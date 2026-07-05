@@ -277,6 +277,14 @@ pub struct ChartContainer {
     /// Runtime-only, not persisted.
     pub needs_snap_after_backfill: bool,
 
+    /// (head_ts_ms, last_ts_ms) of the derived active series as of the last
+    /// `reconcile_derived_series` run. Lets the next run tell a prepend
+    /// (lazy-deepen / scroll-left reseed merging older history in front —
+    /// head_ts moves older, every index shifts right) from a tail append
+    /// (live bar). `None` until the first non-empty reconcile; reset by
+    /// `begin_fresh_load*`. Runtime-only, not persisted.
+    pub(crate) derived_series_stamp: Option<(i64, i64)>,
+
     /// One-shot: viewport width materially changed (split, window resize,
     /// pane re-proportion) → in Auto mode the Y range must be refit to the
     /// NEW visible window. Set by `resize_geometry`, consumed by
@@ -477,6 +485,7 @@ impl ChartContainer {
             stashed_scale_mode: None,
             tag_inherits_home_overlay: false,
             needs_snap_after_backfill: false,
+            derived_series_stamp: None,
             needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
@@ -1076,6 +1085,7 @@ impl ChartContainer {
             // cold-snap off the mother's data that made the sibling diverge
             // from the mother pane (split viewport divergence, 2026-07-03).
             needs_snap_after_backfill: false,
+            derived_series_stamp: None,
             needs_y_rescale: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
@@ -1770,6 +1780,7 @@ impl ChartContainer {
         self.viewport.bar_count = 0;
         self.viewport.view_start = 0.0;
         self.pending_symbol_load = true;
+        self.derived_series_stamp = None;
     }
 
     /// Same reset as [`begin_fresh_load`] but does NOT set
@@ -1783,6 +1794,7 @@ impl ChartContainer {
     pub fn begin_fresh_load_keep_pending(&mut self) {
         self.viewport.bar_count = 0;
         self.viewport.view_start = 0.0;
+        self.derived_series_stamp = None;
     }
 
     /// Seed a fresh-load reconcile: force `ScaleMode::Auto` (the global
@@ -2182,6 +2194,97 @@ impl ChartContainer {
                 self.viewport.chart_width, self.viewport.bar_spacing
             );
         }
+    }
+
+    /// Reconcile viewport after a derived-series upsert (the six
+    /// `*Appended`/`*Updated` reactor events: footprint/renko/pnf/kagi/
+    /// tpo/tlb). Owner doctrine 2026-07-05: data arrivals NEVER move what
+    /// the user is looking at — the viewport is positioned once per load
+    /// (cold snap on the first NON-EMPTY paint), after that only the user
+    /// (pan/zoom) and the scale mode may move it. Mechanically:
+    ///
+    /// - the one-shot `needs_snap_after_backfill` stays ARMED until the
+    ///   series actually has data — burning it against the first bar of a
+    ///   warm replay is how the viewport got stranded at the oldest edge
+    ///   (repro 2026-07-05: snap consumed at len==1, the remaining 381
+    ///   warm bars then appended to the right of a view stuck near 0);
+    /// - a prepend (lazy-deepen / scroll-left reseed merging older bars in
+    ///   front) shifts every existing index right by the prepend count →
+    ///   `view_start` gets the same shift so the anchored bar stays put;
+    /// - a tail append leaves `view_start` alone UNLESS the view was glued
+    ///   to the right edge before the append (kline
+    ///   [`Self::advance_view_on_tick`] Auto-follow parity) or the scale
+    ///   mode is Follow.
+    pub fn reconcile_derived_series(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        let new_len = series.len();
+        if self.needs_snap_after_backfill {
+            if new_len > 0 && self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
+                self.viewport.bar_count = new_len;
+                self.consume_cold_snap(series);
+                self.derived_series_stamp = Some((
+                    series.ts_ms_at(0).unwrap_or(0),
+                    series.ts_ms_at(new_len - 1).unwrap_or(0),
+                ));
+            }
+            // No data yet or chart not sized — keep the flag armed for the
+            // event that actually delivers bars; nothing to book-keep.
+            return;
+        }
+        if new_len == 0 {
+            self.viewport.bar_count = 0;
+            self.derived_series_stamp = None;
+            return;
+        }
+        let new_head = series.ts_ms_at(0).unwrap_or(0);
+        let new_last = series.ts_ms_at(new_len - 1).unwrap_or(0);
+        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
+        match self.derived_series_stamp {
+            Some((old_head, old_last)) => {
+                // Prepend shift: index of the first element at/after the old
+                // head == number of bars merged in front of it.
+                let prepended = if new_head < old_head {
+                    let mut lo = 0usize;
+                    let mut hi = new_len;
+                    while lo < hi {
+                        let mid = lo + (hi - lo) / 2;
+                        if series.ts_ms_at(mid).unwrap_or(i64::MIN) < old_head {
+                            lo = mid + 1;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    lo
+                } else {
+                    0
+                };
+                let visible_f = if self.viewport.bar_spacing > 0.0 {
+                    self.viewport.chart_width / self.viewport.bar_spacing
+                } else {
+                    0.0
+                };
+                let was_glued = bc0 as f64 <= vs0 + visible_f;
+                if prepended > 0 {
+                    self.viewport.view_start += prepended as f64;
+                }
+                self.viewport.bar_count = new_len;
+                let tail_grew = new_last > old_last;
+                if self.price_scale.scale_mode.is_follow()
+                    || (tail_grew && was_glued && self.price_scale.scale_mode == ScaleMode::Auto)
+                {
+                    self.snap_to_end(DEFAULT_SNAP_MARGIN);
+                }
+                if prepended > 0 {
+                    self.log_view_jump("reconcile_derived_prepend", vs0, bc0);
+                }
+            }
+            None => {
+                // First sighting with the snap flag already spent (e.g. a
+                // preset restore that landed data before this reactor ran):
+                // adopt the count without touching view_start.
+                self.viewport.bar_count = new_len;
+            }
+        }
+        self.derived_series_stamp = Some((new_head, new_last));
     }
 
     /// Test-only: force the viewport into a known geometry/position.

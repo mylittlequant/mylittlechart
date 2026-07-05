@@ -584,10 +584,16 @@ impl ChartApp {
                             let sym = self.symbol_for_chart(*cid)?;
                             let at = self.account_type_for_chart(*cid)?;
                             let is_tick_tf = self.timeframe_for_chart(*cid).map(|tf| tf.is_tick()).unwrap_or(false);
+                            // NOT footprint: its bars come from FootprintUpdate
+                            // and its viewport bookkeeping is driven exclusively
+                            // by the FootprintBarAppended arm — letting a live
+                            // kline BarUpdate through here could consume the
+                            // one-shot cold snap against an empty/foreign series
+                            // before the first footprint bar ever lands.
                             let derived_chart_type = panels_store.chart_panel
                                 .get(&win.chart_panel_id)
                                 .map(|p| matches!(p.chart_type,
-                                    "range_bar" | "volume_bar" | "tick_bar" | "footprint"
+                                    "range_bar" | "volume_bar" | "tick_bar"
                                     | "dollar_bar" | "tick_imbalance_bar"
                                     | "volume_imbalance_bar" | "run_bar"
                                 ))
@@ -987,11 +993,16 @@ impl ChartApp {
                     let series = series_by_chart.get(cid_)
                         .map(|s| s.as_active_series())
                         .unwrap_or(crate::active_series::ActiveSeries::Bars(&[]));
-                    if window.pending_symbol_load { window.pending_symbol_load = false; }
-                    if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
-                        window.consume_cold_snap(series);
+                    // Keep the loading state up until the event that actually
+                    // delivers bars — clearing on a zero-length notification
+                    // kills the spinner while the pane is still blank.
+                    if window.pending_symbol_load && !series.is_empty() {
+                        window.pending_symbol_load = false;
                     }
-                    window.set_bar_count(series.len());
+                    // Cold snap (held armed until non-empty), prepend index
+                    // compensation, right-edge follow — all inside the intent
+                    // method (owner viewport doctrine 2026-07-05).
+                    window.reconcile_derived_series(series);
                 }
             }
 
