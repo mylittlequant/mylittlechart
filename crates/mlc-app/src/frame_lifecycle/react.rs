@@ -1003,6 +1003,18 @@ impl ChartApp {
                     // compensation, right-edge follow — all inside the intent
                     // method (owner viewport doctrine 2026-07-05).
                     window.reconcile_derived_series(series);
+                    // Focus-mode Y-track: PriceScale::calc_auto_scale extends
+                    // Y to include the last bar even when it exits the visible
+                    // range (see mlc-core price_scale.rs Focus branch +
+                    // chart_container.rs calc_auto_scale). Kline live-tick
+                    // (BarUpdate arm ~676) drives this every tick; the derived
+                    // Appended arm never called it, so Focus-Y stopped tracking
+                    // last footprint/renko/pnf/kagi/tpo/tlb bars — the last
+                    // bar's high/low drifted off-screen. Mirror the kline
+                    // path's `is_auto_y` gate (covers both Auto and Focus).
+                    if window.price_scale().scale_mode.is_auto_y() && !series.is_empty() {
+                        window.calc_auto_scale(series);
+                    }
                 }
             }
 

@@ -1728,7 +1728,18 @@ impl ChartContainer {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
         let count = self.viewport.bar_count;
-        self.viewport.view_start = (count as f64 + margin - visible_f).max(0.0);
+        // Progressive right-edge margin: absolute-bar `margin` values only
+        // make sense on wide viewports — a fixed 5-bar margin means half an
+        // empty screen when the user zooms to 10 visible bars. Restore the
+        // proportional ladder from v0.5.73 (commit 0cee2596, killed by the
+        // v0.5.216 unify commit c860233e): margin scales with visible bar
+        // count, capped by the caller's request. Callers pass
+        // `DEFAULT_SNAP_MARGIN` (5.0) as the desired MAXIMUM; the actual
+        // margin is `min(DEFAULT_SNAP_MARGIN, ceil(5% * visible_f))` with a
+        // floor of 0 so the last bar stays on-screen at any zoom.
+        let progressive = (0.05 * visible_f).ceil().max(0.0);
+        let effective_margin = margin.min(progressive);
+        self.viewport.view_start = (count as f64 + effective_margin - visible_f).max(0.0);
         self.log_view_jump("snap_to_end", vs0, bc0);
     }
 
