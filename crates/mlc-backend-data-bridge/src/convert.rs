@@ -91,10 +91,23 @@ pub fn kline_to_bar(kline: &Kline) -> Bar {
     }
 }
 
-/// Convert a chart `Timeframe` name to a V5 kline interval string.
+/// Convert a chart timeframe NAME to the exchange kline interval label.
 ///
-/// Chart uses uppercase for hours+ (`"1H"`, `"4H"`, `"1D"`, `"1W"`, `"1M"`).
-/// Most exchanges use lowercase (`"1h"`, `"4h"`, `"1d"`, `"1w"`, `"1M"`).
+/// Chart uses uppercase for hours+ (`"1H"`, `"4H"`, `"1D"`, `"1W"`, `"1M"`);
+/// exchanges use lowercase for all of those EXCEPT month — `"1M"` (month)
+/// vs `"1m"` (minute) is the one case-SENSITIVE pair on the wire (Binance
+/// et al). The old blanket `to_lowercase()` collapsed the pair: picking the
+/// 1-month TF subscribed a 1-minute feed (owner report 2026-07-05).
+pub fn interval_label(tf_name: &str) -> String {
+    if tf_name.ends_with('M') {
+        tf_name.to_string()
+    } else {
+        tf_name.to_lowercase()
+    }
+}
+
+/// Convert a chart `Timeframe` to a V5 kline interval string. See
+/// [`interval_label`] for the month case-sensitivity contract.
 pub fn timeframe_to_interval(tf: &Timeframe) -> String {
-    tf.name.to_lowercase()
+    interval_label(&tf.name)
 }

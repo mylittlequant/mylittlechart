@@ -5720,11 +5720,11 @@ type FetchKey = (ExchangeId, AccountType, String, String);
 /// Build a station `SeriesKey` for the `Kind::Kline(interval)` series
 /// addressed by (exchange, account, raw_symbol, timeframe_name).
 ///
-/// The kline-interval label is the lowercased timeframe name (matches
-/// `timeframe_to_interval`); only the casing is normalised here so the
-/// caller does not need to construct a full `Timeframe` value.
+/// The kline-interval label comes from [`crate::convert::interval_label`]
+/// (month stays "1M" — the one case-sensitive interval; a blanket
+/// lowercase here silently rekeyed the month series as 1-minute).
 fn station_bar_key(exchange: ExchangeId, account: AccountType, symbol: &str, timeframe: &str) -> StationSeriesKey {
-    let iv = KlineInterval::new(&timeframe.to_lowercase());
+    let iv = KlineInterval::new(&crate::convert::interval_label(timeframe));
     StationSeriesKey::new(exchange, account, symbol, StationKind::Kline(iv))
 }
 
