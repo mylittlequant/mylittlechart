@@ -464,17 +464,25 @@ impl ChartApp {
                     }
                 }
 
-                let matched_ids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
+                // Recalc by the window's BUBBLE id — instances hang off
+                // `current_tag_id`, and ChartId/BubbleId come from separate
+                // counters. The old `BubbleId(cid.0)` cast recalced a
+                // usually-nonexistent bubble, leaving indicator values stale
+                // (sized for the PRE-replace series) until the next
+                // trade-tick recalc — visible as the volume histogram
+                // vanishing for a beat after every bars reload (owner
+                // report 2026-07-05).
+                let matched_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid.containers().iter()
                     .filter(|(cid, _)| {
                         self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
                             && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                             && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
                             && self.account_type_for_chart(**cid).map_or(false, |at| at == event_account_type)
                     })
-                    .map(|(cid, _)| cid.0)
+                    .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                     .collect();
-                for wid in &matched_ids {
-                    self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(*wid), new_bars);
+                for b in &matched_bids {
+                    self.core.indicators_mut().recalc_bubble(*b, new_bars);
                 }
             }
 
@@ -550,16 +558,17 @@ impl ChartApp {
                 }
 
                 if any_matched {
-                    let matched_ids: Vec<u64> = self.panel_app.panel_grid.containers().iter()
+                    // Same BubbleId-not-ChartId fix as the BarsLoaded arm above.
+                    let matched_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid.containers().iter()
                         .filter(|(cid, _)| {
                             self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
                                 && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
                                 && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
                         })
-                        .map(|(cid, _)| cid.0)
+                        .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                         .collect();
-                    for wid in &matched_ids {
-                        self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(*wid), new_bars);
+                    for b in &matched_bids {
+                        self.core.indicators_mut().recalc_bubble(*b, new_bars);
                     }
                 }
             }
