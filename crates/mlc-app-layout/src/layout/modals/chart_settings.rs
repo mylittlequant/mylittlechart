@@ -559,15 +559,35 @@ pub fn render_settings_modal(
             ChartSettingsTab::StatusLine => format!("status:dropdown_menu:{}", active_field),
             _ => format!("dropdown_menu:{}", active_field),
         };
+        // Companion `dropdown_cycle:<field>` covers the text half of the
+        // split control; `dropdown_menu:<field>` covers only the chevron
+        // (~20px). The overlay wants the FULL field width so the popup
+        // aligns under the text and `min_width` fits the longest label
+        // ("Normal" was clipped to "Norm|" because only chevron.width was
+        // seeded). Look up both, prefer the union.
+        let cycle_id = match active_tab {
+            ChartSettingsTab::StatusLine => format!("status:dropdown_cycle:{}", active_field),
+            _ => format!("dropdown_cycle:{}", active_field),
+        };
 
         if let Some((_, button_rect)) = result.content_items.iter().find(|(id, _)| id == &dropdown_id) {
-            let dropdown_x = button_rect.x;
+            let cycle_rect = result.content_items.iter()
+                .find(|(id, _)| id == &cycle_id)
+                .map(|(_, r)| r.clone());
+            let dropdown_x = cycle_rect.as_ref().map(|r| r.x).unwrap_or(button_rect.x);
             let dropdown_y = button_rect.y + button_rect.height + 2.0;
-            let button_width = button_rect.width;
+            let button_width = cycle_rect
+                .map(|r| r.width + button_rect.width)
+                .unwrap_or(button_rect.width);
 
             let items: Option<Vec<DropdownItem>> = match active_tab {
                 ChartSettingsTab::Instrument => {
                     match active_field.as_str() {
+                        "price_tick_style" => Some(vec![
+                            DropdownItem::item("dotted", t_settings(SettingsKey::TickStyleDots)),
+                            DropdownItem::item("dashed", t_settings(SettingsKey::TickStyleDash)),
+                            DropdownItem::item("solid", t_settings(SettingsKey::TickStyleLine)),
+                        ]),
                         "precision" => Some(vec![
                             DropdownItem::item("auto", t_settings(SettingsKey::PrecisionAuto)),
                             DropdownItem::item("0", "0 (1)"),
@@ -1139,7 +1159,14 @@ fn render_footprint_settings_block(
     ctx.set_fill_color(text_color);
     ctx.fill_text("Heat intensity", x, row_y + row_height / 2.0);
     let dropdown_x = x + 140.0;
-    let dropdown_width = 140.0;
+    // Width sized off the longest option label ("Normal") rather than the
+    // fixed 140px used by short values elsewhere (e.g. Precision's "Auto")
+    // — bug fix 2026-07-06: 140px clipped "Normal" against the chevron.
+    ctx.set_font("12px sans-serif");
+    let widest_label_w = ["Low", "Normal", "High"].iter()
+        .map(|s| ctx.measure_text(s))
+        .fold(0.0_f64, f64::max);
+    let dropdown_width = (widest_label_w + 8.0 * 2.0 + 20.0).max(140.0);
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let chevron_w = 20.0;
@@ -2172,12 +2199,22 @@ fn draw_split_dropdown(
     ctx.set_stroke_color(&theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, y, width, height, 4.0);
-    ctx.set_fill_color(&theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(label, x + 8.0, text_center_y);
 
     let chevron_width = 20.0;
     let text_width = width - chevron_width;
+
+    // Label — clipped to the text area so a long option (e.g. "Normal")
+    // never bleeds into the vertical separator / chevron zone. Bug fix
+    // 2026-07-06: previously drawn unclipped, so wide labels visually
+    // collided with the separator line drawn right after it.
+    ctx.set_fill_color(&theme.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x, y, (text_width - 8.0).max(0.0), height);
+    ctx.clip();
+    ctx.fill_text(label, x + 8.0, text_center_y);
+    ctx.restore();
 
     // Vertical separator
     ctx.set_stroke_color(&theme.separator);

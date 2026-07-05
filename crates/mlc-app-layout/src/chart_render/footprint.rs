@@ -50,6 +50,13 @@ const IMBALANCE_RATIO: f64 = 3.0;
 const VALUE_AREA_FRACTION: f64 = 0.70;
 
 /// Color palette for the footprint cluster.
+///
+/// `bid`/`ask` (the per-cell volume NUMBERS) are deliberately independent
+/// of the Buy/Sell theme swatches — bug fix 2026-07-06: the swatches are
+/// documented (Instrument-tab CLUSTERS SETTINGS) as controlling the
+/// heat-fill color, not the digit color, so digits stay a fixed
+/// high-legibility red/green pair regardless of the user's fill choice.
+/// See `heat_fill_colors()` for the theme-driven pair used by the fill.
 struct FpColors<'a> {
     bid: &'a str,
     ask: &'a str,
@@ -57,14 +64,11 @@ struct FpColors<'a> {
     ask_imb: &'a str,
     poc_fill: &'a str,
     va_fill: &'a str,
-    cell_bg_dim: &'a str,
 }
 
-/// Non-user-configurable defaults — imbalance/POC/value-area colors stay
-/// fixed constants (not exposed as a settings-modal control). Only
-/// `bid`/`ask` come from the theme (`state.theme.footprint_sell`/
-/// `.footprint_buy`, settings-modal color swatches) — see
-/// `theme_colors()`.
+/// Fixed defaults — volume-text digit colors are NOT user-configurable
+/// (only the heat-fill color is, via the Buy/Sell swatches — see
+/// `heat_fill_colors()`).
 const DEFAULT_COLORS: FpColors<'static> = FpColors {
     bid: "#ef5350",
     ask: "#26a69a",
@@ -72,19 +76,47 @@ const DEFAULT_COLORS: FpColors<'static> = FpColors {
     ask_imb: "#69f0ae",
     poc_fill: "rgba(255, 235, 59, 0.18)",
     va_fill: "rgba(120, 144, 156, 0.10)",
-    cell_bg_dim: "rgba(120, 144, 156, 0.04)",
 };
 
-/// Build the live palette for one frame: bid/ask come from the active
-/// theme (user-editable via the Instrument tab's CLUSTERS SETTINGS
-/// swatches — same channel as Japanese Candles body/border/wick colors),
-/// everything else stays the fixed constant.
-fn theme_colors(theme: &ChartTheme) -> FpColors<'_> {
-    FpColors {
-        bid: &theme.footprint_sell,
-        ask: &theme.footprint_buy,
-        ..DEFAULT_COLORS
-    }
+/// Build the live palette for one frame. Digit colors stay the fixed
+/// constant regardless of theme (see `FpColors` doc) — nothing here reads
+/// `theme` today, but the signature is kept for symmetry with
+/// `heat_fill_colors()` and in case a future non-heat-fill control wants
+/// theme input.
+fn theme_colors(_theme: &ChartTheme) -> FpColors<'static> {
+    DEFAULT_COLORS
+}
+
+/// Convert a `#rrggbb`/`#rgb` hex color to an `rgba(r, g, b, a)` string.
+/// Falls back to a neutral gray if the theme color fails to parse (should
+/// not happen — theme colors are always validated hex on write).
+fn hex_to_rgba(hex: &str, alpha: f64) -> String {
+    let hex = hex.trim_start_matches('#');
+    let (r, g, b) = if hex.len() == 6 {
+        (
+            u8::from_str_radix(&hex[0..2], 16).unwrap_or(128),
+            u8::from_str_radix(&hex[2..4], 16).unwrap_or(128),
+            u8::from_str_radix(&hex[4..6], 16).unwrap_or(128),
+        )
+    } else if hex.len() == 3 {
+        (
+            u8::from_str_radix(&hex[0..1], 16).unwrap_or(8) * 17,
+            u8::from_str_radix(&hex[1..2], 16).unwrap_or(8) * 17,
+            u8::from_str_radix(&hex[2..3], 16).unwrap_or(8) * 17,
+        )
+    } else {
+        (120, 144, 156)
+    };
+    format!("rgba({}, {}, {}, {:.3})", r, g, b, alpha)
+}
+
+/// Heat-fill color pair — sourced from the Buy/Sell theme swatches
+/// (`ChartTheme::footprint_buy`/`.footprint_sell`, user-editable via the
+/// Instrument tab's CLUSTERS SETTINGS block). Bug fix 2026-07-06: the
+/// heat fill used to be two hardcoded hex constants disconnected from the
+/// swatches; now it reads the same theme fields the swatches write.
+fn heat_fill_colors(theme: &ChartTheme) -> (&str, &str) {
+    (&theme.footprint_buy, &theme.footprint_sell)
 }
 
 /// Stacked-imbalance + absorption palette (F1, F2).
@@ -284,30 +316,29 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 ctx.fill_rect(cell_left, y, bar_w, row_h);
             } else if max_vol > 0.0 {
                 let ratio = (lv.total_vol() / max_vol).clamp(0.0, 1.0);
-                if !draw_text {
-                    // Compressed (zoomed-out) mode: the numbers were the
-                    // color carrier — replace each cell with a dominant-side
-                    // heat fill so delta structure stays readable at
-                    // distance instead of collapsing into gray mush.
-                    if ratio > 0.02 {
-                        // Heat-intensity dropdown multiplier applied to the
-                        // base alpha BEFORE the cap — Normal (×1.0) caps at
-                        // 0.7 exactly like the pre-toggle formula (pixel-
-                        // identical default); Low (×0.5) and High (×1.6)
-                        // scale from the same base and clamp to 1.0 so High
-                        // never exceeds full opacity.
-                        let alpha = ((0.12 + ratio * 0.55) * heat_alpha_mult).min(1.0);
-                        let color = if lv.buy_vol >= lv.sell_vol {
-                            format!("rgba(38, 166, 154, {:.3})", alpha)
-                        } else {
-                            format!("rgba(239, 83, 80, {:.3})", alpha)
-                        };
-                        ctx.set_fill_color(&color);
-                        ctx.fill_rect(cell_left, y, bar_w, row_h);
-                    }
-                } else if ratio > 0.05 {
-                    // Faint gradient background by share of bar's max volume.
-                    ctx.set_fill_color(colors.cell_bg_dim);
+                // Heat fill: dominant-side color from the Buy/Sell theme
+                // swatches (`heat_fill_colors`), alpha by volume share,
+                // scaled by the Heat intensity dropdown. Applied in BOTH
+                // zoom regimes — bug fix 2026-07-06: previously this
+                // themed/scaled fill only fired when `!draw_text` (fully
+                // zoomed out), so toggling Low/Normal/High was invisible
+                // at normal zoom (numbers-visible mode painted a flat,
+                // theme-independent gray instead). The base-alpha cap is
+                // lower here (0.5) than in compressed mode (0.7) since the
+                // fill sits BEHIND legible numbers and must not wash them
+                // out; compressed mode has no numbers on top, so it can
+                // run hotter and needs the fill alone to carry structure.
+                let min_ratio = if draw_text { 0.05 } else { 0.02 };
+                if ratio > min_ratio {
+                    let base_cap = if draw_text { 0.08 + ratio * 0.35 } else { 0.12 + ratio * 0.55 };
+                    let alpha = (base_cap * heat_alpha_mult).min(1.0);
+                    let (buy_hex, sell_hex) = heat_fill_colors(state.theme);
+                    let color = if lv.buy_vol >= lv.sell_vol {
+                        hex_to_rgba(buy_hex, alpha)
+                    } else {
+                        hex_to_rgba(sell_hex, alpha)
+                    };
+                    ctx.set_fill_color(&color);
                     ctx.fill_rect(cell_left, y, bar_w, row_h);
                 }
             }

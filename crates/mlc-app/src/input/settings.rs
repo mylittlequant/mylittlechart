@@ -807,6 +807,16 @@ impl ChartApp {
                         eprintln!("[ChartApp] corner_visibility = {:?}", w.scale_settings.corner_visibility);
                     }
                 }
+                "price_tick_style" => {
+                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                        w.scale_settings.price_tick_style = match value.as_str() {
+                            "dashed" => "dashed".to_string(),
+                            "solid"  => "solid".to_string(),
+                            _        => "dotted".to_string(),
+                        };
+                        eprintln!("[ChartApp] price_tick_style = {}", w.scale_settings.price_tick_style);
+                    }
+                }
                 "date_format" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.date_format = match value.as_str() {
