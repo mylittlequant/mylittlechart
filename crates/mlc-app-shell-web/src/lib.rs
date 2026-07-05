@@ -414,6 +414,28 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&dbg, &"fp_last_ts".into(), &fp_last_ts.into());
             let _ = js_sys::Reflect::set(&dbg, &"fp_last_cum_delta".into(), &fp_last_cum_delta.into());
             let _ = js_sys::Reflect::set(&dbg, &"seed_in_flight".into(), &seed_in_flight.into());
+            // Indicator introspection (owner report 2026-07-05: VOLUME
+            // neither auto-added nor visible in the picker) — expose whether
+            // the definition registered and what instances the active bubble
+            // actually carries, so the failing hop is visible live.
+            {
+                let has_volume_def = st.chart.core.indicators()
+                    .definitions()
+                    .iter()
+                    .any(|d| d.type_id.eq_ignore_ascii_case("volume"));
+                let _ = js_sys::Reflect::set(&dbg, &"def_volume".into(), &has_volume_def.into());
+                let inst_list: String = active_bid
+                    .map(|bid| st.chart.core.indicators()
+                        .instances_for_bubble(bid)
+                        .iter()
+                        .map(|i| format!("{}#{}", i.type_id, i.id))
+                        .collect::<Vec<_>>()
+                        .join(","))
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"instances".into(), &inst_list.into());
+                let def_count = st.chart.core.indicators().definitions().len() as f64;
+                let _ = js_sys::Reflect::set(&dbg, &"def_count".into(), &def_count.into());
+            }
 
             // Compare overlay diag — for debugging the compare-chart retry path.
             // Shows what compare series are currently mounted on the active
