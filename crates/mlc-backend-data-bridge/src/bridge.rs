@@ -1965,7 +1965,36 @@ impl DataBridge {
                     exchange_id, symbol_owned, account_type, interval_owned, warm_n, full_warm,
                 );
                 let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
-                let older = station.rewarm_footprint(&key, &symbol_wire, full_warm).await;
+                // The delay races the phase-1 subscribe: its own cold seed
+                // pages ~10 REST calls, so at +4s the ring may not be
+                // registered yet and rewarm no-ops. Retry on a short timer
+                // until the ring exists (bounded; still_active re-checked so
+                // a chart-type/TF switch cancels the wait).
+                let mut older = Vec::new();
+                for _attempt in 0u32..15 {
+                    let active = fp_interval_map
+                        .lock()
+                        .ok()
+                        .and_then(|m| m.get(&(exchange_id, symbol_owned.clone(), account_type)).cloned())
+                        .is_some_and(|iv| iv == interval_owned);
+                    if !active {
+                        break;
+                    }
+                    older = station.rewarm_footprint(&key, &symbol_wire, full_warm).await;
+                    if !older.is_empty() {
+                        break;
+                    }
+                    if station
+                        .series::<digdigdig3_station::data::FootprintPoint>(&key)
+                        .is_some()
+                    {
+                        // Ring exists but nothing older was produced —
+                        // genuine no-op (venue history exhausted / already
+                        // at depth), not the startup race.
+                        break;
+                    }
+                    sleep_ms(2000).await;
+                }
                 crate::dlog!(
                     "[Bridge::footprint lazy-deepen] {:?} {} at={:?} — rewarm spliced {} older bars",
                     exchange_id, symbol_owned, account_type, older.len(),
