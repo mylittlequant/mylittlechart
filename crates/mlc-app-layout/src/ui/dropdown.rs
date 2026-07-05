@@ -383,14 +383,71 @@ where
         }
     }
 
-    // Clamp to max_width if it's set (max_width > 0)
-    let menu_width = if config.max_width > 0.0 {
+    let cols = usize::from(config.grid_columns.unwrap_or(1).max(1));
+
+    // Clamp to max_width if it's set (max_width > 0). In multi-column mode
+    // the measured content width is a CELL width — the menu spans `cols`
+    // cells side by side.
+    let menu_width = if cols > 1 {
+        let cell_w = if config.max_width > 0.0 {
+            content_width.min(config.max_width)
+        } else {
+            content_width
+        };
+        cell_w * cols as f64 + config.padding * 2.0
+    } else if config.max_width > 0.0 {
         content_width.min(config.max_width)
     } else {
         content_width
     };
 
-    let menu_height = config.calculate_height();
+    // Layout pass — one rect per item, aligned by index with config.items.
+    // Headers and separators always span the full row (flushing a partially
+    // filled grid row first); Item/Submenu cells flow `cols` per row. With
+    // cols == 1 this reproduces the classic vertical list exactly.
+    let inner_x = origin.0 + config.padding;
+    let inner_w = menu_width - config.padding * 2.0;
+    let cell_w = inner_w / cols as f64;
+    let mut rects: Vec<WidgetRect> = Vec::with_capacity(config.items.len());
+    let mut y_off = config.padding;
+    let mut col = 0usize;
+    for item in &config.items {
+        match item {
+            DropdownItem::Item { .. } | DropdownItem::Submenu { .. } => {
+                let (x, w) = if cols > 1 {
+                    (inner_x + cell_w * col as f64, cell_w)
+                } else {
+                    (inner_x, inner_w)
+                };
+                rects.push(WidgetRect::new(x, origin.1 + y_off, w, config.item_height));
+                col += 1;
+                if col >= cols {
+                    col = 0;
+                    y_off += config.item_height;
+                }
+            }
+            DropdownItem::Separator => {
+                if col != 0 {
+                    col = 0;
+                    y_off += config.item_height;
+                }
+                rects.push(WidgetRect::new(inner_x, origin.1 + y_off, inner_w, config.separator_height));
+                y_off += config.separator_height;
+            }
+            DropdownItem::Header { .. } => {
+                if col != 0 {
+                    col = 0;
+                    y_off += config.item_height;
+                }
+                rects.push(WidgetRect::new(inner_x, origin.1 + y_off, inner_w, config.header_height));
+                y_off += config.header_height;
+            }
+        }
+    }
+    if col != 0 {
+        y_off += config.item_height;
+    }
+    let menu_height = y_off + config.padding;
 
     let menu_rect = WidgetRect::new(origin.0, origin.1, menu_width, menu_height);
     result.menu_rect = menu_rect;
@@ -415,18 +472,11 @@ where
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
-    // Draw items
-    let mut y = menu_rect.y + config.padding;
-
-    for item in &config.items {
+    // Draw items — rects precomputed by the layout pass above.
+    for (idx, item) in config.items.iter().enumerate() {
         match item {
             DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field } => {
-                let item_rect = WidgetRect::new(
-                    menu_rect.x + config.padding,
-                    y,
-                    menu_rect.width - config.padding * 2.0,
-                    config.item_height,
-                );
+                let item_rect = rects[idx];
 
                 let is_hovered = hovered_id == Some(id.as_str()) && !*disabled;
 
@@ -564,40 +614,32 @@ where
                 if is_hovered {
                     result.hovered = Some(id.clone());
                 }
-
-                y += config.item_height;
             }
             DropdownItem::Separator => {
-                let sep_y = y + config.separator_height / 2.0;
+                let sep_rect = rects[idx];
+                let sep_y = sep_rect.y + config.separator_height / 2.0;
                 ctx.set_stroke_color(&theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.begin_path();
-                ctx.move_to(menu_rect.x + config.padding, sep_y);
-                ctx.line_to(menu_rect.right() - config.padding, sep_y);
+                ctx.move_to(sep_rect.x, sep_y);
+                ctx.line_to(sep_rect.right(), sep_y);
                 ctx.stroke();
-
-                y += config.separator_height;
             }
             DropdownItem::Header { label } => {
-                let header_rect = WidgetRect::new(
-                    menu_rect.x + config.padding,
-                    y,
-                    menu_rect.width - config.padding * 2.0,
-                    config.header_height,
-                );
+                let header_rect = rects[idx];
 
                 ctx.set_font(&format!("bold {}px sans-serif", config.font_size));
                 ctx.set_fill_color(&theme.header_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, menu_rect.x + config.item_padding_x, y + config.header_height / 2.0);
+                ctx.fill_text(label, menu_rect.x + config.item_padding_x, header_rect.y + config.header_height / 2.0);
 
                 // Header bottom border
                 ctx.set_stroke_color(&theme.header_border);
                 ctx.set_stroke_width(1.0);
                 ctx.begin_path();
-                ctx.move_to(menu_rect.x + config.padding, y + config.header_height - 1.0);
-                ctx.line_to(menu_rect.right() - config.padding, y + config.header_height - 1.0);
+                ctx.move_to(header_rect.x, header_rect.y + config.header_height - 1.0);
+                ctx.line_to(header_rect.right(), header_rect.y + config.header_height - 1.0);
                 ctx.stroke();
 
                 // Register a noop hit zone so clicks on the header are consumed
@@ -606,16 +648,9 @@ where
                     format!("__noop__:header:{}", label),
                     header_rect,
                 ));
-
-                y += config.header_height;
             }
             DropdownItem::Submenu { id, icon, label } => {
-                let item_rect = WidgetRect::new(
-                    menu_rect.x + config.padding,
-                    y,
-                    menu_rect.width - config.padding * 2.0,
-                    config.item_height,
-                );
+                let item_rect = rects[idx];
 
                 let is_hovered = hovered_id == Some(id.as_str());
 
@@ -671,8 +706,6 @@ where
                     result.hovered = Some(id.clone());
                     result.open_submenu = Some(id.clone());
                 }
-
-                y += config.item_height;
             }
         }
     }

@@ -911,7 +911,13 @@ fn chart_toolbar_render_dropdown(
         }
 
         // 5. Build config and render the main dropdown
-        let config = DropdownConfig::new(dropdown_items);
+        let mut config = DropdownConfig::new(dropdown_items);
+        // Chart-type menu: two-column grid inside each section (owner spec
+        // 2026-07-05) — headers/separators span the full row, items flow
+        // 2 per row. Everything else keeps the classic vertical list.
+        if dropdown_id == "chart_type_selector" {
+            config.grid_columns = Some(2);
+        }
 
         let result = draw_dropdown(
             ctx,
