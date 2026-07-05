@@ -252,6 +252,17 @@ impl DataBubble {
         self.footprint_bars.as_mut().and_then(|v| v.last_mut())
     }
     pub fn clear_footprint(&mut self) { self.footprint_bars = None; }
+    /// Mark the footprint slot as "subscribed, seed in flight": `Some(empty)`
+    /// instead of `None`. `ChartRenderState::has_any_series_data` treats
+    /// `Some(_)` as a renderable series, so the pane draws its chrome + the
+    /// in-pane waiting spinner instead of the bare loading skeleton (owner
+    /// report 2026-07-05 #3: switching to footprint showed a fully blank
+    /// pane for the whole seed).
+    pub fn mark_footprint_pending(&mut self) {
+        if self.footprint_bars.is_none() {
+            self.footprint_bars = Some(Vec::new());
+        }
+    }
 
     pub fn append_renko(&mut self, brick: mlc_core::types::RenkoBrick) {
         self.renko_bars.get_or_insert_with(Vec::new).push(brick);

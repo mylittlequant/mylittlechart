@@ -1359,6 +1359,7 @@ impl ChartApp {
                             if let Some(bid) = self.bubble_for_chart(*cid) {
                                 self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                     bubble.clear_bars();
+                                    bubble.mark_footprint_pending();
                                     bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
                                 });
                             }
@@ -1370,6 +1371,10 @@ impl ChartApp {
                         bars_requested += 1;
                     }
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
+                    // Default companions (klines → VOLUME, footprint → CVD)
+                    // for the freshly hydrated windows — ChangeChartType
+                    // never ran for them.
+                    self.sync_default_indicators_for_all_windows();
                     let request_bars_us = _t_request_bars.elapsed().as_micros();
 
                     // Prune orphan Panel members from all restored sync groups.

@@ -619,6 +619,7 @@ impl ChartApp {
                                             {
                                                 self.core.bubbles_mut().with_bubble_mut(active_bid, |bubble| {
                                                     bubble.clear_bars();
+                                                    bubble.mark_footprint_pending();
                                                 });
                                                 self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
                                             }
@@ -886,6 +887,7 @@ impl ChartApp {
                                     self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                         bubble.clear_footprint();
                                         bubble.clear_bars();
+                                        bubble.mark_footprint_pending();
                                         bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
                                     });
                                     self.core.bubbles_mut().set_timeframe(
@@ -2421,12 +2423,31 @@ impl ChartApp {
             if let Some(bid) = self.bubble_for_chart(cid) {
                 self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                     bubble.clear_bars();
+                    bubble.mark_footprint_pending();
                     bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
                 });
             }
             self.core.bridge.ensure_connector(eid);
             self.core.bridge.request_footprint(eid, &sym, at, iv);
             eprintln!("[ChartApp] ignited footprint sub for restored window {:?} iv={}", cid, iv);
+        }
+    }
+
+    /// Run the default-companion reconcile for EVERY open window.
+    ///
+    /// `sync_default_indicators_for_chart_type` only fires inside
+    /// ChangeChartType — a restored window never passes through it, so a
+    /// hydrated candles chart came up without its VOLUME companion and a
+    /// hydrated footprint chart without CVD (owner report 2026-07-05 #2).
+    /// Called from the startup / new-window / LoadPreset post-load paths,
+    /// right after `ignite_footprint_windows`.
+    pub(crate) fn sync_default_indicators_for_all_windows(&mut self) {
+        let targets: Vec<(mlc_core::state::ChartId, &'static str)> =
+            self.panel_app.panel_grid.containers().keys()
+                .map(|cid| (*cid, self.chart_type_for_chart(*cid).unwrap_or("candles")))
+                .collect();
+        for (cid, ct) in targets {
+            self.sync_default_indicators_for_chart_type(cid, ct);
         }
     }
 

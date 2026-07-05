@@ -1676,6 +1676,9 @@ impl ChartApp {
             // gate for these bubbles). Runs synchronously right after, so the
             // flag lands before any REST response can.
             app.ignite_footprint_windows();
+            // Default companions (klines → VOLUME, footprint → CVD) for
+            // restored windows — ChangeChartType never ran for them.
+            app.sync_default_indicators_for_all_windows();
 
             // Defer viewport positioning until the first resize() when chart_width is known.
             app.needs_initial_viewport_fit = true;
@@ -2627,6 +2630,7 @@ impl ChartApp {
                 // Footprint windows: ignite the derived pipeline + ownership
                 // stamp (see the startup post-load loop for rationale).
                 app.ignite_footprint_windows();
+                app.sync_default_indicators_for_all_windows();
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
 
                 let nw_cold_us = _t_nw_cold.elapsed().as_micros();

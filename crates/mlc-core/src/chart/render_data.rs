@@ -299,7 +299,10 @@ impl<'a> ChartRenderState<'a> {
     /// sub-pane system, not `ChartRenderState`.
     pub fn has_any_series_data(&self) -> bool {
         !self.bars.is_empty()
-            || self.footprint_bars.is_some_and(|s| !s.is_empty())
+            // `Some(empty)` = footprint subscribed, seed in flight
+            // (`DataBubble::mark_footprint_pending`) — render the pane
+            // chrome + in-pane spinner, not the loading skeleton.
+            || self.footprint_bars.is_some()
             || self.renko_bars.is_some_and(|s| !s.is_empty())
             || self.pnf_columns.is_some_and(|s| !s.is_empty())
             || self.kagi_segments.is_some_and(|s| !s.is_empty())

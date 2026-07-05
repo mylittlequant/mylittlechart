@@ -235,11 +235,12 @@ pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
             | "tick_imbalance_bar"
             | "volume_imbalance_bar"
             | "run_bar"
-            // Footprint clusters ARE minute buckets, but the visible cadence
-            // is one bar per column (index axis, not clock axis) — a regular
-            // clock grid drawn over them reads as broken because it doesn't
-            // align with column edges. Owner rule 2026-07-05.
-            | "footprint"
+            // Footprint returned to the standard time grid (owner report
+            // 2026-07-05 #2): its buckets ARE uniform clock intervals, the
+            // X axis is index-packed like candles, and the ticks land on
+            // bar centers — the earlier "reads as broken" impression came
+            // from the renderer's OWN per-column separator drawn at cell
+            // EDGES (removed) fighting the center-aligned grid.
             | "tpo"
     )
 }

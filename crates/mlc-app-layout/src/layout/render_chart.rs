@@ -1112,6 +1112,68 @@ pub fn draw_sub_pane_line(
     ctx.stroke();
 }
 
+/// Like [`draw_sub_pane_line`], but each segment is colored by its own
+/// direction: rising → `up_color`, falling → `down_color` (CVD reads by
+/// delta sign — parity with the retired hand-drawn footprint strip).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_sub_pane_line_directional(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    values: &[f64],
+    pane_x: f64,
+    pane_y: f64,
+    _pane_width: f64,
+    pane_height: f64,
+    pane_min: f64,
+    pane_max: f64,
+    up_color: &str,
+    down_color: &str,
+    line_width: f32,
+) {
+    let visible = state.viewport.visible_range();
+
+    let (start_bar, end_bar) = if state.disable_clip {
+        let extra_bars = (100.0 / state.viewport.bar_spacing).ceil() as usize;
+        let start = visible.0.max(0).saturating_sub(extra_bars);
+        let end = (visible.1 + extra_bars).min(values.len());
+        (start, end)
+    } else {
+        (visible.0.max(0), visible.1.min(values.len()))
+    };
+
+    if start_bar >= end_bar {
+        return;
+    }
+
+    ctx.set_stroke_width(line_width as f64);
+
+    let mut prev: Option<(f64, f64, f64)> = None; // (x, y, value)
+    for (i, &v) in values.iter().enumerate().take(end_bar).skip(start_bar) {
+        if v.is_nan() || v.is_infinite() {
+            prev = None;
+            continue;
+        }
+
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = pane_x + state.viewport.x_for_bar(i, bar_ts_ms);
+        let ratio = if pane_max > pane_min {
+            (v - pane_min) / (pane_max - pane_min)
+        } else {
+            0.5
+        };
+        let y = pane_y + pane_height - (ratio * pane_height);
+
+        if let Some((px, py, pv)) = prev {
+            ctx.set_stroke_color(if v >= pv { up_color } else { down_color });
+            ctx.begin_path();
+            ctx.move_to(px, py);
+            ctx.line_to(x, y);
+            ctx.stroke();
+        }
+        prev = Some((x, y, v));
+    }
+}
+
 /// Draw a histogram indicator in a sub-pane
 pub fn draw_sub_pane_histogram(
     ctx: &mut dyn RenderContext,
@@ -1338,12 +1400,26 @@ pub fn render_sub_pane(
 
         match output_def.output_type {
             IndicatorOutputRenderType::Line => {
-                draw_sub_pane_line(
-                    ctx, state, values,
-                    content.x, content.y, content.width, content.height,
-                    pane_min, pane_max,
-                    color, line_width,
-                );
+                // CVD reads by delta direction — rising segments green,
+                // falling red (parity with the retired hand-drawn strip;
+                // owner report 2026-07-05 #4: single-color CVD is a
+                // regression). Every other line keeps its flat color.
+                if instance.type_id.eq_ignore_ascii_case("cvd") {
+                    draw_sub_pane_line_directional(
+                        ctx, state, values,
+                        content.x, content.y, content.width, content.height,
+                        pane_min, pane_max,
+                        &state.theme.candle_up, &state.theme.candle_down,
+                        line_width,
+                    );
+                } else {
+                    draw_sub_pane_line(
+                        ctx, state, values,
+                        content.x, content.y, content.width, content.height,
+                        pane_min, pane_max,
+                        color, line_width,
+                    );
+                }
             }
             IndicatorOutputRenderType::Histogram => {
                 draw_sub_pane_histogram(

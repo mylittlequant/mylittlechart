@@ -106,6 +106,21 @@ pub(crate) const fn derived_warm_n() -> usize {
     }
 }
 
+/// First-paint warm depth for a fresh FOOTPRINT subscription.
+///
+/// Owner rule 2026-07-05: cold-open must show clusters in seconds — seed a
+/// shallow 10k-trade window first (≈10 REST pages, ~1-3s), then a single
+/// background deepen re-seeds straight to the full [`derived_warm_n`] depth
+/// (`request_footprint`'s lazy task). One teardown, one deep re-page — NOT
+/// a doubling chain (10→20→40→... would re-fetch the newest pages on every
+/// step and burn ~3x the REST weight of one direct deep seed).
+pub(crate) const FOOTPRINT_INITIAL_WARM_N: usize = 10_000;
+
+/// Delay before the cold-open lazy deepen kicks in — long enough for the
+/// shallow seed to finish + first clusters to paint, short enough that the
+/// full history arrives while the user is still orienting.
+pub(crate) const FOOTPRINT_LAZY_DEEPEN_DELAY_MS: u64 = 4_000;
+
 /// Hard ceiling for [`DataBridge::request_deeper_derived_seed`]'s doubling —
 /// once a key's warm depth reaches this, further scroll-left requests for
 /// deeper history are marked exhausted rather than doubling forever (REST
@@ -1847,7 +1862,10 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let kline_iv = KlineInterval::new(interval);
         let stream = digdigdig3_station::Stream::Footprint(kline_iv);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        // Two-phase cold-open: shallow first paint, one background deepen to
+        // full depth (see FOOTPRINT_INITIAL_WARM_N doc).
+        let warm_n = full_warm.min(FOOTPRINT_INITIAL_WARM_N);
         let interval_changed = if let Ok(mut m) = self.footprint_active_interval.lock() {
             let prev = m.insert((exchange_id, symbol.to_string(), account_type), interval.to_string());
             prev.is_some_and(|p| p != interval)
@@ -1871,11 +1889,69 @@ impl DataBridge {
         }
 
         let handle = self.spawn_footprint_sub(
-            station, tx, series, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            station.clone(), tx.clone(), series.clone(), exchange_id, account_type,
+            symbol_str, symbol_wire.clone(), stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
+        }
+
+        // Lazy deepen: after the shallow seed painted, tear the sub down once
+        // and respawn at full depth in the background (fresh body's ring-peek
+        // replays the deep ring; the FootprintUpdate arm's sorted upsert
+        // merges older bars in front). Guarded by footprint_active_interval —
+        // a chart-type switch clears the entry (`abort_derived_chart`), a
+        // bucket-interval change replaces it, both making this task a no-op.
+        if full_warm > warm_n {
+            let interval_owned = interval.to_string();
+            let symbol_owned = symbol.to_string();
+            let fp_interval_map = self.footprint_active_interval.clone();
+            let warm_state = self.derived_warm_state.clone();
+            let derived_subs = self.derived_subs.clone();
+            self.spawn_bg(async move {
+                sleep_ms(FOOTPRINT_LAZY_DEEPEN_DELAY_MS).await;
+                let still_active = fp_interval_map
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(&(exchange_id, symbol_owned.clone(), account_type)).cloned())
+                    .is_some_and(|iv| iv == interval_owned);
+                if !still_active {
+                    crate::dlog!(
+                        "[Bridge::footprint lazy-deepen] {:?} {} at={:?} — footprint no longer active, skipping",
+                        exchange_id, symbol_owned, account_type,
+                    );
+                    return;
+                }
+                crate::dlog!(
+                    "[Bridge::footprint lazy-deepen] {:?} {} at={:?} interval={} — reseeding {} → {}",
+                    exchange_id, symbol_owned, account_type, interval_owned, warm_n, full_warm,
+                );
+                if let Ok(mut subs) = derived_subs.lock() {
+                    if let Some(h) = subs.remove(&(exchange_id, symbol_owned.clone(), account_type)) {
+                        h.abort();
+                    }
+                }
+                let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
+                if let Err(e) = station.force_unsubscribe_and_await(&key).await {
+                    crate::dlog!(
+                        "[Bridge::footprint lazy-deepen] force_unsubscribe failed {:?} {} at={:?}: {:?}",
+                        exchange_id, symbol_owned, account_type, e,
+                    );
+                }
+                if let Ok(mut ws) = warm_state.lock() {
+                    ws.insert(
+                        (exchange_id, symbol_owned.clone(), account_type, stream.clone()),
+                        full_warm,
+                    );
+                }
+                let inner_handle = spawn_bg_join_nested(footprint_sub_body(
+                    station, tx, series, exchange_id, account_type,
+                    symbol_owned.clone(), symbol_wire, stream, full_warm, None,
+                ));
+                if let Ok(mut subs) = derived_subs.lock() {
+                    subs.insert((exchange_id, symbol_owned, account_type), inner_handle);
+                }
+            });
         }
     }
 
@@ -1900,6 +1976,13 @@ impl DataBridge {
     /// the `derived_subs` slot per instrument (one source per chart).
     pub fn abort_derived_chart(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.abort_derived_sub(exchange_id, symbol, account_type);
+        // Footprint is no longer the active derived mode for this instrument
+        // — clear its interval record so the cold-open lazy-deepen task and
+        // the scroll-left deepen entry point both see "not active" instead
+        // of resurrecting a footprint sub over whatever replaced it.
+        if let Ok(mut m) = self.footprint_active_interval.lock() {
+            m.remove(&(exchange_id, symbol.to_string(), account_type));
+        }
     }
 
     /// Cancel the CVD overlay subscription for an instrument.

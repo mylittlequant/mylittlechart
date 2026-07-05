@@ -82,42 +82,12 @@ const EXTRA_COLORS: FpExtraColors<'static> = FpExtraColors {
     absorption_fill: "rgba(255, 152, 0, 0.16)",
 };
 
-/// Zoom-out fallback: render every visible footprint bar as a plain OHLC
-/// candle (wick + body). Used whenever `bar_w` is below cluster-text
-/// readability — the pane must read as a candle chart, never go blank.
-fn draw_candle_fallback(
-    ctx: &mut dyn RenderContext,
-    state: &ChartRenderState,
-    bars: &[mlc_core::types::FootprintBar],
-) {
-    let viewport = state.viewport;
-    let price_scale = state.price_scale;
-    let rect = &state.chart_rect;
-    let bar_w = viewport.bar_width();
-
-    let (start, end) = viewport.visible_range();
-    let end = end.min(bars.len());
-    if start >= end {
-        return;
-    }
-
-    draw_wicks(ctx, state, bars, start, end, bar_w);
-
-    let theme = state.theme;
-    let body_w = (bar_w * 0.7).max(1.0);
-    for i in start..end {
-        let bar = &bars[i];
-        let cx = viewport.bar_to_x(i) + rect.x;
-        if cx + body_w * 0.5 < rect.x || cx - body_w * 0.5 > rect.x + rect.width {
-            continue;
-        }
-        let up = bar.close >= bar.open;
-        let oy = rect.y + price_to_y_local(bar.open, price_scale, rect.height);
-        let cy = rect.y + price_to_y_local(bar.close, price_scale, rect.height);
-        ctx.set_fill_color(if up { &theme.candle_up } else { &theme.candle_down });
-        ctx.fill_rect(cx - body_w * 0.5, oy.min(cy), body_w, (oy - cy).abs().max(1.0));
-    }
-}
+// NOTE: the zoom-out `draw_candle_fallback` (footprint → plain candles below
+// cluster-text readability) was removed 2026-07-05 — owner rule: footprint
+// never morphs into a candle chart. Compressed zoom now keeps the cluster
+// cells as dominant-side heat rects (see the `draw_text` gate in
+// `draw_footprint_cluster`); only per-level bars WITHOUT levels (historical
+// kline-approx tail) still draw a candle body, which is honest data shape.
 
 /// Entry point — `super::candles::draw_footprint` routes here.
 pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
@@ -137,14 +107,13 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let rect = &state.chart_rect;
     let bar_w = viewport.bar_width();
 
-    // Zoomed out below cluster-text readability — degrade to plain candles
-    // (industry behavior: footprint reads as candles at distance, clusters
-    // appear on zoom-in). Never a blank placeholder over existing data.
+    // Zoomed out below cluster-text readability — clusters STAY clusters
+    // (owner rule 2026-07-05: footprint must never morph into plain
+    // candles). Below the text threshold we keep drawing every cell as a
+    // colored heat rect (dominant-side color, alpha by volume share) and
+    // only drop the per-level numbers/markers that would be illegible.
     let font_size = ((bar_w / 8.5).clamp(MIN_FONT_SIZE_PX, 16.0)).round();
-    if bar_w < MIN_BAR_WIDTH_PX || font_size < MIN_FONT_SIZE_PX {
-        draw_candle_fallback(ctx, state, bars);
-        return;
-    }
+    let draw_text = bar_w >= MIN_BAR_WIDTH_PX && font_size >= MIN_FONT_SIZE_PX;
 
     let colors = DEFAULT_COLORS;
     let price_range = price_scale.price_max - price_scale.price_min;
@@ -287,16 +256,31 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 ctx.set_fill_color(colors.poc_fill);
                 ctx.fill_rect(cell_left, y, bar_w, row_h);
             } else if max_vol > 0.0 {
-                // Faint gradient background by share of bar's max volume.
                 let ratio = (lv.total_vol() / max_vol).clamp(0.0, 1.0);
-                if ratio > 0.05 {
+                if !draw_text {
+                    // Compressed (zoomed-out) mode: the numbers were the
+                    // color carrier — replace each cell with a dominant-side
+                    // heat fill so delta structure stays readable at
+                    // distance instead of collapsing into gray mush.
+                    if ratio > 0.02 {
+                        let alpha = (0.12 + ratio * 0.55).min(0.7);
+                        let color = if lv.buy_vol >= lv.sell_vol {
+                            format!("rgba(38, 166, 154, {:.3})", alpha)
+                        } else {
+                            format!("rgba(239, 83, 80, {:.3})", alpha)
+                        };
+                        ctx.set_fill_color(&color);
+                        ctx.fill_rect(cell_left, y, bar_w, row_h);
+                    }
+                } else if ratio > 0.05 {
+                    // Faint gradient background by share of bar's max volume.
                     ctx.set_fill_color(colors.cell_bg_dim);
                     ctx.fill_rect(cell_left, y, bar_w, row_h);
                 }
             }
 
             // F4: single print dashed border.
-            if lv.is_single_print {
+            if draw_text && lv.is_single_print {
                 ctx.set_stroke_color("rgba(255, 255, 255, 0.55)");
                 ctx.set_stroke_width(1.0);
                 ctx.set_line_dash(&[3.0, 2.0]);
@@ -305,7 +289,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             }
             // F4: unfinished auction dot marker (at bar extreme with one
             // side zero) — placed at the relevant cell edge.
-            if lv.is_unfinished {
+            if draw_text && lv.is_unfinished {
                 ctx.set_fill_color("#ffd54f");
                 let dot_r = (row_h * 0.18).clamp(2.0, 4.0);
                 let dx = if lv.buy_vol == 0.0 { cell_right - dot_r - 1.0 } else { cell_left + dot_r + 1.0 };
@@ -329,7 +313,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 && lv.sell_vol / bar.levels[li + 1].buy_vol >= IMBALANCE_RATIO;
 
             // Bid (sell vol) on the LEFT, right-aligned.
-            if lv.sell_vol > 0.0 {
+            if draw_text && lv.sell_vol > 0.0 {
                 let color = if bid_imb { colors.bid_imb } else { colors.bid };
                 ctx.set_fill_color(color);
                 ctx.set_text_align(TextAlign::Right);
@@ -338,7 +322,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 ctx.fill_text(&label, bid_x, y + row_h * 0.5);
             }
             // Ask (buy vol) on the RIGHT, left-aligned.
-            if lv.buy_vol > 0.0 {
+            if draw_text && lv.buy_vol > 0.0 {
                 let color = if ask_imb { colors.ask_imb } else { colors.ask };
                 ctx.set_fill_color(color);
                 ctx.set_text_align(TextAlign::Left);
@@ -349,13 +333,13 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         }
 
         // F1 zone-edge triangle markers (layer 8).
-        if bar.stacked_ask_start.is_some() {
+        if draw_text && bar.stacked_ask_start.is_some() {
             ctx.set_fill_color(colors.ask_imb);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.fill_text("▲", cx, rect.y + 2.0);
         }
-        if bar.stacked_bid_start.is_some() {
+        if draw_text && bar.stacked_bid_start.is_some() {
             ctx.set_fill_color(colors.bid_imb);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Bottom);
@@ -363,7 +347,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         }
 
         // F2: "ABS" info label on absorption bars.
-        if bar.is_absorption {
+        if draw_text && bar.is_absorption {
             ctx.set_fill_color("rgba(255, 152, 0, 0.95)");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Top);
@@ -371,13 +355,12 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             ctx.fill_text("ABS", cx, rect.y + 14.0);
         }
 
-        // Faint vertical separator between bars.
-        ctx.set_stroke_color("rgba(120, 144, 156, 0.18)");
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(cell_right, rect.y);
-        ctx.line_to(cell_right, rect.y + rect.height);
-        ctx.stroke();
+        // NOTE: the per-column "faint vertical separator" that used to be
+        // drawn here at cell_right was killed 2026-07-05 — full-height lines
+        // at column EDGES read as a second, misaligned grid next to the
+        // standard time grid (which passes through bar CENTERS). The
+        // standard grid is back for footprint (active_series.rs
+        // chart_type_hides_time_grid) and is the only vertical ruling.
     }
 
     eprintln!(

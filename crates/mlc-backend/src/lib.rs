@@ -1464,21 +1464,59 @@ impl BackendCore {
                         }
                         {
                             self.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                let prev_cvd = {
-                                    let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
-                                    match store.last() {
-                                        Some(last) if last.open_time != new_bar_with_static.open_time => last.cumulative_delta,
-                                        Some(_) if store.len() >= 2 => store[store.len() - 2].cumulative_delta,
-                                        _ => 0.0,
-                                    }
-                                };
+                                // Sorted upsert. The live path is always
+                                // append/replace-last, but the lazy-deepen
+                                // reseed replays the WHOLE deep ring oldest→
+                                // newest into a store that already holds the
+                                // shallow tail — those older bars must merge
+                                // in FRONT, not get pushed after the newest
+                                // (which desyncs the index axis exactly like
+                                // the two-writer bug this arm just escaped).
                                 let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
                                 let mut bar = new_bar_with_static.clone();
-                                bar.set_cumulative_delta(prev_cvd);
-                                match store.last_mut() {
-                                    Some(last) if last.open_time == bar.open_time => { *last = bar; }
-                                    _ => store.push(bar),
+                                let out_of_order = match store.last() {
+                                    Some(last) if last.open_time == bar.open_time => {
+                                        let prev_cvd = if store.len() >= 2 {
+                                            store[store.len() - 2].cumulative_delta
+                                        } else {
+                                            0.0
+                                        };
+                                        bar.set_cumulative_delta(prev_cvd);
+                                        let idx = store.len() - 1;
+                                        store[idx] = bar;
+                                        false
+                                    }
+                                    Some(last) if last.open_time < bar.open_time => {
+                                        bar.set_cumulative_delta(last.cumulative_delta);
+                                        store.push(bar);
+                                        false
+                                    }
+                                    None => {
+                                        bar.set_cumulative_delta(0.0);
+                                        store.push(bar);
+                                        false
+                                    }
+                                    Some(_) => {
+                                        match store.binary_search_by_key(&bar.open_time, |b| b.open_time) {
+                                            Ok(pos) => store[pos] = bar,
+                                            Err(pos) => store.insert(pos, bar),
+                                        }
+                                        true
+                                    }
+                                };
+                                if out_of_order {
+                                    // Prepended history invalidates every
+                                    // running total after it — one linear
+                                    // rebuild (store is per-minute bars,
+                                    // a few hundred entries at most).
+                                    let mut prev = 0.0_f64;
+                                    for b in store.iter_mut() {
+                                        b.set_cumulative_delta(prev);
+                                        prev = b.cumulative_delta;
+                                    }
                                 }
+                                // Same sorted-upsert contract for the OHLC
+                                // mirror series.
                                 let last_ohlc_ts = bubble.bars.last().map(|b| b.timestamp);
                                 if last_ohlc_ts == Some(ohlc_ts) {
                                     if let Some(last) = bubble.last_bar_mut() {
@@ -1488,8 +1526,13 @@ impl BackendCore {
                                         last.close  = ohlc_bar.close;
                                         last.volume = ohlc_bar.volume;
                                     }
-                                } else {
+                                } else if last_ohlc_ts.is_none_or(|t| t < ohlc_ts) {
                                     bubble.append_bar(ohlc_bar.clone());
+                                } else {
+                                    match bubble.bars.binary_search_by_key(&ohlc_ts, |b| b.timestamp) {
+                                        Ok(pos) => bubble.bars[pos] = ohlc_bar.clone(),
+                                        Err(pos) => bubble.bars.insert(pos, ohlc_bar.clone()),
+                                    }
                                 }
                             });
                         }
