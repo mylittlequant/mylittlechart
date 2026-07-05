@@ -800,6 +800,15 @@ impl ChartApp {
                     }
                 }
 
+                // Snapshot each affected window's active series ONCE before
+                // the mutable iteration — the borrow-checker forbids
+                // `active_series_for_chart(cid)` inside the mutable loop.
+                let series_by_chart_tu: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
+                    instrument_by_cid_tu.iter()
+                        .filter(|(cid, _)| !derived_cids_tu.contains(cid))
+                        .filter(|(_, (s, _, _, at))| s == symbol && *at == trade_event_at)
+                        .map(|(cid, _)| (*cid, self.active_series_for_chart(*cid)))
+                        .collect();
                 for (cid_tu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if window.pending_symbol_load { continue; }
                     if derived_cids_tu.contains(cid_tu) { continue; }
@@ -809,6 +818,17 @@ impl ChartApp {
                     };
                     if !(win_sym_tu.as_str() == symbol && *win_at_tu == trade_event_at) {
                         continue;
+                    }
+                    // Live tick Y-track for plain kline (candles/bars/line/…):
+                    // owner doctrine 2026-07-06 — F Y-guard rides the tick.
+                    // A-mode also refits so the whole visible range keeps in
+                    // frame. Only F actually needs the tick-level precision
+                    // (grow-only guard); A just keeps the existing behavior
+                    // that the kline BarUpdate arm gets for derived windows.
+                    if window.price_scale().scale_mode.is_auto_y() {
+                        if let Some(owned) = series_by_chart_tu.get(cid_tu) {
+                            window.calc_auto_scale(owned.as_active_series());
+                        }
                     }
                     window.advance_view_on_tick(is_new_bar);
                 }
