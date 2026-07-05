@@ -723,6 +723,10 @@ pub struct ChartSettingsState {
     pub instrument_border_enabled: bool,
     /// Instrument checkbox: wick enabled
     pub instrument_wick_enabled: bool,
+    /// Footprint checkbox: draw ABS-marker (absorption tint + "ABS" label).
+    pub footprint_show_abs_markers: bool,
+    /// Footprint checkbox: draw per-cell buy/sell volume numbers.
+    pub footprint_show_volume_text: bool,
     /// Whether the user is drag-selecting text in the active text input.
     pub text_select_dragging: bool,
     // ---- Template UI state ----
@@ -757,6 +761,8 @@ impl Default for ChartSettingsState {
             instrument_body_enabled: true,
             instrument_border_enabled: true,
             instrument_wick_enabled: true,
+            footprint_show_abs_markers: true,
+            footprint_show_volume_text: true,
             text_select_dragging: false,
             template_dropdown_open: false,
             applied_template_id: None,

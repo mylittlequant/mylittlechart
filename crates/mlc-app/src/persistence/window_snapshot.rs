@@ -75,6 +75,9 @@ pub fn build_chart_window_snapshot(
         watermark: panel.watermark.clone(),
         tooltip: panel.tooltip.clone(),
         chart_type: panel.chart_type.to_string(),
+        chart_type_param: panel.chart_type_param,
+        chart_type_interval: panel.chart_type_interval.to_string(),
+        footprint_display: panel.footprint_display,
         show_candles: panel.show_candles,
         show_bars: panel.show_bars,
         show_hollow_candles: panel.show_hollow_candles,
@@ -139,7 +142,12 @@ mod json_compat_tests {
     #[test]
     fn round_trips_current_shape() {
         let window = ChartContainer::new("BTCUSDT", Timeframe::h1());
-        let panel = ChartPanelState::new(ChartPanelId(1));
+        let mut panel = ChartPanelState::new(ChartPanelId(1));
+        panel.chart_type_param = 25.5;
+        panel.chart_type_interval = "5m";
+        panel.footprint_display.show_abs_markers = false;
+        panel.footprint_display.show_volume_text = false;
+        panel.footprint_display.heat_intensity = mlc_core::chart::FootprintHeatIntensity::High;
 
         let snap = build_chart_window_snapshot(
             &window,
@@ -167,6 +175,9 @@ mod json_compat_tests {
         assert!(json.contains("\"account_type\":\"S\""));
         assert!(json.contains("\"bubble_id\":42"));
         assert!(json.contains("\"chart_type\":\"candles\""));
+        assert!(json.contains("\"chart_type_param\":25.5"));
+        assert!(json.contains("\"chart_type_interval\":\"5m\""));
+        assert!(json.contains("\"footprint_display\""));
         assert!(json.contains("\"show_candles\":true"));
         assert!(json.contains("\"pre_tag_indicator_ids\":[1,2,3]"));
 
@@ -177,5 +188,48 @@ mod json_compat_tests {
         assert_eq!(restored.symbol, "BTCUSDT");
         assert_eq!(restored.bubble_id, Some(42));
         assert_eq!(restored.pre_tag_indicator_ids, vec![1, 2, 3]);
+        assert_eq!(restored.chart_type_param, 25.5);
+        assert_eq!(restored.chart_type_interval, "5m");
+        assert!(!restored.footprint_display.show_abs_markers);
+        assert!(!restored.footprint_display.show_volume_text);
+        assert_eq!(restored.footprint_display.heat_intensity, mlc_core::chart::FootprintHeatIntensity::High);
+    }
+
+    /// Old preset JSON (pre-2026-07-05, no `chart_type_param`/
+    /// `chart_type_interval`/`footprint_display` keys at all) must still
+    /// deserialize — the new fields fall back to their `#[serde(default)]`
+    /// sentinels instead of failing the whole preset load.
+    #[test]
+    fn old_snapshot_without_chart_type_param_fields_still_loads() {
+        let window = ChartContainer::new("ETHUSDT", Timeframe::h1());
+        let panel = ChartPanelState::new(ChartPanelId(2));
+
+        let snap = build_chart_window_snapshot(
+            &window,
+            &panel,
+            &[],
+            9,
+            None,
+            vec![],
+            None,
+            vec![],
+            "ETHUSDT".to_string(),
+            Timeframe::h1(),
+            "binance".to_string(),
+            "S".to_string(),
+        );
+
+        let mut json_value = serde_json::to_value(&snap).expect("snapshot must serialize to value");
+        let obj = json_value.as_object_mut().expect("snapshot serializes to a JSON object");
+        obj.remove("chart_type_param");
+        obj.remove("chart_type_interval");
+        obj.remove("footprint_display");
+        let old_json = serde_json::to_string(&json_value).expect("stripped snapshot must serialize");
+
+        let restored: mlc_core::preset::snapshots::ChartWindowSnapshot =
+            serde_json::from_str(&old_json).expect("old-shape snapshot (missing new fields) must still deserialize");
+        assert_eq!(restored.chart_type_param, 0.0);
+        assert_eq!(restored.chart_type_interval, "1m");
+        assert_eq!(restored.footprint_display, mlc_core::chart::render_data::FootprintDisplayOptions::default());
     }
 }

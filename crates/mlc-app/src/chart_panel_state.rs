@@ -14,7 +14,7 @@
 //! consumers access it through a single authoritative location keyed by
 //! the data bubble rather than the chart panel.
 
-use mlc_core::chart::{CrosshairOptions, GridOptions, Legend, Tooltip, Watermark};
+use mlc_core::chart::{CrosshairOptions, FootprintDisplayOptions, GridOptions, Legend, Tooltip, Watermark};
 use mlc_core::ids::ChartPanelId;
 
 /// State of one chart canvas leaf.
@@ -82,6 +82,9 @@ pub struct ChartPanelState {
     pub watermark: Option<Watermark>,
     /// Tooltip display state and configuration.
     pub tooltip: Tooltip,
+    /// Footprint cluster display toggles (ABS markers / volume text / heat
+    /// intensity). Unused for every other chart type.
+    pub footprint_display: FootprintDisplayOptions,
 }
 
 impl ChartPanelState {
@@ -114,6 +117,7 @@ impl ChartPanelState {
             legend: Legend::default(),
             watermark: Some(Watermark::default()),
             tooltip: Tooltip::default(),
+            footprint_display: FootprintDisplayOptions::default(),
         }
     }
 }

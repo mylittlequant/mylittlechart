@@ -207,6 +207,26 @@ impl ChartApp {
             rt.series.candle_down_body = inst.body_down_color.clone();
             rt.series.candle_up_wick   = inst.wick_up_color.clone();
             rt.series.candle_down_wick = inst.wick_down_color.clone();
+            rt.series.footprint_buy    = inst.footprint_buy_color.clone();
+            rt.series.footprint_sell   = inst.footprint_sell_color.clone();
+
+            css.footprint_show_abs_markers = inst.footprint_show_abs_markers;
+            css.footprint_show_volume_text = inst.footprint_show_volume_text;
+            let heat_intensity = mlc_core::chart::FootprintHeatIntensity::from_id(
+                &inst.footprint_heat_intensity_label.to_lowercase(),
+            );
+
+            // Footprint display gates actually drive the renderer (unlike
+            // the JC checkboxes above, which are UI-cache only — see recon
+            // 2026-07-05 §4b) — write through to the live per-panel state
+            // too, not just the modal's UI cache.
+            let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+            if let Some(pid) = active_pid {
+                let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                panel.footprint_display.show_abs_markers = inst.footprint_show_abs_markers;
+                panel.footprint_display.show_volume_text = inst.footprint_show_volume_text;
+                panel.footprint_display.heat_intensity = heat_intensity;
+            }
         }
 
         // ── Scales & Lines settings ───────────────────────────────────────────
@@ -264,6 +284,24 @@ impl ChartApp {
                         !self.panel_app.chart_settings_state.instrument_wick_enabled;
                     eprintln!("[ChartApp] instrument:wick_enabled = {}", self.panel_app.chart_settings_state.instrument_wick_enabled);
                 }
+                "footprint_show_abs_markers" => {
+                    let new_value = !self.panel_app.chart_settings_state.footprint_show_abs_markers;
+                    self.panel_app.chart_settings_state.footprint_show_abs_markers = new_value;
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.show_abs_markers = new_value;
+                    }
+                    eprintln!("[ChartApp] instrument:footprint_show_abs_markers = {}", new_value);
+                }
+                "footprint_show_volume_text" => {
+                    let new_value = !self.panel_app.chart_settings_state.footprint_show_volume_text;
+                    self.panel_app.chart_settings_state.footprint_show_volume_text = new_value;
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.show_volume_text = new_value;
+                    }
+                    eprintln!("[ChartApp] instrument:footprint_show_volume_text = {}", new_value);
+                }
                 "use_24h" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.use_24h = !w.scale_settings.time_format.use_24h;
@@ -316,7 +354,8 @@ impl ChartApp {
                 }
                 "body_up_color" | "body_down_color"
                 | "border_up_color" | "border_down_color"
-                | "wick_up_color" | "wick_down_color" => {
+                | "wick_up_color" | "wick_down_color"
+                | "footprint_buy_color" | "footprint_sell_color" => {
                     let current_color: Option<String> = {
                         let s = &self.panel_app.theme_manager.current().series;
                         match field {
@@ -326,6 +365,8 @@ impl ChartApp {
                             "border_down_color" => s.candle_down_border.clone().or_else(|| Some(s.candle_down_body.clone())),
                             "wick_up_color"     => Some(s.candle_up_wick.clone()),
                             "wick_down_color"   => Some(s.candle_down_wick.clone()),
+                            "footprint_buy_color"  => Some(s.footprint_buy.clone()),
+                            "footprint_sell_color" => Some(s.footprint_sell.clone()),
                             _ => None,
                         }
                     };
@@ -810,6 +851,38 @@ impl ChartApp {
                         }
                     }
                 }
+                "chart_type_param" => {
+                    // Instrument-tab top slot: preset dropdown for the active
+                    // derived chart type's single editable numeric parameter.
+                    // Applies immediately through the same event the (dead)
+                    // toolbar param field was meant to fire — see recon
+                    // 2026-07-05 §3. Footprint's bucket interval is NOT part
+                    // of this catalog (duplicate of the toolbar TF picker,
+                    // removed 2026-07-05) so every remaining entry is numeric.
+                    use mlc_app_layout::layout::modals::chart_settings::chart_type_param_spec;
+                    let active_chart_type: &'static str = self.panel_app.panel_grid
+                        .active_container()
+                        .map(|w| w.chart_panel_id)
+                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .map(|p| p.chart_type)
+                        .unwrap_or("candles");
+                    if chart_type_param_spec(active_chart_type).is_some() {
+                        if let Ok(v) = value.parse::<f64>() {
+                            self.process_chart_out_event(
+                                mlc_core::events::ChartOutEvent::UpdateChartTypeParam { value: v }
+                            );
+                        }
+                    }
+                    eprintln!("[ChartApp] chart_type_param = {} (chart_type={})", value, active_chart_type);
+                }
+                "footprint_heat_intensity" => {
+                    let intensity = mlc_core::chart::FootprintHeatIntensity::from_id(&value.to_lowercase());
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.heat_intensity = intensity;
+                    }
+                    eprintln!("[ChartApp] instrument:footprint_heat_intensity = {}", value);
+                }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
@@ -890,6 +963,16 @@ impl ChartApp {
                         };
                         eprintln!("[ChartApp] price_tick_style cycled: {}", w.scale_settings.price_tick_style);
                     }
+                }
+                "chart_type_param" => {
+                    // Unlike the fixed enum values above (precision, crosshair
+                    // mode, ...), the preset list here is per-chart-type and
+                    // not meaningfully "next"-cyclable — clicking the text
+                    // area opens the picker instead, same as the chevron.
+                    self.panel_app.chart_settings_state.toggle_dropdown("chart_type_param");
+                }
+                "footprint_heat_intensity" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("footprint_heat_intensity");
                 }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);

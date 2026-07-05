@@ -3504,6 +3504,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    footprint_display: overlay_panel.footprint_display,
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -3601,6 +3602,7 @@ impl ChartApp {
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
+                footprint_display: single_panel.footprint_display,
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
@@ -3875,6 +3877,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    footprint_display: split_panel.footprint_display,
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -4486,6 +4489,7 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    footprint_display: single_window_panel.footprint_display,
                 };
                 single_window_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -8623,9 +8627,15 @@ impl ChartApp {
             .unwrap_or((true, true, true, true, true, false, false));
 
         let css = &self.panel_app.chart_settings_state;
+        let (active_chart_type, active_chart_type_param, active_chart_type_interval) = settings_panel
+            .map(|p| (p.chart_type.to_string(), p.chart_type_param, p.chart_type_interval.to_string()))
+            .unwrap_or_else(|| ("candles".to_string(), 0.0, "1m".to_string()));
 
         ChartSettingsData {
             instrument: InstrumentSettings {
+                chart_type: active_chart_type,
+                chart_type_param: active_chart_type_param,
+                chart_type_interval: active_chart_type_interval,
                 use_prev_close_color: css.instrument_use_prev_close,
                 body_enabled:   css.instrument_body_enabled,
                 body_up_color:  series.candle_up_body.clone(),
@@ -8636,6 +8646,18 @@ impl ChartApp {
                 wick_enabled:   css.instrument_wick_enabled,
                 wick_up_color:  series.candle_up_wick.clone(),
                 wick_down_color: series.candle_down_wick.clone(),
+                footprint_show_abs_markers: css.footprint_show_abs_markers,
+                footprint_show_volume_text: css.footprint_show_volume_text,
+                footprint_buy_color: series.footprint_buy.clone(),
+                footprint_sell_color: series.footprint_sell.clone(),
+                footprint_heat_intensity_label: match settings_panel
+                    .map(|p| p.footprint_display.heat_intensity)
+                    .unwrap_or_default()
+                {
+                    mlc_core::chart::FootprintHeatIntensity::Low => "Low".to_string(),
+                    mlc_core::chart::FootprintHeatIntensity::Normal => "Normal".to_string(),
+                    mlc_core::chart::FootprintHeatIntensity::High => "High".to_string(),
+                },
                 precision_label: precision_lbl.clone(),
                 timezone_label: tz_label.clone(),
                 use_24h: time_fmt_use_24h,

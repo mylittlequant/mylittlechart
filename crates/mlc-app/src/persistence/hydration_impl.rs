@@ -157,6 +157,31 @@ impl ChartApp {
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.chart_type = static_ct;
+                                        // Recon 2026-07-05: restore the derived-type
+                                        // param/interval BEFORE chart_type is used by
+                                        // any downstream subscribe path, so a future
+                                        // re-subscribe (or the settings modal reading
+                                        // this panel) sees the value the user actually
+                                        // set rather than the `0.0`/`"1m"` sentinel.
+                                        // NOTE: `chart_type` itself is only restorable
+                                        // for the plain render-type whitelist above —
+                                        // derived types (renko/footprint/...) still
+                                        // fall back to "candles" on cold load (no
+                                        // per-type cold-ignite wiring exists yet,
+                                        // footprint being the sole exception via its
+                                        // own Step 10 ignite branch). Restoring these
+                                        // two fields regardless keeps them ready for
+                                        // whenever that separate gap is closed, and
+                                        // fixes footprint's interval today (Step 10
+                                        // already reads `chart_type_interval` off this
+                                        // panel for its ignite call).
+                                        panel_state.chart_type_param = snap.chart_type_param;
+                                        panel_state.chart_type_interval = match snap.chart_type_interval.as_str() {
+                                            "1m" => "1m", "3m" => "3m", "5m" => "5m",
+                                            "15m" => "15m", "30m" => "30m", "1h" => "1h",
+                                            _ => "1m",
+                                        };
+                                        panel_state.footprint_display = snap.footprint_display;
                                         self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                         // Restored drawings are written into the window's
                                         // bubble further below, once `auto_bid` is known
@@ -474,6 +499,17 @@ impl ChartApp {
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
                                     ps.chart_type = static_ct;
+                                    // Recon 2026-07-05: see twin branch above for the
+                                    // rationale (restore regardless of whether
+                                    // `chart_type` itself round-tripped to a derived
+                                    // type on this path).
+                                    ps.chart_type_param = snap.chart_type_param;
+                                    ps.chart_type_interval = match snap.chart_type_interval.as_str() {
+                                        "1m" => "1m", "3m" => "3m", "5m" => "5m",
+                                        "15m" => "15m", "30m" => "30m", "1h" => "1h",
+                                        _ => "1m",
+                                    };
+                                    ps.footprint_display = snap.footprint_display;
                                     panel_patches.push((window.chart_panel_id, ps));
                                     // Restore drawings into the window's current bubble
                                     // directly — no separate per-window DrawingManager

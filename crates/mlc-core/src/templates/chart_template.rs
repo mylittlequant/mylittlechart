@@ -65,6 +65,12 @@ impl ChartTemplate {
         };
         let data = ChartSettingsData {
             instrument: InstrumentSettings {
+                // Not applied by `apply_chart_template` (a template reset
+                // only touches candle colors/checkboxes, never the active
+                // chart type) — placeholder defaults, never read back.
+                chart_type: "candles".to_string(),
+                chart_type_param: 0.0,
+                chart_type_interval: "1m".to_string(),
                 use_prev_close_color: false,
                 body_enabled: true,
                 body_up_color: "#26a69a".to_string(),
@@ -75,6 +81,11 @@ impl ChartTemplate {
                 wick_enabled: true,
                 wick_up_color: "#26a69a".to_string(),
                 wick_down_color: "#ef5350".to_string(),
+                footprint_show_abs_markers: true,
+                footprint_show_volume_text: true,
+                footprint_buy_color: "#26a69a".to_string(),
+                footprint_sell_color: "#ef5350".to_string(),
+                footprint_heat_intensity_label: "Normal".to_string(),
                 precision_label: "Авто".to_string(),
                 timezone_label: TimeFormatSettings { timezone_offset_hours: 0, ..TimeFormatSettings::default() }.timezone_label(),
                 use_24h: true,

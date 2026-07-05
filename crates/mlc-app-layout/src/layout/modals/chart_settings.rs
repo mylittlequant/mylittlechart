@@ -592,6 +592,15 @@ pub fn render_settings_modal(
                             DropdownItem::item("asia_singapore", t_settings(SettingsKey::TimezoneSingapore)),
                             DropdownItem::item("australia_sydney", t_settings(SettingsKey::TimezoneSydney)),
                         ]),
+                        "chart_type_param" => chart_type_param_spec(&settings_data.instrument.chart_type)
+                            .map(|spec| spec.options.iter()
+                                .map(|o| DropdownItem::item(o.value_id, o.label))
+                                .collect()),
+                        "footprint_heat_intensity" => Some(vec![
+                            DropdownItem::item("Low", "Low"),
+                            DropdownItem::item("Normal", "Normal"),
+                            DropdownItem::item("High", "High"),
+                        ]),
                         _ => None,
                     }
                 }
@@ -741,12 +750,6 @@ fn render_instrument_settings(
     let viewport_height = content_height;
     let viewport_y = y;
 
-    let section_count = 3.0;
-    let item_count = 13.0;
-    let gap_count = 2.0;
-    let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
-
-    result.total_content_height = total_content_height;
     result.viewport_height = viewport_height;
 
     let viewport_rect = WidgetRect::new(x, viewport_y, width, viewport_height);
@@ -767,78 +770,138 @@ fn render_instrument_settings(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
 
-    // Section: JAPANESE CANDLES
+    // ── Top slot: active chart-type block ─────────────────────────────────
+    //
+    // Owner verdict 2026-07-05: this slot shows exactly one of three things,
+    // driven by the FOCUSED chart's `chart_type` (never both):
+    //   - candle-family (candles / hollow_candles / bars / heikin_ashi) →
+    //     the existing "JAPANESE CANDLES" section, unchanged.
+    //   - a derived type with an editable parameter (footprint's bucket
+    //     interval, renko/pnf/kagi box-or-reversal, tick/volume/dollar/
+    //     imbalance/run bar thresholds, three_line_break lines-back, tpo
+    //     bucket minutes) → a section titled after the type, with one
+    //     control row. Edits apply immediately via the existing
+    //     `ChartOutEvent::UpdateChartTypeParam` / `UpdateChartTypeInterval`.
+    //   - a parameterless type (line/area/baseline/columns/heatmaps/...) →
+    //     nothing is drawn in this slot at all.
     let mut row_y = content_start_y;
-    ctx.set_fill_color(muted_color);
-    ctx.set_font("11px sans-serif");
-    ctx.fill_text(t_settings(SettingsKey::SectionCandles), x, row_y + row_height / 2.0);
-    row_y += row_height;
+    let is_candle_family = matches!(
+        settings.chart_type.as_str(),
+        "candles" | "hollow_candles" | "bars" | "heikin_ashi"
+    );
 
-    // Color swatch helper closure
-    let draw_swatch = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
-        let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
-        ctx.set_fill_color(color);
-        ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
-        swatch_rect
-    };
+    if is_candle_family {
+        // Section: JAPANESE CANDLES
+        ctx.set_fill_color(muted_color);
+        ctx.set_font("11px sans-serif");
+        ctx.fill_text(t_settings(SettingsKey::SectionCandles), x, row_y + row_height / 2.0);
+        row_y += row_height;
 
-    // Row: use_prev_close checkbox
-    let check_y = row_y + (row_height - checkbox_size) / 2.0;
-    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
-    draw_checkbox(ctx, check_rect, settings.use_prev_close_color, theme);
-    result.content_items.push(("instrument:use_prev_close".to_string(), check_rect));
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.fill_text(t_settings(SettingsKey::BodyColorPrevClose), label_x, row_y + row_height / 2.0);
-    row_y += row_height + 8.0;
+        // Color swatch helper closure
+        let draw_swatch = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
+            let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
+            ctx.set_fill_color(color);
+            ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            swatch_rect
+        };
 
-    // Row: body
-    let check_y = row_y + (row_height - checkbox_size) / 2.0;
-    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
-    draw_checkbox(ctx, check_rect, settings.body_enabled, theme);
-    result.content_items.push(("instrument:body_enabled".to_string(), check_rect));
-    ctx.set_fill_color(text_color);
-    ctx.fill_text(t_settings(SettingsKey::Body), label_x, row_y + row_height / 2.0);
+        // Row: use_prev_close checkbox
+        let check_y = row_y + (row_height - checkbox_size) / 2.0;
+        let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+        draw_checkbox(ctx, check_rect, settings.use_prev_close_color, theme);
+        result.content_items.push(("instrument:use_prev_close".to_string(), check_rect));
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(t_settings(SettingsKey::BodyColorPrevClose), label_x, row_y + row_height / 2.0);
+        row_y += row_height + 8.0;
 
-    let swatch_y = row_y + (row_height - swatch_size) / 2.0;
-    let body_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.body_up_color, theme);
-    let body_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.body_down_color, theme);
-    result.content_items.push(("instrument:body_up_color".to_string(), body_up_rect));
-    result.content_items.push(("instrument:body_down_color".to_string(), body_down_rect));
-    row_y += row_height;
+        // Row: body
+        let check_y = row_y + (row_height - checkbox_size) / 2.0;
+        let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+        draw_checkbox(ctx, check_rect, settings.body_enabled, theme);
+        result.content_items.push(("instrument:body_enabled".to_string(), check_rect));
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(t_settings(SettingsKey::Body), label_x, row_y + row_height / 2.0);
 
-    // Row: border
-    let check_y = row_y + (row_height - checkbox_size) / 2.0;
-    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
-    draw_checkbox(ctx, check_rect, settings.border_enabled, theme);
-    result.content_items.push(("instrument:border_enabled".to_string(), check_rect));
-    ctx.set_fill_color(text_color);
-    ctx.fill_text(t_settings(SettingsKey::Borders), label_x, row_y + row_height / 2.0);
+        let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+        let body_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.body_up_color, theme);
+        let body_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.body_down_color, theme);
+        result.content_items.push(("instrument:body_up_color".to_string(), body_up_rect));
+        result.content_items.push(("instrument:body_down_color".to_string(), body_down_rect));
+        row_y += row_height;
 
-    let swatch_y = row_y + (row_height - swatch_size) / 2.0;
-    let border_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.border_up_color, theme);
-    let border_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.border_down_color, theme);
-    result.content_items.push(("instrument:border_up_color".to_string(), border_up_rect));
-    result.content_items.push(("instrument:border_down_color".to_string(), border_down_rect));
-    row_y += row_height;
+        // Row: border
+        let check_y = row_y + (row_height - checkbox_size) / 2.0;
+        let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+        draw_checkbox(ctx, check_rect, settings.border_enabled, theme);
+        result.content_items.push(("instrument:border_enabled".to_string(), check_rect));
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(t_settings(SettingsKey::Borders), label_x, row_y + row_height / 2.0);
 
-    // Row: wick
-    let check_y = row_y + (row_height - checkbox_size) / 2.0;
-    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
-    draw_checkbox(ctx, check_rect, settings.wick_enabled, theme);
-    result.content_items.push(("instrument:wick_enabled".to_string(), check_rect));
-    ctx.set_fill_color(text_color);
-    ctx.fill_text(t_settings(SettingsKey::Wick), label_x, row_y + row_height / 2.0);
+        let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+        let border_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.border_up_color, theme);
+        let border_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.border_down_color, theme);
+        result.content_items.push(("instrument:border_up_color".to_string(), border_up_rect));
+        result.content_items.push(("instrument:border_down_color".to_string(), border_down_rect));
+        row_y += row_height;
 
-    let swatch_y = row_y + (row_height - swatch_size) / 2.0;
-    let wick_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.wick_up_color, theme);
-    let wick_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.wick_down_color, theme);
-    result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
-    result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
-    row_y += row_height + 16.0;
+        // Row: wick
+        let check_y = row_y + (row_height - checkbox_size) / 2.0;
+        let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+        draw_checkbox(ctx, check_rect, settings.wick_enabled, theme);
+        result.content_items.push(("instrument:wick_enabled".to_string(), check_rect));
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(t_settings(SettingsKey::Wick), label_x, row_y + row_height / 2.0);
+
+        let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+        let wick_up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.wick_up_color, theme);
+        let wick_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.wick_down_color, theme);
+        result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
+        result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
+        row_y += row_height + 16.0;
+    } else if settings.chart_type == "footprint" {
+        row_y = render_footprint_settings_block(
+            ctx, x, row_y, row_height, checkbox_size, swatch_size, swatch_gap,
+            label_x, swatches_x, text_color, muted_color, theme, settings, result,
+        );
+    } else if let Some(spec) = chart_type_param_spec(&settings.chart_type) {
+        // Section: "<TYPE NAME> SETTINGS" — one control row for the active
+        // derived chart type's editable parameter.
+        ctx.set_fill_color(muted_color);
+        ctx.set_font("11px sans-serif");
+        ctx.fill_text(&spec.section_title, x, row_y + row_height / 2.0);
+        row_y += row_height;
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text(&spec.row_label, x, row_y + row_height / 2.0);
+
+        let dropdown_x = x + 140.0;
+        let dropdown_width = 140.0;
+        let dropdown_height = 28.0;
+        let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
+        let chevron_w = 20.0;
+        let text_w = dropdown_width - chevron_w;
+
+        let current_label = spec.current_label(settings.chart_type_param);
+
+        draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, &current_label, row_y + row_height / 2.0, theme);
+        result.content_items.push(("dropdown_cycle:chart_type_param".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
+        result.content_items.push(("dropdown_menu:chart_type_param".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
+        row_y += row_height;
+
+        if let Some(ref note) = spec.fixed_note {
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(muted_color);
+            ctx.fill_text(note, x, row_y + row_height / 2.0);
+            row_y += row_height;
+        }
+        row_y += 16.0;
+    }
 
     // Section: DATA SETTINGS
     ctx.set_fill_color(muted_color);
@@ -975,11 +1038,121 @@ fn render_instrument_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.fill_text(ClockKey::DayOfWeek.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Computed from the actual rows drawn above (top slot is conditional —
+    // candle-family / derived-type-param / nothing — so a fixed row-count
+    // formula would drift; measuring `row_y` after the last row is the
+    // robust source of truth for the scrollbar).
+    let total_content_height = row_y - content_start_y;
+    result.total_content_height = total_content_height;
 
     let widget_theme = WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, total_content_height, &widget_theme);
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
+}
+
+/// Footprint's Instrument-tab top-slot block — "CLUSTERS SETTINGS".
+///
+/// Owner verdict 2026-07-05: the modal shows only colors, on/off toggles,
+/// and math parameters for the active chart type. Footprint's TF/bucket
+/// interval stays on the toolbar (removed from here — see
+/// `chart_type_param_spec`'s doc comment). This block owns:
+///   - "ABS markers" checkbox (default on) — gates absorption tint + "ABS"
+///     label (`FootprintDisplayOptions::show_abs_markers`).
+///   - "Volume text" checkbox (default on) — gates per-cell buy/sell
+///     numbers on top of the existing legibility threshold
+///     (`FootprintDisplayOptions::show_volume_text`).
+///   - Buy / Sell color swatches — same widget + same click→color-picker→
+///     `apply_chart_settings_color` channel as Japanese Candles
+///     Body/Border/Wick (`ChartTheme::footprint_buy`/`.footprint_sell`,
+///     global theme, NOT per-panel — matches how candle colors work).
+///   - "Heat intensity" dropdown (Low/Normal/High) — multiplies the
+///     zoomed-out heat-fill alpha (`FootprintDisplayOptions::heat_intensity`).
+/// Returns the updated `row_y` (mirrors the candle-family branch's manual
+/// `row_y` threading — this fn is called inline from the same match arm).
+#[allow(clippy::too_many_arguments)]
+fn render_footprint_settings_block(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    mut row_y: f64,
+    row_height: f64,
+    checkbox_size: f64,
+    swatch_size: f64,
+    swatch_gap: f64,
+    label_x: f64,
+    swatches_x: f64,
+    text_color: &str,
+    muted_color: &str,
+    theme: &ToolbarTheme,
+    settings: &InstrumentSettings,
+    result: &mut ChartSettingsModalResult,
+) -> f64 {
+    ctx.set_fill_color(muted_color);
+    ctx.set_font("11px sans-serif");
+    ctx.fill_text("CLUSTERS SETTINGS", x, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+
+    // Row: ABS markers checkbox
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.footprint_show_abs_markers, theme);
+    result.content_items.push(("instrument:footprint_show_abs_markers".to_string(), check_rect));
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("ABS markers", label_x, row_y + row_height / 2.0);
+    row_y += row_height;
+
+    // Row: Volume text checkbox
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, settings.footprint_show_volume_text, theme);
+    result.content_items.push(("instrument:footprint_show_volume_text".to_string(), check_rect));
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Volume text", label_x, row_y + row_height / 2.0);
+    row_y += row_height + 8.0;
+
+    // Row: Buy / Sell color swatches — same widget as JAPANESE CANDLES
+    // Body/Border/Wick rows (inline filled-rounded-rect + border swatch).
+    let swatch_row = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
+        let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
+        ctx.set_fill_color(color);
+        ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+        swatch_rect
+    };
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Buy / Sell", label_x, row_y + row_height / 2.0);
+    let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+    let buy_rect = swatch_row(ctx, swatches_x, swatch_y, &settings.footprint_buy_color, theme);
+    let sell_rect = swatch_row(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.footprint_sell_color, theme);
+    result.content_items.push(("instrument:footprint_buy_color".to_string(), buy_rect));
+    result.content_items.push(("instrument:footprint_sell_color".to_string(), sell_rect));
+    row_y += row_height + 8.0;
+
+    // Row: Heat intensity dropdown (Low / Normal / High)
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Heat intensity", x, row_y + row_height / 2.0);
+    let dropdown_x = x + 140.0;
+    let dropdown_width = 140.0;
+    let dropdown_height = 28.0;
+    let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
+    let chevron_w = 20.0;
+    let text_w = dropdown_width - chevron_w;
+    draw_split_dropdown(
+        ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height,
+        &settings.footprint_heat_intensity_label, row_y + row_height / 2.0, theme,
+    );
+    result.content_items.push(("dropdown_cycle:footprint_heat_intensity".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
+    result.content_items.push(("dropdown_menu:footprint_heat_intensity".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
+    row_y += row_height + 16.0;
+
+    row_y
 }
 
 // =============================================================================
@@ -2024,4 +2197,224 @@ fn draw_split_dropdown(
     ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
     ctx.close_path();
     ctx.fill();
+}
+
+// =============================================================================
+// Chart-type parameter catalog (Instrument tab top slot, derived types)
+// =============================================================================
+
+/// One dropdown-preset option: `(value_id, display_label)`. `value_id`
+/// parses to the `f64` sent in `ChartOutEvent::UpdateChartTypeParam`.
+pub struct ChartTypeParamOption {
+    pub value_id: &'static str,
+    pub label: &'static str,
+}
+
+/// Render spec for the active derived chart type's single editable
+/// parameter row, shown in the Instrument tab's top slot.
+///
+/// Every catalog entry drives a numeric `chart_type_param` — footprint
+/// (formerly the one interval-kind type, its bucket-interval row) was
+/// removed from this catalog 2026-07-05: it duplicated the toolbar-level
+/// TF picker (owner verdict — no TF/interval controls inside the modal).
+pub struct ChartTypeParamSpec {
+    /// Section header, e.g. "RENKO SETTINGS".
+    pub section_title: String,
+    /// Row label, e.g. "Box size".
+    pub row_label: String,
+    /// Preset dropdown options (this modal has no free-text numeric input
+    /// widget — reuse the existing preset-dropdown pattern from Precision/
+    /// Timezone, per the recon's widget-inventory finding).
+    pub options: Vec<ChartTypeParamOption>,
+    /// Optional muted note under the control for a fixed, non-editable
+    /// companion value (e.g. pnf's hardcoded reversal=3).
+    pub fixed_note: Option<String>,
+}
+
+impl ChartTypeParamSpec {
+    /// Label to show as the dropdown's current value, given the panel's
+    /// live `chart_type_param`. Falls back to the nearest preset's label
+    /// when the live value doesn't exactly match a preset (e.g. a value
+    /// restored from an old preset, or the `0.0` sentinel before first
+    /// subscribe).
+    fn current_label(&self, numeric_value: f64) -> String {
+        if numeric_value <= 0.0 {
+            // Sentinel: nothing user-set yet — show the first (code-side
+            // default) preset rather than "0".
+            return self.options.first()
+                .map(|o| o.label.to_string())
+                .unwrap_or_default();
+        }
+        self.options.iter()
+            .find(|o| o.value_id.parse::<f64>().ok() == Some(numeric_value))
+            .map(|o| o.label.to_string())
+            .unwrap_or_else(|| format_trimmed_f64(numeric_value))
+    }
+}
+
+/// Format an `f64` without a trailing `.0` for whole numbers (matches how
+/// the preset labels below are written, e.g. "1000000" not "1000000.0").
+fn format_trimmed_f64(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{}", v)
+    }
+}
+
+/// Catalog of editable-parameter derived chart types, per owner spec
+/// 2026-07-05. `None` for candle-family (handled separately by the caller)
+/// and for parameterless types (line/area/baseline/columns/heatmaps/...) —
+/// the top slot draws nothing for those.
+///
+/// Preset lists are curated dropdown options (this modal has no free-text
+/// numeric input widget), chosen to bracket the code-side default from
+/// `ChangeChartType`'s subscribe-time fallback (`chart_out_events.rs`).
+pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
+    match chart_type {
+        // "footprint" intentionally absent — owner verdict 2026-07-05: the
+        // bucket interval is a duplicate of the toolbar-level TF picker
+        // (footprint's `chart_type_interval` mirrors the active TF), so it
+        // does not get a row here. Footprint's own editable surface (ABS
+        // markers / volume text / buy-sell colors / heat intensity) is
+        // rendered by a dedicated block, not this generic numeric-param
+        // catalog — see `render_footprint_settings_block`.
+        "renko" => Some(ChartTypeParamSpec {
+            section_title: "RENKO SETTINGS".to_string(),
+            row_label: "Box size".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
+                ChartTypeParamOption { value_id: "1",   label: "1" },
+                ChartTypeParamOption { value_id: "2",   label: "2" },
+                ChartTypeParamOption { value_id: "5",   label: "5" },
+                ChartTypeParamOption { value_id: "10",  label: "10" },
+                ChartTypeParamOption { value_id: "25",  label: "25" },
+                ChartTypeParamOption { value_id: "50",  label: "50" },
+                ChartTypeParamOption { value_id: "100", label: "100" },
+            ],
+            fixed_note: Some("Reversal: 2".to_string()),
+        }),
+        "pnf" => Some(ChartTypeParamSpec {
+            section_title: "POINT & FIGURE SETTINGS".to_string(),
+            row_label: "Box size".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
+                ChartTypeParamOption { value_id: "1",   label: "1" },
+                ChartTypeParamOption { value_id: "2",   label: "2" },
+                ChartTypeParamOption { value_id: "5",   label: "5" },
+                ChartTypeParamOption { value_id: "10",  label: "10" },
+                ChartTypeParamOption { value_id: "25",  label: "25" },
+                ChartTypeParamOption { value_id: "50",  label: "50" },
+                ChartTypeParamOption { value_id: "100", label: "100" },
+            ],
+            fixed_note: Some("Reversal: 3".to_string()),
+        }),
+        "kagi" => Some(ChartTypeParamSpec {
+            section_title: "KAGI SETTINGS".to_string(),
+            row_label: "Reversal".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
+                ChartTypeParamOption { value_id: "1",   label: "1" },
+                ChartTypeParamOption { value_id: "2",   label: "2" },
+                ChartTypeParamOption { value_id: "5",   label: "5" },
+                ChartTypeParamOption { value_id: "10",  label: "10" },
+                ChartTypeParamOption { value_id: "25",  label: "25" },
+                ChartTypeParamOption { value_id: "50",  label: "50" },
+            ],
+            fixed_note: None,
+        }),
+        "three_line_break" => Some(ChartTypeParamSpec {
+            section_title: "3 LINE BREAK SETTINGS".to_string(),
+            row_label: "Lines back".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "2", label: "2" },
+                ChartTypeParamOption { value_id: "3", label: "3" },
+                ChartTypeParamOption { value_id: "4", label: "4" },
+                ChartTypeParamOption { value_id: "6", label: "6" },
+            ],
+            fixed_note: None,
+        }),
+        "range_bar" => Some(ChartTypeParamSpec {
+            section_title: "RANGE BARS SETTINGS".to_string(),
+            row_label: "Threshold".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "1",   label: "1" },
+                ChartTypeParamOption { value_id: "5",   label: "5" },
+                ChartTypeParamOption { value_id: "10",  label: "10" },
+                ChartTypeParamOption { value_id: "25",  label: "25" },
+                ChartTypeParamOption { value_id: "50",  label: "50" },
+                ChartTypeParamOption { value_id: "100", label: "100" },
+            ],
+            fixed_note: None,
+        }),
+        "volume_bar" => Some(ChartTypeParamSpec {
+            section_title: "VOLUME BARS SETTINGS".to_string(),
+            row_label: "Threshold".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "100",    label: "100" },
+                ChartTypeParamOption { value_id: "500",    label: "500" },
+                ChartTypeParamOption { value_id: "1000",   label: "1,000" },
+                ChartTypeParamOption { value_id: "5000",   label: "5,000" },
+                ChartTypeParamOption { value_id: "10000",  label: "10,000" },
+            ],
+            fixed_note: None,
+        }),
+        "dollar_bar" => Some(ChartTypeParamSpec {
+            section_title: "DOLLAR BARS SETTINGS".to_string(),
+            row_label: "Threshold".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "100000",   label: "100,000" },
+                ChartTypeParamOption { value_id: "500000",   label: "500,000" },
+                ChartTypeParamOption { value_id: "1000000",  label: "1,000,000" },
+                ChartTypeParamOption { value_id: "5000000",  label: "5,000,000" },
+                ChartTypeParamOption { value_id: "10000000", label: "10,000,000" },
+            ],
+            fixed_note: None,
+        }),
+        "tick_bar" => Some(ChartTypeParamSpec {
+            section_title: "TICK BARS SETTINGS".to_string(),
+            row_label: "Ticks per bar".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "100",  label: "100" },
+                ChartTypeParamOption { value_id: "200",  label: "200" },
+                ChartTypeParamOption { value_id: "500",  label: "500" },
+                ChartTypeParamOption { value_id: "1000", label: "1,000" },
+                ChartTypeParamOption { value_id: "2000", label: "2,000" },
+            ],
+            fixed_note: None,
+        }),
+        "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+            let section_title = match chart_type {
+                "tick_imbalance_bar" => "TICK IMBALANCE SETTINGS",
+                "volume_imbalance_bar" => "VOLUME IMBALANCE SETTINGS",
+                _ => "RUN BARS SETTINGS",
+            };
+            Some(ChartTypeParamSpec {
+                section_title: section_title.to_string(),
+                row_label: "Min ticks".to_string(),
+                options: vec![
+                    ChartTypeParamOption { value_id: "50",  label: "50" },
+                    ChartTypeParamOption { value_id: "100", label: "100" },
+                    ChartTypeParamOption { value_id: "200", label: "200" },
+                    ChartTypeParamOption { value_id: "500", label: "500" },
+                ],
+                    fixed_note: Some("Alpha: 0.20".to_string()),
+            })
+        }
+        "tpo" => Some(ChartTypeParamSpec {
+            section_title: "MARKET PROFILE (TPO) SETTINGS".to_string(),
+            row_label: "Bucket minutes".to_string(),
+            options: vec![
+                ChartTypeParamOption { value_id: "5",  label: "5" },
+                ChartTypeParamOption { value_id: "15", label: "15" },
+                ChartTypeParamOption { value_id: "30", label: "30" },
+                ChartTypeParamOption { value_id: "60", label: "60" },
+            ],
+            fixed_note: None,
+        }),
+        // Parameterless (top slot draws nothing): line / step_line /
+        // line_markers / area / hlc_area / baseline / columns /
+        // dom_heatmap / liquidation_heatmap.
+        _ => None,
+    }
 }

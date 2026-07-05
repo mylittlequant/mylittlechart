@@ -32,6 +32,7 @@
 //! levels of the latest bar with >= 2 levels; falls back to
 //! `price_range / 50` if no inference is possible.
 
+use mlc_core::chart::ChartTheme;
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::types::FootprintBar;
 use super::ChartRenderState;
@@ -59,6 +60,11 @@ struct FpColors<'a> {
     cell_bg_dim: &'a str,
 }
 
+/// Non-user-configurable defaults — imbalance/POC/value-area colors stay
+/// fixed constants (not exposed as a settings-modal control). Only
+/// `bid`/`ask` come from the theme (`state.theme.footprint_sell`/
+/// `.footprint_buy`, settings-modal color swatches) — see
+/// `theme_colors()`.
 const DEFAULT_COLORS: FpColors<'static> = FpColors {
     bid: "#ef5350",
     ask: "#26a69a",
@@ -68,6 +74,18 @@ const DEFAULT_COLORS: FpColors<'static> = FpColors {
     va_fill: "rgba(120, 144, 156, 0.10)",
     cell_bg_dim: "rgba(120, 144, 156, 0.04)",
 };
+
+/// Build the live palette for one frame: bid/ask come from the active
+/// theme (user-editable via the Instrument tab's CLUSTERS SETTINGS
+/// swatches — same channel as Japanese Candles body/border/wick colors),
+/// everything else stays the fixed constant.
+fn theme_colors(theme: &ChartTheme) -> FpColors<'_> {
+    FpColors {
+        bid: &theme.footprint_sell,
+        ask: &theme.footprint_buy,
+        ..DEFAULT_COLORS
+    }
+}
 
 /// Stacked-imbalance + absorption palette (F1, F2).
 struct FpExtraColors<'a> {
@@ -113,9 +131,16 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // colored heat rect (dominant-side color, alpha by volume share) and
     // only drop the per-level numbers/markers that would be illegible.
     let font_size = ((bar_w / 8.5).clamp(MIN_FONT_SIZE_PX, 16.0)).round();
-    let draw_text = bar_w >= MIN_BAR_WIDTH_PX && font_size >= MIN_FONT_SIZE_PX;
+    // User toggle (Instrument tab, "Volume text" checkbox) sits ON TOP of
+    // the existing legibility gate — either one being false suppresses the
+    // per-cell numbers; the heat-fill cells stay visible regardless.
+    let draw_text = bar_w >= MIN_BAR_WIDTH_PX
+        && font_size >= MIN_FONT_SIZE_PX
+        && state.footprint_display.show_volume_text;
+    let show_abs_markers = state.footprint_display.show_abs_markers;
+    let heat_alpha_mult = state.footprint_display.heat_intensity.alpha_multiplier();
 
-    let colors = DEFAULT_COLORS;
+    let colors = theme_colors(state.theme);
     let price_range = price_scale.price_max - price_scale.price_min;
     if price_range <= 0.0 || !price_range.is_finite() {
         return;
@@ -195,8 +220,10 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         // F2: absorption bar tint clipped to the actual price excursion
         // (high → low) per MQL5 Part 11 spec. The predecessor painted
         // the full chart vertical; that washed out everything else when
-        // an absorption bar was visible.
-        if bar.is_absorption {
+        // an absorption bar was visible. Gated by the "ABS markers" toggle
+        // (Instrument tab) together with the "ABS" text label below —
+        // both are the same absorption-marker visual.
+        if show_abs_markers && bar.is_absorption {
             let hy = rect.y + price_to_y_local(bar.high, price_scale, rect.height);
             let ly = rect.y + price_to_y_local(bar.low, price_scale, rect.height) + row_h;
             ctx.set_fill_color(EXTRA_COLORS.absorption_fill);
@@ -263,7 +290,13 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                     // heat fill so delta structure stays readable at
                     // distance instead of collapsing into gray mush.
                     if ratio > 0.02 {
-                        let alpha = (0.12 + ratio * 0.55).min(0.7);
+                        // Heat-intensity dropdown multiplier applied to the
+                        // base alpha BEFORE the cap — Normal (×1.0) caps at
+                        // 0.7 exactly like the pre-toggle formula (pixel-
+                        // identical default); Low (×0.5) and High (×1.6)
+                        // scale from the same base and clamp to 1.0 so High
+                        // never exceeds full opacity.
+                        let alpha = ((0.12 + ratio * 0.55) * heat_alpha_mult).min(1.0);
                         let color = if lv.buy_vol >= lv.sell_vol {
                             format!("rgba(38, 166, 154, {:.3})", alpha)
                         } else {
@@ -347,7 +380,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         }
 
         // F2: "ABS" info label on absorption bars.
-        if draw_text && bar.is_absorption {
+        if show_abs_markers && draw_text && bar.is_absorption {
             ctx.set_fill_color("rgba(255, 152, 0, 0.95)");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Top);

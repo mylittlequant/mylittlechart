@@ -274,6 +274,8 @@ impl ChartPanelApp {
             scale_bg: rt.chart.scale_bg.clone(),
             scale_border: rt.chart.scale_border.clone(),
             sub_pane_bg: rt.chart.background.clone(),
+            footprint_buy: rt.series.footprint_buy.clone(),
+            footprint_sell: rt.series.footprint_sell.clone(),
         }
     }
 

@@ -781,12 +781,22 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 }
-                let active_ct = self.panel_app.toolbar_state.active_param_chart_type
-                    .clone()
-                    .unwrap_or_default();
                 let pid = self.panel_app.panel_grid
                     .active_container()
                     .map(|w| w.chart_panel_id);
+                // Route off the panel's own `chart_type` rather than the
+                // toolbar-level `active_param_chart_type` field — that field
+                // is only ever set by the dead inline-dropdown-input path
+                // (removed, see dropdown.rs:590-613) and is permanently
+                // `None`, so every param edit used to silently no-op. The
+                // modal (and any other caller) already has the active panel
+                // resolved when it fires this event, so `panel.chart_type`
+                // is the correct, always-populated source of truth for
+                // "which derived type is being parameterized".
+                let active_ct: &'static str = pid
+                    .and_then(|chart_panel_id| self.panels_store.chart_panel.get(&chart_panel_id))
+                    .map(|p| p.chart_type)
+                    .unwrap_or("candles");
                 if let Some(chart_panel_id) = pid {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
                         &mut self.panels_store, chart_panel_id,
@@ -816,7 +826,7 @@ impl ChartApp {
                                         bubble.clear_derived_slots(None);
                                     });
                                 }
-                                match active_ct.as_str() {
+                                match active_ct {
                                     "range_bar"  => self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
                                     "volume_bar" => self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
                                     "renko"      => self.core.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
@@ -840,6 +850,37 @@ impl ChartApp {
                                     "run_bar" => {
                                         let min_ticks = if value > 0.0 { value as u32 } else { 50 };
                                         self.core.bridge.request_run_bars(self.active_exchange, &symbol, at, 20, min_ticks);
+                                    }
+                                    // Recon 2026-07-05: three previously-missing
+                                    // arms — param edits on these types used to
+                                    // silently no-op (fell through `_ => {}`
+                                    // below), even though `ChangeChartType`'s
+                                    // own switch already covers them.
+                                    "three_line_break" => {
+                                        let lines_back = if value > 0.0 { (value as u8).max(1) } else { 3u8 };
+                                        self.core.bridge.request_three_line_break(self.active_exchange, &symbol, at, lines_back);
+                                    }
+                                    "tpo" => {
+                                        let freq = if value > 0.0 { value as u16 } else { 30 };
+                                        self.core.bridge.request_tpo(
+                                            self.active_exchange, &symbol, at, freq,
+                                            mlc_backend_data_bridge::TpoSource::TradeBucket,
+                                        );
+                                    }
+                                    // tick_bar's param is a bar count, not a
+                                    // price/volume threshold — it does not go
+                                    // through the ×1e8 fixed-point scaling or
+                                    // `abort_derived_chart`'s "derived" pool;
+                                    // it reuses the same tick-count subscribe
+                                    // path the Timeframe-driven tick TF switch
+                                    // uses (`request_tick_bars` /
+                                    // `abort_tick_bars`, both keyed into the
+                                    // same `derived_subs` slot as every other
+                                    // derived stream, so the abort above is
+                                    // still correct — only the request differs).
+                                    "tick_bar" => {
+                                        let count = if value > 0.0 { value as u32 } else { 100 };
+                                        self.core.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
                                     }
                                     _ => {}
                                 }

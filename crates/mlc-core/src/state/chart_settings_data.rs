@@ -5,6 +5,21 @@
 /// Settings for chart instrument (candle colors, etc.)
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct InstrumentSettings {
+    /// Active chart type of the focused chart panel (e.g. `"candles"`,
+    /// `"renko"`, `"footprint"`). Drives which chart-type-params block the
+    /// Instrument tab renders (candle-family vs. derived-type controls vs.
+    /// none). Not persisted as part of this DTO's own round-trip — it is a
+    /// read-only mirror of `ChartPanelState::chart_type` for the modal to
+    /// render against; the durable copy lives on `ChartWindowSnapshot`.
+    pub chart_type: String,
+    /// Current numeric parameter for the active derived chart type (box
+    /// size / reversal / threshold / min-ticks / lines-back / ...). Mirrors
+    /// `ChartPanelState::chart_type_param`. Unused for candle-family and
+    /// parameterless chart types.
+    pub chart_type_param: f64,
+    /// Current bucket interval for the `"footprint"` chart type. Mirrors
+    /// `ChartPanelState::chart_type_interval`. Unused for every other type.
+    pub chart_type_interval: String,
     /// Use previous close for bar color
     pub use_prev_close_color: bool,
     /// Body colors enabled
@@ -25,6 +40,21 @@ pub struct InstrumentSettings {
     pub wick_up_color: String,
     /// Wick down color
     pub wick_down_color: String,
+    /// Footprint checkbox: draw ABS-marker (absorption tint + "ABS" label).
+    /// Unused when `chart_type != "footprint"`.
+    pub footprint_show_abs_markers: bool,
+    /// Footprint checkbox: draw per-cell buy/sell volume numbers.
+    /// Unused when `chart_type != "footprint"`.
+    pub footprint_show_volume_text: bool,
+    /// Footprint buy-side (ask) color — mirrors `ChartTheme::footprint_buy`.
+    /// Unused when `chart_type != "footprint"`.
+    pub footprint_buy_color: String,
+    /// Footprint sell-side (bid) color — mirrors `ChartTheme::footprint_sell`.
+    /// Unused when `chart_type != "footprint"`.
+    pub footprint_sell_color: String,
+    /// Footprint heat-fill intensity label ("Low" / "Normal" / "High").
+    /// Unused when `chart_type != "footprint"`.
+    pub footprint_heat_intensity_label: String,
     /// Precision display label (e.g. "Авто", "2 (0.00)")
     pub precision_label: String,
     /// Timezone display label (e.g., "(UTC+3) Москва")

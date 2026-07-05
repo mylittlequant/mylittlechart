@@ -142,6 +142,10 @@ pub struct ChartTheme {
     pub scale_border: String,
     /// Sub-pane background (with style opacity applied)
     pub sub_pane_bg: String,
+    /// Footprint cluster buy-side color (volume text + heat fill).
+    pub footprint_buy: String,
+    /// Footprint cluster sell-side color (volume text + heat fill).
+    pub footprint_sell: String,
 }
 
 impl Default for ChartTheme {
@@ -162,6 +166,86 @@ impl Default for ChartTheme {
             scale_bg: "#1e222d".to_string(),
             scale_border: "#2a2e39".to_string(),
             sub_pane_bg: "#1e222d".to_string(),
+            footprint_buy: "#26a69a".to_string(),
+            footprint_sell: "#ef5350".to_string(),
+        }
+    }
+}
+
+/// Footprint cluster display toggles + heat-intensity setting.
+///
+/// Per-panel (`ChartPanelState::footprint_display`), threaded into
+/// [`ChartRenderState`] the same way `grid`/`legend` are — see
+/// `mlc-backend::bubble::facade::render_state_for` and its 4 call sites in
+/// `mlc-app::lib.rs`. `Copy` (all scalar fields) so it can be passed by
+/// value into `ChartRenderState` without adding a lifetime.
+///
+/// `Serialize`/`Deserialize` for `ChartWindowSnapshot` persistence — see
+/// `mlc-core::preset::snapshots::ChartWindowSnapshot::footprint_display`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FootprintDisplayOptions {
+    /// Draw the "ABS" absorption-bar label + stacked-imbalance triangle
+    /// markers. Default `true` (matches pre-toggle behavior).
+    pub show_abs_markers: bool,
+    /// Draw the per-cell buy/sell volume numbers. Default `true` (matches
+    /// pre-toggle behavior). The existing legibility gate (bar width /
+    /// font-size threshold) still applies underneath this toggle — turning
+    /// this off suppresses numbers even when the legibility gate would
+    /// otherwise allow them; the heat-fill cells stay visible either way.
+    pub show_volume_text: bool,
+    /// Alpha multiplier for the zoomed-out heat-fill cells (dominant-side
+    /// color, alpha by volume share). Default `Normal` (matches pre-toggle
+    /// behavior — the multiplier is a no-op at 1.0).
+    pub heat_intensity: FootprintHeatIntensity,
+}
+
+impl Default for FootprintDisplayOptions {
+    fn default() -> Self {
+        Self {
+            show_abs_markers: true,
+            show_volume_text: true,
+            heat_intensity: FootprintHeatIntensity::Normal,
+        }
+    }
+}
+
+/// Footprint heat-fill alpha multiplier preset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum FootprintHeatIntensity {
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+impl FootprintHeatIntensity {
+    /// Multiplier applied to the computed heat-fill alpha. `Normal` is a
+    /// no-op (1.0) so the default render is pixel-identical to the
+    /// pre-toggle hardcoded formula.
+    pub fn alpha_multiplier(self) -> f64 {
+        match self {
+            Self::Low => 0.5,
+            Self::Normal => 1.0,
+            Self::High => 1.6,
+        }
+    }
+
+    /// Stable id used for persistence + dropdown option value.
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
+    /// Parse back from the persisted/dropdown id. Unknown values fall back
+    /// to `Normal` (additive-field back-compat sentinel).
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "low" => Self::Low,
+            "high" => Self::High,
+            _ => Self::Normal,
         }
     }
 }
@@ -219,6 +303,10 @@ pub struct ChartRenderState<'a> {
     /// level, POC highlight, and value-area background.
     /// When `None` (default), footprint dispatch falls back to draw_candles.
     pub footprint_bars: Option<&'a [crate::types::FootprintBar]>,
+    /// Footprint display toggles (ABS markers / volume text / heat
+    /// intensity) — per-panel config, mirrors `ChartPanelState::footprint_display`.
+    /// Unused for every other chart type.
+    pub footprint_display: FootprintDisplayOptions,
     /// Renko brick data. When `Some(_)` and chart_type == "renko" the
     /// renko renderer draws filled rect bricks; otherwise renko dispatch
     /// renders nothing.

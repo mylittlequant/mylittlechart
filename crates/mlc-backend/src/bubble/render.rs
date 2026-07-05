@@ -1,4 +1,4 @@
-use mlc_core::chart::render_data::{ChartRect, ChartRenderState, ChartTheme};
+use mlc_core::chart::render_data::{ChartRect, ChartRenderState, ChartTheme, FootprintDisplayOptions};
 use mlc_core::chart::types::price_scale::PriceScale;
 use mlc_core::chart::types::{Crosshair, GridOptions, Legend, TimeScale, Viewport};
 use mlc_core::scale_settings::ScaleSettings;
@@ -29,6 +29,9 @@ pub struct ChartWindowRenderInputs<'a> {
     pub oi_show: bool,
     /// Funding Rate display gate (window-local view state).
     pub funding_show: bool,
+    /// Footprint display toggles (ABS markers / volume text / heat
+    /// intensity) — per-panel view state, mirrors `oi_show`/`funding_show`.
+    pub footprint_display: FootprintDisplayOptions,
 }
 
 /// Build a `ChartRenderState` from window render inputs and the associated bubble.
@@ -70,6 +73,7 @@ pub fn build_chart_render_state<'a>(
         wick_enabled: true,
         use_prev_close: false,
         footprint_bars: bubble.footprint_bars.as_deref(),
+        footprint_display: window.footprint_display,
         renko_bars: bubble.renko_bars.as_deref(),
         three_line_break: bubble.three_line_break.as_deref(),
         pnf_columns: bubble.pnf_columns.as_deref(),

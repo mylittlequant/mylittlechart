@@ -12,6 +12,10 @@ fn default_account_type_spot() -> String {
     "S".to_string()
 }
 
+fn default_chart_type_interval() -> String {
+    "1m".to_string()
+}
+
 use crate::chart::types::price_scale::{PriceScaleMode, ScaleMode};
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
@@ -155,6 +159,28 @@ pub struct ChartWindowSnapshot {
     pub tooltip: Tooltip,
     /// Active chart type name (e.g. `"candles"`, `"line"`).
     pub chart_type: String,
+    /// Numeric parameter for derived-bar chart types (range_bar / renko /
+    /// tick_bar / ...). Mirrors `ChartPanelState::chart_type_param` — see
+    /// that field's doc comment for the per-type unit table. `0.0` means
+    /// "use the code-side default at subscribe time" (never actually
+    /// user-set). Additive field (2026-07-05); old presets deserialize via
+    /// `#[serde(default)]` and land on the same `0.0` sentinel they always
+    /// implicitly had.
+    #[serde(default)]
+    pub chart_type_param: f64,
+    /// Kline bucket interval for the `"footprint"` chart type (e.g.
+    /// `"1m"`, `"5m"`). Mirrors `ChartPanelState::chart_type_interval`.
+    /// Additive field (2026-07-05); old presets default to `"1m"`.
+    #[serde(default = "default_chart_type_interval")]
+    pub chart_type_interval: String,
+    /// Footprint cluster display toggles (ABS markers / volume text / heat
+    /// intensity). Mirrors `ChartPanelState::footprint_display`. Unused for
+    /// every other chart type. Additive field (2026-07-05); old presets
+    /// deserialize via `#[serde(default)]` and land on
+    /// `FootprintDisplayOptions::default()` (both checkboxes on, Normal
+    /// heat intensity — pixel-identical to the pre-toggle render).
+    #[serde(default)]
+    pub footprint_display: crate::chart::render_data::FootprintDisplayOptions,
     // --- Series visibility ---
     /// Show filled candlesticks.
     pub show_candles: bool,

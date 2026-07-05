@@ -711,6 +711,14 @@ impl ChartApp {
                 self.panel_app.theme_manager.current_mut().series.candle_down_wick = color.to_string();
                 eprintln!("[ChartApp] applied wick_down_color: {}", color);
             }
+            "footprint_buy_color" => {
+                self.panel_app.theme_manager.current_mut().series.footprint_buy = color.to_string();
+                eprintln!("[ChartApp] applied footprint_buy_color: {}", color);
+            }
+            "footprint_sell_color" => {
+                self.panel_app.theme_manager.current_mut().series.footprint_sell = color.to_string();
+                eprintln!("[ChartApp] applied footprint_sell_color: {}", color);
+            }
             "watermark_color" => {
                 let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = pid {

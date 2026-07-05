@@ -168,6 +168,23 @@ pub struct RuntimeSeriesColors {
     // Volume
     pub volume_up: String,
     pub volume_down: String,
+
+    // Footprint clusters (buy/sell volume text + heat fill). Additive
+    // 2026-07-05 — old theme JSON without these keys falls back to the
+    // same green/red the footprint renderer always hardcoded, so existing
+    // saved themes render pixel-identically to before this field existed.
+    #[serde(default = "default_footprint_buy")]
+    pub footprint_buy: String,
+    #[serde(default = "default_footprint_sell")]
+    pub footprint_sell: String,
+}
+
+fn default_footprint_buy() -> String {
+    "#26a69a".to_string()
+}
+
+fn default_footprint_sell() -> String {
+    "#ef5350".to_string()
 }
 
 /// Font settings
@@ -481,6 +498,8 @@ impl From<&UITheme> for RuntimeTheme {
                 ma_third: theme.series.ma_third.to_string(),
                 volume_up: theme.series.volume_up.to_string(),
                 volume_down: theme.series.volume_down.to_string(),
+                footprint_buy: theme.series.footprint_buy.to_string(),
+                footprint_sell: theme.series.footprint_sell.to_string(),
             },
             fonts: RuntimeFonts {
                 family: theme.fonts.family.to_string(),

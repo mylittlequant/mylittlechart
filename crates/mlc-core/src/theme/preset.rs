@@ -125,6 +125,10 @@ pub struct SeriesColors {
     // Volume
     pub volume_up: &'static str,
     pub volume_down: &'static str,
+
+    // Footprint clusters (buy/sell volume text + heat fill)
+    pub footprint_buy: &'static str,
+    pub footprint_sell: &'static str,
 }
 
 /// Chart-specific font settings
@@ -235,6 +239,9 @@ impl ChartTheme {
 
                 volume_up: "rgba(38, 166, 154, 0.5)",
                 volume_down: "rgba(239, 83, 80, 0.5)",
+
+                footprint_buy: "#26a69a",
+                footprint_sell: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
@@ -331,6 +338,9 @@ impl ChartTheme {
 
                 volume_up: "rgba(38, 166, 154, 0.5)",
                 volume_down: "rgba(239, 83, 80, 0.5)",
+
+                footprint_buy: "#26a69a",
+                footprint_sell: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
@@ -427,6 +437,9 @@ impl ChartTheme {
 
                 volume_up: "rgba(0, 255, 0, 0.5)",
                 volume_down: "rgba(255, 0, 0, 0.5)",
+
+                footprint_buy: "#26a69a",
+                footprint_sell: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "Arial, sans-serif",
@@ -525,6 +538,9 @@ impl ChartTheme {
 
                 volume_up: "rgba(255, 255, 255, 0.4)",
                 volume_down: "rgba(255, 255, 255, 0.15)",
+
+                footprint_buy: "#26a69a",
+                footprint_sell: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "Arial, sans-serif",
@@ -621,6 +637,9 @@ impl ChartTheme {
 
                 volume_up: "rgba(38,166,154,0.5)",
                 volume_down: "rgba(239,83,80,0.5)",
+
+                footprint_buy: "#26a69a",
+                footprint_sell: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
