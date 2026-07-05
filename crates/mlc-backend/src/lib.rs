@@ -1545,6 +1545,122 @@ impl BackendCore {
                     }
                 }
 
+                // ── FootprintHistoryPrepended ───────────────────────────────────
+                // Lazy-deepen batch (`Station::rewarm_footprint` via the
+                // bridge): older bars spliced at the FRONT in one pass — one
+                // cumulative-delta rebuild + one FootprintBarAppended per
+                // owning bubble, which the reactor turns into one viewport
+                // prepend-compensation. The per-point replay this replaces
+                // did an O(n) out-of-order upsert per bar inside a single
+                // frame drain (thousands of events → multi-second stall).
+                LiveUpdate::FootprintHistoryPrepended { exchange_id, account_type: fp_at, symbol: fp_sym, points } => {
+                    if points.is_empty() {
+                        continue;
+                    }
+                    let fp_at_label = fp_at.short_label().to_string();
+                    // Convert once, not per bubble — same construction as the
+                    // live FootprintUpdate arm above (tick size inferred from
+                    // the level grid, static extras stamped, OHLC mirror bar).
+                    let converted: Vec<(mlc_core::FootprintBar, mlc_core::Bar)> = points
+                        .iter()
+                        .map(|point| {
+                            let bar = mlc_core::FootprintBar {
+                                open_time: point.open_time,
+                                open: point.open,
+                                high: point.high,
+                                low: point.low,
+                                close: point.close,
+                                volume: point.volume,
+                                levels: point.levels.iter()
+                                    .map(|(price, buy_vol, sell_vol)| mlc_core::FootprintLevel {
+                                        price: *price,
+                                        buy_vol: *buy_vol,
+                                        sell_vol: *sell_vol,
+                                        is_single_print: false,
+                                        is_unfinished: false,
+                                    })
+                                    .collect(),
+                                cumulative_delta: 0.0,
+                                stacked_ask_start: None,
+                                stacked_ask_len: None,
+                                stacked_bid_start: None,
+                                stacked_bid_len: None,
+                                is_absorption: false,
+                            };
+                            let tick_size = {
+                                let mut step = f64::INFINITY;
+                                for w in bar.levels.windows(2) {
+                                    let d = (w[1].price - w[0].price).abs();
+                                    if d > 0.0 && d < step { step = d; }
+                                }
+                                if step.is_finite() { step } else { 1.0 }
+                            };
+                            let mut with_static = bar;
+                            with_static.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
+                            let ohlc = mlc_core::Bar::with_volume(
+                                with_static.open_time / 1000,
+                                with_static.open,
+                                with_static.high,
+                                with_static.low,
+                                with_static.close,
+                                with_static.volume,
+                            );
+                            (with_static, ohlc)
+                        })
+                        .collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &fp_at_label, fp_sym.as_str());
+                    for bid in bids {
+                        if self.bubbles().bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc {
+                            continue;
+                        }
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|b| b.open_time);
+                            // Batch is oldest→newest and ≤ the splice-time
+                            // window head; re-cut against THIS store's head
+                            // anyway (a live prepend-vs-live interleave must
+                            // never duplicate bars).
+                            let older: Vec<&(mlc_core::FootprintBar, mlc_core::Bar)> = converted
+                                .iter()
+                                .filter(|(fb, _)| head.is_none_or(|h| fb.open_time <= h))
+                                .collect();
+                            if older.is_empty() {
+                                return;
+                            }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|(fb, _)| fb.open_time == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old_fp = std::mem::take(store);
+                            store.reserve(older.len() + old_fp.len());
+                            store.extend(older.iter().map(|(fb, _)| fb.clone()));
+                            store.extend(old_fp.into_iter().skip(skip));
+                            // ONE linear cumulative-delta rebuild (same
+                            // contract as the out-of-order branch above).
+                            let mut prev = 0.0_f64;
+                            for b in store.iter_mut() {
+                                b.set_cumulative_delta(prev);
+                                prev = b.cumulative_delta;
+                            }
+                            // OHLC mirror splice — upserted in lockstep with
+                            // footprint_bars, so the same head/skip applies.
+                            let old_bars = std::mem::take(&mut bubble.bars);
+                            let mut merged: Vec<mlc_core::Bar> =
+                                Vec::with_capacity(older.len() + old_bars.len());
+                            merged.extend(older.iter().map(|(_, ob)| ob.clone()));
+                            merged.extend(old_bars.into_iter().skip(skip));
+                            bubble.bars = merged;
+                        });
+                        events.push(BubbleEvent::FootprintBarAppended {
+                            bid,
+                            exchange_id,
+                            symbol: fp_sym.clone(),
+                            account_type: fp_at_label.clone(),
+                        });
+                    }
+                }
+
                 // ── RenkoBarUpdate ──────────────────────────────────────────────
                 LiveUpdate::RenkoBarUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label().to_string();

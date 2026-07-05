@@ -426,6 +426,20 @@ pub enum LiveUpdate {
         point: digdigdig3_station::data::FootprintPoint,
     },
 
+    /// Batch of OLDER footprint bars spliced in front of the live window by
+    /// the lazy deepen (`Station::rewarm_footprint`). Points are oldest→
+    /// newest and all at/older than the pre-deepen window head — the
+    /// consumer merges them at the FRONT of its store in ONE pass (one
+    /// cumulative-delta rebuild, one viewport prepend-compensation) instead
+    /// of receiving thousands of per-point `FootprintUpdate`s that each
+    /// trigger an O(n) out-of-order upsert in the same frame drain.
+    FootprintHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::FootprintPoint>,
+    },
+
     /// Live Renko brick close from a `Stream::RenkoBar` subscription.
     /// Each event is one fully-closed brick (no in-progress emit —
     /// bricks are atomic, see TradeToRenkoBarDerived).
@@ -641,6 +655,11 @@ pub struct DataBridge {
     /// [`Self::request_deeper_footprint_seed`] entry point (interval as
     /// `&str`, not embedded in a `Stream` the generic dispatcher can replay).
     footprint_active_interval: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), String>>>,
+    /// Single-flight guard for the footprint lazy deepen: keys with an
+    /// in-place `rewarm_footprint` pager currently running. Prevents a TF
+    /// flip-flop (or any re-entrant `request_footprint` on the same
+    /// interval) from stacking multiple 100-page REST walks for one key.
+    footprint_deepen_in_flight: Arc<Mutex<HashSet<(ExchangeId, String, AccountType)>>>,
     /// Per-key live orderbook reconstructors.
     ///
     /// Created on the first `subscribe_orderbook`/`subscribe_depth` call for a given
@@ -912,6 +931,7 @@ impl DataBridge {
             derived_seed_exhausted: Arc::new(Mutex::new(HashSet::new())),
             derived_active_stream: Arc::new(Mutex::new(HashMap::new())),
             footprint_active_interval: Arc::new(Mutex::new(HashMap::new())),
+            footprint_deepen_in_flight: Arc::new(Mutex::new(HashSet::new())),
             ob_trackers: Arc::new(dashmap::DashMap::new()),
             footprint_series: Arc::new(dashmap::DashMap::new()),
             warmup_started: AtomicBool::new(false),
@@ -1896,18 +1916,25 @@ impl DataBridge {
             subs.insert(sub_key, handle);
         }
 
-        // Lazy deepen: after the shallow seed painted, tear the sub down once
-        // and respawn at full depth in the background (fresh body's ring-peek
-        // replays the deep ring; the FootprintUpdate arm's sorted upsert
-        // merges older bars in front). Guarded by footprint_active_interval —
-        // a chart-type switch clears the entry (`abort_derived_chart`), a
-        // bucket-interval change replaces it, both making this task a no-op.
+        // Lazy deepen: after the shallow seed painted, deepen IN PLACE via
+        // `Station::rewarm_footprint` — the phase-1 sub keeps running (live
+        // bars keep flowing) while the deeper trade window is paged and
+        // derived off to the side; the older bars are then spliced in front
+        // and delivered downstream as ONE `FootprintHistoryPrepended` batch.
+        // The previous teardown+respawn version left the chart with NO live
+        // updates for the whole re-warm (minutes on a 100k window in a
+        // browser) and re-ran the full pager on every respawn cycle.
+        // Guarded by footprint_active_interval — a chart-type switch clears
+        // the entry (`abort_derived_chart`), a bucket-interval change
+        // replaces it, both making this task a no-op. Single-flight per key:
+        // overlapping deepens (e.g. a TF flip-flop re-entering the same
+        // interval) collapse to one pager.
         if full_warm > warm_n {
             let interval_owned = interval.to_string();
             let symbol_owned = symbol.to_string();
             let fp_interval_map = self.footprint_active_interval.clone();
             let warm_state = self.derived_warm_state.clone();
-            let derived_subs = self.derived_subs.clone();
+            let deepen_in_flight = self.footprint_deepen_in_flight.clone();
             self.spawn_bg(async move {
                 sleep_ms(FOOTPRINT_LAZY_DEEPEN_DELAY_MS).await;
                 let still_active = fp_interval_map
@@ -1922,34 +1949,57 @@ impl DataBridge {
                     );
                     return;
                 }
-                crate::dlog!(
-                    "[Bridge::footprint lazy-deepen] {:?} {} at={:?} interval={} — reseeding {} → {}",
-                    exchange_id, symbol_owned, account_type, interval_owned, warm_n, full_warm,
-                );
-                if let Ok(mut subs) = derived_subs.lock() {
-                    if let Some(h) = subs.remove(&(exchange_id, symbol_owned.clone(), account_type)) {
-                        h.abort();
+                let flight_key = (exchange_id, symbol_owned.clone(), account_type);
+                {
+                    let Ok(mut inflight) = deepen_in_flight.lock() else { return; };
+                    if !inflight.insert(flight_key.clone()) {
+                        crate::dlog!(
+                            "[Bridge::footprint lazy-deepen] {:?} {} at={:?} — deepen already in flight, skipping",
+                            exchange_id, symbol_owned, account_type,
+                        );
+                        return;
                     }
                 }
+                crate::dlog!(
+                    "[Bridge::footprint lazy-deepen] {:?} {} at={:?} interval={} — in-place rewarm {} → {}",
+                    exchange_id, symbol_owned, account_type, interval_owned, warm_n, full_warm,
+                );
                 let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
-                if let Err(e) = station.force_unsubscribe_and_await(&key).await {
-                    crate::dlog!(
-                        "[Bridge::footprint lazy-deepen] force_unsubscribe failed {:?} {} at={:?}: {:?}",
-                        exchange_id, symbol_owned, account_type, e,
-                    );
+                let older = station.rewarm_footprint(&key, &symbol_wire, full_warm).await;
+                crate::dlog!(
+                    "[Bridge::footprint lazy-deepen] {:?} {} at={:?} — rewarm spliced {} older bars",
+                    exchange_id, symbol_owned, account_type, older.len(),
+                );
+                if !older.is_empty() {
+                    if let Ok(mut ws) = warm_state.lock() {
+                        ws.insert(
+                            (exchange_id, symbol_owned.clone(), account_type, stream.clone()),
+                            full_warm,
+                        );
+                    }
+                    // Mirror the splice into the bridge's own shared Vec so
+                    // render-side readers of `footprint_series_for` see the
+                    // same deepened window.
+                    {
+                        let mut w = series.write().await;
+                        let old = std::mem::take(&mut *w);
+                        let head = old.first().map(|p| p.open_time);
+                        let boundary_replaced = head.is_some_and(|h| {
+                            older.last().is_some_and(|p| p.open_time == h)
+                        });
+                        w.reserve(older.len() + old.len());
+                        w.extend(older.iter().cloned());
+                        w.extend(old.into_iter().skip(usize::from(boundary_replaced)));
+                    }
+                    let _ = tx.send(LiveUpdate::FootprintHistoryPrepended {
+                        exchange_id,
+                        account_type,
+                        symbol: symbol_owned.clone(),
+                        points: older,
+                    });
                 }
-                if let Ok(mut ws) = warm_state.lock() {
-                    ws.insert(
-                        (exchange_id, symbol_owned.clone(), account_type, stream.clone()),
-                        full_warm,
-                    );
-                }
-                let inner_handle = spawn_bg_join_nested(footprint_sub_body(
-                    station, tx, series, exchange_id, account_type,
-                    symbol_owned.clone(), symbol_wire, stream, full_warm, None,
-                ));
-                if let Ok(mut subs) = derived_subs.lock() {
-                    subs.insert((exchange_id, symbol_owned, account_type), inner_handle);
+                if let Ok(mut inflight) = deepen_in_flight.lock() {
+                    inflight.remove(&flight_key);
                 }
             });
         }
