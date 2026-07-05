@@ -2099,6 +2099,15 @@ impl ChartApp {
             bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
         }
 
+        // Default companions (klines → VOLUME) for the freshly seeded
+        // window. This is the FOURTH load path — the wasm shell boots
+        // through seed_default_chart directly (shell-web lib.rs), never
+        // touching the preset-restore / new-window / LoadPreset paths that
+        // already reconcile companions — which is exactly why the default
+        // page came up bare (comp_sync_runs stayed 0 in the live dump,
+        // owner report 2026-07-05).
+        self.sync_default_indicators_for_all_windows();
+
         self.needs_initial_viewport_fit = true;
     }
 
