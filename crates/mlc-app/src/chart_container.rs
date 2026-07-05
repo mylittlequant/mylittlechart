@@ -735,6 +735,14 @@ impl ChartContainer {
     /// (empty-range no-op, 4% padding, Focus-mode last-element extension)
     /// without needing a `&[Bar]`-shaped view of non-Bar series.
     pub fn calc_auto_scale(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        // Focus is grow-only: the user's Y position is preserved; only
+        // pressure from the last bar expands the bounds. Route Focus
+        // through `track_focus_y` instead of the fit-to-visible path,
+        // which would sync-shrink the scale on every quiet tick.
+        if self.price_scale.scale_mode == ScaleMode::Focus {
+            self.track_focus_y(series);
+            return;
+        }
         if !self.price_scale.scale_mode.is_auto_y() {
             return;
         }
@@ -742,21 +750,58 @@ impl ChartContainer {
         if start >= end || series.is_empty() {
             return;
         }
-        let Some((mut min, mut max)) = series.y_range(start..end) else { return };
-
-        // Focus mode also includes the very last element (live price tracking) —
-        // mirrors `PriceScale::calc_auto_scale`'s ScaleMode::Focus branch.
-        if self.price_scale.scale_mode == ScaleMode::Focus {
-            if let Some((last_min, last_max)) = series.y_range(series.len().saturating_sub(1)..series.len()) {
-                min = min.min(last_min);
-                max = max.max(last_max);
-            }
-        }
-
+        let Some((min, max)) = series.y_range(start..end) else { return };
         let range = max - min;
         let padding = range * 0.04;
         self.price_scale.price_min = min - padding;
         self.price_scale.price_max = max + padding;
+    }
+
+    /// Focus-mode Y intent: expand the price-scale bounds under pressure
+    /// from the last bar. Grow-only — never shrinks the range (that's what
+    /// separates F from A). A guard band of `FOCUS_Y_GUARD_RATIO * pane_height`
+    /// in pixels is enforced against the last bar's high/low; if the last
+    /// bar is inside the guard zone (or past the current bound), the bound
+    /// is pushed out just enough to restore the guard. The whole point:
+    /// the last bar's high has at least `FOCUS_Y_GUARD_RATIO` of pane
+    /// height above it, low has at least the same below.
+    ///
+    /// Owner doctrine 2026-07-06: F is a fixation mode. The user's Y
+    /// position is respected unless the live price physically pushes it.
+    pub fn track_focus_y(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        if self.price_scale.scale_mode != ScaleMode::Focus {
+            return;
+        }
+        if self.viewport.chart_height <= 0.0 || series.is_empty() {
+            return;
+        }
+        let Some((last_low, last_high)) = series.y_range(series.len().saturating_sub(1)..series.len())
+        else { return };
+        let cur_min = self.price_scale.price_min;
+        let cur_max = self.price_scale.price_max;
+        let cur_range = cur_max - cur_min;
+        if cur_range <= 0.0 || !cur_range.is_finite() {
+            // Degenerate range — fall back to a plain reconcile so the
+            // scale can bootstrap; the growth-only invariant holds only
+            // when the current range is a real interval.
+            self.calc_auto_scale(series);
+            return;
+        }
+        // 2% of pane height, converted from pixels back to price units.
+        const FOCUS_Y_GUARD_RATIO: f64 = 0.02;
+        let price_per_px = cur_range / self.viewport.chart_height;
+        let guard_price = FOCUS_Y_GUARD_RATIO * self.viewport.chart_height * price_per_px;
+        // Grow-only: last bar's high wants `>= guard_price` room above it,
+        // low wants the same below it. `price_min` moves DOWN, `price_max`
+        // moves UP, never the other direction.
+        let want_max = last_high + guard_price;
+        let want_min = last_low - guard_price;
+        if want_max > cur_max {
+            self.price_scale.price_max = want_max;
+        }
+        if want_min < cur_min {
+            self.price_scale.price_min = want_min;
+        }
     }
 
     /// Consume the `needs_snap_after_backfill` one-shot flag.
