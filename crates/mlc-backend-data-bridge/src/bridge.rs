@@ -1904,8 +1904,9 @@ impl DataBridge {
 
     /// Cancel the CVD overlay subscription for an instrument.
     ///
-    /// Called from the ToggleCvdOverlay handler when the user turns the
-    /// sub-pane off. No-op when no CVD sub is live.
+    /// Called when the last CVD indicator instance for an instrument is
+    /// removed (`ChartApp::unsubscribe_cvd_line_if_last`). No-op when no
+    /// CVD sub is live.
     pub fn unsubscribe_cvd_line(
         &self,
         exchange_id: ExchangeId,

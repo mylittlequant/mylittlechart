@@ -134,13 +134,6 @@ pub struct ChartContainer {
     /// (Per-window display gate; storage lives on the bubble — Phase X0.)
     pub funding_show: bool,
 
-    /// When `true` the CVD (Cumulative Volume Delta) sub-pane is rendered
-    /// below the main chart. Demoted from a full-pane chart_type to a
-    /// subpane overlay (2026-07-04 taxonomy fix) — mirrors `oi_show`/
-    /// `funding_show` exactly. (Per-window display gate; storage lives on
-    /// the bubble — `bubble.cvd_line`.)
-    pub cvd_show: bool,
-
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom). PRIVATE — single-writer: all mutation
     /// goes through the intent methods below (`pan`, `zoom_at`,
@@ -446,7 +439,6 @@ impl ChartContainer {
             vp_show: false,
             oi_show: false,
             funding_show: false,
-            cvd_show: false,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -1027,7 +1019,6 @@ impl ChartContainer {
             vp_show: self.vp_show,
             oi_show: self.oi_show,
             funding_show: self.funding_show,
-            cvd_show: self.cvd_show,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

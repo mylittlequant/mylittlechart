@@ -334,8 +334,8 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::Separator,
         // ── Orderflow / profile visualizations ───────────────────────────────
-        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a subpane
-        // overlay toggled via `ToggleCvdOverlay`, not a chart_type.
+        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a real
+        // compute-catalog indicator instance, not a chart_type.
         DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
             .with_icon(ToolbarIconId::new("Histogram")),
         DropdownItemDef::Separator,

@@ -230,10 +230,6 @@ pub struct ChartRenderState<'a> {
     pub pnf_columns: Option<&'a [crate::types::PnfColumn]>,
     /// Kagi segment data.
     pub kagi_segments: Option<&'a [crate::types::KagiSegment]>,
-    /// Cumulative Volume Delta line samples (used by both the standalone
-    /// CVD chart type and the CVD overlay on other chart types when
-    /// enabled).
-    pub cvd_line: Option<&'a [crate::types::CvdSample]>,
     /// TPO Market Profile session snapshots — typically a small ring
     /// (current session + N closed sessions).
     pub tpo_sessions: Option<&'a [crate::types::TpoSession]>,
@@ -295,10 +291,12 @@ impl<'a> ChartRenderState<'a> {
 
     /// True when there is ANY series data to paint — either kline `bars`, or
     /// a populated own-slot for a chart type that renders from a derived
-    /// series (footprint / renko / PnF / Kagi / three-line-break / TPO / CVD
-    /// / DOM heatmap / liquidation heatmap). The kline-loading skeleton gate
+    /// series (footprint / renko / PnF / Kagi / three-line-break / TPO /
+    /// DOM heatmap / liquidation heatmap). The kline-loading skeleton gate
     /// must NOT blank these chart types just because klines haven't landed
-    /// yet — their primary data lives in the own-slot, not in `bars`.
+    /// yet — their primary data lives in the own-slot, not in `bars`. CVD
+    /// is not in this list — it renders through the normal indicator
+    /// sub-pane system, not `ChartRenderState`.
     pub fn has_any_series_data(&self) -> bool {
         !self.bars.is_empty()
             || self.footprint_bars.is_some_and(|s| !s.is_empty())
@@ -307,7 +305,6 @@ impl<'a> ChartRenderState<'a> {
             || self.kagi_segments.is_some_and(|s| !s.is_empty())
             || self.three_line_break.is_some_and(|s| !s.is_empty())
             || self.tpo_sessions.is_some_and(|s| !s.is_empty())
-            || self.cvd_line.is_some_and(|s| !s.is_empty())
             || self.dom_heatmap_ref.is_some()
             || self.liq_heatmap_ref.is_some()
     }

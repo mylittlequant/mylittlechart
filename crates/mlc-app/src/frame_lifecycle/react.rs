@@ -989,14 +989,32 @@ impl ChartApp {
             // ── CVD (demoted from chart_type — 2026-07-04 taxonomy fix) ────────
             //
             // `bubble.append_cvd` already ran upstream (`BackendCore::tick_writers`)
-            // before this event fires — this arm exists only because
-            // `BubbleEvent` match is exhaustive. Unlike the derived-chart-type
-            // arm above, CVD needs no `pending_symbol_load`/`consume_cold_snap`/
-            // `set_bar_count` bookkeeping of its own: its viewport now borrows
-            // kline bookkeeping (same as OI/Funding), which the kline
-            // `BarUpdate` path already drives independently for every
-            // candle-family window.
-            BubbleEvent::CvdSampleAppended { .. } => {}
+            // before this event fires. CVD needs no `pending_symbol_load`/
+            // `consume_cold_snap`/`set_bar_count` bookkeeping of its own: its
+            // viewport borrows kline bookkeeping (same as OI/Funding), which
+            // the kline `BarUpdate` path already drives independently for
+            // every candle-family window.
+            //
+            // What this arm DOES need to drive: the CVD indicator instance
+            // (real compute-catalog "CVD", mli `BarIndicatorId::Cvd`) reads
+            // its delta feed from `IndicatorsMut::recalc_bubble`'s
+            // bubble-scoped delta builder (footprint_bars preferred,
+            // cvd_line fallback) — a fresh sample just landed on `cvd_line`,
+            // so the sub-pane must recalc or it never advances past the
+            // last footprint-derived value.
+            BubbleEvent::CvdSampleAppended { bid, .. } => {
+                match self.core.indicators().recalc_mode() {
+                    RecalcMode::PerTick => {
+                        let bars = self.core.bubbles().bars(*bid).to_vec();
+                        self.core.indicators_mut().recalc_bubble(*bid, &bars);
+                    }
+                    RecalcMode::PerFrame | RecalcMode::PerBar => {
+                        if let Some(sym) = self.core.bubbles().symbol(*bid) {
+                            self.core.indicators_mut().mark_dirty(sym);
+                        }
+                    }
+                }
+            }
 
             // ── OI / Funding pass-throughs ─────────────────────────────────────
             BubbleEvent::OiUpdatePassthrough { exchange_id: _, account_type, symbol, point } => {

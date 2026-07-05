@@ -534,17 +534,94 @@ impl<'a> IndicatorsMut<'a> {
         self.mgr.pick_overlay_color(type_id, bid.0)
     }
 
-    /// Calculate values for a single instance.
+    /// Calculate values for a single instance. Builds the real per-bar
+    /// (buy_volume, sell_volume) delta series (if the instance's bubble has
+    /// footprint or CVD-line data) so delta-aware variants (CVD,
+    /// VolumeDelta) get real data instead of freezing.
     pub fn calculate(&mut self, id: u64, bars: &[mlc_core::Bar]) {
-        self.mgr.calculate(id, bars);
+        let bid = self.mgr.get_instance(id).and_then(|inst| inst.bubble_id).map(BubbleId);
+        let deltas = bid.and_then(|b| self.build_deltas_for_bubble(b, bars));
+        self.mgr.calculate_with_deltas(id, bars, deltas.as_deref());
     }
 
     /// Recalculate every instance bound to `bid`. Collapses the legacy
     /// `calculate_for_bubble`/`calculate_all_for_bubble`/`_window` alias
     /// family — this always goes through the incremental-aware path
     /// (`calculate_for_bubble`).
+    ///
+    /// Builds the real per-bar (buy_volume, sell_volume) delta series from
+    /// the bubble's footprint bars (preferred, real server-side per-level
+    /// aggressor volume) or standalone CVD-line samples (fallback), and
+    /// threads it into the compute path for delta-aware indicator variants.
     pub fn recalc_bubble(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) {
-        self.mgr.calculate_for_bubble(bid.0, bars);
+        let deltas = self.build_deltas_for_bubble(bid, bars);
+        self.mgr.calculate_for_bubble(bid.0, bars, deltas.as_deref());
+    }
+
+    /// Build the real per-bar (buy_volume, sell_volume) delta series for
+    /// `bid`, aligned by index to `bars`. Returns `None` when neither
+    /// footprint bars nor a CVD line are available for this bubble (the
+    /// overwhelming majority of bubbles — no allocation in that case).
+    ///
+    /// Priority:
+    /// 1. `footprint_bars` (real, per-price-level aggressor volume already
+    ///    cached server-side) — `FootprintBar.open_time` is milliseconds,
+    ///    `Bar.timestamp` is seconds; bars with no matching footprint bar
+    ///    get `(0.0, 0.0)`.
+    /// 2. `cvd_line` (real running cumulative delta, independent of
+    ///    footprint mode) — per-bar delta = `cvd_at_or_before(bar_end) -
+    ///    cvd_at_or_before(prev_bar_end)`, encoded as signed
+    ///    `(delta.max(0.0), (-delta).max(0.0))` so `buy - sell == delta`.
+    fn build_deltas_for_bubble(&self, bid: BubbleId, bars: &[mlc_core::Bar]) -> Option<Vec<(f64, f64)>> {
+        if bars.is_empty() {
+            return None;
+        }
+
+        if let Some(fp_bars) = self.bubbles.footprint_bars(bid) {
+            if !fp_bars.is_empty() {
+                let mut by_ts_sec: std::collections::HashMap<i64, (f64, f64)> =
+                    std::collections::HashMap::with_capacity(fp_bars.len());
+                for fb in fp_bars {
+                    let (buy, sell) = fb.levels.iter()
+                        .fold((0.0_f64, 0.0_f64), |(b, s), l| (b + l.buy_vol, s + l.sell_vol));
+                    by_ts_sec.insert(fb.open_time / 1000, (buy, sell));
+                }
+                return Some(
+                    bars.iter()
+                        .map(|b| by_ts_sec.get(&b.timestamp).copied().unwrap_or((0.0, 0.0)))
+                        .collect(),
+                );
+            }
+        }
+
+        if let Some(cvd) = self.bubbles.cvd_line(bid) {
+            if !cvd.is_empty() {
+                // cvd_at_or_before(ts_ms): last sample with ts_ms <= the
+                // given bound. Samples are append-ordered (ascending ts_ms).
+                let cvd_at_or_before = |bound_ms: i64| -> f64 {
+                    cvd.iter()
+                        .rev()
+                        .find(|s| s.ts_ms <= bound_ms)
+                        .map(|s| s.value)
+                        .unwrap_or(0.0)
+                };
+
+                let mut out = Vec::with_capacity(bars.len());
+                let mut prev_cvd = cvd_at_or_before(bars[0].timestamp * 1000 - 1);
+                for i in 0..bars.len() {
+                    // bar_end = next bar's start (exclusive), or i64::MAX
+                    // for the last bar (= "as of the latest known sample").
+                    let bar_end_ms = bars.get(i + 1).map(|b| b.timestamp * 1000).unwrap_or(i64::MAX);
+                    let cur_cvd = cvd_at_or_before(bar_end_ms);
+                    let delta = cur_cvd - prev_cvd;
+                    out.push((delta.max(0.0), (-delta).max(0.0)));
+                    prev_cvd = cur_cvd;
+                }
+                return Some(out);
+            }
+        }
+
+        None
     }
 
     /// Calculate the Y-axis range for a sub-pane instance in the visible bar range.

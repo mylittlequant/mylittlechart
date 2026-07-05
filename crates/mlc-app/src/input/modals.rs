@@ -1145,6 +1145,13 @@ impl ChartApp {
                             if let (Some(b), Some(bars)) = (bid, bars_opt) {
                                 self.core.indicators_mut().recalc_bubble(b, &bars);
                             }
+                            // CVD instance just added — ensure the real
+                            // aggressor-CVD subscription is live (unless the
+                            // window is a footprint chart, which already has
+                            // real per-bar buy/sell from `footprint_bars`).
+                            if type_id_str.eq_ignore_ascii_case("cvd") {
+                                self.subscribe_cvd_line_for_indicator_add(active_container_id);
+                            }
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
                             self.sidebar_data_dirty = true;

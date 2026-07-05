@@ -20,7 +20,7 @@ use mlc_backend_indicator_engine::managers::indicator_bridge::IndicatorBridge;
 use mlc_backend_indicator_engine::managers::indicator_calculator::IndicatorCalculator;
 use mlc_backend_indicator_engine::managers::indicator_manager::{
     ComputeCache, HistogramStyle, IndicatorCategory, IndicatorDefinition, IndicatorInstance,
-    IndicatorOutput, IndicatorOutputType, IndicatorParamType, IndicatorValue, RecalcMode,
+    IndicatorOutputType, IndicatorParamType, IndicatorValue, RecalcMode,
 };
 
 /// Manages indicator definitions and instances
@@ -111,32 +111,28 @@ impl IndicatorManager {
             self.definitions.insert(definition.type_id.clone(), definition);
         }
 
-        self.register_builtins();
+        self.register_legacy_aliases();
     }
 
-    /// Register built-in indicator overlays that are computed directly from
-    /// bar data without going through the mli catalog.
+    /// Migration aliases for type_ids that used to resolve through a
+    /// bypass path that no longer exists.
     ///
-    /// `builtin_volume` — volume histogram strip pinned to the bottom 18 % of
-    /// the main chart area.  Uses `IndicatorOutputRenderType::Histogram` so
-    /// `draw_volume_overlay` in `render_chart.rs` handles the actual draw.
-    fn register_builtins(&mut self) {
-        let volume_overlay = IndicatorDefinition {
-            type_id: "builtin_volume".to_string(),
-            name: "Volume".to_string(),
-            short_name: "Volume".to_string(),
-            description: "Volume histogram — bars proportional to trade volume, pinned to the bottom of the chart.".to_string(),
-            category: IndicatorCategory::Volume,
-            params: vec![],
-            outputs: vec![IndicatorOutput::histogram("volume", "Volume", "#26A69A80")],
-            overlay: true,
-            precision: 0,
-            bounds: None,
-            zero_baseline: true,
-            histogram_style: HistogramStyle::FromBottom,
-            machine_id: None,
-        };
-        self.definitions.insert(volume_overlay.type_id.clone(), volume_overlay);
+    /// `builtin_volume` — pre-cutover hardcoded volume-histogram bypass
+    /// (compute-builtin, `machine_id: None`, copied `bar.volume` directly).
+    /// Removed in favor of the real mli catalog entry `"VOLUME"`
+    /// (`BarIndicatorId::Volume`, lowercased type_id `"volume"`), which
+    /// computes through the normal `IndicatorCalculator` path and renders
+    /// identically (`overlay: true`, single histogram output "volume",
+    /// `HistogramStyle::FromBottom` → `draw_volume_overlay`). Persisted
+    /// instances with type_id "builtin_volume" (old presets/snapshots) must
+    /// keep resolving — `IndicatorInstance::new` copies `type_id` from the
+    /// definition's OWN field, not the lookup key, so any instance created
+    /// via this alias normalizes to `type_id: "volume"` immediately. Hard
+    /// cutover — no parallel builtin compute path remains.
+    fn register_legacy_aliases(&mut self) {
+        if let Some(volume_def) = self.definitions.get("volume").cloned() {
+            self.definitions.insert("builtin_volume".to_string(), volume_def);
+        }
     }
 
     /// Return the total number of active indicator instances.
@@ -502,7 +498,17 @@ impl IndicatorManager {
     /// Also generates signals if signals_enabled is true.
     ///
     /// Accepts `mlc_core::Bar` (which has `timestamp`) and converts internally.
+    ///
+    /// `deltas`, when present, must be the same length/order as `bars` —
+    /// see `IndicatorCalculator::calculate_with_id` for the contract.
     pub fn calculate(&mut self, id: u64, bars: &[mlc_core::Bar]) {
+        self.calculate_with_deltas(id, bars, None);
+    }
+
+    /// Same as [`Self::calculate`], but threads a real per-bar
+    /// (buy_volume, sell_volume) delta series into the compute path for
+    /// delta-aware indicator variants (CVD, VolumeDelta).
+    pub fn calculate_with_deltas(&mut self, id: u64, bars: &[mlc_core::Bar], deltas: Option<&[(f64, f64)]>) {
         // Convert mlc_core::Bar to indicators Bar
         let bars: Vec<mlc_backend_indicator_engine::Bar> = bars.iter().map(|b| mlc_backend_indicator_engine::Bar {
             time: b.timestamp,
@@ -536,7 +542,7 @@ impl IndicatorManager {
         if let Some(indicator_id) = machine_id {
             if signals_enabled {
                 // Calculate with signals
-                if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &instance.params, bars) {
+                if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &instance.params, bars, deltas) {
                     for (output_name, output_values) in result.values {
                         instance.set_values(&output_name, output_values);
                     }
@@ -544,7 +550,7 @@ impl IndicatorManager {
                 }
             } else {
                 // Calculate without signals (faster)
-                if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &instance.params, bars) {
+                if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &instance.params, bars, deltas) {
                     for (output_name, output_values) in values {
                         instance.set_values(&output_name, output_values);
                     }
@@ -558,11 +564,11 @@ impl IndicatorManager {
     /// Each indicator computation is independent (reads params, writes values),
     /// so all instances can be computed concurrently on the rayon thread pool.
     /// Results are written back sequentially after the parallel phase.
-    pub fn calculate_all_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
+    ///
+    /// `deltas`, when present, must be the same length/order as `bars` —
+    /// see `IndicatorCalculator::calculate_with_id` for the contract.
+    pub fn calculate_all_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar], deltas: Option<&[(f64, f64)]>) {
         use rayon::prelude::*;
-
-        // Built-ins are handled separately (direct bar-data copy, no mli catalog).
-        self.calculate_builtins_for_bubble(bubble_id, bars);
 
         let ids: Vec<u64> = self
             .by_bubble_id
@@ -604,10 +610,10 @@ impl IndicatorManager {
                 let bars: &[mlc_backend_indicator_engine::Bar] = &converted_bars;
                 if let Some(indicator_id) = machine_id {
                     if signals_enabled {
-                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars) {
+                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars, deltas) {
                             return (id, Some(result.values), result.signals);
                         }
-                    } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars) {
+                    } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars, deltas) {
                         return (id, Some(values), Vec::new());
                     }
                 }
@@ -630,34 +636,6 @@ impl IndicatorManager {
         }
     }
 
-    /// Compute built-in indicators (those with `machine_id == None`) for a
-    /// bubble.  Currently the only built-in is `builtin_volume`, which copies
-    /// `bar.volume` directly into its output Vec — no mli catalog needed.
-    ///
-    /// Called from both `calculate_all_for_bubble` and `calculate_for_bubble`
-    /// so that built-ins always run regardless of which recalc path is active.
-    fn calculate_builtins_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
-        let ids: Vec<u64> = self
-            .by_bubble_id
-            .get(&bubble_id)
-            .cloned()
-            .unwrap_or_default();
-
-        for id in ids {
-            let type_id = match self.instances.get(&id) {
-                Some(inst) => inst.type_id.clone(),
-                None => continue,
-            };
-
-            if type_id == "builtin_volume" {
-                let volumes: Vec<f64> = bars.iter().map(|b| b.volume).collect();
-                if let Some(inst) = self.instances.get_mut(&id) {
-                    inst.set_values("volume", volumes);
-                }
-            }
-        }
-    }
-
     /// Calculate only the instances for a symbol that belong to a specific window.
     ///
     /// Uses an **incremental path** (O(1) per indicator) when:
@@ -671,11 +649,12 @@ impl IndicatorManager {
     ///
     /// Instances whose `bubble_id` is `None` (unscoped / legacy) are skipped;
     /// they should be handled by `calculate_all_for_bubble(0, …)` when appropriate.
-    pub fn calculate_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar]) {
+    ///
+    /// `deltas`, when present, must be the same length/order as `bars` —
+    /// see `IndicatorCalculator::calculate_with_id` for the contract. Applies
+    /// to both the full-recalc and incremental paths below.
+    pub fn calculate_for_bubble(&mut self, bubble_id: u64, bars: &[mlc_core::Bar], deltas: Option<&[(f64, f64)]>) {
         use rayon::prelude::*;
-
-        // Built-ins are handled separately (direct bar-data copy, no mli catalog).
-        self.calculate_builtins_for_bubble(bubble_id, bars);
 
         let ids: Vec<u64> = self
             .by_bubble_id
@@ -696,6 +675,9 @@ impl IndicatorManager {
             close: b.close,
             volume: b.volume,
         }).collect();
+
+        // Owned copy so it can be shared into the rayon closure (Send bound).
+        let owned_deltas: Option<Vec<(f64, f64)>> = deltas.map(|d| d.to_vec());
 
         let current_bar_count = converted_bars.len();
 
@@ -756,12 +738,13 @@ impl IndicatorManager {
                 .into_par_iter()
                 .map(|(id, machine_id, signals_enabled, params)| {
                     let bars: &[mlc_backend_indicator_engine::Bar] = &converted_bars;
+                    let deltas = owned_deltas.as_deref();
                     if let Some(indicator_id) = machine_id {
                         if signals_enabled {
-                            if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars) {
+                            if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params, bars, deltas) {
                                 return (id, Some(result.values), result.signals);
                             }
-                        } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars) {
+                        } else if let Some(values) = IndicatorCalculator::calculate_with_id(indicator_id, &params, bars, deltas) {
                             return (id, Some(values), Vec::new());
                         }
                     }
@@ -801,7 +784,8 @@ impl IndicatorManager {
                                 // About to feed the last bar — save N-1 state.
                                 checkpoint = Some(fresh_instance.clone());
                             }
-                            IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
+                            let delta = owned_deltas.as_ref().and_then(|d| d.get(i)).copied();
+                            IndicatorCalculator::feed_bar_with_delta(&mut fresh_instance, bar, delta);
                         }
                         let fingerprint = IndicatorCalculator::params_fingerprint(indicator_id, &params_ref);
                         let last_bar = converted_bars.last().cloned();
@@ -884,7 +868,10 @@ impl IndicatorManager {
                 if let Some(cp) = &cache.checkpoint {
                     // Clone the N-1 checkpoint and feed the updated last bar.
                     let mut working = cp.clone();
-                    let value = IndicatorCalculator::feed_bar(&mut working, &current_bar);
+                    let last_delta = owned_deltas.as_ref()
+                        .and_then(|d| d.get(current_bar_count.saturating_sub(1)))
+                        .copied();
+                    let value = IndicatorCalculator::feed_bar_with_delta(&mut working, &current_bar, last_delta);
                     let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value);
 
                     // Replace the last value in each output series (not append).
@@ -925,14 +912,15 @@ impl IndicatorManager {
 
                 if let Some(indicator_id) = machine_id_opt {
                     let bars_slice: &[mlc_backend_indicator_engine::Bar] = &converted_bars;
+                    let deltas = owned_deltas.as_deref();
                     let (values_opt, signals) = if signals_enabled {
-                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params_clone, bars_slice) {
+                        if let Some(result) = IndicatorCalculator::calculate_with_signals(indicator_id, &params_clone, bars_slice, deltas) {
                             (Some(result.values), result.signals)
                         } else {
                             (None, Vec::new())
                         }
                     } else {
-                        let v = IndicatorCalculator::calculate_with_id(indicator_id, &params_clone, bars_slice);
+                        let v = IndicatorCalculator::calculate_with_id(indicator_id, &params_clone, bars_slice, deltas);
                         (v, Vec::new())
                     };
 
@@ -955,7 +943,8 @@ impl IndicatorManager {
                             if i + 1 == bar_count {
                                 checkpoint = Some(fresh_instance.clone());
                             }
-                            IndicatorCalculator::feed_bar(&mut fresh_instance, bar);
+                            let delta = owned_deltas.as_ref().and_then(|d| d.get(i)).copied();
+                            IndicatorCalculator::feed_bar_with_delta(&mut fresh_instance, bar, delta);
                         }
                         let signal_engine = if signals_enabled {
                             mlc_backend_indicator_engine::signals::rules::default_profile(indicator_id)
@@ -1005,7 +994,10 @@ impl IndicatorManager {
             // Save current instance (N-1) as the checkpoint before feeding the new bar.
             cache.checkpoint = Some(cache.instance.clone());
 
-            let value = IndicatorCalculator::feed_bar(&mut cache.instance, &current_bar);
+            let last_delta = owned_deltas.as_ref()
+                .and_then(|d| d.get(current_bar_count.saturating_sub(1)))
+                .copied();
+            let value = IndicatorCalculator::feed_bar_with_delta(&mut cache.instance, &current_bar, last_delta);
             let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value.clone());
 
             // Process signals on confirmed bar close.
@@ -1589,8 +1581,12 @@ impl IndicatorManager {
             }
         }
 
-        // Special case: volume indicator color params (including builtin_volume overlay)
-        if inst.type_id == "volume" || inst.type_id == "vol" || inst.type_id == "builtin_volume" {
+        // Special case: volume indicator color params. "builtin_volume" is
+        // not reachable as an instance type_id (IndicatorInstance::new
+        // always copies type_id from the definition's own field, which is
+        // "volume" even through the migration alias — see
+        // `register_legacy_aliases`), so it is deliberately not matched here.
+        if inst.type_id == "volume" || inst.type_id == "vol" {
             color_params.entry("up_color".to_string())
                 .or_insert_with(|| "#26A69A80".to_string());
             color_params.entry("down_color".to_string())

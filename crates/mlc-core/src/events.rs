@@ -137,10 +137,6 @@ pub enum ChartOutEvent {
     /// Toggle the Funding Rate strip at the bottom of the active chart.
     ToggleFundingRateStrip,
 
-    // === CVD sub-pane (demoted from chart_type — 2026-07-04 taxonomy fix) ===
-    /// Toggle the Cumulative Volume Delta sub-pane on the active chart.
-    ToggleCvdOverlay,
-
     // === Theme (app-global) ===
     SetTheme(&'static str),
     SetStyle(&'static str),

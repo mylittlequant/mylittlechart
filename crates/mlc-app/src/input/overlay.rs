@@ -5,6 +5,70 @@ use crate::ChartApp;
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 
 impl ChartApp {
+    /// After a CVD indicator instance was just added to `bid` (created on
+    /// `chart_id`'s window), ensure the real aggressor-CVD subscription
+    /// (`Stream::CvdLine`) is live for the instrument — unless the window
+    /// is a footprint chart, which already carries real per-bar buy/sell
+    /// in `bubble.footprint_bars` (Phase 1's delta builder prefers that
+    /// source; a second CvdLine subscription would be redundant).
+    ///
+    /// No-op if `chart_id` is `None`, the chart has no resolvable
+    /// instrument, or the connector for its exchange is disabled.
+    pub(super) fn subscribe_cvd_line_for_indicator_add(
+        &mut self,
+        chart_id: Option<mlc_core::state::ChartId>,
+    ) {
+        let Some(cid) = chart_id else { return };
+        if self.chart_type_for_chart(cid) == Some("footprint") {
+            return;
+        }
+        let Some(symbol) = self.symbol_for_chart(cid) else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let Some(at) = self.account_type_for_chart(cid) else { return };
+        let exchange = self.exchange_for_chart(cid).unwrap_or_default();
+        let exchange_id = digdigdig3::ExchangeId::from_str(&exchange)
+            .unwrap_or(self.active_exchange);
+        let eid_str = exchange_id.as_str();
+        let connector_enabled = self.sidebar_state.connector_enabled
+            .get(eid_str).copied().unwrap_or(true);
+        if !connector_enabled {
+            return;
+        }
+        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+        self.core.bridge.request_cvd_line(exchange_id, &symbol, at_dig3);
+    }
+
+    /// After the last CVD indicator instance for an instrument was removed
+    /// (`bid` no longer has any `type_id == "cvd"` instance), cancel the
+    /// real aggressor-CVD subscription and clear the cached samples.
+    ///
+    /// Reads `bid`'s own resolvable instrument directly (does not depend on
+    /// which window triggered the delete) so peer-instance cleanup — see
+    /// `delete_indicator_instance`'s `peer_instances` sweep — always lands
+    /// on the correct bubble's data plane.
+    pub(super) fn unsubscribe_cvd_line_if_last(&mut self, bid: mlc_core::ids::BubbleId) {
+        let still_has_cvd = self.core.indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .any(|inst| inst.type_id == "cvd");
+        if still_has_cvd {
+            return;
+        }
+        let Some(symbol) = self.core.bubbles().symbol(bid).map(String::from) else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let Some(at) = self.core.bubbles().account_type_typed(bid) else { return };
+        let exchange = self.core.bubbles().exchange(bid).map(String::from).unwrap_or_default();
+        let exchange_id = digdigdig3::ExchangeId::from_str(&exchange)
+            .unwrap_or(self.active_exchange);
+        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+        self.core.bridge.unsubscribe_cvd_line(exchange_id, &symbol, at_dig3);
+        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_cvd());
+    }
+
     /// Handle clicks on widgets registered with the "ind_overlay:" prefix.
     pub(super) fn handle_ind_overlay_click(&mut self, rest: &str, _x: f64, _y: f64) {
         self.handle_indicator_overlay_click(rest);
@@ -786,9 +850,11 @@ impl ChartApp {
 
         // Symmetric guard for the add-side intercept in modals.rs: an
         // opaque host-driven overlay (Volume Profile / OI Delta / Funding
-        // Rate / CVD) never becomes a real `IndicatorInstance`, so this
-        // branch is not reachable in the current UI flow — kept for
-        // correctness if a caller ever passes an `overlay_*` backing id.
+        // Rate) never becomes a real `IndicatorInstance`, so this branch is
+        // not reachable in the current UI flow — kept for correctness if a
+        // caller ever passes an `overlay_*` backing id. CVD is NOT one of
+        // these — it is a real `IndicatorInstance` and is removed below
+        // like any other indicator.
         if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
             self.process_chart_out_event(event);
             return;
@@ -854,6 +920,15 @@ impl ChartApp {
         for inst_id in &all_to_remove {
             self.core.indicators_mut().remove(*inst_id);
             self.core.alerts_mut().clear_for_indicator(*inst_id);
+        }
+
+        // Last CVD instance for this bubble just went away — cancel the
+        // real aggressor-CVD subscription so it stops writing into a bubble
+        // nothing renders from anymore.
+        if type_id == "cvd" {
+            if let Some(bid) = active_bubble_id {
+                self.unsubscribe_cvd_line_if_last(mlc_core::ids::BubbleId(bid));
+            }
         }
 
         // Remove stale entries from auto_bubble.pre_tag_indicator_ids for every window

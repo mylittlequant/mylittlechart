@@ -349,8 +349,8 @@ impl ChartApp {
                     "pnf"           => Some("pnf"),
                     "kagi"          => Some("kagi"),
                     // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a
-                    // subpane overlay toggled via ToggleCvdOverlay, not a
-                    // chart_type routed through ChangeChartType.
+                    // real compute-catalog indicator instance (type_id
+                    // "cvd"), not a chart_type routed through ChangeChartType.
                     "tpo"           => Some("tpo"),
                     "three_line_break" => Some("three_line_break"),
                     // ── López de Prado quant bars (C9) ────────────────────────
@@ -651,9 +651,10 @@ impl ChartApp {
                                             self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
                                         }
                                         // "cvd" removed (2026-07-04 taxonomy fix) —
-                                        // CVD subscribe now lives in the
-                                        // ToggleCvdOverlay handler below, mirroring
-                                        // ToggleOpenInterestOverlay/ToggleFundingRateStrip.
+                                        // CVD subscribe now happens when a CVD
+                                        // indicator instance is added (indicator
+                                        // picker / default-companion path), see
+                                        // `ChartApp::subscribe_cvd_line_for_indicator_add`.
                                         "tpo" => {
                                             // Default 30-min letter buckets, Trade-source path (sub-tick precision, fast cold start).
                                             let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
@@ -1183,47 +1184,6 @@ impl ChartApp {
                                     );
                                 } else {
                                     self.core.bridge.unsubscribe_funding_rate(
-                                        self.active_exchange, &symbol, at,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                state_mutated = true;
-            }
-            // === CVD sub-pane (demoted from chart_type — 2026-07-04 taxonomy fix) ===
-            ChartOutEvent::ToggleCvdOverlay => {
-                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                if let Some(cid) = cid_opt {
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
-                            let connector_enabled = self.sidebar_state.connector_enabled
-                                .get(eid_str).copied().unwrap_or(true);
-                            if connector_enabled {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let cvd_show_now = {
-                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                        w.cvd_show = !w.cvd_show;
-                                        eprintln!("[ChartApp] cvd_show toggled -> {}", w.cvd_show);
-                                        w.cvd_show
-                                    } else { false }
-                                };
-                                // cvd_line storage lives on the bubble, like oi_delta/funding_rate.
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_cvd());
-                                }
-                                if cvd_show_now {
-                                    self.core.bridge.request_cvd_line(
-                                        self.active_exchange, &symbol, at,
-                                    );
-                                } else {
-                                    // Toggle-off: cancel the overlay sub so it stops
-                                    // forwarding events into the just-cleared bubble.
-                                    self.core.bridge.unsubscribe_cvd_line(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }
@@ -2475,22 +2435,32 @@ impl ChartApp {
     ///
     /// Owner rule (2026-07-05): each chart_type has one canonical companion
     /// indicator that opens alongside the base series (footprint → CVD;
-    /// klines/candles → currently none, reserved for future Volume). Add if
-    /// missing, remove if the chart_type no longer wants it. Idempotent —
-    /// safe to call on every ChangeChartType, including no-op switches.
+    /// kline-render family → Volume). Add if missing, remove if the
+    /// chart_type no longer wants it. Idempotent — safe to call on every
+    /// ChangeChartType, including no-op switches.
     ///
-    /// Uses the real mli catalog id (`CVD`, `Vdelta`, ...), so the sub-pane
-    /// is populated by the same pipeline that drives MACD/RSI — no bespoke
-    /// subscription, no bespoke renderer.
+    /// Uses the real mli catalog id (`CVD`, `VOLUME`, ...), so the sub-pane
+    /// / overlay is populated by the same pipeline that drives MACD/RSI —
+    /// no bespoke subscription, no bespoke renderer.
     pub(crate) fn sync_default_indicators_for_chart_type(
         &mut self,
         cid: mlc_core::ids::ChartId,
         chart_type: &str,
     ) {
         // Companion indicator per chart_type. Extend the table when adding
-        // more auto-pairs (klines → Volume, tpo → VolumeProfile, ...).
+        // more auto-pairs (tpo → VolumeProfile, ...).
         let wanted: &[&str] = match chart_type {
             "footprint" => &["CVD"],
+            // Kline-render family (candles + every OHLC-derived line/area
+            // style that draws straight off `bubble.bars`, per the
+            // `ChangeChartType` match arm above) — NOT the derived-seed
+            // family (range_bar/tick_bar/volume_bar/dollar_bar family/
+            // renko/pnf/kagi/three_line_break/footprint/tpo/heatmaps),
+            // which already carry their own volume-shaped visualization or
+            // no kline backdrop to pin a bottom histogram against.
+            "candles" | "hollow_candles" | "heikin_ashi" | "bars"
+            | "line" | "step_line" | "line_markers" | "area" | "hlc_area"
+            | "baseline" | "histogram" | "columns" => &["VOLUME"],
             _ => &[],
         };
 
@@ -2539,8 +2509,12 @@ impl ChartApp {
         // Set of default-companion type_ids across ALL chart_types — used
         // to decide "is this instance a default we own?" so we never touch
         // user-added indicators of the same type_id. Deliberately narrow:
-        // only ids we ever auto-add belong here.
-        const AUTO_MANAGED: &[&str] = &["cvd"];
+        // only ids we ever auto-add belong here. "builtin_volume" is not
+        // listed — no live `IndicatorInstance` can ever carry that type_id:
+        // `IndicatorManager::create_instance{,_with_id}` always normalizes
+        // to the DEFINITION's own `type_id` field ("volume"), even when
+        // looked up through the migration alias (`register_legacy_aliases`).
+        const AUTO_MANAGED: &[&str] = &["cvd", "volume"];
         let wanted_lower: Vec<String> = wanted.iter().map(|s| s.to_lowercase()).collect();
         let to_remove: Vec<u64> = self
             .core

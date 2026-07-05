@@ -69,23 +69,17 @@ const DEFAULT_COLORS: FpColors<'static> = FpColors {
     cell_bg_dim: "rgba(120, 144, 156, 0.04)",
 };
 
-/// Stacked-imbalance + absorption + CVD palette (F1, F2, F5).
+/// Stacked-imbalance + absorption palette (F1, F2).
 struct FpExtraColors<'a> {
     stacked_ask_fill: &'a str,
     stacked_bid_fill: &'a str,
     absorption_fill: &'a str,
-    cvd_up: &'a str,
-    cvd_down: &'a str,
-    cvd_axis: &'a str,
 }
 
 const EXTRA_COLORS: FpExtraColors<'static> = FpExtraColors {
     stacked_ask_fill: "rgba(105, 240, 174, 0.22)",
     stacked_bid_fill: "rgba(255, 82, 82, 0.22)",
     absorption_fill: "rgba(255, 152, 0, 0.16)",
-    cvd_up: "#26a69a",
-    cvd_down: "#ef5350",
-    cvd_axis: "rgba(120, 144, 156, 0.45)",
 };
 
 /// Zoom-out fallback: render every visible footprint bar as a plain OHLC
@@ -167,13 +161,6 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     if start >= end {
         return;
     }
-
-    // CVD is now a first-class indicator that lives in the ChartContainer's
-    // indicator panel (add via "+" → Overlay → CVD). Removed the hand-drawn
-    // in-pane CVD strip that used to eat 28px at the bottom (owner report
-    // 2026-07-05: the manual strip looked out of place vs the real
-    // indicator sub-pane system).
-    let cvd_strip: Option<(f64, f64)> = None;
 
     // First: draw a thin OHLC wick line per bar so price excursion is
     // still readable behind the cluster text.
@@ -398,76 +385,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         start, end, bars_drawn, bars_skipped_empty, tick_size, row_h,
     );
 
-    // F5: CVD sub-strip across the visible window.
-    if let Some((strip_y, strip_h)) = cvd_strip {
-        draw_cvd_strip(ctx, state, bars, start, end, bar_w, strip_y, strip_h);
-    }
-
     // Reset text alignment so subsequent renderers do not inherit our
     // RIGHT/LEFT alignment.
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_line_dash(&[]);
-}
-
-/// CVD line drawn into a reserved horizontal strip at the bottom of the
-/// chart area (F5). Auto-scales to min/max of the visible CVD range so
-/// the line uses the full strip vertically. Color flips: green when CVD
-/// is currently rising, red when falling, segment-by-segment.
-fn draw_cvd_strip(
-    ctx: &mut dyn RenderContext,
-    state: &ChartRenderState,
-    bars: &[FootprintBar],
-    start: usize,
-    end: usize,
-    _bar_w: f64,
-    strip_y: f64,
-    strip_h: f64,
-) {
-    let rect = &state.chart_rect;
-    let viewport = state.viewport;
-
-    // Min/max CVD across the visible window.
-    let (mut cvd_min, mut cvd_max) = (f64::INFINITY, f64::NEG_INFINITY);
-    for i in start..end {
-        let v = bars[i].cumulative_delta;
-        if v < cvd_min { cvd_min = v; }
-        if v > cvd_max { cvd_max = v; }
-    }
-    if !cvd_min.is_finite() || !cvd_max.is_finite() { return; }
-    let span = (cvd_max - cvd_min).max(1e-9);
-
-    // Strip background.
-    ctx.set_fill_color("rgba(0, 0, 0, 0.18)");
-    ctx.fill_rect(rect.x, strip_y, rect.width, strip_h);
-
-    // Zero / baseline line.
-    let zero_y = strip_y + strip_h * (1.0 - (-cvd_min / span)).clamp(0.0, 1.0);
-    ctx.set_stroke_color(EXTRA_COLORS.cvd_axis);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(rect.x, zero_y);
-    ctx.line_to(rect.x + rect.width, zero_y);
-    ctx.stroke();
-
-    // Line segments.
-    ctx.set_stroke_width(1.5);
-    let mut last_xy: Option<(f64, f64, f64)> = None;
-    for i in start..end {
-        let bar = &bars[i];
-        let cx = viewport.bar_to_x(i) + rect.x;
-        let y = strip_y + strip_h * (1.0 - (bar.cumulative_delta - cvd_min) / span);
-        if let Some((px, py, prev_v)) = last_xy {
-            let rising = bar.cumulative_delta >= prev_v;
-            let c = if rising { EXTRA_COLORS.cvd_up } else { EXTRA_COLORS.cvd_down };
-            ctx.set_stroke_color(c);
-            ctx.begin_path();
-            ctx.move_to(px, py);
-            ctx.line_to(cx, y);
-            ctx.stroke();
-        }
-        last_xy = Some((cx, y, bar.cumulative_delta));
-    }
 }
 
 /// Draw a thin wick from each bar's low to high so the candle silhouette

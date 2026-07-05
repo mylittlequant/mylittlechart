@@ -37,10 +37,16 @@ impl IndicatorCalculator {
     ///
     /// This is the correct approach - uses typed enum for fast factory access.
     /// Returns a HashMap of output_name -> Vec<f64> for rendering.
+    ///
+    /// `deltas`, when present, must be the same length/order as `bars` —
+    /// `(buy_volume, sell_volume)` per bar. Real-delta-aware variants (CVD,
+    /// VolumeDelta) consume it via `update_bar_with_delta`; every other
+    /// variant falls through to the plain `update_bar` path regardless.
     pub fn calculate_with_id(
         indicator_id: BarIndicatorId,
         params: &HashMap<String, IndicatorValue>,
         bars: &[Bar],
+        deltas: Option<&[(f64, f64)]>,
     ) -> Option<HashMap<String, Vec<f64>>> {
         // Extract periods from params
         let periods = Self::extract_periods(params);
@@ -65,15 +71,27 @@ impl IndicatorCalculator {
         // Calculate values for each bar
         let mut all_values: Vec<ComputeValue> = Vec::with_capacity(bars.len());
 
-        for bar in bars {
-            let value = instance.update_bar(
-                bar.open,
-                bar.high,
-                bar.low,
-                bar.close,
-                bar.volume,
-                Some(bar.time),
-            );
+        for (i, bar) in bars.iter().enumerate() {
+            let value = match deltas.and_then(|d| d.get(i)) {
+                Some(&(buy, sell)) => instance.update_bar_with_delta(
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    buy,
+                    sell,
+                    Some(bar.time),
+                ),
+                None => instance.update_bar(
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    Some(bar.time),
+                ),
+            };
             all_values.push(value);
         }
 
@@ -102,10 +120,13 @@ impl IndicatorCalculator {
     ///
     /// This is the enhanced version that also generates signals using SignalEngine.
     /// Returns CalculationResult with both values and signals.
+    ///
+    /// `deltas` follows the same contract as [`Self::calculate_with_id`].
     pub fn calculate_with_signals(
         indicator_id: BarIndicatorId,
         params: &HashMap<String, IndicatorValue>,
         bars: &[Bar],
+        deltas: Option<&[(f64, f64)]>,
     ) -> Option<CalculationResult> {
         // Extract periods from params
         let periods = Self::extract_periods(params);
@@ -140,14 +161,26 @@ impl IndicatorCalculator {
         let mut all_signals: Vec<Signal> = Vec::new();
 
         for (bar_idx, bar) in bars.iter().enumerate() {
-            let value = instance.update_bar(
-                bar.open,
-                bar.high,
-                bar.low,
-                bar.close,
-                bar.volume,
-                Some(bar.time),
-            );
+            let value = match deltas.and_then(|d| d.get(bar_idx)) {
+                Some(&(buy, sell)) => instance.update_bar_with_delta(
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    buy,
+                    sell,
+                    Some(bar.time),
+                ),
+                None => instance.update_bar(
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                    Some(bar.time),
+                ),
+            };
 
             // Generate signals if engine exists
             if let Some(ref mut engine) = signal_engine {
@@ -295,6 +328,23 @@ impl IndicatorCalculator {
         instance.update_bar(bar.open, bar.high, bar.low, bar.close, bar.volume, Some(bar.time))
     }
 
+    /// Feed one bar plus its real (buy_volume, sell_volume) delta into an
+    /// existing ComputeInstance and return the output value. `delta` follows
+    /// the same contract as [`Self::calculate_with_id`] — `None` falls
+    /// through to the plain [`Self::feed_bar`] path.
+    pub fn feed_bar_with_delta(
+        instance: &mut ComputeInstance,
+        bar: &crate::Bar,
+        delta: Option<(f64, f64)>,
+    ) -> ComputeValue {
+        match delta {
+            Some((buy, sell)) => instance.update_bar_with_delta(
+                bar.open, bar.high, bar.low, bar.close, bar.volume, buy, sell, Some(bar.time),
+            ),
+            None => Self::feed_bar(instance, bar),
+        }
+    }
+
     /// Extract single-bar outputs from a ComputeValue using rendering metadata.
     ///
     /// Returns a HashMap of output_name -> f64.  Falls back to `"value"` key
@@ -413,6 +463,7 @@ mod tests {
             BarIndicatorId::Sma,
             &params,
             &bars,
+            None,
         );
 
         assert!(result.is_some());

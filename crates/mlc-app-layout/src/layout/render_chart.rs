@@ -221,10 +221,10 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         "renko" => draw_renko(ctx, state),
         "pnf" => draw_pnf(ctx, state),
         "kagi" => draw_kagi(ctx, state),
-        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a subpane
-        // overlay (`draw_cvd_overlay`, gated by `cvd_line.is_some()`), not a
-        // full-pane chart_type. `draw_cvd_chart` (the old full-pane renderer)
-        // is unused now but kept in `chart_render/cvd.rs` per task scope.
+        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a real
+        // compute-catalog indicator instance rendered through the normal
+        // sub-pane system, not a full-pane chart_type. The hand-drawn
+        // `chart_render/cvd.rs` renderer was deleted (2026-07-05).
         "tpo" => draw_tpo(ctx, state),
         "three_line_break" => draw_three_line_break(ctx, state),
         "footprint" => draw_footprint(ctx, state),
@@ -3129,7 +3129,6 @@ pub fn render_full_chart_panel(
         three_line_break: data.state.three_line_break,
         pnf_columns: data.state.pnf_columns,
         kagi_segments: data.state.kagi_segments,
-        cvd_line: data.state.cvd_line,
         tpo_sessions: data.state.tpo_sessions,
         ha_cache: data.state.ha_cache,
         vp_overlay: data.state.vp_overlay,
@@ -3150,7 +3149,7 @@ pub fn render_full_chart_panel(
 
     // Loading / error state — when there is no series data yet (neither
     // klines NOR an own-slot for chart types that render from a derived
-    // series — footprint/renko/PnF/Kagi/three-line-break/TPO/CVD/heatmaps),
+    // series — footprint/renko/PnF/Kagi/three-line-break/TPO/heatmaps),
     // draw ONLY the three scale border lines (price scale separator, time
     // scale separator, scale corner separator) so the chart skeleton has the
     // same visible frame as the active path. NO scale fills, NO grid, NO
@@ -3227,13 +3226,12 @@ pub fn render_full_chart_panel(
             draw_funding_rate_strip(ctx, &corrected_state, fr);
         }
 
-        // CVD subpane removed here (owner report 2026-07-05): CVD is a
-        // first-class indicator that lives in the ChartContainer's
-        // indicator panel like every other overlay/indicator. The
-        // window.cvd_show / bubble.cvd_line pipeline stays wired (via
-        // ChartOutEvent::ToggleCvdOverlay + the mli overlay_cvd catalog
-        // entry) so the indicator panel can render it through the normal
-        // sub-pane system, not a hand-drawn strip on top of the chart.
+        // CVD is a first-class indicator instance (mli `BarIndicatorId::
+        // Cvd`, catalog id "CVD") rendered through the normal indicator
+        // sub-pane system (see `render_sub_pane` dispatch) — no hand-drawn
+        // strip here. The data plane (`bubble.cvd_line`, `CvdSampleAppended`)
+        // now exists purely to feed `IndicatorsMut::recalc_bubble`'s delta
+        // builder; the view-plane toggle pipeline was removed 2026-07-05.
 
         // 4. Last-price projection line.
         draw_last_price_line(ctx, &corrected_state);
@@ -3562,7 +3560,6 @@ pub fn render_chart_overlay(
         three_line_break: state.three_line_break,
         pnf_columns: state.pnf_columns,
         kagi_segments: state.kagi_segments,
-        cvd_line: state.cvd_line,
         tpo_sessions: state.tpo_sessions,
         ha_cache: state.ha_cache,
         vp_overlay: state.vp_overlay,

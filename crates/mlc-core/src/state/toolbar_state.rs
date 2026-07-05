@@ -1232,9 +1232,6 @@ impl ChartToolbarState {
                     "oi_toggle"      => vec![ChartOutEvent::ToggleOpenInterestOverlay],
                     "funding_toggle" => vec![ChartOutEvent::ToggleFundingRateStrip],
 
-                    // CVD (demoted from chart_type — 2026-07-04 taxonomy fix)
-                    "cvd_toggle" => vec![ChartOutEvent::ToggleCvdOverlay],
-
                     // Crosshair
                     "crosshair_toggle" => vec![ChartOutEvent::ToggleCrosshair],
                     "ch_normal" => {

@@ -183,19 +183,20 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
 
 /// Map a catalog `type_id` chosen from the unified indicator picker to the
 /// [`mlc_core::events::ChartOutEvent`] Toggle variant that drives it, if it
-/// is one of the four opaque host-driven overlays (Volume Profile / OI Delta
-/// / Funding Rate / CVD). These ids carry the `overlay_` prefix in mli's
+/// is one of the three opaque host-driven overlays (Volume Profile / OI
+/// Delta / Funding Rate). These ids carry the `overlay_` prefix in mli's
 /// catalog (`mylittleindicators::bar_indicators::overlay::overlay_catalog`)
 /// specifically so they can never collide with the real compute-indicator
-/// ids `volume_profile` / `cvd`. Returns `None` for every other catalog id
-/// — callers fall through to the regular `IndicatorManager::add` path.
+/// id `volume_profile`. Returns `None` for every other catalog id — callers
+/// fall through to the regular `IndicatorManager::add` path. CVD is NOT one
+/// of these — it is a real compute-catalog indicator (mli `BarIndicatorId::
+/// Cvd`, catalog id "CVD") that always goes through the regular `add` path.
 pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::ChartOutEvent> {
     use mlc_core::events::ChartOutEvent;
     match type_id {
         "overlay_volume_profile" => Some(ChartOutEvent::ToggleVolumeProfileOverlay),
         "overlay_oi_delta" => Some(ChartOutEvent::ToggleOpenInterestOverlay),
         "overlay_funding_rate" => Some(ChartOutEvent::ToggleFundingRateStrip),
-        "overlay_cvd" => Some(ChartOutEvent::ToggleCvdOverlay),
         _ => None,
     }
 }
@@ -2708,13 +2709,16 @@ impl ChartApp {
                     }
                 }
 
-                // Add the builtin volume histogram overlay to the fresh window.
-                // This is the default-on state for brand-new charts that have no saved preset.
+                // Add the real mli-catalog Volume histogram overlay to the fresh
+                // window. This is the default-on state for brand-new charts that
+                // have no saved preset. "builtin_volume" retired 2026-07-05 —
+                // "VOLUME" (BarIndicatorId::Volume) computes/renders identically
+                // through the normal indicator pipeline.
                 if let Some(chart_id) = active_chart_id {
                     let bid = app.panel_app.panel_grid.containers()
                         .get(&chart_id)
                         .map(|w| w.current_tag_id);
-                    app.core.indicators_mut().add(bid, "builtin_volume");
+                    app.core.indicators_mut().add(bid, "VOLUME");
                 }
 
                 bridge.ensure_connector(exchange_id);
@@ -3485,7 +3489,6 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    cvd_show: window.cvd_show,
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -3583,7 +3586,6 @@ impl ChartApp {
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
-                cvd_show: window.cvd_show,
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
@@ -3858,7 +3860,6 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    cvd_show: window.cvd_show,
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -4470,7 +4471,6 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    cvd_show: window.cvd_show,
                 };
                 single_window_bubble_mgr.render_state_for(
                     window.current_tag_id,

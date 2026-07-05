@@ -341,10 +341,12 @@ impl DataBubble {
     /// `append_footprint`.
     ///
     /// `cvd` is deliberately NOT in this list (2026-07-04 taxonomy fix): CVD
-    /// was demoted from a chart_type to a subpane overlay toggled
-    /// independently of `chart_type` (like `oi_delta`/`funding_rate`, which
-    /// were never in this list either) — its lifecycle is now owned by
-    /// `clear_cvd()` called directly from the `ToggleCvdOverlay` handler.
+    /// was demoted from a chart_type to a real compute-catalog indicator
+    /// instance, independent of `chart_type` (like `oi_delta`/
+    /// `funding_rate`, which were never in this list either) — its
+    /// lifecycle is now owned by `clear_cvd()` called from
+    /// `ChartApp::unsubscribe_cvd_line_if_last` when the last CVD instance
+    /// for the bubble is removed.
     pub fn clear_derived_slots(&mut self, keep: Option<&str>) {
         if keep != Some("renko") { self.clear_renko(); }
         if keep != Some("pnf") { self.clear_pnf(); }
