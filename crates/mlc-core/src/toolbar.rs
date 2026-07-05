@@ -226,24 +226,14 @@ pub fn top_toolbar() -> PanelToolbarDef {
               .with_min_width(56.0)
               .with_tooltip(t_toolbar(TK::TimeframeSelector)),
         ]).with_separator(),
-        // 4. Chart type selector (dropdown with chart type items)
+        // 4. Chart type selector — SAME source as the standalone toolbar
+        // (`chart_type_items()`). This used to be a hardcoded 12-item copy
+        // (render styles only, no derived types) that silently drifted from
+        // the real menu — stale-dup removed 2026-07-05.
         ToolbarSectionDef::new(vec![
-            ToolbarItemDef::dropdown("chart_type_selector", vec![
-                DropdownItemDef::action("candles", "Candles").with_icon(ToolbarIconId::new("Candlestick")),
-                DropdownItemDef::action("hollow_candles", "Hollow Candles").with_icon(ToolbarIconId::new("HollowCandles")),
-                DropdownItemDef::action("heikin_ashi", "Heikin Ashi").with_icon(ToolbarIconId::new("HeikinAshi")),
-                DropdownItemDef::action("bars", "Bars").with_icon(ToolbarIconId::new("BarChart")),
-                DropdownItemDef::Separator,
-                DropdownItemDef::action("line", "Line").with_icon(ToolbarIconId::new("LineChart")),
-                DropdownItemDef::action("step_line", "Step Line").with_icon(ToolbarIconId::new("StepLine")),
-                DropdownItemDef::action("line_markers", "Line with Markers").with_icon(ToolbarIconId::new("LineWithMarkers")),
-                DropdownItemDef::action("area", "Area").with_icon(ToolbarIconId::new("AreaChart")),
-                DropdownItemDef::Separator,
-                DropdownItemDef::action("hlc_area", "HLC Area").with_icon(ToolbarIconId::new("HlcArea")),
-                DropdownItemDef::action("baseline", "Baseline").with_icon(ToolbarIconId::new("Baseline")),
-                DropdownItemDef::action("columns", "Columns").with_icon(ToolbarIconId::new("Columns")),
-            ]).with_icon(ToolbarIconId::new("Candlestick"))
-              .with_tooltip(t_toolbar(TK::ChartType)),
+            ToolbarItemDef::dropdown("chart_type_selector", chart_type_items())
+                .with_icon(ToolbarIconId::new("Candlestick"))
+                .with_tooltip(t_toolbar(TK::ChartType)),
         ]).with_separator(),
         // 5. Indicators
         ToolbarSectionDef::new(vec![
@@ -292,39 +282,50 @@ pub fn top_toolbar() -> PanelToolbarDef {
 /// Tick is a TIMEFRAME (TF selector), not a chart type.
 fn chart_type_items() -> Vec<DropdownItemDef> {
     let lang = current_language();
+    // Grouped by data source / render character (owner spec 2026-07-05):
+    // candle styles → line styles → fills+columns → trade-aggregation bars →
+    // price-action transforms → orderflow. Headers render as non-clickable
+    // section titles (`DropdownItem::header`). "histogram" removed — it
+    // rendered VOLUME, not price (the VOLUME indicator owns that visual).
+    // "cvd" removed 2026-07-04 — real compute-catalog indicator now.
     vec![
-        // ── Render-style items (visual only, do not re-subscribe) ────────────
+        // ── OHLC candle styles (time bars, render-only switch) ───────────────
+        DropdownItemDef::Header { label: "Candles".to_string() },
         DropdownItemDef::action("candles", MK::Candles.get(lang)).with_icon(ToolbarIconId::new("Candlestick")),
+        DropdownItemDef::action("bars", MK::Bars.get(lang)).with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::action("hollow_candles", MK::HollowCandles.get(lang)).with_icon(ToolbarIconId::new("HollowCandles")),
         DropdownItemDef::action("heikin_ashi", MK::HeikinAshi.get(lang)).with_icon(ToolbarIconId::new("HeikinAshi")),
-        DropdownItemDef::action("bars", MK::Bars.get(lang)).with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::Separator,
+        // ── Close-price lines ─────────────────────────────────────────────────
+        DropdownItemDef::Header { label: "Lines".to_string() },
         DropdownItemDef::action("line", MK::Line.get(lang)).with_icon(ToolbarIconId::new("LineChart")),
         DropdownItemDef::action("step_line", MK::StepLine.get(lang)).with_icon(ToolbarIconId::new("StepLine")),
         DropdownItemDef::action("line_markers", MK::LineWithMarkers.get(lang)).with_icon(ToolbarIconId::new("LineWithMarkers")),
+        // ── Close-price fills / columns (drawn against a base level) ─────────
+        DropdownItemDef::Header { label: "Areas & Columns".to_string() },
         DropdownItemDef::action("area", MK::Area.get(lang)).with_icon(ToolbarIconId::new("AreaChart")),
-        DropdownItemDef::Separator,
         DropdownItemDef::action("hlc_area", MK::HlcArea.get(lang)).with_icon(ToolbarIconId::new("HlcArea")),
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
-        // "histogram" removed 2026-07-05 (owner): it rendered VOLUME instead
-        // of price — a lightweight-charts SERIES type mistakenly ported as a
-        // chart style. The VOLUME indicator owns that visual now.
         DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
-        // ── Derived chart types — bars built from trades by dig3-station ─────
-        // Each row carries an inline numeric/text input on the right edge so
-        // the user picks the threshold WITHOUT leaving the dropdown.
-        // Tick is a TIMEFRAME (TF selector), not here.
-        DropdownItemDef::Separator,
+        // ── Bars aggregated from raw trades (dig3-station derived streams).
+        //    Inline input on the right edge = threshold, editable in place.
+        //    Includes the López de Prado quant family (dollar/imbalance/run).
+        DropdownItemDef::Header { label: "Trade Aggregation".to_string() },
         DropdownItemDef::action_with_input("range_bar",  "Range Bars",  "bar_mode_param", "10.0")
             .with_icon(ToolbarIconId::new("RangeBar")),
         DropdownItemDef::action_with_input("volume_bar", "Volume Bars", "bar_mode_param", "1000.0")
             .with_icon(ToolbarIconId::new("VolumeBar")),
         DropdownItemDef::action_with_input("tick_bar",   "Tick Bars",   "bar_mode_param", "100")
             .with_icon(ToolbarIconId::new("Tick")),
-        DropdownItemDef::action_with_input("footprint",  "Clusters",    "bar_mode_param", "1m")
-            .with_icon(ToolbarIconId::new("Footprint")),
-        DropdownItemDef::Separator,
-        // ── Non-standard bars (price-action: Renko / P&F / Kagi) ─────────────
+        DropdownItemDef::action_with_input("dollar_bar",           "Dollar Bars",        "bar_mode_param", "1000000")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("tick_imbalance_bar",   "Tick Imbalance",     "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("volume_imbalance_bar", "Volume Imbalance",   "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        DropdownItemDef::action_with_input("run_bar",              "Run Bars",           "bar_mode_param", "50")
+            .with_icon(ToolbarIconId::new("BarChart")),
+        // ── Price-action transforms (time axis discarded) ────────────────────
+        DropdownItemDef::Header { label: "Price Action".to_string() },
         DropdownItemDef::action_with_input("renko",      "Renko",       "bar_mode_param", "10.0")
             .with_icon(ToolbarIconId::new("BarChart")),
         DropdownItemDef::action_with_input("pnf",        "Point & Figure", "bar_mode_param", "10.0")
@@ -333,28 +334,14 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("LineChart")),
         DropdownItemDef::action_with_input("three_line_break", "3 Line Break", "bar_mode_param", "3")
             .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::Separator,
-        // ── Orderflow / profile visualizations ───────────────────────────────
-        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a real
-        // compute-catalog indicator instance, not a chart_type.
+        // ── Orderflow / market-structure visualizations ───────────────────────
+        DropdownItemDef::Header { label: "Orderflow".to_string() },
+        DropdownItemDef::action_with_input("footprint",  "Clusters",    "bar_mode_param", "1m")
+            .with_icon(ToolbarIconId::new("Footprint")),
         DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
             .with_icon(ToolbarIconId::new("Histogram")),
-        DropdownItemDef::Separator,
-        // ── López de Prado quant bars (C9) ───────────────────────────────────
-        // param = dollar threshold for dollar_bar; min_ticks for the rest.
-        DropdownItemDef::action_with_input("dollar_bar",           "Dollar Bar",         "bar_mode_param", "1000000")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("tick_imbalance_bar",   "Tick Imbalance",     "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("volume_imbalance_bar", "Volume Imbalance",   "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("run_bar",              "Run Bar",            "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::Separator,
-        // ── Depth-of-market heatmap (C12) ────────────────────────────────────
         DropdownItemDef::action("dom_heatmap", "DOM Heatmap")
             .with_icon(ToolbarIconId::new("Histogram")),
-        // ── Liquidation heatmap (C13) ─────────────────────────────────────────
         DropdownItemDef::action("liquidation_heatmap", "Liquidation Heatmap")
             .with_icon(ToolbarIconId::new("Activity")),
     ]

@@ -517,10 +517,12 @@ pub fn draw_hlc_area(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     ctx.stroke();
 }
 
-/// Draw columns (vertical bars from baseline)
+/// Draw columns — TV semantics: each column rises from the BOTTOM of the
+/// pane to the bar's close, colored by close vs the PREVIOUS close.
 ///
-/// Similar to histogram but uses first bar's open as baseline,
-/// coloring above/below differently.
+/// The old implementation used `bars[0].open` (the first bar of the whole
+/// loaded series) as the baseline — the entire chart re-anchored and
+/// re-colored whenever more history backfilled (owner report 2026-07-05).
 pub fn draw_columns(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let rect = &state.chart_rect;
     let viewport = state.viewport;
@@ -536,24 +538,22 @@ pub fn draw_columns(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     }
 
     let bar_w = (viewport.bar_width() * 0.8).max(2.0);
-
-    // Use first bar's open as baseline
-    let baseline = bars[0].open;
-    let baseline_y = rect.y + viewport.price_to_y(baseline, price_scale.price_min, price_scale.price_max);
+    let bottom_y = rect.bottom();
 
     for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
         let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
         let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
 
-        let is_up = bar.close >= baseline;
-        let color = if is_up {
+        // Color vs previous close (first bar of the series: vs its own open).
+        let prev_close = if i > 0 { bars[i - 1].close } else { bar.open };
+        let color = if bar.close >= prev_close {
             &theme.candle_up
         } else {
             &theme.candle_down
         };
 
-        let top = y.min(baseline_y);
-        let height = (y - baseline_y).abs().max(1.0);
+        let top = y.min(bottom_y);
+        let height = (bottom_y - y).abs().max(1.0);
 
         ctx.set_fill_color(color);
         ctx.fill_rect(x - bar_w / 2.0, top, bar_w, height);
