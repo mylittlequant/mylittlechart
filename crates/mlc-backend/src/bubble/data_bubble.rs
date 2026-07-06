@@ -344,8 +344,21 @@ impl DataBubble {
     /// a PRIOR chart_type left behind (e.g. renko box=10 bricks still in
     /// `renko_bars` after switching to box=20 — the re-subscribe emits fresh
     /// bricks, but the stale ones from the old box size were never dropped,
-    /// so the pane briefly/permanently mixes both geometries). Called on
-    /// EVERY chart_type switch by `ChangeChartType`, keyed to the NEW type.
+    /// so the pane briefly/permanently mixes both geometries).
+    ///
+    /// `ChangeChartType` calls this with `keep = None` (2026-07-06 fix —
+    /// passing `Some(new_type)` there used to skip clearing the TARGET
+    /// type's own slot, so re-entering a previously-visited derived type on
+    /// the same bubble appended a fresh re-seed AFTER stale leftover data,
+    /// breaking the ascending-timestamp invariant `reconcile_derived_series`
+    /// relies on and stranding the viewport mid-history). `UpdateChartTypeParam`
+    /// (same-type param refresh, e.g. renko box=10 -> box=20) also calls this
+    /// with `keep = None` — both call sites always follow with a full fresh
+    /// re-subscribe, so there is currently no caller that legitimately wants
+    /// to preserve the target's own slot; `keep` stays as a general escape
+    /// hatch for a future caller that reconciles in place instead of
+    /// resubscribing.
+    ///
     /// `bars` (kline) and `footprint_bars` are NEVER cleared here — kline
     /// data backs candle-family AND is the backdrop footprint depends on;
     /// footprint has its own re-subscribe-driven replacement via

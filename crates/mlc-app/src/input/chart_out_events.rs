@@ -545,15 +545,35 @@ impl ChartApp {
                                         // edge of the viewport.
                                         window.needs_snap_after_backfill = true;
                                     }
-                                    // Audit D9: clear every sibling derived slot except the
-                                    // target type on EVERY chart-type switch — the cleanup call
-                                    // site this deferred-cleanup comment used to reference never
-                                    // existed. Fixes stale-bricks-on-param-change too (renko
-                                    // box=10 -> box=20 no longer leaves old bricks behind — the
-                                    // re-subscribe below emits fresh data into an empty slot).
+                                    // Audit D9 (extended 2026-07-06 — owner
+                                    // report: chart-type switch jumps the
+                                    // viewport 50-500 bars into history):
+                                    // clear EVERY derived slot, including the
+                                    // TARGET type's own — `ChangeChartType`
+                                    // always performs a full fresh
+                                    // re-subscribe below (`begin_fresh_load`
+                                    // + `needs_snap_after_backfill`), so a
+                                    // "keep the target slot" exemption is
+                                    // never correct here. Re-entering a
+                                    // previously-visited derived type on the
+                                    // same bubble (e.g. renko -> pnf -> renko)
+                                    // used to keep the OLD renko_bars Vec
+                                    // (`clear_derived_slots(Some(ct))` skipped
+                                    // it) and the re-seed then pushed the
+                                    // fresh replay bricks AFTER the stale
+                                    // ones — `reconcile_derived_series`'s
+                                    // prepend binary-search assumes ascending
+                                    // timestamps, so the resulting
+                                    // stale-then-fresh array broke that
+                                    // invariant and stranded `view_start`
+                                    // mid-history instead of at the right
+                                    // edge. `UpdateChartTypeParam` (same-type
+                                    // param refresh) already calls
+                                    // `clear_derived_slots(None)` — this call
+                                    // site now matches it.
                                     if let Some(bid) = self.bubble_for_chart(cid) {
                                         self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                            bubble.clear_derived_slots(Some(ct));
+                                            bubble.clear_derived_slots(None);
                                             // Single-writer ownership of bubble.bars:
                                             // footprint's own pipeline writes the bar
                                             // series; every other chart type returns
