@@ -305,7 +305,11 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
         DropdownItemDef::action("area", MK::Area.get(lang)).with_icon(ToolbarIconId::new("AreaChart")),
         DropdownItemDef::action("hlc_area", MK::HlcArea.get(lang)).with_icon(ToolbarIconId::new("HlcArea")),
         DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
-        DropdownItemDef::action("columns", MK::Columns.get(lang)).with_icon(ToolbarIconId::new("Columns")),
+        // Owner 2026-07-06: "Columns" removed from the picker — it's a
+        // volume-histogram render dressed as a chart type, semantically
+        // out of place next to price series. Kept in the code paths
+        // (matches, hydration) so old presets still resolve, just not
+        // pickable from the menu.
         // ── Bars aggregated from raw trades (dig3-station derived streams).
         //    Inline input on the right edge = threshold, editable in place.
         //    Includes the López de Prado quant family (dollar/imbalance/run).
@@ -336,7 +340,7 @@ fn chart_type_items() -> Vec<DropdownItemDef> {
             .with_icon(ToolbarIconId::new("BarChart")),
         // ── Orderflow / market-structure visualizations ───────────────────────
         DropdownItemDef::Header { label: "Orderflow".to_string() },
-        DropdownItemDef::action_with_input("footprint",  "Clusters",    "bar_mode_param", "1m")
+        DropdownItemDef::action_with_input("footprint",  "Clusters (Footprint)", "bar_mode_param", "1m")
             .with_icon(ToolbarIconId::new("Footprint")),
         DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
             .with_icon(ToolbarIconId::new("Histogram")),

@@ -1046,8 +1046,13 @@ fn render_instrument_settings(
 
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, &settings.date_format_label, row_y + row_height / 2.0, theme);
-    result.content_items.push(("instrument:date_format_cycle".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
-    result.content_items.push(("instrument:date_format_menu".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
+    // Unified overlay-picker keys (`dropdown_cycle:` / `dropdown_menu:`) so
+    // the general dispatcher at ~:558 (`format!("dropdown_menu:{}", active_field)`)
+    // finds this row and renders the popup. The legacy `instrument:date_format_*`
+    // ids were never reached by the popup path — cycle worked (dead code in
+    // settings.rs) but the chevron did nothing.
+    result.content_items.push(("dropdown_cycle:date_format".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
+    result.content_items.push(("dropdown_menu:date_format".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
     row_y += row_height;
 
     // Show day of week checkbox
