@@ -86,20 +86,25 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         return;
     }
 
-    // Draw filled area using vertical strips for non-convex polygon
+    // Draw filled area as ONE continuous path (top forward + bottom
+    // reverse), single fill(). Owner 2026-07-06 (HLC-artifact audit,
+    // docs/mlc/audits/hlc-area-render-artifacts-2026-07-06.md): the
+    // per-bar strip pattern with alpha=0.3 doubled the effective alpha at
+    // every bar boundary — regular dark vertical bands, most visible on
+    // narrow zooms. HLC Area's version was already fixed there; this Area
+    // path has the same bug, just masked by a taller fill.
     ctx.set_fill_color_alpha(line_color, 0.3);
-    for i in 0..top_points.len() - 1 {
-        let (x1, y1) = top_points[i];
-        let (x2, y2) = top_points[i + 1];
-
-        ctx.begin_path();
-        ctx.move_to(x1, y1);
-        ctx.line_to(x2, y2);
-        ctx.line_to(x2, bottom_y);
-        ctx.line_to(x1, bottom_y);
-        ctx.close_path();
-        ctx.fill();
+    ctx.begin_path();
+    ctx.move_to(top_points[0].0, top_points[0].1);
+    for &(x, y) in &top_points[1..] {
+        ctx.line_to(x, y);
     }
+    if let Some(&(last_x, _)) = top_points.last() {
+        ctx.line_to(last_x, bottom_y);
+        ctx.line_to(top_points[0].0, bottom_y);
+    }
+    ctx.close_path();
+    ctx.fill();
     ctx.reset_alpha();
 
     // Draw line on top
@@ -487,22 +492,24 @@ pub fn draw_hlc_area(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         return;
     }
 
-    // Draw filled area between high and low using vertical strips
+    // Draw filled area between high and low as ONE continuous path (top
+    // forward + bottom reverse). Owner 2026-07-06: the previous per-bar
+    // strip pattern (N fill()s with alpha=0.3) produced regular dark
+    // vertical bands — each strip's antialiased edges composited with the
+    // next strip's edge on the shared vertical, doubling the effective
+    // alpha at every bar boundary. One path = one fill = one AA pass, no
+    // per-edge composition, no bands.
     ctx.set_fill_color_alpha(area_color, 0.3);
-    for i in 0..high_points.len() - 1 {
-        let (hx1, hy1) = high_points[i];
-        let (hx2, hy2) = high_points[i + 1];
-        let (_, ly1) = low_points[i];
-        let (_, ly2) = low_points[i + 1];
-
-        ctx.begin_path();
-        ctx.move_to(hx1, hy1);
-        ctx.line_to(hx2, hy2);
-        ctx.line_to(hx2, ly2);
-        ctx.line_to(hx1, ly1);
-        ctx.close_path();
-        ctx.fill();
+    ctx.begin_path();
+    ctx.move_to(high_points[0].0, high_points[0].1);
+    for &(x, y) in &high_points[1..] {
+        ctx.line_to(x, y);
     }
+    for &(x, y) in low_points.iter().rev() {
+        ctx.line_to(x, y);
+    }
+    ctx.close_path();
+    ctx.fill();
     ctx.reset_alpha();
 
     // Draw close line on top
