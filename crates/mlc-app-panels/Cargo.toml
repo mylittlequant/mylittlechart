@@ -14,7 +14,7 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 # After Phase 2B step 2 (trades) + step 3 (orderbook): panels read directly from
 # dig3-station's Series<TradePoint> and OrderBookTracker.
-digdigdig3-station = "=0.3.25"
+digdigdig3-station = "=0.3.26"
 # For Decimal → f64 conversion when reading from OrderBookTracker.
 rust_decimal = "1"
 tokio = { version = "1", features = ["sync"] }

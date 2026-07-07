@@ -5426,7 +5426,7 @@ async fn rewarm_and_emit_derived_prepend(
     new_warm_n: usize,
 ) -> DerivedRewarmOutcome {
     let key = derived_stream_series_key(exchange_id, account_type, symbol_wire, stream);
-    let rewarmed = match station.rewarm_derived(&key, symbol_wire, new_warm_n).await {
+    let outcome = match station.rewarm_derived(&key, symbol_wire, new_warm_n).await {
         Ok(r) => r,
         Err(e) => {
             crate::dlog!(
@@ -5436,6 +5436,12 @@ async fn rewarm_and_emit_derived_prepend(
             return DerivedRewarmOutcome::Fallback;
         }
     };
+    // dig3 0.3.26: rewarm reports the seed outcome alongside the points.
+    // A capability ceiling (RecentOnly venue / RestWindow wall) means deeper
+    // retries can never produce more — stop the ladder immediately instead
+    // of re-fetching the same shallow window on every doubling.
+    let capability_exhausted = outcome.is_capability_exhausted();
+    let rewarmed = outcome.points;
     if rewarmed.is_empty() {
         return DerivedRewarmOutcome::Exhausted;
     }
@@ -5475,6 +5481,12 @@ async fn rewarm_and_emit_derived_prepend(
         },
     };
     let _ = tx.send(update);
+    if capability_exhausted {
+        // Points delivered, but the venue ceiling is reached — report
+        // Exhausted so the deepen ladder marks this key done instead of
+        // scheduling ever-deeper retries that can never return more.
+        return DerivedRewarmOutcome::Exhausted;
+    }
     DerivedRewarmOutcome::Prepended
 }
 

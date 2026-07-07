@@ -20,7 +20,7 @@ mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
 uuid = { version = "1", features = ["v4"] }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
-digdigdig3 = "=0.3.25"
+digdigdig3 = "=0.3.26"
 tokio = { version = "1", features = ["sync"] }
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }
@@ -44,7 +44,7 @@ vt100 = "0.15"
 
 [dev-dependencies]
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-digdigdig3-station = "=0.3.25"
+digdigdig3-station = "=0.3.26"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["console"] }
