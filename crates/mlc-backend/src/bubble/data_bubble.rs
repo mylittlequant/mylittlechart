@@ -222,6 +222,18 @@ pub struct DataBubble {
     /// again. Runtime-only state — not persisted to disk.
     pub scroll_fetch_started: Option<web_time::Instant>,
 
+    /// `true` once the ONE lazy follow-up prefetch has been scheduled for
+    /// the current left-edge crossing (derived-prepend-fold-plan-2026-07-07,
+    /// Task 2: "one batch now, one batch lazy"). Set when
+    /// `BubbleEvent::ScrollBarsAppended` fires a background follow-up
+    /// `request_scroll_backfill` for the SAME bubble right after a
+    /// scroll-triggered page lands; cleared on the NEXT user-triggered
+    /// crossing (`tick.rs`'s threshold check, when it arms
+    /// `scroll_fetch_in_flight` for a fresh request) so each crossing gets
+    /// exactly one prefetch pair, never an unbounded chain. Runtime-only
+    /// state — not persisted to disk.
+    pub scroll_prefetch_done: bool,
+
     /// `Some((started, fired_bar_count))` while a derived-chart-type deeper-
     /// seed request (renko/pnf/kagi/three_line_break, counted-bar family,
     /// footprint, CVD, TPO) is in flight for this bubble, `None` otherwise.
@@ -298,6 +310,7 @@ impl DataBubble {
             alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            scroll_prefetch_done: false,
             derived_seed_in_flight: None,
         }
     }
@@ -561,6 +574,7 @@ impl Clone for DataBubble {
             alert_next_id: self.alert_next_id,
             scroll_fetch_in_flight: self.scroll_fetch_in_flight,
             scroll_fetch_started: self.scroll_fetch_started,
+            scroll_prefetch_done: self.scroll_prefetch_done,
             derived_seed_in_flight: self.derived_seed_in_flight,
         }
     }

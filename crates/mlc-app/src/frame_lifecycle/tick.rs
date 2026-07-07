@@ -546,16 +546,24 @@ impl ChartApp {
         // ── Layer 3: trigger scroll-fetch when viewport approaches left edge ───
         //
         // Routes by chart_type family (2026-07-04 derived-seed fix — see
-        // `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`):
-        // - Kline family (candles/line/area/.../histogram/columns) + footprint
-        //   (footprint's viewport still piggybacks `bubble.bars` per the
-        //   `ActiveSeries::resolve_active_series` table) → `request_scroll_bars`
-        //   (existing kline machinery, untouched).
-        // - Derived (renko/pnf/kagi/three_line_break/range_bar/tick_bar/
-        //   volume_bar/dollar_bar/tick_imbalance_bar/volume_imbalance_bar/
-        //   run_bar/cvd/tpo) → `request_deeper_derived_seed` via
-        //   `request_deeper_seed_for_active` (full teardown + doubled-depth
-        //   respawn — derived state machines have no "prepend older bars").
+        // `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`,
+        // corrected 2026-07-07 — derived-prepend-fold-plan-2026-07-07.md):
+        // - Kline family (candles/line/area/.../histogram/columns) →
+        //   `request_scroll_bars` (existing kline machinery, untouched).
+        // - Everything `chart_type_is_derived_seed` (renko/pnf/kagi/
+        //   three_line_break/range_bar/tick_bar/volume_bar/dollar_bar/
+        //   tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/tpo) →
+        //   `request_deeper_derived_seed` via `request_deeper_seed_for_active`.
+        //   `footprint` IS in this branch (its `ChartTypeKind` is
+        //   `OrderflowSlotted`, not `RenderOnly`) even though its rendered
+        //   series still piggybacks `bubble.bars` — its bridge-side deepen
+        //   (`request_deeper_footprint_seed`) has been in-place since the
+        //   `rewarm_footprint` cutover. Below, `chart_type_deepen_is_teardown`
+        //   further splits this branch: only the 3 EMA kinds (tick_imbalance_
+        //   bar/volume_imbalance_bar/run_bar) still clear+reset for a full
+        //   teardown+respawn — every other kind here (including footprint)
+        //   rides `Station::rewarm_derived`/`rewarm_footprint` in place with
+        //   no clear.
         //
         // The leftmost-rendered-bar read now goes through `active_series_for_chart`
         // (`ts_ms_at(0)` / `len()`) instead of hardcoding `bubble.bars` — the old
@@ -685,6 +693,12 @@ impl ChartApp {
                     self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
                         b.scroll_fetch_in_flight = true;
                         b.scroll_fetch_started = Some(web_time::Instant::now());
+                        // New user-triggered crossing — reset the lazy
+                        // prefetch guard (Task 2, derived-prepend-fold-plan-
+                        // 2026-07-07) so this crossing gets its own "one
+                        // batch now, one batch lazy" pair instead of
+                        // inheriting the previous crossing's `done` flag.
+                        b.scroll_prefetch_done = false;
                     });
                     scroll_requests.push((
                         *cid_scroll,
@@ -719,44 +733,63 @@ impl ChartApp {
             }
 
             for (cid_req, chart_type, symbol, exchange, account_type) in derived_seed_requests {
-                // Drop the stale (shorter) rendered slot BEFORE the reseed
-                // lands — the station-side ring-peek replay in `spawn_*_sub`
-                // (see `derived_bar_sub_body`/`renko_sub_body`/etc.) always
-                // replays the FULL newly-seeded ring on respawn, so clearing
-                // here and letting the replay repopulate is correct and
-                // avoids ever concatenating the old (shallow) series with the
-                // new (deep) one. Bar-family kinds (range/tick/volume/dollar/
-                // imbalance/run) share `bubble.bars` with kline — cleared via
-                // `clear_bars()`, same as `resolve_active_series`'s mapping
-                // for those chart_types.
-                //
-                // In LOCKSTEP: reset the requesting window's derived-series
-                // bookkeeping (`bar_count` + `derived_series_stamp`). Without
-                // this, the first post-clear `reconcile_derived_series` call
-                // (fired by the first `LiveUpdate::*BarUpdate` from the
-                // replay) sees `new_len=1` against the STALE
-                // `(old_head, old_last)` stamp, computes a garbage
-                // `prepended=1` shift, and stomps `bar_count` from its stale
-                // count to 1 — producing the one-frame viewport jump the
-                // owner reports on zoom-out lazy-deepen. Preserving
-                // `view_start` here is deliberate: zoom-out means the user
-                // is mid-history and expects the position to hold, NOT to
-                // snap to end (unlike `ChangeChartType` which resets to
-                // fresh right-edge). See
-                // `ChartContainer::reset_derived_stamp_for_deepen`.
-                if let Some(bid) = self.bubble_for_chart(cid_req) {
-                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                        if let Some(ops) = mlc_backend::chart_type::ops_by_id(chart_type) {
-                            (ops.clear_slot)(bubble);
-                        } else if chart_type == "cvd" {
-                            // Defensive: cvd is no longer a chart_type but
-                            // historical strings may still pass.
-                            bubble.clear_cvd();
-                        }
-                    });
-                }
-                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid_req) {
-                    window.reset_derived_stamp_for_deepen();
+                // derived-prepend-fold-plan-2026-07-07, Step 5: only the 3
+                // EMA kinds (tick_imbalance_bar/volume_imbalance_bar/run_bar)
+                // still teardown+respawn — their fold state cannot be
+                // reconstructed from emitted output (see
+                // `Station::rewarm_derived`'s `RewarmUnsupported` doc
+                // comment). Every other derived chart_type now rides
+                // `Station::rewarm_derived` in place: the live station
+                // subscription never stops, older points are spliced in
+                // FRONT of the existing rendered slot, and arrive as ONE
+                // batched `LiveUpdate::*HistoryPrepended` event that
+                // `reconcile_derived_series`'s stamp-based prepend-shift
+                // already handles correctly — clearing the slot first would
+                // throw away exactly the data being extended.
+                if crate::active_series::chart_type_deepen_is_teardown(chart_type) {
+                    // Drop the stale (shorter) rendered slot BEFORE the reseed
+                    // lands — the station-side ring-peek replay in `spawn_*_sub`
+                    // (see `derived_bar_sub_body`/`renko_sub_body`/etc.) always
+                    // replays the FULL newly-seeded ring on respawn, so clearing
+                    // here and letting the replay repopulate is correct and
+                    // avoids ever concatenating the old (shallow) series with the
+                    // new (deep) one. Bar-family kinds (range/tick/volume/dollar/
+                    // imbalance/run) share `bubble.bars` with kline — cleared via
+                    // `clear_bars()`, same as `resolve_active_series`'s mapping
+                    // for those chart_types.
+                    //
+                    // In LOCKSTEP: reset the requesting window's derived-series
+                    // bookkeeping (`bar_count` + `derived_series_stamp`). Without
+                    // this, the first post-clear `reconcile_derived_series` call
+                    // (fired by the first `LiveUpdate::*BarUpdate` from the
+                    // replay) sees `new_len=1` against the STALE
+                    // `(old_head, old_last)` stamp, computes a garbage
+                    // `prepended=1` shift, and stomps `bar_count` from its stale
+                    // count to 1 — producing the one-frame viewport jump the
+                    // owner reports on zoom-out lazy-deepen. Preserving
+                    // `view_start` here is deliberate: zoom-out means the user
+                    // is mid-history and expects the position to hold, NOT to
+                    // snap to end (unlike `ChangeChartType` which resets to
+                    // fresh right-edge). See
+                    // `ChartContainer::reset_derived_stamp_for_deepen`.
+                    // "cvd" never reaches this branch: it isn't registered
+                    // in `mlc_core::chart_type` (demoted from chart_type to
+                    // overlay), so `chart_type_deepen_is_teardown("cvd")`
+                    // resolves via `by_id(..).unwrap_or(false)` to `false` —
+                    // CVD always takes the rewarm-in-place `else` path below
+                    // (derived-prepend-fold-plan-2026-07-07, Task 3: removed
+                    // the dead `chart_type == "cvd"` clear_cvd fallback that
+                    // could never execute).
+                    if let Some(bid) = self.bubble_for_chart(cid_req) {
+                        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            if let Some(ops) = mlc_backend::chart_type::ops_by_id(chart_type) {
+                                (ops.clear_slot)(bubble);
+                            }
+                        });
+                    }
+                    if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid_req) {
+                        window.reset_derived_stamp_for_deepen();
+                    }
                 }
 
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)

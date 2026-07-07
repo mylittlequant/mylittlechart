@@ -263,6 +263,27 @@ pub fn chart_type_is_derived_seed(chart_type: &str) -> bool {
     chart_type == "cvd"
 }
 
+/// Whether `chart_type`'s scroll-left deepen must go through the OLD
+/// teardown+respawn path (`clear_slot` + `reset_derived_stamp_for_deepen` +
+/// full reseed at doubled depth) rather than the in-place prepend-fold
+/// (`Station::rewarm_derived` → one batched `*HistoryPrepended` LiveUpdate,
+/// live sub never stops).
+///
+/// `true` only for `tick_imbalance_bar` / `volume_imbalance_bar` / `run_bar`
+/// — their fold state is an EMA carried over the ENTIRE trade history, not
+/// reconstructible from already-emitted output (see
+/// `digdigdig3_station::Station::rewarm_derived`'s `RewarmUnsupported` doc
+/// comment). Every other derived chart_type (renko/pnf/kagi/
+/// three_line_break/range_bar/volume_bar/tick_bar/dollar_bar/footprint/tpo)
+/// is `DeepenKind::DerivedPrependFold` and rides the in-place path.
+/// Registry-driven (`ChartTypeDef::deepen_kind`) — see
+/// `derived-prepend-fold-plan-2026-07-07.md` Step 5.
+pub fn chart_type_deepen_is_teardown(chart_type: &str) -> bool {
+    mlc_core::chart_type::by_id(chart_type)
+        .map(|def| def.deepen_kind == mlc_core::chart_type::DeepenKind::DerivedTeardownRespawn)
+        .unwrap_or(false)
+}
+
 pub fn ts_shadow_for_chart_type(chart_type: &str, bubble: &DataBubble) -> Option<Vec<Bar>> {
     let needs_shadow = mlc_core::chart_type::by_id(chart_type).map(|d| d.needs_ts_shadow).unwrap_or(false);
     if !needs_shadow {

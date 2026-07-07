@@ -307,24 +307,34 @@ pub struct ChartContainer {
     /// P0 V2 follow-up (viewport doctrine audit 2026-07-07): records
     /// `bar_count` at the moment `reset_derived_stamp_for_deepen` fires a
     /// zoom-out lazy-deepen reseed. The zero-frame itself is already guarded
-    /// (`bar_count > 0` gate in `resize_geometry`), but the replay that
-    /// follows streams the deeper ring back ONE BRICK PER FRAME — `bar_count`
-    /// climbs 1, 2, 3, ... while `view_start` sits at the pre-reseed position
-    /// (often far larger than the transient `bar_count`). Every one of those
-    /// frames is individually non-zero, so the existing guard doesn't cover
-    /// them: `resize_geometry`'s max_vs clamp fires each frame and hard-writes
-    /// `view_start` down to the tiny transient `bar_count`, and by the time
-    /// the replay catches up the viewport has been dragged to the wrong spot.
-    /// `Some(fired_bar_count)` suppresses that clamp (`resize_geometry`) and
-    /// the Auto-mode glue-snap (`reconcile_derived_series`, whose `was_glued`
-    /// check is vacuously true while `bar_count` is still tiny) until the
-    /// replay's `new_len` reaches `fired_bar_count` again. Cleared by
+    /// (`bar_count > 0` gate in `resize_geometry`), but the gap between
+    /// `clear_slot` zeroing the series and the reseed's replay landing can
+    /// span one or more frames (network round-trip) with `bar_count` at a
+    /// small transient value while `view_start` sits at the pre-reseed
+    /// position (often far larger than the transient `bar_count`). Every one
+    /// of those frames is individually non-zero, so the existing guard
+    /// doesn't cover them: `resize_geometry`'s max_vs clamp fires each frame
+    /// and hard-writes `view_start` down to the tiny transient `bar_count`,
+    /// and by the time the replay lands the viewport has been dragged to the
+    /// wrong spot. `Some(fired_bar_count)` suppresses that clamp
+    /// (`resize_geometry`) and the Auto-mode glue-snap
+    /// (`reconcile_derived_series`, whose `was_glued` check is vacuously true
+    /// while `bar_count` is still tiny) until the replay's `new_len` reaches
+    /// `fired_bar_count` again. Cleared by
     /// `begin_fresh_load`/`begin_fresh_load_keep_pending` (a fresh load
     /// supersedes any pending reseed) and by the reseed-in-flight timeout in
     /// `frame_lifecycle/tick.rs` (a failed/short reseed must not disable the
     /// clamp forever). RAM-only — not persisted, not restored by hydration,
     /// `None` on every fresh `ChartContainer` (`new_with_provider`,
     /// `clone_for_split_shell`).
+    ///
+    /// Reachability (derived-prepend-fold-plan-2026-07-07, Task 3): only
+    /// `reset_derived_stamp_for_deepen` ever sets this to `Some` — and that
+    /// fn is only called from the teardown+respawn deepen path (the 3 EMA
+    /// kinds: tick_imbalance_bar/volume_imbalance_bar/run_bar — see
+    /// `chart_type_deepen_is_teardown`). Every other derived kind rewarms
+    /// `Station::rewarm_derived` in place with no clear/reset, so this field
+    /// stays `None` for their entire lifetime.
     pub(crate) reseed_clamp_guard: Option<usize>,
 }
 
@@ -2167,18 +2177,34 @@ impl ChartContainer {
         // the series is transiently empty; nothing to clamp against anyway.
         //
         // P0 V2 follow-up: the zero-frame itself was never the whole story —
-        // the reseed replay that follows streams the deeper ring back ONE
-        // BRICK PER FRAME, so `bar_count` passes through 1, 2, 3, ... for
-        // many frames while `view_start` still holds the pre-reseed position
-        // (typically far larger than these transient counts). Each of those
-        // frames has `bar_count > 0`, so the guard above never covers them:
-        // this clamp fired every single frame of the replay and hard-wrote
-        // `view_start` down to track the tiny transient `bar_count`, parking
-        // the viewport in the wrong place once the replay finally caught up.
-        // `reseed_clamp_guard` (set by `reset_derived_stamp_for_deepen`,
-        // cleared once `reconcile_derived_series` sees the replay reach the
-        // pre-reseed depth) spans exactly that window — skip the clamp for
-        // its whole duration, not just the single zero-frame.
+        // between `clear_slot` zeroing the series and the reseed's replay
+        // landing, `bar_count` can pass through small transient values for
+        // one or more frames (network round-trip) while `view_start` still
+        // holds the pre-reseed position (typically far larger than these
+        // transient counts). Each of those frames has `bar_count > 0`, so
+        // the guard above never covers them: this clamp fired every frame
+        // of the gap and hard-wrote `view_start` down to track the tiny
+        // transient `bar_count`, parking the viewport in the wrong place
+        // once the reseed finally landed. `reseed_clamp_guard` (set by
+        // `reset_derived_stamp_for_deepen`, cleared once
+        // `reconcile_derived_series` sees the replay reach the pre-reseed
+        // depth) spans exactly that window — skip the clamp for its whole
+        // duration, not just the single zero-frame.
+        //
+        // Reachability (derived-prepend-fold-plan-2026-07-07, Task 3):
+        // `reset_derived_stamp_for_deepen` — and therefore this guard — is
+        // now armed ONLY by the teardown+respawn path (the 3 EMA kinds:
+        // tick_imbalance_bar/volume_imbalance_bar/run_bar; see
+        // `chart_type_deepen_is_teardown`) and released by either the
+        // normal reconcile above or the 10s in-flight timeout backstop in
+        // `frame_lifecycle/tick.rs`. Every other derived kind rides
+        // `Station::rewarm_derived` in place (no clear_slot, no stamp
+        // reset, this guard never arms for them) — see the plan doc's
+        // Phase 3 for the full cutover. The teardown replay itself also
+        // lands as ONE batched `LiveUpdate::BarsLoaded`/`RenkoHistoryPrepended`-
+        // shaped event now (Task 1), not a per-point trickle — the guard
+        // stays as a defensive span across the (now much shorter) gap
+        // rather than a strict per-frame necessity.
         if self.viewport.bar_count > 0
             && self.viewport.bar_spacing > 0.0
             && self.viewport.chart_width > 0.0

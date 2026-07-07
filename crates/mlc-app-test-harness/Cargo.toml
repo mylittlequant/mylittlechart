@@ -16,7 +16,7 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-digdigdig3 = "=0.3.24"
+digdigdig3 = "=0.3.25"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
 

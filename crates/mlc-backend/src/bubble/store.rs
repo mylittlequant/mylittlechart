@@ -88,6 +88,7 @@ impl BubbleStore {
             alert_next_id: 1,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            scroll_prefetch_done: false,
             derived_seed_in_flight: None,
         };
         self.bubbles.insert(id, bubble);
@@ -139,6 +140,7 @@ impl BubbleStore {
             alert_next_id: 1,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
+            scroll_prefetch_done: false,
             derived_seed_in_flight: None,
         };
         self.bubbles.insert(id, bubble);

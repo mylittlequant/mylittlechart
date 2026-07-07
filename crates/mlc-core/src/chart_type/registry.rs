@@ -10,7 +10,9 @@
 //! - `mlc-app-layout/src/layout/modals/chart_settings.rs::chart_type_param_spec`
 //!   — per-type parameter dropdown catalog.
 //!
-//! This module is dead code as of Step 1 — no call site reads from it yet.
+//! Was dead code as of Step 1 (no call site read from it yet). First live
+//! consumer (2026-07-07): `mlc-app::active_series::chart_type_deepen_is_teardown`
+//! reads `ChartTypeDef::deepen_kind`.
 
 /// Coarse visual/data-source grouping, mirrors the dropdown section headers
 /// in `toolbar.rs::chart_type_items()`.
@@ -70,8 +72,20 @@ pub enum DeepenKind {
     /// Kline REST-page prepend via `request_scroll_bars` + `merge_scroll_bars` — sorted-append,
     /// reactor uses `capture_view_anchor`/`reconcile_view_keep_anchor`.
     KlinePrepend,
-    /// Teardown+respawn of the dig3-station subscription with doubled warm_n — reactor uses
-    /// `reconcile_derived_series` + `derived_series_stamp`.
+    /// In-place prepend-fold via `Station::rewarm_derived` — the live station
+    /// subscription keeps running, older points are spliced in front of the
+    /// existing ring under one lock and delivered as ONE batched
+    /// `LiveUpdate::*HistoryPrepended` event; reactor uses
+    /// `reconcile_derived_series`' prepend-shift the same way kline does.
+    /// Covers renko/pnf/kagi/three_line_break/range_bar/volume_bar/tick_bar/
+    /// dollar_bar/cvd/tpo (derived-prepend-fold-plan-2026-07-07, Phase 1).
+    DerivedPrependFold,
+    /// Teardown+respawn of the dig3-station subscription with doubled warm_n
+    /// — reactor uses `reconcile_derived_series` + `derived_series_stamp`.
+    /// Restricted to tick_imbalance_bar/volume_imbalance_bar/run_bar: their
+    /// fold state is an EMA carried over the ENTIRE history, not
+    /// reconstructible from already-emitted output (see
+    /// `Station::rewarm_derived`'s `RewarmUnsupported` doc comment).
     DerivedTeardownRespawn,
     /// No deepen support (dom/liq heatmaps have ring-buffer state, no history extension).
     Unsupported,
@@ -441,7 +455,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("10.0"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
     },
@@ -465,7 +479,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("1000.0"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
     },
@@ -489,7 +503,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("100"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
     },
@@ -513,7 +527,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("1000000"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
     },
@@ -611,7 +625,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: Some("Reversal: 2"),
         }),
         inline_default: Some("10.0"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
     },
@@ -635,7 +649,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: Some("Reversal: 3"),
         }),
         inline_default: Some("10.0"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
     },
@@ -659,7 +673,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("10.0"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
     },
@@ -683,7 +697,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("3"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
     },
@@ -711,7 +725,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         // toolbar.rs still shows an inline TF text field for footprint despite
         // param_spec being None — see field doc comment above.
         inline_default: Some("1m"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: true,
     },
@@ -739,7 +753,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: None,
         }),
         inline_default: Some("30"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
     },

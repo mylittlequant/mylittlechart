@@ -490,15 +490,76 @@ impl ChartApp {
             }
 
             // ── ScrollBarsAppended ─────────────────────────────────────────────
-            BubbleEvent::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars, .. } => {
+            BubbleEvent::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars, prepend_count } => {
                 let new_bars = bars;
                 // F4 (viewport doctrine audit 2026-07-07): the in-flight
                 // guard lives on the bubble now, not the window — clear it
                 // once for the bubble this event actually landed on.
+                //
+                // Task 2 (derived-prepend-fold-plan-2026-07-07, "one batch
+                // now, one batch lazy"): this event is shared by TWO
+                // producers — kline's `ScrollBarsLoaded` REST path (sets
+                // `scroll_fetch_in_flight`) and the trade-agg family's
+                // `DerivedBarsPrepended` prepend-fold (driven by
+                // `derived_seed_in_flight` instead, never touches this
+                // flag). Reading `scroll_fetch_in_flight` BEFORE clearing it
+                // is exactly how we tell "this was the kline scroll-left
+                // page landing" from "this was a derived-family prepend
+                // that happens to reuse the same merge/anchor machinery" —
+                // the lazy follow-up prefetch below is kline-only by design
+                // (Task 2 scope).
+                let was_kline_scroll_fetch = self.core.bubbles()
+                    .with_bubble(*bid, |b| b.scroll_fetch_in_flight)
+                    .unwrap_or(false);
                 self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
                     b.scroll_fetch_in_flight = false;
                     b.scroll_fetch_started = None;
                 });
+                // One prefetch pair per left-edge crossing: schedule exactly
+                // ONE background follow-up page (same 500-bar batch size,
+                // anchored at the NEW oldest bar) right after the first page
+                // lands — "one batch now, one batch lazy". Guarded by
+                // `scroll_prefetch_done` so a second `ScrollBarsAppended`
+                // for the same bubble (e.g. the prefetch's own page landing)
+                // does not chain a third fetch; `tick.rs`'s threshold check
+                // clears the guard on the NEXT user-triggered crossing (by
+                // re-arming `scroll_fetch_in_flight`, which this arm reads
+                // fresh each time — no separate reset needed here).
+                if was_kline_scroll_fetch && !new_bars.is_empty() && *prepend_count > 0 {
+                    let already_prefetched = self.core.bubbles()
+                        .with_bubble(*bid, |b| b.scroll_prefetch_done)
+                        .unwrap_or(true);
+                    if !already_prefetched {
+                        if let Some(tf) = crate::parse_timeframe_name(tf_name) {
+                            if let Some(oldest_ts) = new_bars.first().map(|b| b.timestamp) {
+                                let eid = *exchange_id;
+                                let at_prefetch: mlc_core::instrument::AccountType =
+                                    account_type.parse().unwrap_or_default();
+                                let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at_prefetch);
+                                self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
+                                    b.scroll_prefetch_done = true;
+                                    // Re-arm the in-flight guard for the
+                                    // prefetch's own flight — otherwise a
+                                    // user crossing mid-prefetch fires a
+                                    // second concurrent fetch on the same
+                                    // bubble (the F4 race this flag exists
+                                    // to prevent).
+                                    b.scroll_fetch_in_flight = true;
+                                    b.scroll_fetch_started = Some(web_time::Instant::now());
+                                });
+                                self.core.request_scroll_backfill(eid, symbol, &tf, at_dig3, oldest_ts, 500);
+                            }
+                        }
+                    }
+                } else if was_kline_scroll_fetch {
+                    // Venue exhausted (empty page / no older bars spliced) —
+                    // nothing to prefetch; leave the guard as-is so the next
+                    // real crossing (fresh `scroll_fetch_in_flight` arm)
+                    // starts a clean pair.
+                    self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
+                        b.scroll_prefetch_done = false;
+                    });
+                }
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
                 let mut any_matched = false;

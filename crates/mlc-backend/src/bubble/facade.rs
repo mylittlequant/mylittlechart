@@ -338,6 +338,10 @@ impl<'a> BubblesMut<'a> {
         self.store.symbol(bid)
     }
 
+    pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
+        self.store.timeframe(bid)
+    }
+
     pub fn scale_mode(&self, bid: BubbleId) -> Option<ScaleMode> {
         self.store.scale_mode(bid)
     }

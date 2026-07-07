@@ -116,6 +116,20 @@ pub(crate) const fn derived_warm_n() -> usize {
 /// step and burn ~3x the REST weight of one direct deep seed).
 pub(crate) const FOOTPRINT_INITIAL_WARM_N: usize = 10_000;
 
+/// First-paint warm depth for a fresh subscription of any of the other 9
+/// prepend-fold-capable derived kinds (renko/pnf/kagi/three_line_break/
+/// range_bar/volume_bar/tick_bar/dollar_bar/cvd/tpo).
+///
+/// Same rationale and value as [`FOOTPRINT_INITIAL_WARM_N`] — cold-open
+/// paints a shallow window immediately, then a background deepen re-seeds
+/// straight to the full [`derived_warm_n`] depth via
+/// `Station::rewarm_derived`, in place (see
+/// `nemo/docs/mlc/plans/derived-prepend-fold-plan-2026-07-07.md` Phase 2).
+/// `TickImbalanceBar`/`VolumeImbalanceBar`/`RunBar` cannot rewarm (EMA state
+/// over the full history) — they keep cold-opening at full `derived_warm_n`
+/// depth in one shot, unchanged.
+pub(crate) const DERIVED_INITIAL_WARM_N: usize = 10_000;
+
 /// Delay before the cold-open lazy deepen kicks in — long enough for the
 /// shallow seed to finish + first clusters to paint, short enough that the
 /// full history arrives while the user is still orienting.
@@ -279,6 +293,20 @@ pub enum LiveUpdate {
         account_type: AccountType,
         symbol: String,
         bar: Bar,
+    },
+    /// Batch of OLDER bars spliced in front of the live window by
+    /// [`digdigdig3_station::Station::rewarm_derived`], for the counted-bar
+    /// family (range_bar/volume_bar/tick_bar/dollar_bar — all share
+    /// `RewarmedPoints::Bar(Vec<BarPoint>)` on the station side, converted
+    /// with the same `BarPoint` → `Bar` mapping [`LiveUpdate::BarUpdate`]'s
+    /// live path uses). Same one-pass front-merge rationale as
+    /// [`LiveUpdate::FootprintHistoryPrepended`] — NOT used for kline scroll
+    /// (that has its own dedicated [`LiveUpdate::ScrollBarsLoaded`]).
+    DerivedBarsPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        bars: Vec<Bar>,
     },
     /// Live trade update from WebSocket.
     TradeUpdate {
@@ -450,6 +478,18 @@ pub enum LiveUpdate {
         point: digdigdig3_station::data::RenkoBrickPoint,
     },
 
+    /// Batch of OLDER renko bricks spliced in front of the live window by
+    /// [`digdigdig3_station::Station::rewarm_derived`]. Same one-pass
+    /// front-merge rationale as [`LiveUpdate::FootprintHistoryPrepended`] —
+    /// points are oldest→newest and all at/older than the pre-deepen window
+    /// head.
+    RenkoHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::RenkoBrickPoint>,
+    },
+
     /// Live Point-and-Figure column update from a `Stream::PnfBar`
     /// subscription. Emitted on every trade that extends the current
     /// column or rolls into a new one — readers group by `column_id`.
@@ -465,6 +505,19 @@ pub enum LiveUpdate {
         box_size: f64,
     },
 
+    /// Batch of OLDER P&F columns spliced in front of the live window by
+    /// [`digdigdig3_station::Station::rewarm_derived`]. Same one-pass
+    /// front-merge rationale as [`LiveUpdate::FootprintHistoryPrepended`].
+    PnfHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::PnfColumnPoint>,
+        /// Same fixed box size as [`LiveUpdate::PnfBarUpdate`] — every point
+        /// in the batch shares one subscription's box_size.
+        box_size: f64,
+    },
+
     /// Live Kagi segment / connector close from a `Stream::KagiBar`
     /// subscription. One event per closed segment.
     KagiBarUpdate {
@@ -474,6 +527,16 @@ pub enum LiveUpdate {
         point: digdigdig3_station::data::KagiSegmentPoint,
     },
 
+    /// Batch of OLDER kagi segments spliced in front of the live window by
+    /// [`digdigdig3_station::Station::rewarm_derived`]. Same one-pass
+    /// front-merge rationale as [`LiveUpdate::FootprintHistoryPrepended`].
+    KagiHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::KagiSegmentPoint>,
+    },
+
     /// Cumulative Volume Delta scalar update from `Stream::CvdLine`.
     /// One event per upstream trade.
     CvdLineUpdate {
@@ -481,6 +544,16 @@ pub enum LiveUpdate {
         account_type: AccountType,
         symbol: String,
         point: digdigdig3_station::data::ScalarBarPoint,
+    },
+
+    /// Batch of OLDER CVD scalar samples spliced in front of the live window
+    /// by [`digdigdig3_station::Station::rewarm_derived`]. Same one-pass
+    /// front-merge rationale as [`LiveUpdate::FootprintHistoryPrepended`].
+    CvdHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::ScalarBarPoint>,
     },
 
     /// TPO Market Profile session snapshot from `Stream::TpoProfile`.
@@ -494,6 +567,16 @@ pub enum LiveUpdate {
         point: digdigdig3_station::data::TpoSessionPoint,
     },
 
+    /// Batch of OLDER TPO sessions spliced in front of the live window by
+    /// [`digdigdig3_station::Station::rewarm_derived`]. Same one-pass
+    /// front-merge rationale as [`LiveUpdate::FootprintHistoryPrepended`].
+    TpoHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::TpoSessionPoint>,
+    },
+
     /// Live Three Line Break line close from a `Stream::ThreeLineBreak`
     /// subscription. Each event is one completed line.
     ThreeLineBreakUpdate {
@@ -501,6 +584,17 @@ pub enum LiveUpdate {
         account_type: AccountType,
         symbol: String,
         point: digdigdig3_station::data::ThreeLineBreakLinePoint,
+    },
+
+    /// Batch of OLDER three-line-break lines spliced in front of the live
+    /// window by [`digdigdig3_station::Station::rewarm_derived`]. Same
+    /// one-pass front-merge rationale as
+    /// [`LiveUpdate::FootprintHistoryPrepended`].
+    TlbHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        points: Vec<digdigdig3_station::data::ThreeLineBreakLinePoint>,
     },
 
     /// Live Open Interest event from a `Stream::OpenInterest` subscription.
@@ -660,6 +754,13 @@ pub struct DataBridge {
     /// flip-flop (or any re-entrant `request_footprint` on the same
     /// interval) from stacking multiple 100-page REST walks for one key.
     footprint_deepen_in_flight: Arc<Mutex<HashSet<(ExchangeId, String, AccountType)>>>,
+    /// Single-flight guard for the OTHER 9 prepend-fold-capable derived
+    /// kinds' lazy deepen (renko/pnf/kagi/three_line_break/range_bar/
+    /// volume_bar/tick_bar/dollar_bar/cvd/tpo) — same role as
+    /// `footprint_deepen_in_flight`, keyed by `Stream` (not just the
+    /// instrument) since a chart-type switch can leave a different derived
+    /// kind's pager running for the same instrument.
+    derived_deepen_in_flight: Arc<Mutex<HashSet<(ExchangeId, String, AccountType, digdigdig3_station::Stream)>>>,
     /// Per-key live orderbook reconstructors.
     ///
     /// Created on the first `subscribe_orderbook`/`subscribe_depth` call for a given
@@ -932,6 +1033,7 @@ impl DataBridge {
             derived_active_stream: Arc::new(Mutex::new(HashMap::new())),
             footprint_active_interval: Arc::new(Mutex::new(HashMap::new())),
             footprint_deepen_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            derived_deepen_in_flight: Arc::new(Mutex::new(HashSet::new())),
             ob_trackers: Arc::new(dashmap::DashMap::new()),
             footprint_series: Arc::new(dashmap::DashMap::new()),
             warmup_started: AtomicBool::new(false),
@@ -1715,16 +1817,21 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::TickBar(count);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         // Track the new task so the next TF switch can abort it.
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Abort the active tick subscription for an instrument, when switching away.
@@ -1808,15 +1915,22 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::RangeBar(price_units);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        // Two-phase cold-open: shallow first paint, one background deepen
+        // to full depth (see DERIVED_INITIAL_WARM_N doc).
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a volume-bar stream (`volume_units` total volume per bar, ×1e8 fixed-point).
@@ -1836,15 +1950,20 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
 
         let stream = digdigdig3_station::Stream::VolumeBar(volume_units);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a footprint stream — aggregates trades into per-price-level
@@ -2116,15 +2235,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::RenkoBar(box_size_units, reversal_count);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_renko_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a Point-and-Figure column stream.
@@ -2144,15 +2268,21 @@ impl DataBridge {
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::PnfBar(box_size_units, reversal_count);
         let box_size = box_size_units as f64 / 1e8;
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_pnf_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, box_size, warm_n,
+            symbol_str, symbol_wire, stream.clone(), box_size, warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream,
+            DerivedSeedExtra::PnfBoxSize(box_size), warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a Kagi segment stream (`reversal_units` × 1e8).
@@ -2170,15 +2300,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::KagiBar(reversal_units);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_kagi_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to the Cumulative Volume Delta line for an instrument.
@@ -2203,14 +2338,25 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::Cvd);
         let stream = digdigdig3_station::Stream::CvdLine;
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         let handle = self.spawn_cvd_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.overlay_subs.lock() {
-            subs.insert(sub_key, handle);
+            subs.insert(sub_key.clone(), handle);
         }
+        // CVD is an overlay, not a primary chart_type — it never populates
+        // `derived_active_stream` (see `record_active_stream`'s doc comment
+        // and this method's own doc comment above), so its still-active
+        // check reads `overlay_subs` membership directly instead of using
+        // `Self::derived_active_still`.
+        let overlay_subs = self.overlay_subs.clone();
+        let still_active = move || overlay_subs.lock().is_ok_and(|m| m.contains_key(&sub_key));
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a TPO Market Profile session stream.
@@ -2233,15 +2379,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::TpoProfile(freq_minutes, source);
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_tpo_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     // ── DOM Heatmap subscription (C12) ───────────────────────────────────────
@@ -2495,15 +2646,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::DollarBar { dollar_threshold };
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_derived_bar_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to a Tick Imbalance Bar stream (López de Prado, AFML ch.2).
@@ -2605,15 +2761,20 @@ impl DataBridge {
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
         let sub_key = (exchange_id, symbol.to_string(), account_type);
         let stream = digdigdig3_station::Stream::ThreeLineBreak { lines_back };
-        let warm_n = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let full_warm = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
+        let warm_n = full_warm.min(DERIVED_INITIAL_WARM_N);
         self.record_active_stream(exchange_id, symbol, account_type, stream.clone());
         let handle = self.spawn_three_line_break_sub(
             station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream, warm_n,
+            symbol_str, symbol_wire, stream.clone(), warm_n,
         );
         if let Ok(mut subs) = self.derived_subs.lock() {
             subs.insert(sub_key, handle);
         }
+        let still_active = self.derived_active_still(exchange_id, symbol, account_type, stream.clone());
+        self.spawn_derived_lazy_deepen(
+            exchange_id, symbol, account_type, stream, DerivedSeedExtra::None, warm_n, full_warm, still_active,
+        );
     }
 
     /// Subscribe to the Open Interest stream for an instrument (C15).
@@ -2685,6 +2846,160 @@ impl DataBridge {
         }
     }
 
+    /// Build a `still_active` predicate for [`Self::spawn_derived_lazy_deepen`]
+    /// backed by `derived_active_stream` — true while `stream` remains the
+    /// instrument's recorded active derived subscription (a chart-type
+    /// switch overwrites or never sets this entry for the new kind). Used by
+    /// every `spawn_derived_lazy_deepen` caller EXCEPT `request_cvd_line`
+    /// (CVD is an overlay, not a primary chart_type — see that call site).
+    fn derived_active_still(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        stream: digdigdig3_station::Stream,
+    ) -> impl Fn() -> bool + Send + Sync + 'static {
+        let active_stream = self.derived_active_stream.clone();
+        let symbol = symbol.to_string();
+        move || {
+            active_stream
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&(exchange_id, symbol.clone(), account_type)).cloned())
+                .is_some_and(|s| s == stream)
+        }
+    }
+
+    /// Schedule the background lazy-deepen from `warm_n` (the clamped
+    /// [`DERIVED_INITIAL_WARM_N`] first-paint depth) to `full_warm` (the
+    /// station-wide [`derived_warm_n()`] default), for the 10 kinds
+    /// `Station::rewarm_derived` supports.
+    ///
+    /// Mirrors `request_footprint`'s lazy-deepen task (bridge.rs, cold-open
+    /// two-phase pattern) but reuses [`rewarm_and_emit_derived_prepend`]
+    /// instead of hand-rolling the splice: the phase-1 subscribe spawned by
+    /// the caller keeps running (live bars keep flowing) while this task
+    /// pages the deeper trade window off to the side and delivers the older
+    /// points as ONE batched `LiveUpdate::*HistoryPrepended` event. No-op
+    /// (returns immediately) if `full_warm <= warm_n` — nothing to deepen.
+    ///
+    /// `still_active` is re-evaluated before the first attempt and on every
+    /// retry — a chart-type/overlay switch cancels the wait. Callers for the
+    /// 9 primary derived_subs kinds pass a `derived_active_stream` lookup
+    /// (matches `record_active_stream`'s bookkeeping); `request_cvd_line`
+    /// (the one overlay-slot kind among the 10) passes an `overlay_subs`
+    /// membership check instead, since CVD never populates
+    /// `derived_active_stream`.
+    ///
+    /// Single-flight per `(exchange, symbol, account, stream)` via
+    /// `derived_deepen_in_flight` — a chart-type switch that re-enters the
+    /// same kind before the first deepen finishes collapses to one pager.
+    /// Records the resulting depth in `derived_warm_state` on success so the
+    /// scroll-left doubling ladder ([`Self::request_deeper_derived_seed`])
+    /// continues from full depth instead of restarting at `warm_n`.
+    fn spawn_derived_lazy_deepen(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        stream: digdigdig3_station::Stream,
+        extra_params: DerivedSeedExtra,
+        warm_n: usize,
+        full_warm: usize,
+        still_active: impl Fn() -> bool + Send + Sync + 'static,
+    ) {
+        if full_warm <= warm_n {
+            return;
+        }
+        let symbol_owned = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let warm_state = self.derived_warm_state.clone();
+        let deepen_in_flight = self.derived_deepen_in_flight.clone();
+        self.spawn_bg(async move {
+            sleep_ms(FOOTPRINT_LAZY_DEEPEN_DELAY_MS).await;
+            if !still_active() {
+                crate::dlog!(
+                    "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — no longer active, skipping",
+                    exchange_id, symbol_owned, account_type, stream,
+                );
+                return;
+            }
+            let flight_key = (exchange_id, symbol_owned.clone(), account_type, stream.clone());
+            {
+                let Ok(mut inflight) = deepen_in_flight.lock() else { return; };
+                if !inflight.insert(flight_key.clone()) {
+                    crate::dlog!(
+                        "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — deepen already in flight, skipping",
+                        exchange_id, symbol_owned, account_type, stream,
+                    );
+                    return;
+                }
+            }
+            crate::dlog!(
+                "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — in-place rewarm {} -> {}",
+                exchange_id, symbol_owned, account_type, stream, warm_n, full_warm,
+            );
+            // The delay races the phase-1 subscribe: its own cold seed
+            // pages several REST calls, so at +4s the ring may not be
+            // registered yet and rewarm no-ops. Retry on a short timer
+            // until the ring exists (bounded; still_active re-checked so a
+            // chart-type switch cancels the wait) — same pattern as
+            // footprint's lazy-deepen retry loop.
+            let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
+            let mut outcome = DerivedRewarmOutcome::Exhausted;
+            for _attempt in 0u32..15 {
+                if !still_active() {
+                    break;
+                }
+                outcome = rewarm_and_emit_derived_prepend(
+                    &station, &tx, exchange_id, account_type, &symbol_owned, &symbol_wire,
+                    &stream, extra_params, full_warm,
+                ).await;
+                if !matches!(outcome, DerivedRewarmOutcome::Exhausted) {
+                    break;
+                }
+                if station.series::<BarPoint>(&key).is_some()
+                    || station_derived_ring_alive(&station, &key, &stream)
+                {
+                    // Ring exists but nothing older was produced — genuine
+                    // no-op (venue history exhausted / already at depth),
+                    // not the startup race.
+                    break;
+                }
+                sleep_ms(2000).await;
+            }
+            match outcome {
+                DerivedRewarmOutcome::Prepended => {
+                    if let Ok(mut ws) = warm_state.lock() {
+                        ws.insert((exchange_id, symbol_owned.clone(), account_type, stream.clone()), full_warm);
+                    }
+                }
+                DerivedRewarmOutcome::Exhausted => {
+                    crate::dlog!(
+                        "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — no older points produced",
+                        exchange_id, symbol_owned, account_type, stream,
+                    );
+                }
+                DerivedRewarmOutcome::Fallback => {
+                    // Cold-open lazy deepen has no live viewport riding on
+                    // it yet — unlike scroll-left, there is nothing to
+                    // recover into here. The next scroll-left request for
+                    // this key will hit the same RewarmUnsupported/dead-ring
+                    // condition and run the full teardown+respawn path.
+                    crate::dlog!(
+                        "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — rewarm unsupported/dead ring, leaving at initial depth",
+                        exchange_id, symbol_owned, account_type, stream,
+                    );
+                }
+            }
+            if let Ok(mut inflight) = deepen_in_flight.lock() {
+                inflight.remove(&flight_key);
+            }
+        });
+    }
+
     /// Abort the active derived/footprint subscription for an instrument, if any.
     fn abort_derived_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if let Ok(mut subs) = self.derived_subs.lock() {
@@ -2736,37 +3051,36 @@ impl DataBridge {
             .unwrap_or_else(derived_warm_n)
     }
 
-    /// Force a deeper cold-start reseed of a derived-chart-type subscription,
+    /// Force a deeper history extension of a derived-chart-type subscription,
     /// for progressive scroll-left backfill.
     ///
-    /// Derived state machines (renko/pnf/kagi/three_line_break, counted-bar
-    /// family, footprint, CVD, TPO) are stateful over the full ordered
-    /// trade/kline stream — the only way to deepen their history is a full
-    /// teardown + respawn with a larger warm depth (there is no "prepend
-    /// older bars" operation for a running state machine, unlike kline's
-    /// `request_scroll_bars`).
+    /// Two paths, split by [`stream_is_rewarm_capable`]
+    /// (derived-prepend-fold-plan-2026-07-07, Step 1):
     ///
-    /// Sequence:
+    /// - **Prepend-fold (10 kinds — renko/pnf/kagi/three_line_break/
+    ///   range_bar/volume_bar/tick_bar/dollar_bar/cvd/tpo)**: in-place via
+    ///   [`rewarm_and_emit_derived_prepend`] — the live station subscription
+    ///   keeps running, no abort, no teardown. A non-empty result is
+    ///   delivered as ONE batched `LiveUpdate::*HistoryPrepended` event and
+    ///   `derived_warm_state` is updated to `new_warm_n`. An empty result
+    ///   marks the key exhausted (venue history ends here). If the ring is
+    ///   dead or `rewarm_derived` reports `RewarmUnsupported`, this falls
+    ///   back to the teardown+respawn path below.
+    /// - **Teardown+respawn (3 EMA kinds — tick_imbalance_bar/
+    ///   volume_imbalance_bar/run_bar — plus the prepend-fold fallback
+    ///   above)**: full station-side unsubscribe + resubscribe at doubled
+    ///   depth, unchanged from the pre-Phase-1 behavior. Their fold state is
+    ///   an EMA carried over the ENTIRE trade history, not reconstructible
+    ///   from already-emitted output (see `Station::rewarm_derived`'s
+    ///   `RewarmUnsupported` doc comment).
+    ///
+    /// Shared depth bookkeeping for both paths:
     /// 1. Look up the current warm depth (map default = [`derived_warm_n()`]).
     /// 2. No-op if this key is already marked exhausted (previous call hit
-    ///    [`warm_cap()`]).
+    ///    [`warm_cap()`] or found nothing older).
     /// 3. Compute `new_warm_n = (current * 2).min(warm_cap())`; if that does
     ///    not exceed `current` (already at/above cap), mark exhausted and
     ///    return without touching any subscription.
-    /// 4. Abort the mlc-side forwarder task FIRST (releases this bridge's own
-    ///    station consumer ref), THEN
-    ///    `station.force_unsubscribe_and_await(&key)` (defensive ordering —
-    ///    releases our own handle before forcing the mux/forwarder down, so
-    ///    we never race our own `release_consumer` against the forced
-    ///    teardown for the same key).
-    /// 5. Record the new warm depth in `derived_warm_state`.
-    /// 6. Re-spawn via the same `spawn_*_sub` this `stream` variant would use
-    ///    on a fresh subscribe, now carrying `new_warm_n`.
-    /// 7. If the fresh subscribe reports fewer distinct ok-streams than
-    ///    requested (report.ok.is_empty() — the only reseed-time failure
-    ///    signal available; a short REST page during seeding is silently
-    ///    absorbed by the ring, which is not observable here), mark the key
-    ///    exhausted so we stop growing a subscription the venue can't fill.
     ///
     /// `extra_params` provides whatever additional wire-format inputs the
     /// `stream`'s spawn variant needs beyond the plain instrument key (e.g.
@@ -2814,6 +3128,113 @@ impl DataBridge {
             exchange_id, symbol, account_type, stream, current, new_warm_n,
         );
 
+        if !stream_is_rewarm_capable(&stream) {
+            self.spawn_deeper_derived_seed_teardown(
+                exchange_id, symbol, account_type, stream, extra_params, new_warm_n,
+            );
+            return;
+        }
+
+        let flight_key = (exchange_id, symbol.to_string(), account_type, stream.clone());
+        {
+            let Ok(mut inflight) = self.derived_deepen_in_flight.lock() else { return; };
+            if !inflight.insert(flight_key.clone()) {
+                crate::dlog!(
+                    "[Bridge::request_deeper_derived_seed] {:?} {} at={:?} stream={:?} — deepen already in flight, no-op",
+                    exchange_id, symbol, account_type, stream,
+                );
+                return;
+            }
+        }
+
+        // Order: abort the mlc-side forwarder FIRST — even on the
+        // prepend-fold path, the rewarm below talks to the station directly
+        // (not through our forwarder), so the live forwarder is left alone
+        // here; it is only aborted inside the teardown fallback (see
+        // `run_deeper_derived_seed_teardown`).
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let symbol_str = symbol.to_string();
+        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let warm_state = self.derived_warm_state.clone();
+        let seed_exhausted = self.derived_seed_exhausted.clone();
+        let deepen_in_flight = self.derived_deepen_in_flight.clone();
+        let derived_subs = self.derived_subs.clone();
+
+        self.spawn_bg(async move {
+            let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
+            let ring_alive = station.series::<BarPoint>(&key).is_some()
+                || station_derived_ring_alive(&station, &key, &stream);
+
+            if ring_alive {
+                let outcome = rewarm_and_emit_derived_prepend(
+                    &station, &tx, exchange_id, account_type, &symbol_str, &symbol_wire,
+                    &stream, extra_params, new_warm_n,
+                ).await;
+                match outcome {
+                    DerivedRewarmOutcome::Prepended => {
+                        crate::dlog!(
+                            "[Bridge::request_deeper_derived_seed] {:?} {} at={:?} stream={:?} — in-place rewarm {} -> {}",
+                            exchange_id, symbol_str, account_type, stream, current, new_warm_n,
+                        );
+                        if let Ok(mut ws) = warm_state.lock() {
+                            ws.insert((exchange_id, symbol_str.clone(), account_type, stream.clone()), new_warm_n);
+                        }
+                        if let Ok(mut inflight) = deepen_in_flight.lock() { inflight.remove(&flight_key); }
+                        return;
+                    }
+                    DerivedRewarmOutcome::Exhausted => {
+                        crate::dlog!(
+                            "[Bridge::request_deeper_derived_seed] {:?} {} at={:?} stream={:?} — rewarm produced nothing older, marking exhausted",
+                            exchange_id, symbol_str, account_type, stream,
+                        );
+                        if let Ok(mut exhausted) = seed_exhausted.lock() {
+                            exhausted.insert((exchange_id, symbol_str.clone(), account_type, stream.clone()));
+                        }
+                        if let Ok(mut inflight) = deepen_in_flight.lock() { inflight.remove(&flight_key); }
+                        return;
+                    }
+                    DerivedRewarmOutcome::Fallback => {}
+                }
+            }
+
+            if let Ok(mut inflight) = deepen_in_flight.lock() { inflight.remove(&flight_key); }
+            // Fallback: RewarmUnsupported or a dead ring — cold teardown +
+            // respawn at the doubled depth is the recovery path. The mlc-side
+            // forwarder (if any) must be aborted here, on the fallback branch
+            // only — the prepend-fold path above never touched it.
+            crate::dlog!(
+                "[Bridge::request_deeper_derived_seed] {:?} {} at={:?} stream={:?} — falling back to teardown+respawn",
+                exchange_id, symbol_str, account_type, stream,
+            );
+            if let Ok(mut subs) = derived_subs.lock() {
+                if let Some(h) = subs.remove(&sub_key) { h.abort(); }
+            }
+            run_deeper_derived_seed_teardown(
+                station, tx, exchange_id, account_type, symbol_str, symbol_wire,
+                sub_key, stream, extra_params, new_warm_n,
+                warm_state, seed_exhausted, derived_subs,
+            ).await;
+        });
+    }
+
+    /// Non-rewarm-capable path: abort the mlc-side forwarder, awaited
+    /// `force_unsubscribe_and_await`, then re-spawn via
+    /// `spawn_deeper_derived_forwarder` at `new_warm_n`. Used directly for
+    /// the 3 EMA kinds. The rewarm-fallback branch inside
+    /// [`Self::request_deeper_derived_seed`] shares the same body via the
+    /// free function [`run_deeper_derived_seed_teardown`] (it runs inside an
+    /// already-detached task with no `&self` available).
+    fn spawn_deeper_derived_seed_teardown(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        stream: digdigdig3_station::Stream,
+        extra_params: DerivedSeedExtra,
+        new_warm_n: usize,
+    ) {
         // Order: abort the mlc-side forwarder FIRST (drops our own
         // consumer ref / SubscriptionHandle inside the station), THEN force
         // the station-side mux down inside the spawned task below. This
@@ -2830,56 +3251,12 @@ impl DataBridge {
         let seed_exhausted = self.derived_seed_exhausted.clone();
         let derived_subs = self.derived_subs.clone();
 
-        // The 8 `spawn_*_sub` bodies below are free async functions (not
-        // `&self` methods) precisely so they can be re-entered from inside
-        // an already-spawned, non-`'static`-`self` task via
-        // `spawn_bg_join_nested` — the SAME bodies `spawn_renko_sub` etc.
-        // wrap with `self.spawn_bg_join(...)` for the plain first-subscribe
-        // path. This outer task does the awaited teardown, then re-spawns
-        // and registers the FRESH inner handle into `derived_subs` (the
-        // outer task itself is never registered — it is transient plumbing,
-        // not the long-lived forwarder).
         self.spawn_bg(async move {
-            let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
-            if let Err(e) = station.force_unsubscribe_and_await(&key).await {
-                crate::dlog!(
-                    "[Bridge::request_deeper_derived_seed] force_unsubscribe_and_await failed {:?} {} at={:?} stream={:?}: {:?}",
-                    exchange_id, symbol_str, account_type, stream, e,
-                );
-                // Fall through and attempt the respawn anyway — the mux may
-                // simply not have existed (idempotent Ok(()) case is the
-                // common outcome; an Err here is unexpected but not fatal to
-                // retrying the subscribe).
-            }
-
-            if let Ok(mut ws) = warm_state.lock() {
-                ws.insert(
-                    (exchange_id, symbol_str.clone(), account_type, stream.clone()),
-                    new_warm_n,
-                );
-            }
-
-            let (inner_handle, ok_count) = spawn_deeper_derived_forwarder(
-                station,
-                tx,
-                exchange_id,
-                account_type,
-                symbol_str.clone(),
-                symbol_wire,
-                stream.clone(),
-                extra_params,
-                new_warm_n,
+            run_deeper_derived_seed_teardown(
+                station, tx, exchange_id, account_type, symbol_str, symbol_wire,
+                sub_key, stream, extra_params, new_warm_n,
+                warm_state, seed_exhausted, derived_subs,
             ).await;
-
-            if let Ok(mut subs) = derived_subs.lock() {
-                subs.insert(sub_key, inner_handle);
-            }
-
-            if ok_count == 0 {
-                if let Ok(mut exhausted) = seed_exhausted.lock() {
-                    exhausted.insert((exchange_id, symbol_str, account_type, stream));
-                }
-            }
         });
     }
 
@@ -5007,6 +5384,216 @@ fn derived_stream_series_key(
     StationSeriesKey::new(exchange_id, account_type, symbol_wire, derived_stream_to_kind(stream))
 }
 
+/// Result of [`rewarm_and_emit_derived_prepend`] — tells the caller how to
+/// update its own bookkeeping (warm depth / exhaustion) without re-deriving
+/// the outcome from the emitted event.
+enum DerivedRewarmOutcome {
+    /// Non-empty batch spliced + emitted — `warm_state` should record
+    /// `new_warm_n` for this key.
+    Prepended,
+    /// Ring alive, rewarm ran, but produced nothing older — venue history
+    /// exhausted at this depth (or already fully covered).
+    Exhausted,
+    /// `Station::rewarm_derived` returned `Err(RewarmUnsupported)` (imbalance/
+    /// run/footprint/non-derived kind) or no live ring exists for this key —
+    /// caller must fall back to teardown+respawn.
+    Fallback,
+}
+
+/// Shared prepend-fold driver for the 10 rewarm-capable derived kinds
+/// (renko/pnf/kagi/three_line_break/range_bar/volume_bar/tick_bar/
+/// dollar_bar/cvd/tpo — NOT footprint, which has its own dedicated
+/// `rewarm_footprint`/`request_deeper_footprint_seed` path, and NOT
+/// tick_imbalance_bar/volume_imbalance_bar/run_bar, which cannot rewarm at
+/// all).
+///
+/// Calls `Station::rewarm_derived` IN PLACE — the live station subscription
+/// keeps running, no abort, no teardown. On a non-empty result the older
+/// points are converted to the matching `LiveUpdate::*HistoryPrepended`
+/// batch (one event, oldest→newest) and sent on `tx`. Used by both the
+/// scroll-left deepen ([`DataBridge::request_deeper_derived_seed`]) and the
+/// staged cold-open background deepen (the `request_*` methods' lazy-deepen
+/// task, mirroring footprint's cold-open pattern).
+async fn rewarm_and_emit_derived_prepend(
+    station: &digdigdig3_station::Station,
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_canonical: &str,
+    symbol_wire: &str,
+    stream: &digdigdig3_station::Stream,
+    extra_params: DerivedSeedExtra,
+    new_warm_n: usize,
+) -> DerivedRewarmOutcome {
+    let key = derived_stream_series_key(exchange_id, account_type, symbol_wire, stream);
+    let rewarmed = match station.rewarm_derived(&key, symbol_wire, new_warm_n).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::dlog!(
+                "[Bridge::rewarm_and_emit_derived_prepend] {:?} {} at={:?} stream={:?} — rewarm_derived Err, fallback to teardown: {:?}",
+                exchange_id, symbol_canonical, account_type, stream, e,
+            );
+            return DerivedRewarmOutcome::Fallback;
+        }
+    };
+    if rewarmed.is_empty() {
+        return DerivedRewarmOutcome::Exhausted;
+    }
+    let symbol = symbol_canonical.to_string();
+    let update = match rewarmed {
+        digdigdig3_station::RewarmedPoints::Renko(points) => LiveUpdate::RenkoHistoryPrepended {
+            exchange_id, account_type, symbol, points,
+        },
+        digdigdig3_station::RewarmedPoints::Pnf(points) => {
+            let box_size = match extra_params {
+                DerivedSeedExtra::PnfBoxSize(b) => b,
+                DerivedSeedExtra::None => {
+                    if let digdigdig3_station::Stream::PnfBar(box_size_units, _) = stream {
+                        *box_size_units as f64 / 1e8
+                    } else {
+                        0.0
+                    }
+                }
+            };
+            LiveUpdate::PnfHistoryPrepended { exchange_id, account_type, symbol, points, box_size }
+        }
+        digdigdig3_station::RewarmedPoints::Kagi(points) => LiveUpdate::KagiHistoryPrepended {
+            exchange_id, account_type, symbol, points,
+        },
+        digdigdig3_station::RewarmedPoints::ThreeLineBreak(points) => LiveUpdate::TlbHistoryPrepended {
+            exchange_id, account_type, symbol, points,
+        },
+        digdigdig3_station::RewarmedPoints::Bar(points) => {
+            let bars: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
+            LiveUpdate::DerivedBarsPrepended { exchange_id, account_type, symbol, bars }
+        }
+        digdigdig3_station::RewarmedPoints::Cvd(points) => LiveUpdate::CvdHistoryPrepended {
+            exchange_id, account_type, symbol, points,
+        },
+        digdigdig3_station::RewarmedPoints::Tpo(points) => LiveUpdate::TpoHistoryPrepended {
+            exchange_id, account_type, symbol, points,
+        },
+    };
+    let _ = tx.send(update);
+    DerivedRewarmOutcome::Prepended
+}
+
+/// Whether `stream` is one of the 10 kinds `Station::rewarm_derived`/
+/// `rewarm_footprint` support (in-place prepend-fold). `false` for
+/// `TickImbalanceBar`/`VolumeImbalanceBar`/`RunBar` (EMA state over the
+/// entire history, not reconstructible from emitted output) and for any
+/// non-derived `Stream` variant.
+fn stream_is_rewarm_capable(stream: &digdigdig3_station::Stream) -> bool {
+    use digdigdig3_station::Stream;
+    matches!(
+        stream,
+        Stream::RenkoBar(_, _)
+            | Stream::PnfBar(_, _)
+            | Stream::KagiBar(_)
+            | Stream::ThreeLineBreak { .. }
+            | Stream::RangeBar(_)
+            | Stream::VolumeBar(_)
+            | Stream::TickBar(_)
+            | Stream::DollarBar { .. }
+            | Stream::CvdLine
+            | Stream::TpoProfile(_, _)
+    )
+}
+
+/// Liveness probe for `rewarm_derived`'s ring, across every concrete output
+/// type the 10 rewarm-capable kinds can produce. `station.series::<BarPoint>`
+/// alone (checked by the caller before this) only covers the counted-bar
+/// family — this covers the rest so the scroll-left/lazy-deepen paths can
+/// tell "ring exists, rewarm should work" from "no forwarder registered,
+/// fall back to teardown" for renko/pnf/kagi/tlb/cvd/tpo too.
+fn station_derived_ring_alive(
+    station: &digdigdig3_station::Station,
+    key: &StationSeriesKey,
+    stream: &digdigdig3_station::Stream,
+) -> bool {
+    use digdigdig3_station::Stream;
+    match stream {
+        Stream::RenkoBar(_, _) => station.series::<digdigdig3_station::data::RenkoBrickPoint>(key).is_some(),
+        Stream::PnfBar(_, _) => station.series::<digdigdig3_station::data::PnfColumnPoint>(key).is_some(),
+        Stream::KagiBar(_) => station.series::<digdigdig3_station::data::KagiSegmentPoint>(key).is_some(),
+        Stream::ThreeLineBreak { .. } => {
+            station.series::<digdigdig3_station::data::ThreeLineBreakLinePoint>(key).is_some()
+        }
+        Stream::CvdLine => station.series::<digdigdig3_station::data::ScalarBarPoint>(key).is_some(),
+        Stream::TpoProfile(_, _) => station.series::<digdigdig3_station::data::TpoSessionPoint>(key).is_some(),
+        // RangeBar/VolumeBar/TickBar/DollarBar already checked via BarPoint
+        // by the caller; any other variant is not rewarm-capable.
+        _ => false,
+    }
+}
+
+/// Shared teardown+respawn body for [`DataBridge::spawn_deeper_derived_seed_teardown`]
+/// (direct call, 3 EMA kinds) and the rewarm-fallback branch inside
+/// [`DataBridge::request_deeper_derived_seed`] (dead ring / `RewarmUnsupported`).
+/// A free function (not a `&self` method) because the fallback caller runs
+/// inside an already-detached `'static` task with no `DataBridge` reference
+/// — same rationale as `spawn_deeper_derived_forwarder`.
+///
+/// Callers are responsible for aborting the previous mlc-side forwarder
+/// (`derived_subs.remove(&sub_key)`) BEFORE calling this — this function only
+/// does the awaited `force_unsubscribe_and_await` + respawn + bookkeeping.
+async fn run_deeper_derived_seed_teardown(
+    station: std::sync::Arc<digdigdig3_station::Station>,
+    tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_str: String,
+    symbol_wire: String,
+    sub_key: (ExchangeId, String, AccountType),
+    stream: digdigdig3_station::Stream,
+    extra_params: DerivedSeedExtra,
+    new_warm_n: usize,
+    warm_state: Arc<Mutex<HashMap<(ExchangeId, String, AccountType, digdigdig3_station::Stream), usize>>>,
+    seed_exhausted: Arc<Mutex<HashSet<(ExchangeId, String, AccountType, digdigdig3_station::Stream)>>>,
+    derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), BgJoinHandle>>>,
+) {
+    let key = derived_stream_series_key(exchange_id, account_type, &symbol_wire, &stream);
+    if let Err(e) = station.force_unsubscribe_and_await(&key).await {
+        crate::dlog!(
+            "[Bridge::run_deeper_derived_seed_teardown] force_unsubscribe_and_await failed {:?} {} at={:?} stream={:?}: {:?}",
+            exchange_id, symbol_str, account_type, stream, e,
+        );
+        // Fall through and attempt the respawn anyway — the mux may
+        // simply not have existed (idempotent Ok(()) case is the
+        // common outcome; an Err here is unexpected but not fatal to
+        // retrying the subscribe).
+    }
+
+    if let Ok(mut ws) = warm_state.lock() {
+        ws.insert(
+            (exchange_id, symbol_str.clone(), account_type, stream.clone()),
+            new_warm_n,
+        );
+    }
+
+    let (inner_handle, ok_count) = spawn_deeper_derived_forwarder(
+        station,
+        tx,
+        exchange_id,
+        account_type,
+        symbol_str.clone(),
+        symbol_wire,
+        stream.clone(),
+        extra_params,
+        new_warm_n,
+    ).await;
+
+    if let Ok(mut subs) = derived_subs.lock() {
+        subs.insert(sub_key, inner_handle);
+    }
+
+    if ok_count == 0 {
+        if let Ok(mut exhausted) = seed_exhausted.lock() {
+            exhausted.insert((exchange_id, symbol_str, account_type, stream));
+        }
+    }
+}
+
 /// Dispatch table: spawn the correct `*_sub_body` for `stream`, at depth
 /// `warm_n`, wired to report its first-subscribe `ok` count back to the
 /// caller. Used only by [`DataBridge::request_deeper_derived_seed`] — the
@@ -5185,7 +5772,9 @@ async fn derived_bar_sub_body(
             if let Some(tx0) = first_ok_tx.take() { let _ = tx0.send(report.ok.len()); }
         }
         // Pull-then-live: on the FIRST subscribe of this task (a fresh
-        // chart-open / re-open), peek the station's own `Series<BarPoint>`
+        // chart-open / re-open — including a post-teardown respawn from
+        // `run_deeper_derived_seed_teardown`, which always starts a NEW task
+        // at `respawn_n == 0`), peek the station's own `Series<BarPoint>`
         // ring for this key and replay it before entering the recv loop.
         // The ring already holds whatever the warm-seed / prior-session
         // subscribers put there (register-in-series_handles fix,
@@ -5193,6 +5782,23 @@ async fn derived_bar_sub_body(
         // instantly instead of waiting for the first live tick.
         // Skipped on respawn cycles (respawn_n > 0): those are internal
         // reconnects of the SAME open, not a new consumer view.
+        //
+        // Batched as ONE `LiveUpdate::BarsLoaded` (Task 1, prepend-fold plan
+        // Phase 2b) instead of one `BarUpdate` per point — this snapshot can
+        // hold up to `DERIVED_INITIAL_WARM_N` (10k) points at cold-open or
+        // the full doubled depth after a teardown+respawn deepen; emitting
+        // per-point flooded `tick_writers`' unbounded drain with N events
+        // in a single frame (the exact stall class `FootprintHistoryPrepended`
+        // was introduced to kill for the lazy-deepen path — this closes the
+        // matching hole on the COLD/replay path). `timeframe` is left empty:
+        // the bridge has no window/bubble access to know this bubble's own
+        // TF label (range/volume/tick/dollar size, or the fixed EMA params
+        // for imbalance/run) — `BackendCore::tick_writers`'s `BarsLoaded` arm
+        // resolves the real per-bubble timeframe when it sees an empty
+        // string. `bars-ownership` gate (FootprintOhlc) is also enforced
+        // there, same as every other `BarsLoaded` writer. Live per-point
+        // `BarUpdate`s continue unchanged below — this only touches the
+        // snapshot replay, which is not "live" in nature.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(series) = station.series::<BarPoint>(key) {
@@ -5201,12 +5807,14 @@ async fn derived_bar_sub_body(
                         "[Bridge::derived-bar-fwd ring-peek] {:?} {} stream={} n={}",
                         exchange_id, symbol_canonical, stream_label, points.len(),
                     );
-                    for point in &points {
-                        let _ = tx.send(LiveUpdate::BarUpdate {
+                    if !points.is_empty() {
+                        let bars: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
+                        let _ = tx.send(LiveUpdate::BarsLoaded {
                             exchange_id,
                             account_type,
                             symbol: symbol_canonical.clone(),
-                            bar: bar_point_to_bar(point),
+                            timeframe: String::new(),
+                            bars,
                         });
                     }
                 }
@@ -5450,7 +6058,12 @@ async fn renko_sub_body(
         }
         // Pull-then-live: replay the station's Series<RenkoBrickPoint>
         // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale).
+        // derived_bar_sub_body for full rationale). Batched as ONE
+        // `RenkoHistoryPrepended` (Task 1) — the mlc-backend handler for
+        // that variant already handles an empty target slot correctly
+        // (`head.is_none_or(...)` inserts everything when the store is
+        // empty), so reusing it for the cold seed is a no-op change on the
+        // receive side. Live per-brick `RenkoBarUpdate` continues below.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::RenkoBrickPoint>(key) {
@@ -5459,11 +6072,11 @@ async fn renko_sub_body(
                         "[Bridge::renko-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::RenkoBarUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::RenkoHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                         });
                     }
                 }
@@ -5526,6 +6139,9 @@ async fn three_line_break_sub_body(
         // Pull-then-live: replay the station's
         // Series<ThreeLineBreakLinePoint> ring on the first subscribe
         // of this task (see derived_bar_sub_body for full rationale).
+        // Batched as ONE `TlbHistoryPrepended` (Task 1) — see the
+        // `RenkoHistoryPrepended` seed batch above for the empty-slot
+        // rationale (identical `head.is_none_or(...)` handling).
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::ThreeLineBreakLinePoint>(key) {
@@ -5534,11 +6150,11 @@ async fn three_line_break_sub_body(
                         "[Bridge::tlb-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::ThreeLineBreakUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::TlbHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                         });
                     }
                 }
@@ -5601,7 +6217,9 @@ async fn pnf_sub_body(
         }
         // Pull-then-live: replay the station's Series<PnfColumnPoint>
         // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale).
+        // derived_bar_sub_body for full rationale). Batched as ONE
+        // `PnfHistoryPrepended` (Task 1) — see the `RenkoHistoryPrepended`
+        // seed batch above for the empty-slot rationale.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::PnfColumnPoint>(key) {
@@ -5610,11 +6228,11 @@ async fn pnf_sub_body(
                         "[Bridge::pnf-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::PnfBarUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::PnfHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                             box_size,
                         });
                     }
@@ -5678,7 +6296,9 @@ async fn kagi_sub_body(
         }
         // Pull-then-live: replay the station's Series<KagiSegmentPoint>
         // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale).
+        // derived_bar_sub_body for full rationale). Batched as ONE
+        // `KagiHistoryPrepended` (Task 1) — see the `RenkoHistoryPrepended`
+        // seed batch above for the empty-slot rationale.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::KagiSegmentPoint>(key) {
@@ -5687,11 +6307,11 @@ async fn kagi_sub_body(
                         "[Bridge::kagi-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::KagiBarUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::KagiHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                         });
                     }
                 }
@@ -5753,7 +6373,12 @@ async fn cvd_sub_body(
         }
         // Pull-then-live: replay the station's Series<ScalarBarPoint>
         // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale).
+        // derived_bar_sub_body for full rationale). Batched as ONE
+        // `CvdHistoryPrepended` (Task 1) — its mlc-backend handler pushes
+        // into `bubble.cvd_line` and emits ONE `CvdSampleAppended` (same
+        // downstream fan-out `CvdLineUpdate`'s live path drives: the CVD
+        // indicator pane recalc), so batching the seed is behavior-identical
+        // to the per-point replay it replaces, just one event instead of N.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::ScalarBarPoint>(key) {
@@ -5762,11 +6387,11 @@ async fn cvd_sub_body(
                         "[Bridge::cvd-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::CvdLineUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::CvdHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                         });
                     }
                 }
@@ -5828,7 +6453,11 @@ async fn tpo_sub_body(
         }
         // Pull-then-live: replay the station's Series<TpoSessionPoint>
         // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale).
+        // derived_bar_sub_body for full rationale). Batched as ONE
+        // `TpoHistoryPrepended` (Task 1) — its mlc-backend handler applies
+        // the same `MAX_TPO_SESSIONS` (11) recency cap post-splice that the
+        // live `TpoProfileUpdate` push enforces, so batching the seed keeps
+        // the same steady-state ring size.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
                 if let Some(station_series) = station.series::<digdigdig3_station::data::TpoSessionPoint>(key) {
@@ -5837,11 +6466,11 @@ async fn tpo_sub_body(
                         "[Bridge::tpo-fwd ring-peek] {:?} {} n={}",
                         exchange_id, symbol_canonical, points.len(),
                     );
-                    for point in points {
-                        let _ = tx.send(LiveUpdate::TpoProfileUpdate {
+                    if !points.is_empty() {
+                        let _ = tx.send(LiveUpdate::TpoHistoryPrepended {
                             exchange_id, account_type,
                             symbol: symbol_canonical.clone(),
-                            point,
+                            points,
                         });
                     }
                 }

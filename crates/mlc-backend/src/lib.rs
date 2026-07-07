@@ -1229,6 +1229,23 @@ impl BackendCore {
                             if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
                                 continue;
                             }
+                            // Trade-agg cold-seed batch (range/tick/volume/
+                            // dollar/imbalance/run bar — Task 1 batching):
+                            // the bridge has no window/bubble access to know
+                            // the bubble's own timeframe label ("100t",
+                            // user-picked range size, etc.), so it sends an
+                            // empty `tf_name` for this case. Resolve the
+                            // REAL per-bubble timeframe here instead of
+                            // trusting the event field — react.rs's window
+                            // match requires `win_tf.name == tf_name` in
+                            // addition to `current_tag_id == bid`; an empty
+                            // or wrong tf_name would silently fail that
+                            // match and leave `pending_symbol_load` stuck.
+                            let tf_name = if tf_name.is_empty() {
+                                mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default()
+                            } else {
+                                tf_name.clone()
+                            };
                             let prev_bars = mgr.bars(bid).to_vec();
                             mgr.replace_bars(bid, bars.clone());
                             drop(mgr);
@@ -1237,7 +1254,7 @@ impl BackendCore {
                                 exchange_id,
                                 symbol: symbol.clone(),
                                 account_type: account_type.short_label().to_string(),
-                                timeframe: tf_name.clone(),
+                                timeframe: tf_name,
                                 bars: bars.clone(),
                                 prev_bars,
                             });
@@ -1323,6 +1340,51 @@ impl BackendCore {
                         symbol: bar_sym,
                         bar,
                     });
+                }
+
+                // ── DerivedBarsPrepended ─────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch for the counted-bar family
+                // (range_bar/volume_bar/tick_bar/dollar_bar — all share
+                // `bubble.bars` with kline, see `resolve_active_series`'s
+                // mapping). Reuses the SAME `merge_scroll_bars` + `ScrollBarsAppended`
+                // path `ScrollBarsLoaded` uses above — bars are immutable once
+                // emitted (unlike kline's in-progress last bar), so a
+                // timestamp merge is exact and the kline ts-anchor reconcile
+                // in react.rs applies verbatim, no separate arm needed.
+                LiveUpdate::DerivedBarsPrepended { exchange_id, account_type: at, symbol: sym, bars } => {
+                    if bars.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        // react.rs's ScrollBarsAppended handler filters
+                        // candidate windows by `win_tf.name == *tf_name`, so
+                        // this must carry the bubble's OWN current timeframe
+                        // name (not an invented placeholder) for the match to
+                        // succeed against `timeframe_for_chart`.
+                        let tf_name = self.bubbles().timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
+                        let mut mgr = self.bubbles_mut();
+                        // bars-ownership gate (see ScrollBarsLoaded arm) — a
+                        // derived-bar-family prepend must never land on a
+                        // bubble currently rendering footprint OHLC.
+                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                            continue;
+                        }
+                        let prev_bars = mgr.bars(bid).to_vec();
+                        let merged = mgr.merge_scroll_bars(bid, &bars);
+                        drop(mgr);
+                        let prepend_count = merged.len().saturating_sub(prev_bars.len());
+                        events.push(BubbleEvent::ScrollBarsAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                            timeframe: tf_name,
+                            bars: merged,
+                            prev_bars,
+                            prepend_count,
+                        });
+                    }
                 }
 
                 // ── TradeUpdate — pass-through ──────────────────────────────────
@@ -1721,6 +1783,55 @@ impl BackendCore {
                     }
                 }
 
+                // ── RenkoHistoryPrepended ────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch (`Station::rewarm_derived`):
+                // older bricks spliced at the FRONT in one pass, dedup by
+                // `open_time` against the live store's own head — mirrors
+                // `LiveUpdate::FootprintHistoryPrepended`'s front-merge above.
+                // ONE `RenkoBarAppended` per owning bubble; `reconcile_derived_series`'s
+                // prepend-shift (stamp-based binary search) already handles a
+                // batch prepend correctly — no per-point replay.
+                LiveUpdate::RenkoHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::RenkoBrick> = points.iter().map(|point| {
+                        mlc_core::types::RenkoBrick {
+                            open_time: point.open_time,
+                            bottom: point.bottom,
+                            top: point.top,
+                            up: point.up,
+                            volume: point.volume,
+                            trades_count: point.trades_count,
+                        }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.renko_bars.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|b| b.open_time);
+                            let older: Vec<&mlc_core::types::RenkoBrick> = converted.iter()
+                                .filter(|b| head.is_none_or(|h| b.open_time <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|b| b.open_time == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                        });
+                        events.push(BubbleEvent::RenkoBarAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
                 // ── PnfBarUpdate ────────────────────────────────────────────────
                 LiveUpdate::PnfBarUpdate { exchange_id, account_type: at, symbol: sym, point, box_size: bs } => {
                     let at_label = at.short_label().to_string();
@@ -1742,6 +1853,52 @@ impl BackendCore {
                                 bubble.append_pnf(col.clone());
                             });
                         }
+                        events.push(BubbleEvent::PnfBarAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
+                // ── PnfHistoryPrepended ───────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
+                // above for the front-merge rationale.
+                LiveUpdate::PnfHistoryPrepended { exchange_id, account_type: at, symbol: sym, points, box_size: bs } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::PnfColumn> = points.iter().map(|point| {
+                        mlc_core::types::PnfColumn {
+                            open_time: point.open_time,
+                            column_id: point.column_id,
+                            is_x: point.is_x,
+                            bottom: point.bottom,
+                            top: point.top,
+                            volume: point.volume,
+                            trades_count: point.trades_count,
+                            box_size: bs,
+                        }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|c| c.open_time);
+                            let older: Vec<&mlc_core::types::PnfColumn> = converted.iter()
+                                .filter(|c| head.is_none_or(|h| c.open_time <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|c| c.open_time == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                        });
                         events.push(BubbleEvent::PnfBarAppended {
                             bid,
                             exchange_id,
@@ -1779,6 +1936,50 @@ impl BackendCore {
                     }
                 }
 
+                // ── KagiHistoryPrepended ──────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
+                // above for the front-merge rationale.
+                LiveUpdate::KagiHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::KagiSegment> = points.iter().map(|point| {
+                        mlc_core::types::KagiSegment {
+                            open_time: point.open_time,
+                            start_price: point.start_price,
+                            end_price: point.end_price,
+                            up: point.up,
+                            yang: point.yang,
+                            is_connector: point.is_connector,
+                        }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.kagi_segments.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|s| s.open_time);
+                            let older: Vec<&mlc_core::types::KagiSegment> = converted.iter()
+                                .filter(|s| head.is_none_or(|h| s.open_time <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|s| s.open_time == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                        });
+                        events.push(BubbleEvent::KagiBarAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
                 // ── CvdLineUpdate ───────────────────────────────────────────────
                 LiveUpdate::CvdLineUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label().to_string();
@@ -1794,6 +1995,46 @@ impl BackendCore {
                                 bubble.append_cvd(sample);
                             });
                         }
+                        events.push(BubbleEvent::CvdSampleAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
+                // ── CvdHistoryPrepended ───────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
+                // above for the front-merge rationale. `append_cvd` is a plain
+                // push (CVD is a running total, not an upsert-by-ts store), so
+                // the dedup-by-`ts_ms` cut against the live head is done here
+                // directly rather than reusing `append_cvd` in a loop.
+                LiveUpdate::CvdHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::CvdSample> = points.iter().map(|point| {
+                        mlc_core::types::CvdSample { ts_ms: point.ts_ms, value: point.value }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.cvd_line.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|s| s.ts_ms);
+                            let older: Vec<&mlc_core::types::CvdSample> = converted.iter()
+                                .filter(|s| head.is_none_or(|h| s.ts_ms <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|s| s.ts_ms == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                        });
                         events.push(BubbleEvent::CvdSampleAppended {
                             bid,
                             exchange_id,
@@ -1843,6 +2084,61 @@ impl BackendCore {
                     }
                 }
 
+                // ── TpoHistoryPrepended ───────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
+                // above for the front-merge rationale. `tpo_sessions` is a
+                // recency ring capped at `MAX_TPO_SESSIONS` (11) — a prepend
+                // fills in older sessions the ring didn't have room for yet,
+                // still capped to the newest 11 after the splice (matches the
+                // live-path cap above).
+                LiveUpdate::TpoHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::TpoSession> = points.iter().map(|point| {
+                        mlc_core::types::TpoSession {
+                            open_time: point.open_time,
+                            tick_size: point.tick_size,
+                            session_high: point.session_high,
+                            session_low: point.session_low,
+                            poc_price: point.poc_price,
+                            vah_price: point.vah_price,
+                            val_price: point.val_price,
+                            rows: point.rows.clone(),
+                        }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.tpo_sessions.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|s| s.open_time);
+                            let older: Vec<&mlc_core::types::TpoSession> = converted.iter()
+                                .filter(|s| head.is_none_or(|h| s.open_time <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|s| s.open_time == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                            const MAX_TPO_SESSIONS: usize = 11;
+                            if store.len() > MAX_TPO_SESSIONS {
+                                let drop = store.len() - MAX_TPO_SESSIONS;
+                                store.drain(0..drop);
+                            }
+                        });
+                        events.push(BubbleEvent::TpoSessionUpdated {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
                 // ── ThreeLineBreakUpdate ────────────────────────────────────────
                 LiveUpdate::ThreeLineBreakUpdate { exchange_id, account_type: at, symbol: sym, point } => {
                     let at_label = at.short_label().to_string();
@@ -1862,6 +2158,51 @@ impl BackendCore {
                                 bubble.append_three_line_break(line.clone());
                             });
                         }
+                        events.push(BubbleEvent::TlbLineAppended {
+                            bid,
+                            exchange_id,
+                            symbol: sym.clone(),
+                            account_type: at_label.clone(),
+                        });
+                    }
+                }
+
+                // ── TlbHistoryPrepended ───────────────────────────────────────────
+                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
+                // above for the front-merge rationale. Dedup keyed by
+                // `ts_open` (same field `append_three_line_break` upserts on).
+                LiveUpdate::TlbHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
+                    if points.is_empty() { continue; }
+                    let at_label = at.short_label().to_string();
+                    let converted: Vec<mlc_core::types::ThreeLineBreakLine> = points.iter().map(|point| {
+                        mlc_core::types::ThreeLineBreakLine {
+                            ts_open: point.ts_open,
+                            ts_close: point.ts_close,
+                            price_open: point.open,
+                            price_close: point.close,
+                            volume: point.volume,
+                            direction: point.direction,
+                        }
+                    }).collect();
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                            let store = bubble.three_line_break.get_or_insert_with(Vec::new);
+                            let head = store.first().map(|l| l.ts_open);
+                            let older: Vec<&mlc_core::types::ThreeLineBreakLine> = converted.iter()
+                                .filter(|l| head.is_none_or(|h| l.ts_open <= h))
+                                .collect();
+                            if older.is_empty() { return; }
+                            let boundary_replaced = head.is_some_and(|h| {
+                                older.last().is_some_and(|l| l.ts_open == h)
+                            });
+                            let skip = usize::from(boundary_replaced);
+                            let old = std::mem::take(store);
+                            store.reserve(older.len() + old.len());
+                            store.extend(older.into_iter().cloned());
+                            store.extend(old.into_iter().skip(skip));
+                        });
                         events.push(BubbleEvent::TlbLineAppended {
                             bid,
                             exchange_id,

@@ -64,7 +64,7 @@ uzor-fonts            = { path = "../uzor/uzor-fonts" }
 uzor-window-web       = { path = "../uzor/uzor-window-web" }
 uzor-render-canvas2d  = { path = "../uzor/uzor-render-canvas2d" }
 # Local dig3 path build — same policy as uzor. Pins stay at the published
-# 0.3.23; the patch resolves them to the working tree so in-flight dig3
+# 0.3.25; the patch resolves them to the working tree so in-flight dig3
 # fixes are picked up without a publish round-trip. Keep pins == published
 # dig3 version on every bump; all three crates patched together so the
 # graph resolves one consistent version.
