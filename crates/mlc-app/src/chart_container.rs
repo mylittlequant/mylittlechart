@@ -900,7 +900,7 @@ impl ChartContainer {
 
         self.viewport.bar_count = series.len();
 
-        if let Some((anchor_ts, frac)) = prev_anchor {
+        if let Some((anchor_ts, offset)) = prev_anchor {
             if let Some(pos_i) = bars.iter().position(|b| b.timestamp >= anchor_ts) {
                 // F2 (viewport doctrine audit 2026-07-07): the anchor ts can
                 // vanish from the array after a merge (gap-filling backfill,
@@ -939,7 +939,9 @@ impl ChartContainer {
                     }
                 }
                 // Never snap, never bail — always land on the nearest bar.
-                self.viewport.view_start = candidate_i as f64 + frac;
+                // `offset` is SIGNED and unbounded (see capture_view_anchor)
+                // so out-of-range viewport positions survive the reconcile.
+                self.viewport.view_start = candidate_i as f64 + offset;
             }
         }
 
@@ -955,17 +957,26 @@ impl ChartContainer {
         self.log_view_jump("reconcile_view_keep_anchor", vs0, bc0);
     }
 
-    /// Capture the (timestamp, fractional offset) of the bar currently at
-    /// `view_start`. Used by callers before they replace bubble.bars so they
-    /// can pass it to `reconcile_view_keep_anchor` afterwards.
+    /// Capture the (timestamp, SIGNED offset) of the viewport relative to
+    /// the nearest in-range bar. Used by callers before they replace
+    /// bubble.bars so they can pass it to `reconcile_view_keep_anchor`.
+    ///
+    /// Live-caught 2026-07-07 (owner repro, VPJUMP log): the old
+    /// `(ts, frac∈[0,1))` shape CLAMPED out-of-range positions — a user
+    /// scrolled into the pre-history void (`view_start = -72.4`) got
+    /// re-anchored to bar 0 with the -72-bar offset silently dropped, so a
+    /// backfill prepend shifted the visual window by 72 bars. The offset is
+    /// now signed and unbounded: `view_start = new_index(ts) + offset`
+    /// reproduces positions beyond EITHER edge (pre-history void and
+    /// future-scroll overhang) exactly.
     pub fn capture_view_anchor(&self, bars: &[Bar]) -> Option<(i64, f64)> {
         if bars.is_empty() {
             return None;
         }
         let vs = self.viewport.view_start;
-        let clamped_idx = (vs.floor() as usize).min(bars.len().saturating_sub(1));
-        let frac = vs - vs.floor();
-        bars.get(clamped_idx).map(|b| (b.timestamp, frac))
+        let clamped_idx = (vs.floor().max(0.0) as usize).min(bars.len().saturating_sub(1));
+        let offset = vs - clamped_idx as f64;
+        bars.get(clamped_idx).map(|b| (b.timestamp, offset))
     }
 
     // `clone_data_from` was unused (mirrors viewport + scales between

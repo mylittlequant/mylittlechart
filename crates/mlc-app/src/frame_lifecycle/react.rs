@@ -94,7 +94,26 @@ impl ChartApp {
                         // Auto on every tab switch).  Fresh = pending only.
                         let is_backfill = !window.pending_symbol_load;
                         let anchor = if is_backfill {
-                            window.capture_view_anchor(prev_bars_for_anchor)
+                            // Stale-snapshot guard (live-caught 2026-07-07,
+                            // VPJUMP repro): two backfill-class events can
+                            // stack in ONE drain. Event #2's `prev_bars`
+                            // snapshot predates event #1's reconcile, so the
+                            // window's `view_start` is already in POST-#1
+                            // coordinates — indexing it into the #2 snapshot
+                            // clamps to the newest bar and teleports the view
+                            // to the live edge. If the snapshot length doesn't
+                            // match the window's current bookkeeping, skip the
+                            // anchor math entirely (count-adopt only).
+                            let wc = window.viewport().bar_count;
+                            if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                                log::warn!(
+                                    "[VPANCHOR stale] BarsLoaded: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                    prev_bars_for_anchor.len(), wc
+                                );
+                                None
+                            } else {
+                                window.capture_view_anchor(prev_bars_for_anchor)
+                            }
                         } else {
                             None
                         };
@@ -430,7 +449,23 @@ impl ChartApp {
                             && window.viewport().chart_width > 0.0
                             && prev_count > 0.0
                     };
-                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor), was_at_end));
+                    // Stale-snapshot guard — see BarsLoaded branch. Skip the
+                    // anchor math when this event's pre-merge snapshot no
+                    // longer matches the window's bookkeeping (an earlier
+                    // event in the same drain already reconciled it).
+                    let anchor = {
+                        let wc = window.viewport().bar_count;
+                        if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                            log::warn!(
+                                "[VPANCHOR stale] BackfillCompleted: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                prev_bars_for_anchor.len(), wc
+                            );
+                            None
+                        } else {
+                            window.capture_view_anchor(prev_bars_for_anchor)
+                        }
+                    };
+                    matched_anchors.push((*chart_id_key, anchor, was_at_end));
                 }
 
                 // Audit D8: resolve each matched window's OWN active series
@@ -599,7 +634,20 @@ impl ChartApp {
                         continue;
                     }
                     any_matched = true;
-                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor)));
+                    // Stale-snapshot guard — see BarsLoaded branch.
+                    let anchor = {
+                        let wc = window.viewport().bar_count;
+                        if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                            log::warn!(
+                                "[VPANCHOR stale] ScrollBarsAppended: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                prev_bars_for_anchor.len(), wc
+                            );
+                            None
+                        } else {
+                            window.capture_view_anchor(prev_bars_for_anchor)
+                        }
+                    };
+                    matched_anchors.push((*chart_id_key, anchor));
                 }
 
                 // Audit D8: resolve each matched window's own active series
