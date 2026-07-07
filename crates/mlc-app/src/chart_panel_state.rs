@@ -26,7 +26,7 @@ use mlc_core::ids::ChartPanelId;
 pub struct ChartPanelState {
     pub chart_panel_id: ChartPanelId,
 
-    // ── Series visibility flags + chart_type ─────────────────────────────────
+    // ── Series visibility flags ────────────────────────────────────────────────
     /// Show candlesticks (default: `true`).
     pub show_candles: bool,
     /// Show OHLC bars with ticks (default: `false`).
@@ -51,25 +51,6 @@ pub struct ChartPanelState {
     pub show_columns: bool,
     /// Show baseline (default: `false`).
     pub show_baseline: bool,
-    /// Active chart type name (e.g. `"candles"`, `"bars"`, `"line"`, `"area"`).
-    /// Default: `"candles"`.
-    pub chart_type: &'static str,
-
-    /// Numeric parameter for derived-bar chart types (range_bar / volume_bar).
-    ///
-    /// - For `"range_bar"`: price-move size (e.g. `10.0` USD) — converted to
-    ///   ×1e8 fixed-point at the bridge boundary.
-    /// - For `"volume_bar"`: cumulative volume per bar (e.g. `1000.0` units).
-    /// - For `"footprint"`: unused — footprint uses `chart_type_interval` instead.
-    /// - For plain render chart types: unused.
-    ///
-    /// Default `0.0` — code-side defaults (10.0 / 1000.0) are applied at
-    /// subscribe time when this field is non-positive.
-    pub chart_type_param: f64,
-
-    /// Kline interval label for `"footprint"` chart type (e.g. `"1m"`, `"5m"`).
-    /// Default: `"1m"`. Unused for non-footprint chart types.
-    pub chart_type_interval: &'static str,
 
     // ── Display options ───────────────────────────────────────────────────────
     /// Grid display options (vertical + horizontal lines).
@@ -91,9 +72,9 @@ impl ChartPanelState {
     /// Construct default state for a freshly-allocated canvas leaf.
     ///
     /// Defaults match [`crate::chart_container::ChartContainer::new_with_provider`]:
-    /// `show_candles = true`, all other `show_*` flags `false`,
-    /// `chart_type = "candles"`. Display options use their respective
-    /// `Default` impls except `watermark = Some(Watermark::default())`.
+    /// `show_candles = true`, all other `show_*` flags `false`. Display
+    /// options use their respective `Default` impls except
+    /// `watermark = Some(Watermark::default())`.
     pub fn new(chart_panel_id: ChartPanelId) -> Self {
         Self {
             chart_panel_id,
@@ -109,9 +90,6 @@ impl ChartPanelState {
             show_histogram: false,
             show_columns: false,
             show_baseline: false,
-            chart_type: "candles",
-            chart_type_param: 0.0,
-            chart_type_interval: "1m",
             grid_options: GridOptions::default(),
             crosshair_options: CrosshairOptions::default(),
             legend: Legend::default(),

@@ -110,7 +110,7 @@ impl ChartApp {
                                             snap_exchange_id,
                                             snap_exchange_id.as_str().to_string(),
                                             snap_at,
-                                            std::sync::Arc::clone(&self.core.bridge),
+                                            self.core.bridge_arc(),
                                         ),
                                     );
 
@@ -124,20 +124,6 @@ impl ChartApp {
 
                                     // Phase 4 C+S2.8: restore display/series fields + drawing_manager into panel state.
                                     {
-                                        let static_ct: &'static str = match snap.chart_type.as_str() {
-                                            "bars"           => "bars",
-                                            "hollow_candles" => "hollow_candles",
-                                            "heikin_ashi"    => "heikin_ashi",
-                                            "line"           => "line",
-                                            "step_line"      => "step_line",
-                                            "line_markers"   => "line_markers",
-                                            "area"           => "area",
-                                            "hlc_area"       => "hlc_area",
-                                            "baseline"       => "baseline",
-                                            // legacy "histogram" chart_type migrates to candles (removed 2026-07-05)
-                                            "columns"        => "columns",
-                                            _                => "candles",
-                                        };
                                         let mut panel_state = crate::chart_panel_state::ChartPanelState::new(window.chart_panel_id);
                                         panel_state.grid_options = snap.grid_options.clone();
                                         panel_state.crosshair_options = snap.crosshair_options.clone();
@@ -156,31 +142,6 @@ impl ChartApp {
                                         panel_state.show_histogram = snap.show_histogram;
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
-                                        panel_state.chart_type = static_ct;
-                                        // Recon 2026-07-05: restore the derived-type
-                                        // param/interval BEFORE chart_type is used by
-                                        // any downstream subscribe path, so a future
-                                        // re-subscribe (or the settings modal reading
-                                        // this panel) sees the value the user actually
-                                        // set rather than the `0.0`/`"1m"` sentinel.
-                                        // NOTE: `chart_type` itself is only restorable
-                                        // for the plain render-type whitelist above —
-                                        // derived types (renko/footprint/...) still
-                                        // fall back to "candles" on cold load (no
-                                        // per-type cold-ignite wiring exists yet,
-                                        // footprint being the sole exception via its
-                                        // own Step 10 ignite branch). Restoring these
-                                        // two fields regardless keeps them ready for
-                                        // whenever that separate gap is closed, and
-                                        // fixes footprint's interval today (Step 10
-                                        // already reads `chart_type_interval` off this
-                                        // panel for its ignite call).
-                                        panel_state.chart_type_param = snap.chart_type_param;
-                                        panel_state.chart_type_interval = match snap.chart_type_interval.as_str() {
-                                            "1m" => "1m", "3m" => "3m", "5m" => "5m",
-                                            "15m" => "15m", "30m" => "30m", "1h" => "1h",
-                                            _ => "1m",
-                                        };
                                         panel_state.footprint_display = snap.footprint_display;
                                         self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                         // Restored drawings are written into the window's
@@ -208,6 +169,13 @@ impl ChartApp {
                                     // color-bubble (Step 5); default to auto_bid for now.
                                     window.current_tag_id = auto_bid;
                                     self.attach_chart_to_tag(chart_id, auto_bid);
+                                    // chart_type/param/interval restore deferred to the
+                                    // unified post-restore pass below (after Step 5's
+                                    // `bubbles_mut().clear()` + `restore_from_snapshots`)
+                                    // — this `auto_bid` is a transient pre-clear bubble;
+                                    // any write here would be discarded exactly like the
+                                    // (pre-existing, likewise-transient) instrument/
+                                    // timeframe writes in the legacy fallback branch.
 
                                     // Restore drawings into `auto_bid`'s primitives — under
                                     // the per-bubble drawing model this bubble IS what the
@@ -402,7 +370,7 @@ impl ChartApp {
                                             patch_exchange_id,
                                             patch_exchange_id.as_str().to_string(),
                                             patch_at,
-                                            std::sync::Arc::clone(&self.core.bridge),
+                                            self.core.bridge_arc(),
                                         ),
                                     );
                                     // Viewport / price-scale are restored below (bar_spacing +
@@ -466,20 +434,6 @@ impl ChartApp {
                                     window.needs_snap_after_backfill = true;
 
                                     // Collect panel state for post-borrow write to panels_store.
-                                    let static_ct: &'static str = match snap.chart_type.as_str() {
-                                        "bars"           => "bars",
-                                        "hollow_candles" => "hollow_candles",
-                                        "heikin_ashi"    => "heikin_ashi",
-                                        "line"           => "line",
-                                        "step_line"      => "step_line",
-                                        "line_markers"   => "line_markers",
-                                        "area"           => "area",
-                                        "hlc_area"       => "hlc_area",
-                                        "baseline"       => "baseline",
-                                        // legacy "histogram" chart_type migrates to candles (removed 2026-07-05)
-                                        "columns"        => "columns",
-                                        _                => "candles",
-                                    };
                                     let mut ps = crate::chart_panel_state::ChartPanelState::new(window.chart_panel_id);
                                     ps.grid_options = snap.grid_options.clone();
                                     ps.crosshair_options = snap.crosshair_options.clone();
@@ -498,17 +452,6 @@ impl ChartApp {
                                     ps.show_histogram = snap.show_histogram;
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
-                                    ps.chart_type = static_ct;
-                                    // Recon 2026-07-05: see twin branch above for the
-                                    // rationale (restore regardless of whether
-                                    // `chart_type` itself round-tripped to a derived
-                                    // type on this path).
-                                    ps.chart_type_param = snap.chart_type_param;
-                                    ps.chart_type_interval = match snap.chart_type_interval.as_str() {
-                                        "1m" => "1m", "3m" => "3m", "5m" => "5m",
-                                        "15m" => "15m", "30m" => "30m", "1h" => "1h",
-                                        _ => "1m",
-                                    };
                                     ps.footprint_display = snap.footprint_display;
                                     panel_patches.push((window.chart_panel_id, ps));
                                     // Restore drawings into the window's current bubble
@@ -596,6 +539,42 @@ impl ChartApp {
                         self.set_panel_synced(member, gid);
                     }
                     eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
+
+                    // Restore chart_type/param/interval onto each window's FINAL
+                    // bubble. Must run here — after `bubbles_mut().clear()` +
+                    // `restore_from_snapshots` above — because `chart_type` is
+                    // bubble-resident (symmetric with `timeframe`) but
+                    // `DataBubbleSnapshot` does not carry it (it stays on the
+                    // per-window `ChartWindowSnapshot`, S1 note). Any write onto
+                    // `bubble_for_chart(chart_id)` taken BEFORE this point targets
+                    // a transient pre-clear bubble (the `auto_bid` minted during
+                    // window construction above) that this clear+restore just
+                    // discarded — same hazard the "Window↔bubble pointer sync
+                    // sweep" further below documents and fixes for other fields.
+                    //
+                    // Whitelist widened §3.4 (handoff 2026-07-06): derived types
+                    // now round-trip. Step 10 (below in this file, or the startup
+                    // post-load loop in lib.rs) ignites the matching bridge sub
+                    // for each — previously the whole family collapsed to
+                    // "candles" here because no cold-open subscribe existed
+                    // outside footprint. Legacy `"columns"`/`"histogram"` ids no
+                    // longer exist in the registry — `by_id(...).unwrap_or` below
+                    // naturally migrates them to "candles" on restore.
+                    for snap in &preset.windows {
+                        let chart_id = mlc_core::ids::ChartId(snap.window_id);
+                        let Some(bid) = self.bubble_for_chart(chart_id) else { continue };
+                        let static_ct: &'static str = mlc_core::chart_type::by_id(snap.chart_type.as_str())
+                            .map(|d| d.id)
+                            .unwrap_or("candles");
+                        let static_iv: &'static str = match snap.chart_type_interval.as_str() {
+                            "1m" => "1m", "3m" => "3m", "5m" => "5m",
+                            "15m" => "15m", "30m" => "30m", "1h" => "1h",
+                            _ => "1m",
+                        };
+                        self.core.bubbles_mut().set_chart_type(bid, static_ct);
+                        self.core.bubbles_mut().set_chart_type_param(bid, snap.chart_type_param);
+                        self.core.bubbles_mut().set_chart_type_interval(bid, static_iv);
+                    }
                     let bubbles_us = _t_bubbles.elapsed().as_micros();
 
                     // NOTE (Step 3.1): style-store rebinding is no longer needed —
@@ -968,8 +947,8 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
-                                                let trade_handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
+                                                let trade_handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = trade_handle;
                                             }
                                         }
@@ -991,7 +970,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1013,7 +992,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1035,7 +1014,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
@@ -1057,7 +1036,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1080,7 +1059,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                s.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
                                         self.panels_store.l2_tape.insert(pid, s);
@@ -1102,7 +1081,7 @@ impl ChartApp {
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
                                                 let at = crate::account_type_from_label(&s.account_type);
-                                                let handle = self.core.bridge.subscribe_trades(eid, &s.symbol, at);
+                                                let handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
                                         }
@@ -1186,7 +1165,7 @@ impl ChartApp {
                                             for ex_label in exchanges {
                                                 if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                                                     let at = digdigdig3::AccountType::Spot;
-                                                    let _ = self.core.bridge.subscribe_orderbook(eid, symbol, at);
+                                                    let _ = self.core.subscribe_orderbook(eid, symbol, at);
                                                 }
                                             }
                                         }
@@ -1309,7 +1288,7 @@ impl ChartApp {
                         let mut seen: std::collections::HashSet<(digdigdig3::ExchangeId, String, digdigdig3::AccountType)> = std::collections::HashSet::new();
                         for (eid, sym, at) in depth_subs {
                             if seen.insert((eid, sym.clone(), at)) {
-                                self.core.bridge.subscribe_depth(eid, &sym, at);
+                                self.core.subscribe_depth(eid, &sym, at);
                             }
                         }
                     }
@@ -1340,7 +1319,7 @@ impl ChartApp {
 
                     for (eid, symbol) in &old_subscriptions {
                         if !new_subscriptions.contains(&(*eid, symbol.clone())) {
-                            self.core.bridge.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
+                            self.core.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
                             eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                         }
                     }
@@ -1356,7 +1335,10 @@ impl ChartApp {
                     let bar_count = self.core.user().profile().domain.bar_count as usize;
                     let mut bars_requested: usize = 0;
                     // Phase 4 S2.7.1c: read via branch_meta (B6 tuple-collect flip).
-                    let window_bar_data: Vec<(mlc_core::state::ChartId, String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, &'static str, &'static str)> = self
+                    // §3.4 (handoff 2026-07-06): pre-collect chart_type per window
+                    // so the kline `request_bars` below can skip derived windows —
+                    // `ignite_derived_windows` fires their matching bridge sub.
+                    let window_bar_data: Vec<(mlc_core::state::ChartId, String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, &'static str)> = self
                         .panel_app
                         .panel_grid
                         .iter_containers()
@@ -1369,43 +1351,26 @@ impl ChartApp {
                             let tf = self.timeframe_for_chart(cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = self.account_type_for_chart(cid).unwrap_or_default();
                             let ct = self.chart_type_for_chart(cid).unwrap_or("candles");
-                            let fp_iv = self.panels_store.chart_panel.get(&w.chart_panel_id)
-                                .map(|p| p.chart_type_interval)
-                                .unwrap_or("1m");
-                            (cid, sym, exch, tf, at, ct, fp_iv)
+                            (cid, sym, exch, tf, at, ct)
                         })
                         .collect();
-                    for (cid, sym, exch, tf, at_typed, ct, fp_iv) in &window_bar_data {
+                    for (_cid, sym, exch, tf, at_typed, ct) in &window_bar_data {
                         let eid = digdigdig3::ExchangeId::from_str(&exch)
                             .unwrap_or(digdigdig3::ExchangeId::Binance);
                         if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
                             continue;
                         }
-                        let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
-                        self.core.bridge.ensure_connector(eid);
-                        if *ct == "footprint" {
-                            // A hydrated footprint window never went through
-                            // ChangeChartType's Step 6, so nothing ignited its
-                            // derived sub — the pane sat on the spinner forever
-                            // while the kline seed below painted a foreign
-                            // timeline (cold-open hang, handoff 2026-07-05
-                            // §2.3). Ignite the footprint pipeline instead of
-                            // the kline fetch, and stamp bar-series ownership
-                            // so the kline-family write gates hold.
-                            if let Some(bid) = self.bubble_for_chart(*cid) {
-                                self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                    bubble.clear_bars();
-                                    bubble.mark_footprint_pending();
-                                    bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
-                                });
-                            }
-                            self.core.bridge.request_footprint(eid, sym, at, fp_iv);
-                            bars_requested += 1;
+                        if crate::active_series::chart_type_is_derived_seed(ct) {
                             continue;
                         }
-                        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), true);
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
+                        self.core.ensure_connector(eid);
+                        self.core.request_kline(eid, sym, tf, at, None, Some(bar_count), true);
                         bars_requested += 1;
                     }
+                    // §3.4: derived windows go through the shared helper —
+                    // same code path as startup / new-window Post-LoadPreset paths.
+                    self.ignite_derived_windows();
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
                     // Default companions (klines → VOLUME, footprint → CVD)
                     // for the freshly hydrated windows — ChangeChartType

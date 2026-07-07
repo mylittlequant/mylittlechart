@@ -37,7 +37,7 @@ impl ChartApp {
             return;
         }
         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.bridge.request_cvd_line(exchange_id, &symbol, at_dig3);
+        self.core.subscribe_cvd_line(exchange_id, &symbol, at_dig3);
     }
 
     /// After the last CVD indicator instance for an instrument was removed
@@ -65,7 +65,7 @@ impl ChartApp {
         let exchange_id = digdigdig3::ExchangeId::from_str(&exchange)
             .unwrap_or(self.active_exchange);
         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.bridge.unsubscribe_cvd_line(exchange_id, &symbol, at_dig3);
+        self.core.unsubscribe_cvd_line(exchange_id, &symbol, at_dig3);
         self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_cvd());
     }
 

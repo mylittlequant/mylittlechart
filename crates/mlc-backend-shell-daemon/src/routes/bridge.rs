@@ -84,8 +84,7 @@ async fn request_bars(
     let limit = body.limit.map(|v| v as u16);
     let total_bars = body.total_bars.map(|v| v as usize);
     s.core
-        .bridge
-        .request_bars(exchange_id, &body.symbol, &tf, acct, limit, total_bars, body.force.unwrap_or(false));
+        .request_kline(exchange_id, &body.symbol, &tf, acct, limit, total_bars, body.force.unwrap_or(false));
     Json(RequestBarsOut { requested: true }).into_response()
 }
 

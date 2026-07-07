@@ -78,14 +78,12 @@ pub fn process_event(
                 dirty.sidebar_dirty_scene = true;
                 dirty.chart_dirty         = true;
 
-                if state.was_minimized {
-                    state.was_minimized = false;
-                    for window in chart.panel_app.panel_grid.containers_mut().values_mut() {
-                        if !true && window.price_scale().scale_mode.is_follow() {
-                            window.snap_to_end(mlc_app::chart_container::DEFAULT_SNAP_MARGIN);
-                        }
-                    }
-                }
+                // D1 (viewport doctrine audit 2026-07-07): the restore-from-
+                // minimize re-snap branch that lived here was gated
+                // `!true && ...` — permanently dead. Deleted; `was_minimized`
+                // still resets here so the vello shell resumes ticking this
+                // window (see `mlc-app-shell-vello/main.rs:4099`).
+                state.was_minimized = false;
             } else {
                 state.was_minimized = true;
             }

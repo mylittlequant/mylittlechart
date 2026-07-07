@@ -226,23 +226,7 @@ impl<'a> ActiveSeries<'a> {
 /// per-bar tick path). Kept out of the `non_temporal` flag because
 /// their axis IS temporal — just non-uniform.
 pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
-    matches!(
-        chart_type,
-        "range_bar"
-            | "tick_bar"
-            | "volume_bar"
-            | "dollar_bar"
-            | "tick_imbalance_bar"
-            | "volume_imbalance_bar"
-            | "run_bar"
-            // Footprint returned to the standard time grid (owner report
-            // 2026-07-05 #2): its buckets ARE uniform clock intervals, the
-            // X axis is index-packed like candles, and the ticks land on
-            // bar centers — the earlier "reads as broken" impression came
-            // from the renderer's OWN per-column separator drawn at cell
-            // EDGES (removed) fighting the center-aligned grid.
-            | "tpo"
-    )
+    mlc_core::chart_type::by_id(chart_type).map(|d| d.hides_time_grid).unwrap_or(false)
 }
 
 /// `chart_type`s whose scroll-left backfill must go through
@@ -251,7 +235,7 @@ pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
 /// `request_scroll_bars` (kline REST-page prepend).
 ///
 /// Kline family (candles/line/area/hollow_candles/heikin_ashi/bars/
-/// step_line/line_markers/hlc_area/baseline/histogram/columns) and
+/// step_line/line_markers/hlc_area/baseline/histogram) and
 /// `"footprint"` are NOT here — footprint's viewport bookkeeping still
 /// piggybacks `bubble.bars` (see `resolve_active_series`'s doc comment),
 /// and every kline-family type extends via the existing
@@ -261,40 +245,31 @@ pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
 /// for why derived state machines cannot use a "prepend older bars" fetch —
 /// the only way to deepen their history is a full station-side
 /// unsubscribe + respawn with a larger warm depth.
+///
+/// Registry-driven: "derived" = any `chart_type` whose `ChartTypeKind` is not
+/// `RenderOnly` (trade-agg bars, price-action transforms, orderflow-slotted
+/// types all reseed via `request_deeper_seed_for_active`).
+///
+/// Defensive fallback: `"cvd"` is no longer reachable via `ChangeChartType`
+/// (the 2026-07-04 taxonomy fix demoted CVD from a full-pane chart_type to a
+/// subpane indicator instance, so it has no registry row), but historical
+/// presets / agent-API callers may still pass the string. Kept `true` here to
+/// preserve today's behavior — drop this arm only once no external caller can
+/// still send `"cvd"` through this path.
 pub fn chart_type_is_derived_seed(chart_type: &str) -> bool {
-    matches!(
-        chart_type,
-        "renko"
-            | "pnf"
-            | "kagi"
-            | "three_line_break"
-            | "range_bar"
-            | "tick_bar"
-            | "volume_bar"
-            | "dollar_bar"
-            | "tick_imbalance_bar"
-            | "volume_imbalance_bar"
-            | "run_bar"
-            | "cvd"
-            | "tpo"
-            // Footprint's OWN slot (bubble.footprint_bars) is derived — the
-            // kline backdrop that piggybacks bubble.bars extends via
-            // request_scroll_bars for free, but the cluster data needs the
-            // same teardown+deeper-warm reseed as the rest of the derived
-            // family. request_deeper_seed_for_active checks
-            // footprint_active_interval first so this dispatches correctly.
-            | "footprint"
-    )
+    if let Some(def) = mlc_core::chart_type::by_id(chart_type) {
+        return def.kind != mlc_core::chart_type::ChartTypeKind::RenderOnly;
+    }
+    chart_type == "cvd"
 }
 
 pub fn ts_shadow_for_chart_type(chart_type: &str, bubble: &DataBubble) -> Option<Vec<Bar>> {
-    match chart_type {
-        "renko" | "pnf" | "kagi" | "three_line_break" => {
-            let series = resolve_active_series(chart_type, bubble);
-            Some(series.to_bar_shadow())
-        }
-        _ => None,
+    let needs_shadow = mlc_core::chart_type::by_id(chart_type).map(|d| d.needs_ts_shadow).unwrap_or(false);
+    if !needs_shadow {
+        return None;
     }
+    let series = resolve_active_series(chart_type, bubble);
+    Some(series.to_bar_shadow())
 }
 
 /// Resolve the [`ActiveSeries`] a `chart_type` renders, from the bubble that
@@ -305,14 +280,17 @@ pub fn ts_shadow_for_chart_type(chart_type: &str, bubble: &DataBubble) -> Option
 /// fallback discipline as `draw_series`' `_ => draw_candles(ctx, state)`
 /// arm, so an unknown/new chart_type never panics on an absent slot.
 pub fn resolve_active_series<'a>(chart_type: &str, bubble: &'a DataBubble) -> ActiveSeries<'a> {
-    match chart_type {
-        "renko" => bubble.renko_bars.as_deref().map(ActiveSeries::Renko).unwrap_or(ActiveSeries::Bars(&[])),
-        "pnf" => bubble.pnf_columns.as_deref().map(ActiveSeries::Pnf).unwrap_or(ActiveSeries::Bars(&[])),
-        "kagi" => bubble.kagi_segments.as_deref().map(ActiveSeries::Kagi).unwrap_or(ActiveSeries::Bars(&[])),
-        "three_line_break" => bubble.three_line_break.as_deref().map(ActiveSeries::Tlb).unwrap_or(ActiveSeries::Bars(&[])),
-        "tpo" => bubble.tpo_sessions.as_deref().map(ActiveSeries::Tpo).unwrap_or(ActiveSeries::Bars(&[])),
+    use mlc_core::chart_type::SeriesVariant;
+    let variant =
+        mlc_core::chart_type::by_id(chart_type).map(|d| d.series_variant).unwrap_or(SeriesVariant::Bars);
+    match variant {
+        SeriesVariant::Renko => bubble.renko_bars.as_deref().map(ActiveSeries::Renko),
+        SeriesVariant::Pnf => bubble.pnf_columns.as_deref().map(ActiveSeries::Pnf),
+        SeriesVariant::Kagi => bubble.kagi_segments.as_deref().map(ActiveSeries::Kagi),
+        SeriesVariant::Tlb => bubble.three_line_break.as_deref().map(ActiveSeries::Tlb),
+        SeriesVariant::Tpo => bubble.tpo_sessions.as_deref().map(ActiveSeries::Tpo),
         // candles/bars/hollow_candles/heikin_ashi/line/step_line/line_markers/
-        // area/hlc_area/baseline/histogram/columns: bubble.bars directly.
+        // area/hlc_area/baseline/histogram: bubble.bars directly.
         //
         // range_bar/volume_bar/tick_bar/dollar_bar/tick_imbalance_bar/
         // volume_imbalance_bar/run_bar: station writes these series directly
@@ -330,8 +308,9 @@ pub fn resolve_active_series<'a>(chart_type: &str, bubble: &'a DataBubble) -> Ac
         // (`bucket_idx = (ts-oldest)/bucket_ms`) computed straight from each
         // cell's ts_ms, never from viewport.bar_count — genuinely bypass this
         // seam; resolving them to Bars is inert (nothing reads it for X).
-        _ => ActiveSeries::Bars(&bubble.bars),
+        SeriesVariant::Bars => None,
     }
+    .unwrap_or(ActiveSeries::Bars(&bubble.bars))
 }
 
 /// Owned snapshot mirroring [`ActiveSeries`]'s variants, for call sites that
@@ -392,13 +371,16 @@ pub fn resolve_active_series_owned_from_store(
     store: &BubbleStore,
     bid: BubbleId,
 ) -> OwnedActiveSeries {
-    match chart_type {
-        "renko" => store.renko_bars(bid).map(|s| OwnedActiveSeries::Renko(s.to_vec())),
-        "pnf" => store.pnf_columns(bid).map(|s| OwnedActiveSeries::Pnf(s.to_vec())),
-        "kagi" => store.kagi_segments(bid).map(|s| OwnedActiveSeries::Kagi(s.to_vec())),
-        "three_line_break" => store.three_line_break(bid).map(|s| OwnedActiveSeries::Tlb(s.to_vec())),
-        "tpo" => store.tpo_sessions(bid).map(|s| OwnedActiveSeries::Tpo(s.to_vec())),
-        _ => None,
+    use mlc_core::chart_type::SeriesVariant;
+    let variant =
+        mlc_core::chart_type::by_id(chart_type).map(|d| d.series_variant).unwrap_or(SeriesVariant::Bars);
+    match variant {
+        SeriesVariant::Renko => store.renko_bars(bid).map(|s| OwnedActiveSeries::Renko(s.to_vec())),
+        SeriesVariant::Pnf => store.pnf_columns(bid).map(|s| OwnedActiveSeries::Pnf(s.to_vec())),
+        SeriesVariant::Kagi => store.kagi_segments(bid).map(|s| OwnedActiveSeries::Kagi(s.to_vec())),
+        SeriesVariant::Tlb => store.three_line_break(bid).map(|s| OwnedActiveSeries::Tlb(s.to_vec())),
+        SeriesVariant::Tpo => store.tpo_sessions(bid).map(|s| OwnedActiveSeries::Tpo(s.to_vec())),
+        SeriesVariant::Bars => None,
     }
     .unwrap_or_else(|| OwnedActiveSeries::Bars(store.bars(bid).to_vec()))
 }
@@ -409,20 +391,7 @@ pub fn resolve_active_series_owned_from_store(
 /// Mirrors [`chart_type_hides_time_grid`]'s counted-bar family plus the
 /// non-temporal price-action transforms (renko/pnf/kagi/three_line_break).
 pub fn chart_type_hides_timeframe_picker(chart_type: &str) -> bool {
-    matches!(
-        chart_type,
-        "renko"
-            | "pnf"
-            | "kagi"
-            | "three_line_break"
-            | "range_bar"
-            | "tick_bar"
-            | "volume_bar"
-            | "dollar_bar"
-            | "tick_imbalance_bar"
-            | "volume_imbalance_bar"
-            | "run_bar"
-    )
+    mlc_core::chart_type::by_id(chart_type).map(|d| d.hides_tf_picker).unwrap_or(false)
 }
 
 /// The full set of `tf_*` dropdown item ids from the timeframe_selector
@@ -446,17 +415,28 @@ const ALL_TF_IDS: &[&str] = &[
 /// fires a fresh REST backfill at that resolution, so the locally loaded
 /// series' depth says nothing about whether the TF is usable. The old gate
 /// (`depth_ms >= interval * 10`) blocked 1M on an 83-day 1H chart and
-/// blocked everything above 2H after a footprint→klines round-trip (the
-/// local series was minutes deep at that instant). Tick TFs were always
-/// allowed anyway. The only remaining distinction: chart types with an
-/// inert TF concept hide the picker entirely.
+/// blocked everything above 2H after a footprint→klines round-trip.
+///
+/// Chart-type COMPATIBILITY gating (owner report 2026-07-06 regression): a
+/// separate concern from depth. Some chart types physically cannot use tick
+/// TFs (footprint's bucket_interval, TPO's letter-frequency) — the bucket
+/// pipeline expects a millisecond duration, tick TFs express a trade-count
+/// window. Similarly, footprint's server-side bucket only supports 1m..1h.
+/// This whitelist survived a prior implementation and got accidentally
+/// dropped when the depth-gate rewrite collapsed the function body — it is
+/// restored here as a distinct, chart_type-keyed filter that runs
+/// independently of any depth check.
 pub fn allowed_timeframes(
     _active_series: ActiveSeries<'_>,
     chart_type: &str,
     _now_ms: i64,
 ) -> Option<std::collections::HashSet<&'static str>> {
-    if chart_type_hides_timeframe_picker(chart_type) {
+    let def = mlc_core::chart_type::by_id(chart_type)?;
+    if def.hides_tf_picker {
         return None;
     }
-    Some(ALL_TF_IDS.iter().copied().collect())
+    match def.tf_whitelist {
+        Some(slice) => Some(slice.iter().copied().collect()),
+        None => Some(ALL_TF_IDS.iter().copied().collect()),
+    }
 }

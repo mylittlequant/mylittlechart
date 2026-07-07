@@ -289,6 +289,16 @@ struct App<'s> {
     /// as an executor context for blocking calls like Telegram get_updates.
     live_data_handle: tokio::runtime::Handle,
     /// Shared DataBridge — connector pool, created once at startup.
+    ///
+    /// Chart-type registry arc Step 12: NOT dead weight from the facade
+    /// migration. `ChartApp::new_window` (mlc-app public API) takes
+    /// `Arc<DataBridge>` as its own constructor parameter — every window
+    /// spawn (both the synchronous path and the background-thread restore
+    /// path) needs an owned clone to hand it, independent of `core`. Method
+    /// calls that DO have a `BackendCore` facade go through `self.core.*`;
+    /// this field stays for the handful that don't (`subscribe_mini_ticker`,
+    /// `ws_task_count_total`) and for `ChartApp::new_window`'s own
+    /// `Arc<DataBridge>` parameter.
     bridge: std::sync::Arc<mlc_backend_data_bridge::DataBridge>,
     /// Shared backend core — one instance per process, handed to every
     /// `ChartApp::new_window` call so all windows read/write the same
@@ -2234,7 +2244,7 @@ impl App<'_> {
                 Ok(exchange_id) => {
                     let eid_str = exchange_id.as_str();
                     if self.core.user().is_connector_enabled(eid_str) {
-                        self.bridge.request_symbols(exchange_id);
+                        self.core.bootstrap_request_symbols(exchange_id);
                     }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -2385,7 +2395,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 let enabled = self.core.user().is_connector_enabled(eid.as_str());
                                 if enabled {
                                     let at = mlc_app::account_type_from_label(&account_type);
-                                    self.bridge.ensure_connector(eid);
+                                    self.core.ensure_connector(eid);
                                     self.bridge.subscribe_mini_ticker(eid, &symbol, at);
                                 }
                             }
@@ -2393,7 +2403,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         } else {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
                                 let at = mlc_app::account_type_from_label(&account_type);
-                                self.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
+                                self.core.unsubscribe_mini_ticker(eid, &symbol, at);
                             }
                             if let Some(ref mut snap) = pw.chart.watchlist_ui.list_mut(active_list_id).order_snapshot {
                                 snap.retain(|s| s.symbol != symbol);
@@ -4170,7 +4180,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Request a fresh bar fetch from the exchange.
                 if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
                     let at = mlc_app::account_type_from_label(&account_type);
-                    self.bridge.request_bars(eid, &symbol, &timeframe, at, None, Some(bar_count), true);
+                    self.core.request_kline(eid, &symbol, &timeframe, at, None, Some(bar_count), true);
                 }
 
                 eprintln!(
@@ -4351,7 +4361,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
             // Connector stream count for the perf panel — cheap, keep every second.
             {
-                let metrics = self.bridge.collect_metrics();
+                let metrics = self.core.agent_metrics_snapshot();
                 self.cached_connector_count = metrics.len();
             }
 

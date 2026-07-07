@@ -34,6 +34,20 @@ fn short_liq_color(alpha: f64) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", 0x2e, 0xcc, 0x71, a)
 }
 
+/// Draw the liquidation heatmap chart-type, conditional on
+/// `state.liq_heatmap_ref` being populated.
+///
+/// Matches the `fn(&mut dyn RenderContext, &ChartRenderState)` shape needed
+/// by the chart-type `DrawOps` table (`crate::chart_type::draw_ops`) — the
+/// ring-buffer presence check that used to live inline in
+/// `render_chart.rs::draw_series` now lives here instead. No-ops silently
+/// when the buffer is absent, same as before.
+pub fn draw_liquidation_heatmap_conditional(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    if let Some(buf) = state.liq_heatmap_ref {
+        draw_liquidation_heatmap(ctx, state, buf, state.liq_dots_ref);
+    }
+}
+
 /// Draw the liquidation heatmap chart-type.
 ///
 /// `buf` is the rolling liquidation cell buffer; `dots` is the optional per-event overlay.

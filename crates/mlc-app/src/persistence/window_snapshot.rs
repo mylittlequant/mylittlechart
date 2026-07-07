@@ -26,7 +26,9 @@ use crate::chart_panel_state::ChartPanelState;
 ///
 /// `symbol`, `timeframe`, `exchange`, and `account_type` are read from
 /// `branch_meta` by the caller (Phase 4 B — instrument fields removed from
-/// `ChartContainer`).
+/// `ChartContainer`). `chart_type`/`chart_type_param`/`chart_type_interval`
+/// are likewise read from the bubble by the caller (chart_type moved off
+/// `ChartPanelState` onto `DataBubble`, symmetric with `timeframe`).
 #[allow(clippy::too_many_arguments)]
 pub fn build_chart_window_snapshot(
     window: &ChartContainer,
@@ -41,6 +43,9 @@ pub fn build_chart_window_snapshot(
     timeframe: Timeframe,
     exchange: String,
     account_type: String,
+    chart_type: String,
+    chart_type_param: f64,
+    chart_type_interval: String,
 ) -> ChartWindowSnapshot {
     let drawings = DrawingSnapshot::from_primitives(window.id.0, primitives);
 
@@ -74,9 +79,9 @@ pub fn build_chart_window_snapshot(
         legend: panel.legend.clone(),
         watermark: panel.watermark.clone(),
         tooltip: panel.tooltip.clone(),
-        chart_type: panel.chart_type.to_string(),
-        chart_type_param: panel.chart_type_param,
-        chart_type_interval: panel.chart_type_interval.to_string(),
+        chart_type,
+        chart_type_param,
+        chart_type_interval,
         footprint_display: panel.footprint_display,
         show_candles: panel.show_candles,
         show_bars: panel.show_bars,
@@ -143,8 +148,6 @@ mod json_compat_tests {
     fn round_trips_current_shape() {
         let window = ChartContainer::new("BTCUSDT", Timeframe::h1());
         let mut panel = ChartPanelState::new(ChartPanelId(1));
-        panel.chart_type_param = 25.5;
-        panel.chart_type_interval = "5m";
         panel.footprint_display.show_abs_markers = false;
         panel.footprint_display.show_volume_text = false;
         panel.footprint_display.heat_intensity = mlc_core::chart::FootprintHeatIntensity::High;
@@ -162,6 +165,9 @@ mod json_compat_tests {
             Timeframe::h1(),
             "binance".to_string(),
             "S".to_string(),
+            "candles".to_string(),
+            25.5,
+            "5m".to_string(),
         );
 
         let json = serde_json::to_string(&snap).expect("snapshot must serialize");
@@ -217,6 +223,9 @@ mod json_compat_tests {
             Timeframe::h1(),
             "binance".to_string(),
             "S".to_string(),
+            "candles".to_string(),
+            0.0,
+            "1m".to_string(),
         );
 
         let mut json_value = serde_json::to_value(&snap).expect("snapshot must serialize to value");

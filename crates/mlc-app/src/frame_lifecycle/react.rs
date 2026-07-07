@@ -152,6 +152,8 @@ impl ChartApp {
                         {
                             window.consume_cold_snap(series);
                         } else if was_at_end && !series.is_empty() {
+                            // EDGE-GLUE (owner ruling 2026-07-07): re-snap only
+                            // restores "was glued to live edge" — legal data-side move.
                             // User was on right edge; backfill prepended older
                             // bars — re-snap to keep them on the right edge.
                             window.snap_to_end(DEFAULT_SNAP_MARGIN);
@@ -192,7 +194,7 @@ impl ChartApp {
                 let bg_target = self.core.user().profile().domain.data_load.background_bar_count;
                 for (sym, tf, at) in backfill_requests {
                     let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                    self.core.bridge.request_background_backfill(*exchange_id, &sym, &tf, at, bg_target);
+                    self.core.request_background_backfill(*exchange_id, &sym, &tf, at, bg_target);
                 }
 
                 // Parked preset delivery.
@@ -233,11 +235,10 @@ impl ChartApp {
                                 // Audit D8: resolve this parked window's OWN
                                 // chart_type against the parked BubbleStore
                                 // (not always the just-replaced kline array).
-                                let chart_type = parked.panel_grid.containers().get(&cid)
-                                    .and_then(|w| parked.panels_store.chart_panel.get(&w.chart_panel_id))
-                                    .map(|p| p.chart_type)
-                                    .unwrap_or("candles");
                                 let bid_for_series = parked.tag_manager.tag_for_chart(cid);
+                                let chart_type = bid_for_series
+                                    .and_then(|b| parked.bubble_store.chart_type(b))
+                                    .unwrap_or("candles");
                                 let series_owned = bid_for_series.map(|b| crate::active_series::resolve_active_series_owned_from_store(
                                     chart_type, &parked.bubble_store, b,
                                 )).unwrap_or_default();
@@ -281,7 +282,7 @@ impl ChartApp {
                 if any_matched {
                     if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
                         let at = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
-                        self.core.bridge.subscribe_trades(*exchange_id, symbol, at);
+                        self.core.subscribe_trades(*exchange_id, symbol, at);
                     }
                 }
 
@@ -449,6 +450,8 @@ impl ChartApp {
                     if window.needs_snap_after_backfill {
                         window.consume_cold_snap(series);
                     } else if was_at_end && !series.is_empty() {
+                        // EDGE-GLUE (owner ruling 2026-07-07): re-snap only
+                        // restores "was glued to live edge" — legal data-side move.
                         // User was at right edge before backfill prepended
                         // older bars — re-snap so the live tick stays visible.
                         window.snap_to_end(DEFAULT_SNAP_MARGIN);
@@ -487,9 +490,15 @@ impl ChartApp {
             }
 
             // ── ScrollBarsAppended ─────────────────────────────────────────────
-            BubbleEvent::ScrollBarsAppended { bid: _, exchange_id, symbol, account_type, timeframe: tf_name, bars, .. } => {
+            BubbleEvent::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars, .. } => {
                 let new_bars = bars;
-                let at_label = account_type.as_str();
+                // F4 (viewport doctrine audit 2026-07-07): the in-flight
+                // guard lives on the bubble now, not the window — clear it
+                // once for the bubble this event actually landed on.
+                self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
+                    b.scroll_fetch_in_flight = false;
+                    b.scroll_fetch_started = None;
+                });
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let mut prev_close_mirrors: Vec<(mlc_core::state::ChartId, Option<f64>)> = Vec::new();
                 let mut any_matched = false;
@@ -506,12 +515,14 @@ impl ChartApp {
                         .collect()
                 };
 
-                let prev_bars_for_anchor: Vec<mlc_core::Bar> = {
-                    let mgr = self.core.bubbles();
-                    mgr.bubble_for_instrument(exchange_id.as_str(), at_label, symbol)
-                        .map(|b| mgr.bars(b).to_vec())
-                        .unwrap_or_default()
-                };
+                // Pre-merge snapshot from event: pinned to bubble.bars state
+                // BEFORE tick_writers' merge_scroll_bars ran. `capture_view_anchor`
+                // must index `view_start` into this OLD coordinate space (pre-
+                // prepend), otherwise the anchor collapses onto a bar
+                // `prepend_count` positions further back in time than what was
+                // actually visible before the merge. See BubbleEvent::
+                // ScrollBarsAppended doc comment (mlc-backend/src/lib.rs).
+                let prev_bars_for_anchor: &[mlc_core::Bar] = prev_bars;
 
                 let mut matched_anchors: Vec<(mlc_core::state::ChartId, Option<(i64, f64)>)> = Vec::new();
                 for (chart_id_key, window) in self.panel_app.panel_grid.containers().iter() {
@@ -527,7 +538,7 @@ impl ChartApp {
                         continue;
                     }
                     any_matched = true;
-                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(&prev_bars_for_anchor)));
+                    matched_anchors.push((*chart_id_key, window.capture_view_anchor(prev_bars_for_anchor)));
                 }
 
                 // Audit D8: resolve each matched window's own active series
@@ -542,8 +553,6 @@ impl ChartApp {
                     let series = series_by_chart.get(chart_id_key)
                         .map(|s| s.as_active_series())
                         .unwrap_or(crate::active_series::ActiveSeries::Bars(new_bars));
-                    window.scroll_fetch_in_flight = false;
-                    window.scroll_fetch_started = None;
                     window.reconcile_view_keep_anchor(new_bars, series, anchor);
                     if window.price_scale().scale_mode.is_auto_y() {
                         window.calc_auto_scale(series);
@@ -578,9 +587,8 @@ impl ChartApp {
                 let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
                 let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool)> = {
-                    let panels_store = &self.panels_store;
-                    self.panel_app.panel_grid.containers().iter()
-                        .filter_map(|(cid, win)| {
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
                             let at = self.account_type_for_chart(*cid)?;
                             let is_tick_tf = self.timeframe_for_chart(*cid).map(|tf| tf.is_tick()).unwrap_or(false);
@@ -590,14 +598,12 @@ impl ChartApp {
                             // kline BarUpdate through here could consume the
                             // one-shot cold snap against an empty/foreign series
                             // before the first footprint bar ever lands.
-                            let derived_chart_type = panels_store.chart_panel
-                                .get(&win.chart_panel_id)
-                                .map(|p| matches!(p.chart_type,
-                                    "range_bar" | "volume_bar" | "tick_bar"
-                                    | "dollar_bar" | "tick_imbalance_bar"
-                                    | "volume_imbalance_bar" | "run_bar"
-                                ))
-                                .unwrap_or(false);
+                            let derived_chart_type = matches!(
+                                self.chart_type_for_chart(*cid),
+                                Some("range_bar") | Some("volume_bar") | Some("tick_bar")
+                                | Some("dollar_bar") | Some("tick_imbalance_bar")
+                                | Some("volume_imbalance_bar") | Some("run_bar")
+                            );
                             let is_derived = is_tick_tf || derived_chart_type;
                             Some((*cid, (sym, at, is_derived)))
                         })
@@ -836,7 +842,6 @@ impl ChartApp {
                 self.last_bar_apply_us += _bar_apply_start.elapsed().as_micros() as u64;
 
                 if needs_backfill {
-                    let bridge = self.core.bridge.clone();
                     for cid in self.panel_app.panel_grid.containers().keys() {
                         // Footprint windows own their bar series — a kline
                         // REST refill would be dropped by the BarsLoaded
@@ -848,7 +853,7 @@ impl ChartApp {
                         if sym_match && at_match {
                             let at_val = mlc_backend_data_bridge::account_type_to_dig3(win_at.unwrap_or_default());
                             if let Some(tf) = self.timeframe_for_chart(*cid) {
-                                bridge.request_bars(*exchange_id, symbol, &tf, at_val, None, None, false);
+                                self.core.request_kline(*exchange_id, symbol, &tf, at_val, None, None, false);
                             }
                         }
                     }
@@ -867,7 +872,7 @@ impl ChartApp {
                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                             let at: mlc_core::instrument::AccountType = state.account_type.parse().unwrap_or_default();
                             let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                            let h = self.core.bridge.subscribe_trades(eid, &state.symbol, at);
+                            let h = self.core.subscribe_trades(eid, &state.symbol, at);
                             state.shared_trades = h;
                             state.last_seen_ts_ms = 0;
                         }
@@ -902,14 +907,13 @@ impl ChartApp {
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                     return;
                 }
-                let bridge = self.core.bridge.clone();
                 let exchange_str = eid_str;
                 let wl_guard = self.core.watchlists();
                 if let Some(wl) = wl_guard.find(self.watchlist_ui.active_list_id) {
                     for ws in wl.all_symbols() {
                         if ws.exchange == exchange_str {
                             let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws.account_type);
-                            bridge.subscribe_mini_ticker(*exchange_id, &ws.symbol, ws_at);
+                            self.core.bridge_handle().subscribe_mini_ticker(*exchange_id, &ws.symbol, ws_at);
                         }
                     }
                 }
@@ -927,7 +931,7 @@ impl ChartApp {
                         let at: mlc_core::instrument::AccountType = self.account_type_for_chart(*cid).unwrap_or_default();
                         let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                         if let Some(tf) = self.timeframe_for_chart(*cid) {
-                            bridge.request_bars(*exchange_id, &sym, &tf, at, None, None, false);
+                            self.core.request_kline(*exchange_id, &sym, &tf, at, None, None, false);
                         }
                     }
                 }
@@ -1007,6 +1011,8 @@ impl ChartApp {
                     .collect();
                 let series_by_chart: std::collections::HashMap<mlc_core::state::ChartId, crate::active_series::OwnedActiveSeries> =
                     target_cids.iter().map(|cid| (*cid, self.active_series_for_chart(*cid))).collect();
+                let chart_type_by_chart: std::collections::HashMap<mlc_core::state::ChartId, &'static str> =
+                    target_cids.iter().filter_map(|cid| self.chart_type_for_chart(*cid).map(|ct| (*cid, ct))).collect();
                 for (cid_, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     if window.current_tag_id != *bid { continue; }
                     let _ = (exchange_id, symbol, at_label);
@@ -1023,6 +1029,38 @@ impl ChartApp {
                     // compensation, right-edge follow — all inside the intent
                     // method (owner viewport doctrine 2026-07-05).
                     window.reconcile_derived_series(series);
+                    // F5 (viewport doctrine audit 2026-07-07): clear the
+                    // derived in-flight guard as soon as the deepen actually
+                    // grew the series, instead of waiting out the 10s
+                    // timeout backstop in tick.rs (which still applies if
+                    // the reseed silently stalls).
+                    let new_len = series.len();
+                    self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
+                        if let Some((_, fired_len)) = b.derived_seed_in_flight {
+                            if new_len > fired_len {
+                                b.derived_seed_in_flight = None;
+                            }
+                        }
+                    });
+                    // VPLOCKSTEP (viewport doctrine audit 2026-07-07,
+                    // mechanism #2): footprint's viewport bookkeeping keys
+                    // off `bubble.bars` while the renderer clamps against
+                    // `footprint_bars` independently — diagnostic only, logs
+                    // on desync so a future writer touching one array
+                    // without the other is visible instead of surfacing as
+                    // an unexplained jump.
+                    if chart_type_by_chart.get(cid_).copied() == Some("footprint") {
+                        if let Some((fp_len, bars_len)) = self.core.bubbles().with_bubble(*bid, |b| {
+                            b.footprint_bars.as_ref().map(|fp| (fp.len(), b.bars.len()))
+                        }).flatten() {
+                            if fp_len != bars_len {
+                                log::warn!(
+                                    "[VPLOCKSTEP] footprint desync bid={:?} footprint_bars.len()={fp_len} bubble.bars.len()={bars_len}",
+                                    bid,
+                                );
+                            }
+                        }
+                    }
                     // Focus-mode Y-track: PriceScale::calc_auto_scale extends
                     // Y to include the last bar even when it exits the visible
                     // range (see mlc-core price_scale.rs Focus branch +
@@ -1110,14 +1148,11 @@ impl ChartApp {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    let panels_store = &self.panels_store;
-                    self.panel_app.panel_grid.containers().iter()
-                        .filter_map(|(cid, win)| {
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| {
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_dom = panels_store.chart_panel.get(&win.chart_panel_id)
-                                .map(|p| p.chart_type == "dom_heatmap")
-                                .unwrap_or(false);
+                            let is_dom = self.chart_type_for_chart(*cid) == Some("dom_heatmap");
                             if !is_dom || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
@@ -1150,14 +1185,11 @@ impl ChartApp {
             BubbleEvent::DomTradeDotPassthrough { exchange_id: _, account_type, symbol, dot } => {
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    let panels_store = &self.panels_store;
-                    self.panel_app.panel_grid.containers().iter()
-                        .filter_map(|(cid, win)| {
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| {
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_dom = panels_store.chart_panel.get(&win.chart_panel_id)
-                                .map(|p| p.chart_type == "dom_heatmap")
-                                .unwrap_or(false);
+                            let is_dom = self.chart_type_for_chart(*cid) == Some("dom_heatmap");
                             if !is_dom || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
@@ -1179,14 +1211,11 @@ impl ChartApp {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    let panels_store = &self.panels_store;
-                    self.panel_app.panel_grid.containers().iter()
-                        .filter_map(|(cid, win)| {
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| {
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_liq = panels_store.chart_panel.get(&win.chart_panel_id)
-                                .map(|p| p.chart_type == "liquidation_heatmap")
-                                .unwrap_or(false);
+                            let is_liq = self.chart_type_for_chart(*cid) == Some("liquidation_heatmap");
                             if !is_liq || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
@@ -1228,14 +1257,11 @@ impl ChartApp {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    let panels_store = &self.panels_store;
-                    self.panel_app.panel_grid.containers().iter()
-                        .filter_map(|(cid, win)| {
+                    self.panel_app.panel_grid.containers().keys()
+                        .filter_map(|cid| {
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_liq = panels_store.chart_panel.get(&win.chart_panel_id)
-                                .map(|p| p.chart_type == "liquidation_heatmap")
-                                .unwrap_or(false);
+                            let is_liq = self.chart_type_for_chart(*cid) == Some("liquidation_heatmap");
                             if !is_liq || s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()

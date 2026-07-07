@@ -10,6 +10,7 @@
 //! Empty skeleton (Phase D). Frontend modules land in V1-V4.
 
 pub mod chart_render;
+pub mod chart_type;
 pub mod layout;
 pub mod ui;
 pub mod panel_app;

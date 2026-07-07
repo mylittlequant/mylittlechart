@@ -871,10 +871,8 @@ impl ChartApp {
                     // removed 2026-07-05) so every remaining entry is numeric.
                     use mlc_app_layout::layout::modals::chart_settings::chart_type_param_spec;
                     let active_chart_type: &'static str = self.panel_app.panel_grid
-                        .active_container()
-                        .map(|w| w.chart_panel_id)
-                        .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                        .map(|p| p.chart_type)
+                        .active_container_id()
+                        .and_then(|cid| self.chart_type_for_chart(cid))
                         .unwrap_or("candles");
                     if chart_type_param_spec(active_chart_type).is_some() {
                         if let Ok(v) = value.parse::<f64>() {

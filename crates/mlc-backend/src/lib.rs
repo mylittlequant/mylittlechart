@@ -26,6 +26,7 @@
 
 pub mod bubble;
 pub mod alert;
+pub mod chart_type;
 pub mod drawing;
 pub mod indicator;
 pub mod watchlist;
@@ -54,14 +55,18 @@ use std::collections::HashMap;
 use dashmap::DashMap;
 use serde::{Serialize, Serializer};
 
-use digdigdig3::ExchangeId;
+use digdigdig3::{AccountType, ExchangeId};
 use mlc_core::ids::BubbleId;
+use mlc_core::state::Timeframe;
 use crate::alert::AlertManager;
 use crate::bubble::BubbleStore;
 use crate::drawing::DrawingManager;
 use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
-use mlc_backend_data_bridge::{DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource};
+use mlc_backend_data_bridge::{
+    DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource,
+    SharedTradeSeries, SharedOrderBookTracker,
+};
 use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
 use crate::tag::TagManager;
@@ -127,6 +132,17 @@ pub enum BubbleEvent {
         prev_bars: Vec<Bar>,
     },
     /// Scroll-fetch bars (left-extend) written into one bubble.
+    ///
+    /// `prev_bars` is the snapshot of `bubble.bars` taken in `tick_writers`
+    /// *before* `merge_scroll_bars` prepended the older page. Same rationale
+    /// as `BarsLoaded`/`BackfillCompleted` (see doc comment above `BarsLoaded`):
+    /// re-reading the bubble after the merge gives back the already-front-
+    /// extended array, and `capture_view_anchor` would then index `view_start`
+    /// into the NEW array — collapsing the anchor onto a bar `prepend_count`
+    /// positions further back in time than what the user was actually
+    /// looking at pre-merge. Every scroll-left/zoom-out backfill round-trip
+    /// re-locked the viewport to a progressively older date window. Field
+    /// added 2026-07-06.
     ScrollBarsAppended {
         bid: BubbleId,
         exchange_id: ExchangeId,
@@ -134,6 +150,7 @@ pub enum BubbleEvent {
         account_type: String,
         timeframe: String,
         bars: Vec<Bar>,
+        prev_bars: Vec<Bar>,
         prepend_count: usize,
     },
     /// BarUpdate pass-through — the per-app reactor owns this write because
@@ -351,7 +368,7 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("bars_count", &bars.len())?;
                 m.end()
             }
-            Self::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe, bars, prepend_count } => {
+            Self::ScrollBarsAppended { bid, exchange_id, symbol, account_type, timeframe, bars, prev_bars: _, prepend_count } => {
                 let mut m = s.serialize_map(Some(8))?;
                 m.serialize_entry("type", "ScrollBarsAppended")?;
                 m.serialize_entry("bid", &bid.0)?;
@@ -620,7 +637,15 @@ pub struct BackendCore {
     /// Live data bridge — owns the tokio runtime, station, connector pool,
     /// broadcast channel. Already internally synchronised; `Arc::clone` is
     /// the only thing consumers need.
-    pub bridge: Arc<DataBridge>,
+    ///
+    /// Private (Step 12 of the chart-type registry arc closed the `pub`
+    /// hole) — external callers (mlc-app*, shells) go through the facade
+    /// methods below (`request_kline`, `subscribe_depth`, ...) or, for the
+    /// narrow set of call sites with no facade wrapper (chart-type registry
+    /// dispatch, mini-ticker subscribe, ws metrics), through
+    /// [`BackendCore::bridge_handle`] / [`BackendCore::bridge_arc`]. Do not
+    /// widen this back to `pub` — that reopens the exact hole Step 12 closed.
+    bridge: Arc<DataBridge>,
 
     /// Backend's own broadcast receiver. Drained by `tick_writers` each tick
     /// to write incoming data into the shared bubble store / caches and emit
@@ -1267,6 +1292,12 @@ impl BackendCore {
                         if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
                             continue;
                         }
+                        // Snapshot BEFORE the merge so the reactor's anchor
+                        // capture can index `view_start` into the OLD (pre-
+                        // prepend) coordinate space. See `ScrollBarsAppended`
+                        // doc comment for why re-reading the bubble after
+                        // the merge would collapse the anchor.
+                        let prev_bars = mgr.bars(bid).to_vec();
                         let merged = mgr.merge_scroll_bars(bid, &bars);
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
@@ -1276,6 +1307,7 @@ impl BackendCore {
                             account_type: at_label.clone(),
                             timeframe: tf_name.clone(),
                             bars: merged,
+                            prev_bars,
                             prepend_count,
                         });
                     }
@@ -1707,11 +1739,7 @@ impl BackendCore {
                     for bid in bids {
                         {
                             self.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                let store = bubble.pnf_columns.get_or_insert_with(Vec::new);
-                                match store.last_mut() {
-                                    Some(last) if last.column_id == col.column_id => *last = col.clone(),
-                                    _ => store.push(col.clone()),
-                                }
+                                bubble.append_pnf(col.clone());
                             });
                         }
                         events.push(BubbleEvent::PnfBarAppended {
@@ -1927,6 +1955,229 @@ impl BackendCore {
     /// about intent — the daemon has no `ChartApp` to consume events.
     pub fn tick_bridge_only(&self, now_ms: u64) {
         let _ = self.tick_writers(now_ms);
+    }
+}
+
+// ── Chart data-plane facade methods (Step 11 of chart-type registry arc) ──
+// These wrap DataBridge calls that are NOT chart-type dispatch (which goes
+// through mlc_backend::chart_type::engine::SubscribeOps). One method per
+// distinct data-plane operation used by mlc-app / mlc-app-shell-vello callers.
+//
+// Step 11 adds these methods only — no call site is touched here. Step 12
+// repoints `self.core.bridge.*` / `self.bridge.*` call sites at the matching
+// method below and closes the field to private; the handful of remaining
+// direct-bridge callers (chart-type dispatch + methods with no facade
+// wrapper) go through `BackendCore::bridge_handle()` / `bridge_arc()` instead.
+impl BackendCore {
+    /// Fetch (or refresh) a page of kline bars for an instrument + timeframe.
+    ///
+    /// Thin wrapper over [`DataBridge::request_bars`] — parameter names kept
+    /// as `_limit`/`_total_bars` to match the underlying signature verbatim
+    /// (the leading underscores are the bridge's own naming, not a typo).
+    pub fn request_kline(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        tf: &Timeframe,
+        account_type: AccountType,
+        limit: Option<u16>,
+        total_bars: Option<usize>,
+        force: bool,
+    ) {
+        self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);
+    }
+
+    /// Subscribe to a tick-count aggregated bar stream (e.g. 100t/1000t).
+    pub fn request_tick_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        count: u32,
+    ) {
+        self.bridge.request_tick_bars(exchange_id, symbol, account_type, count);
+    }
+
+    /// Abort the active tick-bar subscription for an instrument (TF switch away).
+    pub fn abort_tick_bars(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.abort_tick_bars(exchange_id, symbol, account_type);
+    }
+
+    /// Abort the active kline forwarder for an instrument + timeframe.
+    pub fn abort_kline_bars(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        timeframe: &str,
+    ) {
+        self.bridge.abort_kline_bars(exchange_id, symbol, account_type, timeframe);
+    }
+
+    /// Fetch the next older page of bars for scroll-left backfill.
+    pub fn request_scroll_backfill(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        tf: &Timeframe,
+        account_type: AccountType,
+        before_ts: i64,
+        batch_size: usize,
+    ) {
+        self.bridge.request_scroll_bars(exchange_id, symbol, tf, account_type, before_ts, batch_size);
+    }
+
+    /// Paginate the connector's REST history toward `target_bars` in the background.
+    pub fn request_background_backfill(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        tf: &Timeframe,
+        account_type: AccountType,
+        target_bars: u32,
+    ) {
+        self.bridge.request_background_backfill(exchange_id, symbol, tf, account_type, target_bars);
+    }
+
+    /// Subscribe to the Open Interest overlay stream for an instrument.
+    pub fn subscribe_open_interest(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.request_open_interest(exchange_id, symbol, account_type);
+    }
+
+    /// Cancel the Open Interest overlay subscription for an instrument.
+    pub fn unsubscribe_open_interest(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_open_interest(exchange_id, symbol, account_type);
+    }
+
+    /// Subscribe to the Funding Rate overlay stream for an instrument.
+    pub fn subscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.request_funding_rate(exchange_id, symbol, account_type);
+    }
+
+    /// Cancel the Funding Rate overlay subscription for an instrument.
+    pub fn unsubscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_funding_rate(exchange_id, symbol, account_type);
+    }
+
+    /// Subscribe to the Cumulative Volume Delta overlay line for an instrument.
+    pub fn subscribe_cvd_line(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.request_cvd_line(exchange_id, symbol, account_type);
+    }
+
+    /// Cancel the CVD overlay subscription for an instrument.
+    pub fn unsubscribe_cvd_line(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_cvd_line(exchange_id, symbol, account_type);
+    }
+
+    /// Clear cached CVD samples on a bubble after its CVD subscription is torn down.
+    ///
+    /// Pairs with [`BackendCore::unsubscribe_cvd_line`] — callers invoke both
+    /// when the last CVD indicator instance for an instrument is removed.
+    pub fn clear_cvd_slot(&self, bid: BubbleId) {
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.clear_cvd());
+    }
+
+    /// Ensure a connector for `exchange_id` is connected, spawning it if needed.
+    pub fn ensure_connector(&self, exchange_id: ExchangeId) {
+        self.bridge.ensure_connector(exchange_id);
+    }
+
+    /// Subscribe to the live depth (orderbook delta) stream for an instrument.
+    pub fn subscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.subscribe_depth(exchange_id, symbol, account_type);
+    }
+
+    /// Remove one consumer interest in the depth stream for an instrument.
+    pub fn unsubscribe_depth(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_depth(exchange_id, symbol, account_type);
+    }
+
+    /// Remove one consumer interest in the trade stream for an instrument.
+    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_trades(exchange_id, symbol, account_type);
+    }
+
+    /// Remove one consumer interest in the orderbook stream for an instrument.
+    pub fn unsubscribe_orderbook(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_orderbook(exchange_id, symbol, account_type);
+    }
+
+    /// Unsubscribe a single mini-ticker symbol (e.g. removed from watchlist).
+    pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_mini_ticker(exchange_id, symbol, account_type);
+    }
+
+    /// Fetch the tradable symbol list for `exchange_id` (cache hit or async REST fetch).
+    ///
+    /// Cold-boot bootstrap call, made before a `ChartApp` exists (shell-vello
+    /// calls this directly on its own `Arc<BackendCore>`); functionally
+    /// identical to a plain data-plane symbol request, no `ChartApp` state
+    /// involved.
+    pub fn bootstrap_request_symbols(&self, exchange_id: ExchangeId) {
+        self.bridge.request_symbols(exchange_id);
+    }
+
+    /// Read-only snapshot of per-connector WebSocket/REST metrics.
+    pub fn agent_metrics_snapshot(&self) -> Vec<(ExchangeId, digdigdig3::core::types::ConnectorStats, usize)> {
+        self.bridge.collect_metrics()
+    }
+
+    /// Subscribe to the live trade stream for an instrument, returning the
+    /// station's shared trade series handle for direct reads (trade tape,
+    /// big-trades, volume-profile panels).
+    ///
+    /// Thin wrapper over [`DataBridge::subscribe_trades`] — kept as a
+    /// pass-through `Option` (not unwrapped) because the bridge itself
+    /// returns `None` on the rare path where the subscribe future hasn't
+    /// completed yet; callers already handle that case.
+    pub fn subscribe_trades(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<SharedTradeSeries> {
+        self.bridge.subscribe_trades(exchange_id, symbol, account_type)
+    }
+
+    /// Subscribe to the live orderbook for an instrument, returning the
+    /// shared `OrderBookTracker` handle for direct reads (DOM, heatmap,
+    /// L2 tape, paper-engine BBO).
+    ///
+    /// Thin wrapper over [`DataBridge::subscribe_orderbook`].
+    pub fn subscribe_orderbook(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<SharedOrderBookTracker> {
+        self.bridge.subscribe_orderbook(exchange_id, symbol, account_type)
+    }
+
+    /// Narrow escape hatch to the raw `DataBridge` for the handful of
+    /// legitimate direct callers that predate (or fall outside) the facade:
+    /// the chart-type registry's `SubscribeOps`/`AbortOps` dispatch (needs a
+    /// `&DataBridge` to hand to per-type function pointers), and a few
+    /// bridge methods with no facade wrapper (`subscribe_mini_ticker`,
+    /// `ws_task_count_total`, `pool()`, `is_kline_alive`, `request_footprint`,
+    /// `abort_derived_chart`, `request_deeper_seed_for_active`,
+    /// `enable_connector`/`disable_connector`, `warmup_all_connectors`).
+    ///
+    /// Do not add new call sites here for methods that already have (or
+    /// could trivially get) a facade wrapper above — this exists to avoid
+    /// re-litigating every bridge method into a 1:1 facade forwarder, not to
+    /// route around the facade.
+    pub fn bridge_handle(&self) -> &DataBridge {
+        &self.bridge
+    }
+
+    /// Owned `Arc<DataBridge>` handle, for the construction sites that need
+    /// to store their own clone rather than borrow through `bridge_handle()`
+    /// — `LiveDataProvider::new` (per-window data provider construction) and
+    /// `ChartApp::new_window` / shell process-spawn plumbing, which predate
+    /// the shared-`BackendCore` arc and still take `Arc<DataBridge>` as a
+    /// constructor parameter in their own right.
+    pub fn bridge_arc(&self) -> Arc<DataBridge> {
+        self.bridge.clone()
     }
 }
 

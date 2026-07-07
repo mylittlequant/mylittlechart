@@ -81,6 +81,7 @@ pub mod engine;
 
 // Organized modules
 pub mod chart;
+pub mod chart_type;
 pub mod drawing;
 pub mod scale_settings;
 pub mod state;

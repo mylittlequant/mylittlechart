@@ -45,6 +45,15 @@ impl<'a> BubbleView<'a> {
     pub fn timeframe(&self) -> &Timeframe {
         &self.bubble.timeframe
     }
+    pub fn chart_type(&self) -> &'static str {
+        self.bubble.chart_type
+    }
+    pub fn chart_type_param(&self) -> f64 {
+        self.bubble.chart_type_param
+    }
+    pub fn chart_type_interval(&self) -> &'static str {
+        self.bubble.chart_type_interval
+    }
     pub fn bars_len(&self) -> usize {
         self.bubble.bars.len()
     }
@@ -194,6 +203,18 @@ impl<'a> Bubbles<'a> {
 
     pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
         self.store.timeframe(bid)
+    }
+
+    pub fn chart_type(&self, bid: BubbleId) -> Option<&'static str> {
+        self.store.chart_type(bid)
+    }
+
+    pub fn chart_type_param(&self, bid: BubbleId) -> Option<f64> {
+        self.store.chart_type_param(bid)
+    }
+
+    pub fn chart_type_interval(&self, bid: BubbleId) -> Option<&'static str> {
+        self.store.chart_type_interval(bid)
     }
 
     pub fn instrument(&self, bid: BubbleId) -> Option<InstrumentKey> {
@@ -359,6 +380,18 @@ impl<'a> BubblesMut<'a> {
 
     pub fn set_timeframe(&mut self, bid: BubbleId, tf: Timeframe) -> bool {
         self.store.set_timeframe(bid, tf)
+    }
+
+    pub fn set_chart_type(&mut self, bid: BubbleId, ct: &'static str) -> bool {
+        self.store.set_chart_type(bid, ct)
+    }
+
+    pub fn set_chart_type_param(&mut self, bid: BubbleId, param: f64) -> bool {
+        self.store.set_chart_type_param(bid, param)
+    }
+
+    pub fn set_chart_type_interval(&mut self, bid: BubbleId, iv: &'static str) -> bool {
+        self.store.set_chart_type_interval(bid, iv)
     }
 
     pub fn set_instrument(&mut self, bid: BubbleId, symbol: String, exchange: String, account_type: String) -> bool {

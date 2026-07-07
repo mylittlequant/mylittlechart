@@ -54,12 +54,12 @@ pub use three_line_break::draw_three_line_break;
 pub use volume_profile::draw_volume_profile_overlay;
 pub use oi_delta::draw_oi_delta;
 pub use funding_rate::draw_funding_rate_strip;
-pub use dom_heatmap::draw_dom_heatmap;
-pub use liquidation_heatmap::draw_liquidation_heatmap;
+pub use dom_heatmap::{draw_dom_heatmap, draw_dom_heatmap_conditional};
+pub use liquidation_heatmap::{draw_liquidation_heatmap, draw_liquidation_heatmap_conditional};
 pub use series::{
     draw_line_series, draw_area_series,
     draw_baseline_series, draw_step_line, draw_line_with_markers,
-    draw_line_from_data, draw_hlc_area, draw_columns, draw_compare_overlay,
+    draw_line_from_data, draw_hlc_area, draw_compare_overlay,
 };
 pub use scales::{
     draw_price_scale, draw_price_scale_cursor_label,

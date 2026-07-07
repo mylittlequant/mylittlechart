@@ -802,7 +802,7 @@ fn render_instrument_settings(
     //     bucket minutes) → a section titled after the type, with one
     //     control row. Edits apply immediately via the existing
     //     `ChartOutEvent::UpdateChartTypeParam` / `UpdateChartTypeInterval`.
-    //   - a parameterless type (line/area/baseline/columns/heatmaps/...) →
+    //   - a parameterless type (line/area/baseline/heatmaps/...) →
     //     nothing is drawn in this slot at all.
     let mut row_y = content_start_y;
     let is_candle_family = matches!(
@@ -882,7 +882,9 @@ fn render_instrument_settings(
         result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
         result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
         row_y += row_height + 16.0;
-    } else if settings.chart_type == "footprint" {
+    } else if mlc_core::chart_type::by_id(&settings.chart_type)
+        .is_some_and(|d| d.has_bespoke_settings_block)
+    {
         row_y = render_footprint_settings_block(
             ctx, x, row_y, row_height, checkbox_size, swatch_size, swatch_gap,
             label_x, swatches_x, text_color, muted_color, theme, settings, result,
@@ -2306,157 +2308,29 @@ fn format_trimmed_f64(v: f64) -> String {
 
 /// Catalog of editable-parameter derived chart types, per owner spec
 /// 2026-07-05. `None` for candle-family (handled separately by the caller)
-/// and for parameterless types (line/area/baseline/columns/heatmaps/...) —
+/// and for parameterless types (line/area/baseline/heatmaps/...) —
 /// the top slot draws nothing for those.
 ///
 /// Preset lists are curated dropdown options (this modal has no free-text
 /// numeric input widget), chosen to bracket the code-side default from
 /// `ChangeChartType`'s subscribe-time fallback (`chart_out_events.rs`).
+///
+/// Sourced from `mlc_core::chart_type::registry`'s `param_spec` field.
+/// "footprint" intentionally has `param_spec: None` in the registry — owner
+/// verdict 2026-07-05: the bucket interval is a duplicate of the
+/// toolbar-level TF picker (footprint's `chart_type_interval` mirrors the
+/// active TF), so it does not get a row here. Footprint's own editable
+/// surface (ABS markers / volume text / buy-sell colors / heat intensity) is
+/// rendered by a dedicated block, not this generic numeric-param catalog —
+/// see `render_footprint_settings_block`.
 pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
-    match chart_type {
-        // "footprint" intentionally absent — owner verdict 2026-07-05: the
-        // bucket interval is a duplicate of the toolbar-level TF picker
-        // (footprint's `chart_type_interval` mirrors the active TF), so it
-        // does not get a row here. Footprint's own editable surface (ABS
-        // markers / volume text / buy-sell colors / heat intensity) is
-        // rendered by a dedicated block, not this generic numeric-param
-        // catalog — see `render_footprint_settings_block`.
-        "renko" => Some(ChartTypeParamSpec {
-            section_title: "RENKO SETTINGS".to_string(),
-            row_label: "Box size".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
-                ChartTypeParamOption { value_id: "1",   label: "1" },
-                ChartTypeParamOption { value_id: "2",   label: "2" },
-                ChartTypeParamOption { value_id: "5",   label: "5" },
-                ChartTypeParamOption { value_id: "10",  label: "10" },
-                ChartTypeParamOption { value_id: "25",  label: "25" },
-                ChartTypeParamOption { value_id: "50",  label: "50" },
-                ChartTypeParamOption { value_id: "100", label: "100" },
-            ],
-            fixed_note: Some("Reversal: 2".to_string()),
-        }),
-        "pnf" => Some(ChartTypeParamSpec {
-            section_title: "POINT & FIGURE SETTINGS".to_string(),
-            row_label: "Box size".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
-                ChartTypeParamOption { value_id: "1",   label: "1" },
-                ChartTypeParamOption { value_id: "2",   label: "2" },
-                ChartTypeParamOption { value_id: "5",   label: "5" },
-                ChartTypeParamOption { value_id: "10",  label: "10" },
-                ChartTypeParamOption { value_id: "25",  label: "25" },
-                ChartTypeParamOption { value_id: "50",  label: "50" },
-                ChartTypeParamOption { value_id: "100", label: "100" },
-            ],
-            fixed_note: Some("Reversal: 3".to_string()),
-        }),
-        "kagi" => Some(ChartTypeParamSpec {
-            section_title: "KAGI SETTINGS".to_string(),
-            row_label: "Reversal".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "0.5", label: "0.5" },
-                ChartTypeParamOption { value_id: "1",   label: "1" },
-                ChartTypeParamOption { value_id: "2",   label: "2" },
-                ChartTypeParamOption { value_id: "5",   label: "5" },
-                ChartTypeParamOption { value_id: "10",  label: "10" },
-                ChartTypeParamOption { value_id: "25",  label: "25" },
-                ChartTypeParamOption { value_id: "50",  label: "50" },
-            ],
-            fixed_note: None,
-        }),
-        "three_line_break" => Some(ChartTypeParamSpec {
-            section_title: "3 LINE BREAK SETTINGS".to_string(),
-            row_label: "Lines back".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "2", label: "2" },
-                ChartTypeParamOption { value_id: "3", label: "3" },
-                ChartTypeParamOption { value_id: "4", label: "4" },
-                ChartTypeParamOption { value_id: "6", label: "6" },
-            ],
-            fixed_note: None,
-        }),
-        "range_bar" => Some(ChartTypeParamSpec {
-            section_title: "RANGE BARS SETTINGS".to_string(),
-            row_label: "Threshold".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "1",   label: "1" },
-                ChartTypeParamOption { value_id: "5",   label: "5" },
-                ChartTypeParamOption { value_id: "10",  label: "10" },
-                ChartTypeParamOption { value_id: "25",  label: "25" },
-                ChartTypeParamOption { value_id: "50",  label: "50" },
-                ChartTypeParamOption { value_id: "100", label: "100" },
-            ],
-            fixed_note: None,
-        }),
-        "volume_bar" => Some(ChartTypeParamSpec {
-            section_title: "VOLUME BARS SETTINGS".to_string(),
-            row_label: "Threshold".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "100",    label: "100" },
-                ChartTypeParamOption { value_id: "500",    label: "500" },
-                ChartTypeParamOption { value_id: "1000",   label: "1,000" },
-                ChartTypeParamOption { value_id: "5000",   label: "5,000" },
-                ChartTypeParamOption { value_id: "10000",  label: "10,000" },
-            ],
-            fixed_note: None,
-        }),
-        "dollar_bar" => Some(ChartTypeParamSpec {
-            section_title: "DOLLAR BARS SETTINGS".to_string(),
-            row_label: "Threshold".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "100000",   label: "100,000" },
-                ChartTypeParamOption { value_id: "500000",   label: "500,000" },
-                ChartTypeParamOption { value_id: "1000000",  label: "1,000,000" },
-                ChartTypeParamOption { value_id: "5000000",  label: "5,000,000" },
-                ChartTypeParamOption { value_id: "10000000", label: "10,000,000" },
-            ],
-            fixed_note: None,
-        }),
-        "tick_bar" => Some(ChartTypeParamSpec {
-            section_title: "TICK BARS SETTINGS".to_string(),
-            row_label: "Ticks per bar".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "100",  label: "100" },
-                ChartTypeParamOption { value_id: "200",  label: "200" },
-                ChartTypeParamOption { value_id: "500",  label: "500" },
-                ChartTypeParamOption { value_id: "1000", label: "1,000" },
-                ChartTypeParamOption { value_id: "2000", label: "2,000" },
-            ],
-            fixed_note: None,
-        }),
-        "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
-            let section_title = match chart_type {
-                "tick_imbalance_bar" => "TICK IMBALANCE SETTINGS",
-                "volume_imbalance_bar" => "VOLUME IMBALANCE SETTINGS",
-                _ => "RUN BARS SETTINGS",
-            };
-            Some(ChartTypeParamSpec {
-                section_title: section_title.to_string(),
-                row_label: "Min ticks".to_string(),
-                options: vec![
-                    ChartTypeParamOption { value_id: "50",  label: "50" },
-                    ChartTypeParamOption { value_id: "100", label: "100" },
-                    ChartTypeParamOption { value_id: "200", label: "200" },
-                    ChartTypeParamOption { value_id: "500", label: "500" },
-                ],
-                    fixed_note: Some("Alpha: 0.20".to_string()),
-            })
-        }
-        "tpo" => Some(ChartTypeParamSpec {
-            section_title: "MARKET PROFILE (TPO) SETTINGS".to_string(),
-            row_label: "Bucket minutes".to_string(),
-            options: vec![
-                ChartTypeParamOption { value_id: "5",  label: "5" },
-                ChartTypeParamOption { value_id: "15", label: "15" },
-                ChartTypeParamOption { value_id: "30", label: "30" },
-                ChartTypeParamOption { value_id: "60", label: "60" },
-            ],
-            fixed_note: None,
-        }),
-        // Parameterless (top slot draws nothing): line / step_line /
-        // line_markers / area / hlc_area / baseline / columns /
-        // dom_heatmap / liquidation_heatmap.
-        _ => None,
-    }
+    let core_spec = mlc_core::chart_type::by_id(chart_type)?.param_spec?;
+    Some(ChartTypeParamSpec {
+        section_title: core_spec.section_title.to_string(),
+        row_label: core_spec.row_label.to_string(),
+        options: core_spec.options.iter()
+            .map(|o| ChartTypeParamOption { value_id: o.value_id, label: o.label })
+            .collect(),
+        fixed_note: core_spec.fixed_note.map(str::to_string),
+    })
 }

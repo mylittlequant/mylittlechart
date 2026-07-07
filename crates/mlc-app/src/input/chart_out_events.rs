@@ -28,8 +28,8 @@ impl ChartApp {
         let drain_t0 = web_time::Instant::now();
         let n = work.len();
         for (eid, sym, tf, at, force) in work {
-            self.core.bridge.ensure_connector(eid);
-            self.core.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), force);
+            self.core.ensure_connector(eid);
+            self.core.request_kline(eid, &sym, &tf, at, None, Some(bar_count), force);
         }
         eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
     }
@@ -308,14 +308,14 @@ impl ChartApp {
                             // prior tick subscription is owned by abort_tick_bars).
                             if let Some(ref prev_tf) = prev_tf_opt {
                                 if prev_tf.tick_count().is_none() {
-                                    self.core.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                                    self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
                                 }
                             }
                             if let Some(count) = tf.tick_count() {
-                                self.core.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
+                                self.core.request_tick_bars(self.active_exchange, &symbol, at, count);
                             } else {
-                                self.core.bridge.abort_tick_bars(self.active_exchange, &symbol, at);
-                                self.core.bridge.request_bars(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
+                                self.core.abort_tick_bars(self.active_exchange, &symbol, at);
+                                self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
                             }
                         }
                     }
@@ -347,7 +347,11 @@ impl ChartApp {
                     // "histogram" removed 2026-07-05 — it drew VOLUME, not
                     // price (lightweight-charts series type mis-ported as a
                     // chart style); legacy saves fall through to "candles".
-                    "columns"       => Some("columns"),
+                    // "columns" fully deleted 2026-07-06 (chart-type registry
+                    // arc Step 13) — falls into the `_` arm below and is
+                    // rejected like any other unknown chart_type id. Legacy
+                    // preset restore still resolves it to "candles" via
+                    // `hydration_impl.rs::static_ct`'s `by_id(...).unwrap_or`.
                     // Phase 2C: derived bar streams from dig3-station — own
                     // subscription, no per-frame folding. Bars arrive via
                     // LiveUpdate::BarUpdate from the station's
@@ -380,32 +384,28 @@ impl ChartApp {
                     }
                 };
                 if let Some(ct) = static_type {
-                    let pid = self.panel_app.panel_grid
-                        .active_container()
-                        .map(|w| w.chart_panel_id);
+                    let active_cid = self.panel_app.panel_grid.active_container_id();
+                    let bid = active_cid.and_then(|cid| self.bubble_for_chart(cid));
                     // Captured BEFORE the mutation below so the D9 kline-forwarder
                     // refcount logic knows what family the window is LEAVING.
-                    let previous_ct: Option<&'static str> = pid
-                        .and_then(|chart_panel_id| self.panels_store.chart_panel.get(&chart_panel_id))
-                        .map(|p| p.chart_type);
-                    let (chart_param, chart_interval): (f64, &'static str) = if let Some(chart_panel_id) = pid {
-                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
-                            &mut self.panels_store, chart_panel_id,
-                        );
+                    let previous_ct: Option<&'static str> = bid
+                        .and_then(|bid| self.core.bubbles().chart_type(bid));
+                    let (chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
+                        let previous_type = previous_ct.unwrap_or("candles").to_string();
+                        self.core.bubbles_mut().set_chart_type(bid, ct);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            window.set_chart_type_with_undo(panel, ct);
-                            // Wave T1 commit 1: some chart types need more
-                            // horizontal room per bar than whatever spacing
-                            // the previous type left behind (footprint's
-                            // text-legibility floor). Clamp up, right-edge
-                            // anchored, so the switch shows real content
-                            // instead of a permanent zoom-in placeholder.
-                            // Switching AWAY never restores the old spacing.
-                            if let Some(min_spacing) = min_usable_bar_spacing(ct) {
-                                window.ensure_min_bar_spacing(min_spacing);
-                            }
+                            window.command_history.push(mlc_core::state::Command::ChangeChartType {
+                                previous_type,
+                                new_type: ct.to_string(),
+                            });
+                            // F6 (viewport doctrine audit 2026-07-07):
+                            // `ensure_min_bar_spacing` moved below, after
+                            // `render_only_switch` is known — see that site
+                            // for the full rationale (was unconditional here,
+                            // ahead of the render-only gate).
                         }
-                        (panel.chart_type_param, panel.chart_type_interval)
+                        let bubbles = self.core.bubbles();
+                        (bubbles.chart_type_param(bid).unwrap_or(0.0), bubbles.chart_type_interval(bid).unwrap_or("1m"))
                     } else {
                         (0.0, "1m")
                     };
@@ -431,16 +431,7 @@ impl ChartApp {
                     //   5. set `pending_symbol_load = true` so renderer
                     //      shows the loading skeleton until the first new
                     //      bar arrives.
-                    let is_derived_target = matches!(
-                        ct,
-                        "range_bar" | "volume_bar" | "tick_bar" | "footprint"
-                        | "renko" | "pnf" | "kagi" | "tpo"
-                        | "three_line_break"
-                        | "dollar_bar" | "tick_imbalance_bar"
-                        | "volume_imbalance_bar" | "run_bar"
-                        | "dom_heatmap"
-                        | "liquidation_heatmap"
-                    );
+                    let is_derived_target = crate::active_series::chart_type_is_derived_seed(ct);
                     if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                         let cid = active_leaf.id;
                         let symbol_opt = self.symbol_for_chart(cid);
@@ -487,15 +478,9 @@ impl ChartApp {
                                     // needs its own arc (a shared kline-forwarder
                                     // refcount on BackendCore, not per-ChartApp
                                     // enumeration).
-                                    let was_kline_family = !matches!(
-                                        previous_ct,
-                                        Some("range_bar") | Some("volume_bar") | Some("tick_bar") | Some("footprint")
-                                        | Some("renko") | Some("pnf") | Some("kagi") | Some("tpo")
-                                        | Some("three_line_break")
-                                        | Some("dollar_bar") | Some("tick_imbalance_bar")
-                                        | Some("volume_imbalance_bar") | Some("run_bar")
-                                        | Some("dom_heatmap") | Some("liquidation_heatmap")
-                                    );
+                                    let was_kline_family = previous_ct.map_or(true, |ct| {
+                                        !crate::active_series::chart_type_is_derived_seed(ct)
+                                    });
                                     // NOTE: footprint used to be exempted here via a
                                     // `target_needs_kline_backdrop` flag — stale since
                                     // 441d623d dropped the kline backdrop (footprint IS
@@ -513,37 +498,75 @@ impl ChartApp {
                                                     && self.timeframe_for_chart(*other_cid).map(|t| t.name.clone()) == Some(tf.name.clone());
                                                 if !same_instrument { return false; }
                                                 let other_ct = self.chart_type_for_chart(*other_cid).unwrap_or("candles");
-                                                !matches!(
-                                                    other_ct,
-                                                    "range_bar" | "volume_bar" | "tick_bar" | "footprint"
-                                                    | "renko" | "pnf" | "kagi" | "tpo"
-                                                    | "three_line_break"
-                                                    | "dollar_bar" | "tick_imbalance_bar"
-                                                    | "volume_imbalance_bar" | "run_bar"
-                                                    | "dom_heatmap" | "liquidation_heatmap"
-                                                )
+                                                !crate::active_series::chart_type_is_derived_seed(other_ct)
                                             });
                                         if !still_needed {
-                                            self.core.bridge.abort_kline_bars(self.active_exchange, &symbol, at, &tf.name);
+                                            self.core.abort_kline_bars(self.active_exchange, &symbol, at, &tf.name);
                                         }
                                     }
+
+                                    // Render-only switch (both previous and target are
+                                    // plain render styles over the same kline bars):
+                                    // preserve the viewport. `begin_fresh_load` /
+                                    // `needs_snap_after_backfill` / `request_bars(force)`
+                                    // are ONLY needed when the underlying series changes
+                                    // (kline↔derived, or between two derived families).
+                                    // For candles→line the bars are identical, just
+                                    // rendered differently — resetting `view_start=0` +
+                                    // snap-to-end throws the user out of any scroll-back
+                                    // position they were holding. Owner report 2026-07-06.
+                                    let is_render_family = |t: Option<&'static str>| matches!(
+                                        t,
+                                        Some("candles") | Some("bars") | Some("hollow_candles")
+                                        | Some("heikin_ashi") | Some("line") | Some("step_line")
+                                        | Some("line_markers") | Some("area") | Some("hlc_area")
+                                        | Some("baseline")
+                                    );
+                                    let render_only_switch = is_render_family(previous_ct)
+                                        && is_render_family(Some(ct));
 
                                     // Step 1: always abort any derived
                                     // subscription. The bridge.abort_* call is
                                     // idempotent when nothing's live.
-                                    self.core.bridge.abort_derived_chart(
-                                        self.active_exchange, &symbol, at,
-                                    );
+                                    if !render_only_switch {
+                                        self.core.bridge_handle().abort_derived_chart(
+                                            self.active_exchange, &symbol, at,
+                                        );
+                                    }
 
                                     // Steps 2-5: mutate the active window.
                                     // X axis is always index-packed (see
                                     // chart-types-xaxis-audit-2026-07-03.md).
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        window.begin_fresh_load();
-                                        // Mark "snap to end on first data" so
-                                        // the new stream lands at the right
-                                        // edge of the viewport.
-                                        window.needs_snap_after_backfill = true;
+                                    // Skipped for render-only switches (see above).
+                                    if !render_only_switch {
+                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                            window.begin_fresh_load();
+                                            // Mark "snap to end on first data" so
+                                            // the new stream lands at the right
+                                            // edge of the viewport.
+                                            window.needs_snap_after_backfill = true;
+                                            // F6 (viewport doctrine audit
+                                            // 2026-07-07): moved from before
+                                            // `render_only_switch` was known —
+                                            // some chart types need more
+                                            // horizontal room per bar than
+                                            // whatever spacing the previous
+                                            // type left behind (footprint's
+                                            // text-legibility floor). Clamp
+                                            // up, right-edge anchored, so the
+                                            // switch shows real content
+                                            // instead of a permanent zoom-in
+                                            // placeholder. Skipped for
+                                            // render-only switches — a "pure
+                                            // re-render" switch (candles↔line)
+                                            // must never move `view_start`; no
+                                            // render-family type has a floor
+                                            // today, but a future one would
+                                            // otherwise silently violate that.
+                                            if let Some(min_spacing) = min_usable_bar_spacing(ct) {
+                                                window.ensure_min_bar_spacing(min_spacing);
+                                            }
+                                        }
                                     }
                                     // Audit D9 (extended 2026-07-06 — owner
                                     // report: chart-type switch jumps the
@@ -571,211 +594,90 @@ impl ChartApp {
                                     // param refresh) already calls
                                     // `clear_derived_slots(None)` — this call
                                     // site now matches it.
-                                    if let Some(bid) = self.bubble_for_chart(cid) {
-                                        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                            bubble.clear_derived_slots(None);
-                                            // Single-writer ownership of bubble.bars:
-                                            // footprint's own pipeline writes the bar
-                                            // series; every other chart type returns
-                                            // ownership to the kline family. Set here
-                                            // (one choke point for every switch) so
-                                            // the kernel/reactor write gates see the
-                                            // right owner before the first event of
-                                            // the new mode lands.
-                                            bubble.bars_source = if ct == "footprint" {
-                                                mlc_backend::bubble::BarsSource::FootprintOhlc
-                                            } else {
-                                                mlc_backend::bubble::BarsSource::Kline
-                                            };
-                                        });
+                                    // Full wipe of every derived slot (defensive —
+                                    // we're switching AWAY from a possibly-unknown
+                                    // previous derived type) followed by the
+                                    // registry's own type-specific clear (stamps
+                                    // `bars_source` + owns footprint's
+                                    // clear_bars/mark_footprint_pending). Some
+                                    // slots get cleared twice; harmless.
+                                    if !render_only_switch {
+                                        if let Some(bid) = self.bubble_for_chart(cid) {
+                                            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                                bubble.clear_derived_slots(None);
+                                                if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                                                    (ops.clear_slot)(bubble);
+                                                }
+                                            });
+                                        }
                                     }
                                     let _ = is_derived_target; // axis flip done in prepare_frame
 
-                                    // Step 6: fire the appropriate
-                                    // subscription for the new mode.
-                                    match ct {
-                                        "range_bar" => {
-                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
-                                            let scaled = (units * 1e8) as u64;
-                                            self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled);
+                                    // Step 6 (chart-type registry arc, Step 10):
+                                    // fire the appropriate subscription for the
+                                    // new mode through the `SubscribeOps` engine
+                                    // (Step 8). Footprint's TF flip (bucket
+                                    // interval → bubble timeframe) still needs
+                                    // its own bespoke handling here — the engine's
+                                    // `subscribe_footprint` only touches
+                                    // `DataBridge`, not the bubble's `Timeframe`.
+                                    if ct == "footprint" {
+                                        let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
+                                        // Full TF flip for the footprint bucket
+                                        // interval (2026-07-05 owner report:
+                                        // switching to footprint on a 1H chart
+                                        // left the toolbar showing "1H" while
+                                        // clusters were bucketed at 1m; naively
+                                        // updating just the bubble label left
+                                        // stale 1H bars mixed with the incoming
+                                        // 1m fetch — timelines couldn't align,
+                                        // pane rendered empty).
+                                        let iv_ms = match iv {
+                                            "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
+                                            "15m" => 900_000, "30m" => 1_800_000,
+                                            "1h" => 3_600_000, _ => 60_000,
+                                        };
+                                        let footprint_tf = mlc_core::state::Timeframe::new(iv, iv_ms);
+                                        if let Some(active_bid) = self.panel_app.panel_grid.active_container()
+                                            .map(|w| w.current_tag_id)
+                                        {
+                                            self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
                                         }
-                                        "volume_bar" => {
-                                            let units = if chart_param > 0.0 { chart_param } else { 1000.0 };
-                                            let scaled = (units * 1e8) as u64;
-                                            self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled);
+                                    }
+                                    if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                                        // Render-family (candles/bars/line/...) shares
+                                        // `subscribe_kline_bars` with the legacy `_`
+                                        // fallback arm below, which only fired when
+                                        // NOT on a tick TF (tick TF flips into the
+                                        // derived path) and NOT a render-only switch
+                                        // (bars already loaded — re-requesting would
+                                        // trigger the fresh-load viewport jump this
+                                        // arc is fixing). Every other (derived)
+                                        // chart_type always fires, matching the
+                                        // per-arm behavior this table replaces.
+                                        let skip = is_render_family(Some(ct)) && (on_tick_tf || render_only_switch);
+                                        if !skip {
+                                            let bar_count = self.core.user().profile().domain.bar_count as usize;
+                                            let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count);
+                                            (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                         }
-                                        "footprint" => {
-                                            let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
-                                            // Full TF flip for the footprint bucket
-                                            // interval (2026-07-05 owner report:
-                                            // switching to footprint on a 1H chart
-                                            // left the toolbar showing "1H" while
-                                            // clusters were bucketed at 1m; naively
-                                            // updating just the bubble label left
-                                            // stale 1H bars mixed with the incoming
-                                            // 1m fetch — timelines couldn't align,
-                                            // pane rendered empty).
-                                            //
-                                            // Order matters:
-                                            //   1. abort the previous kline sub on
-                                            //      the OLD TF (target_needs_kline_
-                                            //      backdrop skipped this earlier),
-                                            //   2. clear bubble.bars — 1H bars are
-                                            //      semantically incompatible with
-                                            //      the new 1m timeline,
-                                            //   3. set the bubble timeframe to the
-                                            //      footprint bucket interval,
-                                            //   4. dispatch request_footprint (its
-                                            //      internal REST + WS sub target
-                                            //      the new interval automatically).
-                                            // Unconditional: footprint owns its OHLC
-                                            // timeline (441d623d dropped the kline
-                                            // backdrop). The old `tf.name != iv`
-                                            // guard left the live kline sub running
-                                            // whenever the chart was ALREADY on the
-                                            // bucket interval (1m chart → footprint
-                                            // 1m) — that surviving sub was one of
-                                            // the five writers interleaving a kline
-                                            // timeline into bubble.bars.
-                                            self.core.bridge.abort_kline_bars(
-                                                self.active_exchange, &symbol, at, &tf.name,
+                                        // The CVD sub-pane companion for footprint
+                                        // is handled uniformly by
+                                        // `sync_default_indicators_for_chart_type`
+                                        // below (adds the real mli `CVD` indicator
+                                        // to the chart's bubble, computed off the
+                                        // bar stream like MACD/RSI — no bespoke
+                                        // sub, no bespoke render path).
+                                    } else {
+                                        // Unknown chart_type (legacy preset) — fall
+                                        // through to plain kline.
+                                        if !on_tick_tf && !render_only_switch {
+                                            self.core.request_kline(
+                                                self.active_exchange, &symbol, &tf, at,
+                                                None,
+                                                Some(self.core.user().profile().domain.bar_count as usize),
+                                                true,
                                             );
-                                            let iv_ms = match iv {
-                                                "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
-                                                "15m" => 900_000, "30m" => 1_800_000,
-                                                "1h" => 3_600_000, _ => 60_000,
-                                            };
-                                            let footprint_tf = mlc_core::state::Timeframe::new(iv, iv_ms);
-                                            if let Some(active_bid) = self.panel_app.panel_grid.active_container()
-                                                .map(|w| w.current_tag_id)
-                                            {
-                                                self.core.bubbles_mut().with_bubble_mut(active_bid, |bubble| {
-                                                    bubble.clear_bars();
-                                                    bubble.mark_footprint_pending();
-                                                });
-                                                self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
-                                            }
-                                            self.core.bridge.request_footprint(self.active_exchange, &symbol, at, iv);
-                                            // The CVD sub-pane companion for footprint
-                                            // is now handled uniformly by
-                                            // `sync_default_indicators_for_chart_type`
-                                            // at the tail of Step 6 (adds the real
-                                            // mli `CVD` indicator to the chart's
-                                            // bubble, computed off the bar stream
-                                            // like MACD/RSI — no bespoke sub, no
-                                            // bespoke render path).
-                                        }
-                                        "renko" => {
-                                            // Default: 0.5 % of last close for the box size; reversal = 2 (TradeStation classic).
-                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
-                                            let scaled = (units * 1e8) as u64;
-                                            self.core.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2);
-                                        }
-                                        "pnf" => {
-                                            // Default reversal = 3 (TradeStation classic).
-                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
-                                            let scaled = (units * 1e8) as u64;
-                                            self.core.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3);
-                                        }
-                                        "kagi" => {
-                                            // Default reversal = 1 % of current price expressed as absolute units.
-                                            let units = if chart_param > 0.0 { chart_param } else { 10.0 };
-                                            let scaled = (units * 1e8) as u64;
-                                            self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled);
-                                        }
-                                        // "cvd" removed (2026-07-04 taxonomy fix) —
-                                        // CVD subscribe now happens when a CVD
-                                        // indicator instance is added (indicator
-                                        // picker / default-companion path), see
-                                        // `ChartApp::subscribe_cvd_line_for_indicator_add`.
-                                        "tpo" => {
-                                            // Default 30-min letter buckets, Trade-source path (sub-tick precision, fast cold start).
-                                            let freq = if chart_param > 0.0 { chart_param as u16 } else { 30 };
-                                            self.core.bridge.request_tpo(
-                                                self.active_exchange, &symbol, at, freq,
-                                                mlc_backend_data_bridge::TpoSource::TradeBucket,
-                                            );
-                                        }
-                                        "three_line_break" => {
-                                            // Default N=3 (industry standard).
-                                            let lines_back = if chart_param > 0.0 {
-                                                (chart_param as u8).max(1)
-                                            } else {
-                                                3u8
-                                            };
-                                            self.core.bridge.request_three_line_break(
-                                                self.active_exchange, &symbol, at, lines_back,
-                                            );
-                                        }
-                                        // ── López de Prado quant bars (C9) ────
-                                        "dollar_bar" => {
-                                            // Default threshold = $1,000,000 (typical liquid futures).
-                                            let threshold = if chart_param > 0.0 {
-                                                chart_param as u64
-                                            } else {
-                                                1_000_000u64
-                                            };
-                                            self.core.bridge.request_dollar_bars(
-                                                self.active_exchange, &symbol, at, threshold,
-                                            );
-                                        }
-                                        "tick_imbalance_bar" => {
-                                            // alpha=0.20 (20%), min_ticks=50.
-                                            let min_ticks = if chart_param > 0.0 {
-                                                chart_param as u32
-                                            } else {
-                                                50u32
-                                            };
-                                            self.core.bridge.request_tick_imbalance_bars(
-                                                self.active_exchange, &symbol, at, 20, min_ticks,
-                                            );
-                                        }
-                                        "volume_imbalance_bar" => {
-                                            let min_ticks = if chart_param > 0.0 {
-                                                chart_param as u32
-                                            } else {
-                                                50u32
-                                            };
-                                            self.core.bridge.request_volume_imbalance_bars(
-                                                self.active_exchange, &symbol, at, 20, min_ticks,
-                                            );
-                                        }
-                                        "run_bar" => {
-                                            let min_ticks = if chart_param > 0.0 {
-                                                chart_param as u32
-                                            } else {
-                                                50u32
-                                            };
-                                            self.core.bridge.request_run_bars(
-                                                self.active_exchange, &symbol, at, 20, min_ticks,
-                                            );
-                                        }
-                                        // ── DOM Heatmap (C12) ─────────────────
-                                        "dom_heatmap" => {
-                                            self.core.bridge.request_dom_heatmap(
-                                                self.active_exchange, &symbol, at,
-                                            );
-                                        }
-                                        // ── Liquidation Heatmap (C13) ─────────
-                                        "liquidation_heatmap" => {
-                                            self.core.bridge.request_liquidation_heatmap(
-                                                self.active_exchange, &symbol, at,
-                                            );
-                                        }
-                                        _ => {
-                                            // Plain render type (candle /
-                                            // bars / line / ...). Kline
-                                            // request only when NOT on a
-                                            // tick TF (tick TF flips into
-                                            // derived path above).
-                                            if !on_tick_tf {
-                                                self.core.bridge.request_bars(
-                                                    self.active_exchange, &symbol, &tf, at,
-                                                    None,
-                                                    Some(self.core.user().profile().domain.bar_count as usize),
-                                                    true,
-                                                );
-                                            }
                                         }
                                     }
                                     // Owner rule 2026-07-05: each chart_type
@@ -801,27 +703,23 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 }
-                let pid = self.panel_app.panel_grid
-                    .active_container()
-                    .map(|w| w.chart_panel_id);
-                // Route off the panel's own `chart_type` rather than the
+                let active_cid = self.panel_app.panel_grid.active_container_id();
+                let bid = active_cid.and_then(|cid| self.bubble_for_chart(cid));
+                // Route off the bubble's own `chart_type` rather than the
                 // toolbar-level `active_param_chart_type` field — that field
                 // is only ever set by the dead inline-dropdown-input path
                 // (removed, see dropdown.rs:590-613) and is permanently
                 // `None`, so every param edit used to silently no-op. The
-                // modal (and any other caller) already has the active panel
-                // resolved when it fires this event, so `panel.chart_type`
-                // is the correct, always-populated source of truth for
-                // "which derived type is being parameterized".
-                let active_ct: &'static str = pid
-                    .and_then(|chart_panel_id| self.panels_store.chart_panel.get(&chart_panel_id))
-                    .map(|p| p.chart_type)
+                // modal (and any other caller) already has the active
+                // bubble resolved when it fires this event, so
+                // `bubble.chart_type` is the correct, always-populated
+                // source of truth for "which derived type is being
+                // parameterized".
+                let active_ct: &'static str = bid
+                    .and_then(|bid| self.core.bubbles().chart_type(bid))
                     .unwrap_or("candles");
-                if let Some(chart_panel_id) = pid {
-                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
-                        &mut self.panels_store, chart_panel_id,
-                    );
-                    panel.chart_type_param = value;
+                if let Some(bid) = bid {
+                    self.core.bubbles_mut().set_chart_type_param(bid, value);
                 }
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
@@ -832,7 +730,11 @@ impl ChartApp {
                             let eid_str = self.active_exchange.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let scaled = (value * 1e8) as u64;
+                                let tf = self.timeframe_for_chart(cid).unwrap_or_default();
+                                let chart_interval: &'static str = bid
+                                    .and_then(|bid| self.core.bubbles().chart_type_interval(bid))
+                                    .unwrap_or("1m");
+                                let bar_count = self.core.user().profile().domain.bar_count as usize;
                                 // Audit D9: a param change (e.g. renko box=10 -> box=20)
                                 // re-subscribes on the SAME chart_type — ChangeChartType's
                                 // clear never fires. append_renko/append_pnf/... only ever
@@ -846,63 +748,16 @@ impl ChartApp {
                                         bubble.clear_derived_slots(None);
                                     });
                                 }
-                                match active_ct {
-                                    "range_bar"  => self.core.bridge.request_range_bars(self.active_exchange, &symbol, at, scaled),
-                                    "volume_bar" => self.core.bridge.request_volume_bars(self.active_exchange, &symbol, at, scaled),
-                                    "renko"      => self.core.bridge.request_renko_bars(self.active_exchange, &symbol, at, scaled, 2),
-                                    "pnf"        => self.core.bridge.request_pnf_bars(self.active_exchange, &symbol, at, scaled, 3),
-                                    "kagi"       => self.core.bridge.request_kagi_bars(self.active_exchange, &symbol, at, scaled),
-                                    // Quant bars (C9): param is reinterpreted per bar type.
-                                    // dollar_bar: param = dollar threshold (whole dollars).
-                                    "dollar_bar" => {
-                                        let threshold = if value > 0.0 { value as u64 } else { 1_000_000u64 };
-                                        self.core.bridge.request_dollar_bars(self.active_exchange, &symbol, at, threshold);
-                                    }
-                                    // imbalance/run bars: param = min_ticks floor.
-                                    "tick_imbalance_bar" => {
-                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.core.bridge.request_tick_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
-                                    }
-                                    "volume_imbalance_bar" => {
-                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.core.bridge.request_volume_imbalance_bars(self.active_exchange, &symbol, at, 20, min_ticks);
-                                    }
-                                    "run_bar" => {
-                                        let min_ticks = if value > 0.0 { value as u32 } else { 50 };
-                                        self.core.bridge.request_run_bars(self.active_exchange, &symbol, at, 20, min_ticks);
-                                    }
-                                    // Recon 2026-07-05: three previously-missing
-                                    // arms — param edits on these types used to
-                                    // silently no-op (fell through `_ => {}`
-                                    // below), even though `ChangeChartType`'s
-                                    // own switch already covers them.
-                                    "three_line_break" => {
-                                        let lines_back = if value > 0.0 { (value as u8).max(1) } else { 3u8 };
-                                        self.core.bridge.request_three_line_break(self.active_exchange, &symbol, at, lines_back);
-                                    }
-                                    "tpo" => {
-                                        let freq = if value > 0.0 { value as u16 } else { 30 };
-                                        self.core.bridge.request_tpo(
-                                            self.active_exchange, &symbol, at, freq,
-                                            mlc_backend_data_bridge::TpoSource::TradeBucket,
-                                        );
-                                    }
-                                    // tick_bar's param is a bar count, not a
-                                    // price/volume threshold — it does not go
-                                    // through the ×1e8 fixed-point scaling or
-                                    // `abort_derived_chart`'s "derived" pool;
-                                    // it reuses the same tick-count subscribe
-                                    // path the Timeframe-driven tick TF switch
-                                    // uses (`request_tick_bars` /
-                                    // `abort_tick_bars`, both keyed into the
-                                    // same `derived_subs` slot as every other
-                                    // derived stream, so the abort above is
-                                    // still correct — only the request differs).
-                                    "tick_bar" => {
-                                        let count = if value > 0.0 { value as u32 } else { 100 };
-                                        self.core.bridge.request_tick_bars(self.active_exchange, &symbol, at, count);
-                                    }
-                                    _ => {}
+                                // P0 V1 (viewport doctrine audit 2026-07-07): param
+                                // change = new series identity = same cold-load
+                                // contract as UpdateChartTypeInterval below.
+                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                    window.begin_fresh_load();
+                                    window.needs_snap_after_backfill = true;
+                                }
+                                if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
+                                    let params = build_subscribe_params(active_ct, value, chart_interval, bar_count);
+                                    (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                 }
                             }
                         }
@@ -926,14 +781,9 @@ impl ChartApp {
                         return;
                     }
                 };
-                let pid = self.panel_app.panel_grid
-                    .active_container()
-                    .map(|w| w.chart_panel_id);
-                if let Some(chart_panel_id) = pid {
-                    let panel = crate::chart_panel_bridge::ensure_chart_panel_state(
-                        &mut self.panels_store, chart_panel_id,
-                    );
-                    panel.chart_type_interval = static_iv;
+                let active_cid = self.panel_app.panel_grid.active_container_id();
+                if let Some(bid) = active_cid.and_then(|cid| self.bubble_for_chart(cid)) {
+                    self.core.bubbles_mut().set_chart_type_interval(bid, static_iv);
                 }
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
@@ -971,7 +821,7 @@ impl ChartApp {
                                     window.begin_fresh_load();
                                     window.needs_snap_after_backfill = true;
                                 }
-                                self.core.bridge.request_footprint(self.active_exchange, &symbol, at, static_iv);
+                                self.core.bridge_handle().request_footprint(self.active_exchange, &symbol, at, static_iv);
                             }
                         }
                     }
@@ -1073,7 +923,7 @@ impl ChartApp {
 
                 self.active_exchange = resolved_exchange;
                 if !previous_symbol.is_empty() {
-                    self.core.bridge.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                    self.core.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
@@ -1081,8 +931,8 @@ impl ChartApp {
                 } else {
                     let at_typed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                     let at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
-                    self.core.bridge.ensure_connector(resolved_exchange);
-                    self.core.bridge.request_bars(
+                    self.core.ensure_connector(resolved_exchange);
+                    self.core.request_kline(
                         resolved_exchange, &symbol, &timeframe, at, None,
                         Some(self.core.user().profile().domain.bar_count as usize), false,
                     );
@@ -1215,11 +1065,11 @@ impl ChartApp {
                                     self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_oi());
                                 }
                                 if oi_show_now {
-                                    self.core.bridge.request_open_interest(
+                                    self.core.subscribe_open_interest(
                                         self.active_exchange, &symbol, at,
                                     );
                                 } else {
-                                    self.core.bridge.unsubscribe_open_interest(
+                                    self.core.unsubscribe_open_interest(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }
@@ -1254,11 +1104,11 @@ impl ChartApp {
                                     self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_funding());
                                 }
                                 if funding_show_now {
-                                    self.core.bridge.request_funding_rate(
+                                    self.core.subscribe_funding_rate(
                                         self.active_exchange, &symbol, at,
                                     );
                                 } else {
-                                    self.core.bridge.unsubscribe_funding_rate(
+                                    self.core.unsubscribe_funding_rate(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }
@@ -1792,7 +1642,7 @@ impl ChartApp {
                         // fixed the gate so this is now honestly observable) —
                         // force the refetch+resub in that case too, not only
                         // when the bubble came back empty (audit D5).
-                        let kline_alive = self.core.bridge.is_kline_alive(eid, sym, at, &tf.name);
+                        let kline_alive = self.core.bridge_handle().is_kline_alive(eid, sym, at, &tf.name);
                         let force = !*has_bars || !kline_alive;
                         self.pending_cure_after_preset_load.push((eid, sym.clone(), tf.clone(), at, force));
                         if force { bars_requested_force += 1; } else { bars_requested_lazy += 1; }
@@ -2461,32 +2311,41 @@ impl ChartApp {
         }
     }
 
-    /// Ignite the footprint pipeline for every restored window whose
-    /// chart_type is `footprint`.
+    /// Ignite the derived-pipeline for every restored window whose chart_type
+    /// is derived (footprint / renko / pnf / kagi / three_line_break / tpo /
+    /// range_bar / volume_bar / tick_bar / dollar_bar / *_imbalance_bar /
+    /// run_bar / dom_heatmap / liquidation_heatmap).
     ///
-    /// The startup / new-window post-load loops only fire kline
-    /// `request_bars` — a hydrated footprint window never went through
-    /// ChangeChartType's Step 6, so nothing subscribed its derived stream:
-    /// the pane sat on the spinner forever while the kline seed painted a
-    /// foreign timeline (cold-open hang, handoff 2026-07-05 §2.3). Also
-    /// stamps `bars_source = FootprintOhlc` so the kline-family write gates
-    /// drop the parallel kline seed for these bubbles.
-    pub(crate) fn ignite_footprint_windows(&mut self) {
-        let targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, &'static str)> =
-            self.panel_app.panel_grid.containers().iter()
-                .filter_map(|(cid, w)| {
-                    if self.chart_type_for_chart(*cid) != Some("footprint") { return None; }
+    /// The startup / new-window post-load loops only fire kline `request_bars`;
+    /// a hydrated derived window never went through `ChangeChartType`'s Step 6,
+    /// so nothing subscribed its derived stream — the pane sat on the spinner
+    /// forever while the kline seed painted a foreign timeline (cold-open hang,
+    /// handoff 2026-07-05 §2.3 for footprint; §3.4 handoff 2026-07-06 widens
+    /// this to the whole derived family).
+    ///
+    /// Mirrors `ChangeChartType`'s Step 6 dispatch — `bars_source` stamp,
+    /// `clear_derived_slots(None)` on the target bubble, then the matching
+    /// bridge `request_*`. `chart_param`/`chart_type_interval` defaults are
+    /// the same as the runtime switch so a preset lands on the SAME live
+    /// pipeline as if the user had just clicked the picker.
+    pub(crate) fn ignite_derived_windows(&mut self) {
+        let targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, &'static str, &'static str, f64, mlc_core::state::Timeframe)> =
+            self.panel_app.panel_grid.containers().keys()
+                .filter_map(|cid| {
+                    let ct = self.chart_type_for_chart(*cid)?;
+                    let is_derived = crate::active_series::chart_type_is_derived_seed(ct);
+                    if !is_derived { return None; }
                     let sym = self.symbol_for_chart(*cid)?;
                     if sym.is_empty() { return None; }
                     let exch = self.exchange_for_chart(*cid)?;
                     let at = self.account_type_for_chart(*cid)?;
-                    let iv = self.panels_store.chart_panel.get(&w.chart_panel_id)
-                        .map(|p| p.chart_type_interval)
-                        .unwrap_or("1m");
-                    Some((*cid, sym.to_string(), exch.to_string(), at, iv))
+                    let iv = self.chart_type_interval_for_chart(*cid).unwrap_or("1m");
+                    let param = self.chart_type_param_for_chart(*cid).unwrap_or(0.0);
+                    let tf = self.timeframe_for_chart(*cid).unwrap_or_default();
+                    Some((*cid, sym.to_string(), exch.to_string(), at, ct, iv, param, tf))
                 })
                 .collect();
-        for (cid, sym, exch, at, iv) in targets {
+        for (cid, sym, exch, at, ct, iv, param, tf) in targets {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
@@ -2495,14 +2354,19 @@ impl ChartApp {
             let at = mlc_backend_data_bridge::account_type_to_dig3(at);
             if let Some(bid) = self.bubble_for_chart(cid) {
                 self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                    bubble.clear_bars();
-                    bubble.mark_footprint_pending();
-                    bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
+                    bubble.clear_derived_slots(None);
+                    if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                        (ops.clear_slot)(bubble);
+                    }
                 });
             }
-            self.core.bridge.ensure_connector(eid);
-            self.core.bridge.request_footprint(eid, &sym, at, iv);
-            eprintln!("[ChartApp] ignited footprint sub for restored window {:?} iv={}", cid, iv);
+            self.core.ensure_connector(eid);
+            if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                let bar_count = self.core.user().profile().domain.bar_count as usize;
+                let params = build_subscribe_params(ct, param, iv, bar_count);
+                (ops.subscribe)(self.core.bridge_handle(), eid, &sym, at, &tf, params);
+            }
+            eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);
         }
     }
 
@@ -2547,22 +2411,13 @@ impl ChartApp {
         cid: mlc_core::ids::ChartId,
         chart_type: &str,
     ) {
-        // Companion indicator per chart_type. Extend the table when adding
+        // Companion indicator per chart_type, sourced from the chart-type
+        // registry (`mlc_core::chart_type::ChartTypeDef::default_indicators`)
+        // — the registry row IS the table now; extend it there when adding
         // more auto-pairs (tpo → VolumeProfile, ...).
-        let wanted: &[&str] = match chart_type {
-            "footprint" => &["CVD"],
-            // Kline-render family (candles + every OHLC-derived line/area
-            // style that draws straight off `bubble.bars`, per the
-            // `ChangeChartType` match arm above) — NOT the derived-seed
-            // family (range_bar/tick_bar/volume_bar/dollar_bar family/
-            // renko/pnf/kagi/three_line_break/footprint/tpo/heatmaps),
-            // which already carry their own volume-shaped visualization or
-            // no kline backdrop to pin a bottom histogram against.
-            "candles" | "hollow_candles" | "heikin_ashi" | "bars"
-            | "line" | "step_line" | "line_markers" | "area" | "hlc_area"
-            | "baseline" | "columns" => &["VOLUME"],
-            _ => &[],
-        };
+        let wanted: &[&str] = mlc_core::chart_type::by_id(chart_type)
+            .map(|d| d.default_indicators)
+            .unwrap_or(&[]);
 
         let bid = match self.bubble_for_chart(cid) {
             Some(b) => b,
@@ -2659,19 +2514,72 @@ impl ChartApp {
 /// `mlc-app-layout/src/chart_render/footprint.rs` `MIN_BAR_WIDTH_PX`).
 /// Returns `None` when the type is fine with the inherited spacing.
 ///
-/// Table is deliberately extensible — new entries only need a match arm.
+/// Sourced from `mlc_core::chart_type::registry` — footprint clusters draw
+/// per-level bid/ask numbers inside the bar column (`footprint.rs::
+/// MIN_BAR_WIDTH_PX = 40.0` is the hard floor for text, `bar_width() =
+/// bar_spacing * bar_width_ratio` with default ratio 0.8, so `bar_spacing`
+/// must clear `40.0 / 0.8 = 50.0` for the body alone to fit legible text
+/// plus headroom for the per-level number labels). P&F X/O shapes stretch to
+/// the box cell (`pnf.rs`) — below ~12px of spacing the glyph is a sliver
+/// and the column grid is unreadable.
 pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
-    match chart_type {
-        // Footprint clusters draw per-level bid/ask numbers inside the bar
-        // column; `footprint.rs::MIN_BAR_WIDTH_PX = 40.0` is the hard floor
-        // for text, `bar_width() = bar_spacing * bar_width_ratio` (default
-        // ratio 0.8) — so `bar_spacing` must clear `40.0 / 0.8 = 50.0` for
-        // the body alone to fit legible text, plus a little headroom for
-        // the per-level number labels so they don't touch the column edges.
-        "footprint" => Some(50.0),
-        // P&F X/O shapes stretch to the box cell (`pnf.rs`); below ~12px of
-        // spacing the glyph is a sliver and the column grid is unreadable.
-        "pnf" => Some(12.0),
-        _ => None,
+    mlc_core::chart_type::by_id(chart_type).and_then(|d| d.min_bar_spacing)
+}
+
+/// Map a `chart_type` id + its raw UI param/interval into the
+/// `SubscribeParams` shape the [`mlc_backend::chart_type::SubscribeOps`]
+/// table expects (chart-type registry arc, Step 10). One choke point for
+/// the same per-type scaling formulas previously duplicated across
+/// `ChangeChartType`, `UpdateChartTypeParam`, and `ignite_derived_windows`.
+fn build_subscribe_params(
+    ct: &str,
+    param: f64,
+    interval: &'static str,
+    bar_count: usize,
+) -> mlc_backend::chart_type::SubscribeParams {
+    use mlc_backend::chart_type::SubscribeParams;
+    match ct {
+        "range_bar" | "kagi" => {
+            let units = if param > 0.0 { param } else { 10.0 };
+            SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
+        }
+        "volume_bar" => {
+            let units = if param > 0.0 { param } else { 1000.0 };
+            SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
+        }
+        "renko" => {
+            let units = if param > 0.0 { param } else { 10.0 };
+            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 2 }
+        }
+        "pnf" => {
+            let units = if param > 0.0 { param } else { 10.0 };
+            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 3 }
+        }
+        "dollar_bar" => {
+            SubscribeParams::Threshold { threshold_u64: if param > 0.0 { param as u64 } else { 1_000_000 } }
+        }
+        "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+            SubscribeParams::MinTicks {
+                alpha_x100: 20,
+                min_ticks: if param > 0.0 { param as u32 } else { 50 },
+            }
+        }
+        "tick_bar" => {
+            SubscribeParams::Count { count_u32: if param > 0.0 { param as u32 } else { 100 } }
+        }
+        "three_line_break" => {
+            SubscribeParams::LinesBack {
+                lines_back: if param > 0.0 { (param as u8).max(1) } else { 3 },
+            }
+        }
+        "tpo" => {
+            SubscribeParams::Freq { freq_u16: if param > 0.0 { param as u16 } else { 30 } }
+        }
+        "footprint" => {
+            let iv = if !interval.is_empty() { interval } else { "1m" };
+            SubscribeParams::Interval { interval: iv }
+        }
+        "dom_heatmap" | "liquidation_heatmap" => SubscribeParams::None,
+        _ => SubscribeParams::Kline { bar_count },
     }
 }

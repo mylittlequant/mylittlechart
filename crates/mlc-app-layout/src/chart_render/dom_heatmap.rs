@@ -37,6 +37,20 @@ fn ask_color(alpha: f64) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", 0xe7, 0x4c, 0x3c, a)
 }
 
+/// Draw the DOM heatmap chart-type, conditional on `state.dom_heatmap_ref`
+/// being populated.
+///
+/// Matches the `fn(&mut dyn RenderContext, &ChartRenderState)` shape needed
+/// by the chart-type `DrawOps` table (`crate::chart_type::draw_ops`) — the
+/// ring-buffer presence check that used to live inline in
+/// `render_chart.rs::draw_series` now lives here instead. No-ops silently
+/// when the buffer is absent, same as before.
+pub fn draw_dom_heatmap_conditional(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+    if let Some(buf) = state.dom_heatmap_ref {
+        draw_dom_heatmap(ctx, state, buf, state.dom_trade_dots_ref);
+    }
+}
+
 /// Draw the DOM heatmap chart-type.
 ///
 /// `buf` is the rolling depth buffer; `trade_dots` is the optional overlay.

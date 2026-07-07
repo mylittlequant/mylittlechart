@@ -280,75 +280,111 @@ pub fn top_toolbar() -> PanelToolbarDef {
 /// (candles, line, …) and transform styles (range_bar, volume_bar, footprint —
 /// derived from the current TF's bars, like heikin_ashi) are all chart types.
 /// Tick is a TIMEFRAME (TF selector), not a chart type.
+///
+/// Data-driven since the chart-type registry arc Step 2: iterates
+/// `crate::chart_type::all()` instead of a hand-written literal list.
+/// Grouped by data source / render character (owner spec 2026-07-05):
+/// candle styles → line styles → fills → trade-aggregation bars →
+/// price-action transforms → orderflow. Headers render as non-clickable
+/// section titles (`DropdownItem::header`), emitted whenever the registry's
+/// `ChartTypeGroup` changes across the (group-sorted) row order. "histogram"
+/// removed — it rendered VOLUME, not price (the VOLUME indicator owns that
+/// visual). "cvd" removed 2026-07-04 — real compute-catalog indicator now.
+/// "columns" fully deleted 2026-07-06 (chart-type registry arc Step 13) —
+/// no longer in the registry at all.
 fn chart_type_items() -> Vec<DropdownItemDef> {
     let lang = current_language();
-    // Grouped by data source / render character (owner spec 2026-07-05):
-    // candle styles → line styles → fills+columns → trade-aggregation bars →
-    // price-action transforms → orderflow. Headers render as non-clickable
-    // section titles (`DropdownItem::header`). "histogram" removed — it
-    // rendered VOLUME, not price (the VOLUME indicator owns that visual).
-    // "cvd" removed 2026-07-04 — real compute-catalog indicator now.
-    vec![
-        // ── OHLC candle styles (time bars, render-only switch) ───────────────
-        DropdownItemDef::Header { label: "Candles".to_string() },
-        DropdownItemDef::action("candles", MK::Candles.get(lang)).with_icon(ToolbarIconId::new("Candlestick")),
-        DropdownItemDef::action("bars", MK::Bars.get(lang)).with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action("hollow_candles", MK::HollowCandles.get(lang)).with_icon(ToolbarIconId::new("HollowCandles")),
-        DropdownItemDef::action("heikin_ashi", MK::HeikinAshi.get(lang)).with_icon(ToolbarIconId::new("HeikinAshi")),
-        // ── Close-price lines ─────────────────────────────────────────────────
-        DropdownItemDef::Header { label: "Lines".to_string() },
-        DropdownItemDef::action("line", MK::Line.get(lang)).with_icon(ToolbarIconId::new("LineChart")),
-        DropdownItemDef::action("step_line", MK::StepLine.get(lang)).with_icon(ToolbarIconId::new("StepLine")),
-        DropdownItemDef::action("line_markers", MK::LineWithMarkers.get(lang)).with_icon(ToolbarIconId::new("LineWithMarkers")),
-        // ── Close-price fills / columns (drawn against a base level) ─────────
-        DropdownItemDef::Header { label: "Areas & Columns".to_string() },
-        DropdownItemDef::action("area", MK::Area.get(lang)).with_icon(ToolbarIconId::new("AreaChart")),
-        DropdownItemDef::action("hlc_area", MK::HlcArea.get(lang)).with_icon(ToolbarIconId::new("HlcArea")),
-        DropdownItemDef::action("baseline", MK::Baseline.get(lang)).with_icon(ToolbarIconId::new("Baseline")),
-        // Owner 2026-07-06: "Columns" removed from the picker — it's a
-        // volume-histogram render dressed as a chart type, semantically
-        // out of place next to price series. Kept in the code paths
-        // (matches, hydration) so old presets still resolve, just not
-        // pickable from the menu.
-        // ── Bars aggregated from raw trades (dig3-station derived streams).
-        //    Inline input on the right edge = threshold, editable in place.
-        //    Includes the López de Prado quant family (dollar/imbalance/run).
-        DropdownItemDef::Header { label: "Trade Aggregation".to_string() },
-        DropdownItemDef::action_with_input("range_bar",  "Range Bars",  "bar_mode_param", "10.0")
-            .with_icon(ToolbarIconId::new("RangeBar")),
-        DropdownItemDef::action_with_input("volume_bar", "Volume Bars", "bar_mode_param", "1000.0")
-            .with_icon(ToolbarIconId::new("VolumeBar")),
-        DropdownItemDef::action_with_input("tick_bar",   "Tick Bars",   "bar_mode_param", "100")
-            .with_icon(ToolbarIconId::new("Tick")),
-        DropdownItemDef::action_with_input("dollar_bar",           "Dollar Bars",        "bar_mode_param", "1000000")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("tick_imbalance_bar",   "Tick Imbalance",     "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("volume_imbalance_bar", "Volume Imbalance",   "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("run_bar",              "Run Bars",           "bar_mode_param", "50")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        // ── Price-action transforms (time axis discarded) ────────────────────
-        DropdownItemDef::Header { label: "Price Action".to_string() },
-        DropdownItemDef::action_with_input("renko",      "Renko",       "bar_mode_param", "10.0")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("pnf",        "Point & Figure", "bar_mode_param", "10.0")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        DropdownItemDef::action_with_input("kagi",       "Kagi",        "bar_mode_param", "10.0")
-            .with_icon(ToolbarIconId::new("LineChart")),
-        DropdownItemDef::action_with_input("three_line_break", "3 Line Break", "bar_mode_param", "3")
-            .with_icon(ToolbarIconId::new("BarChart")),
-        // ── Orderflow / market-structure visualizations ───────────────────────
-        DropdownItemDef::Header { label: "Orderflow".to_string() },
-        DropdownItemDef::action_with_input("footprint",  "Clusters (Footprint)", "bar_mode_param", "1m")
-            .with_icon(ToolbarIconId::new("Footprint")),
-        DropdownItemDef::action_with_input("tpo", "Market Profile (TPO)", "bar_mode_param", "30")
-            .with_icon(ToolbarIconId::new("Histogram")),
-        DropdownItemDef::action("dom_heatmap", "DOM Heatmap")
-            .with_icon(ToolbarIconId::new("Histogram")),
-        DropdownItemDef::action("liquidation_heatmap", "Liquidation Heatmap")
-            .with_icon(ToolbarIconId::new("Activity")),
-    ]
+    let mut items = Vec::new();
+    let mut previous_group: Option<crate::chart_type::ChartTypeGroup> = None;
+
+    for def in crate::chart_type::all() {
+        if previous_group != Some(def.group) {
+            items.push(DropdownItemDef::Header {
+                label: crate::chart_type::registry::group_label(def.group).to_string(),
+            });
+            previous_group = Some(def.group);
+        }
+
+        // The 12 plain render styles keep their pre-existing localized labels
+        // (MK::*.get(lang)); every other type already used a plain English
+        // literal in the hand-written list, which now comes from the
+        // registry's `label` field instead.
+        let label: std::borrow::Cow<'static, str> = match def.id {
+            "candles" => MK::Candles.get(lang).into(),
+            "bars" => MK::Bars.get(lang).into(),
+            "hollow_candles" => MK::HollowCandles.get(lang).into(),
+            "heikin_ashi" => MK::HeikinAshi.get(lang).into(),
+            "line" => MK::Line.get(lang).into(),
+            "step_line" => MK::StepLine.get(lang).into(),
+            "line_markers" => MK::LineWithMarkers.get(lang).into(),
+            "area" => MK::Area.get(lang).into(),
+            "hlc_area" => MK::HlcArea.get(lang).into(),
+            "baseline" => MK::Baseline.get(lang).into(),
+            _ => def.label.into(),
+        };
+
+        let item = match def.inline_default {
+            Some(default_text) => {
+                DropdownItemDef::action_with_input(def.id, label, "bar_mode_param", default_text)
+            }
+            None => DropdownItemDef::action(def.id, label),
+        }
+        .with_icon(ToolbarIconId::new(def.icon_id));
+
+        items.push(item);
+    }
+
+    items
+}
+
+/// Resolve the icon id for a chart_type by walking `chart_type_items()`.
+///
+/// Used by the top toolbar to make the `chart_type_selector` dropdown button
+/// reflect the ACTIVE chart type instead of the hardcoded "Candlestick"
+/// fallback in the static toolbar def. When `chart_type` is unknown (old
+/// preset id, custom type), returns `"Candlestick"` — same as the static
+/// fallback.
+pub fn chart_type_icon_id(chart_type: &str) -> &'static str {
+    // Walk the catalog once; return matched item's icon or default.
+    for item in chart_type_items() {
+        let (id, icon) = match &item {
+            DropdownItemDef::Action { id, icon, .. } => (id.as_str(), icon.as_ref()),
+            DropdownItemDef::ActionWithInput { id, icon, .. } => (id.as_str(), icon.as_ref()),
+            _ => continue,
+        };
+        if id == chart_type {
+            if let Some(ic) = icon {
+                // ToolbarIconId(String) → &str → static-lifetime via match.
+                // The catalog uses a fixed set of names; map back to a static
+                // slice to avoid allocating per render frame.
+                return match ic.0.as_str() {
+                    "Candlestick" => "Candlestick",
+                    "BarChart" => "BarChart",
+                    "HollowCandles" => "HollowCandles",
+                    "HeikinAshi" => "HeikinAshi",
+                    "LineChart" => "LineChart",
+                    "StepLine" => "StepLine",
+                    "LineWithMarkers" => "LineWithMarkers",
+                    "AreaChart" => "AreaChart",
+                    "HlcArea" => "HlcArea",
+                    "Baseline" => "Baseline",
+                    "RangeBar" => "RangeBar",
+                    "VolumeBar" => "VolumeBar",
+                    "Tick" => "Tick",
+                    "Renko" => "Renko",
+                    "Pnf" => "Pnf",
+                    "Kagi" => "Kagi",
+                    "ThreeLB" => "ThreeLB",
+                    "Footprint" => "Footprint",
+                    "Histogram" => "Histogram",
+                    "Activity" => "Activity",
+                    _ => "Candlestick",
+                };
+            }
+            return "Candlestick";
+        }
+    }
+    "Candlestick"
 }
 
 /// Layout menu dropdown items (localized).

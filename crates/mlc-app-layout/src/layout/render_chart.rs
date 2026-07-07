@@ -27,12 +27,8 @@
 use mlc_core::render::RenderContext;
 use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
-    draw_grid, draw_grid_extended, draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi,
-    draw_range_bars, draw_volume_bars, draw_tick_bars, draw_footprint, draw_renko, draw_pnf, draw_kagi,
-    draw_tpo, draw_three_line_break, draw_volume_profile_overlay,
-    draw_oi_delta, draw_funding_rate_strip, draw_dom_heatmap, draw_liquidation_heatmap,
-    draw_line_series, draw_area_series, draw_baseline_series,
-    draw_step_line, draw_line_with_markers, draw_hlc_area, draw_columns,
+    draw_grid, draw_grid_extended, draw_candles, draw_volume_profile_overlay,
+    draw_oi_delta, draw_funding_rate_strip,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
@@ -202,50 +198,14 @@ pub fn draw_series(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_
         ctx.clip();
     }
 
-    match chart_type {
-        "candles" => draw_candles(ctx, state),
-        "bars" => draw_bars(ctx, state),
-        "hollow_candles" => draw_hollow_candles(ctx, state),
-        "heikin_ashi" => draw_heikin_ashi(ctx, state),
-        "line" => draw_line_series(ctx, state),
-        "step_line" => draw_step_line(ctx, state),
-        "line_markers" => draw_line_with_markers(ctx, state),
-        "area" => draw_area_series(ctx, state),
-        "hlc_area" => draw_hlc_area(ctx, state),
-        "baseline" => draw_baseline_series(ctx, state),
-
-        "columns" => draw_columns(ctx, state),
-        "range_bar" => draw_range_bars(ctx, state),
-        "volume_bar" => draw_volume_bars(ctx, state),
-        "tick_bar" => draw_tick_bars(ctx, state),
-        "renko" => draw_renko(ctx, state),
-        "pnf" => draw_pnf(ctx, state),
-        "kagi" => draw_kagi(ctx, state),
-        // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a real
-        // compute-catalog indicator instance rendered through the normal
-        // sub-pane system, not a full-pane chart_type. The hand-drawn
-        // `chart_render/cvd.rs` renderer was deleted (2026-07-05).
-        "tpo" => draw_tpo(ctx, state),
-        "three_line_break" => draw_three_line_break(ctx, state),
-        "footprint" => draw_footprint(ctx, state),
-        // DOM Heatmap (C12): Bookmap-style 2D depth heatmap.
-        "dom_heatmap" => {
-            if let Some(buf) = state.dom_heatmap_ref {
-                draw_dom_heatmap(ctx, state, buf, state.dom_trade_dots_ref);
-            }
-        }
-        // Liquidation Heatmap (C13): Hyblock/CoinGlass-style 2D liquidation heatmap.
-        "liquidation_heatmap" => {
-            if let Some(buf) = state.liq_heatmap_ref {
-                draw_liquidation_heatmap(ctx, state, buf, state.liq_dots_ref);
-            }
-        }
-        // López de Prado quant bars (C9): output is OHLC BarPoint — render as
-        // standard candles. Explicit arms avoid silent fallback for new types.
-        "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
-            draw_candles(ctx, state)
-        }
-        _ => draw_candles(ctx, state), // Default fallback
+    // chart_type → draw fn dispatch: static DrawOps table (Step 9 of the
+    // chart-type registry arc), replacing the former `match chart_type` block.
+    // See `crate::chart_type::draw_ops` for the table and per-type notes
+    // (López de Prado bars falling through to draw_candles, dom/liquidation
+    // heatmap conditional-on-ring-buffer draw fns).
+    match crate::chart_type::draw_ops_by_id(chart_type) {
+        Some(ops) => (ops.draw)(ctx, state),
+        None => draw_candles(ctx, state), // Default fallback for unknown chart_type
     }
 
     ctx.restore();

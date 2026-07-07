@@ -1293,13 +1293,27 @@ impl ChartApp {
         self.core.bubbles().timeframe(bid).cloned()
     }
 
-    /// `chart_type` string of the panel rendering this chart (e.g. "renko",
-    /// "candles"). `None` when the container or its panel state doesn't
-    /// exist yet — callers fall back to the `Bars` resolution.
+    /// `chart_type` string of the bubble attached to this chart (e.g.
+    /// "renko", "candles"). `None` when the chart isn't attached to a bubble
+    /// yet — callers fall back to the `Bars` resolution.
     #[inline]
     pub fn chart_type_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<&'static str> {
-        let panel_id = self.panel_app.panel_grid.containers().get(&chart_id)?.chart_panel_id;
-        self.panels_store.chart_panel.get(&panel_id).map(|p| p.chart_type)
+        let bid = self.bubble_for_chart(chart_id)?;
+        self.core.bubbles().chart_type(bid)
+    }
+
+    /// `chart_type_param` of the bubble attached to this chart.
+    #[inline]
+    pub fn chart_type_param_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<f64> {
+        let bid = self.bubble_for_chart(chart_id)?;
+        self.core.bubbles().chart_type_param(bid)
+    }
+
+    /// `chart_type_interval` of the bubble attached to this chart.
+    #[inline]
+    pub fn chart_type_interval_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<&'static str> {
+        let bid = self.bubble_for_chart(chart_id)?;
+        self.core.bubbles().chart_type_interval(bid)
     }
 
     /// Resolve the group/bubble id for any sync member id.
@@ -1401,7 +1415,7 @@ impl ChartApp {
     /// to inject synthetic LiveUpdates via `debug_broadcast_tx`.
     #[doc(hidden)]
     pub fn bridge_arc(&self) -> std::sync::Arc<DataBridge> {
-        self.core.bridge.clone()
+        self.core.bridge_arc()
     }
 
     /// Create a new chart application for the given symbol.
@@ -1615,7 +1629,10 @@ impl ChartApp {
 
             // Ensure all windows have a data_provider and toolbar config.
             // Phase 4 B: read exchange/account_type from branch_meta (no longer on struct).
-            let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = {
+            // §3.4 (handoff 2026-07-06): tuple widened with chart_type so the
+            // request_bars loop below can skip derived windows — those are
+            // ignited via `ignite_derived_windows` right after.
+            let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, &'static str)> = {
                 let containers = app.panel_app.panel_grid.containers();
                 containers.keys()
                     .filter_map(|cid| {
@@ -1623,7 +1640,8 @@ impl ChartApp {
                         let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                         let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                         let at = app.account_type_for_chart(*cid).unwrap_or_default();
-                        Some((sym, exch, tf, at))
+                        let ct = app.chart_type_for_chart(*cid).unwrap_or("candles");
+                        Some((sym, exch, tf, at, ct))
                     })
                     .collect()
             };
@@ -1661,21 +1679,32 @@ impl ChartApp {
             }
 
             // Ensure connectors are ready and request bars for each window's own exchange.
-            for (sym, exch, tf, at_typed) in &window_data {
+            // Skip derived chart types — `ignite_derived_windows` below fires their
+            // matching bridge sub instead. Doing the kline `request_bars` for them
+            // would only trigger a REST fetch discarded by the ownership gate.
+            for (sym, exch, tf, at_typed, ct) in &window_data {
                 let eid = digdigdig3::ExchangeId::from_str(&exch)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                    continue;
+                }
+                if matches!(*ct,
+                    "footprint" | "range_bar" | "volume_bar" | "tick_bar"
+                    | "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar"
+                    | "run_bar" | "renko" | "pnf" | "kagi" | "three_line_break"
+                    | "tpo" | "dom_heatmap" | "liquidation_heatmap"
+                ) {
                     continue;
                 }
                 let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
                 bridge.ensure_connector(eid);
                 bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
             }
-            // Footprint windows: ignite the derived pipeline + stamp bar-series
-            // ownership (the kline request above is dropped by the ownership
-            // gate for these bubbles). Runs synchronously right after, so the
-            // flag lands before any REST response can.
-            app.ignite_footprint_windows();
+            // Derived windows: ignite the matching pipeline + stamp bar-series
+            // ownership. Runs synchronously right after, so the flag lands before
+            // any REST response can. §3.4 (handoff 2026-07-06) widened from
+            // footprint-only to the whole derived family.
+            app.ignite_derived_windows();
             // Default companions (klines → VOLUME, footprint → CVD) for
             // restored windows — ChangeChartType never ran for them.
             app.sync_default_indicators_for_all_windows();
@@ -2011,7 +2040,7 @@ impl ChartApp {
         let exchange_name = exchange_id.as_str().to_string();
         let at_label = account_type_to_label(account_type).to_string();
 
-        let bridge = self.core.bridge.clone();
+        let bridge = self.core.bridge_arc();
 
         // Build a LiveDataProvider for the active window.
         let data_provider: SharedDataProvider = std::sync::Arc::new(
@@ -2075,8 +2104,8 @@ impl ChartApp {
 
         self.panel_app.toolbar_config = ToolbarConfig::standalone();
 
-        bridge.ensure_connector(exchange_id);
-        bridge.request_bars(exchange_id, symbol, &timeframe, account_type, None, Some(bar_count), false);
+        self.core.ensure_connector(exchange_id);
+        self.core.request_kline(exchange_id, symbol, &timeframe, account_type, None, Some(bar_count), false);
 
         // Subscribe mini-tickers for every symbol in the active watchlist.
         // Watchlist subscriptions are independent of whether the sidebar is
@@ -2095,7 +2124,7 @@ impl ChartApp {
                 continue;
             }
             let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws_account_type);
-            bridge.ensure_connector(ws_exchange);
+            self.core.ensure_connector(ws_exchange);
             bridge.subscribe_mini_ticker(ws_exchange, &ws_symbol, ws_at);
         }
 
@@ -2145,15 +2174,15 @@ impl ChartApp {
                                 .get(eid.as_str()).copied().unwrap_or(true);
                             if enabled {
                                 let at = account_type_from_label(&account_type);
-                                self.core.bridge.ensure_connector(eid);
-                                self.core.bridge.subscribe_mini_ticker(eid, &symbol, at);
+                                self.core.ensure_connector(eid);
+                                self.core.bridge_handle().subscribe_mini_ticker(eid, &symbol, at);
                             }
                         }
                         self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
                     } else {
                         if let Some(eid) = ExchangeId::from_str(&exchange) {
                             let at = account_type_from_label(&account_type);
-                            self.core.bridge.unsubscribe_mini_ticker(eid, &symbol, at);
+                            self.core.unsubscribe_mini_ticker(eid, &symbol, at);
                         }
                         if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
                             snap.retain(|s| s.symbol != symbol);
@@ -2580,7 +2609,9 @@ impl ChartApp {
 
                 // Ensure all windows have data_provider and toolbar config.
                 // Phase 4 B: read exchange/account_type from branch_meta.
-                let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType)> = {
+                // §3.4 (handoff 2026-07-06): tuple widened with chart_type — see
+                // startup path above for rationale.
+                let window_data: Vec<(String, String, mlc_core::state::Timeframe, mlc_core::instrument::AccountType, &'static str)> = {
                     let containers = app.panel_app.panel_grid.containers();
                     containers.keys()
                         .filter_map(|cid| {
@@ -2588,7 +2619,8 @@ impl ChartApp {
                             let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                             let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = app.account_type_for_chart(*cid).unwrap_or_default();
-                            Some((sym, exch, tf, at))
+                            let ct = app.chart_type_for_chart(*cid).unwrap_or("candles");
+                            Some((sym, exch, tf, at, ct))
                         })
                         .collect()
                 };
@@ -2625,10 +2657,18 @@ impl ChartApp {
 
                 let _t_nw_reqbars = web_time::Instant::now();
                 let mut nw_reqbars_n: usize = 0;
-                for (sym, exch, tf, at_typed) in &window_data {
+                for (sym, exch, tf, at_typed, ct) in &window_data {
                     let eid = digdigdig3::ExchangeId::from_str(&exch)
                         .unwrap_or(digdigdig3::ExchangeId::Binance);
                     if !app.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    if matches!(*ct,
+                        "footprint" | "range_bar" | "volume_bar" | "tick_bar"
+                        | "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar"
+                        | "run_bar" | "renko" | "pnf" | "kagi" | "three_line_break"
+                        | "tpo" | "dom_heatmap" | "liquidation_heatmap"
+                    ) {
                         continue;
                     }
                     let at = mlc_backend_data_bridge::account_type_to_dig3(*at_typed);
@@ -2636,9 +2676,9 @@ impl ChartApp {
                     bridge.request_bars(eid, sym, tf, at, None, Some(app.core.user().profile().domain.bar_count as usize), false);
                     nw_reqbars_n += 1;
                 }
-                // Footprint windows: ignite the derived pipeline + ownership
+                // Derived windows: ignite the matching pipeline + ownership
                 // stamp (see the startup post-load loop for rationale).
-                app.ignite_footprint_windows();
+                app.ignite_derived_windows();
                 app.sync_default_indicators_for_all_windows();
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
 
@@ -3025,7 +3065,7 @@ impl ChartApp {
     /// Return a clone of the `Arc<DataBridge>` so it can be shared with other
     /// windows created via [`new_empty`].
     pub fn bridge(&self) -> std::sync::Arc<DataBridge> {
-        self.core.bridge.clone()
+        self.core.bridge_arc()
     }
 
     // -------------------------------------------------------------------------
@@ -3068,11 +3108,11 @@ impl ChartApp {
             .map(mlc_backend_data_bridge::account_type_to_dig3)
             .unwrap_or(digdigdig3::AccountType::Spot);
 
-        let bridge = self.core.bridge.clone();
+        let bridge = self.core.bridge_arc();
         self.active_exchange = exchange_id;
 
         // Start the connector (no-op if already running).
-        bridge.ensure_connector(exchange_id);
+        self.core.ensure_connector(exchange_id);
 
         // Human-readable exchange name used by the window header.
         let exchange_name = exchange_id.as_str().to_string();
@@ -3096,7 +3136,7 @@ impl ChartApp {
         // Unsubscribe only the old symbol's trade stream on the old exchange,
         // leaving other windows' streams intact.
         if !old_trade_symbol.is_empty() {
-            bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+            self.core.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
         }
 
         // Phase 4 S2.2: capture chart_id BEFORE the mutating block.
@@ -3120,7 +3160,7 @@ impl ChartApp {
             window.data_provider = provider;
             let at = account_type_from_label(&cur_at_label_exc);
             mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
-            bridge.request_bars(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
+            self.core.request_kline(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
             if let Some(bid) = self.bubble_for_chart(chart_id) {
@@ -3524,11 +3564,12 @@ impl ChartApp {
                         render_state.bars = shadow;
                         render_state.non_temporal_axis = true;
                     }
-                    render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_panel.chart_type);
+                    let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                    render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_chart_type);
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
                         scale_theme: self.panel_app.scale_theme_for_render(),
-                        chart_type: overlay_panel.chart_type,
+                        chart_type: overlay_chart_type,
                         crosshair_config,
                         ..ChartRenderConfig::default()
                     };
@@ -3619,11 +3660,12 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
-                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_panel.chart_type);
+                let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_chart_type);
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: single_panel.chart_type,
+                    chart_type: single_chart_type,
                     crosshair_config,
                     ..ChartRenderConfig::default()
                 };
@@ -3897,7 +3939,8 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
-                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(split_panel.chart_type);
+                let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(split_chart_type);
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
                 } else {
@@ -3905,7 +3948,7 @@ impl ChartApp {
                 };
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: split_panel.chart_type,
+                    chart_type: split_chart_type,
                     crosshair_config,
                     ..ChartRenderConfig::default()
                 };
@@ -4354,10 +4397,8 @@ impl ChartApp {
             let scale_corner_state = self.panel_app.panel_grid.active_container()
                 .map(|w| w.to_corner_state())
                 .unwrap_or_default();
-            let active_pid_for_ct = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-            let active_chart_type = active_pid_for_ct
-                .and_then(|pid| self.panels_store.chart_panel.get(&pid))
-                .map(|p| p.chart_type)
+            let active_chart_type = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_for_chart(cid))
                 .unwrap_or("candles");
             let crosshair_config = if self.pending_alert_screenshot {
                 mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -4508,7 +4549,8 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
-                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_window_panel.chart_type);
+                let single_window_chart_type = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_window_chart_type);
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
@@ -4996,6 +5038,8 @@ impl ChartApp {
             // TF picker gating (audit D8 follow-up, 2026-07-04): computed
             // fresh every frame from the active window's chart_type + series
             // depth — RAM-only, no persisted field (SWC).
+            let active_ct_str: Option<&'static str> = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_for_chart(cid));
             let allowed_tfs = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 cid.map(|cid| {
@@ -5021,6 +5065,7 @@ impl ChartApp {
                 active_is_mono_group,
                 presets_guard_tb.values(),
                 allowed_tfs.as_ref(),
+                active_ct_str,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -5704,6 +5749,8 @@ impl ChartApp {
         // TF picker gating (audit D8 follow-up, 2026-07-04) — see the
         // `render()` call site for rationale; kept in parity here per the
         // shell-web/native toolbar-duty binding invariant.
+        let active_ct_str: Option<&'static str> = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.chart_type_for_chart(cid));
         let allowed_tfs = self.panel_app.panel_grid.active_container_id().map(|cid| {
             let chart_type = self.chart_type_for_chart(cid).unwrap_or("candles");
             let active_series = self.active_series_for_chart(cid);
@@ -5726,6 +5773,7 @@ impl ChartApp {
             active_is_mono_group,
             presets_guard_tb2.values(),
             allowed_tfs.as_ref(),
+            active_ct_str,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -6126,7 +6174,7 @@ impl ChartApp {
                     .unwrap_or(true)
             })
             .collect();
-        self.core.bridge.warmup_all_connectors(&enabled);
+        self.core.bridge_handle().warmup_all_connectors(&enabled);
     }
 
     // -------------------------------------------------------------------------
@@ -6804,16 +6852,16 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.core.bridge.unsubscribe_orderbook(eid, &old_sym, old_at);
-                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.unsubscribe_orderbook(eid, &old_sym, old_at);
+                        self.core.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new orderbook and trades.
                 let (new_ob_handle, new_trade_handle) = if !symbol.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&exchange) {
                         let new_at = account_type_from_label(&account_type);
-                        let ob = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
-                        let tr = self.core.bridge.subscribe_trades(eid, &symbol, new_at);
+                        let ob = self.core.subscribe_orderbook(eid, &symbol, new_at);
+                        let tr = self.core.subscribe_trades(eid, &symbol, new_at);
                         (ob, tr)
                     } else {
                         (None, None)
@@ -6875,14 +6923,14 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 // Subscribe new.
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -6909,13 +6957,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -6945,13 +6993,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -6979,13 +7027,13 @@ impl ChartApp {
                 if !old_sym.is_empty() {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(&old_exch) {
                         let old_at = account_type_from_label(&old_at_label);
-                        self.core.bridge.unsubscribe_trades(eid, &old_sym, old_at);
+                        self.core.unsubscribe_trades(eid, &old_sym, old_at);
                     }
                 }
                 let new_handle = if !symbol.is_empty() {
                     digdigdig3::ExchangeId::from_str(&exchange).and_then(|eid| {
                         let new_at = account_type_from_label(&account_type);
-                        self.core.bridge.subscribe_trades(eid, &symbol, new_at)
+                        self.core.subscribe_trades(eid, &symbol, new_at)
                     })
                 } else {
                     None
@@ -7039,10 +7087,10 @@ impl ChartApp {
                 for ex_label in &exchanges {
                     if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                         if !old_sym.is_empty() {
-                            self.core.bridge.unsubscribe_orderbook(eid, &old_sym, new_at);
+                            self.core.unsubscribe_orderbook(eid, &old_sym, new_at);
                         }
                         if !symbol.is_empty() {
-                            let _ = self.core.bridge.subscribe_orderbook(eid, &symbol, new_at);
+                            let _ = self.core.subscribe_orderbook(eid, &symbol, new_at);
                         }
                     }
                 }
@@ -7072,7 +7120,7 @@ impl ChartApp {
                 .find_by_label(old_exch.as_str())
                 .unwrap_or(self.active_exchange);
             let old_at = crate::account_type_from_label(old_at_label);
-            self.core.bridge.unsubscribe_depth(old_eid, old_sym, old_at);
+            self.core.unsubscribe_depth(old_eid, old_sym, old_at);
             dlog!(
                 "[BubbleStore] unsubscribed depth for panel group {} ← {} @ {} ({})",
                 group_id.0, old_sym, old_exch, old_at_label
@@ -7086,7 +7134,7 @@ impl ChartApp {
                 .find_by_label(&exchange)
                 .unwrap_or(self.active_exchange);
             let at = crate::account_type_from_label(&account_type);
-            self.core.bridge.subscribe_depth(eid, &symbol, at);
+            self.core.subscribe_depth(eid, &symbol, at);
             dlog!(
                 "[BubbleStore] subscribed depth for panel group {} → {} @ {} ({})",
                 group_id.0, symbol, exchange, account_type
@@ -7141,8 +7189,8 @@ impl ChartApp {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             let at = account_type_from_label(&at_label);
-            self.core.bridge.ensure_connector(eid);
-            self.core.bridge.request_bars(eid, &sym, &tf, at, None, Some(bar_count), false);
+            self.core.ensure_connector(eid);
+            self.core.request_kline(eid, &sym, &tf, at, None, Some(bar_count), false);
             warmed += 1;
         }
         eprintln!("[ChartApp] startup: warmed {} background tab series", warmed);
@@ -7189,8 +7237,8 @@ impl ChartApp {
         let eid = digdigdig3::ExchangeId::from_str(&exch)
             .unwrap_or(digdigdig3::ExchangeId::Binance);
         let at = account_type_from_label(at_label);
-        self.core.bridge.ensure_connector(eid);
-        self.core.bridge.request_bars(eid, sym, tf, at, None, Some(bar_count), false);
+        self.core.ensure_connector(eid);
+        self.core.request_kline(eid, sym, tf, at, None, Some(bar_count), false);
     }
 
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.
@@ -8627,9 +8675,18 @@ impl ChartApp {
             .unwrap_or((true, true, true, true, true, false, false));
 
         let css = &self.panel_app.chart_settings_state;
-        let (active_chart_type, active_chart_type_param, active_chart_type_interval) = settings_panel
-            .map(|p| (p.chart_type.to_string(), p.chart_type_param, p.chart_type_interval.to_string()))
-            .unwrap_or_else(|| ("candles".to_string(), 0.0, "1m".to_string()));
+        let settings_cid = self.panel_app.panel_grid.active_container_id();
+        let active_chart_type = settings_cid
+            .and_then(|cid| self.chart_type_for_chart(cid))
+            .unwrap_or("candles")
+            .to_string();
+        let active_chart_type_param = settings_cid
+            .and_then(|cid| self.chart_type_param_for_chart(cid))
+            .unwrap_or(0.0);
+        let active_chart_type_interval = settings_cid
+            .and_then(|cid| self.chart_type_interval_for_chart(cid))
+            .unwrap_or("1m")
+            .to_string();
 
         ChartSettingsData {
             instrument: InstrumentSettings {

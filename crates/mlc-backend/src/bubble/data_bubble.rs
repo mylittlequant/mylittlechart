@@ -48,6 +48,27 @@ pub struct DataBubble {
     pub address: InstrumentAddress,
     pub timeframe: Timeframe,
 
+    /// Active chart type name (e.g. `"candles"`, `"bars"`, `"line"`,
+    /// `"footprint"`). Default: `"candles"`. Symmetric with `timeframe` —
+    /// shared across every member window of this bubble.
+    pub chart_type: &'static str,
+
+    /// Numeric parameter for derived-bar chart types (range_bar / volume_bar).
+    ///
+    /// - For `"range_bar"`: price-move size (e.g. `10.0` USD) — converted to
+    ///   ×1e8 fixed-point at the bridge boundary.
+    /// - For `"volume_bar"`: cumulative volume per bar (e.g. `1000.0` units).
+    /// - For `"footprint"`: unused — footprint uses `chart_type_interval` instead.
+    /// - For plain render chart types: unused.
+    ///
+    /// Default `0.0` — code-side defaults (10.0 / 1000.0) are applied at
+    /// subscribe time when this field is non-positive.
+    pub chart_type_param: f64,
+
+    /// Kline interval label for `"footprint"` chart type (e.g. `"1m"`, `"5m"`).
+    /// Default: `"1m"`. Unused for non-footprint chart types.
+    pub chart_type_interval: &'static str,
+
     /// Which properties are synchronized.
     pub sync_flags: SyncFlags,
 
@@ -61,8 +82,10 @@ pub struct DataBubble {
 
     /// Shared undo/redo history for operations that affect all members
     /// (primitives, indicator configs). Window-local operations (viewport,
-    /// symbol, timeframe, chart type) are stored on the individual window's
-    /// `command_history` instead.
+    /// symbol) are stored on the individual window's `command_history`
+    /// instead. Chart-type undo records also live on the window's
+    /// `command_history` — the intent (`Command::ChangeChartType`) is
+    /// window-local even though the resulting value lives on the bubble.
     pub command_history: CommandHistory,
 
     /// Indicator instance ids that were active on the chart BEFORE it joined a
@@ -173,6 +196,46 @@ pub struct DataBubble {
 
     /// Per-bubble next-id counter for alerts.
     pub alert_next_id: u64,
+
+    // =========================================================================
+    // === In-flight guards (F4/F5, viewport doctrine audit 2026-07-07) =======
+    // =========================================================================
+    // Moved here from per-WINDOW fields on `ChartContainer`: the resource
+    // being guarded (a scroll-left backfill / derived reseed fetch) is a
+    // per-BUBBLE fetch, not a per-window one — two windows sharing one
+    // bubble each firing their own backfill for the same bubble was the
+    // race these flags previously failed to prevent.
+    // =========================================================================
+
+    /// `true` while an async scroll-left (historical bar extension) fetch is
+    /// in flight for this bubble.
+    ///
+    /// Guards against issuing multiple concurrent scroll-fetch requests for
+    /// the same bubble. Reset to `false` when `ScrollBarsAppended` arrives
+    /// (or on error/timeout). Runtime-only state — not persisted to disk.
+    pub scroll_fetch_in_flight: bool,
+
+    /// When the current scroll fetch was started (for timeout reset).
+    ///
+    /// If `ScrollBarsAppended` is dropped (channel lag), the 10-second
+    /// timeout resets `scroll_fetch_in_flight` so the bubble can fetch
+    /// again. Runtime-only state — not persisted to disk.
+    pub scroll_fetch_started: Option<web_time::Instant>,
+
+    /// `Some((started, fired_bar_count))` while a derived-chart-type deeper-
+    /// seed request (renko/pnf/kagi/three_line_break, counted-bar family,
+    /// footprint, CVD, TPO) is in flight for this bubble, `None` otherwise.
+    ///
+    /// `fired_bar_count` is the series length observed at fire time (same
+    /// length used for the left-edge threshold check) — the successful-
+    /// reconcile clear compares the post-deepen length against it so the
+    /// flag drops as soon as the reseed actually grew the series, instead
+    /// of waiting out the full 10s timeout backstop (F5). Sibling of
+    /// `scroll_fetch_started`/`scroll_fetch_in_flight` for the derived-
+    /// reseed path — kline scroll-left and derived reseed are mutually
+    /// exclusive per-bubble operations that share the same left-edge
+    /// trigger in `tick.rs`, so they need independent in-flight guards.
+    pub derived_seed_in_flight: Option<(web_time::Instant, usize)>,
 }
 
 
@@ -206,6 +269,9 @@ impl DataBubble {
                 snap.account_type.parse().unwrap_or_default(),
             ),
             timeframe: snap.timeframe.clone(),
+            chart_type: "candles",
+            chart_type_param: 0.0,
+            chart_type_interval: "1m",
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
             command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
@@ -230,6 +296,9 @@ impl DataBubble {
             liq_dots: None,
             alerts: snap.alerts.clone(),
             alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
+            scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
+            derived_seed_in_flight: None,
         }
     }
 
@@ -264,26 +333,91 @@ impl DataBubble {
         }
     }
 
+    /// Sorted upsert by `open_time`. Keeps `renko_bars` strictly
+    /// ascending — `ChartContainer::reconcile_derived_series` binary-
+    /// searches this array to detect prepended history, so an
+    /// out-of-order arrival (chart-type re-entry, WS reconnect replay)
+    /// must never silently break the sort invariant via a plain push.
     pub fn append_renko(&mut self, brick: mlc_core::types::RenkoBrick) {
-        self.renko_bars.get_or_insert_with(Vec::new).push(brick);
+        let store = self.renko_bars.get_or_insert_with(Vec::new);
+        let ts = brick.open_time;
+        match store.last() {
+            None => store.push(brick),
+            Some(last) if last.open_time == ts => {
+                let idx = store.len() - 1;
+                store[idx] = brick;
+            }
+            Some(last) if last.open_time < ts => store.push(brick),
+            Some(_) => match store.binary_search_by_key(&ts, |b| b.open_time) {
+                Ok(pos) => store[pos] = brick,
+                Err(pos) => store.insert(pos, brick),
+            },
+        }
     }
     pub fn clear_renko(&mut self) { self.renko_bars = None; }
 
+    /// Sorted upsert by `ts_open`. See `append_renko` for why this must
+    /// not regress to a plain push.
     pub fn append_three_line_break(&mut self, line: mlc_core::types::ThreeLineBreakLine) {
-        self.three_line_break.get_or_insert_with(Vec::new).push(line);
+        let store = self.three_line_break.get_or_insert_with(Vec::new);
+        let ts = line.ts_open;
+        match store.last() {
+            None => store.push(line),
+            Some(last) if last.ts_open == ts => {
+                let idx = store.len() - 1;
+                store[idx] = line;
+            }
+            Some(last) if last.ts_open < ts => store.push(line),
+            Some(_) => match store.binary_search_by_key(&ts, |l| l.ts_open) {
+                Ok(pos) => store[pos] = line,
+                Err(pos) => store.insert(pos, line),
+            },
+        }
     }
     pub fn clear_three_line_break(&mut self) { self.three_line_break = None; }
 
+    /// Sorted upsert by `open_time`. See `append_renko` for why this must
+    /// not regress to a plain push. Also the single source of truth for
+    /// PnF column merge — `LiveUpdate::PnfBarUpdate` no longer bypasses
+    /// this with its own `column_id`-based tail check.
     pub fn append_pnf(&mut self, col: mlc_core::types::PnfColumn) {
-        self.pnf_columns.get_or_insert_with(Vec::new).push(col);
+        let store = self.pnf_columns.get_or_insert_with(Vec::new);
+        let ts = col.open_time;
+        match store.last() {
+            None => store.push(col),
+            Some(last) if last.open_time == ts => {
+                let idx = store.len() - 1;
+                store[idx] = col;
+            }
+            Some(last) if last.open_time < ts => store.push(col),
+            Some(_) => match store.binary_search_by_key(&ts, |c| c.open_time) {
+                Ok(pos) => store[pos] = col,
+                Err(pos) => store.insert(pos, col),
+            },
+        }
     }
     pub fn last_pnf_mut(&mut self) -> Option<&mut mlc_core::types::PnfColumn> {
         self.pnf_columns.as_mut().and_then(|v| v.last_mut())
     }
     pub fn clear_pnf(&mut self) { self.pnf_columns = None; }
 
+    /// Sorted upsert by `open_time`. See `append_renko` for why this must
+    /// not regress to a plain push.
     pub fn append_kagi(&mut self, seg: mlc_core::types::KagiSegment) {
-        self.kagi_segments.get_or_insert_with(Vec::new).push(seg);
+        let store = self.kagi_segments.get_or_insert_with(Vec::new);
+        let ts = seg.open_time;
+        match store.last() {
+            None => store.push(seg),
+            Some(last) if last.open_time == ts => {
+                let idx = store.len() - 1;
+                store[idx] = seg;
+            }
+            Some(last) if last.open_time < ts => store.push(seg),
+            Some(_) => match store.binary_search_by_key(&ts, |s| s.open_time) {
+                Ok(pos) => store[pos] = seg,
+                Err(pos) => store.insert(pos, seg),
+            },
+        }
     }
     pub fn clear_kagi(&mut self) { self.kagi_segments = None; }
 
@@ -396,6 +530,9 @@ impl Clone for DataBubble {
             indicator_configs: self.indicator_configs.clone(),
             address: self.address.clone(),
             timeframe: self.timeframe.clone(),
+            chart_type: self.chart_type,
+            chart_type_param: self.chart_type_param,
+            chart_type_interval: self.chart_type_interval,
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,
             command_history: CommandHistory::new(250),
@@ -422,6 +559,9 @@ impl Clone for DataBubble {
             liq_dots: self.liq_dots.clone(),
             alerts: self.alerts.clone(),
             alert_next_id: self.alert_next_id,
+            scroll_fetch_in_flight: self.scroll_fetch_in_flight,
+            scroll_fetch_started: self.scroll_fetch_started,
+            derived_seed_in_flight: self.derived_seed_in_flight,
         }
     }
 }
@@ -434,6 +574,9 @@ impl std::fmt::Debug for DataBubble {
             .field("indicator_configs", &self.indicator_configs)
             .field("address", &self.address)
             .field("timeframe", &self.timeframe)
+            .field("chart_type", &self.chart_type)
+            .field("chart_type_param", &self.chart_type_param)
+            .field("chart_type_interval", &self.chart_type_interval)
             .field("sync_flags", &self.sync_flags)
             .field("command_history_size", &self.command_history.size())
             .finish()

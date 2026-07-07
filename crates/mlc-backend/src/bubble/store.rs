@@ -58,6 +58,9 @@ impl BubbleStore {
             indicator_configs: Vec::new(),
             address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
+            chart_type: "candles",
+            chart_type_param: 0.0,
+            chart_type_interval: "1m",
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
             command_history: CommandHistory::new(250),
@@ -83,6 +86,9 @@ impl BubbleStore {
             liq_dots: None,
             alerts: Vec::new(),
             alert_next_id: 1,
+            scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
+            derived_seed_in_flight: None,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -103,6 +109,9 @@ impl BubbleStore {
             indicator_configs: Vec::new(),
             address: InstrumentAddress::new(String::new(), symbol, mlc_core::instrument::AccountType::default()),
             timeframe,
+            chart_type: "candles",
+            chart_type_param: 0.0,
+            chart_type_interval: "1m",
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
             command_history: CommandHistory::new(250),
@@ -128,6 +137,9 @@ impl BubbleStore {
             liq_dots: None,
             alerts: Vec::new(),
             alert_next_id: 1,
+            scroll_fetch_in_flight: false,
+            scroll_fetch_started: None,
+            derived_seed_in_flight: None,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -241,6 +253,30 @@ impl BubbleStore {
     pub fn set_timeframe(&mut self, bid: BubbleId, tf: Timeframe) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         bubble.timeframe = tf;
+        true
+    }
+
+    /// Update the chart type for a bubble known by id directly. Caller
+    /// resolves `chart_id → bid` via `core.tags().tag_for_chart(cid)` first.
+    pub fn set_chart_type(&mut self, bid: BubbleId, ct: &'static str) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.chart_type = ct;
+        true
+    }
+
+    /// Update the chart-type numeric parameter (range_bar / volume_bar size)
+    /// for a bubble known by id directly.
+    pub fn set_chart_type_param(&mut self, bid: BubbleId, param: f64) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.chart_type_param = param;
+        true
+    }
+
+    /// Update the chart-type kline interval (footprint) for a bubble known
+    /// by id directly.
+    pub fn set_chart_type_interval(&mut self, bid: BubbleId, iv: &'static str) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.chart_type_interval = iv;
         true
     }
 
@@ -514,6 +550,21 @@ impl BubbleStore {
     /// Timeframe of a bubble known by id directly.
     pub fn timeframe(&self, bid: BubbleId) -> Option<&Timeframe> {
         self.bubbles.get(&bid).map(|b| &b.timeframe)
+    }
+
+    /// Chart type of a bubble known by id directly.
+    pub fn chart_type(&self, bid: BubbleId) -> Option<&'static str> {
+        self.bubbles.get(&bid).map(|b| b.chart_type)
+    }
+
+    /// Chart-type numeric parameter of a bubble known by id directly.
+    pub fn chart_type_param(&self, bid: BubbleId) -> Option<f64> {
+        self.bubbles.get(&bid).map(|b| b.chart_type_param)
+    }
+
+    /// Chart-type kline interval of a bubble known by id directly.
+    pub fn chart_type_interval(&self, bid: BubbleId) -> Option<&'static str> {
+        self.bubbles.get(&bid).map(|b| b.chart_type_interval)
     }
 
     /// Bundled instrument-address + timeframe read — the shape most DTO

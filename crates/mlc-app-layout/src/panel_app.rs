@@ -321,6 +321,7 @@ pub fn chart_toolbar_render_toolbars(
     active_timeframe: Option<&str>,
     sidebar_w: f64,
     allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
+    active_chart_type: Option<&str>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -432,6 +433,36 @@ pub fn chart_toolbar_render_toolbars(
                                     *text = Some(tf.to_string());
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Override chart_type_selector icon with the active chart_type's icon.
+            // The toolbar def hardcodes "Candlestick" as a fallback (see
+            // `top_toolbar()` in mlc-core::toolbar), but at render time we know
+            // the actual chart_type — resolve its icon via
+            // `mlc_core::toolbar::chart_type_icon_id()`. §3.3 (handoff 2026-07-06).
+            //
+            // Note: the dropdown builder in panel_app.rs downgrades a
+            // no-text Dropdown to `TcToolbarItem::IconButton` (see line ~1311),
+            // so match both shapes here.
+            if let Some(ct) = active_chart_type {
+                let icon_name = mlc_core::toolbar::chart_type_icon_id(ct);
+                for section in &mut control_sections {
+                    for item in &mut section.items {
+                        match item {
+                            TcToolbarItem::IconButton { id, icon, .. }
+                                if id == "chart_type_selector" =>
+                            {
+                                *icon = IconId::new(icon_name);
+                            }
+                            TcToolbarItem::Dropdown { id, icon, .. }
+                                if id == "chart_type_selector" =>
+                            {
+                                *icon = Some(IconId::new(icon_name));
+                            }
+                            _ => {}
                         }
                     }
                 }

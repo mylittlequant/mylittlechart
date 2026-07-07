@@ -24,7 +24,7 @@ use mlc_core::{Legend, Watermark, PriceLine};
 use crate::chart_panel_state::ChartPanelState;
 use mlc_core::state::sub_pane_y_state::SubPaneYState;
 use mlc_core::chart::{CompareOverlay, CompareSeries, get_compare_color};
-use mlc_core::state::{CommandHistory, Command};
+use mlc_core::state::CommandHistory;
 use mlc_core::data_provider::{SharedDataProvider, NullDataProvider};
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::state::toolbar_state::{ChartToolbarState, ToolbarConfig};
@@ -231,35 +231,6 @@ pub struct ChartContainer {
     /// `sync_viewport_from_layout()` has set the real dimensions and re-runs the scale.
     pub needs_auto_scale_after_bars: bool,
 
-    /// `true` while an async scroll-left (historical bar extension) fetch is in flight.
-    ///
-    /// Guards against issuing multiple concurrent scroll-fetch requests for the
-    /// same window. Reset to `false` when `ScrollBarsLoaded` arrives (or on error).
-    /// Runtime-only state — not persisted to disk.
-    pub scroll_fetch_in_flight: bool,
-
-    /// When the current scroll fetch was started (for timeout reset).
-    ///
-    /// If `ScrollBarsLoaded` is dropped (channel lag), the 10-second timeout
-    /// resets `scroll_fetch_in_flight` so the window can fetch again.
-    /// Runtime-only state — not persisted to disk.
-    pub scroll_fetch_started: Option<web_time::Instant>,
-
-    /// When a derived-chart-type deeper-seed request (renko/pnf/kagi/
-    /// three_line_break, counted-bar family, footprint, CVD, TPO) was
-    /// started, or `None` when no such request is in flight for this window.
-    ///
-    /// Sibling of `scroll_fetch_started`/`scroll_fetch_in_flight` for the
-    /// derived-reseed path (`DataBridge::request_deeper_derived_seed` /
-    /// `request_deeper_footprint_seed`) — kline scroll-left and derived
-    /// reseed are mutually exclusive per-window operations that share the
-    /// same left-edge trigger in `tick.rs`, so they need independent
-    /// in-flight guards (a chart never needs both at once, but reusing one
-    /// flag for both would let a stuck kline fetch block a derived reseed on
-    /// the SAME window forever, or vice versa). Same 10s timeout reset
-    /// rationale as `scroll_fetch_started`. Runtime-only, not persisted.
-    pub derived_seed_in_flight: Option<web_time::Instant>,
-
     /// Scale mode to restore after the next `set_bars()` call completes.
     ///
     /// Set by `LoadPreset` before bars arrive asynchronously. Consumed and
@@ -332,6 +303,29 @@ pub struct ChartContainer {
     /// geometry. Populated from snapshots via `pending_sub_pane_above_main` in
     /// `ChartApp::sync_sub_panes_from_manager`.
     pub sub_pane_above_main: std::collections::HashSet<u64>,
+
+    /// P0 V2 follow-up (viewport doctrine audit 2026-07-07): records
+    /// `bar_count` at the moment `reset_derived_stamp_for_deepen` fires a
+    /// zoom-out lazy-deepen reseed. The zero-frame itself is already guarded
+    /// (`bar_count > 0` gate in `resize_geometry`), but the replay that
+    /// follows streams the deeper ring back ONE BRICK PER FRAME — `bar_count`
+    /// climbs 1, 2, 3, ... while `view_start` sits at the pre-reseed position
+    /// (often far larger than the transient `bar_count`). Every one of those
+    /// frames is individually non-zero, so the existing guard doesn't cover
+    /// them: `resize_geometry`'s max_vs clamp fires each frame and hard-writes
+    /// `view_start` down to the tiny transient `bar_count`, and by the time
+    /// the replay catches up the viewport has been dragged to the wrong spot.
+    /// `Some(fired_bar_count)` suppresses that clamp (`resize_geometry`) and
+    /// the Auto-mode glue-snap (`reconcile_derived_series`, whose `was_glued`
+    /// check is vacuously true while `bar_count` is still tiny) until the
+    /// replay's `new_len` reaches `fired_bar_count` again. Cleared by
+    /// `begin_fresh_load`/`begin_fresh_load_keep_pending` (a fresh load
+    /// supersedes any pending reseed) and by the reseed-in-flight timeout in
+    /// `frame_lifecycle/tick.rs` (a failed/short reseed must not disable the
+    /// clamp forever). RAM-only — not persisted, not restored by hydration,
+    /// `None` on every fresh `ChartContainer` (`new_with_provider`,
+    /// `clone_for_split_shell`).
+    pub(crate) reseed_clamp_guard: Option<usize>,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -487,12 +481,10 @@ impl ChartContainer {
             needs_snap_after_backfill: false,
             derived_series_stamp: None,
             needs_y_rescale: false,
-            scroll_fetch_in_flight: false,
-            scroll_fetch_started: None,
-            derived_seed_in_flight: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),
+            reseed_clamp_guard: None,
         }
     }
 
@@ -672,11 +664,6 @@ impl ChartContainer {
     ) -> Option<Vec<mlc_core::drawing::PrimitiveSnapshot>> {
         let key = format!("{}:{}:{}", symbol, exchange, account_type);
         self.symbol_drawings.get(&key).cloned()
-    }
-
-    /// Store the active chart type in the panel state.
-    pub fn set_chart_type(&mut self, panel: &mut ChartPanelState, chart_type: &'static str) {
-        panel.chart_type = chart_type;
     }
 
     // `clone_for_split` was deleted — every split path uses
@@ -904,8 +891,45 @@ impl ChartContainer {
         self.viewport.bar_count = series.len();
 
         if let Some((anchor_ts, frac)) = prev_anchor {
-            if let Some(new_i) = bars.iter().position(|b| b.timestamp >= anchor_ts) {
-                self.viewport.view_start = new_i as f64 + frac;
+            if let Some(pos_i) = bars.iter().position(|b| b.timestamp >= anchor_ts) {
+                // F2 (viewport doctrine audit 2026-07-07): the anchor ts can
+                // vanish from the array after a merge (gap-filling backfill,
+                // history trim) — a bare `position()` then lands on whatever
+                // bar happens to be next, silently teleporting the view. Pick
+                // whichever of the candidate and its left neighbor is
+                // actually closer to the anchor ts by absolute distance.
+                let candidate_i = if pos_i > 0 {
+                    let dist_at = bars[pos_i].timestamp - anchor_ts;
+                    let dist_prev = anchor_ts - bars[pos_i - 1].timestamp;
+                    if dist_prev < dist_at { pos_i - 1 } else { pos_i }
+                } else {
+                    pos_i
+                };
+                let chosen_ts = bars[candidate_i].timestamp;
+                let gap = (chosen_ts - anchor_ts).abs();
+                // Estimate the local bar interval from the chosen bar's
+                // neighbor (prefer the following bar, fall back to the
+                // preceding one) — any positive diff is good enough for a
+                // tolerance check, never used to relocate the anchor itself.
+                let local_interval = bars.get(candidate_i + 1)
+                    .map(|b| b.timestamp - chosen_ts)
+                    .filter(|d| *d > 0)
+                    .or_else(|| {
+                        if candidate_i > 0 {
+                            Some(chosen_ts - bars[candidate_i - 1].timestamp).filter(|d| *d > 0)
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(interval) = local_interval {
+                    if gap > interval {
+                        log::warn!(
+                            "[VPANCHOR gap] reconcile_view_keep_anchor: anchor_ts={anchor_ts} nearest_ts={chosen_ts} gap={gap} interval={interval} idx={candidate_i}",
+                        );
+                    }
+                }
+                // Never snap, never bail — always land on the nearest bar.
+                self.viewport.view_start = candidate_i as f64 + frac;
             }
         }
 
@@ -1146,12 +1170,12 @@ impl ChartContainer {
             needs_snap_after_backfill: false,
             derived_series_stamp: None,
             needs_y_rescale: false,
-            scroll_fetch_in_flight: false,
-            scroll_fetch_started: None,
-            derived_seed_in_flight: None,
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),
+            // Sibling starts with no pending reseed of its own — a split
+            // never fires `reset_derived_stamp_for_deepen`.
+            reseed_clamp_guard: None,
         }
     }
 
@@ -1609,20 +1633,6 @@ impl ChartContainer {
     }
 
     // =========================================================================
-    // Chart Type
-    // =========================================================================
-
-    /// Set chart type in panel state and record in undo history.
-    pub fn set_chart_type_with_undo(&mut self, panel: &mut ChartPanelState, chart_type: &'static str) {
-        let previous_type = panel.chart_type.to_string();
-        panel.chart_type = chart_type;
-        self.command_history.push(Command::ChangeChartType {
-            previous_type,
-            new_type: chart_type.to_string(),
-        });
-    }
-
-    // =========================================================================
     // Toggle Overlays
     // =========================================================================
 
@@ -1818,19 +1828,6 @@ impl ChartContainer {
         }
     }
 
-    /// Pan the price scale vertically by `pixel_delta` pixels.
-    ///
-    /// Converts pixels to price units using the current visible price range and
-    /// chart height.  Has no effect when auto-scale is enabled.
-    pub fn pan_vertical(&mut self, pixel_delta: f64) {
-        if !self.price_scale.scale_mode.is_auto_y() && self.viewport.chart_height > 0.0 {
-            let price_range = self.price_scale.price_max - self.price_scale.price_min;
-            let price_delta = pixel_delta * price_range / self.viewport.chart_height;
-            self.price_scale.price_min += price_delta;
-            self.price_scale.price_max += price_delta;
-        }
-    }
-
     // =========================================================================
     // Viewport Intents — single-writer entry points for every remaining
     // W-site from `docs/mlc/audits/viewport-audit-2026-07-03.md`. Callers
@@ -1851,6 +1848,9 @@ impl ChartContainer {
         self.viewport.view_start = 0.0;
         self.pending_symbol_load = true;
         self.derived_series_stamp = None;
+        // A fresh load supersedes any pending reseed — the cold snap that
+        // follows will place the viewport regardless.
+        self.reseed_clamp_guard = None;
     }
 
     /// Same reset as [`begin_fresh_load`] but does NOT set
@@ -1864,6 +1864,42 @@ impl ChartContainer {
     pub fn begin_fresh_load_keep_pending(&mut self) {
         self.viewport.bar_count = 0;
         self.viewport.view_start = 0.0;
+        self.derived_series_stamp = None;
+        // See `begin_fresh_load` — a fresh load supersedes any pending reseed.
+        self.reseed_clamp_guard = None;
+    }
+
+    /// Reset the derived-series bookkeeping (`bar_count` + `derived_series_stamp`)
+    /// WITHOUT touching `view_start`, in preparation for a zoom-out-triggered
+    /// lazy-deepen reseed of a derived slot (`bubble.<derived>_bars`).
+    ///
+    /// Rationale: the tick-level derived-deepen trigger clears the bubble's
+    /// derived array (`bubble.clear_renko()`/`clear_pnf()`/etc. in
+    /// `frame_lifecycle/tick.rs`) and then re-subscribes with a doubled
+    /// warm_n, streaming the fresh, deeper ring back one brick per
+    /// `LiveUpdate::*BarUpdate`. If we leave `derived_series_stamp = Some(...)`
+    /// pointing at the OLD (shallow) series, the first post-clear
+    /// `reconcile_derived_series` call sees `new_len=1` against the stale
+    /// `(old_head, old_last)` — computes a garbage `prepended=1` shift and
+    /// stomps `bar_count` from its stale count to 1, producing a one-frame
+    /// viewport jump. Clearing the stamp routes that first reactor pass
+    /// through the `None` branch of `reconcile_derived_series`, which adopts
+    /// `new_len` without touching `view_start` — subsequent bricks then land
+    /// on a valid stamp and correctly shift `view_start` by prepended-count
+    /// as they extend backward in time.
+    ///
+    /// UNLIKE `begin_fresh_load`, this preserves `view_start` (the user is
+    /// mid-history, zooming out — they want their current position held,
+    /// not snapped to end) and does NOT arm `needs_snap_after_backfill`
+    /// (which would snap to end on the first brick).
+    pub fn reset_derived_stamp_for_deepen(&mut self) {
+        // P0 V2 follow-up: record the pre-reseed depth so `resize_geometry`
+        // and `reconcile_derived_series` can recognize the multi-frame
+        // replay that follows (bar_count climbs 1, 2, 3, ... back up to this
+        // value) and suppress the clamp/glue-snap until it completes. See
+        // `reseed_clamp_guard`'s doc comment for the full mechanism.
+        self.reseed_clamp_guard = Some(self.viewport.bar_count.max(1));
+        self.viewport.bar_count = 0;
         self.derived_series_stamp = None;
     }
 
@@ -2122,9 +2158,31 @@ impl ChartContainer {
         // TV semantics: scrolling right is free as long as SOME data stays
         // visible — so the invalid state is only "zero data bars on
         // screen", not "past the snap margin".
+        // P0 V2 (viewport doctrine audit 2026-07-07): a derived deepen
+        // deliberately zeroes `bar_count` while preserving `view_start`
+        // across the async reseed gap (`reset_derived_stamp_for_deepen`) —
+        // this clamp running against that transient `bar_count == 0` window
+        // defeated the no-jump guarantee by hard-writing `view_start`
+        // toward 0 every frame until the reseed landed. Skip entirely while
+        // the series is transiently empty; nothing to clamp against anyway.
+        //
+        // P0 V2 follow-up: the zero-frame itself was never the whole story —
+        // the reseed replay that follows streams the deeper ring back ONE
+        // BRICK PER FRAME, so `bar_count` passes through 1, 2, 3, ... for
+        // many frames while `view_start` still holds the pre-reseed position
+        // (typically far larger than these transient counts). Each of those
+        // frames has `bar_count > 0`, so the guard above never covers them:
+        // this clamp fired every single frame of the replay and hard-wrote
+        // `view_start` down to track the tiny transient `bar_count`, parking
+        // the viewport in the wrong place once the replay finally caught up.
+        // `reseed_clamp_guard` (set by `reset_derived_stamp_for_deepen`,
+        // cleared once `reconcile_derived_series` sees the replay reach the
+        // pre-reseed depth) spans exactly that window — skip the clamp for
+        // its whole duration, not just the single zero-frame.
         if self.viewport.bar_count > 0
             && self.viewport.bar_spacing > 0.0
             && self.viewport.chart_width > 0.0
+            && self.reseed_clamp_guard.is_none()
         {
             // Owner 2026-07-06: 3-bar minimum was too aggressive — at
             // deep zoom (2 visible bars) the clamp blocked Manual-mode
@@ -2292,6 +2350,19 @@ impl ChartContainer {
     ///   mode is Follow.
     pub fn reconcile_derived_series(&mut self, series: crate::active_series::ActiveSeries<'_>) {
         let new_len = series.len();
+        // P0 V2 follow-up: the reseed replay set up by
+        // `reset_derived_stamp_for_deepen` has caught back up to (or past)
+        // the pre-reseed depth — the transient small-`bar_count` window is
+        // over, release the `resize_geometry` clamp and the glue-snap
+        // suppression below. Read the guard before this point mutates it so
+        // the glue-snap suppression still applies to THIS reconcile pass
+        // (the one that observes the replay complete).
+        let reseeding = self.reseed_clamp_guard.is_some();
+        if let Some(fired) = self.reseed_clamp_guard {
+            if new_len >= fired {
+                self.reseed_clamp_guard = None;
+            }
+        }
         if self.needs_snap_after_backfill {
             if new_len > 0 && self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
                 self.viewport.bar_count = new_len;
@@ -2315,6 +2386,22 @@ impl ChartContainer {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         match self.derived_series_stamp {
             Some((old_head, old_last)) => {
+                // F3 (viewport doctrine audit 2026-07-07): the prepend
+                // binary-search below assumes strictly monotonic replay
+                // (either a clean prepend or a clean tail append). Guard the
+                // two ways that assumption breaks: unsorted endpoints, or a
+                // wholesale replacement (shrunk on BOTH ends) that isn't an
+                // append/prepend at all. Adopt the new count as-is — no
+                // shift math, no glue-snap — and log instead of trusting a
+                // binary search over data that doesn't fit its contract.
+                if new_last < new_head || (new_head > old_head && new_last < old_last) {
+                    log::warn!(
+                        "[VPDERIVED nonmonotonic] reconcile_derived_series: old=({old_head},{old_last}) new=({new_head},{new_last}) new_len={new_len} vs0={vs0:.1} bc0={bc0}",
+                    );
+                    self.viewport.bar_count = new_len;
+                    self.derived_series_stamp = Some((new_head, new_last));
+                    return;
+                }
                 // Prepend shift: index of the first element at/after the old
                 // head == number of bars merged in front of it.
                 let prepended = if new_head < old_head {
@@ -2343,8 +2430,17 @@ impl ChartContainer {
                 }
                 self.viewport.bar_count = new_len;
                 let tail_grew = new_last > old_last;
+                // P0 V2 follow-up: while a reseed replay is in flight,
+                // `was_glued` is meaningless — `bc0` is a transient small
+                // count from mid-replay, not the real pre-reseed depth, so
+                // the comparison against `vs0 + visible_f` (which still holds
+                // the pre-reseed `view_start`) is vacuously true. A live tick
+                // landing mid-replay with `tail_grew` would otherwise fire a
+                // spurious Auto-mode glue-snap. Follow-mode is left alone —
+                // it's an explicit user mode and converges correctly once the
+                // replay finishes.
                 if self.price_scale.scale_mode.is_follow()
-                    || (tail_grew && was_glued && self.price_scale.scale_mode == ScaleMode::Auto)
+                    || (tail_grew && was_glued && !reseeding && self.price_scale.scale_mode == ScaleMode::Auto)
                 {
                     self.snap_to_end(DEFAULT_SNAP_MARGIN);
                 }
@@ -2379,17 +2475,6 @@ impl ChartContainer {
         self.viewport.view_start = view_start;
     }
 
-    /// Zoom the price scale vertically around the center price.
-    ///
-    /// `factor` > 1.0 expands the range (zoom out), < 1.0 contracts it
-    /// (zoom in).  Disables auto-scale so the manual range is preserved.
-    pub fn zoom_vertical(&mut self, factor: f64) {
-        self.price_scale.scale_mode = ScaleMode::Manual;
-        let center = (self.price_scale.price_min + self.price_scale.price_max) / 2.0;
-        let half_range = (self.price_scale.price_max - self.price_scale.price_min) / 2.0 * factor;
-        self.price_scale.price_min = center - half_range;
-        self.price_scale.price_max = center + half_range;
-    }
 
     /// Clamp `bar_spacing` up to `min_spacing` if it's currently below it,
     /// keeping the RIGHT EDGE anchored (the bar that currently sits at the

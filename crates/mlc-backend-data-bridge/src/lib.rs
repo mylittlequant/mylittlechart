@@ -47,7 +47,10 @@ mod bridge;
 mod provider;
 mod convert;
 
-pub use bridge::{DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label};
+pub use bridge::{
+    DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
+    SharedTradeSeries, SharedOrderBookTracker,
+};
 pub use provider::LiveDataProvider;
 pub use convert::{
     account_type_from_dig3, account_type_to_dig3, kline_to_bar, resolve_exchange, timeframe_to_interval,

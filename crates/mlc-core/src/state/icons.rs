@@ -28,7 +28,6 @@ pub enum Icon {
     HlcArea,
     BarChart,
     Histogram,
-    Columns,
     Baseline,
 
     // === Drawing Tools ===
@@ -971,14 +970,7 @@ pub const ICON_HLC_AREA: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
   <path d="M3 12l5 1 5-2 5 2 3-1"/>
 </svg>"##;
 
-pub const ICON_COLUMNS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="10" width="3" height="10" fill="currentColor"/>
-  <rect x="8" y="6" width="3" height="14" fill="currentColor"/>
-  <rect x="13" y="14" width="3" height="6" fill="currentColor"/>
-  <rect x="18" y="8" width="3" height="12" fill="currentColor"/>
-</svg>"##;
-
-pub const ICON_ZOOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+pub const ICON_ZOOM: &str =r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="10" cy="10" r="7"/>
   <path d="M21 21l-4.35-4.35"/>
   <path d="M10 7v6"/>
@@ -1376,7 +1368,6 @@ impl Icon {
             Icon::HlcArea => ICON_HLC_AREA,
             Icon::BarChart => ICON_BAR_CHART,
             Icon::Histogram => ICON_HISTOGRAM,
-            Icon::Columns => ICON_COLUMNS,
             Icon::Baseline => ICON_BASELINE,
             Icon::TrendLine => ICON_TREND_LINE,
             Icon::HorizontalLine => ICON_HORIZONTAL_LINE,
@@ -1573,7 +1564,6 @@ impl Icon {
             "hlc_area" | "hlcarea" => Some(Icon::HlcArea),
             "bar_chart" | "barchart" | "bars" => Some(Icon::BarChart),
             "histogram" => Some(Icon::Histogram),
-            "columns" => Some(Icon::Columns),
             "baseline" => Some(Icon::Baseline),
             "trend_line" | "trendline" => Some(Icon::TrendLine),
             "horizontal_line" | "horizontalline" => Some(Icon::HorizontalLine),
@@ -1815,7 +1805,6 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "step_line" | "stepline" => Some(ICON_STEP_LINE),
         "line_markers" | "linemarkers" | "line_with_markers" | "linewithmarkers" => Some(ICON_LINE_MARKERS),
         "hlc_area" | "hlcarea" => Some(ICON_HLC_AREA),
-        "columns" => Some(ICON_COLUMNS),
         // Renko uses candlestick as fallback
         "renko" => Some(ICON_CANDLESTICK),
         // Derived bar chart types — fallback to BarChart / Candlestick / Histogram.

@@ -38,22 +38,6 @@ pub fn ensure_chart_panel_state(
 }
 
 // =============================================================================
-// mirror_chart_type — single-field mirror
-// =============================================================================
-
-/// Mirror only `chart_type` into `panels_store.chart_panel[chart_panel_id]`.
-/// Lazy-inserts the entry on miss. Used by the `ChangeChartType` event handler
-/// which only mutates `chart_type` (not the `show_*` bools).
-pub fn mirror_chart_type(
-    panels_store: &mut TradingPanelsStore,
-    chart_panel_id: ChartPanelId,
-    chart_type: &'static str,
-) {
-    let entry = ensure_chart_panel_state(panels_store, chart_panel_id);
-    entry.chart_type = chart_type;
-}
-
-// =============================================================================
 // Tests
 // =============================================================================
 
@@ -77,25 +61,14 @@ mod tests {
         assert_eq!(entry.chart_panel_id, pid(1));
         assert!(entry.show_candles, "default show_candles must be true");
         assert!(!entry.show_bars, "default show_bars must be false");
-        assert_eq!(entry.chart_type, "candles");
     }
 
     #[test]
     fn ensure_idempotent_on_second_call() {
         let mut s = store();
-        ensure_chart_panel_state(&mut s, pid(2)).chart_type = "line";
+        ensure_chart_panel_state(&mut s, pid(2)).show_bars = true;
         // Second call must NOT re-insert (preserves the mutation).
         let entry = ensure_chart_panel_state(&mut s, pid(2));
-        assert_eq!(entry.chart_type, "line", "existing entry must not be replaced");
-    }
-
-    #[test]
-    fn mirror_chart_type_lazy_inserts_and_sets() {
-        let mut s = store();
-        mirror_chart_type(&mut s, pid(3), "bars");
-        let entry = s.chart_panel.get(&pid(3)).expect("entry must exist after mirror");
-        assert_eq!(entry.chart_type, "bars");
-        // Other defaults preserved on lazy insert.
-        assert!(entry.show_candles);
+        assert!(entry.show_bars, "existing entry must not be replaced");
     }
 }

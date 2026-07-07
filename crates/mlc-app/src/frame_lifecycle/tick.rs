@@ -593,33 +593,62 @@ impl ChartApp {
                     .filter_map(|cid| self.chart_type_for_chart(*cid).map(|ct| (*cid, ct)))
                     .collect();
 
+            // F4 (viewport doctrine audit 2026-07-07): the in-flight guards
+            // live on the BUBBLE, not the window — the resource they guard
+            // (a scroll-left backfill / derived reseed fetch) is per-bubble.
+            // Two windows sharing one bubble used to carry independent
+            // per-window flags, so each fired its own backfill for the same
+            // bubble; the second event's `prev_bars` snapshot went stale
+            // w.r.t. the first event's merge (double/under-shift). Resolve
+            // each chart's bubble id up front (immutable borrow), same
+            // access pattern as `ops.clear_slot` below.
+            let bid_by_chart: std::collections::HashMap<mlc_core::state::ChartId, mlc_core::ids::BubbleId> =
+                self.panel_app.panel_grid.containers().keys()
+                    .filter_map(|cid| self.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
+                    .collect();
+
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let chart_type = chart_type_by_chart.get(cid_scroll).copied().unwrap_or("candles");
                 let is_derived = crate::active_series::chart_type_is_derived_seed(chart_type);
+                let Some(bid_scroll) = bid_by_chart.get(cid_scroll).copied() else { continue; };
 
                 // Per-chart-type-family in-flight guard: kline scroll and
-                // derived reseed are mutually exclusive per window but need
+                // derived reseed are mutually exclusive per bubble but need
                 // independent flags — see `derived_seed_in_flight`'s doc
-                // comment on `ChartContainer`.
+                // comment on `DataBubble`.
                 if is_derived {
-                    if window.derived_seed_in_flight.is_some() {
-                        if let Some(started) = window.derived_seed_in_flight {
+                    let in_flight = self.core.bubbles().with_bubble(bid_scroll, |b| b.derived_seed_in_flight).flatten();
+                    if let Some((started, _)) = in_flight {
+                        if started.elapsed() > std::time::Duration::from_secs(10) {
+                            crate::dlog!("[ChartApp] derived_seed_in_flight timeout, resetting for chart {:?}", cid_scroll);
+                            self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| b.derived_seed_in_flight = None);
+                            // P0 V2 follow-up: a failed/short reseed must not
+                            // leave `reseed_clamp_guard` armed forever — that
+                            // would permanently disable `resize_geometry`'s
+                            // end-clamp for this window. The in-flight flag
+                            // and the clamp guard both track the same reseed
+                            // attempt, so they're released together.
+                            window.reseed_clamp_guard = None;
+                        } else {
+                            continue;
+                        }
+                    }
+                } else {
+                    let in_flight = self.core.bubbles().with_bubble(bid_scroll, |b| b.scroll_fetch_in_flight).unwrap_or(false);
+                    if in_flight {
+                        let started = self.core.bubbles().with_bubble(bid_scroll, |b| b.scroll_fetch_started).flatten();
+                        if let Some(started) = started {
                             if started.elapsed() > std::time::Duration::from_secs(10) {
-                                crate::dlog!("[ChartApp] derived_seed_in_flight timeout, resetting for chart {:?}", cid_scroll);
-                                window.derived_seed_in_flight = None;
+                                crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for chart {:?}", cid_scroll);
+                                self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
+                                    b.scroll_fetch_in_flight = false;
+                                    b.scroll_fetch_started = None;
+                                });
+                                continue;
                             }
                         }
-                        if window.derived_seed_in_flight.is_some() { continue; }
+                        continue;
                     }
-                } else if window.scroll_fetch_in_flight {
-                    if let Some(started) = window.scroll_fetch_started {
-                        if started.elapsed() > std::time::Duration::from_secs(10) {
-                            crate::dlog!("[ChartApp] scroll_fetch_in_flight timeout, resetting for chart {:?}", cid_scroll);
-                            window.scroll_fetch_in_flight = false;
-                            window.scroll_fetch_started = None;
-                        }
-                    }
-                    if window.scroll_fetch_in_flight { continue; }
                 }
 
                 let series = match active_series_by_chart.get(cid_scroll) {
@@ -642,7 +671,9 @@ impl ChartApp {
                 };
 
                 if is_derived {
-                    window.derived_seed_in_flight = Some(web_time::Instant::now());
+                    self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
+                        b.derived_seed_in_flight = Some((web_time::Instant::now(), bar_count_scroll));
+                    });
                     derived_seed_requests.push((
                         *cid_scroll,
                         chart_type,
@@ -651,8 +682,10 @@ impl ChartApp {
                         *win_at_sc,
                     ));
                 } else {
-                    window.scroll_fetch_in_flight = true;
-                    window.scroll_fetch_started = Some(web_time::Instant::now());
+                    self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
+                        b.scroll_fetch_in_flight = true;
+                        b.scroll_fetch_started = Some(web_time::Instant::now());
+                    });
                     scroll_requests.push((
                         *cid_scroll,
                         win_sym_sc.clone(),
@@ -681,7 +714,7 @@ impl ChartApp {
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
 
                 if let Some(tf) = parse_timeframe_name(&tf_name) {
-                    self.core.bridge.request_scroll_bars(eid, &symbol, &tf, at, oldest_ts, 500);
+                    self.core.request_scroll_backfill(eid, &symbol, &tf, at, oldest_ts, 500);
                 }
             }
 
@@ -696,24 +729,40 @@ impl ChartApp {
                 // imbalance/run) share `bubble.bars` with kline — cleared via
                 // `clear_bars()`, same as `resolve_active_series`'s mapping
                 // for those chart_types.
+                //
+                // In LOCKSTEP: reset the requesting window's derived-series
+                // bookkeeping (`bar_count` + `derived_series_stamp`). Without
+                // this, the first post-clear `reconcile_derived_series` call
+                // (fired by the first `LiveUpdate::*BarUpdate` from the
+                // replay) sees `new_len=1` against the STALE
+                // `(old_head, old_last)` stamp, computes a garbage
+                // `prepended=1` shift, and stomps `bar_count` from its stale
+                // count to 1 — producing the one-frame viewport jump the
+                // owner reports on zoom-out lazy-deepen. Preserving
+                // `view_start` here is deliberate: zoom-out means the user
+                // is mid-history and expects the position to hold, NOT to
+                // snap to end (unlike `ChangeChartType` which resets to
+                // fresh right-edge). See
+                // `ChartContainer::reset_derived_stamp_for_deepen`.
                 if let Some(bid) = self.bubble_for_chart(cid_req) {
-                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| match chart_type {
-                        "renko" => bubble.clear_renko(),
-                        "pnf" => bubble.clear_pnf(),
-                        "kagi" => bubble.clear_kagi(),
-                        "three_line_break" => bubble.clear_three_line_break(),
-                        "tpo" => bubble.clear_tpo(),
-                        "cvd" => bubble.clear_cvd(),
-                        "range_bar" | "tick_bar" | "volume_bar" | "dollar_bar"
-                        | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => bubble.clear_bars(),
-                        _ => {}
+                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                        if let Some(ops) = mlc_backend::chart_type::ops_by_id(chart_type) {
+                            (ops.clear_slot)(bubble);
+                        } else if chart_type == "cvd" {
+                            // Defensive: cvd is no longer a chart_type but
+                            // historical strings may still pass.
+                            bubble.clear_cvd();
+                        }
                     });
+                }
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid_req) {
+                    window.reset_derived_stamp_for_deepen();
                 }
 
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                self.core.bridge.request_deeper_seed_for_active(eid, &symbol, at);
+                self.core.bridge_handle().request_deeper_seed_for_active(eid, &symbol, at);
             }
         }
 

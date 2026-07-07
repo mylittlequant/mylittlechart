@@ -163,132 +163,112 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
         return;
     }
 
-    // Draw filled areas
-    for i in 0..points.len() - 1 {
-        let (x1, y1, v1) = points[i];
-        let (x2, y2, v2) = points[i + 1];
+    // Two accumulated multi-subpath paths (one per baseline side) instead of
+    // N-per-run fills/strokes. Owner 2026-07-06 (post hlc-area-render-artifacts
+    // fix): at bar_spacing near MIN_BAR_SPACING with dense baseline crossings,
+    // each same-sign run collapses to a ~1px-wide strip; N separate
+    // begin_path()/fill() pairs each get their own independent AA falloff on
+    // both edges with no opaque interior, reading as a field of hairlines. The
+    // fix used for Area/HLC Area (one accumulated path, one fill) does not
+    // apply directly here because runs alternate between two colors — so we
+    // accumulate ALL above-baseline islands into one multi-subpath path (fill
+    // once) and ALL below-baseline islands into a second (fill once). Same
+    // split for the stroke polylines. Backends fill all subpaths of a single
+    // path as one NonZero-winded region composited with a single alpha pass
+    // (see `emit_svg_path_body` in uzor/uzor/src/core/render/path.rs for the
+    // same accumulated-subpath principle already used for SVG icon fills).
+    //
+    // Crossing points are computed exactly once per flip and shared
+    // bit-identically between: the fill island's baseline-return start/end,
+    // the next fill island's first vertex, and the corresponding stroke
+    // polyline endpoints — no seam risk from divergent interpolation.
+    let mut above_islands: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut below_islands: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut above_polylines: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut below_polylines: Vec<Vec<(f64, f64)>> = Vec::new();
 
+    let (x0, y0, v0) = points[0];
+    let mut above = v0 >= baseline_value;
+    let mut top: Vec<(f64, f64)> = vec![(x0, y0)];
+
+    for w in points.windows(2) {
+        let (x1, _y1, v1) = w[0];
+        let (x2, y2, v2) = w[1];
         let above1 = v1 >= baseline_value;
         let above2 = v2 >= baseline_value;
 
-        if above1 && above2 {
-            // Both above baseline - green fill
-            ctx.set_fill_color_alpha(top_color, 0.3);
-            ctx.begin_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.line_to(x2, baseline_y);
-            ctx.line_to(x1, baseline_y);
-            ctx.close_path();
-            ctx.fill();
-        } else if !above1 && !above2 {
-            // Both below baseline - red fill
-            ctx.set_fill_color_alpha(bottom_color, 0.3);
-            ctx.begin_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.line_to(x2, baseline_y);
-            ctx.line_to(x1, baseline_y);
-            ctx.close_path();
-            ctx.fill();
-        } else {
-            // Crossing - need to split
-            let t = (baseline_value - v1) / (v2 - v1);
-            let cross_x = x1 + (x2 - x1) * t;
-
-            if above1 {
-                // Goes from above to below
-                ctx.set_fill_color_alpha(top_color, 0.3);
-                ctx.begin_path();
-                ctx.move_to(x1, y1);
-                ctx.line_to(cross_x, baseline_y);
-                ctx.line_to(x1, baseline_y);
-                ctx.close_path();
-                ctx.fill();
-
-                ctx.set_fill_color_alpha(bottom_color, 0.3);
-                ctx.begin_path();
-                ctx.move_to(cross_x, baseline_y);
-                ctx.line_to(x2, y2);
-                ctx.line_to(x2, baseline_y);
-                ctx.close_path();
-                ctx.fill();
-            } else {
-                // Goes from below to above
-                ctx.set_fill_color_alpha(bottom_color, 0.3);
-                ctx.begin_path();
-                ctx.move_to(x1, y1);
-                ctx.line_to(cross_x, baseline_y);
-                ctx.line_to(x1, baseline_y);
-                ctx.close_path();
-                ctx.fill();
-
-                ctx.set_fill_color_alpha(top_color, 0.3);
-                ctx.begin_path();
-                ctx.move_to(cross_x, baseline_y);
-                ctx.line_to(x2, y2);
-                ctx.line_to(x2, baseline_y);
-                ctx.close_path();
-                ctx.fill();
-            }
+        if above1 == above2 {
+            top.push((x2, y2));
+            continue;
         }
+
+        // Crossing between this pair — compute once, close the current run
+        // with it, then open the next run with the same tuple.
+        let denom = v2 - v1;
+        let t = if denom.abs() > f64::EPSILON {
+            ((baseline_value - v1) / denom).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let cross = (x1 + (x2 - x1) * t, baseline_y);
+
+        top.push(cross);
+        push_run(&mut above_islands, &mut below_islands, &mut above_polylines, &mut below_polylines, &top, above, baseline_y);
+
+        above = above2;
+        top = vec![cross, (x2, y2)];
     }
+
+    push_run(&mut above_islands, &mut below_islands, &mut above_polylines, &mut below_polylines, &top, above, baseline_y);
+
+    // Fill pass — exactly 2 fill() calls total regardless of crossing count.
+    ctx.set_fill_color_alpha(top_color, 0.3);
+    ctx.begin_path();
+    for island in &above_islands {
+        ctx.move_to(island[0].0, island[0].1);
+        for &(x, y) in &island[1..] {
+            ctx.line_to(x, y);
+        }
+        ctx.close_path();
+    }
+    ctx.fill();
     ctx.reset_alpha();
 
-    // Draw line with color based on position
+    ctx.set_fill_color_alpha(bottom_color, 0.3);
+    ctx.begin_path();
+    for island in &below_islands {
+        ctx.move_to(island[0].0, island[0].1);
+        for &(x, y) in &island[1..] {
+            ctx.line_to(x, y);
+        }
+        ctx.close_path();
+    }
+    ctx.fill();
+    ctx.reset_alpha();
+
+    // Stroke pass — exactly 2 stroke() calls total regardless of crossing count.
     ctx.set_stroke_width(2.0);
     ctx.set_line_dash(&[]);
-    for i in 0..points.len() - 1 {
-        let (x1, y1, v1) = points[i];
-        let (x2, y2, v2) = points[i + 1];
 
-        let above1 = v1 >= baseline_value;
-        let above2 = v2 >= baseline_value;
-
-        if above1 && above2 {
-            ctx.set_stroke_color(top_color);
-            ctx.begin_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.stroke();
-        } else if !above1 && !above2 {
-            ctx.set_stroke_color(bottom_color);
-            ctx.begin_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.stroke();
-        } else {
-            // Crossing - draw in two parts
-            let t = (baseline_value - v1) / (v2 - v1);
-            let cross_x = x1 + (x2 - x1) * t;
-
-            if above1 {
-                ctx.set_stroke_color(top_color);
-                ctx.begin_path();
-                ctx.move_to(x1, y1);
-                ctx.line_to(cross_x, baseline_y);
-                ctx.stroke();
-
-                ctx.set_stroke_color(bottom_color);
-                ctx.begin_path();
-                ctx.move_to(cross_x, baseline_y);
-                ctx.line_to(x2, y2);
-                ctx.stroke();
-            } else {
-                ctx.set_stroke_color(bottom_color);
-                ctx.begin_path();
-                ctx.move_to(x1, y1);
-                ctx.line_to(cross_x, baseline_y);
-                ctx.stroke();
-
-                ctx.set_stroke_color(top_color);
-                ctx.begin_path();
-                ctx.move_to(cross_x, baseline_y);
-                ctx.line_to(x2, y2);
-                ctx.stroke();
-            }
+    ctx.set_stroke_color(top_color);
+    ctx.begin_path();
+    for polyline in &above_polylines {
+        ctx.move_to(polyline[0].0, polyline[0].1);
+        for &(x, y) in &polyline[1..] {
+            ctx.line_to(x, y);
         }
     }
+    ctx.stroke();
+
+    ctx.set_stroke_color(bottom_color);
+    ctx.begin_path();
+    for polyline in &below_polylines {
+        ctx.move_to(polyline[0].0, polyline[0].1);
+        for &(x, y) in &polyline[1..] {
+            ctx.line_to(x, y);
+        }
+    }
+    ctx.stroke();
 
     // Draw baseline reference line
     ctx.set_stroke_color("#96969680"); // Gray with 50% alpha
@@ -297,6 +277,40 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
     ctx.move_to(rect.x, baseline_y);
     ctx.line_to(rect.right(), baseline_y);
     ctx.stroke();
+}
+
+/// Finalize one same-side run for `draw_baseline_series`: pushes the run's
+/// stroke polyline (`top`, unmodified) and — if the run has at least 2
+/// vertices — its fill island (top forward + baseline-return) into the
+/// appropriate above/below accumulator so the caller can later issue exactly
+/// one `fill()` and one `stroke()` per side.
+fn push_run(
+    above_islands: &mut Vec<Vec<(f64, f64)>>,
+    below_islands: &mut Vec<Vec<(f64, f64)>>,
+    above_polylines: &mut Vec<Vec<(f64, f64)>>,
+    below_polylines: &mut Vec<Vec<(f64, f64)>>,
+    top: &[(f64, f64)],
+    above: bool,
+    baseline_y: f64,
+) {
+    if top.len() < 2 {
+        return;
+    }
+
+    let (islands, polylines) = if above {
+        (&mut *above_islands, &mut *above_polylines)
+    } else {
+        (&mut *below_islands, &mut *below_polylines)
+    };
+
+    polylines.push(top.to_vec());
+
+    let mut island = top.to_vec();
+    let last_x = island.last().map(|p| p.0).unwrap_or(top[0].0);
+    let first_x = top[0].0;
+    island.push((last_x, baseline_y));
+    island.push((first_x, baseline_y));
+    islands.push(island);
 }
 
 /// Draw step line (staircase pattern)
@@ -522,49 +536,6 @@ pub fn draw_hlc_area(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         ctx.line_to(x, y);
     }
     ctx.stroke();
-}
-
-/// Draw columns — TV semantics: each column rises from the BOTTOM of the
-/// pane to the bar's close, colored by close vs the PREVIOUS close.
-///
-/// The old implementation used `bars[0].open` (the first bar of the whole
-/// loaded series) as the baseline — the entire chart re-anchored and
-/// re-colored whenever more history backfilled (owner report 2026-07-05).
-pub fn draw_columns(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    let rect = &state.chart_rect;
-    let viewport = state.viewport;
-    let price_scale = state.price_scale;
-    let theme = state.theme;
-    let bars = state.bars;
-
-    let (start, end) = viewport.visible_range();
-    let end = end.min(bars.len());
-
-    if start >= end || bars.is_empty() {
-        return;
-    }
-
-    let bar_w = (viewport.bar_width() * 0.8).max(2.0);
-    let bottom_y = rect.bottom();
-
-    for (i, bar) in bars.iter().enumerate().take(end).skip(start) {
-        let x = rect.x + viewport.x_for_bar(i, bar.ts_ms());
-        let y = rect.y + viewport.price_to_y(bar.close, price_scale.price_min, price_scale.price_max);
-
-        // Color vs previous close (first bar of the series: vs its own open).
-        let prev_close = if i > 0 { bars[i - 1].close } else { bar.open };
-        let color = if bar.close >= prev_close {
-            &theme.candle_up
-        } else {
-            &theme.candle_down
-        };
-
-        let top = y.min(bottom_y);
-        let height = (bottom_y - y).abs().max(1.0);
-
-        ctx.set_fill_color(color);
-        ctx.fill_rect(x - bar_w / 2.0, top, bar_w, height);
-    }
 }
 
 /// Draw compare overlay (symbol comparison lines)

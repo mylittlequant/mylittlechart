@@ -404,15 +404,15 @@ impl ChartApp {
                         // Unsubscribe only the old symbol's trade stream, leaving other
                         // windows' streams intact.
                         if !old_trade_symbol.is_empty() {
-                            self.core.bridge.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+                            self.core.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
                         }
                         let eid_str = resolved_exchange.as_str();
                         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                             eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
                         } else {
                             let item_at = crate::account_type_from_label(&item_account_type);
-                            self.core.bridge.ensure_connector(resolved_exchange);
-                            self.core.bridge.request_bars(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
+                            self.core.ensure_connector(resolved_exchange);
+                            self.core.request_kline(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
                         }
                         // Propagate the new symbol+exchange+account_type to all other windows
                         // in the same sync group so the full instrument key is consistent.
@@ -449,10 +449,10 @@ impl ChartApp {
 
                 if let Some(eid) = digdigdig3::ExchangeId::from_str(exchange_id_str) {
                     if now_enabled {
-                        self.core.bridge.enable_connector(eid);
+                        self.core.bridge_handle().enable_connector(eid);
                         eprintln!("[Sidebar] Connector enabled: {}", exchange_id_str);
                     } else {
-                        self.core.bridge.disable_connector(eid);
+                        self.core.bridge_handle().disable_connector(eid);
                         eprintln!("[Sidebar] Connector disabled: {}", exchange_id_str);
                     }
                 } else {
@@ -1290,11 +1290,11 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let trade_handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
+                                    let trade_handle = self.core.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                         state.level_qty_bid.clear();
                                         state.level_qty_ask.clear();
@@ -1325,7 +1325,7 @@ impl ChartApp {
                                     let at = digdigdig3::AccountType::Spot;
                                     for ex_label in &default_exchanges {
                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                            let _ = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
+                                            let _ = self.core.subscribe_orderbook(eid, &symbol, at);
                                         }
                                     }
                                 }
@@ -1337,7 +1337,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
@@ -1356,7 +1356,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
@@ -1378,7 +1378,7 @@ impl ChartApp {
                                     if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                     }
                                 } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
@@ -1395,7 +1395,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
@@ -1420,7 +1420,7 @@ impl ChartApp {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
                                         state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.bridge.subscribe_orderbook(eid, &symbol, at);
+                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
                                         state.last_seen_update_id = None;
                                         state.previous_book.clear();
                                     }
@@ -1437,7 +1437,7 @@ impl ChartApp {
                                     let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
                                         .unwrap_or(self.active_exchange);
                                     let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.bridge.subscribe_trades(eid, &symbol, at);
+                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
                                     if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
                                         state.symbol = symbol.clone();
                                         state.exchange = exchange_str.clone();
@@ -1504,7 +1504,7 @@ impl ChartApp {
                                 .find_by_label(&exchange_str)
                                 .unwrap_or(self.active_exchange);
                             let at = crate::account_type_from_label(&account_type_str);
-                            self.core.bridge.subscribe_depth(eid, &symbol, at);
+                            self.core.subscribe_depth(eid, &symbol, at);
                         }
 
                         // Register market-data panels in TagManager as Synced members.
@@ -1816,8 +1816,8 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
-                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1827,7 +1827,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1837,7 +1837,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1847,7 +1847,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1857,7 +1857,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1867,7 +1867,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_trades(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1877,7 +1877,7 @@ impl ChartApp {
                                                     if !state.symbol.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                             let at = crate::account_type_from_label(&state.account_type);
-                                                            self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                            self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                                         }
                                                     }
                                                 }
@@ -1888,7 +1888,7 @@ impl ChartApp {
                                                         let at = digdigdig3::AccountType::Spot;
                                                         for ex_label in &state.config.exchanges {
                                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                                self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                                             }
                                                         }
                                                     }
@@ -1999,8 +1999,8 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
-                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2010,7 +2010,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2020,7 +2020,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2030,7 +2030,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2040,7 +2040,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2050,7 +2050,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_trades(eid, &state.symbol, at);
+                                                self.core.unsubscribe_trades(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2060,7 +2060,7 @@ impl ChartApp {
                                         if !state.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&state.exchange) {
                                                 let at = crate::account_type_from_label(&state.account_type);
-                                                self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                             }
                                         }
                                     }
@@ -2071,7 +2071,7 @@ impl ChartApp {
                                             let at = digdigdig3::AccountType::Spot;
                                             for ex_label in &state.config.exchanges {
                                                 if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                    self.core.bridge.unsubscribe_orderbook(eid, &state.symbol, at);
+                                                    self.core.unsubscribe_orderbook(eid, &state.symbol, at);
                                                 }
                                             }
                                         }
@@ -2533,7 +2533,7 @@ impl ChartApp {
                                                 if !new_exchanges.iter().any(|e| e == ex) {
                                                     if !sym.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
-                                                            self.core.bridge.unsubscribe_orderbook(eid, &sym, at);
+                                                            self.core.unsubscribe_orderbook(eid, &sym, at);
                                                         }
                                                     }
                                                 }
@@ -2543,7 +2543,7 @@ impl ChartApp {
                                                 if !old_exchanges.iter().any(|e| e == ex) {
                                                     if !sym.is_empty() {
                                                         if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
-                                                            let _ = self.core.bridge.subscribe_orderbook(eid, &sym, at);
+                                                            let _ = self.core.subscribe_orderbook(eid, &sym, at);
                                                         }
                                                     }
                                                 }

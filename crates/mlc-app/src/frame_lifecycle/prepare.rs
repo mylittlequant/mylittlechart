@@ -294,15 +294,16 @@ impl ChartApp {
             { let _ = dump; }
         }
 
-        for (_cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+        let is_ha_by_chart: std::collections::HashMap<ChartId, bool> =
+            self.panel_app.panel_grid.containers().keys()
+                .map(|cid| (*cid, self.chart_type_for_chart(*cid) == Some("heikin_ashi")))
+                .collect();
+        for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             // Refresh the Heikin Ashi memo if the chart panel is on
             // chart_type == "heikin_ashi" AND `bars` mutated since the
             // last frame. Cheap when stamp matches (single i64
             // comparison + Option check).
-            let is_ha = self.panels_store.chart_panel
-                .get(&window.chart_panel_id)
-                .map(|p| p.chart_type == "heikin_ashi")
-                .unwrap_or(false);
+            let is_ha = is_ha_by_chart.get(cid).copied().unwrap_or(false);
             let bubble_bars: &[mlc_core::Bar] = bubble_snapshot
                 .get(&window.current_tag_id)
                 .map(|(b,)| b.as_slice())
@@ -829,10 +830,10 @@ impl ChartApp {
                 use mlc_app_sidebar_content::types::ConnectorGroup;
 
                 self.sidebar_state.connector_items.clear();
-                let active_ids = self.core.bridge.pool().list_connected();
+                let active_ids = self.core.bridge_handle().pool().list_connected();
 
                 let metrics_map: std::collections::HashMap<String, (digdigdig3::core::types::ConnectorStats, usize)> =
-                    self.core.bridge.collect_metrics()
+                    self.core.agent_metrics_snapshot()
                         .into_iter()
                         .map(|(eid, stats, ws)| (eid.as_str().to_string(), (stats, ws)))
                         .collect();
@@ -859,7 +860,7 @@ impl ChartApp {
                 }
 
                 for exchange_id in &active_ids {
-                    let hub = self.core.bridge.pool();
+                    let hub = self.core.bridge_handle().pool();
                     let at = digdigdig3::AccountType::Spot;
                     let connector = match hub.rest(*exchange_id) {
                         Some(c) => c,

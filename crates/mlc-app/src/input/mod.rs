@@ -6167,12 +6167,11 @@ impl ChartApp {
                 }
             }
             Command::ChangeChartType { new_type, .. } => {
-                // chart_type is now in ChartPanelState; leak the string to produce a 'static ref.
-                let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
-                if let Some(pid) = pid {
+                // chart_type lives on the bubble; leak the string to produce a 'static ref.
+                let cid = self.panel_app.panel_grid.active_container_id();
+                if let Some(bid) = cid.and_then(|cid| self.bubble_for_chart(cid)) {
                     let static_str: &'static str = Box::leak(new_type.clone().into_boxed_str());
-                    crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid)
-                        .chart_type = static_str;
+                    self.core.bubbles_mut().set_chart_type(bid, static_str);
                 }
             }
             Command::ChangeSymbol { new_symbol, .. } => {
@@ -7087,7 +7086,7 @@ impl ChartApp {
                         digdigdig3::ExchangeId::Binance,
                         exchange_name.clone(),
                         digdigdig3::AccountType::Spot,
-                        self.core.bridge.clone(),
+                        self.core.bridge_arc(),
                     ),
                 );
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -7098,13 +7097,13 @@ impl ChartApp {
                     window.pending_symbol_load = true;
                     window.needs_snap_after_backfill = true;
                 }
-                self.core.bridge.ensure_connector(digdigdig3::ExchangeId::Binance);
+                self.core.ensure_connector(digdigdig3::ExchangeId::Binance);
                 let bar_count_new = self.core.user().profile().domain.bar_count as usize;
                 sglog!(
                     "[execute_new_chart_with_name] calling bridge.request_bars Binance BTCUSDT tf={:?} bars={} force=true",
                     default_timeframe, bar_count_new
                 );
-                self.core.bridge.request_bars(
+                self.core.request_kline(
                     digdigdig3::ExchangeId::Binance,
                     "BTCUSDT",
                     &default_timeframe,
@@ -7224,6 +7223,14 @@ impl ChartApp {
                 let snap_account_type = self.account_type_for_chart(chart_id)
                     .map(|at| at.to_string())
                     .unwrap_or_else(|| "S".to_string());
+                // chart_type/param/interval now live on the bubble, symmetric
+                // with timeframe (moved off ChartPanelState).
+                let snap_chart_type = self.chart_type_for_chart(chart_id)
+                    .unwrap_or("candles").to_string();
+                let snap_chart_type_param = self.chart_type_param_for_chart(chart_id)
+                    .unwrap_or(0.0);
+                let snap_chart_type_interval = self.chart_type_interval_for_chart(chart_id)
+                    .unwrap_or("1m").to_string();
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
                 let snap_panel_id = window.chart_panel_id;
                 let snap_default_panel = crate::chart_panel_state::ChartPanelState::new(snap_panel_id);
@@ -7235,6 +7242,7 @@ impl ChartApp {
                 preset.windows.push(crate::persistence::build_chart_window_snapshot(
                     window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
+                    snap_chart_type, snap_chart_type_param, snap_chart_type_interval,
                 ));
             }
         }
