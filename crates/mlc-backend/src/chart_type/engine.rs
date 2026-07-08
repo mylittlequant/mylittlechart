@@ -369,11 +369,28 @@ fn subscribe_liq_heatmap(
 // Clear-slot fns
 // ---------------------------------------------------------------------------
 
-/// Render-family (10 types) and trade-agg-bar family (7 types) share this —
-/// both write into `bubble.bars` and reset `bars_source` back to `Kline`.
+/// Render-family (10 types) share this — writes into `bubble.bars` and
+/// resets `bars_source` back to `Kline` (also the reset target every OTHER
+/// clear_slot fn in this module uses, including the trade-agg-bar family's
+/// own [`clear_slot_trade_agg_bars`] switch-away path via
+/// `chart_out_events.rs`'s generic `ops.clear_slot` dispatch).
 fn clear_slot_kline_bars(bubble: &mut DataBubble) {
     bubble.clear_bars();
     bubble.bars_source = BarsSource::Kline;
+}
+
+/// Trade-agg-bar family (range_bar/volume_bar/tick_bar/dollar_bar/
+/// tick_imbalance_bar/volume_imbalance_bar/run_bar — registry
+/// `ChartTypeKind::TradeAggBar`, 7 types) — shares `bubble.bars` with kline
+/// (see `resolve_active_series`'s mapping) but is a DIFFERENT writer: the
+/// station's trade-agg derived pipeline, not the kline REST/WS path. Stamps
+/// `bars_source = TradeAggBars` on subscribe so every kline-family writer
+/// (`BackfillComplete`/`ScrollBarsLoaded` REST, `TradeUpdate`-built candles)
+/// drops its write for this bubble instead of stomping the derived series —
+/// mirrors [`clear_slot_footprint_hybrid_aware`]'s stamp for footprint.
+fn clear_slot_trade_agg_bars(bubble: &mut DataBubble) {
+    bubble.clear_bars();
+    bubble.bars_source = BarsSource::TradeAggBars;
 }
 
 fn clear_slot_renko(bubble: &mut DataBubble) {
@@ -484,13 +501,13 @@ static OPS: &[(&str, SubscribeOps)] = &[
     ("area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
     ("hlc_area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
     ("baseline", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("range_bar", SubscribeOps { subscribe: subscribe_range_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("volume_bar", SubscribeOps { subscribe: subscribe_volume_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("tick_bar", SubscribeOps { subscribe: subscribe_tick_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("dollar_bar", SubscribeOps { subscribe: subscribe_dollar_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_tick_imbalance_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_volume_imbalance_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
-    ("run_bar", SubscribeOps { subscribe: subscribe_run_bar, clear_slot: clear_slot_kline_bars, abort: abort_derived }),
+    ("range_bar", SubscribeOps { subscribe: subscribe_range_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("volume_bar", SubscribeOps { subscribe: subscribe_volume_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("tick_bar", SubscribeOps { subscribe: subscribe_tick_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("dollar_bar", SubscribeOps { subscribe: subscribe_dollar_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_tick_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_volume_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("run_bar", SubscribeOps { subscribe: subscribe_run_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
     ("renko", SubscribeOps { subscribe: subscribe_renko, clear_slot: clear_slot_renko, abort: abort_derived }),
     ("pnf", SubscribeOps { subscribe: subscribe_pnf, clear_slot: clear_slot_pnf, abort: abort_derived }),
     ("kagi", SubscribeOps { subscribe: subscribe_kagi, clear_slot: clear_slot_kagi, abort: abort_derived }),

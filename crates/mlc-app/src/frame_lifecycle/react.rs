@@ -740,6 +740,26 @@ impl ChartApp {
                         .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                         .collect();
 
+                // Trade-agg-bar-owned subset of `target_bubbles_bu` (excludes
+                // tick-TF kline windows) — used below to defensively stamp
+                // `bars_source` on the first derived bar that arrives for a
+                // bubble the subscribe-time `clear_slot_trade_agg_bars` stamp
+                // somehow missed (stale hydration path, future caller that
+                // bypasses the `SubscribeOps` table). Belt-and-suspenders:
+                // the OPS table stamp is the single source of truth in the
+                // normal path, this only guards against that invariant
+                // silently regressing.
+                let trade_agg_bids_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
+                    instrument_by_cid_bu.iter()
+                        .filter(|(cid, (sym, at, _))| {
+                            sym == bar_symbol && *at == bar_event_at
+                                && self.chart_type_for_chart(**cid)
+                                    .map(crate::active_series::chart_type_is_trade_agg_bar)
+                                    .unwrap_or(false)
+                        })
+                        .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
+                        .collect();
+
                 // Caterpillar-bug fix (2026-07-08): `bar.timestamp` is seconds-
                 // truncated from dig3's ms-native `open_time` — the trade-agg
                 // family (range/volume/tick/dollar bars, tick TFs) can close
@@ -759,15 +779,30 @@ impl ChartApp {
                 };
 
                 for bid_bu in &target_bubbles_bu {
+                    let is_trade_agg_owner = trade_agg_bids_bu.contains(bid_bu);
                     let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
-                        // bars-ownership gate: footprint is in the is_derived
-                        // set above, but its bars come from FootprintUpdate —
-                        // a live kline BarUpdate for the same instrument must
-                        // not interleave here. Range/volume/tick bubbles keep
-                        // the default Kline source, so their station-written
-                        // BarUpdate stream passes unchanged.
+                        // bars-ownership gate: `BarUpdate` is a dual-purpose
+                        // writer here — live kline ticks for tick-TF windows
+                        // (`Kline`-owned) AND live trade-agg-bar-family ticks
+                        // for range/volume/tick/dollar/imbalance/run windows
+                        // (`TradeAggBars`-owned, per-bar station output) both
+                        // legitimately land through this same event type, so
+                        // only `FootprintOhlc` is blocked — footprint gets its
+                        // bars from `FootprintUpdate` instead and must never
+                        // have a live kline/derived `BarUpdate` interleave.
                         if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
                             return false;
+                        }
+                        // Defensive stamp: the first derived bar for a
+                        // trade-agg-bar window should always find
+                        // `bars_source` already `TradeAggBars` (stamped by
+                        // `clear_slot_trade_agg_bars` at subscribe time) —
+                        // if it still reads `Kline` here, stamp it now and
+                        // drop any leftover kline bars before the append so
+                        // this bubble never mixes two timelines.
+                        if is_trade_agg_owner && bubble.bars_source == mlc_backend::bubble::BarsSource::Kline {
+                            bubble.clear_bars();
+                            bubble.bars_source = mlc_backend::bubble::BarsSource::TradeAggBars;
                         }
                         let last_ts_identity = bubble.bars.last().map(|b| {
                             if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
@@ -919,12 +954,19 @@ impl ChartApp {
 
                 for (bid_tu, period_secs) in &bubble_periods {
                     let outcome = self.core.bubbles_mut().with_bubble_mut(*bid_tu, |bubble| {
-                        // bars-ownership gate: footprint-owned bubbles get their
-                        // OHLC from FootprintUpdate; trade-built bars would
-                        // interleave a second timeline (the tick-TF exclusion
-                        // above never fires for footprint — its TF is a time
-                        // bucket like "1m").
-                        if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
+                        // bars-ownership gate: only a `Kline`-owned bubble may
+                        // have a wall-clock candle built from raw trades here.
+                        // Footprint-owned bubbles get their OHLC from
+                        // FootprintUpdate (the tick-TF exclusion above never
+                        // fires for footprint — its TF is a time bucket like
+                        // "1m" — so this bars_source check is footprint's only
+                        // protection in this arm). Trade-agg-bar bubbles are
+                        // already excluded upstream via `derived_cids_tu`
+                        // (`chart_type_is_trade_agg_bar`), but gating on "Kline
+                        // owns" rather than naming FootprintOhlc alone makes
+                        // this arm defend the invariant even if that upstream
+                        // filter's set ever drifts from the ownership map.
+                        if bubble.bars_source != mlc_backend::bubble::BarsSource::Kline {
                             return (false, false);
                         }
                         if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {

@@ -1268,7 +1268,11 @@ impl BackendCore {
                             // bars-ownership gate: a footprint-owned bubble's
                             // bar series is written by FootprintUpdate; a kline
                             // REST load for the same instrument (another
-                            // window, hydration seed) must not stomp it.
+                            // window, hydration seed) must not stomp it. This
+                            // SAME `BarsLoaded` event is also the trade-agg
+                            // cold-seed batch's own writer (see the comment
+                            // below), so a `TradeAggBars`-owned bubble must
+                            // stay writable here — only `FootprintOhlc` blocks.
                             if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
                                 continue;
                             }
@@ -1314,8 +1318,14 @@ impl BackendCore {
                         // bubble.bars before overwrite so the reactor's
                         // capture_view_anchor sees real prior state.
                         let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate (see BarsLoaded arm).
-                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                        // bars-ownership gate: unlike the `BarsLoaded` arm
+                        // above, kline REST backfill is the ONLY legitimate
+                        // writer here (the trade-agg family has its own
+                        // dedicated `DerivedBarsPrepended` for scroll-left/
+                        // lazy-deepen) — gate on "Kline owns" so both
+                        // `FootprintOhlc` and `TradeAggBars` bubbles are
+                        // protected from this write.
+                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline {
                             continue;
                         }
                         let prev_bars = mgr.bars(bid).to_vec();
@@ -1348,8 +1358,11 @@ impl BackendCore {
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
                         let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate (see BarsLoaded arm).
-                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                        // bars-ownership gate: kline REST scroll is the ONLY
+                        // legitimate writer here (see BackfillComplete arm) —
+                        // gate on "Kline owns" so both `FootprintOhlc` and
+                        // `TradeAggBars` bubbles are protected.
+                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline {
                             continue;
                         }
                         // Snapshot BEFORE the merge so the reactor's anchor
@@ -1407,10 +1420,14 @@ impl BackendCore {
                         // succeed against `timeframe_for_chart`.
                         let tf_name = self.bubbles().timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
                         let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate (see ScrollBarsLoaded arm) — a
-                        // derived-bar-family prepend must never land on a
-                        // bubble currently rendering footprint OHLC.
-                        if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
+                        // bars-ownership gate: this event is the trade-agg
+                        // family's OWN dedicated scroll-left/lazy-deepen
+                        // writer — it must land ONLY on a `TradeAggBars`-
+                        // owned bubble, never on a `Kline`-owned window (the
+                        // observed live bug: a range_bar bubble stayed
+                        // default-`Kline`-owned pre-fix and could be stomped
+                        // by an unrelated kline write) nor a footprint one.
+                        if mgr.bars_source(bid) != crate::bubble::BarsSource::TradeAggBars {
                             continue;
                         }
                         let prev_bars = mgr.bars(bid).to_vec();

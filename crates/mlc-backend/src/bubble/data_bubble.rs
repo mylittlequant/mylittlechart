@@ -21,11 +21,30 @@ use mlc_core::state::Timeframe;
 /// bubble. Set by the footprint arm of `ChangeChartType` (and preset
 /// hydration of a footprint window); reset to `Kline` on switch to any
 /// other chart type.
+///
+/// `TradeAggBars`: the trade-agg derived pipeline owns `bars` — the
+/// registry's `ChartTypeKind::TradeAggBar` family (range_bar/volume_bar/
+/// tick_bar/dollar_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar)
+/// streams its station-derived series directly into `bubble.bars` (the
+/// SAME array the kline family renders — see `resolve_active_series`),
+/// while `bubble.timeframe` stays whatever ordinary wall-clock TF was
+/// active before the switch (never re-stamped, unlike footprint's bucket
+/// interval). Before this variant existed, these bubbles stayed on the
+/// default `Kline` value with no ownership marker of their own, so every
+/// kline-family writer (`BarsLoaded`/`BarUpdate`/`BackfillComplete`/
+/// `ScrollBarsLoaded`) treated them as kline-owned and stomped the
+/// derived series (observed live: switching a range_bar param repainted
+/// the pane with plain kline candles). Stamped at subscribe time by the
+/// chart-type engine's `clear_slot_trade_agg_bars` (mirrors
+/// `clear_slot_footprint_hybrid_aware`'s stamp for footprint); reset to
+/// `Kline` on switch to any other chart type (`clear_slot_kline_bars`,
+/// same reset every render-family/heatmap/price-action row already uses).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BarsSource {
     #[default]
     Kline,
     FootprintOhlc,
+    TradeAggBars,
 }
 
 /// How much history backs this bubble's active series, derived from the
@@ -183,7 +202,7 @@ pub struct DataBubble {
 
     /// Who owns writes into `bars` right now (single-writer contract).
     ///
-    /// Footprint is the one chart type whose own derived pipeline
+    /// Footprint is one chart type whose own derived pipeline
     /// (`FootprintUpdate`) writes OHLC bars into `bars` while the window
     /// stays on a TIME timeframe — so the tick-TF exclusion that protects
     /// range/volume/tick bubbles does not fire, and five independent kline
@@ -191,9 +210,14 @@ pub struct DataBubble {
     /// `TradeUpdate`, `BarsLoaded` REST replace, `BackfillComplete`,
     /// `ScrollBarsLoaded`) were interleaving a 2000-bar kline timeline with
     /// the ~N footprint-derived bars, desyncing the index axis (blank
-    /// clusters, grid drift, phantom X labels). Every kline-family writer
-    /// MUST check this flag before touching `bars`; `FootprintUpdate`
-    /// writes only when it holds ownership.
+    /// clusters, grid drift, phantom X labels). The trade-agg-bar family
+    /// (range/volume/tick/dollar/imbalance/run bars) has the same shape of
+    /// bug (2026-07-08): they stream derived bars into the SAME `bars`
+    /// array while `timeframe` stays a stale wall-clock TF, so they need
+    /// their own `TradeAggBars` ownership marker. Every kline-family
+    /// writer MUST check this flag before touching `bars`; `FootprintUpdate`
+    /// and the trade-agg station pipeline write only when they hold
+    /// ownership.
     pub bars_source: BarsSource,
 
     /// Footprint cluster bars. Written by `FootprintUpdate`.
