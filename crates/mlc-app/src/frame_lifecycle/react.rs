@@ -297,9 +297,23 @@ impl ChartApp {
                 // bubble-bound, not chart-bound.
                 self.core.indicators_mut().recalc_bubble(*bid, new_bars);
 
-                // Subscribe trades for matched windows.
+                // Subscribe trades for matched windows — skip when every matched
+                // window's active chart_type is a trade-agg-bar type (root cause
+                // fixed 2026-07-08): these windows' bars are written entirely by
+                // the station's `BarUpdatePassthrough`, and a live trade sub here
+                // re-arms `TradeUpdatePassthrough`'s kline-builder for them (their
+                // `bubble.timeframe` is an ordinary wall-clock value, never
+                // re-stamped on chart-type switch) — a second writer racing the
+                // station into the SAME `bubble.bars`. Tick-TF kline windows
+                // (`is_tick()`) still need this: raw trades ARE their real live
+                // source. Footprint has its own subscribe flow, untouched.
                 if any_matched {
-                    if self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
+                    let needs_trade_sub = matched_windows.iter().any(|(cid, _, _)| {
+                        !self.chart_type_for_chart(*cid)
+                            .map(crate::active_series::chart_type_is_trade_agg_bar)
+                            .unwrap_or(false)
+                    });
+                    if needs_trade_sub && self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
                         let at = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
                         self.core.subscribe_trades(*exchange_id, symbol, at);
                     }
@@ -707,12 +721,9 @@ impl ChartApp {
                             // kline BarUpdate through here could consume the
                             // one-shot cold snap against an empty/foreign series
                             // before the first footprint bar ever lands.
-                            let derived_chart_type = matches!(
-                                self.chart_type_for_chart(*cid),
-                                Some("range_bar") | Some("volume_bar") | Some("tick_bar")
-                                | Some("dollar_bar") | Some("tick_imbalance_bar")
-                                | Some("volume_imbalance_bar") | Some("run_bar")
-                            );
+                            let derived_chart_type = self.chart_type_for_chart(*cid)
+                                .map(crate::active_series::chart_type_is_trade_agg_bar)
+                                .unwrap_or(false);
                             let is_derived = is_tick_tf || derived_chart_type;
                             Some((*cid, (sym, at, is_derived)))
                         })
@@ -861,10 +872,25 @@ impl ChartApp {
                         })
                         .collect()
                 };
+                // Excludes tick-TF kline windows (their real live source IS raw
+                // trades) AND trade-agg-bar windows (range/volume/tick/dollar/
+                // imbalance/run bars) — the latter's `bubble.timeframe` stays an
+                // ordinary wall-clock value (e.g. "15m", never re-stamped on
+                // chart-type switch, see `chart_out_events.rs:690-694`), so an
+                // `is_tick()`-only gate let raw trades build a SECOND, ordinary-
+                // OHLC candle series into the SAME `bubble.bars` the station's
+                // `BarUpdatePassthrough` writes for these windows (root cause
+                // fixed 2026-07-08). `chart_type_is_trade_agg_bar` is the same
+                // registry-driven check `BarUpdatePassthrough`'s bars-ownership
+                // gate above uses — single source of truth.
                 let derived_cids_tu: std::collections::HashSet<mlc_core::state::ChartId> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter(|cid| {
-                            self.timeframe_for_chart(**cid).map(|tf| tf.is_tick()).unwrap_or(false)
+                            let is_tick_tf = self.timeframe_for_chart(**cid).map(|tf| tf.is_tick()).unwrap_or(false);
+                            let is_trade_agg_bar = self.chart_type_for_chart(**cid)
+                                .map(crate::active_series::chart_type_is_trade_agg_bar)
+                                .unwrap_or(false);
+                            is_tick_tf || is_trade_agg_bar
                         })
                         .copied()
                         .collect()

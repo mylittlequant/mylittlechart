@@ -1316,6 +1316,42 @@ impl ChartApp {
         self.core.bubbles().chart_type_interval(bid)
     }
 
+    /// Resolution label for this chart's pane overlay tab / legend —
+    /// mirrors the TF toolbar button's own dispatch
+    /// (`mlc-app-layout::panel_app`'s `tf_button_label` build, owner
+    /// doctrine 2026-07-08): `Time`/`Interval` show the TF name unchanged;
+    /// `Param` (trade-agg bars, price-action transforms) shows the
+    /// formatted `chart_type_param` + suffix ("20R", "0.1V") instead of the
+    /// stale wall-clock TF name (legend-honesty fix, 2026-07-08 — a
+    /// range_bar/volume_bar/etc. window's `bubble.timeframe` is never
+    /// re-stamped on chart-type switch, see `chart_out_events.rs:690-694`).
+    ///
+    /// Falls back to the plain TF name when the chart_type is unknown or
+    /// not yet attached to a bubble.
+    pub fn resolution_label_for_chart(&self, chart_id: mlc_core::state::ChartId) -> String {
+        let tf_name = self.timeframe_for_chart(chart_id)
+            .map(|tf| tf.name.clone())
+            .unwrap_or_default();
+        let Some(def) = self.chart_type_for_chart(chart_id).and_then(mlc_core::chart_type::by_id) else {
+            return tf_name;
+        };
+        match def.resolution {
+            mlc_core::chart_type::ResolutionKind::Param { suffix } => {
+                let value = self.chart_type_param_for_chart(chart_id).unwrap_or(0.0);
+                if value > 0.0 {
+                    mlc_app_layout::panel_app::format_resolution_param(value, suffix)
+                } else {
+                    def.param_spec
+                        .and_then(|spec| spec.options.first())
+                        .map(|opt| mlc_app_layout::panel_app::format_resolution_param_label(opt.label, suffix))
+                        .unwrap_or_else(|| mlc_app_layout::panel_app::format_resolution_param(value, suffix))
+                }
+            }
+            mlc_core::chart_type::ResolutionKind::Time
+            | mlc_core::chart_type::ResolutionKind::Interval => tf_name,
+        }
+    }
+
     /// Resolve the group/bubble id for any sync member id.
     #[inline]
     pub fn group_for_member(&self, member: mlc_core::ids::SyncMemberId) -> Option<mlc_core::ids::BubbleId> {
@@ -3967,6 +4003,13 @@ impl ChartApp {
                     .and_then(|cid| self.timeframe_for_chart(cid));
                 let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
                 let split_tf_interval_ms: Option<i64> = split_tf.map(|tf| tf.interval_ms);
+                // Overlay tab legend uses the resolution-aware label (TF name for
+                // Time/Interval, formatted param for Param types) — kept distinct
+                // from `split_tf_name` above, which stays the raw TF name feeding
+                // `render_state_for`'s time-scale formatting.
+                let split_tab_label: String = leaf_chart_id
+                    .map(|cid| self.resolution_label_for_chart(cid))
+                    .unwrap_or_default();
 
                 // Convert sub_rect to absolute LayoutRect.
                 let leaf_rect = LayoutRect {
@@ -4231,7 +4274,7 @@ impl ChartApp {
                     main_chart_y + 2.0,
                     leaf_rect.width - 4.0,
                     &split_symbol,
-                    &split_tf_name,
+                    &split_tab_label,
                     &split_exchange,
                     &split_account_type,
                     is_active_leaf,
@@ -4828,7 +4871,7 @@ impl ChartApp {
             // Render overlay tab header (single mode) — skipped while a
             // maximized sub-pane covers the container.
             if single_leaf_tab_visible {
-            if let Some((symbol, timeframe, exchange, account_type_label)) = single_window_info {
+            if let Some((symbol, _timeframe, exchange, account_type_label)) = single_window_info {
                 let single_leaf_id = self.panel_app.panel_grid.docking()
                     .active_leaf()
                     .unwrap_or(mlc_core::LeafId(0));
@@ -4838,13 +4881,19 @@ impl ChartApp {
                     mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::None
                 };
                 let single_color_tag = self.panel_app.leaf_color_tags.get(&single_leaf_id).copied();
+                // Overlay tab legend uses the resolution-aware label (see
+                // `split_tab_label` above) — distinct from the raw TF name
+                // this tuple otherwise carries.
+                let single_tab_label: String = self.panel_app.panel_grid.active_container_id()
+                    .map(|cid| self.resolution_label_for_chart(cid))
+                    .unwrap_or(_timeframe);
                 let hit_zones = mlc_app_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
                     main_chart_y_single + 2.0,
                     content_rect.width - 4.0,
                     &symbol,
-                    &timeframe,
+                    &single_tab_label,
                     &exchange,
                     &account_type_label,
                     true, // always active in single mode

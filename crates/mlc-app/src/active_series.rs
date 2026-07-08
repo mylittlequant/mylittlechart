@@ -263,6 +263,27 @@ pub fn chart_type_is_derived_seed(chart_type: &str) -> bool {
     chart_type == "cvd"
 }
 
+/// Whether `chart_type` is one of the 7 trade-aggregation bar types
+/// (range_bar/volume_bar/tick_bar/dollar_bar/tick_imbalance_bar/
+/// volume_imbalance_bar/run_bar) — the family that writes its derived
+/// series directly into `bubble.bars` while keeping `bubble.timeframe`
+/// unstamped (unlike footprint, whose `UpdateChartTypeInterval` re-stamps
+/// it; see `chart_out_events.rs`).
+///
+/// Single source of truth for the "is this window's active chart_type a
+/// trade-agg-bar" test — both `BarUpdatePassthrough`'s bars-ownership gate
+/// and `TradeUpdatePassthrough`'s kline-builder exclusion (react.rs) must
+/// agree on this set, or a trade-agg-bar window gets a second writer
+/// (raw-trade kline candles built on top of the station-derived series
+/// into the same `bubble.bars`, root cause fixed 2026-07-08). Registry-driven
+/// (`ChartTypeDef::kind == ChartTypeKind::TradeAggBar`) instead of a
+/// hand-copied string list.
+pub fn chart_type_is_trade_agg_bar(chart_type: &str) -> bool {
+    mlc_core::chart_type::by_id(chart_type)
+        .map(|def| def.kind == mlc_core::chart_type::ChartTypeKind::TradeAggBar)
+        .unwrap_or(false)
+}
+
 /// Whether `chart_type`'s scroll-left deepen must go through the OLD
 /// teardown+respawn path (`clear_slot` + `reset_derived_stamp_for_deepen` +
 /// full reseed at doubled depth) rather than the in-place prepend-fold

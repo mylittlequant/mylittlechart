@@ -35,7 +35,7 @@ uzor-render-canvas2d  = "=1.4.16"
 # uzor-render-vello-hybrid = { version = "=1.4.16", optional = true }
 # uzor-render-vello-gpu    = { version = "=1.4.16", optional = true }
 
-digdigdig3 = "=0.3.29"
+digdigdig3 = "=0.3.30"
 
 # wasm-bindgen ecosystem
 wasm-bindgen         = "0.2"

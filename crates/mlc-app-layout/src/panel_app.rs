@@ -1310,7 +1310,13 @@ fn chart_toolbar_render_inline_dropdown(
 /// Format a `ResolutionKind::Param` value for the TF button label / dropdown
 /// item text — compact, trims trailing zeros, dollar-family gets a K/M
 /// shorthand (owner spec 2026-07-08: "10R", "100T", "$100K" style).
-fn format_resolution_param(value: f64, suffix: &str) -> String {
+///
+/// `pub` (not crate-private) — the pane overlay tab legend (`mlc-app`,
+/// `render_leaf_tab` caller) reuses this SAME formatting path so a
+/// trade-agg-bar/price-action window's tab shows the live param label
+/// ("20R", "0.1V") instead of the stale `bubble.timeframe.name` (root
+/// cause fixed 2026-07-08, legend-honesty item).
+pub fn format_resolution_param(value: f64, suffix: &str) -> String {
     if suffix == "$" {
         let abs = value.abs();
         if abs >= 1_000_000.0 {
@@ -1329,7 +1335,10 @@ fn format_resolution_param(value: f64, suffix: &str) -> String {
 /// [`resolution_param_dropdown_items`]'s item labels, factored out so the
 /// TF button's pre-first-subscribe fallback (sentinel `chart_type_param <=
 /// 0.0`) renders identically to the dropdown's own first entry.
-fn format_resolution_param_label(preset_label: &str, suffix: &str) -> String {
+///
+/// `pub` — reused by the pane overlay tab legend (`mlc-app`) for the same
+/// pre-first-subscribe sentinel case.
+pub fn format_resolution_param_label(preset_label: &str, suffix: &str) -> String {
     if suffix == "$" {
         format!("${}", preset_label)
     } else {
