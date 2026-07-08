@@ -183,10 +183,10 @@ impl ChartApp {
             ChartOutEvent::ChangeTimeframe { timeframe_id } => {
                 eprintln!("[ChartApp] ChangeTimeframe: {}", timeframe_id);
                 let timeframe = match timeframe_id.as_str() {
-                    "tf_1t"    => Some(Timeframe::t1()),
-                    "tf_10t"   => Some(Timeframe::t10()),
-                    "tf_100t"  => Some(Timeframe::t100()),
-                    "tf_1000t" => Some(Timeframe::t1000()),
+                    "tf_1s"  => Some(Timeframe::s1()),
+                    "tf_5s"  => Some(Timeframe::s5()),
+                    "tf_15s" => Some(Timeframe::s15()),
+                    "tf_30s" => Some(Timeframe::s30()),
                     "tf_1m"  => Some(Timeframe::m1()),
                     "tf_3m"  => Some(Timeframe::new("3m", 3 * 60_000)),
                     "tf_5m"  => Some(Timeframe::m5()),
@@ -700,7 +700,8 @@ impl ChartApp {
                                         let skip = is_render_family(Some(ct)) && (on_tick_tf || render_only_switch);
                                         if !skip {
                                             let bar_count = self.core.user().profile().domain.bar_count as usize;
-                                            let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count);
+                                            let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+                                            let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count, tick_size);
                                             (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                         }
                                         // The CVD sub-pane companion for footprint
@@ -798,7 +799,8 @@ impl ChartApp {
                                     window.needs_snap_after_backfill = true;
                                 }
                                 if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
-                                    let params = build_subscribe_params(active_ct, value, chart_interval, bar_count);
+                                    let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+                                    let params = build_subscribe_params(active_ct, value, chart_interval, bar_count, tick_size);
                                     (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                 }
                             }
@@ -2430,7 +2432,8 @@ impl ChartApp {
                 continue;
             }
             let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-            if let Some(bid) = self.bubble_for_chart(cid) {
+            let bid = self.bubble_for_chart(cid);
+            if let Some(bid) = bid {
                 self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                     bubble.clear_derived_slots(None);
                     if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
@@ -2441,7 +2444,8 @@ impl ChartApp {
             self.core.ensure_connector(eid);
             if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
                 let bar_count = self.core.user().profile().domain.bar_count as usize;
-                let params = build_subscribe_params(ct, param, iv, bar_count);
+                let tick_size = self.resolve_tick_size(eid.as_str(), &sym, bid);
+                let params = build_subscribe_params(ct, param, iv, bar_count, tick_size);
                 (ops.subscribe)(self.core.bridge_handle(), eid, &sym, at, &tf, params);
             }
             eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);
@@ -2579,6 +2583,75 @@ impl ChartApp {
 
         self.sync_sub_panes_from_manager();
     }
+
+    /// Resolve the instrument tick size used to convert a TICKS-denominated
+    /// `chart_type_param` (range_bar/renko/pnf/kagi — owner doctrine
+    /// 2026-07-08 resolution-axes rework) into absolute price units at
+    /// subscribe time.
+    ///
+    /// Fallback chain (each step logged via `dlog!` so a wrong pick is
+    /// diagnosable):
+    /// 1. Exchange symbol catalogue (`BackendCore::exchange_symbols`) —
+    ///    authoritative venue-reported tick size, when the catalogue has
+    ///    loaded for this instrument.
+    /// 2. Recent bars on the bubble — mirrors footprint's
+    ///    `infer_tick_size` precedent (`mlc-app-layout/src/chart_render/
+    ///    footprint.rs`), but computes the actual minimum observed price
+    ///    step rather than a display-density row target (footprint's
+    ///    ladder is tuned for legible cluster rows, not real tick size).
+    /// 3. Price-magnitude heuristic: `10^(floor(log10(price)) - 4)` — a
+    ///    coarse guess (~4 significant digits of quantization) used only
+    ///    when neither of the above has any data (e.g. cold subscribe
+    ///    before the first bar ever arrived).
+    pub(crate) fn resolve_tick_size(
+        &self,
+        exchange_str: &str,
+        symbol: &str,
+        bid: Option<mlc_core::ids::BubbleId>,
+    ) -> f64 {
+        if let Some(t) = self.core.exchange_symbols().tick_size_for(exchange_str, symbol).filter(|t| *t > 0.0) {
+            crate::dlog!(
+                "[ChartApp] resolve_tick_size: {}/{} = {} (source=catalogue)",
+                exchange_str, symbol, t
+            );
+            return t;
+        }
+        if let Some(bid) = bid {
+            let bubbles = self.core.bubbles();
+            let bars = bubbles.bars(bid);
+            let mut min_step = f64::INFINITY;
+            let mut last_close: Option<f64> = None;
+            for bar in bars.iter().rev().take(200) {
+                if let Some(prev) = last_close {
+                    let step = (prev - bar.close).abs();
+                    if step > 0.0 && step < min_step {
+                        min_step = step;
+                    }
+                }
+                last_close = Some(bar.close);
+            }
+            if min_step.is_finite() && min_step > 0.0 {
+                crate::dlog!(
+                    "[ChartApp] resolve_tick_size: {}/{} = {} (source=recent_bars)",
+                    exchange_str, symbol, min_step
+                );
+                return min_step;
+            }
+            if let Some(price) = bars.last().map(|b| b.close).filter(|p| *p > 0.0) {
+                let heuristic = 10f64.powf(price.log10().floor() - 4.0);
+                crate::dlog!(
+                    "[ChartApp] resolve_tick_size: {}/{} = {} (source=price_magnitude_heuristic, price={})",
+                    exchange_str, symbol, heuristic, price
+                );
+                return heuristic;
+            }
+        }
+        crate::dlog!(
+            "[ChartApp] resolve_tick_size: {}/{} = 0.01 (source=fallback_default, no catalogue/bars available)",
+            exchange_str, symbol
+        );
+        0.01
+    }
 }
 
 /// Per-chart-type minimum-usable `bar_spacing` (px), enforced on
@@ -2609,16 +2682,28 @@ pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
 /// table expects (chart-type registry arc, Step 10). One choke point for
 /// the same per-type scaling formulas previously duplicated across
 /// `ChangeChartType`, `UpdateChartTypeParam`, and `ignite_derived_windows`.
+///
+/// `tick_size` is the resolved instrument tick size (see
+/// [`ChartApp::resolve_tick_size`]) — used ONLY by the price-quantized
+/// price-action family (range_bar/kagi/renko/pnf). Owner doctrine
+/// (2026-07-08 resolution-axes rework): `param` for those four chart types
+/// is now expressed in INSTRUMENT TICKS, not absolute price. The conversion
+/// `price_units = ticks * tick_size` happens here, at the last choke point
+/// before the value leaves the UI layer for the engine — every other
+/// chart_type's `param` is unaffected and keeps its pre-existing unit
+/// (contract count / volume / dollar notional / trade count).
 fn build_subscribe_params(
     ct: &str,
     param: f64,
     interval: &'static str,
     bar_count: usize,
+    tick_size: f64,
 ) -> mlc_backend::chart_type::SubscribeParams {
     use mlc_backend::chart_type::SubscribeParams;
     match ct {
         "range_bar" | "kagi" => {
-            let units = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { 10.0 };
+            let units = ticks * tick_size;
             SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
         }
         "volume_bar" => {
@@ -2626,11 +2711,13 @@ fn build_subscribe_params(
             SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
         }
         "renko" => {
-            let units = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { 10.0 };
+            let units = ticks * tick_size;
             SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 2 }
         }
         "pnf" => {
-            let units = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { 10.0 };
+            let units = ticks * tick_size;
             SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 3 }
         }
         "dollar_bar" => {

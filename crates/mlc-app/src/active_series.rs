@@ -421,7 +421,7 @@ pub fn chart_type_hides_timeframe_picker(chart_type: &str) -> bool {
 /// the toolbar defs) so this writer is self-contained — see
 /// [`allowed_timeframes`].
 const ALL_TF_IDS: &[&str] = &[
-    "tf_1t", "tf_10t", "tf_100t", "tf_1000t",
+    "tf_1s", "tf_5s", "tf_15s", "tf_30s",
     "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m",
     "tf_1h", "tf_2h", "tf_4h", "tf_6h", "tf_12h",
     "tf_1d", "tf_1w", "tf_1M",

@@ -51,6 +51,36 @@ impl ChartApp {
                             b.exchange = "binance".to_string();
                         }
                     }
+                    // Tick-TF removal migration (resolution-axes rework,
+                    // 2026-07-08 owner doctrine): ticks were removed from the
+                    // kline-family Time dropdown — they now live exclusively
+                    // as the `tick_bar` chart_type's own `chart_type_param`.
+                    // A preset saved before this cutover can still carry a
+                    // window `timeframe` with `TfKind::Tick { count }` (see
+                    // `mlc-core/src/state/timeframe.rs`). Map it onto
+                    // `chart_type = "tick_bar"` + `chart_type_param = count`
+                    // + a sane time-TF fallback (1m) so the window still
+                    // subscribes through the normal kline-family path after
+                    // load — mirrors the `columns`/`histogram` chart_type-id
+                    // migration precedent already handled below by
+                    // `by_id(...).unwrap_or("candles")`. `DataBubbleSnapshot`
+                    // carries a `timeframe` too but no `chart_type` field (it
+                    // stays window-resident, S1 note above) — the window loop
+                    // below is the only migration site needed; the bubble's
+                    // `timeframe` is overwritten from `snap.timeframe` during
+                    // the restore pass further down, so fixing it up here is
+                    // sufficient for both.
+                    for w in preset.windows.iter_mut() {
+                        if let Some(count) = w.timeframe.tick_count() {
+                            eprintln!(
+                                "[ChartApp] migrating legacy tick TF '{}' (window {}) -> chart_type=tick_bar param={}",
+                                w.timeframe.name, w.window_id, count,
+                            );
+                            w.chart_type = "tick_bar".to_string();
+                            w.chart_type_param = count as f64;
+                            w.timeframe = mlc_core::state::Timeframe::m1();
+                        }
+                    }
                     let prep_us = _t_prep.elapsed().as_micros();
                     eprintln!(
                         "[ChartApp] applying preset '{}' COLD path: {} windows, {} groups, {} indicators (materialized={}us autosave={}us park={}us unpark_miss={}us clone={}us)",

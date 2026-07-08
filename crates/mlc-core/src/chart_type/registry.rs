@@ -233,11 +233,12 @@ pub struct ChartTypeDef {
     pub resolution: ResolutionKind,
 }
 
-// ── TPO's TF whitelist ("all except tick") ─────────────────────────────────
+// ── TPO's TF whitelist ("minutes and up") ───────────────────────────────────
 //
-// `allowed_timeframes` (active_series.rs:486-490) computes this as
-// `ALL_TF_IDS - TICK_TF_IDS` at runtime rather than a literal. Mirrored here
-// as an explicit static list (ALL_TF_IDS minus tf_1t/tf_10t/tf_100t/tf_1000t).
+// TPO's letter-frequency bucketing expects a wall-clock minute-or-coarser
+// period — excludes the sub-minute second TFs (tf_1s/tf_5s/tf_15s/tf_30s)
+// added by the resolution-axes rework (2026-07-08), same as it excluded the
+// removed tick TFs (tf_1t/tf_10t/tf_100t/tf_1000t) before them.
 static TPO_TF_WHITELIST: &[&str] = &[
     "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m",
     "tf_1h", "tf_2h", "tf_4h", "tf_6h", "tf_12h",
@@ -248,28 +249,24 @@ static FOOTPRINT_TF_WHITELIST: &[&str] = &["tf_1m", "tf_3m", "tf_5m", "tf_15m", 
 
 // ── param_spec option tables (mirrors chart_settings.rs::chart_type_param_spec) ──
 
+// Price-quantized price-action family (range_bar/renko/pnf/kagi) shares one
+// ladder — owner doctrine 2026-07-08 resolution-axes rework: `param` for
+// these four is now denominated in INSTRUMENT TICKS (not absolute price).
+// `build_subscribe_params` (mlc-app/src/input/chart_out_events.rs) converts
+// `price_units = ticks * tick_size` at subscribe time.
 static RENKO_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "0.5", label: "0.5" },
     ChartTypeParamOption { value_id: "1", label: "1" },
     ChartTypeParamOption { value_id: "2", label: "2" },
     ChartTypeParamOption { value_id: "5", label: "5" },
     ChartTypeParamOption { value_id: "10", label: "10" },
-    ChartTypeParamOption { value_id: "25", label: "25" },
+    ChartTypeParamOption { value_id: "20", label: "20" },
     ChartTypeParamOption { value_id: "50", label: "50" },
     ChartTypeParamOption { value_id: "100", label: "100" },
 ];
 
 static PNF_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
-
-static KAGI_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "0.5", label: "0.5" },
-    ChartTypeParamOption { value_id: "1", label: "1" },
-    ChartTypeParamOption { value_id: "2", label: "2" },
-    ChartTypeParamOption { value_id: "5", label: "5" },
-    ChartTypeParamOption { value_id: "10", label: "10" },
-    ChartTypeParamOption { value_id: "25", label: "25" },
-    ChartTypeParamOption { value_id: "50", label: "50" },
-];
+static KAGI_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
+static RANGE_BAR_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
 
 static THREE_LINE_BREAK_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "2", label: "2" },
@@ -278,44 +275,49 @@ static THREE_LINE_BREAK_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "6", label: "6" },
 ];
 
-static RANGE_BAR_OPTIONS: &[ChartTypeParamOption] = &[
+static VOLUME_BAR_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "0.1", label: "0.1" },
+    ChartTypeParamOption { value_id: "0.5", label: "0.5" },
     ChartTypeParamOption { value_id: "1", label: "1" },
+    ChartTypeParamOption { value_id: "5", label: "5" },
+    ChartTypeParamOption { value_id: "10", label: "10" },
+    ChartTypeParamOption { value_id: "50", label: "50" },
+    ChartTypeParamOption { value_id: "100", label: "100" },
+    ChartTypeParamOption { value_id: "500", label: "500" },
+    ChartTypeParamOption { value_id: "1000", label: "1,000" },
+];
+
+// Labels are plain K/M-shorthand digits, no `$` — the `$` prefix is added by
+// each consumer (toolbar's `format_resolution_param_label`, settings-modal's
+// verbatim display) so the registry stays presentation-neutral. Matches the
+// TF button's own K/M shorthand for the live value (`format_resolution_param`).
+static DOLLAR_BAR_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "1000", label: "1K" },
+    ChartTypeParamOption { value_id: "10000", label: "10K" },
+    ChartTypeParamOption { value_id: "100000", label: "100K" },
+    ChartTypeParamOption { value_id: "1000000", label: "1M" },
+    ChartTypeParamOption { value_id: "10000000", label: "10M" },
+];
+
+static TICK_BAR_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "1", label: "1" },
+    ChartTypeParamOption { value_id: "2", label: "2" },
     ChartTypeParamOption { value_id: "5", label: "5" },
     ChartTypeParamOption { value_id: "10", label: "10" },
     ChartTypeParamOption { value_id: "25", label: "25" },
     ChartTypeParamOption { value_id: "50", label: "50" },
     ChartTypeParamOption { value_id: "100", label: "100" },
-];
-
-static VOLUME_BAR_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "100", label: "100" },
+    ChartTypeParamOption { value_id: "250", label: "250" },
     ChartTypeParamOption { value_id: "500", label: "500" },
     ChartTypeParamOption { value_id: "1000", label: "1,000" },
-    ChartTypeParamOption { value_id: "5000", label: "5,000" },
-    ChartTypeParamOption { value_id: "10000", label: "10,000" },
-];
-
-static DOLLAR_BAR_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "100000", label: "100,000" },
-    ChartTypeParamOption { value_id: "500000", label: "500,000" },
-    ChartTypeParamOption { value_id: "1000000", label: "1,000,000" },
-    ChartTypeParamOption { value_id: "5000000", label: "5,000,000" },
-    ChartTypeParamOption { value_id: "10000000", label: "10,000,000" },
-];
-
-static TICK_BAR_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "100", label: "100" },
-    ChartTypeParamOption { value_id: "200", label: "200" },
-    ChartTypeParamOption { value_id: "500", label: "500" },
-    ChartTypeParamOption { value_id: "1000", label: "1,000" },
-    ChartTypeParamOption { value_id: "2000", label: "2,000" },
 ];
 
 static IMBALANCE_RUN_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "10", label: "10" },
+    ChartTypeParamOption { value_id: "25", label: "25" },
     ChartTypeParamOption { value_id: "50", label: "50" },
     ChartTypeParamOption { value_id: "100", label: "100" },
-    ChartTypeParamOption { value_id: "200", label: "200" },
-    ChartTypeParamOption { value_id: "500", label: "500" },
+    ChartTypeParamOption { value_id: "250", label: "250" },
 ];
 
 static TPO_OPTIONS: &[ChartTypeParamOption] = &[
@@ -558,11 +560,11 @@ static REGISTRY: &[ChartTypeDef] = &[
         default_indicators: &[],
         param_spec: Some(ChartTypeParamSpec {
             section_title: "RANGE BARS SETTINGS",
-            row_label: "Threshold",
+            row_label: "Threshold (ticks)",
             options: RANGE_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("10.0"),
+        inline_default: Some("10"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
@@ -588,7 +590,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: VOLUME_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("1000.0"),
+        inline_default: Some("10.0"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
@@ -640,7 +642,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: DOLLAR_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("1000000"),
+        inline_default: Some("100000"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
@@ -742,11 +744,11 @@ static REGISTRY: &[ChartTypeDef] = &[
         default_indicators: &[],
         param_spec: Some(ChartTypeParamSpec {
             section_title: "RENKO SETTINGS",
-            row_label: "Box size",
+            row_label: "Box size (ticks)",
             options: RENKO_OPTIONS,
             fixed_note: Some("Reversal: 2"),
         }),
-        inline_default: Some("10.0"),
+        inline_default: Some("10"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
@@ -768,11 +770,11 @@ static REGISTRY: &[ChartTypeDef] = &[
         default_indicators: &[],
         param_spec: Some(ChartTypeParamSpec {
             section_title: "POINT & FIGURE SETTINGS",
-            row_label: "Box size",
+            row_label: "Box size (ticks)",
             options: PNF_OPTIONS,
             fixed_note: Some("Reversal: 3"),
         }),
-        inline_default: Some("10.0"),
+        inline_default: Some("10"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
@@ -794,11 +796,11 @@ static REGISTRY: &[ChartTypeDef] = &[
         default_indicators: &[],
         param_spec: Some(ChartTypeParamSpec {
             section_title: "KAGI SETTINGS",
-            row_label: "Reversal",
+            row_label: "Reversal (ticks)",
             options: KAGI_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("10.0"),
+        inline_default: Some("10"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,

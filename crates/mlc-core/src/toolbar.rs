@@ -95,10 +95,10 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
         // 2. Timeframe selector
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("timeframe_selector", vec![
-                DropdownItemDef::action("tf_1t", "1 tick"),
-                DropdownItemDef::action("tf_10t", "10 ticks"),
-                DropdownItemDef::action("tf_100t", "100 ticks"),
-                DropdownItemDef::action("tf_1000t", "1000 ticks"),
+                DropdownItemDef::action("tf_1s", "1s"),
+                DropdownItemDef::action("tf_5s", "5s"),
+                DropdownItemDef::action("tf_15s", "15s"),
+                DropdownItemDef::action("tf_30s", "30s"),
                 DropdownItemDef::action("tf_1m", "1m"),
                 DropdownItemDef::action("tf_3m", "3m"),
                 DropdownItemDef::action("tf_5m", "5m"),
@@ -204,10 +204,10 @@ pub fn top_toolbar() -> PanelToolbarDef {
         // 3. Timeframe selector
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("timeframe_selector", vec![
-                DropdownItemDef::action("tf_1t", "1 tick"),
-                DropdownItemDef::action("tf_10t", "10 ticks"),
-                DropdownItemDef::action("tf_100t", "100 ticks"),
-                DropdownItemDef::action("tf_1000t", "1000 ticks"),
+                DropdownItemDef::action("tf_1s", "1s"),
+                DropdownItemDef::action("tf_5s", "5s"),
+                DropdownItemDef::action("tf_15s", "15s"),
+                DropdownItemDef::action("tf_30s", "30s"),
                 DropdownItemDef::action("tf_1m", "1m"),
                 DropdownItemDef::action("tf_3m", "3m"),
                 DropdownItemDef::action("tf_5m", "5m"),
