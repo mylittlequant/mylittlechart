@@ -1420,6 +1420,66 @@ impl ChartApp {
         )
     }
 
+    /// `timeframe_selector` per-item native-availability marks for the
+    /// ACTIVE window's (exchange, account_type) — resolution-availability-
+    /// 2026-07-08 Phase 3. Maps every `tf_*` dropdown item id to whether
+    /// THIS venue natively serves that kline interval
+    /// (`KlineIntervalCapabilities::supports`, via `BackendCore::
+    /// kline_interval_native`). `false` does not mean the interval is
+    /// unusable — the station still builds it live from trade aggregation
+    /// (`TradeToBarDerived`) — it means there is no REST-backed history for
+    /// it, which the dropdown marks as "(no history)" (client-only doctrine:
+    /// never imply history that doesn't exist).
+    ///
+    /// Computed fresh every frame (RAM-only, same discipline as
+    /// `chart_type_data_modes`/`allowed_timeframes`). `None` when there is
+    /// no active window, or the venue's kline-interval capability isn't
+    /// known yet (exchange not connected) — dropdown renders with no marks
+    /// either way.
+    pub fn timeframe_native_map(
+        &self,
+    ) -> Option<std::collections::HashMap<&'static str, bool>> {
+        let cid = self.panel_app.panel_grid.active_container_id()?;
+        let account_type = self.account_type_for_chart(cid).unwrap_or_default();
+        let exchange_id = self.exchange_for_chart(cid)
+            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
+            .unwrap_or(self.active_exchange);
+        let mut map = std::collections::HashMap::new();
+        for &tf_id in crate::active_series::ALL_TF_IDS {
+            let Some(interval) = crate::active_series::tf_id_to_dig3_interval(tf_id) else {
+                continue;
+            };
+            let Some(native) = self.core.kline_interval_native(&interval, exchange_id, account_type) else {
+                // Capability unknown for at least one id — bail on the whole
+                // map rather than mixing known/unknown marks for one venue.
+                return None;
+            };
+            map.insert(tf_id, native);
+        }
+        Some(map)
+    }
+
+    /// Whether the footprint bucket dropdown (`ResolutionKind::Interval`)
+    /// should mark every item "live only" for the ACTIVE window's (exchange,
+    /// account_type) — true exactly when the venue's trade-history
+    /// capability is the `RecentOnly` tier, mirroring `mlc_backend::
+    /// chart_type::is_footprint_hybrid` (the same capability check that
+    /// drives footprint's kline-backdrop hybrid subscribe path). `false`
+    /// when there is no active window or the capability isn't known yet
+    /// (exchange not connected) — safer default, matches
+    /// `is_footprint_hybrid`'s own `None`-is-not-hybrid contract.
+    pub fn footprint_live_only(&self) -> bool {
+        let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
+            return false;
+        };
+        let account_type = self.account_type_for_chart(cid).unwrap_or_default();
+        let exchange_id = self.exchange_for_chart(cid)
+            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
+            .unwrap_or(self.active_exchange);
+        let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+        mlc_backend::chart_type::is_footprint_hybrid(self.core.bridge_handle(), exchange_id, at)
+    }
+
     /// Audit D8 (chart-types-xaxis-audit §3 items c/e): the `Vec<Bar>`
     /// timestamp shadow `ChartRenderState.bars` should carry for THIS
     /// chart's chart_type, for time-scale labels + drawings ts→x. `None`
@@ -5080,6 +5140,8 @@ impl ChartApp {
                 }).unwrap_or(None)
             };
             let chart_type_data_modes = self.chart_type_data_modes();
+            let timeframe_native_map = self.timeframe_native_map();
+            let footprint_live_only = self.footprint_live_only();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5096,6 +5158,8 @@ impl ChartApp {
                 active_ct_str,
                 active_ct_param,
                 chart_type_data_modes.as_ref(),
+                timeframe_native_map.as_ref(),
+                footprint_live_only,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -5793,6 +5857,8 @@ impl ChartApp {
             crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms)
         }).unwrap_or(None);
         let chart_type_data_modes = self.chart_type_data_modes();
+        let timeframe_native_map = self.timeframe_native_map();
+        let footprint_live_only = self.footprint_live_only();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -5809,6 +5875,8 @@ impl ChartApp {
             active_ct_str,
             active_ct_param,
             chart_type_data_modes.as_ref(),
+            timeframe_native_map.as_ref(),
+            footprint_live_only,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);

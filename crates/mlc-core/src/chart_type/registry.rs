@@ -208,7 +208,7 @@ pub struct ChartTypeDef {
     pub hides_time_grid: bool,
     pub hides_tf_picker: bool,
     /// None = no chart-type-specific TF gate (fall back to ALL_TF_IDS or hides_tf_picker=true).
-    /// Some(slice) = explicit whitelist. Only footprint (6 TFs) and tpo (all-except-tick) use this.
+    /// Some(slice) = explicit whitelist. Only footprint (9 TFs, 5s..1h) and tpo (all-except-tick) use this.
     pub tf_whitelist: Option<&'static [&'static str]>,
     pub min_bar_spacing: Option<f64>,
     pub default_indicators: &'static [&'static str],
@@ -245,7 +245,10 @@ static TPO_TF_WHITELIST: &[&str] = &[
     "tf_1d", "tf_1w", "tf_1M",
 ];
 
-static FOOTPRINT_TF_WHITELIST: &[&str] = &["tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m", "tf_1h"];
+static FOOTPRINT_TF_WHITELIST: &[&str] = &[
+    "tf_5s", "tf_15s", "tf_30s",
+    "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m", "tf_1h",
+];
 
 // ── param_spec option tables (mirrors chart_settings.rs::chart_type_param_spec) ──
 
@@ -982,7 +985,10 @@ mod tests {
         let d = by_id("footprint").unwrap();
         assert_eq!(
             d.tf_whitelist,
-            Some(&["tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m", "tf_1h"][..])
+            Some(&[
+                "tf_5s", "tf_15s", "tf_30s",
+                "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m", "tf_1h",
+            ][..])
         );
     }
 

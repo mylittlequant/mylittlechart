@@ -315,6 +315,18 @@ pub fn floating_inline_update_drag(
 /// tick-driven bars, ranges for range-driven bars, etc). `None` when the
 /// active chart_type's [`mlc_core::chart_type::ResolutionKind`] is not
 /// `Param` (the button falls back to the TF-name label in that case).
+///
+/// `timeframe_native_map` marks `timeframe_selector` items (`ResolutionKind::
+/// Time`) that are NOT natively served by the active venue with a
+/// "(no history)" subtitle — writer: `ChartApp::timeframe_native_map`,
+/// resolution-availability-2026-07-08 Phase 3. A missing/`None` map means no
+/// marker — items stay fully clickable either way (same transparency-only
+/// contract as `chart_type_data_modes`; the station still builds a
+/// non-native interval live via trade aggregation, it just has no history).
+///
+/// `footprint_live_only` marks every footprint bucket item (`ResolutionKind::
+/// Interval`) "live only" when the active venue's trade-history capability
+/// is the `RecentOnly` tier — writer: `ChartApp::footprint_live_only`.
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -338,6 +350,8 @@ pub fn chart_toolbar_render_toolbars(
     active_chart_type: Option<&str>,
     active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
+    timeframe_native_map: Option<&std::collections::HashMap<&'static str, bool>>,
+    footprint_live_only: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -829,7 +843,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only)
         } else {
             None
         };
@@ -898,6 +912,8 @@ fn chart_toolbar_render_dropdown(
     active_chart_type: Option<&str>,
     active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
+    timeframe_native_map: Option<&std::collections::HashMap<&'static str, bool>>,
+    footprint_live_only: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -937,7 +953,7 @@ fn chart_toolbar_render_dropdown(
 
         // 3. Convert DropdownItemDef -> DropdownItem
         let active_preset_load_id = format!("preset_load:{}", active_preset_id);
-        let dropdown_items: Vec<DropdownItem> = items.iter().map(|item| {
+        let dropdown_items: Vec<DropdownItem> = items.iter().filter_map(|item| {
             let mut di = convert_dropdown_item(item);
             if dropdown_id == "presets_menu" {
                 if let DropdownItem::Item { ref id, ref mut accent_color, ref mut toggle, ref mut disabled, .. } = di {
@@ -978,7 +994,7 @@ fn chart_toolbar_render_dropdown(
                 }
             }
             if dropdown_id == "timeframe_selector" {
-                if let DropdownItem::Item { ref id, ref mut disabled, ref mut accent_color, .. } = di {
+                if let DropdownItem::Item { ref id, ref mut disabled, ref mut accent_color, ref mut subtitle, .. } = di {
                     if let Some(value_id) = id.strip_prefix(RESOLUTION_PARAM_ITEM_PREFIX) {
                         // `ResolutionKind::Param` dropdown (owner doctrine
                         // 2026-07-08): items are real presets now, not a
@@ -996,18 +1012,55 @@ fn chart_toolbar_render_dropdown(
                             *accent_color = Some("#2962ff".to_string());
                         }
                     } else {
-                        // Depth-gating (audit D8 follow-up, 2026-07-04): a TF not
-                        // in the allowed set has insufficient backfilled depth —
-                        // disable it rather than remove it, so the full TF list
-                        // stays visible/discoverable (only reachability changes).
+                        // Whitelist filtering (2026-07-08 hide-not-blur): a
+                        // chart_type with an explicit `tf_whitelist`
+                        // (footprint/tpo) OMITS non-whitelisted TF items from
+                        // the dropdown entirely, rather than rendering them
+                        // disabled/greyed. `tf_whitelist: None` types resolve
+                        // to `Some(ALL_TF_IDS)` here, which contains every id
+                        // — the omission check below is a no-op for them and
+                        // the full list still renders.
+                        //
                         // `None` = TF picker is not applicable at all for the
-                        // active chart_type (TF-inert families) — disable EVERY
-                        // TF item; the button itself stays visible so its
-                        // toolbar position stays stable across chart-type switches.
+                        // active chart_type (TF-inert families, `hides_tf_picker`)
+                        // — keep disabling EVERY TF item; the button itself
+                        // stays visible so its toolbar position stays stable
+                        // across chart-type switches. This is a different
+                        // mechanism than whitelist filtering and is unaffected.
                         match allowed_timeframes {
                             None => *disabled = true,
-                            Some(allowed) if !allowed.contains(id.as_str()) => *disabled = true,
+                            Some(allowed) if !allowed.contains(id.as_str()) => return None,
                             _ => {}
+                        }
+
+                        // Availability marking (resolution-availability-
+                        // 2026-07-08 Phase 3): transparency-only, same
+                        // contract as `chart_type_selector` below — items
+                        // stay fully clickable, `disabled` is never touched
+                        // here (a non-native/live-only interval is still
+                        // buildable live, just carries no REST history).
+                        //
+                        // `footprint_live_only` (RecentOnly trade-history
+                        // tier) takes priority over the per-interval native
+                        // map for `ResolutionKind::Interval` (footprint):
+                        // footprint's bucket is derived from live trades
+                        // regardless of interval, so EVERY bucket is
+                        // live-only on a RecentOnly venue, not just the
+                        // non-native ones.
+                        let is_footprint_interval = active_chart_type
+                            .and_then(mlc_core::chart_type::by_id)
+                            .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval))
+                            .unwrap_or(false);
+                        if is_footprint_interval {
+                            if footprint_live_only {
+                                *subtitle = Some("live only".to_string());
+                                *accent_color = Some("#ef5350".to_string());
+                            }
+                        } else if let Some(native_map) = timeframe_native_map {
+                            if native_map.get(id.as_str()) == Some(&false) {
+                                *subtitle = Some("(no history)".to_string());
+                                *accent_color = Some("#ffa726".to_string());
+                            }
                         }
                     }
                 }
@@ -1034,7 +1087,7 @@ fn chart_toolbar_render_dropdown(
                     }
                 }
             }
-            di
+            Some(di)
         }).collect();
 
         if dropdown_items.is_empty() {

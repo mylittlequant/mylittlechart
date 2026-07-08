@@ -2617,6 +2617,30 @@ impl BackendCore {
         }
     }
 
+    /// Whether `interval` (canonical dig3 form — `"1m"`, `"1h"`, `"1M"`, see
+    /// `mlc_app::active_series::tf_id_to_dig3_interval` for the id→canonical
+    /// mapping) is natively served by `(exchange_id, account_type)`'s kline
+    /// WS/REST — `None` when the exchange isn't connected yet (capability
+    /// unknown; caller renders no marker rather than a wrong one).
+    ///
+    /// Consumed by the TF/bucket dropdown's per-item "(no history)" marking
+    /// (`mlc-app::ChartApp::timeframe_native_map`,
+    /// `nemo/docs/mlc/plans/resolution-availability-2026-07-08.md` Phase 3):
+    /// a non-native interval is still selectable (the station falls back to
+    /// live trade aggregation, `TradeToBarDerived`) but carries no REST
+    /// backfill — client-only doctrine forbids claiming history that doesn't
+    /// exist.
+    pub fn kline_interval_native(
+        &self,
+        interval: &str,
+        exchange_id: ExchangeId,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> Option<bool> {
+        let caps = self.bridge.kline_interval_capabilities(exchange_id)?;
+        let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+        Some(caps.supports(interval, dig3_at))
+    }
+
     /// Subscribe to the live trade stream for an instrument, returning the
     /// station's shared trade series handle for direct reads (trade tape,
     /// big-trades, volume-profile panels).

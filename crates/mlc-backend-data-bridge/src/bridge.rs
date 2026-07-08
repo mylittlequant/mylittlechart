@@ -1271,6 +1271,22 @@ impl DataBridge {
         self.hub.trade_history_capabilities(exchange_id)
     }
 
+    /// Native kline-interval capability for `exchange_id`, per account type.
+    ///
+    /// Thin wrapper over `ExchangeHub::kline_interval_capabilities` — `None`
+    /// if the exchange isn't connected yet (mirrors the hub's own `None`
+    /// contract). Consumed by the TF dropdown per-item availability marking
+    /// (`mlc-app::ChartApp::timeframe_data_modes`) to distinguish natively-
+    /// served intervals from ones only reachable via live trade aggregation
+    /// (`TradeToBarDerived`, no REST history) — see
+    /// `nemo/docs/mlc/plans/resolution-availability-2026-07-08.md` Phase 3.
+    pub fn kline_interval_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+    ) -> Option<digdigdig3::core::types::KlineIntervalCapabilities> {
+        self.hub.kline_interval_capabilities(exchange_id)
+    }
+
     /// Record the oldest bar timestamp seen for a given key.
     ///
     /// Only updates the stored value when `ts` is strictly older (smaller) than

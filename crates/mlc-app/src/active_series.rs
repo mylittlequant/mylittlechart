@@ -420,7 +420,7 @@ pub fn chart_type_hides_timeframe_picker(chart_type: &str) -> bool {
 /// / `top_toolbar`). Kept as an independent literal here (not read back from
 /// the toolbar defs) so this writer is self-contained — see
 /// [`allowed_timeframes`].
-const ALL_TF_IDS: &[&str] = &[
+pub(crate) const ALL_TF_IDS: &[&str] = &[
     "tf_1s", "tf_5s", "tf_15s", "tf_30s",
     "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m",
     "tf_1h", "tf_2h", "tf_4h", "tf_6h", "tf_12h",
@@ -459,5 +459,34 @@ pub fn allowed_timeframes(
     match def.tf_whitelist {
         Some(slice) => Some(slice.iter().copied().collect()),
         None => Some(ALL_TF_IDS.iter().copied().collect()),
+    }
+}
+
+/// Convert a `timeframe_selector` dropdown item id (`"tf_1h"`, `"tf_1M"`,
+/// `"tf_5s"`, ...) to the canonical dig3 kline-interval string
+/// (`"1h"`, `"1M"`, `"5s"`, ...) consumed by
+/// `KlineIntervalCapabilities::supports` (resolution-availability-2026-07-08
+/// Phase 3).
+///
+/// Mirrors `mlc_backend_data_bridge::convert::interval_label`'s case rule
+/// (chart uses uppercase for hours+, exchanges/dig3 use lowercase — EXCEPT
+/// month, which stays `"1M"` on both sides; that is the one case-sensitive
+/// pair, `"1M"` month vs `"1m"` minute) but starts from the dropdown item id
+/// (`tf_` prefix, already-lowercase minutes/seconds, already-uppercase-only-
+/// for-month) rather than a `Timeframe.name`. Returns `None` for an id that
+/// doesn't match the `tf_` prefix convention (defensive — every real
+/// `timeframe_selector` item id is `tf_*`).
+pub fn tf_id_to_dig3_interval(tf_id: &str) -> Option<String> {
+    let suffix = tf_id.strip_prefix("tf_")?;
+    if suffix.ends_with('M') {
+        // Month — canonical form is already uppercase-M on both sides.
+        Some(suffix.to_string())
+    } else {
+        // Everything else (seconds/minutes/hours/days/weeks) is lowercase
+        // on the wire; dropdown ids already carry lowercase suffixes for
+        // every one of these (`tf_1h`, `tf_1d`, `tf_1w`, ...) so this is a
+        // no-op today, but normalizing defensively keeps the mapping
+        // correct if an uppercase id variant is ever added.
+        Some(suffix.to_lowercase())
     }
 }

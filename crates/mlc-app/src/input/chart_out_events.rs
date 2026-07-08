@@ -250,82 +250,115 @@ impl ChartApp {
                     // Phase 4 S2.2: capture chart_id BEFORE mutating block.
                     // Phase 4 S2.7.1c: reads via branch_meta (B1 flip).
                     let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                    // Capture previous timeframe and active leaf BEFORE changing.
-                    let previous_timeframe = active_chart_id
-                        .and_then(|cid| self.timeframe_for_chart(cid));
-                    let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                    // Extract whether timeframe actually changed before mutating.
-                    // prev_tf_opt: Some(prev) means there was a window; None means no window.
-                    let prev_tf_opt = previous_timeframe;
-                    let tf_changed = match prev_tf_opt {
-                        Some(ref prev_tf) if *prev_tf != tf => {
-                            self.push_undo_command(mlc_core::Command::ChangeTimeframe {
-                                previous_timeframe: prev_tf.clone(),
-                                new_timeframe: tf.clone(),
-                            });
-                            eprintln!("[ChartApp] Recorded ChangeTimeframe {} -> {}", prev_tf.name, tf.name);
-                            true
+                    // `ResolutionKind::Interval` chart_types (footprint today)
+                    // surface the SAME `timeframe_selector` dropdown as
+                    // `Time` types (owner doctrine 2026-07-08 — "the TF
+                    // button IS the resolution picker"), but a bucket-
+                    // interval change is not a plain kline TF switch: it must
+                    // re-subscribe the footprint stream (`request_footprint`)
+                    // and stamp `chart_type_interval`, not fetch klines at
+                    // the clicked TF. Route through the same helper the
+                    // toolbar's inline text field uses
+                    // (`apply_footprint_interval`) instead of falling into
+                    // the generic kline/tick branch below — that branch has
+                    // never known about footprint and previously left a
+                    // dropdown-clicked bucket interval (e.g. 15s) applied
+                    // only to the label, not the live subscription.
+                    let is_interval_resolution = active_chart_id
+                        .and_then(|cid| self.chart_type_for_chart(cid))
+                        .and_then(mlc_core::chart_type::by_id)
+                        .is_some_and(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval));
+                    if is_interval_resolution {
+                        // `tf` was resolved from a `tf_whitelist`-gated
+                        // dropdown id (footprint's whitelist and
+                        // `footprint_interval_static`'s table are kept in
+                        // sync — see `mlc-core::chart_type::registry`'s
+                        // `FOOTPRINT_TF_WHITELIST`), so this always resolves
+                        // in practice; `None` degrades to a no-op rather
+                        // than panicking on a future whitelist/table drift.
+                        if let Some(static_iv) = Self::footprint_interval_static(&tf.name) {
+                            self.apply_footprint_interval(static_iv, tf.interval_ms);
+                            self.sidebar_data_dirty = true;
+                            state_mutated = true;
                         }
-                        Some(_) => false,
-                        None => true,
-                    };
-                    // Set timeframe, clear bars, and request new data asynchronously.
-                    // (change_timeframe tries a sync cache lookup which fails for live data.)
-                    let symbol = active_chart_id
-                        .and_then(|cid| self.symbol_for_chart(cid))
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let at_tf: mlc_core::instrument::AccountType = active_chart_id
-                        .and_then(|cid| self.account_type_for_chart(cid))
-                        .unwrap_or_default();
-                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        // Mark a fresh load so a stray TradeUpdate can't synthesize a
-                        // bar before BarsLoaded arrives (which would strand view_start
-                        // at 0 = oldest bar at the left edge).
-                        window.begin_fresh_load();
-                        // Snap to right edge once first batch lands — without this
-                        // the last bar sits at view_start=0 (left edge) after TF switch.
-                        window.needs_snap_after_backfill = true;
-                    }
-                    if let Some(chart_id) = active_chart_id {
-                        if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
-                            self.core.bubbles_mut().set_timeframe(bid, tf.clone());
+                    } else {
+                        // Capture previous timeframe and active leaf BEFORE changing.
+                        let previous_timeframe = active_chart_id
+                            .and_then(|cid| self.timeframe_for_chart(cid));
+                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+                        // Extract whether timeframe actually changed before mutating.
+                        // prev_tf_opt: Some(prev) means there was a window; None means no window.
+                        let prev_tf_opt = previous_timeframe;
+                        let tf_changed = match prev_tf_opt {
+                            Some(ref prev_tf) if *prev_tf != tf => {
+                                self.push_undo_command(mlc_core::Command::ChangeTimeframe {
+                                    previous_timeframe: prev_tf.clone(),
+                                    new_timeframe: tf.clone(),
+                                });
+                                eprintln!("[ChartApp] Recorded ChangeTimeframe {} -> {}", prev_tf.name, tf.name);
+                                true
+                            }
+                            Some(_) => false,
+                            None => true,
+                        };
+                        // Set timeframe, clear bars, and request new data asynchronously.
+                        // (change_timeframe tries a sync cache lookup which fails for live data.)
+                        let symbol = active_chart_id
+                            .and_then(|cid| self.symbol_for_chart(cid))
+                            .map(String::from)
+                            .unwrap_or_default();
+                        let at_tf: mlc_core::instrument::AccountType = active_chart_id
+                            .and_then(|cid| self.account_type_for_chart(cid))
+                            .unwrap_or_default();
+                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                            // Mark a fresh load so a stray TradeUpdate can't synthesize a
+                            // bar before BarsLoaded arrives (which would strand view_start
+                            // at 0 = oldest bar at the left edge).
+                            window.begin_fresh_load();
+                            // Snap to right edge once first batch lands — without this
+                            // the last bar sits at view_start=0 (left edge) after TF switch.
+                            window.needs_snap_after_backfill = true;
                         }
-                    }
-                    // Fetch data for the new timeframe. A tick TF subscribes to the
-                    // dig3 TickBar stream (N trades/bar); a time TF fetches klines.
-                    // Either way switch ABORTS any prior tick subscription so a
-                    // stale tick forwarder can't keep feeding the window.
-                    if !symbol.is_empty() {
-                        let eid_str = self.active_exchange.as_str();
-                        if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                            eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
-                        } else {
-                            let at = mlc_backend_data_bridge::account_type_to_dig3(at_tf);
-                            // Drop the OLD time-TF kline forwarder so it stops piping
-                            // 1h BarUpdates to the broadcast after the user switched
-                            // to 1m. abort_kline_bars is a no-op for tick TFs (the
-                            // prior tick subscription is owned by abort_tick_bars).
-                            if let Some(ref prev_tf) = prev_tf_opt {
-                                if prev_tf.tick_count().is_none() {
-                                    self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                        if let Some(chart_id) = active_chart_id {
+                            if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
+                                self.core.bubbles_mut().set_timeframe(bid, tf.clone());
+                            }
+                        }
+                        // Fetch data for the new timeframe. A tick TF subscribes to the
+                        // dig3 TickBar stream (N trades/bar); a time TF fetches klines.
+                        // Either way switch ABORTS any prior tick subscription so a
+                        // stale tick forwarder can't keep feeding the window.
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                                eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
+                            } else {
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at_tf);
+                                // Drop the OLD time-TF kline forwarder so it stops piping
+                                // 1h BarUpdates to the broadcast after the user switched
+                                // to 1m. abort_kline_bars is a no-op for tick TFs (the
+                                // prior tick subscription is owned by abort_tick_bars).
+                                if let Some(ref prev_tf) = prev_tf_opt {
+                                    if prev_tf.tick_count().is_none() {
+                                        self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                                    }
+                                }
+                                if let Some(count) = tf.tick_count() {
+                                    self.core.request_tick_bars(self.active_exchange, &symbol, at, count);
+                                } else {
+                                    self.core.abort_tick_bars(self.active_exchange, &symbol, at);
+                                    self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
                                 }
                             }
-                            if let Some(count) = tf.tick_count() {
-                                self.core.request_tick_bars(self.active_exchange, &symbol, at, count);
-                            } else {
-                                self.core.abort_tick_bars(self.active_exchange, &symbol, at);
-                                self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
+                        }
+                        // Propagate new timeframe to all leaves in the same sync group.
+                        if tf_changed {
+                            if let Some(leaf) = active_leaf {
+                                self.propagate_timeframe_to_sync_group(leaf, tf);
                             }
+                            self.sidebar_data_dirty = true;
+                            state_mutated = true;
                         }
-                    }
-                    // Propagate new timeframe to all leaves in the same sync group.
-                    if tf_changed {
-                        if let Some(leaf) = active_leaf {
-                            self.propagate_timeframe_to_sync_group(leaf, tf);
-                        }
-                        self.sidebar_data_dirty = true;
-                        state_mutated = true;
                     }
                 }
             }
@@ -813,99 +846,28 @@ impl ChartApp {
 
             ChartOutEvent::UpdateChartTypeInterval { interval } => {
                 eprintln!("[ChartApp] UpdateChartTypeInterval: {}", interval);
-                let static_iv: &'static str = match interval.trim() {
-                    "1m"  => "1m",
-                    "5m"  => "5m",
-                    "15m" => "15m",
-                    "30m" => "30m",
-                    "1h"  => "1h",
-                    "4h"  => "4h",
-                    _ => {
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        return;
-                    }
+                // Free-text inline field (footprint's toolbar text input) —
+                // only wall-clock-minute-and-up values are accepted here;
+                // the dropdown path (`ChangeTimeframe`, whitelist-gated by
+                // `tf_whitelist`) reuses `apply_footprint_interval` directly
+                // with an already-validated interval/ms pair, including the
+                // sub-minute (5s/15s/30s) buckets this text field rejects.
+                let Some(static_iv) = Self::footprint_interval_static(interval.trim())
+                    .filter(|iv| !matches!(*iv, "5s" | "15s" | "30s"))
+                else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
                 };
-                let active_cid = self.panel_app.panel_grid.active_container_id();
-                if let Some(bid) = active_cid.and_then(|cid| self.bubble_for_chart(cid)) {
-                    self.core.bubbles_mut().set_chart_type_interval(bid, static_iv);
-                }
-                if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
-                    let cid = active_leaf.id;
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
-                            if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                // Bucket-interval change re-subscribes on the SAME
-                                // chart_type — ChangeChartType's clear never fires
-                                // (same class of bug as the D9 param-change fix).
-                                // Old-interval clusters and bars are semantically
-                                // incompatible with the new bucket timeline: clear
-                                // both slots and re-stamp the bubble TF before the
-                                // re-subscribe repopulates from scratch.
-                                //
-                                // Hybrid (hybrid-data-modes-plan-2026-07-08, Step
-                                // 3): on a RecentOnly venue `bubble.bars` is the
-                                // kline backdrop, not footprint's own OHLC mirror
-                                // — clearing it here would blank the backdrop for
-                                // no reason (the kline sub keeps running under a
-                                // bucket-interval change same as any other TF
-                                // change) and flipping `bars_source` away from
-                                // `Kline` would make the FootprintUpdate mirror-
-                                // write guard start writing into it, creating a
-                                // second writer. Only `footprint_bars` needs a
-                                // reset (old-interval clusters are foreign to the
-                                // new bucket grid); the kline backdrop is
-                                // re-requested fresh at the new interval below so
-                                // it stays aligned to the bucket grid.
-                                let iv_ms = match static_iv {
-                                    "1m" => 60_000, "5m" => 300_000, "15m" => 900_000,
-                                    "30m" => 1_800_000, "1h" => 3_600_000, "4h" => 14_400_000,
-                                    _ => 60_000,
-                                };
-                                let fp_hybrid_backdrop = mlc_backend::chart_type::is_footprint_hybrid(
-                                    self.core.bridge_handle(), self.active_exchange, at,
-                                );
-                                // Old backdrop TF name — in hybrid mode the kline
-                                // backdrop always rides the PREVIOUS bucket
-                                // interval (Step 3 invariant: backdrop TF ==
-                                // footprint interval), so this is the exact key
-                                // `abort_kline_bars` needs. Captured before
-                                // `set_timeframe` overwrites the bubble's label.
-                                let old_tf_name = self.timeframe_for_chart(cid).map(|tf| tf.name.clone());
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                        bubble.clear_footprint();
-                                        mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
-                                    });
-                                    self.core.bubbles_mut().set_timeframe(
-                                        bid, mlc_core::state::Timeframe::new(static_iv, iv_ms),
-                                    );
-                                }
-                                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                    window.begin_fresh_load();
-                                    window.needs_snap_after_backfill = true;
-                                }
-                                if fp_hybrid_backdrop {
-                                    if let Some(old_tf_name) = old_tf_name {
-                                        self.core.bridge_handle().abort_kline_bars(
-                                            self.active_exchange, &symbol, at, &old_tf_name,
-                                        );
-                                    }
-                                    let bar_count = self.core.user().profile().domain.bar_count as usize;
-                                    let backdrop_tf = mlc_core::state::Timeframe::new(static_iv, iv_ms);
-                                    self.core.bridge_handle().request_bars(
-                                        self.active_exchange, &symbol, &backdrop_tf, at,
-                                        None, Some(bar_count), true,
-                                    );
-                                }
-                                self.core.bridge_handle().request_footprint(self.active_exchange, &symbol, at, static_iv);
-                            }
-                        }
-                    }
-                }
+                let iv_ms: i64 = match static_iv {
+                    "1m"  => 60_000,
+                    "5m"  => 300_000,
+                    "15m" => 900_000,
+                    "30m" => 1_800_000,
+                    "1h"  => 3_600_000,
+                    "4h"  => 14_400_000,
+                    _ => 60_000,
+                };
+                self.apply_footprint_interval(static_iv, iv_ms);
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 state_mutated = true;
             }
@@ -2389,6 +2351,117 @@ impl ChartApp {
         if state_mutated {
             self.autosave_snapshot();
         }
+    }
+
+    /// Canonical `&'static str` form of a footprint bucket-interval label,
+    /// covering every value reachable from either interval-change entry
+    /// point: the toolbar's free-text field (minute-and-up) and the TF
+    /// dropdown (whitelist-gated by `tf_whitelist`, includes 5s/15s/30s).
+    /// `set_chart_type_interval`/`request_footprint` key off this stable
+    /// string, not the caller's owned `String`/`Timeframe::name`.
+    fn footprint_interval_static(interval: &str) -> Option<&'static str> {
+        match interval {
+            "5s"  => Some("5s"),
+            "15s" => Some("15s"),
+            "30s" => Some("30s"),
+            "1m"  => Some("1m"),
+            "3m"  => Some("3m"),
+            "5m"  => Some("5m"),
+            "15m" => Some("15m"),
+            "30m" => Some("30m"),
+            "1h"  => Some("1h"),
+            "4h"  => Some("4h"),
+            _ => None,
+        }
+    }
+
+    /// Apply a new footprint bucket interval to the active window — re-stamps
+    /// `bubble.timeframe` to `(interval, interval_ms)` and re-subscribes the
+    /// footprint stream at the new bucket size.
+    ///
+    /// Shared by both footprint interval-change entry points: the toolbar
+    /// inline text field (`UpdateChartTypeInterval`, minute-and-up only) and
+    /// the TF dropdown (`ChangeTimeframe`, whitelist-gated by
+    /// `tf_whitelist` — includes 5s/15s/30s). The caller is responsible for
+    /// validating `interval`/`interval_ms` before calling (via
+    /// `footprint_interval_static`); this method does not re-derive
+    /// `interval_ms` from a hardcoded table, so any interval string the
+    /// caller already resolved a duration for (including sub-minute
+    /// buckets) survives unclamped into the dig3 subscribe call —
+    /// `interval_to_ms` on the station side already parses "5s"-style
+    /// strings.
+    fn apply_footprint_interval(&mut self, interval: &'static str, interval_ms: i64) {
+        let active_cid = self.panel_app.panel_grid.active_container_id();
+        if let Some(bid) = active_cid.and_then(|cid| self.bubble_for_chart(cid)) {
+            self.core.bubbles_mut().set_chart_type_interval(bid, interval);
+        }
+        let Some(active_leaf) = self.panel_app.panel_grid.active_container() else { return };
+        let cid = active_leaf.id;
+        let symbol_opt = self.symbol_for_chart(cid);
+        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+        let (Some(symbol), Some(at)) = (symbol_opt, at_opt) else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let eid_str = self.active_exchange.as_str();
+        if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+            return;
+        }
+        let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+        // Bucket-interval change re-subscribes on the SAME chart_type —
+        // ChangeChartType's clear never fires (same class of bug as the D9
+        // param-change fix). Old-interval clusters and bars are semantically
+        // incompatible with the new bucket timeline: clear both slots and
+        // re-stamp the bubble TF before the re-subscribe repopulates from
+        // scratch.
+        //
+        // Hybrid (hybrid-data-modes-plan-2026-07-08, Step 3): on a
+        // RecentOnly venue `bubble.bars` is the kline backdrop, not
+        // footprint's own OHLC mirror — clearing it here would blank the
+        // backdrop for no reason (the kline sub keeps running under a
+        // bucket-interval change same as any other TF change) and flipping
+        // `bars_source` away from `Kline` would make the FootprintUpdate
+        // mirror-write guard start writing into it, creating a second
+        // writer. Only `footprint_bars` needs a reset (old-interval clusters
+        // are foreign to the new bucket grid); the kline backdrop is
+        // re-requested fresh at the new interval below so it stays aligned
+        // to the bucket grid.
+        let fp_hybrid_backdrop = mlc_backend::chart_type::is_footprint_hybrid(
+            self.core.bridge_handle(), self.active_exchange, at,
+        );
+        // Old backdrop TF name — in hybrid mode the kline backdrop always
+        // rides the PREVIOUS bucket interval (Step 3 invariant: backdrop TF
+        // == footprint interval), so this is the exact key `abort_kline_bars`
+        // needs. Captured before `set_timeframe` overwrites the bubble's
+        // label.
+        let old_tf_name = self.timeframe_for_chart(cid).map(|tf| tf.name.clone());
+        if let Some(bid) = self.bubble_for_chart(cid) {
+            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                bubble.clear_footprint();
+                mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
+            });
+            self.core.bubbles_mut().set_timeframe(
+                bid, mlc_core::state::Timeframe::new(interval, interval_ms),
+            );
+        }
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            window.begin_fresh_load();
+            window.needs_snap_after_backfill = true;
+        }
+        if fp_hybrid_backdrop {
+            if let Some(old_tf_name) = old_tf_name {
+                self.core.bridge_handle().abort_kline_bars(
+                    self.active_exchange, &symbol, at, &old_tf_name,
+                );
+            }
+            let bar_count = self.core.user().profile().domain.bar_count as usize;
+            let backdrop_tf = mlc_core::state::Timeframe::new(interval, interval_ms);
+            self.core.bridge_handle().request_bars(
+                self.active_exchange, &symbol, &backdrop_tf, at,
+                None, Some(bar_count), true,
+            );
+        }
+        self.core.bridge_handle().request_footprint(self.active_exchange, &symbol, at, interval);
     }
 
     /// Ignite the derived-pipeline for every restored window whose chart_type
