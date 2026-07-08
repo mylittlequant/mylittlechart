@@ -437,23 +437,6 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     }
 }
 
-/// Draw Range Bars — transform source bars into range bars and render as candles.
-///
-/// Each derived bar accumulates source OHLCV until `(close - open).abs() >= range`,
-/// Draw Range Bars — OHLC bar style with horizontal open/close ticks
-/// (TradeStation / NinjaTrader textbook).
-///
-/// Range bars are derived in dig3-station's `TradeToRangeBarDerived` so all
-/// bars already span the configured price range. We render them as OHLC
-/// bars (vertical wick H→L + open tick left + close tick right) WITHOUT a
-/// filled body rectangle — this is the canonical visual: it signals "range
-/// bar" by the absence of body while preserving directional color via the
-/// open/close tick spread. Reuses `draw_bars` directly because the visual
-/// is identical to the OHLC bar style.
-pub fn draw_range_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    draw_bars(ctx, state);
-}
-
 /// Draw Volume Bars — standard OHLC candles.
 ///
 /// Volume bars are derived in dig3-station's `TradeToVolumeBarDerived`. The

@@ -1352,6 +1352,23 @@ impl ChartApp {
         }
     }
 
+    /// Bar-close countdown interval (ms) for this chart's price-scale label —
+    /// `None` on `ResolutionKind::Param` chart types (trade-agg bars,
+    /// price-action transforms) whose `bubble.timeframe` is a stale leftover
+    /// from before the chart-type switch (never re-stamped, see
+    /// `chart_out_events.rs:690-694`). Feeding that stale interval into the
+    /// countdown renders a nonsense wall-clock timer on volume/range/dollar
+    /// bars; hiding it at the source keeps the countdown correct for
+    /// `Time`/`Interval` types and absent everywhere else.
+    #[inline]
+    pub fn countdown_interval_ms_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<i64> {
+        let interval_ms = self.timeframe_for_chart(chart_id)?.interval_ms;
+        match self.chart_type_for_chart(chart_id).and_then(mlc_core::chart_type::by_id) {
+            Some(def) if matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }) => None,
+            _ => Some(interval_ms),
+        }
+    }
+
     /// Resolve the group/bubble id for any sync member id.
     #[inline]
     pub fn group_for_member(&self, member: mlc_core::ids::SyncMemberId) -> Option<mlc_core::ids::BubbleId> {
@@ -3629,7 +3646,11 @@ impl ChartApp {
                 let overlay_tf = chart_id
                     .and_then(|cid| self.timeframe_for_chart(cid));
                 let overlay_tf_name: String = overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-                let overlay_tf_interval_ms: Option<i64> = overlay_tf.map(|tf| tf.interval_ms);
+                // Countdown gate: None on Param-resolution chart types (see
+                // `countdown_interval_ms_for_chart` doc) — not the raw TF
+                // interval, which stays stale after a chart-type switch.
+                let overlay_tf_interval_ms: Option<i64> = chart_id
+                    .and_then(|cid| self.countdown_interval_ms_for_chart(cid));
                 let overlay_symbol: String = chart_id
                     .and_then(|cid| self.symbol_for_chart(cid))
                     .map(String::from)
@@ -3730,7 +3751,9 @@ impl ChartApp {
             let single_overlay_tf = single_overlay_cid
                 .and_then(|cid| self.timeframe_for_chart(cid));
             let single_overlay_tf_name: String = single_overlay_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-            let single_overlay_tf_interval_ms: Option<i64> = single_overlay_tf.map(|tf| tf.interval_ms);
+            // Countdown gate: see `countdown_interval_ms_for_chart` doc.
+            let single_overlay_tf_interval_ms: Option<i64> = single_overlay_cid
+                .and_then(|cid| self.countdown_interval_ms_for_chart(cid));
             let single_overlay_symbol: String = single_overlay_cid
                 .and_then(|cid| self.symbol_for_chart(cid))
                 .map(String::from)
@@ -4002,7 +4025,9 @@ impl ChartApp {
                 let split_tf = leaf_chart_id
                     .and_then(|cid| self.timeframe_for_chart(cid));
                 let split_tf_name: String = split_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
-                let split_tf_interval_ms: Option<i64> = split_tf.map(|tf| tf.interval_ms);
+                // Countdown gate: see `countdown_interval_ms_for_chart` doc.
+                let split_tf_interval_ms: Option<i64> = leaf_chart_id
+                    .and_then(|cid| self.countdown_interval_ms_for_chart(cid));
                 // Overlay tab legend uses the resolution-aware label (TF name for
                 // Time/Interval, formatted param for Param types) — kept distinct
                 // from `split_tf_name` above, which stays the raw TF name feeding
@@ -4555,9 +4580,9 @@ impl ChartApp {
                     (sym, tf_name, exch, at)
                 })
             };
+            // Countdown gate: see `countdown_interval_ms_for_chart` doc.
             let single_tf_interval_ms: Option<i64> = self.panel_app.panel_grid.active_container_id()
-                .and_then(|cid| self.timeframe_for_chart(cid))
-                .map(|tf| tf.interval_ms);
+                .and_then(|cid| self.countdown_interval_ms_for_chart(cid));
 
             // Hold the indicator manager read guard for the duration of the
             // single-window render path so `&self.indicator_manager` borrows stay alive.

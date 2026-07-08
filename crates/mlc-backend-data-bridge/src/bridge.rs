@@ -3036,6 +3036,20 @@ impl DataBridge {
                         "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — no older points produced",
                         exchange_id, symbol_owned, account_type, stream,
                     );
+                    // dlog-only used to leave the user with no signal that
+                    // the deepen attempt topped out — surface the achieved
+                    // depth (still `warm_n`, nothing older was produced) so
+                    // the pane badge shows Capped instead of silence.
+                    let chart_type = stream_to_chart_type(&stream);
+                    if !chart_type.is_empty() {
+                        let _ = tx.send(LiveUpdate::HistoryDepthReported {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_owned.clone(),
+                            chart_type,
+                            depth: HistoryDepthWire::Capped { achieved: warm_n },
+                        });
+                    }
                 }
                 DerivedRewarmOutcome::Fallback => {
                     // Cold-open lazy deepen has no live viewport riding on
@@ -3047,6 +3061,20 @@ impl DataBridge {
                         "[Bridge::derived lazy-deepen] {:?} {} at={:?} stream={:?} — rewarm unsupported/dead ring, leaving at initial depth",
                         exchange_id, symbol_owned, account_type, stream,
                     );
+                    // Same dlog-only gap as Exhausted above — report the
+                    // depth we're stuck at (LiveOnly: rewarm is fundamentally
+                    // unsupported for this kind, e.g. imbalance/run) so the
+                    // badge reflects reality instead of staying silent.
+                    let chart_type = stream_to_chart_type(&stream);
+                    if !chart_type.is_empty() {
+                        let _ = tx.send(LiveUpdate::HistoryDepthReported {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_owned.clone(),
+                            chart_type,
+                            depth: HistoryDepthWire::LiveOnly,
+                        });
+                    }
                 }
             }
             if let Ok(mut inflight) = deepen_in_flight.lock() {
@@ -3246,6 +3274,22 @@ impl DataBridge {
                         );
                         if let Ok(mut exhausted) = seed_exhausted.lock() {
                             exhausted.insert((exchange_id, symbol_str.clone(), account_type, stream.clone()));
+                        }
+                        // Same dlog-only swallow as the lazy-deepen path
+                        // (`spawn_derived_lazy_deepen`'s Exhausted arm) —
+                        // surface the achieved depth (still `current`;
+                        // nothing older was produced) so the pane badge
+                        // shows Capped instead of silently marking exhausted
+                        // with no user-visible signal.
+                        let chart_type = stream_to_chart_type(&stream);
+                        if !chart_type.is_empty() {
+                            let _ = tx.send(LiveUpdate::HistoryDepthReported {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_str.clone(),
+                                chart_type,
+                                depth: HistoryDepthWire::Capped { achieved: current },
+                            });
                         }
                         if let Ok(mut inflight) = deepen_in_flight.lock() { inflight.remove(&flight_key); }
                         return;
@@ -5900,6 +5944,10 @@ async fn derived_bar_sub_body(
     // the loop entirely, which is what abort_derived_sub wants.
     let mut total_bars: u64 = 0;
     let mut respawn_n: u32 = 0;
+    // Consecutive subscribe-error counter driving the retry backoff below —
+    // separate from `respawn_n` (which also counts clean exits/cycles and
+    // feeds warm-seed/logging semantics elsewhere in this function).
+    let mut subscribe_err_n: u32 = 0;
     loop {
         // Deep warm seed on chart-open (design doc: dig3-station-0325-
         // derived-seeding-2026-07-04.md, risk register — 50k native /
@@ -5921,18 +5969,30 @@ async fn derived_bar_sub_body(
         let mut report = match station.subscribe(sub_set).await {
             Ok(r) => r,
             Err(e) => {
+                // `station.subscribe()` failing used to permanently kill this
+                // task (silent `return`) — the prime suspect for a dead live
+                // feed that never recovers on its own. Retry with capped
+                // exponential backoff instead; the task is only ever ended
+                // by `abort_derived_sub`'s `JoinHandle::abort()` (external,
+                // fires on chart-type/TF switch — cancels this `.await`
+                // cleanly at any point, including mid-sleep), so there is no
+                // separate "still active" flag to recheck here — staying in
+                // this loop is exactly as safe as the clean-exit respawn
+                // path a few lines below.
+                subscribe_err_n = subscribe_err_n.saturating_add(1);
+                let backoff_secs = 1u64.checked_shl(subscribe_err_n.saturating_sub(1).min(4)).unwrap_or(30).min(30);
                 crate::dlog!(
-                    "[Bridge::derived-bar-fwd subscribe FAILED] respawn={} {:?} {} wire={} stream={}: {:?}",
-                    respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, e,
+                    "[Bridge::derived-bar-fwd subscribe FAILED] attempt={} respawn={} {:?} {} wire={} stream={}: {:?} — retrying in {}s",
+                    subscribe_err_n, respawn_n, exchange_id, symbol_canonical, symbol_wire, stream_label, e, backoff_secs,
                 );
-                // Hard failure (likely StreamNotSupported / venue gap).
-                // Don't busy-loop — give up.
                 if respawn_n == 0 {
                     if let Some(tx0) = first_ok_tx.take() { let _ = tx0.send(0); }
                 }
-                return;
+                sleep_ms(backoff_secs.saturating_mul(1000)).await;
+                continue;
             }
         };
+        subscribe_err_n = 0;
         if !report.failed.is_empty() {
             crate::dlog!(
                 "[Bridge::derived-bar-fwd subscribe partial-fail] respawn={} {:?} {} wire={} stream={}: {} failed (ok={})",

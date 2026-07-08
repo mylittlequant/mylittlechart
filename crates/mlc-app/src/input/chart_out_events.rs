@@ -819,9 +819,33 @@ impl ChartApp {
                                 // the target's own slot (keep=None) right before the
                                 // re-subscribe so it starts from empty; the re-sub below
                                 // repopulates it with fresh data at the new param.
+                                //
+                                // `clear_derived_slots(None)` alone never touches
+                                // `bubble.bars` (see its doc — kline/trade-agg-family
+                                // storage is deliberately excluded there), so on
+                                // trade-agg param changes (e.g. 1V -> 1000V) the OLD
+                                // bars lingered, `has_any_series_data()` stayed true,
+                                // and the loading skeleton never showed during the
+                                // multi-second reseed. Also invoke the active type's
+                                // own `ops.clear_slot` (mirrors ChangeChartType's
+                                // arm at chart_out_events.rs:651-660) so trade-agg/
+                                // renko/pnf/etc. bars are wiped too. Footprint routes
+                                // through the hybrid-aware clear directly (same
+                                // reasoning as the ChangeChartType arm — only call
+                                // sites with `(exchange_id, account_type)` in scope
+                                // can resolve `is_footprint_hybrid`); every other
+                                // registered type uses the generic table entry.
                                 if let Some(bid) = self.bubble_for_chart(cid) {
                                     self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                         bubble.clear_derived_slots(None);
+                                        if active_ct == "footprint" {
+                                            let hybrid = mlc_backend::chart_type::is_footprint_hybrid(
+                                                self.core.bridge_handle(), self.active_exchange, at,
+                                            );
+                                            mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, hybrid);
+                                        } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
+                                            (ops.clear_slot)(bubble);
+                                        }
                                     });
                                 }
                                 // P0 V1 (viewport doctrine audit 2026-07-07): param

@@ -12,8 +12,8 @@ web-time = "1"
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-digdigdig3 = "=0.3.30"
-digdigdig3-station = "=0.3.30"
+digdigdig3 = "=0.3.31"
+digdigdig3-station = "=0.3.31"
 serde_json = "1"
 
 # tokio surface differs sharply: native uses multi-thread runtime + process

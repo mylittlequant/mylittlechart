@@ -40,7 +40,9 @@ static DRAWS: &[(&str, DrawOps)] = &[
     ("area", DrawOps { draw: crate::chart_render::draw_area_series }),
     ("hlc_area", DrawOps { draw: crate::chart_render::draw_hlc_area }),
     ("baseline", DrawOps { draw: crate::chart_render::draw_baseline_series }),
-    ("range_bar", DrawOps { draw: crate::chart_render::draw_range_bars }),
+    // Kline re-cut (2026-07-08 minimal-sufficient-source doctrine) — render
+    // as standard candles, same as volume_bar/dollar_bar below.
+    ("range_bar", DrawOps { draw: crate::chart_render::draw_candles }),
     ("volume_bar", DrawOps { draw: crate::chart_render::draw_volume_bars }),
     ("tick_bar", DrawOps { draw: crate::chart_render::draw_tick_bars }),
     // López de Prado quant bars (C9): output is OHLC BarPoint — render as
