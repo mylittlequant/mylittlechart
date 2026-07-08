@@ -55,7 +55,7 @@ strip = "none"
 opt-level = 2
 
 [patch.crates-io]
-# Local uzor path build. Pins below track the published version (1.4.15)
+# Local uzor path build. Pins below track the published version (1.4.16)
 # so the manifest stays honest; the patch just resolves them to the
 # working tree so in-flight uzor fixes are picked up without a publish
 # round-trip. Keep pins == published uzor version on every bump.

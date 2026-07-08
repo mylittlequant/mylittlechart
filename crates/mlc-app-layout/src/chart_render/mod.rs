@@ -67,8 +67,8 @@ pub use scales::{
 };
 pub use crosshair::{draw_crosshair, draw_pane_crosshair};
 pub use overlays::{
-    draw_watermark, draw_legend, draw_tooltip, draw_price_lines, draw_markers,
-    draw_last_price_line,
+    draw_watermark, draw_history_depth_badge, draw_legend, draw_tooltip,
+    draw_price_lines, draw_markers, draw_last_price_line,
 };
 pub use panes::{
     draw_pane_separator, draw_pane_background, draw_pane_grid,

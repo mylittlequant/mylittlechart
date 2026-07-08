@@ -1398,6 +1398,28 @@ impl ChartApp {
             .unwrap_or_default()
     }
 
+    /// Chart-type dropdown data-mode marks for the ACTIVE window's
+    /// (exchange, account_type) — hybrid-data-modes-plan-2026-07-08 Step 5.
+    /// Computed fresh every frame (RAM-only, no persisted field, same
+    /// discipline as `allowed_timeframes`) at the toolbar-render call site.
+    /// `None` when there is no active window — dropdown renders with no
+    /// markers, same as an empty map would.
+    pub fn chart_type_data_modes(
+        &self,
+    ) -> Option<std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>> {
+        let cid = self.panel_app.panel_grid.active_container_id()?;
+        let account_type = self.account_type_for_chart(cid).unwrap_or_default();
+        let exchange_id = self.exchange_for_chart(cid)
+            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
+            .unwrap_or(self.active_exchange);
+        Some(
+            mlc_core::chart_type::all()
+                .iter()
+                .map(|def| (def.id, self.core.data_mode_for(def.id, exchange_id, account_type)))
+                .collect(),
+        )
+    }
+
     /// Audit D8 (chart-types-xaxis-audit §3 items c/e): the `Vec<Bar>`
     /// timestamp shadow `ChartRenderState.bars` should carry for THIS
     /// chart's chart_type, for time-scale labels + drawings ts→x. `None`
@@ -5052,6 +5074,7 @@ impl ChartApp {
                     crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms)
                 }).unwrap_or(None)
             };
+            let chart_type_data_modes = self.chart_type_data_modes();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5066,6 +5089,7 @@ impl ChartApp {
                 presets_guard_tb.values(),
                 allowed_tfs.as_ref(),
                 active_ct_str,
+                chart_type_data_modes.as_ref(),
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -5760,6 +5784,7 @@ impl ChartApp {
                 .as_millis() as i64;
             crate::active_series::allowed_timeframes(active_series.as_active_series(), chart_type, now_ms)
         }).unwrap_or(None);
+        let chart_type_data_modes = self.chart_type_data_modes();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -5774,6 +5799,7 @@ impl ChartApp {
             presets_guard_tb2.values(),
             allowed_tfs.as_ref(),
             active_ct_str,
+            chart_type_data_modes.as_ref(),
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);

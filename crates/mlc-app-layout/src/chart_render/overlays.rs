@@ -5,6 +5,7 @@
 //! # Functions
 //!
 //! - `draw_watermark()` - Symbol/exchange text behind chart
+//! - `draw_history_depth_badge()` - Degraded-history chip (Capped/LiveOnly)
 //! - `draw_legend()` - OHLC values in corner
 //! - `draw_tooltip()` - Floating OHLC box near cursor
 //! - `draw_price_lines()` - Horizontal price level lines
@@ -13,7 +14,7 @@
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::chart::{Watermark, Legend, Tooltip, HorzAlign, VertAlign, LegendPosition};
 use mlc_core::chart::render_data::{
-    ChartRenderState, ChartRect,
+    ChartRenderState, ChartRect, HistoryDepthDisplay,
     LegendData, TooltipLines,
     RenderPriceLine, RenderMarker, RenderMarkerShape,
 };
@@ -68,6 +69,33 @@ pub fn draw_watermark(
         ctx.fill_text(&line.text, rect.x + text_x, rect.y + current_y);
         current_y += line.font_size * 1.2;
     }
+}
+
+/// Draw a compact degraded-history chip (hybrid-data-modes-plan-2026-07-08,
+/// Step 6). `Capped`/`LiveOnly` render a small pane-corner text chip;
+/// `Full`/`Unknown` render nothing. Pane-scoped — one call per chart window,
+/// bottom-right corner of `chart_rect` (distinct from the default top-left
+/// watermark/legend spot so it never overlaps either).
+pub fn draw_history_depth_badge(
+    ctx: &mut dyn RenderContext,
+    rect: &ChartRect,
+    text_color: &str,
+    history_depth: HistoryDepthDisplay,
+) {
+    let label = match history_depth {
+        HistoryDepthDisplay::Unknown | HistoryDepthDisplay::Full => return,
+        HistoryDepthDisplay::Capped { achieved } => format!("History: {} bars", achieved),
+        HistoryDepthDisplay::LiveOnly => "Live only \u{2014} no history".to_string(),
+    };
+
+    let padding = 6.0;
+    let font_size = 10.0;
+
+    ctx.set_font(&format!("{}px sans-serif", font_size));
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Bottom);
+    ctx.set_fill_color(text_color);
+    ctx.fill_text(&label, rect.right() - padding, rect.bottom() - padding);
 }
 
 /// Draw OHLC legend in corner of chart

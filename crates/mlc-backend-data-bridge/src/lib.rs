@@ -49,7 +49,7 @@ mod convert;
 
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
-    SharedTradeSeries, SharedOrderBookTracker,
+    SharedTradeSeries, SharedOrderBookTracker, HistoryDepthWire,
 };
 pub use provider::LiveDataProvider;
 pub use convert::{

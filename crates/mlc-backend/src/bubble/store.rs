@@ -90,6 +90,7 @@ impl BubbleStore {
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
             derived_seed_in_flight: None,
+            history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -142,6 +143,7 @@ impl BubbleStore {
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
             derived_seed_in_flight: None,
+            history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
         };
         self.bubbles.insert(id, bubble);
         id
@@ -260,9 +262,15 @@ impl BubbleStore {
 
     /// Update the chart type for a bubble known by id directly. Caller
     /// resolves `chart_id → bid` via `core.tags().tag_for_chart(cid)` first.
+    ///
+    /// Resets `history_depth` to `Unknown` — it reports the depth for
+    /// whichever chart_type is CURRENTLY active on the bubble, so a switch
+    /// invalidates whatever the previous type's seed reported (see
+    /// `HistoryDepth`'s doc comment).
     pub fn set_chart_type(&mut self, bid: BubbleId, ct: &'static str) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         bubble.chart_type = ct;
+        bubble.history_depth = crate::bubble::data_bubble::HistoryDepth::default();
         true
     }
 
@@ -456,6 +464,21 @@ impl BubbleStore {
     /// kline-family writers that consult this before writing.
     pub fn bars_source(&self, bid: BubbleId) -> super::data_bubble::BarsSource {
         self.bubbles.get(&bid).map(|b| b.bars_source).unwrap_or_default()
+    }
+
+    /// History depth backing the bubble's currently-active chart_type. See
+    /// [`super::data_bubble::HistoryDepth`]. Unknown bubble reads as the
+    /// default `Unknown`.
+    pub fn history_depth(&self, bid: BubbleId) -> super::data_bubble::HistoryDepth {
+        self.bubbles.get(&bid).map(|b| b.history_depth).unwrap_or_default()
+    }
+
+    /// Record a seed/deepen depth report for `chart_type` on `bid`. Returns
+    /// `false` for an unknown bubble OR when [`DataBubble::set_history_depth`]
+    /// rejected the report as stale (chart_type no longer active).
+    pub fn set_history_depth(&mut self, bid: BubbleId, chart_type: &str, depth: super::data_bubble::HistoryDepth) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.set_history_depth(chart_type, depth)
     }
 
     pub fn bars(&self, bid: BubbleId) -> &[mlc_core::Bar] {

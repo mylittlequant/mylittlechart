@@ -28,6 +28,62 @@ pub enum BarsSource {
     FootprintOhlc,
 }
 
+/// How much history backs this bubble's active series, derived from the
+/// most recent seed/deepen outcome the bridge reported.
+///
+/// Bridge-agnostic — no `digdigdig3-station` types in the signature
+/// (`mlc-backend` depends on `digdigdig3` directly but NOT
+/// `digdigdig3-station`; the translation from `SeedOutcome`/
+/// `TruncationReason` happens in `mlc-backend-data-bridge`, which sends the
+/// already-reduced variant across the `LiveUpdate` channel — see
+/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 1).
+///
+/// PER-bubble, not per-chart_type: `DataBubble` renders one chart_type at a
+/// time, so this is overwritten on every chart-type switch (`clear_slot_*`
+/// resets it to `Unknown`) and repopulated by the first
+/// `LiveUpdate::HistoryDepthReported` for the NEW active type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum HistoryDepth {
+    /// No seed fetch ran yet for the active series (still loading, or this
+    /// chart_type has no seed concept — e.g. dom/liquidation heatmap).
+    #[default]
+    Unknown,
+    /// Seed fully satisfied the request, OR the venue has real deep/paginated
+    /// history and no ceiling was hit — deepen ladder still has room.
+    Full,
+    /// Venue supports SOME real history but a hard/soft ceiling was hit
+    /// (Binance futures 24h wall, MEXC/Gate window cap) — `achieved` is the
+    /// last known depth in points; further deepen calls are pre-emptively
+    /// skipped once the bridge reports this.
+    Capped { achieved: usize },
+    /// Venue capability is `RecentOnly` (Bybit 60/1000, KuCoin 100, ...) —
+    /// no REST pagination exists at all. The active series is backed ONLY
+    /// by what has accumulated from WS since subscribe; deepen is a
+    /// permanent no-op for this instrument+chart_type combination.
+    LiveOnly,
+}
+
+impl HistoryDepth {
+    /// True when scroll-left / cold-open deepen should not even try.
+    pub fn is_deepen_blocked(&self) -> bool {
+        matches!(self, HistoryDepth::LiveOnly)
+    }
+
+    /// 1:1 mirror into the mlc-core-safe render-facing shape (hybrid-data-
+    /// modes-plan-2026-07-08, Step 6) — `mlc-core` cannot see this type, so
+    /// `build_chart_render_state` calls this to populate `ChartRenderState.
+    /// history_depth` for the degraded-history badge.
+    pub fn to_display(self) -> mlc_core::chart::render_data::HistoryDepthDisplay {
+        use mlc_core::chart::render_data::HistoryDepthDisplay as Display;
+        match self {
+            HistoryDepth::Unknown => Display::Unknown,
+            HistoryDepth::Full => Display::Full,
+            HistoryDepth::Capped { achieved } => Display::Capped { achieved },
+            HistoryDepth::LiveOnly => Display::LiveOnly,
+        }
+    }
+}
+
 /// A mathematical data space: bars, primitives, indicator configs, alerts,
 /// and derived series for one instrument+timeframe.
 ///
@@ -248,6 +304,12 @@ pub struct DataBubble {
     /// exclusive per-bubble operations that share the same left-edge
     /// trigger in `tick.rs`, so they need independent in-flight guards.
     pub derived_seed_in_flight: Option<(web_time::Instant, usize)>,
+
+    /// How much real history backs the active chart_type's series right now.
+    /// See [`HistoryDepth`]. Reset to `Unknown` on every chart-type switch
+    /// (`clear_slot_*`); populated by the first
+    /// `LiveUpdate::HistoryDepthReported` for the new active type.
+    pub history_depth: HistoryDepth,
 }
 
 
@@ -312,6 +374,7 @@ impl DataBubble {
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
             derived_seed_in_flight: None,
+            history_depth: HistoryDepth::default(),
         }
     }
 
@@ -533,6 +596,22 @@ impl DataBubble {
             self.clear_liq_dots();
         }
     }
+
+    /// Record a seed/deepen depth report for `chart_type`. Returns `true`
+    /// when the report was applied.
+    ///
+    /// `history_depth` is a single field, not per-chart_type storage — a
+    /// report for any chart_type OTHER than the one currently active on
+    /// this bubble is a stale event from a just-switched-away subscribe
+    /// racing the switch (same discipline as the `bars_source` ownership
+    /// guards elsewhere) and is silently ignored (`false`).
+    pub fn set_history_depth(&mut self, chart_type: &str, depth: HistoryDepth) -> bool {
+        if self.chart_type != chart_type {
+            return false;
+        }
+        self.history_depth = depth;
+        true
+    }
 }
 
 impl Clone for DataBubble {
@@ -576,6 +655,7 @@ impl Clone for DataBubble {
             scroll_fetch_started: self.scroll_fetch_started,
             scroll_prefetch_done: self.scroll_prefetch_done,
             derived_seed_in_flight: self.derived_seed_in_flight,
+            history_depth: self.history_depth,
         }
     }
 }

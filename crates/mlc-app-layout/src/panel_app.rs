@@ -301,6 +301,12 @@ pub fn floating_inline_update_drag(
 /// control is dropped from the control strip entirely instead of rendering
 /// a picker with no effect. `Some(set)` means the picker applies; TF ids not
 /// in `set` (insufficient backfilled depth) render disabled in the popup.
+///
+/// `chart_type_data_modes` marks the `chart_type_selector` popup items with
+/// a "hybrid"/"live only" subtitle (writer: `ChartApp::chart_type_data_modes`,
+/// hybrid-data-modes-plan-2026-07-08 Step 5). `None`/missing-entry means no
+/// marker — items stay fully clickable either way (owner directive: no
+/// chart type is ever disabled by data capability).
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -322,6 +328,7 @@ pub fn chart_toolbar_render_toolbars(
     sidebar_w: f64,
     allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
     active_chart_type: Option<&str>,
+    chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -782,7 +789,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, chart_type_data_modes)
         } else {
             None
         };
@@ -848,6 +855,7 @@ fn chart_toolbar_render_dropdown(
     split_without_group: bool,
     is_mono_group: bool,
     allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
+    chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -931,6 +939,28 @@ fn chart_toolbar_render_dropdown(
                         None => *disabled = true,
                         Some(allowed) if !allowed.contains(id.as_str()) => *disabled = true,
                         _ => {}
+                    }
+                }
+            }
+            if dropdown_id == "chart_type_selector" {
+                if let DropdownItem::Item { ref id, ref mut subtitle, ref mut accent_color, .. } = di {
+                    // Data-availability marking (hybrid-data-modes-plan-
+                    // 2026-07-08, Step 5): transparency-only — every chart
+                    // type stays clickable (owner directive), `disabled` is
+                    // never set here. `None`/`Unknown`/`Full` render no
+                    // marker at all.
+                    if let Some(marks) = chart_type_data_modes {
+                        match marks.get(id.as_str()) {
+                            Some(mlc_core::chart_type::DataMode::Hybrid) => {
+                                *subtitle = Some("hybrid".to_string());
+                                *accent_color = Some("#ffa726".to_string());
+                            }
+                            Some(mlc_core::chart_type::DataMode::LiveOnly) => {
+                                *subtitle = Some("live only".to_string());
+                                *accent_color = Some("#ef5350".to_string());
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }

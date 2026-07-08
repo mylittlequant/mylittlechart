@@ -1158,7 +1158,16 @@ impl ChartApp {
                     // on desync so a future writer touching one array
                     // without the other is visible instead of surfacing as
                     // an unexplained jump.
-                    if chart_type_by_chart.get(cid_).copied() == Some("footprint") {
+                    //
+                    // Excluded in hybrid mode (hybrid-data-modes-plan-2026-07-08,
+                    // Step 3): a RecentOnly-venue footprint bubble stays on
+                    // `BarsSource::Kline` by design — `footprint_bars` (the
+                    // live-accumulated tail) is PERMANENTLY shorter than
+                    // `bubble.bars` (the full kline backdrop) there, which is
+                    // the intended hybrid shape, not a desync bug.
+                    if chart_type_by_chart.get(cid_).copied() == Some("footprint")
+                        && self.core.bubbles().bars_source(*bid) == mlc_backend::bubble::BarsSource::FootprintOhlc
+                    {
                         if let Some((fp_len, bars_len)) = self.core.bubbles().with_bubble(*bid, |b| {
                             b.footprint_bars.as_ref().map(|fp| (fp.len(), b.bars.len()))
                         }).flatten() {
@@ -1390,6 +1399,60 @@ impl ChartApp {
                             buf.push_bucket_spread(*ts_ms, *long_liq_usd, *short_liq_usd, mark, SPREAD_HALF_TICKS);
                         }
                     });
+                }
+            }
+
+            // ── HistoryDepthReported: eternal-skeleton fix ──────────────────────
+            //
+            // hybrid-data-modes-plan-2026-07-08, Step 4. Traced behavior: a
+            // batch-cut chart_type (tick_bar/volume_bar/dollar_bar/
+            // tick_imbalance_bar/volume_imbalance_bar/run_bar) writes into
+            // `bubble.bars` directly (same array as kline). On a `RecentOnly`
+            // venue the cold seed (`backfill::trades_recent`, capped e.g. 60
+            // trades on Bybit spot) can complete ZERO buckets for a chart_type
+            // with a large threshold (tick_bar(100), volume_bar(1000)) — the
+            // `derived_bar_sub_body` ring-peek only sends `LiveUpdate::
+            // BarsLoaded` `if !points.is_empty()` (bridge.rs), so on a
+            // zero-bucket seed that event NEVER fires and `pending_symbol_load`
+            // is never cleared by the normal `BarsLoaded` fresh-load path —
+            // CONFIRMED HANG until enough live trades finally complete the
+            // first bucket (could be arbitrarily long on a low-volume symbol).
+            //
+            // Fix: once the seed's depth is known to be a permanent ceiling
+            // (`LiveOnly`) or a soft ceiling with nothing usable achieved yet
+            // (`Capped { achieved: 0 }` — the REST seed ran and returned
+            // nothing), AND the window is still waiting AND its own active
+            // series is still empty, clear `pending_symbol_load` so the chart
+            // shows the (empty) live-accumulation view instead of hanging.
+            // `needs_snap_after_backfill` is deliberately left armed — it was
+            // already set by `begin_fresh_load` at subscribe time and stays
+            // armed through the empty period; the existing cold-snap
+            // consumers (`BarUpdatePassthrough`'s `consume_cold_snap` call,
+            // shared with kline) fire it on the first bar that actually
+            // completes, so the viewport still snaps correctly the moment
+            // live trades produce real data — this arm only stops the
+            // spinner from lying about a fetch that structurally cannot
+            // resolve via REST.
+            BubbleEvent::HistoryDepthReported { bid, depth, .. } => {
+                let seed_exhausted_empty = matches!(
+                    depth,
+                    mlc_backend::bubble::HistoryDepth::LiveOnly
+                        | mlc_backend::bubble::HistoryDepth::Capped { achieved: 0 }
+                );
+                if seed_exhausted_empty {
+                    let target_cids: Vec<mlc_core::state::ChartId> = self.panel_app.panel_grid
+                        .containers().iter()
+                        .filter(|(_, w)| w.current_tag_id == *bid && w.pending_symbol_load)
+                        .map(|(cid, _)| *cid)
+                        .collect();
+                    for cid in target_cids {
+                        if !self.active_series_for_chart(cid).as_active_series().is_empty() {
+                            continue;
+                        }
+                        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                            window.pending_symbol_load = false;
+                        }
+                    }
                 }
             }
 

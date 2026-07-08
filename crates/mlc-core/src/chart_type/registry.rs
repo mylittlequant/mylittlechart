@@ -66,6 +66,50 @@ pub enum BarsSourceKind {
     FootprintOhlc,
 }
 
+/// What class of upstream data a chart_type needs to render a REAL history
+/// (not "what protocol" — dig3 capability tiers are venue-specific and
+/// resolved at runtime via `BackendCore::data_mode_for`; this is the STATIC
+/// classification used to decide which venues/account-types can ever show
+/// real history for this chart_type, independent of which venue is
+/// currently active). See
+/// `docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 5.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataRequirement {
+    /// Backed by kline REST pagination — works on every TRUSTED venue
+    /// (deepest cross-venue-uniform path). candle-family + price-action
+    /// transforms (renko/pnf/kagi/tlb — synthetic-trades-from-klines) + tpo
+    /// (1m-klines-fed).
+    Klines,
+    /// Needs REAL per-trade history (aggTrades pagination or equivalent) to
+    /// show anything before "now" — footprint, counted-bar family. On a
+    /// `RecentOnly` venue this chart_type either goes hybrid (footprint) or
+    /// shows empty-space-before-live (counted bars).
+    DeepTrades,
+    /// No history concept at all — always live-only by nature, on every
+    /// venue (dom/liquidation heatmap).
+    LiveFeed,
+}
+
+/// Resolved data-availability class for one chart_type on the active
+/// (exchange, account_type) — the dropdown-marking result computed by
+/// `BackendCore::data_mode_for` (`mlc-backend`, which resolves
+/// `DataRequirement` against the venue's `TradeHistoryCapabilities`). Pure
+/// data, no dig3 types — mlc-core stays capability-blind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataMode {
+    /// Klines-backed or LiveFeed-by-design type, or DeepTrades type on a
+    /// venue/account with RestDeep/RestWindow capability — real history.
+    Full,
+    /// DeepTrades type on a RecentOnly venue, footprint specifically —
+    /// hybrid (kline backdrop + live clusters).
+    Hybrid,
+    /// DeepTrades type on a RecentOnly venue, NOT footprint (counted-bar
+    /// family) — live-only, empty space before the live window.
+    LiveOnly,
+    /// Capability unknown (exchange not connected yet / unrecognized type).
+    Unknown,
+}
+
 /// How a chart_type's history is deepened on scroll-to-edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeepenKind {
@@ -121,6 +165,10 @@ pub struct ChartTypeDef {
     pub kind: ChartTypeKind,
     pub series_variant: SeriesVariant,
     pub bars_source: BarsSourceKind,
+    /// Static upstream-data classification (hybrid-data-modes-plan-2026-07-08,
+    /// Step 5) — resolved against a venue's `TradeHistoryCapabilities` by
+    /// `BackendCore::data_mode_for`, never read directly by mlc-core itself.
+    pub data_requirement: DataRequirement,
     pub hides_time_grid: bool,
     pub hides_tf_picker: bool,
     /// None = no chart-type-specific TF gate (fall back to ALL_TF_IDS or hides_tf_picker=true).
@@ -248,6 +296,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -267,6 +316,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -286,6 +336,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -305,6 +356,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -325,6 +377,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -344,6 +397,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -363,6 +417,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -383,6 +438,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -402,6 +458,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -421,6 +478,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::RenderOnly,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -441,6 +499,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -467,6 +526,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -491,6 +551,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -515,6 +576,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -539,6 +601,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -563,6 +626,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -587,6 +651,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -612,6 +677,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Renko,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -637,6 +703,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Pnf,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -661,6 +728,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Kagi,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -685,6 +753,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Tlb,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: false,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -713,6 +782,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         // (bubble.footprint_bars) is not what ActiveSeries resolves to.
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::FootprintOhlc,
+        data_requirement: DataRequirement::DeepTrades,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: Some(FOOTPRINT_TF_WHITELIST),
@@ -737,6 +807,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::OrderflowSlotted,
         series_variant: SeriesVariant::Tpo,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: true,
         // NOTE: source says false, see hand-raise in Step 1 deliverable —
         // `chart_type_hides_timeframe_picker` (active_series.rs:411-426)
@@ -765,6 +836,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::OrderflowRingBuffer,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::LiveFeed,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,
@@ -784,6 +856,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::OrderflowRingBuffer,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
+        data_requirement: DataRequirement::LiveFeed,
         hides_time_grid: false,
         hides_tf_picker: false,
         tf_whitelist: None,

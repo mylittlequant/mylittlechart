@@ -33,7 +33,7 @@ use crate::chart_render::{
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
     draw_legend, draw_tooltip, LegendData, TooltipLines,
-    draw_watermark, draw_last_price_line, draw_compare_overlay,
+    draw_watermark, draw_history_depth_badge, draw_last_price_line, draw_compare_overlay,
     ScaleConfig, ScaleTheme, CrosshairConfig,
 };
 use mlc_core::chart::Tooltip;
@@ -3177,6 +3177,7 @@ pub fn render_full_chart_panel(
         liq_dots_ref: data.state.liq_dots_ref,
         non_temporal_axis: data.state.non_temporal_axis,
         hide_time_grid: data.state.hide_time_grid,
+        history_depth: data.state.history_depth,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3277,6 +3278,15 @@ pub fn render_full_chart_panel(
         if let Some(watermark) = data.watermark {
             draw_watermark(ctx, &corrected_state.chart_rect, watermark);
         }
+
+        // 5b. Degraded-history badge (hybrid-data-modes-plan-2026-07-08,
+        // Step 6) — Capped/LiveOnly only, no-op for Full/Unknown.
+        draw_history_depth_badge(
+            ctx,
+            &corrected_state.chart_rect,
+            &corrected_state.theme.text,
+            corrected_state.history_depth,
+        );
 
         // 6. Compare overlay (symbol comparisons).
         if let Some(compare_overlay) = data.compare_overlay {
@@ -3609,6 +3619,7 @@ pub fn render_chart_overlay(
         liq_dots_ref: state.liq_dots_ref,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
+        history_depth: state.history_depth,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

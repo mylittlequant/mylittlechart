@@ -9,7 +9,7 @@ name = "mlc_app_panels"
 [dependencies]
 web-time = "1"
 serde = { version = "1.0", features = ["derive"] }
-uzor = "=1.4.15"
+uzor = "=1.4.16"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 # After Phase 2B step 2 (trades) + step 3 (orderbook): panels read directly from

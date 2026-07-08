@@ -285,6 +285,15 @@ fn subscribe_tpo(
 /// set_timeframe) live in `clear_slot_footprint` and the caller's
 /// `set_timeframe` call — dispatch order is `clear_slot()` then
 /// `subscribe()`, same as today's `ChangeChartType` footprint arm.
+///
+/// Hybrid switch point (hybrid-data-modes-plan-2026-07-08, Step 3): on a
+/// `RecentOnly` venue (no REST pagination for trade history at all —
+/// Bybit/KuCoin-class), footprint cannot be a full takeover — there is no
+/// history to page in once `bubble.bars` is cleared and the kline sub is
+/// aborted. Instead the kline sub is left running as a backdrop; footprint
+/// accumulates live-only in `footprint_bars` alongside it. On every other
+/// tier (`RestDeep`/`RestWindow`) the existing full-takeover behavior is
+/// unchanged — `abort_kline_bars` still fires before `request_footprint`.
 fn subscribe_footprint(
     bridge: &DataBridge,
     eid: ExchangeId,
@@ -297,8 +306,41 @@ fn subscribe_footprint(
         SubscribeParams::Interval { interval } => interval,
         _ => "1m",
     };
-    bridge.abort_kline_bars(eid, symbol, at, &tf.name);
+    if !is_footprint_hybrid(bridge, eid, at) {
+        bridge.abort_kline_bars(eid, symbol, at, &tf.name); // unchanged full-takeover path
+    }
+    // RecentOnly (hybrid): kline sub is NOT aborted here — it keeps writing
+    // bubble.bars as the backdrop. `request_footprint` never touches the
+    // kline forwarder (it only manages `derived_subs`), so leaving the
+    // abort call out is sufficient to keep it alive.
     bridge.request_footprint(eid, symbol, at, interval);
+}
+
+/// Whether footprint on `(exchange_id, account_type)` must run hybrid
+/// (kline backdrop + live-built clusters) instead of the full-takeover
+/// path — true exactly when the venue's trade-history capability is the
+/// `RecentOnly` tier (no REST pagination exists at all, so a `DeepTrades`
+/// chart_type has no history to page in once `bubble.bars` is cleared and
+/// the kline sub is aborted).
+///
+/// `pub` (not crate-private) — `mlc-app`'s `ChangeChartType`/
+/// `UpdateChartTypeInterval` handlers (`chart_out_events.rs`) call this
+/// directly to decide `clear_slot_footprint`'s hybrid branch and the
+/// backdrop-kline-resubscribe-at-bucket-interval step, both of which need
+/// the SAME capability check `subscribe_footprint` uses here — see
+/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3.
+///
+/// `None` capability (exchange not connected yet) is treated as NOT
+/// hybrid — "unknown" must not force hybrid on a venue that may in fact be
+/// deep; the ordinary full-takeover path is the safer default until the
+/// capability is actually known.
+pub fn is_footprint_hybrid(bridge: &DataBridge, eid: ExchangeId, at: Dig3AccountType) -> bool {
+    bridge.trade_history_capabilities(eid)
+        .map(|caps| matches!(
+            caps.tier_for(at),
+            digdigdig3::core::types::TradeHistoryTier::RecentOnly { .. },
+        ))
+        .unwrap_or(false)
 }
 
 fn subscribe_dom_heatmap(
@@ -360,12 +402,35 @@ fn clear_slot_tpo(bubble: &mut DataBubble) {
 }
 
 /// Footprint's clear_slot owns ALL the bubble mutations for the switch
-/// (matches `ChangeChartType`'s footprint arm at chart_out_events.rs:657-661)
-/// — `subscribe_footprint` only touches `DataBridge`.
+/// (matches `ChangeChartType`'s footprint arm at chart_out_events.rs) —
+/// `subscribe_footprint` only touches `DataBridge`.
+///
+/// This is the `SubscribeOps` table entry — its fn-pointer type
+/// (`fn(&mut DataBubble)`) carries no capability info, so it always takes
+/// the full-takeover branch. The real `ChangeChartType`/
+/// `UpdateChartTypeInterval` call sites in `mlc-app` do NOT use this table
+/// entry for footprint — they call [`clear_slot_footprint_hybrid_aware`]
+/// directly instead, since only they have `(exchange_id, account_type)` in
+/// scope to resolve [`is_footprint_hybrid`]. Kept in the table anyway so
+/// `ops_by_id("footprint")` stays a complete, self-consistent (if
+/// capability-blind) `SubscribeOps` for any other/future caller.
 fn clear_slot_footprint(bubble: &mut DataBubble) {
-    bubble.clear_bars();
+    clear_slot_footprint_hybrid_aware(bubble, false);
+}
+
+/// Capability-aware footprint clear_slot (hybrid-data-modes-plan-2026-07-08,
+/// Step 3). `hybrid == true` (RecentOnly venue): `bars_source` STAYS
+/// `Kline` and `bubble.bars` is NOT cleared — the kline backdrop keeps
+/// rendering through the existing candle path while `footprint_bars`
+/// accumulates live-only alongside it; clearing `bubble.bars` here would
+/// blank the very backdrop hybrid mode exists to keep. `hybrid == false`
+/// (deep tiers): unchanged full-takeover behavior.
+pub fn clear_slot_footprint_hybrid_aware(bubble: &mut DataBubble, hybrid: bool) {
     bubble.mark_footprint_pending();
-    bubble.bars_source = BarsSource::FootprintOhlc;
+    if !hybrid {
+        bubble.clear_bars();
+        bubble.bars_source = BarsSource::FootprintOhlc;
+    }
 }
 
 fn clear_slot_dom_heatmap(bubble: &mut DataBubble) {

@@ -620,6 +620,24 @@ impl ChartApp {
                 let is_derived = crate::active_series::chart_type_is_derived_seed(chart_type);
                 let Some(bid_scroll) = bid_by_chart.get(cid_scroll).copied() else { continue; };
 
+                // hybrid-data-modes-plan-2026-07-08, Step 2: a `LiveOnly`
+                // bubble (RecentOnly venue — Bybit 60/1000, KuCoin 100, ...)
+                // has no venue-side history at all, ever, for this
+                // instrument+chart_type. Skip BEFORE arming
+                // `derived_seed_in_flight` (10s timeout bookkeeping) or
+                // firing the one wasted rewarm/trades_recent REST call every
+                // scroll-left crossing would otherwise cost. `Capped` still
+                // attempts to deepen (there may be more history up to the
+                // wall); `Unknown` (seed not yet reported, or a chart_type
+                // that never populates `history_depth`) never blocks —
+                // default behavior preserved.
+                if is_derived {
+                    let depth = self.core.bubbles().history_depth(bid_scroll);
+                    if depth.is_deepen_blocked() {
+                        continue;
+                    }
+                }
+
                 // Per-chart-type-family in-flight guard: kline scroll and
                 // derived reseed are mutually exclusive per bubble but need
                 // independent flags — see `derived_seed_in_flight`'s doc

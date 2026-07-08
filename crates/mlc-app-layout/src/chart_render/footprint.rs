@@ -140,16 +140,56 @@ const EXTRA_COLORS: FpExtraColors<'static> = FpExtraColors {
 // kline-approx tail) still draw a candle body, which is honest data shape.
 
 /// Entry point — `super::candles::draw_footprint` routes here.
+///
+/// Hybrid mode (hybrid-data-modes-plan-2026-07-08, Step 3): on a
+/// `RecentOnly` venue footprint runs hybrid — `state.bars` is the REAL
+/// kline backdrop (kept alive by the engine's subscribe switch point, see
+/// `mlc-backend::chart_type::engine::subscribe_footprint`) and
+/// `state.footprint_bars` is only the live-accumulated tail, permanently
+/// shorter than the backdrop. This entry draws the kline backdrop across
+/// the FULL visible range first (reusing `draw_candles` as-is — it already
+/// clips/iterates `state.bars` independently), then overlays cluster cells
+/// ONLY for the suffix of the visible range that has a matching
+/// `footprint_bars` entry, aligned by index from the tail
+/// (`cluster_offset = backdrop_len - cluster_len`, valid under the Step 3
+/// invariant that the kline backdrop TF always equals the footprint bucket
+/// interval — see `chart_out_events.rs`'s hybrid backdrop-TF-alignment
+/// block). In takeover mode (`cluster_len >= backdrop_len`, the ordinary
+/// case on deep-history venues) `cluster_offset` is 0 and behavior is
+/// unchanged from before this arc.
 pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
-    let bars = match state.footprint_bars {
-        Some(b) if !b.is_empty() => b,
-        _ => {
-            // No footprint data yet — show explicit empty-state instead of
-            // pretending with candles. Owner needs to see "we have nothing"
-            // not a fake series.
-            super::draw_waiting_placeholder(ctx, state, "Footprint: waiting for data…");
-            return;
-        }
+    let fp_bars = state.footprint_bars.filter(|b| !b.is_empty());
+    if fp_bars.is_none() && state.bars.is_empty() {
+        // No footprint data yet AND no kline backdrop either — genuinely
+        // nothing to show. Owner needs to see "we have nothing", not a
+        // fake series.
+        super::draw_waiting_placeholder(ctx, state, "Footprint: waiting for data…");
+        return;
+    }
+
+    let backdrop_len = state.bars.len();
+    let cluster_len = fp_bars.map_or(0, <[FootprintBar]>::len);
+    // Hybrid signature: the backdrop (kline, `state.bars`) is strictly
+    // LONGER than the cluster array (`footprint_bars`) — takeover mode's
+    // OHLC-mirror keeps both arrays in lockstep (same length, written by
+    // the same event handler), so `backdrop_len == cluster_len` there and
+    // this stays false. Only draw the separate candle-backdrop PASS in the
+    // genuinely hybrid case — takeover mode's existing per-bar
+    // empty-levels candle fallback (below, in the main loop) already
+    // covers its own narrower gap shape and must not get a second,
+    // redundant candle body drawn underneath every cluster bar.
+    let is_hybrid = backdrop_len > cluster_len;
+    if is_hybrid {
+        // Kline backdrop pass — draws its own visible range independently
+        // (including the Glass-style clip extension).
+        super::candles::draw_candles(ctx, state);
+    }
+
+    let Some(bars) = fp_bars else {
+        // Hybrid cold-open: kline backdrop just drawn above (or nothing to
+        // draw at all if `state.bars` was also empty — caught by the
+        // placeholder branch above). No live clusters accumulated yet.
+        return;
     };
 
     let viewport = state.viewport;
@@ -181,16 +221,38 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let tick_size = infer_tick_size(bars).max(price_range / 200.0);
     let row_h = (rect.height * tick_size / price_range).max(1.0);
 
-    // Visible range — bars share the index-axis with the kline path.
-    let (start, end) = viewport.visible_range();
-    let end = end.min(bars.len());
+    // Cluster cells are the newest `cluster_len` entries of the backdrop's
+    // index axis — aligned to the TAIL, not the head (Step 3 index math).
+    // In takeover mode `backdrop_len == cluster_len` (OHLC-mirror lockstep)
+    // — `cluster_offset` collapses to 0 and every visible index maps 1:1
+    // into `bars`, matching today's behavior exactly.
+    let cluster_offset = backdrop_len.saturating_sub(cluster_len);
+
+    // Visible range in the ACTIVE-SERIES index domain — viewport bookkeeping
+    // for footprint keys off `bubble.bars` (see active_series.rs), i.e. the
+    // backdrop length in hybrid mode, or `bars.len()` itself in takeover
+    // mode where `backdrop_len == cluster_len`.
+    let (vp_start, vp_end) = viewport.visible_range();
+    let axis_len = backdrop_len.max(cluster_len);
+    let vp_end = vp_end.min(axis_len);
+    if vp_start >= vp_end {
+        return;
+    }
+    // Intersect the visible range with the cluster sub-range
+    // `[cluster_offset, axis_len)`, then map into `bars`' own index space.
+    let start = vp_start.max(cluster_offset).saturating_sub(cluster_offset);
+    let end = vp_end.saturating_sub(cluster_offset).min(bars.len());
     if start >= end {
         return;
     }
 
     // First: draw a thin OHLC wick line per bar so price excursion is
-    // still readable behind the cluster text.
-    draw_wicks(ctx, state, bars, start, end, bar_w);
+    // still readable behind the cluster text. In hybrid mode the backdrop
+    // pass above already drew wicks for the WHOLE visible range (including
+    // this cluster sub-range) — redraw here anyway for the cluster slice so
+    // takeover mode (no separate backdrop pass) keeps its wicks, and the
+    // hybrid tail gets the exact same wick styling regardless of source.
+    draw_wicks(ctx, state, bars, start, end, bar_w, cluster_offset);
 
     // Then the per-level cluster grid. Bars with empty levels (historical
     // klines-only window — no per-trade data that far back) fall back to a
@@ -200,9 +262,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     let mut bars_skipped_empty = 0_usize;
     for i in start..end {
         let bar = &bars[i];
+        // Global viewport index — see `draw_wicks`' `index_offset` doc.
+        let gi = i + cluster_offset;
         if bar.levels.is_empty() {
             bars_skipped_empty += 1;
-            let cx = viewport.bar_to_x(i) + rect.x;
+            let cx = viewport.bar_to_x(gi) + rect.x;
             let body_w = (bar_w * 0.6).max(1.0);
             if cx + body_w * 0.5 < rect.x || cx - body_w * 0.5 > rect.x + rect.width {
                 continue;
@@ -216,7 +280,7 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             continue;
         }
         bars_drawn += 1;
-        let cx = viewport.bar_to_x(i) + rect.x;
+        let cx = viewport.bar_to_x(gi) + rect.x;
         let cell_left  = cx - bar_w * 0.5;
         let cell_right = cx + bar_w * 0.5;
 
@@ -441,6 +505,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
 
 /// Draw a thin wick from each bar's low to high so the candle silhouette
 /// remains visible behind the cluster numbers.
+///
+/// `index_offset` shifts `[start, end)` (local indices into `bars`) into
+/// the viewport's GLOBAL index domain for `bar_to_x` — 0 in takeover mode
+/// (`bars` IS the active series), `cluster_offset` in hybrid mode (`bars`
+/// is only the live-accumulated tail of a longer kline backdrop).
 fn draw_wicks(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
@@ -448,6 +517,7 @@ fn draw_wicks(
     start: usize,
     end: usize,
     bar_w: f64,
+    index_offset: usize,
 ) {
     let viewport = state.viewport;
     let price_scale = state.price_scale;
@@ -457,7 +527,7 @@ fn draw_wicks(
     ctx.set_line_dash(&[]);
     for i in start..end {
         let bar = &bars[i];
-        let cx = viewport.bar_to_x(i) + rect.x;
+        let cx = viewport.bar_to_x(i + index_offset) + rect.x;
         let is_up = bar.is_bullish();
         let color = if is_up { &theme.wick_up } else { &theme.wick_down };
         ctx.set_stroke_color(color);

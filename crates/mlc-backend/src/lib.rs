@@ -329,6 +329,23 @@ pub enum BubbleEvent {
         long_liq_usd: f64,
         short_liq_usd: f64,
     },
+    /// History depth report landed for `bid`'s currently-active chart_type
+    /// (hybrid-data-modes-plan-2026-07-08, Step 1). The bubble write
+    /// (`DataBubble::set_history_depth`) already happened in `tick_writers`
+    /// — this event exists so the reactor can clear a stuck
+    /// `pending_symbol_load` for a `LiveOnly`/tiny-`Capped` batch-cut
+    /// chart_type whose cold seed produced zero complete bars (Step 4: the
+    /// eternal-skeleton fix — a tick_bar/volume_bar seed of 60 trades can
+    /// complete zero buckets, so `LiveUpdate::BarsLoaded` never fires and
+    /// the spinner would otherwise hang until enough live trades land).
+    HistoryDepthReported {
+        bid: BubbleId,
+        exchange_id: ExchangeId,
+        symbol: String,
+        account_type: String,
+        chart_type: &'static str,
+        depth: crate::bubble::HistoryDepth,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -594,6 +611,32 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("ts_ms", ts_ms)?;
                 m.serialize_entry("long_liq_usd", long_liq_usd)?;
                 m.serialize_entry("short_liq_usd", short_liq_usd)?;
+                m.end()
+            }
+            Self::HistoryDepthReported { bid, exchange_id, symbol, account_type, chart_type, depth } => {
+                let mut m = s.serialize_map(Some(6))?;
+                m.serialize_entry("type", "HistoryDepthReported")?;
+                m.serialize_entry("bid", &bid.0)?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("chart_type", chart_type)?;
+                // `HistoryDepth` does not impl Serialize — inline as a tagged shape.
+                match depth {
+                    crate::bubble::HistoryDepth::Unknown => {
+                        m.serialize_entry("depth", "unknown")?;
+                    }
+                    crate::bubble::HistoryDepth::Full => {
+                        m.serialize_entry("depth", "full")?;
+                    }
+                    crate::bubble::HistoryDepth::Capped { achieved } => {
+                        m.serialize_entry("depth", "capped")?;
+                        m.serialize_entry("achieved", achieved)?;
+                    }
+                    crate::bubble::HistoryDepth::LiveOnly => {
+                        m.serialize_entry("depth", "live_only")?;
+                    }
+                }
                 m.end()
             }
         }
@@ -1549,13 +1592,31 @@ impl BackendCore {
                         .bubbles_for_instrument(exchange_id.as_str(), &fp_at_label, fp_sym.as_str());
                     for bid in bids {
                         // bars-ownership gate, mirror image of the kline arms:
-                        // footprint OHLC lands ONLY in the bubble whose window
+                        // footprint levels land ONLY in the bubble whose window
                         // is actually in footprint mode. Without this, a
                         // candles window on the same instrument gets 1m-bucket
                         // footprint bars interleaved into its own timeline.
-                        if self.bubbles().bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc {
+                        //
+                        // Widened for hybrid mode (hybrid-data-modes-plan-
+                        // 2026-07-08, Step 3): a RecentOnly-venue footprint
+                        // window never flips `bars_source` away from `Kline`
+                        // (the kline backdrop keeps writing `bubble.bars`
+                        // itself), so `bars_source == FootprintOhlc` alone no
+                        // longer identifies "this bubble is in footprint
+                        // mode" — it only identifies the full-takeover case.
+                        // `chart_type == "footprint"` is the mode-membership
+                        // check that holds in BOTH takeover and hybrid; the
+                        // narrower `bars_source == FootprintOhlc` check is
+                        // used below to gate ONLY the OHLC-mirror write
+                        // (which must stay off in hybrid — the kline writer
+                        // owns `bubble.bars` there).
+                        let bars_source = self.bubbles().bars_source(bid);
+                        let is_footprint_owned = bars_source == crate::bubble::BarsSource::FootprintOhlc
+                            || self.bubbles().chart_type(bid) == Some("footprint");
+                        if !is_footprint_owned {
                             continue;
                         }
+                        let mirror_ohlc = bars_source == crate::bubble::BarsSource::FootprintOhlc;
                         {
                             self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                 // Sorted upsert. The live path is always
@@ -1610,22 +1671,30 @@ impl BackendCore {
                                     }
                                 }
                                 // Same sorted-upsert contract for the OHLC
-                                // mirror series.
-                                let last_ohlc_ts = bubble.bars.last().map(|b| b.timestamp);
-                                if last_ohlc_ts == Some(ohlc_ts) {
-                                    if let Some(last) = bubble.last_bar_mut() {
-                                        last.open   = ohlc_bar.open;
-                                        last.high   = ohlc_bar.high;
-                                        last.low    = ohlc_bar.low;
-                                        last.close  = ohlc_bar.close;
-                                        last.volume = ohlc_bar.volume;
-                                    }
-                                } else if last_ohlc_ts.is_none_or(|t| t < ohlc_ts) {
-                                    bubble.append_bar(ohlc_bar.clone());
-                                } else {
-                                    match bubble.bars.binary_search_by_key(&ohlc_ts, |b| b.timestamp) {
-                                        Ok(pos) => bubble.bars[pos] = ohlc_bar.clone(),
-                                        Err(pos) => bubble.bars.insert(pos, ohlc_bar.clone()),
+                                // mirror series — SKIPPED in hybrid mode
+                                // (`mirror_ohlc == false`): the kline writer
+                                // (BarUpdate/BarsLoaded/ScrollBarsLoaded) owns
+                                // `bubble.bars` there, same as any other
+                                // Kline-sourced bubble. Writing here too would
+                                // create a second writer racing the kline
+                                // forwarder over the same array.
+                                if mirror_ohlc {
+                                    let last_ohlc_ts = bubble.bars.last().map(|b| b.timestamp);
+                                    if last_ohlc_ts == Some(ohlc_ts) {
+                                        if let Some(last) = bubble.last_bar_mut() {
+                                            last.open   = ohlc_bar.open;
+                                            last.high   = ohlc_bar.high;
+                                            last.low    = ohlc_bar.low;
+                                            last.close  = ohlc_bar.close;
+                                            last.volume = ohlc_bar.volume;
+                                        }
+                                    } else if last_ohlc_ts.is_none_or(|t| t < ohlc_ts) {
+                                        bubble.append_bar(ohlc_bar.clone());
+                                    } else {
+                                        match bubble.bars.binary_search_by_key(&ohlc_ts, |b| b.timestamp) {
+                                            Ok(pos) => bubble.bars[pos] = ohlc_bar.clone(),
+                                            Err(pos) => bubble.bars.insert(pos, ohlc_bar.clone()),
+                                        }
                                     }
                                 }
                             });
@@ -1705,9 +1774,16 @@ impl BackendCore {
                     let bids = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), &fp_at_label, fp_sym.as_str());
                     for bid in bids {
-                        if self.bubbles().bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc {
+                        // Mode-membership gate widened for hybrid, mirror
+                        // splice gated separately — same rationale as the
+                        // live FootprintUpdate arm above.
+                        let bars_source = self.bubbles().bars_source(bid);
+                        let is_footprint_owned = bars_source == crate::bubble::BarsSource::FootprintOhlc
+                            || self.bubbles().chart_type(bid) == Some("footprint");
+                        if !is_footprint_owned {
                             continue;
                         }
+                        let mirror_ohlc = bars_source == crate::bubble::BarsSource::FootprintOhlc;
                         self.bubbles_mut().with_bubble_mut(bid, |bubble| {
                             let store = bubble.footprint_bars.get_or_insert_with(Vec::new);
                             let head = store.first().map(|b| b.open_time);
@@ -1739,12 +1815,18 @@ impl BackendCore {
                             }
                             // OHLC mirror splice — upserted in lockstep with
                             // footprint_bars, so the same head/skip applies.
-                            let old_bars = std::mem::take(&mut bubble.bars);
-                            let mut merged: Vec<mlc_core::Bar> =
-                                Vec::with_capacity(older.len() + old_bars.len());
-                            merged.extend(older.iter().map(|(_, ob)| ob.clone()));
-                            merged.extend(old_bars.into_iter().skip(skip));
-                            bubble.bars = merged;
+                            // SKIPPED in hybrid mode: `bubble.bars` is the
+                            // real kline backdrop there, not a footprint OHLC
+                            // mirror — splicing synthetic footprint-derived
+                            // OHLC into it would corrupt real kline data.
+                            if mirror_ohlc {
+                                let old_bars = std::mem::take(&mut bubble.bars);
+                                let mut merged: Vec<mlc_core::Bar> =
+                                    Vec::with_capacity(older.len() + old_bars.len());
+                                merged.extend(older.iter().map(|(_, ob)| ob.clone()));
+                                merged.extend(old_bars.into_iter().skip(skip));
+                                bubble.bars = merged;
+                            }
                         });
                         events.push(BubbleEvent::FootprintBarAppended {
                             bid,
@@ -2284,6 +2366,37 @@ impl BackendCore {
                         short_liq_usd,
                     });
                 }
+
+                // ── HistoryDepthReported ───────────────────────────────────────
+                // Bubble-storage write (hybrid-data-modes-plan-2026-07-08,
+                // Step 1) — `DataBubble::set_history_depth` (via the facade)
+                // rejects the write on its own if `chart_type` no longer
+                // matches the bubble's active type (stale event from a
+                // just-switched-away subscribe). ONE `BubbleEvent` per
+                // written bubble so the per-app reactor can clear a stuck
+                // `pending_symbol_load` (Step 4 — eternal-skeleton fix).
+                LiveUpdate::HistoryDepthReported { exchange_id, account_type: at, symbol: sym, chart_type, depth } => {
+                    let at_label = at.short_label().to_string();
+                    let depth = match depth {
+                        mlc_backend_data_bridge::HistoryDepthWire::Full => crate::bubble::HistoryDepth::Full,
+                        mlc_backend_data_bridge::HistoryDepthWire::Capped { achieved } => crate::bubble::HistoryDepth::Capped { achieved },
+                        mlc_backend_data_bridge::HistoryDepthWire::LiveOnly => crate::bubble::HistoryDepth::LiveOnly,
+                    };
+                    let bids = self.bubbles()
+                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
+                    for bid in bids {
+                        if self.bubbles_mut().set_history_depth(bid, chart_type, depth) {
+                            events.push(BubbleEvent::HistoryDepthReported {
+                                bid,
+                                exchange_id,
+                                symbol: sym.clone(),
+                                account_type: at_label.clone(),
+                                chart_type,
+                                depth,
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -2461,6 +2574,47 @@ impl BackendCore {
     /// Read-only snapshot of per-connector WebSocket/REST metrics.
     pub fn agent_metrics_snapshot(&self) -> Vec<(ExchangeId, digdigdig3::core::types::ConnectorStats, usize)> {
         self.bridge.collect_metrics()
+    }
+
+    /// Whether `chart_type` would run in hybrid/live-only mode on
+    /// `(exchange_id, account_type)` — resolved from `ChartTypeDef::
+    /// data_requirement` + the venue's `TradeHistoryCapabilities`. `None`
+    /// exchange-not-connected or an unrecognized `chart_type` id resolves to
+    /// `Unknown` (dropdown shows no marker rather than a wrong one).
+    ///
+    /// mlc-core stays capability-blind: this is the ONE call site that joins
+    /// the static per-chart_type classification (`mlc-core`) with the
+    /// runtime per-venue capability (`digdigdig3`, via `DataBridge`) — see
+    /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 5.
+    pub fn data_mode_for(
+        &self,
+        chart_type: &str,
+        exchange_id: ExchangeId,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> mlc_core::chart_type::DataMode {
+        use mlc_core::chart_type::{DataMode, DataRequirement};
+
+        let Some(def) = mlc_core::chart_type::by_id(chart_type) else {
+            return DataMode::Unknown;
+        };
+        match def.data_requirement {
+            DataRequirement::Klines | DataRequirement::LiveFeed => DataMode::Full,
+            DataRequirement::DeepTrades => {
+                let Some(caps) = self.bridge.trade_history_capabilities(exchange_id) else {
+                    return DataMode::Unknown;
+                };
+                let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+                let is_recent_only = matches!(
+                    caps.tier_for(dig3_at),
+                    digdigdig3::core::types::TradeHistoryTier::RecentOnly { .. },
+                );
+                match (is_recent_only, chart_type) {
+                    (false, _) => DataMode::Full,
+                    (true, "footprint") => DataMode::Hybrid,
+                    (true, _) => DataMode::LiveOnly,
+                }
+            }
+        }
     }
 
     /// Subscribe to the live trade stream for an instrument, returning the

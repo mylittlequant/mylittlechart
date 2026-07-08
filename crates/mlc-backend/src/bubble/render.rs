@@ -98,5 +98,10 @@ pub fn build_chart_render_state<'a>(
         // for the counted-bar family (range/tick/volume/dollar/tick-imbalance/
         // volume-imbalance/run bars).
         hide_time_grid: false,
+        // Direct 1:1 mirror of the bubble's active-series depth (hybrid-
+        // data-modes-plan-2026-07-08, Step 6) — no caller override needed,
+        // unlike non_temporal_axis/hide_time_grid which depend on chart_type
+        // knowledge this fn doesn't have.
+        history_depth: bubble.history_depth.to_display(),
     }
 }

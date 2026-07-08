@@ -12,7 +12,7 @@ mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
-uzor = "=1.4.15"
+uzor = "=1.4.16"
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 mlc-app-panels = { path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }

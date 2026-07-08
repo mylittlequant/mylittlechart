@@ -59,5 +59,6 @@ pub use render_data::{
     PaneGeom, PaneTheme, HistogramStyle,
     GridRenderOptions, LineRenderStyle,
     FootprintDisplayOptions, FootprintHeatIntensity,
+    HistoryDepthDisplay,
 };
 

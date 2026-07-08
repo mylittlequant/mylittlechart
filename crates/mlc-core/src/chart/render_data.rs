@@ -250,6 +250,32 @@ impl FootprintHeatIntensity {
     }
 }
 
+/// Render-facing mirror of `mlc_backend::bubble::HistoryDepth` — mlc-core
+/// cannot depend on mlc-backend (which owns the bubble-side source of
+/// truth), so `mlc-backend::bubble::render::build_chart_render_state`
+/// translates 1:1 into this shape when it populates `ChartRenderState`.
+///
+/// Drives the degraded-history badge (hybrid-data-modes-plan-2026-07-08,
+/// Step 6) — `Capped`/`LiveOnly` render a small pane-corner chip,
+/// `Full`/`Unknown` render nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum HistoryDepthDisplay {
+    /// No seed fetch reported yet for the active series (still loading, or
+    /// this chart_type has no seed concept at all — dom/liquidation
+    /// heatmap). No badge.
+    #[default]
+    Unknown,
+    /// Deep/paginated history, no ceiling hit. No badge.
+    Full,
+    /// A soft/hard venue ceiling was hit — `achieved` is the last known
+    /// depth in points, shown in the badge text.
+    Capped { achieved: usize },
+    /// No REST pagination exists at all for this venue/chart_type — the
+    /// active series is backed only by what has accumulated live since
+    /// subscribe.
+    LiveOnly,
+}
+
 /// State needed for chart rendering
 ///
 /// This struct aggregates all the data needed to render a chart frame.
@@ -360,6 +386,11 @@ pub struct ChartRenderState<'a> {
     /// labels them meaningfully; only the uniform-spacing grid lines are
     /// misleading and get suppressed.
     pub hide_time_grid: bool,
+    /// History depth backing the bubble's active series (hybrid-data-modes-
+    /// plan-2026-07-08, Step 6) — mirrors `mlc_backend::bubble::
+    /// HistoryDepth`, populated 1:1 by `build_chart_render_state`. Drives
+    /// the degraded-history badge; `Full`/`Unknown` render nothing.
+    pub history_depth: HistoryDepthDisplay,
 }
 
 impl<'a> ChartRenderState<'a> {

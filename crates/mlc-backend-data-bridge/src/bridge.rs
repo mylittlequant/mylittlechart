@@ -669,6 +669,29 @@ pub enum LiveUpdate {
         long_liq_usd: f64,
         short_liq_usd: f64,
     },
+
+    /// Trade-history depth for a `DeepTrades` chart_type's active series,
+    /// derived from a station seed/deepen outcome (dig3 0.3.27
+    /// `SeedOutcome`/`RewarmOutcome`).
+    ///
+    /// Emitted on cold subscribe (the real chart-open seed, `respawn_n ==
+    /// 0`) by every derived-stream forwarder body, and again whenever an
+    /// in-place rewarm/deepen flips the depth (e.g. Full → Capped mid-
+    /// session). `mlc-backend`'s `tick_writers` converts [`HistoryDepthWire`]
+    /// into the real `mlc_backend::bubble::HistoryDepth` and stamps it onto
+    /// the owning bubble via `DataBubble::set_history_depth` — see
+    /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 1.
+    HistoryDepthReported {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        /// chart_type id this depth applies to (e.g. `"footprint"`,
+        /// `"tick_bar"`) — `tick_writers` ignores this event if it doesn't
+        /// match the owning bubble's CURRENTLY active `chart_type` (stale
+        /// event from a just-switched-away subscribe racing the switch).
+        chart_type: &'static str,
+        depth: HistoryDepthWire,
+    },
 }
 
 /// Live-data bridge backed by digdigdig3-station.
@@ -1230,6 +1253,22 @@ impl DataBridge {
     /// Get a reference to the connector hub.
     pub fn pool(&self) -> &ExchangeHub {
         &self.hub
+    }
+
+    /// Trade-history depth capability for `exchange_id`, per account type.
+    ///
+    /// Thin wrapper over `ExchangeHub::trade_history_capabilities` — `None`
+    /// if the exchange isn't connected yet (mirrors the hub's own `None`
+    /// contract). Consumed by the footprint hybrid switch point
+    /// (`mlc-backend::chart_type::engine::subscribe_footprint`) to decide
+    /// whether a `RecentOnly` venue keeps the kline backdrop alive instead
+    /// of taking over `bubble.bars` — see
+    /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3.
+    pub fn trade_history_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+    ) -> Option<digdigdig3::core::types::TradeHistoryCapabilities> {
+        self.hub.trade_history_capabilities(exchange_id)
     }
 
     /// Record the oldest bar timestamp seen for a given key.
@@ -5341,6 +5380,102 @@ fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
 // during warm-seed is absorbed silently by the ring and not observable
 // here). Plain first-subscribe callers pass `None` — zero behavior change.
 
+/// Bridge-crate-local mirror of `mlc_backend::bubble::HistoryDepth`.
+///
+/// `mlc-backend-data-bridge` sits BELOW `mlc-backend` in the crate graph
+/// (engine layer vs kernel — see the contract table in
+/// `mylittlechart/CLAUDE.md`), so this crate cannot name
+/// `mlc_backend::bubble::HistoryDepth` directly. `LiveUpdate::
+/// HistoryDepthReported` carries this plain wire shape instead;
+/// `mlc-backend`'s `tick_writers` match arm does the final 1:1 conversion
+/// into the real `HistoryDepth` enum (see
+/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryDepthWire {
+    Full,
+    Capped { achieved: usize },
+    LiveOnly,
+}
+
+/// Reduce a station `SeedOutcome` to the bubble-facing [`HistoryDepthWire`].
+/// `achieved` is carried through for `Capped` so the UI badge can show a
+/// number ("240 bars") instead of just "degraded".
+fn history_depth_from_seed_outcome(outcome: &digdigdig3_station::SeedOutcome) -> HistoryDepthWire {
+    use digdigdig3_station::TruncationReason as TR;
+    match outcome.truncated_by {
+        None => HistoryDepthWire::Full,
+        Some(TR::VenueRecentOnly) => HistoryDepthWire::LiveOnly,
+        Some(TR::VenueWindowCap) => HistoryDepthWire::Capped { achieved: outcome.achieved },
+        // Exhausted-by-genuine-history-end or a transient error still means
+        // "this is what we have" — not a hard venue ceiling, so it does NOT
+        // block future deepen attempts the way RecentOnly/WindowCap do, but
+        // it also isn't a confirmed-Full result. Treat as Capped so the UI
+        // shows a soft-degraded state rather than silently claiming Full.
+        Some(TR::VenueHistoryExhausted | TR::Error) => HistoryDepthWire::Capped { achieved: outcome.achieved },
+    }
+}
+
+/// Map a derived `Stream` variant to the chart_type id it backs. 1:1 with
+/// the `Stream` construction inside each `request_*` method — used only to
+/// stamp `LiveUpdate::HistoryDepthReported.chart_type` for the generic
+/// `*_sub_body` forwarders (which have no other way to know which
+/// chart_type they were spawned for). `""` for any variant that never
+/// reaches these forwarders (kline/render-family and the two heatmaps have
+/// their own history story, or none at all).
+fn stream_to_chart_type(stream: &digdigdig3_station::Stream) -> &'static str {
+    use digdigdig3_station::Stream;
+    match stream {
+        Stream::RangeBar(_) => "range_bar",
+        Stream::VolumeBar(_) => "volume_bar",
+        Stream::TickBar(_) => "tick_bar",
+        Stream::DollarBar { .. } => "dollar_bar",
+        Stream::TickImbalanceBar { .. } => "tick_imbalance_bar",
+        Stream::VolumeImbalanceBar { .. } => "volume_imbalance_bar",
+        Stream::RunBar { .. } => "run_bar",
+        Stream::Footprint(_) => "footprint",
+        Stream::RenkoBar(_, _) => "renko",
+        Stream::PnfBar(_, _) => "pnf",
+        Stream::KagiBar(_) => "kagi",
+        Stream::ThreeLineBreak { .. } => "three_line_break",
+        Stream::TpoProfile(_, _) => "tpo",
+        _ => "",
+    }
+}
+
+/// Look up `key`'s seed outcome in `report.seed_outcomes` and, if present,
+/// broadcast one `LiveUpdate::HistoryDepthReported` for `chart_type`.
+///
+/// Shared by every derived-stream `*_sub_body` cold-subscribe path (Step 1,
+/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md`) — called only
+/// at `respawn_n == 0` (the actual cold/chart-open subscribe; later respawn
+/// cycles are heal-driven, not user-visible depth changes). No-op (silently)
+/// when `chart_type` is empty (stream has no chart_type mapping) or the key
+/// has no seed outcome (WS-only stream, no REST seed ran).
+fn emit_seed_history_depth(
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_canonical: &str,
+    chart_type: &'static str,
+    report: &digdigdig3_station::SubscribeReport,
+    key: &StationSeriesKey,
+) {
+    if chart_type.is_empty() {
+        return;
+    }
+    let Some((_, outcome)) = report.seed_outcomes.iter().find(|(k, _)| k == key) else {
+        return;
+    };
+    let depth = history_depth_from_seed_outcome(outcome);
+    let _ = tx.send(LiveUpdate::HistoryDepthReported {
+        exchange_id,
+        account_type,
+        symbol: symbol_canonical.to_string(),
+        chart_type,
+        depth,
+    });
+}
+
 /// Map a derived `Stream` variant to its `Kind` counterpart.
 ///
 /// `Stream::to_kind()` on the station side is `pub(crate)` (not part of
@@ -5441,6 +5576,20 @@ async fn rewarm_and_emit_derived_prepend(
     // retries can never produce more — stop the ladder immediately instead
     // of re-fetching the same shallow window on every doubling.
     let capability_exhausted = outcome.is_capability_exhausted();
+    // Report the depth this rewarm actually found — a mid-session deepen
+    // that discovers the venue ceiling (Full → Capped/LiveOnly) must update
+    // the bubble the same way the cold-open seed does, not just flip the
+    // bridge-internal exhaustion bookkeeping silently.
+    let chart_type = stream_to_chart_type(stream);
+    if !chart_type.is_empty() {
+        let _ = tx.send(LiveUpdate::HistoryDepthReported {
+            exchange_id,
+            account_type,
+            symbol: symbol_canonical.to_string(),
+            chart_type,
+            depth: history_depth_from_seed_outcome(&outcome.seed),
+        });
+    }
     let rewarmed = outcome.points;
     if rewarmed.is_empty() {
         return DerivedRewarmOutcome::Exhausted;
@@ -5813,6 +5962,10 @@ async fn derived_bar_sub_body(
         // snapshot replay, which is not "live" in nature.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(series) = station.series::<BarPoint>(key) {
                     let points = series.read().await.snapshot();
                     crate::dlog!(
@@ -5949,6 +6102,10 @@ async fn footprint_sub_body(
         // live path) so readers relying on that Vec see the same data.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::FootprintPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6078,6 +6235,10 @@ async fn renko_sub_body(
         // receive side. Live per-brick `RenkoBarUpdate` continues below.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::RenkoBrickPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6156,6 +6317,10 @@ async fn three_line_break_sub_body(
         // rationale (identical `head.is_none_or(...)` handling).
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::ThreeLineBreakLinePoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6234,6 +6399,10 @@ async fn pnf_sub_body(
         // seed batch above for the empty-slot rationale.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::PnfColumnPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6313,6 +6482,10 @@ async fn kagi_sub_body(
         // seed batch above for the empty-slot rationale.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::KagiSegmentPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6393,6 +6566,10 @@ async fn cvd_sub_body(
         // to the per-point replay it replaces, just one event instead of N.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::ScalarBarPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(
@@ -6472,6 +6649,10 @@ async fn tpo_sub_body(
         // the same steady-state ring size.
         if respawn_n == 0 {
             if let Some(key) = report.ok.first() {
+                emit_seed_history_depth(
+                    &tx, exchange_id, account_type, &symbol_canonical,
+                    stream_to_chart_type(&stream), &report, key,
+                );
                 if let Some(station_series) = station.series::<digdigdig3_station::data::TpoSessionPoint>(key) {
                     let points = station_series.read().await.snapshot();
                     crate::dlog!(

@@ -9,7 +9,7 @@ name = "mlc_app_render_context_vello"
 
 [dependencies]
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-uzor = "=1.4.15"
-uzor-render-vello-gpu = "=1.4.15"
+uzor = "=1.4.16"
+uzor-render-vello-gpu = "=1.4.16"
 vello = "0.9"
 skrifa = "0.40"

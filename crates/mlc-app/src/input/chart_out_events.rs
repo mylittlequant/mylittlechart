@@ -601,11 +601,27 @@ impl ChartApp {
                                     // `bars_source` + owns footprint's
                                     // clear_bars/mark_footprint_pending). Some
                                     // slots get cleared twice; harmless.
+                                    //
+                                    // Footprint hybrid (hybrid-data-modes-plan-
+                                    // 2026-07-08, Step 3): resolved once here —
+                                    // reused below both to bypass the generic
+                                    // `ops.clear_slot` table entry (its
+                                    // fn-pointer type carries no capability
+                                    // info, so only a call site with
+                                    // `(exchange_id, account_type)` in scope can
+                                    // resolve it) and to decide the backdrop-TF
+                                    // realignment after the TF flip.
+                                    let fp_hybrid_backdrop = ct == "footprint"
+                                        && mlc_backend::chart_type::is_footprint_hybrid(
+                                            self.core.bridge_handle(), self.active_exchange, at,
+                                        );
                                     if !render_only_switch {
                                         if let Some(bid) = self.bubble_for_chart(cid) {
                                             self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                                 bubble.clear_derived_slots(None);
-                                                if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                                                if ct == "footprint" {
+                                                    mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
+                                                } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
                                                     (ops.clear_slot)(bubble);
                                                 }
                                             });
@@ -641,7 +657,33 @@ impl ChartApp {
                                         if let Some(active_bid) = self.panel_app.panel_grid.active_container()
                                             .map(|w| w.current_tag_id)
                                         {
-                                            self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf);
+                                            self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf.clone());
+                                        }
+                                        // Hybrid backdrop TF alignment (Step 3,
+                                        // plan risk note): the kline sub left
+                                        // running by `clear_slot_footprint_hybrid_aware`
+                                        // is whatever the PREVIOUS chart_type was
+                                        // subscribed at (`tf`, e.g. "1h") — that
+                                        // can differ from the footprint bucket
+                                        // interval (`footprint_tf`, e.g. "1m").
+                                        // A mismatched backdrop TF desyncs the
+                                        // index axis between `bubble.bars` (kline
+                                        // backdrop) and `footprint_bars` (bucket
+                                        // grid). Simplest fix per the plan:
+                                        // backdrop TF == footprint interval,
+                                        // ALWAYS, in hybrid mode — abort the old-TF
+                                        // kline sub and re-request kline bars
+                                        // fresh at the bucket interval before
+                                        // `subscribe_footprint` fires below.
+                                        if fp_hybrid_backdrop && tf.name != iv {
+                                            self.core.bridge_handle().abort_kline_bars(
+                                                self.active_exchange, &symbol, at, &tf.name,
+                                            );
+                                            let bar_count = self.core.user().profile().domain.bar_count as usize;
+                                            self.core.bridge_handle().request_bars(
+                                                self.active_exchange, &symbol, &footprint_tf, at,
+                                                None, Some(bar_count), true,
+                                            );
                                         }
                                     }
                                     if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
@@ -801,17 +843,40 @@ impl ChartApp {
                                 // incompatible with the new bucket timeline: clear
                                 // both slots and re-stamp the bubble TF before the
                                 // re-subscribe repopulates from scratch.
+                                //
+                                // Hybrid (hybrid-data-modes-plan-2026-07-08, Step
+                                // 3): on a RecentOnly venue `bubble.bars` is the
+                                // kline backdrop, not footprint's own OHLC mirror
+                                // — clearing it here would blank the backdrop for
+                                // no reason (the kline sub keeps running under a
+                                // bucket-interval change same as any other TF
+                                // change) and flipping `bars_source` away from
+                                // `Kline` would make the FootprintUpdate mirror-
+                                // write guard start writing into it, creating a
+                                // second writer. Only `footprint_bars` needs a
+                                // reset (old-interval clusters are foreign to the
+                                // new bucket grid); the kline backdrop is
+                                // re-requested fresh at the new interval below so
+                                // it stays aligned to the bucket grid.
                                 let iv_ms = match static_iv {
                                     "1m" => 60_000, "5m" => 300_000, "15m" => 900_000,
                                     "30m" => 1_800_000, "1h" => 3_600_000, "4h" => 14_400_000,
                                     _ => 60_000,
                                 };
+                                let fp_hybrid_backdrop = mlc_backend::chart_type::is_footprint_hybrid(
+                                    self.core.bridge_handle(), self.active_exchange, at,
+                                );
+                                // Old backdrop TF name — in hybrid mode the kline
+                                // backdrop always rides the PREVIOUS bucket
+                                // interval (Step 3 invariant: backdrop TF ==
+                                // footprint interval), so this is the exact key
+                                // `abort_kline_bars` needs. Captured before
+                                // `set_timeframe` overwrites the bubble's label.
+                                let old_tf_name = self.timeframe_for_chart(cid).map(|tf| tf.name.clone());
                                 if let Some(bid) = self.bubble_for_chart(cid) {
                                     self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                                         bubble.clear_footprint();
-                                        bubble.clear_bars();
-                                        bubble.mark_footprint_pending();
-                                        bubble.bars_source = mlc_backend::bubble::BarsSource::FootprintOhlc;
+                                        mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
                                     });
                                     self.core.bubbles_mut().set_timeframe(
                                         bid, mlc_core::state::Timeframe::new(static_iv, iv_ms),
@@ -820,6 +885,19 @@ impl ChartApp {
                                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                     window.begin_fresh_load();
                                     window.needs_snap_after_backfill = true;
+                                }
+                                if fp_hybrid_backdrop {
+                                    if let Some(old_tf_name) = old_tf_name {
+                                        self.core.bridge_handle().abort_kline_bars(
+                                            self.active_exchange, &symbol, at, &old_tf_name,
+                                        );
+                                    }
+                                    let bar_count = self.core.user().profile().domain.bar_count as usize;
+                                    let backdrop_tf = mlc_core::state::Timeframe::new(static_iv, iv_ms);
+                                    self.core.bridge_handle().request_bars(
+                                        self.active_exchange, &symbol, &backdrop_tf, at,
+                                        None, Some(bar_count), true,
+                                    );
                                 }
                                 self.core.bridge_handle().request_footprint(self.active_exchange, &symbol, at, static_iv);
                             }

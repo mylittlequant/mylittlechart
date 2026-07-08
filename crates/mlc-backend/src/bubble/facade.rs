@@ -131,6 +131,11 @@ impl<'a> Bubbles<'a> {
         self.store.bars_source(bid)
     }
 
+    /// History depth backing the bubble's currently-active chart_type.
+    pub fn history_depth(&self, bid: BubbleId) -> super::data_bubble::HistoryDepth {
+        self.store.history_depth(bid)
+    }
+
     pub fn footprint_bars(&self, bid: BubbleId) -> Option<&[mlc_core::types::FootprintBar]> {
         self.store.footprint_bars(bid)
     }
@@ -334,6 +339,11 @@ impl<'a> BubblesMut<'a> {
         self.store.bars_source(bid)
     }
 
+    /// History depth backing the bubble's currently-active chart_type.
+    pub fn history_depth(&self, bid: BubbleId) -> super::data_bubble::HistoryDepth {
+        self.store.history_depth(bid)
+    }
+
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
         self.store.symbol(bid)
     }
@@ -396,6 +406,14 @@ impl<'a> BubblesMut<'a> {
 
     pub fn set_chart_type_interval(&mut self, bid: BubbleId, iv: &'static str) -> bool {
         self.store.set_chart_type_interval(bid, iv)
+    }
+
+    /// Record a seed/deepen depth report for `chart_type` on `bid`. Ignored
+    /// (both by the store lookup and by `DataBubble::set_history_depth`'s
+    /// own guard) when `bid` is unknown or `chart_type` doesn't match the
+    /// bubble's currently-active chart_type.
+    pub fn set_history_depth(&mut self, bid: BubbleId, chart_type: &str, depth: super::data_bubble::HistoryDepth) -> bool {
+        self.store.set_history_depth(bid, chart_type, depth)
     }
 
     pub fn set_instrument(&mut self, bid: BubbleId, symbol: String, exchange: String, account_type: String) -> bool {
