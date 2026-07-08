@@ -297,26 +297,29 @@ impl ChartApp {
                 // bubble-bound, not chart-bound.
                 self.core.indicators_mut().recalc_bubble(*bid, new_bars);
 
-                // Subscribe trades for matched windows — skip when every matched
-                // window's active chart_type is a trade-agg-bar type (root cause
-                // fixed 2026-07-08): these windows' bars are written entirely by
-                // the station's `BarUpdatePassthrough`, and a live trade sub here
-                // re-arms `TradeUpdatePassthrough`'s kline-builder for them (their
-                // `bubble.timeframe` is an ordinary wall-clock value, never
-                // re-stamped on chart-type switch) — a second writer racing the
-                // station into the SAME `bubble.bars`. Tick-TF kline windows
-                // (`is_tick()`) still need this: raw trades ARE their real live
-                // source. Footprint has its own subscribe flow, untouched.
-                if any_matched {
-                    let needs_trade_sub = matched_windows.iter().any(|(cid, _, _)| {
-                        !self.chart_type_for_chart(*cid)
-                            .map(crate::active_series::chart_type_is_trade_agg_bar)
-                            .unwrap_or(false)
-                    });
-                    if needs_trade_sub && self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
-                        let at = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
-                        self.core.subscribe_trades(*exchange_id, symbol, at);
-                    }
+                // Subscribe trades for matched windows — ALWAYS, regardless of
+                // chart_type (unified-data-plane Stage Э1: every active bubble
+                // keeps a live trade feed so `trade_layer` fills continuously,
+                // not just tick-TF/footprint windows). `subscribe_trades` is
+                // idempotent per (exchange_id, account_type, symbol) — gated
+                // by the bridge's own `station_trade_subscribed` set, so a
+                // repeat call for an already-live stream is a cheap no-op.
+                //
+                // The b67bda42 skip-for-trade-agg-bar gate that used to live
+                // here (root cause fixed 2026-07-08) protected against a
+                // DIFFERENT hazard: `TradeUpdatePassthrough`'s kline-candle-
+                // builder writing a second series into a trade-agg-bar
+                // bubble's `bubble.bars`. That protection is the bars-
+                // ownership check inside `TradeUpdatePassthrough` itself
+                // (`derived_cids_tu` / `bars_source != Kline` below) — it does
+                // NOT depend on whether a subscription exists, so removing
+                // this gate does not reintroduce the double-writer bug; it
+                // only lets the WS stream reach that (already-guarded) arm
+                // continuously, which is exactly what the raw trade layer
+                // needs. Footprint has its own subscribe flow, untouched.
+                if any_matched && self.sidebar_state.connector_enabled.get(exchange_id.as_str()).copied().unwrap_or(true) {
+                    let at = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
+                    self.core.subscribe_trades(*exchange_id, symbol, at);
                 }
 
                 // ── Pending compare retry ─────────────────────────────────────────

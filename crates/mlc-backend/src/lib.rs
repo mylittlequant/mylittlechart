@@ -65,7 +65,7 @@ use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
 use mlc_backend_data_bridge::{
     DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource,
-    SharedTradeSeries, SharedOrderBookTracker,
+    SharedTradeSeries, SharedOrderBookTracker, BarStreamKind,
 };
 use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
@@ -1241,7 +1241,7 @@ impl BackendCore {
 
             match update {
                 // ── BarsLoaded ─────────────────────────────────────────────────
-                LiveUpdate::BarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
+                LiveUpdate::BarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, source } => {
                     let bids_for_instrument = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol);
                     if bids_for_instrument.is_empty() {
@@ -1295,6 +1295,19 @@ impl BackendCore {
                             };
                             let prev_bars = mgr.bars(bid).to_vec();
                             mgr.replace_bars(bid, bars.clone());
+                            // Raw kline layer (unified-data-plane Stage Э1):
+                            // ADDITIVE write, independent of `bars_source` —
+                            // this is raw storage, not the active display
+                            // series. Genuine kline data ONLY: the trade-agg
+                            // family's cold-seed replay carries
+                            // `source == Derived` and must never pollute a
+                            // kline layer (it has no real per-bubble TF
+                            // identity — see `BarStreamKind`).
+                            if source == BarStreamKind::Kline {
+                                for bar in &bars {
+                                    mgr.kline_layer_push_live(bid, &tf_name, *bar);
+                                }
+                            }
                             drop(mgr);
                             events.push(BubbleEvent::BarsLoaded {
                                 bid,
@@ -1330,6 +1343,13 @@ impl BackendCore {
                         }
                         let prev_bars = mgr.bars(bid).to_vec();
                         mgr.replace_bars(bid, bars.clone());
+                        // Raw kline layer (unified-data-plane Stage Э1):
+                        // ADDITIVE write, independent of `bars_source` —
+                        // `BackfillComplete` only ever carries genuine kline
+                        // data (see the bars-ownership comment above).
+                        for bar in &bars {
+                            mgr.kline_layer_push_live(bid, &tf_name, *bar);
+                        }
                         drop(mgr);
                         events.push(BubbleEvent::BackfillCompleted {
                             bid,
@@ -1372,6 +1392,11 @@ impl BackendCore {
                         // the merge would collapse the anchor.
                         let prev_bars = mgr.bars(bid).to_vec();
                         let merged = mgr.merge_scroll_bars(bid, &bars);
+                        // Raw kline layer (unified-data-plane Stage Э1):
+                        // ADDITIVE prepend — `ScrollBarsLoaded` only ever
+                        // carries genuine kline data (bars-ownership gate
+                        // above).
+                        mgr.kline_layer_prepend_batch(bid, &tf_name, bars.clone());
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
                             bid,
@@ -1389,7 +1414,22 @@ impl BackendCore {
                 // ── BarUpdate — pass-through ────────────────────────────────────
                 // Bubble write depends on per-window `is_derived` / `chart_type` flags;
                 // reactor owns the full arm.
-                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, bar } => {
+                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, bar, source } => {
+                    // Raw kline layer (unified-data-plane Stage Э1): ADDITIVE
+                    // live-tick write, independent of `bars_source`/chart_type
+                    // — every bubble on this instrument gets the tick in its
+                    // OWN timeframe's layer. Genuine kline ticks only
+                    // (`source == Kline`); the trade-agg family's derived
+                    // ticks (`source == Derived`) must never land in a kline
+                    // layer.
+                    if source == BarStreamKind::Kline {
+                        let at_label = bar_at.short_label();
+                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &bar_sym) {
+                            if let Some(tf_name) = self.bubbles().timeframe(bid).map(|tf| tf.name.clone()) {
+                                self.bubbles_mut().kline_layer_push_live(bid, &tf_name, bar);
+                            }
+                        }
+                    }
                     events.push(BubbleEvent::BarUpdatePassthrough {
                         exchange_id,
                         account_type: bar_at.short_label().to_string(),
@@ -1451,6 +1491,23 @@ impl BackendCore {
                 // Aggregation period and derived-window exclusion depend on per-window
                 // TF metadata and `is_derived` flags; reactor owns the full arm.
                 LiveUpdate::TradeUpdate { exchange_id, account_type, symbol, price, quantity, timestamp, is_buyer_maker } => {
+                    // Raw trade layer (unified-data-plane Stage Э1): ADDITIVE
+                    // live-tick write into EVERY bubble on this instrument —
+                    // single-writer-core, backend-side (not mlc-app), and
+                    // unconditional (not gated by chart_type/TF, unlike the
+                    // kline-candle-builder path in react.rs's
+                    // `TradeUpdatePassthrough` arm, which keeps ALL its
+                    // existing gates).
+                    let at_label = account_type.short_label();
+                    let raw_trade = crate::bubble::RawTrade {
+                        ts_ms: timestamp,
+                        price,
+                        qty: quantity,
+                        is_buyer_maker,
+                    };
+                    for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                        self.bubbles_mut().trade_layer_push_live(bid, raw_trade);
+                    }
                     events.push(BubbleEvent::TradeUpdatePassthrough {
                         exchange_id,
                         account_type: account_type.short_label().to_string(),

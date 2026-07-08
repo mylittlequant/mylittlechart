@@ -167,6 +167,16 @@ pub struct DataLoadSettings {
     /// Delete bar files not accessed in N days. Default 30.
     #[serde(default = "default_store_cleanup_days")]
     pub store_cleanup_days: u32,
+
+    /// Ring capacity (points) for one bubble's raw kline layer, per
+    /// touched timeframe (unified-data-plane Stage Э1). Default 200_000.
+    #[serde(default = "default_kline_layer_capacity")]
+    pub kline_layer_capacity: u32,
+
+    /// Ring capacity (points) for one bubble's raw trade layer
+    /// (unified-data-plane Stage Э1). Default 1_000_000.
+    #[serde(default = "default_trade_layer_capacity")]
+    pub trade_layer_capacity: u32,
 }
 
 impl Default for DataLoadSettings {
@@ -176,6 +186,8 @@ impl Default for DataLoadSettings {
             max_loaded_bars: default_max_loaded_bars(),
             max_store_size_mb: default_max_store_size_mb(),
             store_cleanup_days: default_store_cleanup_days(),
+            kline_layer_capacity: default_kline_layer_capacity(),
+            trade_layer_capacity: default_trade_layer_capacity(),
         }
     }
 }
@@ -680,6 +692,14 @@ fn default_max_store_size_mb() -> u32 {
 
 fn default_store_cleanup_days() -> u32 {
     30
+}
+
+fn default_kline_layer_capacity() -> u32 {
+    200_000
+}
+
+fn default_trade_layer_capacity() -> u32 {
+    1_000_000
 }
 
 // =============================================================================

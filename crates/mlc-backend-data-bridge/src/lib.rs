@@ -50,6 +50,7 @@ mod convert;
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
     SharedTradeSeries, SharedOrderBookTracker, HistoryDepthWire,
+    BarStreamKind,
 };
 pub use provider::LiveDataProvider;
 pub use convert::{

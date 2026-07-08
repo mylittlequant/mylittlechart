@@ -1107,10 +1107,12 @@ impl ChartApp {
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
     ) -> mlc_core::ids::BubbleId {
+        let (kline_cap, trade_cap) = self.layer_capacities();
         let bid = self
             .core
             .bubbles_mut()
             .create_bubble(symbol, timeframe);
+        self.core.bubbles_mut().set_layer_capacities(bid, kline_cap, trade_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
@@ -1122,12 +1124,25 @@ impl ChartApp {
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
     ) -> mlc_core::ids::BubbleId {
+        let (kline_cap, trade_cap) = self.layer_capacities();
         let bid = self
             .core
             .bubbles_mut()
             .create_bubble_auto(symbol, timeframe);
+        self.core.bubbles_mut().set_layer_capacities(bid, kline_cap, trade_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
+    }
+
+    /// Raw-data-layer ring capacities from the active profile
+    /// (`UserProfile.domain.data_load.{kline,trade}_layer_capacity`),
+    /// applied to every freshly-created bubble (unified-data-plane
+    /// Stage Э1). `user()` is a leaf lock — read independently, never
+    /// nested under a held `bubbles_mut()` guard.
+    fn layer_capacities(&self) -> (usize, usize) {
+        let user = self.core.user();
+        let dl = &user.profile().domain.data_load;
+        (dl.kline_layer_capacity as usize, dl.trade_layer_capacity as usize)
     }
 
     /// Remove a bubble + its paired tag.

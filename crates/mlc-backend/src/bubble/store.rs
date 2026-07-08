@@ -91,6 +91,10 @@ impl BubbleStore {
             scroll_prefetch_done: false,
             derived_seed_in_flight: None,
             history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
+            kline_layers: HashMap::new(),
+            trade_layer: crate::bubble::RawLayer::new(crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY),
+            kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
+            trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -144,6 +148,10 @@ impl BubbleStore {
             scroll_prefetch_done: false,
             derived_seed_in_flight: None,
             history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
+            kline_layers: HashMap::new(),
+            trade_layer: crate::bubble::RawLayer::new(crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY),
+            kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
+            trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -292,6 +300,13 @@ impl BubbleStore {
 
     /// Update symbol, exchange, and account_type for a bubble known by id
     /// directly. Caller resolves `member → bid` via `core.tags()` first.
+    ///
+    /// Resets the bubble's raw data layers (`kline_layers`/`trade_layer`,
+    /// unified-data-plane Stage Э1) when the resulting instrument identity
+    /// actually differs from the old one — a genuine symbol/exchange/
+    /// account_type reassignment means the previously-buffered raw data
+    /// belongs to a DIFFERENT instrument and must not linger. A no-op call
+    /// (identity unchanged) leaves the layers untouched.
     pub fn set_instrument(
         &mut self,
         bid: BubbleId,
@@ -300,9 +315,16 @@ impl BubbleStore {
         account_type: String,
     ) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        let identity_changed = bubble.address.symbol != symbol
+            || bubble.address.exchange != exchange
+            || bubble.address.account_type != at;
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
-        bubble.address.account_type = account_type.parse().unwrap_or_default();
+        bubble.address.account_type = at;
+        if identity_changed {
+            bubble.reset_raw_layers();
+        }
         true
     }
 
@@ -310,16 +332,27 @@ impl BubbleStore {
     /// (no chart member required). Used by bare/headless bubble creation —
     /// e.g. the daemon's `POST /v1/bubbles` route, which creates a bubble
     /// with no chart attached yet.
+    ///
+    /// Resets raw data layers on genuine identity change — see
+    /// [`Self::set_instrument`].
     pub fn set_bubble_instrument(&mut self, bid: BubbleId, exchange: String, account_type: String) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        let identity_changed = bubble.address.exchange != exchange || bubble.address.account_type != at;
         bubble.address.exchange = exchange;
-        bubble.address.account_type = account_type.parse().unwrap_or_default();
+        bubble.address.account_type = at;
+        if identity_changed {
+            bubble.reset_raw_layers();
+        }
         true
     }
 
     /// Update symbol/exchange/account_type/timeframe for a bubble known by id
     /// directly. Covers the "assign full instrument to a freshly-created
     /// bubble" shape used by chart-seed / new-window flows.
+    ///
+    /// Resets raw data layers on genuine identity change (symbol/exchange/
+    /// account_type — NOT timeframe alone) — see [`Self::set_instrument`].
     pub fn set_bid_instrument_full(
         &mut self,
         bid: BubbleId,
@@ -329,17 +362,31 @@ impl BubbleStore {
         timeframe: Timeframe,
     ) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
+        let identity_changed = bubble.address.symbol != symbol
+            || bubble.address.exchange != exchange
+            || bubble.address.account_type != at;
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
-        bubble.address.account_type = account_type.parse().unwrap_or_default();
+        bubble.address.account_type = at;
         bubble.timeframe = timeframe;
+        if identity_changed {
+            bubble.reset_raw_layers();
+        }
         true
     }
 
     /// Update just the exchange field for a bubble known by id directly.
+    ///
+    /// Resets raw data layers on genuine identity change — see
+    /// [`Self::set_instrument`].
     pub fn set_exchange_for_bid(&mut self, bid: BubbleId, exchange: String) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        let identity_changed = bubble.address.exchange != exchange;
         bubble.address.exchange = exchange;
+        if identity_changed {
+            bubble.reset_raw_layers();
+        }
         true
     }
 
@@ -550,6 +597,19 @@ impl BubbleStore {
         self.bubbles.get(&bid)?.liq_dots.as_deref()
     }
 
+    /// Raw kline layer for timeframe `tf`, if any data has been written for
+    /// it yet (unified-data-plane Stage Э1). `None` if the bubble is
+    /// missing or the timeframe has never been touched.
+    pub fn kline_layer(&self, bid: BubbleId, tf: &str) -> Option<&super::raw_layer::RawLayer<mlc_core::Bar>> {
+        self.bubbles.get(&bid)?.kline_layer(tf)
+    }
+
+    /// Raw trade layer for a bubble known by id directly. `None` if the
+    /// bubble is missing.
+    pub fn trade_layer(&self, bid: BubbleId) -> Option<&super::raw_layer::RawLayer<super::raw_layer::RawTrade>> {
+        Some(self.bubbles.get(&bid)?.trade_layer())
+    }
+
     /// Symbol of a bubble known by id directly. `None` if missing or empty.
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
         self.bubbles.get(&bid).map(|b| b.address.symbol.as_str()).filter(|s| !s.is_empty())
@@ -687,6 +747,36 @@ impl BubbleStore {
     pub fn set_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.replace_bars(bars);
+        }
+    }
+
+    // =========================================================================
+    // Raw data layer write intents (unified-data-plane Stage Э1)
+    // =========================================================================
+
+    /// Live-tick write into a bubble's raw kline layer for timeframe `tf`
+    /// (append, or in-place replace of the current last point by
+    /// chronological identity). No-op for an unknown bubble.
+    pub fn kline_layer_push_live(&mut self, bid: BubbleId, tf: &str, bar: mlc_core::Bar) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.kline_layer_mut(tf).push_live(bar);
+        }
+    }
+
+    /// Backfill-batch write into a bubble's raw kline layer for timeframe
+    /// `tf` — prepended in front of the existing series with seam dedup.
+    /// No-op for an unknown bubble.
+    pub fn kline_layer_prepend_batch(&mut self, bid: BubbleId, tf: &str, bars: Vec<mlc_core::Bar>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.kline_layer_mut(tf).prepend_batch(bars);
+        }
+    }
+
+    /// Live-tick write into a bubble's raw trade layer. No-op for an
+    /// unknown bubble.
+    pub fn trade_layer_push_live(&mut self, bid: BubbleId, trade: super::raw_layer::RawTrade) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.trade_layer_mut().push_live(trade);
         }
     }
 
