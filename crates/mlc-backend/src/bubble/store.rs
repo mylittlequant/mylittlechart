@@ -780,6 +780,15 @@ impl BubbleStore {
         }
     }
 
+    /// Backfill-batch write into a bubble's raw trade layer — prepended in
+    /// front of the existing series with seam dedup (unified-data-plane
+    /// Stage Э2 `BackfillEngine`). No-op for an unknown bubble.
+    pub fn trade_layer_prepend_batch(&mut self, bid: BubbleId, trades: Vec<super::raw_layer::RawTrade>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.trade_layer_mut().prepend_batch(trades);
+        }
+    }
+
     /// Set the price-scale corner mode of a bubble known by id directly.
     pub fn set_scale_mode(&mut self, bid: BubbleId, mode: ScaleMode) {
         if let Some(b) = self.bubbles.get_mut(&bid) {

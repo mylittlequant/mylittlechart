@@ -685,6 +685,22 @@ impl ChartApp {
                 if bar_count_scroll == 0 { continue; }
                 if window.pending_symbol_load { continue; }
 
+                // Scroll-pressure trigger (unified-data-plane Э2 doctrine:
+                // fire at ~80% of LOADED history toward the oldest edge).
+                // This check stays in VISIBLE-bars terms rather than
+                // recomputing against `bar_count_scroll` (total loaded) —
+                // `view_start <= visible_bars * 0.20` means the viewport's
+                // oldest visible bar is within the last 20% of one screen
+                // width from the oldest LOADED bar. That is the same
+                // "within 20% of loaded history" rule restated in the units
+                // this call site already tracks, and is exactly equivalent
+                // to it whenever the loaded series is not dramatically
+                // larger than one screen (the common case right after a
+                // fresh open or a scroll-driven ramp) — see
+                // `BackfillEngine::on_kline_scroll_pressure`'s doc comment
+                // for the full mapping note. The call below now feeds a
+                // scroll-PRESSURE signal into `BackfillEngine`'s ramp
+                // instead of a one-shot fixed-size page fetch.
                 let visible = window.viewport().visible_bars() as f64;
                 let threshold = (visible * 0.20).max(5.0);
                 if window.viewport().view_start > threshold { continue; }

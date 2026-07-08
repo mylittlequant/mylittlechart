@@ -46,12 +46,14 @@
 mod bridge;
 mod provider;
 mod convert;
+pub mod backfill_engine;
 
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
     SharedTradeSeries, SharedOrderBookTracker, HistoryDepthWire,
-    BarStreamKind,
+    BarStreamKind, RawTradeWire,
 };
+pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState};
 pub use provider::LiveDataProvider;
 pub use convert::{
     account_type_from_dig3, account_type_to_dig3, kline_to_bar, resolve_exchange, timeframe_to_interval,

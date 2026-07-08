@@ -420,6 +420,12 @@ impl<'a> BubblesMut<'a> {
         self.store.trade_layer_push_live(bid, trade)
     }
 
+    /// Backfill-batch write into a bubble's raw trade layer (unified-data-
+    /// plane Stage Э2 `BackfillEngine`).
+    pub fn trade_layer_prepend_batch(&mut self, bid: BubbleId, trades: Vec<super::raw_layer::RawTrade>) {
+        self.store.trade_layer_prepend_batch(bid, trades)
+    }
+
     /// Configure raw-layer ring capacities for a bubble known by id
     /// directly (unified-data-plane Stage Э1).
     pub fn set_layer_capacities(&mut self, bid: BubbleId, kline_capacity: usize, trade_capacity: usize) {

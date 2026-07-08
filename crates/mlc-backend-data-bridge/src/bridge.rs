@@ -214,6 +214,19 @@ where
     BgJoinHandle { abort }
 }
 
+/// Wire shape of one raw trade tick/backfill point, crossing the
+/// `mlc-backend-data-bridge` → `mlc-backend` boundary (mirrors
+/// `mlc_backend::bubble::raw_layer::RawTrade` field-for-field — this crate
+/// sits BELOW `mlc-backend` in the layering and cannot name that type
+/// directly, same rationale as [`HistoryDepthWire`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RawTradeWire {
+    pub ts_ms: i64,
+    pub price: f64,
+    pub qty: f64,
+    pub is_buyer_maker: bool,
+}
+
 /// Identifies whether an [`LiveUpdate::OrderbookSnapshot`] originated from the
 /// one-shot REST bootstrap (deep, up to 1000 levels) or from the WebSocket
 /// stream (partial snapshot — only used by exchanges that lack a diff stream).
@@ -681,6 +694,44 @@ pub enum LiveUpdate {
         chart_type: &'static str,
         depth: HistoryDepthWire,
     },
+
+    /// Batch of OLDER trades prepended to a bubble's raw trade layer by
+    /// [`BackfillEngine`](crate::backfill_engine::BackfillEngine) — the
+    /// trade-layer analogue of `ScrollBarsLoaded` (unified-data-plane Э2).
+    /// No active-series write happens for this variant today (trades do not
+    /// drive `bubble.bars` directly) — `tick_writers` writes it straight
+    /// into `trade_layer_prepend_batch`; Э4's client-side folds are the
+    /// intended future active-series consumer.
+    TradeHistoryPrepended {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        trades: Vec<RawTradeWire>,
+    },
+
+    /// A raw-layer backfill page landed (unified-data-plane Э2,
+    /// `BackfillEngine`). Layer-level notification for consumers that watch
+    /// a bubble's raw `kline_layers`/`trade_layer` directly rather than the
+    /// active-series-shaped events (`ScrollBarsLoaded`/`BackfillComplete`) —
+    /// Э3/Э4 client-side folds are the intended consumer, so this variant is
+    /// informational-only today (no writer keys off it yet). The kline
+    /// layer write itself still happens through the existing
+    /// `ScrollBarsLoaded`/`BackfillComplete` writers (`tick_writers`'
+    /// `kline_layer_prepend_batch`/`kline_layer_push_live` calls) — this
+    /// event fires ALONGSIDE those, not instead.
+    LayerBackfilled {
+        exchange_id: ExchangeId,
+        symbol: String,
+        account_type: AccountType,
+        /// `"kline:<tf>"` or `"trades"` — see `backfill_engine::LayerId::wire_label`.
+        layer: String,
+        /// Bars/trades prepended by this page (0 on the terminal exhaustion
+        /// notification, which carries `exhausted: true` with no data).
+        prepended: usize,
+        /// `true` on the final notification for this backfill run — venue
+        /// exhaustion, venue wall, or target reached.
+        exhausted: bool,
+    },
 }
 
 /// Live-data bridge backed by digdigdig3-station.
@@ -813,6 +864,12 @@ pub struct DataBridge {
     /// streams (OrderUpdate / BalanceUpdate / PositionUpdate — auth required)
     /// and exchange_info.
     station: Arc<digdigdig3_station::Station>,
+    /// Unified ramped-backfill state registry (unified-data-plane Э2,
+    /// `crate::backfill_engine`) — one [`crate::backfill_engine::RampState`]
+    /// per `(exchange, symbol, account, layer)`, shared by every
+    /// `ensure_kline_backfill`/`on_kline_scroll_pressure`/
+    /// `ensure_trade_backfill`/`on_trade_scroll_pressure` call.
+    backfill_engine: crate::backfill_engine::BackfillEngine,
     /// C3: tracks which `(exchange_id, account_type, symbol)` keys already have
     /// a live station trade-subscriber task spawned.
     ///
@@ -1053,6 +1110,7 @@ impl DataBridge {
             footprint_series: Arc::new(dashmap::DashMap::new()),
             warmup_started: AtomicBool::new(false),
             station,
+            backfill_engine: crate::backfill_engine::BackfillEngine::new(),
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -1131,6 +1189,52 @@ impl DataBridge {
     /// [`LiveUpdate`] broadcast.
     pub fn station(&self) -> Arc<digdigdig3_station::Station> {
         self.station.clone()
+    }
+
+    /// Clone of the update broadcast sender, for `crate::backfill_engine`'s
+    /// driver tasks (same-crate module, private fields not visible across
+    /// module boundaries in Rust — this is the accessor, not a privacy
+    /// relaxation; production callers outside this crate still only ever
+    /// see [`Self::add_listener`]/the receiver returned by `new`).
+    pub(crate) fn updates_tx(&self) -> broadcast::Sender<LiveUpdate> {
+        self.tx.clone()
+    }
+
+    /// Resolve a canonical/native symbol to its venue wire form, for
+    /// `crate::backfill_engine`'s driver tasks. Thin `pub(crate)` passthrough
+    /// to the private [`Self::wire_symbol`] — see [`Self::updates_tx`]'s doc
+    /// comment for why an accessor is needed for a same-crate module.
+    pub(crate) fn wire_symbol_pub(&self, exchange_id: ExchangeId, account_type: AccountType, requested: &str) -> String {
+        self.wire_symbol(exchange_id, account_type, requested)
+    }
+
+    /// Shared [`crate::backfill_engine::BackfillEngine`] registry — one
+    /// instance per bridge, threaded into every `ensure_kline_backfill`/
+    /// `on_kline_scroll_pressure`/`ensure_trade_backfill`/
+    /// `on_trade_scroll_pressure` driver task.
+    pub(crate) fn backfill_engine(&self) -> crate::backfill_engine::BackfillEngine {
+        self.backfill_engine.clone()
+    }
+
+    /// `pub(crate)` passthrough to the private `spawn_bg` helper, for
+    /// `crate::backfill_engine`'s driver tasks (see [`Self::updates_tx`]'s
+    /// doc comment for the same-crate-module rationale).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn spawn_bg_pub<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.spawn_bg(fut);
+    }
+
+    /// Wasm counterpart of [`Self::spawn_bg_pub`] — no `Send` bound (wasm is
+    /// single-threaded; `spawn_bg`'s wasm arm uses `spawn_local`).
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn spawn_bg_pub<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + 'static,
+    {
+        self.spawn_bg(fut);
     }
 
     /// Create a new update receiver that receives all future updates.
@@ -4643,554 +4747,6 @@ impl DataBridge {
         if bars.is_empty() { None } else { Some(bars) }
     }
 
-    /// Request background backfill of historical bars for a symbol/timeframe.
-    ///
-    /// Non-blocking — spawns an async task that pages backward through history
-    /// until `target_bars` are accumulated in the cache. On completion, sends
-    /// `BackfillComplete` through the update channel.
-    ///
-    /// This is Layer 2 of the data loading pipeline. It is designed to run
-    /// silently after `request_bars` (Layer 1) has already populated the cache
-    /// with recent bars, extending history further into the past.
-    ///
-    /// If the cache already holds `>= target_bars`, or a backfill for this key
-    /// is already in-flight, the call returns immediately without spawning a task.
-    pub fn request_background_backfill(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        timeframe: &Timeframe,
-        account_type: AccountType,
-        target_bars: u32,
-    ) {
-        // Phase 2B: background backfill paginates through the STATION hub
-        // (shared connector pool with live WS + Phase A/B fetch).
-        let fetch_hub = self.station.hub();
-        let tx = self.tx.clone();
-        let symbol_str = symbol.to_string();
-        // Wire form for dig3 REST calls.
-        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
-        let interval = timeframe_to_interval(timeframe);
-        let tf_name = timeframe.name.clone();
-        let active_fetches = self.active_fetches.clone();
-        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
-        let station_bg = self.station.clone();
-
-        let station_bar_seriskey = station_bar_key(exchange_id, account_type, &symbol_str, &tf_name);
-
-        // Backfill dedup key: encode the "backfill" role by prefixing the symbol.
-        // This avoids colliding with the regular request_bars fetch key while
-        // reusing the same HashSet type.
-        let backfill_fetch_key: FetchKey = (
-            exchange_id,
-            account_type,
-            format!("backfill:{}", symbol_str),
-            tf_name.clone(),
-        );
-
-        // ── Deduplication guard ───────────────────────────────────────────────
-        {
-            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
-            if af.contains(&backfill_fetch_key) {
-                crate::dlog!(
-                    "[Bridge] backfill already in flight for {:?} sym={} tf={}, skipping",
-                    exchange_id, symbol_str, tf_name
-                );
-                return;
-            }
-            af.insert(backfill_fetch_key.clone());
-        }
-
-        // ── Early-exit if cache is already satisfied ─────────────────────────
-        let cached_len = station_read_bars_len(&station_bg, &station_bar_seriskey);
-
-        if cached_len >= target_bars as usize {
-            crate::dlog!(
-                "[Bridge] backfill {:?} sym={} tf={}: cache already has {} >= {} bars, skipping",
-                exchange_id, symbol_str, tf_name, cached_len, target_bars
-            );
-            if let Ok(mut af) = active_fetches.lock() {
-                af.remove(&backfill_fetch_key);
-            }
-            return;
-        }
-
-        self.spawn_bg(async move {
-            macro_rules! finish_backfill {
-                () => {
-                    if let Ok(mut af) = active_fetches.lock() {
-                        af.remove(&backfill_fetch_key);
-                    }
-                };
-            }
-
-            // Wait for the connector to be dialed (readiness barrier — dig3
-            // fetch_history resolves hub.rest itself; same pattern as
-            // request_bars / request_scroll_bars).
-            {
-                let mut attempts = 0;
-                loop {
-                    if fetch_hub.rest(exchange_id).is_some() {
-                        break;
-                    }
-                    attempts += 1;
-                    if attempts > 50 {
-                        crate::dlog!(
-                            "[Bridge] backfill: connector {:?} not initialized after 5s",
-                            exchange_id
-                        );
-                        let _ = tx.send(LiveUpdate::Error {
-                            exchange_id,
-                            account_type,
-                            symbol: symbol_str.clone(),
-                            timeframe: tf_name.clone(),
-                            message: format!(
-                                "backfill: connector {:?} not initialized",
-                                exchange_id
-                            ),
-                        });
-                        finish_backfill!();
-                        return;
-                    }
-                    sleep_ms(100).await;
-                }
-            }
-
-            // Rule: the exchange is the source of truth. Each emit from
-            // background_backfill must contain a SELF-SUFFICIENT dataset that
-            // tick.rs can apply via `update_bars`/`set_bars` AS-IS, including
-            // the fresh tail. We must NEVER ask the consumer to merge.
-            //
-            // Pre-Phase 2B that worked because the consumer-side ring held the
-            // fresh tail by construction. After Phase 2B the station's ring
-            // is a different buffer (warm-seed may be older than Phase A's
-            // fresh 300), so we cannot use station_read_bars as the "fresh
-            // anchor" any more. Instead: always start backfill paging from
-            // `now_ms`. The FIRST page is the latest 500 from REST = the
-            // fresh tail. Subsequent pages walk backwards. The accumulated
-            // result is a complete contiguous history that already includes
-            // the freshest closed bars, so the consumer's `update_bars`
-            // replacement is correct without any merge.
-            //
-            // The "still_need" / "satisfied-by-cache" short-circuit is
-            // intentionally dropped here — background_backfill is an
-            // explicit "fetch target_bars history NOW from the exchange"
-            // op (called by tick.rs after every BarsLoaded), not a
-            // lazy-fill. The previous early-exit-on-cache branch was the
-            // mechanism by which station's stale warm-seed could block the
-            // refresh AND poison the cursor at the same time.
-            let still_need = target_bars as usize;
-
-            crate::dlog!(
-                "[Bridge] backfill {:?} sym={} tf={}: target={} bars, paginating from now",
-                exchange_id, symbol_str, tf_name, still_need
-            );
-
-            // Effective limit accounts for exchange-specific per-request caps
-            // (e.g. OKX returns at most 300 bars regardless of what we request).
-            let effective_limit = fetch_hub.max_kline_limit(exchange_id, 500);
-
-            // Phase 2B: pages come from dig3 `backfill::fetch_history`
-            // (exclusive `end_time_ms`, raw symbol, sorted+deduped). First
-            // page = (now - effective_limit*tf) .. now → fresh tail. Cursor
-            // walks backwards from there.
-            let kline_iv = KlineInterval::new(interval.as_str());
-            let now_ms = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(i64::MAX);
-            let mut end_time_cursor: i64 = now_ms;
-            let mut accumulated: Vec<Bar> = Vec::with_capacity(still_need.min(20_000));
-            let mut pages: usize = 0;
-
-            'backfill: loop {
-                let result = digdigdig3_station::backfill::fetch_history(
-                    &fetch_hub,
-                    exchange_id,
-                    &wire_sym,
-                    account_type,
-                    &kline_iv,
-                    end_time_cursor,
-                    effective_limit,
-                )
-                .await;
-
-                match result {
-                    Ok(points) => {
-                        if points.is_empty() {
-                            // Exchange has no more data — record oldest_ts so scroll
-                            // can stop asking for more.
-                            crate::dlog!("[Bridge] backfill: empty page at page {}, stopping", pages);
-                            if let Some(oldest_so_far) = accumulated.first().map(|b| b.timestamp) {
-                                if let Ok(mut map) = oldest_fetched_ts.lock() {
-                                    let bf_oldest_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-                                    let entry = map.entry(bf_oldest_key).or_insert(i64::MAX);
-                                    if oldest_so_far < *entry {
-                                        *entry = oldest_so_far;
-                                    }
-                                }
-                            }
-                            break 'backfill;
-                        }
-
-                        let page_len = points.len();
-                        pages += 1;
-                        let batch: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
-
-                        // Move cursor to before the oldest bar in this page
-                        // (`open_time` ms; cursor exclusive ms).
-                        if let Some(oldest_ms) = points.iter().map(|p| p.open_time).min() {
-                            end_time_cursor = oldest_ms - 1;
-                        }
-
-                        let oldest_bar_ts = batch.first().map(|b| b.timestamp).unwrap_or(0);
-
-                        // If the exchange returned fewer bars than its effective limit, it has
-                        // run out of history — record oldest_ts so scroll-left stops requesting
-                        // more.  A full page (page_len == effective_limit) means there is more
-                        // data available further back; recording oldest_ts here would
-                        // incorrectly block future fetches.
-                        if page_len < effective_limit as usize && oldest_bar_ts > 0 {
-                            if let Ok(mut map) = oldest_fetched_ts.lock() {
-                                let bf_oldest_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-                                let entry = map.entry(bf_oldest_key).or_insert(i64::MAX);
-                                if oldest_bar_ts < *entry {
-                                    *entry = oldest_bar_ts;
-                                }
-                            }
-                        }
-
-                        accumulated = merge_bars(batch, accumulated);
-
-                        crate::dlog!(
-                            "[Bridge] backfill: page {} -> {} accumulated bars (oldest_ts={}, page_len={})",
-                            pages,
-                            accumulated.len(),
-                            oldest_bar_ts,
-                            page_len,
-                        );
-
-                        if accumulated.len() >= still_need {
-                            crate::dlog!(
-                                "[Bridge] backfill: reached target ({} >= {}), more data may exist on exchange",
-                                accumulated.len(),
-                                still_need
-                            );
-                            // Do NOT record oldest_ts here — we stopped by choice, not
-                            // because the exchange ran out of data.
-                            break 'backfill;
-                        }
-                        if pages >= 40 {
-                            crate::dlog!("[Bridge] backfill: capped at 40 pages (~20k bars)");
-                            // Page cap also does not mean exchange ran out.
-                            break 'backfill;
-                        }
-                    }
-                    Err(e) => {
-                        crate::dlog!("[Bridge] backfill: error at page {}: {}", pages, e);
-                        break 'backfill;
-                    }
-                }
-            }
-
-            if accumulated.is_empty() {
-                crate::dlog!("[Bridge] backfill: no bars fetched, done");
-                finish_backfill!();
-                return;
-            }
-
-            // accumulated is already self-sufficient: page 1 was anchored at
-            // now_ms so the freshest bars are included; subsequent pages
-            // walked further back. tick.rs's BackfillComplete handler does
-            // `window.update_bars(bars)` (full replace) and that's correct
-            // by the source-of-truth rule — REST overwrites RAM as-is.
-            let acc_first = accumulated.first().map(|b| b.timestamp).unwrap_or(0);
-            let acc_last = accumulated.last().map(|b| b.timestamp).unwrap_or(0);
-
-            crate::dlog!(
-                "[Bridge] backfill {:?} sym={} tf={}: fetched {} bars over {} pages, emitting",
-                exchange_id, symbol_str, tf_name, accumulated.len(), pages
-            );
-            crate::dlog!(
-                "[Bridge::backfill emit BackfillComplete] {:?} {} at={:?} tf={} bars={} first_ts={} last_ts={} pages={}",
-                exchange_id, symbol_str, account_type, tf_name, accumulated.len(), acc_first, acc_last, pages,
-            );
-
-            let _ = tx.send(LiveUpdate::BackfillComplete {
-                exchange_id,
-                account_type,
-                symbol: symbol_str,
-                timeframe: tf_name,
-                bars: accumulated,
-            });
-
-            finish_backfill!();
-        });
-    }
-
-    /// Request a single page of bars older than `before_ts` for scroll-left (infinite scroll).
-    ///
-    /// Non-blocking — spawns an async task. On completion, sends
-    /// `ScrollBarsLoaded` through the update channel.
-    ///
-    /// This is Layer 3 of the data loading pipeline. It is triggered when the
-    /// user scrolls left past the oldest bar currently in the viewport. The
-    /// caller should fire it again when the user scrolls further left; the
-    /// dedup guard ensures only one in-flight scroll fetch exists per key at
-    /// any time.
-    ///
-    /// # Parameters
-    ///
-    /// - `before_ts`: oldest timestamp currently in the window's bar series
-    ///   (seconds). The fetch retrieves bars strictly older than this.
-    /// - `batch_size`: number of bars to request per page (typically 500).
-    ///
-    /// # Behaviour
-    ///
-    /// 1. Dedup: if a scroll fetch for this key is already in-flight, returns immediately.
-    /// 2. Cache hit: if the session bar cache already contains bars older than
-    ///    `before_ts`, extracts them and sends `ScrollBarsLoaded` without a
-    ///    network request.
-    /// 3. Oldest-ts guard: if we already know the exchange has no data before
-    ///    `before_ts` (recorded by a previous scroll fetch), returns immediately.
-    /// 4. REST fetch: fetches one page ending just before `before_ts`, merges
-    ///    the result into the cache, and sends `ScrollBarsLoaded`.
-    pub fn request_scroll_bars(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        timeframe: &Timeframe,
-        account_type: AccountType,
-        before_ts: i64,
-        batch_size: usize,
-    ) {
-        // Phase 2B: scroll-left pagination uses the STATION hub (shared pool
-        // with live WS + Phase A/B + background backfill).
-        let fetch_hub = self.station.hub();
-        let tx = self.tx.clone();
-        let symbol_str = symbol.to_string();
-        // Wire form for dig3 REST calls.
-        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
-        let interval = timeframe_to_interval(timeframe);
-        let tf_name = timeframe.name.clone();
-        let active_fetches = self.active_fetches.clone();
-        let oldest_fetched_ts = self.oldest_fetched_ts.clone();
-        let station_sc = self.station.clone();
-
-        let station_bar_seriskey = station_bar_key(exchange_id, account_type, &symbol_str, &tf_name);
-        let scroll_oldest_ts_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-
-        // Scroll dedup key: encode "scroll:" role by prefixing the symbol,
-        // matching the pattern used by "backfill:" in request_background_backfill.
-        let scroll_fetch_key: FetchKey = (
-            exchange_id,
-            account_type,
-            format!("scroll:{}", symbol_str),
-            tf_name.clone(),
-        );
-
-        // ── Deduplication guard ───────────────────────────────────────────────
-        {
-            let mut af = active_fetches.lock().unwrap_or_else(|e| e.into_inner());
-            if af.contains(&scroll_fetch_key) {
-                crate::dlog!(
-                    "[Bridge] scroll fetch already in flight for {:?} sym={} tf={}, skipping",
-                    exchange_id, symbol_str, tf_name
-                );
-                return;
-            }
-            af.insert(scroll_fetch_key.clone());
-        }
-
-        // ── Cache check: do we already have bars older than before_ts? ────────
-        let all_cached_bars = station_read_bars(&station_sc, &station_bar_seriskey);
-        let cached_older: Option<Vec<Bar>> = if all_cached_bars.is_empty() {
-            None
-        } else {
-            Some(
-                all_cached_bars
-                    .iter()
-                    .filter(|b| b.timestamp < before_ts)
-                    .copied()
-                    .collect::<Vec<Bar>>(),
-            )
-        };
-
-        if let Some(ref older_bars) = cached_older {
-            if !older_bars.is_empty() {
-                let prepend_count = older_bars.len().min(batch_size);
-                // Full merged set is whatever is in cache (already sorted).
-                let full_bars: Vec<Bar> = all_cached_bars;
-
-                crate::dlog!(
-                    "[Bridge] scroll {:?} sym={} tf={}: {} cached bars older than {}, serving {} from cache",
-                    exchange_id, symbol_str, tf_name, older_bars.len(), before_ts, prepend_count
-                );
-
-                let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
-                    exchange_id,
-                    account_type,
-                    symbol: symbol_str.clone(),
-                    timeframe: tf_name.clone(),
-                    bars: full_bars,
-                    prepend_count,
-                });
-
-                if let Ok(mut af) = active_fetches.lock() {
-                    af.remove(&scroll_fetch_key);
-                }
-                return;
-            }
-        }
-
-        // ── Oldest-ts guard: no point fetching if exchange has no more data ───
-        let known_oldest = oldest_fetched_ts
-            .lock()
-            .ok()
-            .and_then(|m| m.get(&scroll_oldest_ts_key).copied());
-
-        if let Some(oldest) = known_oldest {
-            if before_ts <= oldest {
-                // This is correct behavior: the exchange returned an empty page or error
-                // at this timestamp in a previous fetch, so there are no older bars.
-                // All available bars are already loaded — scroll has reached the beginning
-                // of the exchange's history for this symbol/timeframe.
-                crate::dlog!(
-                    "[Bridge] scroll {}: all available bars already loaded (oldest_fetched={}, before_ts={})",
-                    symbol_str, oldest, before_ts
-                );
-                if let Ok(mut af) = active_fetches.lock() {
-                    af.remove(&scroll_fetch_key);
-                }
-                return;
-            }
-        }
-
-        // ── REST fetch ────────────────────────────────────────────────────────
-        self.spawn_bg(async move {
-            macro_rules! finish_scroll {
-                () => {
-                    if let Ok(mut af) = active_fetches.lock() {
-                        af.remove(&scroll_fetch_key);
-                    }
-                };
-            }
-
-            // Wait for connector — ensures the exchange is connected before
-            // fetch_history attempts its REST call (fetch_history returns Err
-            // immediately if hub has no connector for this exchange).
-            {
-                let mut attempts = 0;
-                loop {
-                    if fetch_hub.rest(exchange_id).is_some() {
-                        break;
-                    }
-                    attempts += 1;
-                    if attempts > 50 {
-                        crate::dlog!(
-                            "[Bridge] scroll: connector {:?} not initialized after 5s",
-                            exchange_id
-                        );
-                        finish_scroll!();
-                        return;
-                    }
-                    sleep_ms(100).await;
-                }
-            }
-
-            // end_time = just before the oldest timestamp the caller has (ms).
-            let end_time_ms = before_ts * 1000 - 1;
-
-            crate::dlog!(
-                "[Bridge] scroll fetch (station): {:?} sym={} tf={} end_time_ms={} batch={}",
-                exchange_id, symbol_str, tf_name, end_time_ms, batch_size
-            );
-
-            // Clamp to the exchange's actual per-request maximum so we request
-            // exactly what the exchange will return, and can correctly distinguish
-            // a full page from an exhausted-history short page.
-            let limit = fetch_hub.max_kline_limit(exchange_id, (batch_size as u16).min(500));
-            let kline_iv = KlineInterval::new(&interval);
-            let result = digdigdig3_station::fetch_history(
-                &fetch_hub,
-                exchange_id,
-                &wire_sym,
-                account_type,
-                &kline_iv,
-                end_time_ms,
-                limit,
-            ).await;
-
-            match result {
-                Err(e) => {
-                    crate::dlog!(
-                        "[Bridge] scroll fetch error: {:?} sym={} tf={}: {}",
-                        exchange_id, symbol_str, tf_name, e
-                    );
-                    // Do NOT record oldest_fetched_ts — this may be a temporary error
-                    // (e.g. rate limit). The scroll trigger will retry on the next frame.
-                    finish_scroll!();
-                }
-                Ok(points) if points.is_empty() => {
-                    crate::dlog!(
-                        "[Bridge] scroll fetch: {:?} sym={} tf={}: empty page, no more history",
-                        exchange_id, symbol_str, tf_name
-                    );
-                    // Record before_ts as the oldest known — exchange has nothing older.
-                    if let Ok(mut map) = oldest_fetched_ts.lock() {
-                        let entry = map.entry(scroll_oldest_ts_key.clone()).or_insert(i64::MAX);
-                        if before_ts < *entry {
-                            *entry = before_ts;
-                        }
-                    }
-                    finish_scroll!();
-                }
-                Ok(points) => {
-                    let page_len = points.len();
-                    let new_page: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
-                    let prepend_count = new_page.len();
-
-                    crate::dlog!(
-                        "[Bridge] scroll fetch: {:?} sym={} tf={}: got {} bars",
-                        exchange_id, symbol_str, tf_name, prepend_count
-                    );
-
-                    // Only record oldest_fetched_ts when the exchange returned fewer bars
-                    // than requested — that means it ran out of history.  A full page
-                    // (page_len == limit) means there is more data available further back;
-                    // recording oldest_ts here would incorrectly block future scroll requests.
-                    let oldest_bar_ts = new_page.first().map(|b| b.timestamp).unwrap_or(0);
-                    if oldest_bar_ts > 0 && page_len < limit as usize {
-                        if let Ok(mut map) = oldest_fetched_ts.lock() {
-                            let entry = map.entry(scroll_oldest_ts_key.clone()).or_insert(i64::MAX);
-                            if oldest_bar_ts < *entry {
-                                *entry = oldest_bar_ts;
-                            }
-                        }
-                    }
-
-                    // Send only the new REST page; the consumer (BackendCore::
-                    // tick_writers) merges this page into the existing bubble.bars
-                    // by timestamp (last-write-wins) so live bars to the right of
-                    // `before_ts` are preserved. `fetch_history` bypasses Station's
-                    // persisted Series, so the page won't appear in the cache path
-                    // above on its own — the bubble in BackendCore is the single
-                    // source of truth for the chart's current bar set.
-                    let _ = tx.send(LiveUpdate::ScrollBarsLoaded {
-                        exchange_id,
-                        account_type,
-                        symbol: symbol_str,
-                        timeframe: tf_name,
-                        bars: new_page,
-                        prepend_count,
-                    });
-
-                    finish_scroll!();
-                }
-            }
-        });
-    }
-
     /// Resolve a (possibly canonical) symbol key to the venue-native wire string.
     ///
     /// Canonical keys are of the form `"BTCUSDT"` (base+quote uppercased, no
@@ -5374,39 +4930,6 @@ pub fn account_type_from_short_label(s: &str) -> AccountType {
 
 /// Parse an interval string to seconds.
 // ─────────────────────────────────────────────────────────────────────────────
-// BAR PAGE MERGE
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Merge two sorted bar vectors by timestamp, keeping the *newer* version of
-/// any bar that appears in both (same timestamp). The result is sorted
-/// ascending by timestamp.
-///
-/// Used during Phase B heal accumulation and background-backfill page
-/// accumulation — pure in-task math, no shared state.
-fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
-    if fresh.is_empty() {
-        return old;
-    }
-    if old.is_empty() {
-        return fresh;
-    }
-
-    // Always merge via HashMap (fresh wins on conflicts) + sort.
-    // This is self-healing: even if old is unsorted, the result is always sorted.
-    let mut map: HashMap<i64, Bar> = HashMap::with_capacity(old.len() + fresh.len());
-    for bar in old {
-        map.insert(bar.timestamp, bar);
-    }
-    for bar in fresh {
-        map.insert(bar.timestamp, bar);
-    }
-    let mut merged: Vec<Bar> = map.into_values().collect();
-    merged.sort_by_key(|b| b.timestamp);
-    merged.retain(|b| b.timestamp >= 1_000_000_000 && b.timestamp <= 9_999_999_999);
-    merged
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // STATION BAR CONVERSION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -5418,7 +4941,7 @@ fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
 /// once inside the same wall-clock second, so the seconds-truncated
 /// `timestamp` alone is not a unique bar identity (2026-07-08 caterpillar
 /// bug — see the field doc on `mlc_core::Bar`).
-fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
+pub(crate) fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
     Bar {
         timestamp: point.open_time / 1000,
         open: point.open,
@@ -6874,19 +6397,6 @@ fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesK
     drop(arc);
     result
 }
-
-/// Count of bars in the station's `Series<BarPoint>` ring. Non-blocking;
-/// returns 0 when the writer holds the lock (treat as "unknown / retry").
-fn station_read_bars_len(station: &digdigdig3_station::Station, key: &StationSeriesKey) -> usize {
-    let Some(arc) = station.series::<BarPoint>(key) else { return 0; };
-    let result = match arc.try_read() {
-        Ok(guard) => guard.len(),
-        Err(_) => 0,
-    };
-    drop(arc);
-    result
-}
-
 
 // ── Trading / Account / Position bridge methods ─────────────────────────────
 

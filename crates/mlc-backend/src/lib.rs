@@ -1519,6 +1519,26 @@ impl BackendCore {
                     });
                 }
 
+                // ── TradeHistoryPrepended (unified-data-plane Э2) ────────────────
+                // `BackfillEngine`'s trade-layer backfill page — ADDITIVE prepend
+                // into every bubble on this instrument's raw trade layer. No
+                // active-series write (trades do not drive `bubble.bars`
+                // directly today); Э4's client-side folds are the intended
+                // future active-series consumer of this data.
+                LiveUpdate::TradeHistoryPrepended { exchange_id, account_type, symbol, trades } => {
+                    if trades.is_empty() { continue; }
+                    let at_label = account_type.short_label();
+                    let raw_trades: Vec<crate::bubble::RawTrade> = trades.iter().map(|t| crate::bubble::RawTrade {
+                        ts_ms: t.ts_ms,
+                        price: t.price,
+                        qty: t.qty,
+                        is_buyer_maker: t.is_buyer_maker,
+                    }).collect();
+                    for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                        self.bubbles_mut().trade_layer_prepend_batch(bid, raw_trades.clone());
+                    }
+                }
+
                 // ── MiniTickerUpdate ────────────────────────────────────────────
                 LiveUpdate::MiniTickerUpdate { exchange_id, account_type, symbol, last_price,
                     price_change_percent, high_price, low_price, volume } =>
@@ -1609,6 +1629,16 @@ impl BackendCore {
                 LiveUpdate::ConnectorMetrics { .. } => {
                     // Collected on-demand; no action.
                 }
+
+                // ── LayerBackfilled (unified-data-plane Э2) ──────────────────────
+                // Layer-level notification only — the actual `kline_layers`/
+                // `trade_layer` write already happened via the
+                // `ScrollBarsLoaded`/`BackfillComplete` arms above (kline) or
+                // `trade_layer_prepend_batch` (trades, once Э4 wires a
+                // consumer). No writer keys off this event yet; it exists so
+                // Э3/Э4 client-side folds have a layer-scoped signal to
+                // subscribe to instead of the active-series-shaped events.
+                LiveUpdate::LayerBackfilled { .. } => {}
 
                 // ── Trading (Order / Balance / Position) ─────────────────────────
                 LiveUpdate::OrderUpdate { .. }
@@ -2543,19 +2573,30 @@ impl BackendCore {
     }
 
     /// Fetch the next older page of bars for scroll-left backfill.
+    ///
+    /// Unified-data-plane Э2: routed through `BackfillEngine`'s scroll-
+    /// pressure entry (`on_kline_scroll_pressure`) instead of the legacy
+    /// one-page-per-call `request_scroll_bars`. `before_ts`/`batch_size` are
+    /// no longer threaded through — the engine tracks its own
+    /// `oldest_anchor` per key and ramps the group size itself; the caller
+    /// (`tick.rs`'s scroll-threshold site) only needs to signal "pressure
+    /// now", which is what a scroll-left crossing means.
     pub fn request_scroll_backfill(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         tf: &Timeframe,
         account_type: AccountType,
-        before_ts: i64,
-        batch_size: usize,
+        _before_ts: i64,
+        _batch_size: usize,
     ) {
-        self.bridge.request_scroll_bars(exchange_id, symbol, tf, account_type, before_ts, batch_size);
+        self.bridge.on_kline_scroll_pressure(exchange_id, symbol, tf, account_type);
     }
 
-    /// Paginate the connector's REST history toward `target_bars` in the background.
+    /// Paginate the connector's REST history toward `target_bars` in the
+    /// background (unified-data-plane Э2: `BackfillEngine::ensure_kline_backfill`
+    /// — progressive ramp 1→1→2→4→… instead of the legacy one-shot 40-page
+    /// ladder emitted as a single `BackfillComplete`).
     pub fn request_background_backfill(
         &self,
         exchange_id: ExchangeId,
@@ -2564,7 +2605,7 @@ impl BackendCore {
         account_type: AccountType,
         target_bars: u32,
     ) {
-        self.bridge.request_background_backfill(exchange_id, symbol, tf, account_type, target_bars);
+        self.bridge.ensure_kline_backfill(exchange_id, symbol, tf, account_type, Some(target_bars));
     }
 
     /// Subscribe to the Open Interest overlay stream for an instrument.
@@ -2740,7 +2781,16 @@ impl BackendCore {
         symbol: &str,
         account_type: AccountType,
     ) -> Option<SharedTradeSeries> {
-        self.bridge.subscribe_trades(exchange_id, symbol, account_type)
+        let handle = self.bridge.subscribe_trades(exchange_id, symbol, account_type);
+        // Unified-data-plane Э2: warm the raw trade layer with one shallow
+        // page immediately on activation so the layer has depth from the
+        // first frame, instead of only accumulating from this point forward
+        // via live ticks. Unbounded target (`None`) — trades default to
+        // "no fixed target, ramp until scroll stops" per owner doctrine;
+        // this call only seeds the FIRST page (single-flight guard makes it
+        // a no-op if a backfill for this key is already running).
+        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
+        handle
     }
 
     /// Subscribe to the live orderbook for an instrument, returning the
