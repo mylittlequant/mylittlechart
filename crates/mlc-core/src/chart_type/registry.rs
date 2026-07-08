@@ -78,12 +78,18 @@ pub enum DataRequirement {
     /// Backed by kline REST pagination — works on every TRUSTED venue
     /// (deepest cross-venue-uniform path). candle-family + price-action
     /// transforms (renko/pnf/kagi/tlb — synthetic-trades-from-klines) + tpo
-    /// (1m-klines-fed).
+    /// (1m-klines-fed) + the trade-aggregation family promoted to
+    /// kline-sufficient (2026-07-08 minimal-sufficient-source doctrine):
+    /// range_bar/volume_bar/dollar_bar. Their HISTORY now seeds from
+    /// paginated 1m klines via synthetic 4-leg trades (same path
+    /// renko/pnf/kagi/tlb always used) + a shallow live trades_recent tail
+    /// — deep aggTrades pagination is gone for this class.
     Klines,
     /// Needs REAL per-trade history (aggTrades pagination or equivalent) to
-    /// show anything before "now" — footprint, counted-bar family. On a
-    /// `RecentOnly` venue this chart_type either goes hybrid (footprint) or
-    /// shows empty-space-before-live (counted bars).
+    /// show anything before "now" — footprint, tick_bar, tick/volume
+    /// imbalance, run_bar. On a `RecentOnly` venue this chart_type either
+    /// goes hybrid (footprint) or shows empty-space-before-live (counted
+    /// bars).
     DeepTrades,
     /// No history concept at all — always live-only by nature, on every
     /// venue (dom/liquidation heatmap).
@@ -553,7 +559,12 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
-        data_requirement: DataRequirement::DeepTrades,
+        // Promoted to kline-sufficient (2026-07-08 minimal-sufficient-source
+        // doctrine, dig3 0.3.29): HISTORY seeds from paginated 1m klines via
+        // synthetic 4-leg trades, same path renko/pnf/kagi/tlb always used,
+        // plus a shallow live trades_recent tail. Deep aggTrades pagination
+        // is gone for range_bar.
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -581,7 +592,12 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
-        data_requirement: DataRequirement::DeepTrades,
+        // Promoted to kline-sufficient (2026-07-08 minimal-sufficient-source
+        // doctrine, dig3 0.3.29): HISTORY seeds from paginated 1m klines via
+        // synthetic 4-leg trades, same path renko/pnf/kagi/tlb always used,
+        // plus a shallow live trades_recent tail. Deep aggTrades pagination
+        // is gone for volume_bar.
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,
@@ -633,7 +649,12 @@ static REGISTRY: &[ChartTypeDef] = &[
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
         bars_source: BarsSourceKind::Kline,
-        data_requirement: DataRequirement::DeepTrades,
+        // Promoted to kline-sufficient (2026-07-08 minimal-sufficient-source
+        // doctrine, dig3 0.3.29): HISTORY seeds from paginated 1m klines via
+        // synthetic 4-leg trades, same path renko/pnf/kagi/tlb always used,
+        // plus a shallow live trades_recent tail. Deep aggTrades pagination
+        // is gone for dollar_bar.
+        data_requirement: DataRequirement::Klines,
         hides_time_grid: true,
         hides_tf_picker: true,
         tf_whitelist: None,

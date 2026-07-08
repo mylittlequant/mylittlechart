@@ -2586,6 +2586,17 @@ impl BackendCore {
     /// the static per-chart_type classification (`mlc-core`) with the
     /// runtime per-venue capability (`digdigdig3`, via `DataBridge`) — see
     /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 5.
+    ///
+    /// `Klines` types (candle-family, renko/pnf/kagi/tlb, tpo, and — since
+    /// dig3 0.3.29 — range_bar/volume_bar/dollar_bar) are trade-tier-blind:
+    /// their history comes from kline REST pagination, not
+    /// `TradeHistoryCapabilities.spot/futures`. The only capability that can
+    /// degrade them is `kline_backpage` (Kraken/HTX/Gemini honestly cap kline
+    /// backward pagination to one page) — no `DataMode` variant exists for
+    /// that yet, so (matching every other Klines type today) it resolves to
+    /// `Full` here; the actual cap surfaces per-bubble via dig3's
+    /// `SeedOutcome` → `HistoryDepth::Capped` (`tick.rs`/`overlays.rs`), not
+    /// through this dropdown-marking facade.
     pub fn data_mode_for(
         &self,
         chart_type: &str,
