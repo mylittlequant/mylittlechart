@@ -1787,6 +1787,7 @@ mod tests {
             low: 99.0 + (i as f64 * 0.1).sin() * 5.0,
             close: 100.0 + (i as f64 * 0.1).sin() * 5.0,
             volume: 1000.0,
+            ..Default::default()
         }).collect();
 
         // Calculate

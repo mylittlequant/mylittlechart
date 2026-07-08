@@ -16,5 +16,5 @@ pub mod registry;
 pub use registry::{
     all, by_id, BarsSourceKind, ChartTypeDef, ChartTypeGroup, ChartTypeKind,
     ChartTypeParamOption, ChartTypeParamSpec, DataMode, DataRequirement,
-    DeepenKind, SeriesVariant,
+    DeepenKind, ResolutionKind, SeriesVariant, RESOLUTION_PARAM_ITEM_PREFIX,
 };

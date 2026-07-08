@@ -21,6 +21,7 @@ pub fn mk_bar(ts: i64) -> Bar {
         low: 99.0,
         close: 100.5,
         volume: 1.0,
+        ..Default::default()
     }
 }
 

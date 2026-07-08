@@ -23,6 +23,7 @@ fn mk_bars(n: usize) -> Vec<Bar> {
         low: 99.0,
         close: 100.5,
         volume: 1.0,
+        ..Default::default()
     }).collect()
 }
 

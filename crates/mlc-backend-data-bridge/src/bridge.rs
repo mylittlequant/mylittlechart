@@ -5350,6 +5350,11 @@ fn merge_bars(old: Vec<Bar>, fresh: Vec<Bar>) -> Vec<Bar> {
 /// Convert a `digdigdig3_station::BarPoint` to a chart `Bar`.
 ///
 /// `BarPoint.open_time` is in milliseconds; `Bar.timestamp` is in seconds.
+/// `Bar.derived_ts_ms` carries the ms value verbatim — trade-agg bar
+/// families (range/volume/tick/dollar/imbalance/run) can close more than
+/// once inside the same wall-clock second, so the seconds-truncated
+/// `timestamp` alone is not a unique bar identity (2026-07-08 caterpillar
+/// bug — see the field doc on `mlc_core::Bar`).
 fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
     Bar {
         timestamp: point.open_time / 1000,
@@ -5358,6 +5363,7 @@ fn bar_point_to_bar(point: &digdigdig3_station::data::BarPoint) -> Bar {
         low: point.low,
         close: point.close,
         volume: point.volume,
+        derived_ts_ms: point.open_time,
     }
 }
 

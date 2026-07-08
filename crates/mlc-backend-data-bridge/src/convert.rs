@@ -88,6 +88,7 @@ pub fn kline_to_bar(kline: &Kline) -> Bar {
         low: kline.low,
         close: kline.close,
         volume: kline.volume,
+        derived_ts_ms: kline.open_time,
     }
 }
 

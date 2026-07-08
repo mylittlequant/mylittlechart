@@ -881,17 +881,46 @@ impl TimeScale {
         candidates.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
 
         // LWC uses an estimate of the widest label as the index-gap basis.
-        // We measure a representative full label ("01 Jan" / "01:00") and
-        // convert that to a bar-count using bar_spacing. Falls back to the
-        // pixel-collision check when bar_spacing is zero (defensive — should
-        // never happen because viewport already guards on this).
-        let sample_label = "00:00";
-        let label_px = measure_text(sample_label).max(20.0);
+        // We measure a representative full label and convert that to a
+        // bar-count using bar_spacing. Falls back to the pixel-collision
+        // check when bar_spacing is zero (defensive — should never happen
+        // because viewport already guards on this).
+        //
+        // The sample MUST be sized from the widest weight tier actually in
+        // play, not a hardcoded "00:00" (5 chars) — Second/LessThanSecond
+        // tiers render "HH:MM:SS" (8 chars, see `format_time_by_weight`).
+        // A hardcoded short sample undersized the index-gap for those tiers,
+        // so adjacent range/tick/volume-bar ticks landed closer than their
+        // rendered label was wide, producing visually-identical repeated
+        // labels (2026-07-08 x-label-spacing-gate bug). Build one
+        // representative label per distinct weight present and take the
+        // widest — cheap, `candidates` is a handful of tick weights, not one
+        // per candidate.
+        let mut seen_weights: Vec<TickMarkWeight> = Vec::new();
+        for c in &candidates {
+            if !seen_weights.contains(&c.2) { seen_weights.push(c.2); }
+        }
+        let label_px = seen_weights.iter()
+            .map(|&w| {
+                let sample = if let Some(settings) = format_settings {
+                    format_time_by_weight_with_settings(0, w, settings)
+                } else {
+                    format_time_by_weight(0, w)
+                };
+                measure_text(&sample)
+            })
+            .fold(0.0_f64, f64::max)
+            .max(20.0);
         let bar_spacing = viewport.bar_spacing.max(1e-6);
         let max_indexes_per_mark = ((label_px / bar_spacing).ceil() as i64).max(1);
 
-        // Track accepted bar indices sorted for bilateral lookup.
+        // Track accepted bar indices sorted for bilateral lookup, alongside
+        // each accepted tick's rendered label (same index into both Vecs) so
+        // the adjacent-dedup check below can read a true visual neighbor's
+        // label rather than whatever was accepted last in weight-major
+        // iteration order.
         let mut accepted: Vec<i64> = Vec::new();
+        let mut accepted_labels: Vec<String> = Vec::new();
         let mut used_positions: Vec<(f64, f64)> = Vec::new(); // (x, half_width)
 
         for (bar_idx, x, weight, ts) in candidates {
@@ -901,15 +930,10 @@ impl TimeScale {
             }
 
             // Bilateral index-gap check.
-            let left_gap = accepted
-                .iter()
-                .rev()
-                .find(|&&i| i < bar_idx)
-                .map(|i| bar_idx - i);
-            let right_gap = accepted
-                .iter()
-                .find(|&&i| i > bar_idx)
-                .map(|i| i - bar_idx);
+            let left_idx = accepted.iter().rposition(|&i| i < bar_idx);
+            let right_idx = accepted.iter().position(|&i| i > bar_idx);
+            let left_gap = left_idx.map(|i| bar_idx - accepted[i]);
+            let right_gap = right_idx.map(|i| accepted[i] - bar_idx);
 
             if let Some(g) = left_gap {
                 if g < max_indexes_per_mark { continue; }
@@ -924,6 +948,20 @@ impl TimeScale {
             } else {
                 format_time_by_weight(ts, weight)
             };
+
+            // Adjacent-dedup safety net: the index-gap + pixel-collision
+            // checks above are geometric (position-based) and can still
+            // accept two candidates whose FORMATTED label is identical
+            // (e.g. two Second-weight ticks that round to the same
+            // "HH:MM:SS" string but sit far enough apart in bar_idx/x) —
+            // skip a tick whose rendered label equals its nearest already-
+            // accepted NEIGHBOR's label (left or right, whichever exists).
+            let dup_of_neighbor = left_idx.map_or(false, |i| accepted_labels[i] == label)
+                || right_idx.map_or(false, |i| accepted_labels[i] == label);
+            if dup_of_neighbor {
+                continue;
+            }
+
             let measured_width = measure_text(&label);
             let half_width = measured_width / 2.0 + 5.0;
 
@@ -935,17 +973,19 @@ impl TimeScale {
                 continue;
             }
 
+            used_positions.push((x, half_width));
+
+            // Maintain accepted/accepted_labels sorted in lockstep by bar_idx.
+            let pos = accepted.binary_search(&bar_idx).unwrap_or_else(|p| p);
+            accepted.insert(pos, bar_idx);
+            accepted_labels.insert(pos, label.clone());
+
             ticks.push(TimeTick {
                 bar_idx,
                 x,
                 weight,
                 label,
             });
-            used_positions.push((x, half_width));
-
-            // Maintain accepted as sorted by bar_idx.
-            let pos = accepted.binary_search(&bar_idx).unwrap_or_else(|p| p);
-            accepted.insert(pos, bar_idx);
         }
     }
 }

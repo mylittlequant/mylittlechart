@@ -135,6 +135,42 @@ pub enum DeepenKind {
     Unsupported,
 }
 
+/// Which resolution/granularity concept the TF toolbar button and its
+/// dropdown surface for this chart_type (owner doctrine 2026-07-08): "the TF
+/// button shows the resolution picker for the active instrument — seconds/
+/// minutes for kline-family, ticks for tick-driven bars, ranges for
+/// range-driven bars — the SAME button, adapted to the active chart_type".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolutionKind {
+    /// Wall-clock/tick timeframe (`bubble.timeframe`) — candle family, TPO,
+    /// and the two ring-buffer heatmaps. Button label = TF name unchanged;
+    /// dropdown = the existing `timeframe_selector` TF list (whitelisted or
+    /// full, per `tf_whitelist`/`hides_tf_picker`).
+    Time,
+    /// Bucket interval keyed by the SAME `bubble.timeframe` mechanism as
+    /// `Time` (footprint's `UpdateChartTypeInterval` re-stamps
+    /// `bubble.timeframe` — see `chart_out_events.rs`), restricted to a
+    /// chart_type-specific whitelist (`tf_whitelist`). Distinct label from
+    /// `Time` only in that the field is conceptually "bucket size", not
+    /// "candle period" — rendering is identical (TF name).
+    Interval,
+    /// Numeric `chart_type_param`-driven resolution (range/tick/volume/
+    /// dollar/imbalance/run bars, renko/pnf/kagi/three_line_break). Button
+    /// label = formatted `chart_type_param` + `suffix`; dropdown lists
+    /// `ChartTypeDef::param_spec`'s presets (single source of truth shared
+    /// with the settings-modal numeric-param row).
+    Param { suffix: &'static str },
+}
+
+/// `timeframe_selector` item-id prefix used for `ResolutionKind::Param`
+/// dropdown entries (owner doctrine 2026-07-08). Lives in `mlc-core` (not
+/// `mlc-app-layout`, where the dropdown is actually built) because the
+/// dispatch side — `ChartToolbarState::handle_dropdown_select_with_chart`,
+/// also `mlc-core` — needs to recognize the prefix without a reverse
+/// dependency on the app layer; the id itself carries the numeric value, so
+/// dispatch never needs to know the active chart_type.
+pub const RESOLUTION_PARAM_ITEM_PREFIX: &str = "reso_param:";
+
 /// One preset option in a `ChartTypeParamSpec`'s dropdown.
 #[derive(Clone, Copy, Debug)]
 pub struct ChartTypeParamOption {
@@ -192,6 +228,9 @@ pub struct ChartTypeDef {
     pub needs_ts_shadow: bool,
     /// Whether the settings modal renders a bespoke params block (footprint only).
     pub has_bespoke_settings_block: bool,
+    /// Which resolution concept the TF toolbar button/dropdown surfaces for
+    /// this chart_type (owner doctrine 2026-07-08). See [`ResolutionKind`].
+    pub resolution: ResolutionKind,
 }
 
 // ── TPO's TF whitelist ("all except tick") ─────────────────────────────────
@@ -307,6 +346,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "bars",
@@ -327,6 +367,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "hollow_candles",
@@ -347,6 +388,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "heikin_ashi",
@@ -367,6 +409,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     // ── Lines ────────────────────────────────────────────────────────────
     ChartTypeDef {
@@ -388,6 +431,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "step_line",
@@ -408,6 +452,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "line_markers",
@@ -428,6 +473,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     // ── Areas & Columns ──────────────────────────────────────────────────
     ChartTypeDef {
@@ -449,6 +495,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "hlc_area",
@@ -469,6 +516,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "baseline",
@@ -489,6 +537,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::KlinePrepend,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     // ── Trade Aggregation ────────────────────────────────────────────────
     ChartTypeDef {
@@ -517,6 +566,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "R" },
     },
     ChartTypeDef {
         id: "volume_bar",
@@ -542,6 +592,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "V" },
     },
     ChartTypeDef {
         id: "tick_bar",
@@ -567,6 +618,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "T" },
     },
     ChartTypeDef {
         id: "dollar_bar",
@@ -592,6 +644,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "$" },
     },
     ChartTypeDef {
         id: "tick_imbalance_bar",
@@ -617,6 +670,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedTeardownRespawn,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "T" },
     },
     ChartTypeDef {
         id: "volume_imbalance_bar",
@@ -642,6 +696,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedTeardownRespawn,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "V" },
     },
     ChartTypeDef {
         id: "run_bar",
@@ -667,6 +722,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedTeardownRespawn,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "RN" },
     },
     // ── Price Action ─────────────────────────────────────────────────────
     ChartTypeDef {
@@ -694,6 +750,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "B" },
     },
     ChartTypeDef {
         id: "pnf",
@@ -719,6 +776,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "B" },
     },
     ChartTypeDef {
         id: "kagi",
@@ -744,6 +802,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "RV" },
     },
     ChartTypeDef {
         id: "three_line_break",
@@ -769,6 +828,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Param { suffix: "L" },
     },
     // ── Orderflow (heterogeneous) ────────────────────────────────────────
     ChartTypeDef {
@@ -798,6 +858,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: true,
+        resolution: ResolutionKind::Interval,
     },
     ChartTypeDef {
         id: "tpo",
@@ -827,6 +888,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "dom_heatmap",
@@ -847,6 +909,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::Unsupported,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
     ChartTypeDef {
         id: "liquidation_heatmap",
@@ -867,6 +930,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         deepen_kind: DeepenKind::Unsupported,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
+        resolution: ResolutionKind::Time,
     },
 ];
 

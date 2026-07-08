@@ -24,6 +24,7 @@ use crate::ui::toolbar_core::{
     apply_active_states, apply_toggle_icons, apply_quick_select_icons,
 };
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
+use mlc_core::chart_type::RESOLUTION_PARAM_ITEM_PREFIX;
 
 // Types moved to state/toolbar_state.rs (Phase X.4 back-edge removal).
 // Re-exported here so any `crate::panel_app::*` paths remain valid.
@@ -307,6 +308,13 @@ pub fn floating_inline_update_drag(
 /// hybrid-data-modes-plan-2026-07-08 Step 5). `None`/missing-entry means no
 /// marker — items stay fully clickable either way (owner directive: no
 /// chart type is ever disabled by data capability).
+///
+/// `active_chart_type_param` is the active window's bubble's live
+/// `chart_type_param` (owner doctrine 2026-07-08: the TF button shows the
+/// resolution picker for the active instrument/chart_type — ticks for
+/// tick-driven bars, ranges for range-driven bars, etc). `None` when the
+/// active chart_type's [`mlc_core::chart_type::ResolutionKind`] is not
+/// `Param` (the button falls back to the TF-name label in that case).
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -328,6 +336,7 @@ pub fn chart_toolbar_render_toolbars(
     sidebar_w: f64,
     allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
     active_chart_type: Option<&str>,
+    active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
@@ -427,7 +436,38 @@ pub fn chart_toolbar_render_toolbars(
             });
 
             // Override symbol_selector and timeframe_selector text with actual live values.
-            if active_symbol.is_some() || active_timeframe.is_some() {
+            //
+            // timeframe_selector's label dispatches on the active chart_type's
+            // `ResolutionKind` (owner doctrine 2026-07-08: the TF button IS
+            // the universal resolution picker for the active instrument) —
+            // `Time`/`Interval` both show the TF name unchanged (Interval's
+            // bucket size rides the same `bubble.timeframe` field as Time,
+            // see `ResolutionKind::Interval`'s doc comment); `Param` shows
+            // the formatted `chart_type_param` + suffix instead.
+            let tf_button_label: Option<String> = match active_chart_type.and_then(mlc_core::chart_type::by_id) {
+                Some(def) => match def.resolution {
+                    mlc_core::chart_type::ResolutionKind::Param { suffix } => {
+                        active_chart_type_param.map(|v| {
+                            // `v <= 0.0` is the pre-first-subscribe sentinel
+                            // (mirrors `ChartTypeParamSpec::current_label` in
+                            // chart_settings.rs) — show the first registry
+                            // preset instead of a misleading "0<suffix>".
+                            if v > 0.0 {
+                                format_resolution_param(v, suffix)
+                            } else {
+                                def.param_spec
+                                    .and_then(|spec| spec.options.first())
+                                    .map(|opt| format_resolution_param_label(opt.label, suffix))
+                                    .unwrap_or_else(|| format_resolution_param(v, suffix))
+                            }
+                        })
+                    }
+                    mlc_core::chart_type::ResolutionKind::Time
+                    | mlc_core::chart_type::ResolutionKind::Interval => active_timeframe.map(String::from),
+                },
+                None => active_timeframe.map(String::from),
+            };
+            if active_symbol.is_some() || tf_button_label.is_some() {
                 for section in &mut control_sections {
                     for item in &mut section.items {
                         if let TcToolbarItem::Dropdown { id, text, .. } = item {
@@ -436,8 +476,8 @@ pub fn chart_toolbar_render_toolbars(
                                     *text = Some(sym.to_string());
                                 }
                             } else if id == "timeframe_selector" {
-                                if let Some(tf) = active_timeframe {
-                                    *text = Some(tf.to_string());
+                                if let Some(ref label) = tf_button_label {
+                                    *text = Some(label.clone());
                                 }
                             }
                         }
@@ -789,7 +829,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, chart_type_data_modes)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes)
         } else {
             None
         };
@@ -855,6 +895,8 @@ fn chart_toolbar_render_dropdown(
     split_without_group: bool,
     is_mono_group: bool,
     allowed_timeframes: Option<&std::collections::HashSet<&'static str>>,
+    active_chart_type: Option<&str>,
+    active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
@@ -880,8 +922,18 @@ fn chart_toolbar_render_dropdown(
             }
         };
 
-        // 2. Find the dropdown items from toolbar definitions
-        let items = chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id)?;
+        // 2. Find the dropdown items from toolbar definitions.
+        //
+        // `timeframe_selector` is dynamic for `Param`-resolution chart_types
+        // (owner doctrine 2026-07-08): the button's popup lists the
+        // registry's numeric presets instead of the static TF list — built
+        // fresh here so it always reflects the active chart_type/instrument.
+        let items = if dropdown_id == "timeframe_selector" {
+            resolution_param_dropdown_items(active_chart_type)
+                .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id))?
+        } else {
+            chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id)?
+        };
 
         // 3. Convert DropdownItemDef -> DropdownItem
         let active_preset_load_id = format!("preset_load:{}", active_preset_id);
@@ -926,19 +978,37 @@ fn chart_toolbar_render_dropdown(
                 }
             }
             if dropdown_id == "timeframe_selector" {
-                if let DropdownItem::Item { ref id, ref mut disabled, .. } = di {
-                    // Depth-gating (audit D8 follow-up, 2026-07-04): a TF not
-                    // in the allowed set has insufficient backfilled depth —
-                    // disable it rather than remove it, so the full TF list
-                    // stays visible/discoverable (only reachability changes).
-                    // `None` = TF picker is not applicable at all for the
-                    // active chart_type (TF-inert families) — disable EVERY
-                    // TF item; the button itself stays visible so its
-                    // toolbar position stays stable across chart-type switches.
-                    match allowed_timeframes {
-                        None => *disabled = true,
-                        Some(allowed) if !allowed.contains(id.as_str()) => *disabled = true,
-                        _ => {}
+                if let DropdownItem::Item { ref id, ref mut disabled, ref mut accent_color, .. } = di {
+                    if let Some(value_id) = id.strip_prefix(RESOLUTION_PARAM_ITEM_PREFIX) {
+                        // `ResolutionKind::Param` dropdown (owner doctrine
+                        // 2026-07-08): items are real presets now, not a
+                        // TF-inert placeholder list — the old "disable every
+                        // item, `allowed_timeframes == None`" behavior no
+                        // longer applies (that gate is TF-depth-specific and
+                        // has no meaning for a numeric threshold). Mark the
+                        // preset matching the bubble's live `chart_type_param`
+                        // instead, mirroring the `chart_type_selector` accent
+                        // pattern above.
+                        let is_current = active_chart_type_param
+                            .map(|v| value_id.parse::<f64>().ok() == Some(v))
+                            .unwrap_or(false);
+                        if is_current {
+                            *accent_color = Some("#2962ff".to_string());
+                        }
+                    } else {
+                        // Depth-gating (audit D8 follow-up, 2026-07-04): a TF not
+                        // in the allowed set has insufficient backfilled depth —
+                        // disable it rather than remove it, so the full TF list
+                        // stays visible/discoverable (only reachability changes).
+                        // `None` = TF picker is not applicable at all for the
+                        // active chart_type (TF-inert families) — disable EVERY
+                        // TF item; the button itself stays visible so its
+                        // toolbar position stays stable across chart-type switches.
+                        match allowed_timeframes {
+                            None => *disabled = true,
+                            Some(allowed) if !allowed.contains(id.as_str()) => *disabled = true,
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -1183,6 +1253,71 @@ fn chart_toolbar_render_inline_dropdown(
             menu_rect: result.menu_rect,
         })
     }
+
+/// Format a `ResolutionKind::Param` value for the TF button label / dropdown
+/// item text — compact, trims trailing zeros, dollar-family gets a K/M
+/// shorthand (owner spec 2026-07-08: "10R", "100T", "$100K" style).
+fn format_resolution_param(value: f64, suffix: &str) -> String {
+    if suffix == "$" {
+        let abs = value.abs();
+        if abs >= 1_000_000.0 {
+            return format!("${}M", format_trimmed(value / 1_000_000.0));
+        }
+        if abs >= 1_000.0 {
+            return format!("${}K", format_trimmed(value / 1_000.0));
+        }
+        return format!("${}", format_trimmed(value));
+    }
+    format!("{}{}", format_trimmed(value), suffix)
+}
+
+/// Format a registry preset's pre-formatted `label` (e.g. "1,000,000") with
+/// its chart_type's suffix — same dollar-vs-suffix convention as
+/// [`resolution_param_dropdown_items`]'s item labels, factored out so the
+/// TF button's pre-first-subscribe fallback (sentinel `chart_type_param <=
+/// 0.0`) renders identically to the dropdown's own first entry.
+fn format_resolution_param_label(preset_label: &str, suffix: &str) -> String {
+    if suffix == "$" {
+        format!("${}", preset_label)
+    } else {
+        format!("{}{}", preset_label, suffix)
+    }
+}
+
+/// Trim a trailing `.0` (or more generally any trailing fractional zeros)
+/// from an `f64`'s decimal rendering — mirrors
+/// `chart_settings.rs::format_trimmed_f64` for the toolbar-side formatting
+/// need (kept local: `mlc-app-layout` cannot depend on that modal-internal
+/// helper).
+fn format_trimmed(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        let s = format!("{:.2}", v);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Build the `timeframe_selector` dropdown's item list for the active
+/// chart_type's `ResolutionKind::Param` presets (owner doctrine 2026-07-08).
+///
+/// `None` when the active chart_type is unknown or not `Param`-resolution —
+/// caller falls back to the static TF item list (`Time`/`Interval` share the
+/// existing `timeframe_selector` toolbar-def item list unchanged).
+///
+/// Sourced from the SAME `ChartTypeDef::param_spec` catalog the settings-
+/// modal numeric-param row reads (`chart_settings.rs::chart_type_param_spec`)
+/// — single source of truth, no duplicated preset lists.
+fn resolution_param_dropdown_items(active_chart_type: Option<&str>) -> Option<Vec<DropdownItemDef>> {
+    let ct = active_chart_type?;
+    let def = mlc_core::chart_type::by_id(ct)?;
+    let mlc_core::chart_type::ResolutionKind::Param { suffix } = def.resolution else { return None };
+    let spec = def.param_spec?;
+    Some(spec.options.iter().map(|opt| {
+        let label = format_resolution_param_label(opt.label, suffix);
+        DropdownItemDef::action(format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, opt.value_id), label)
+    }).collect())
+}
 
 /// Find the DropdownItemDef list for a given dropdown_id from toolbar definitions.
 ///

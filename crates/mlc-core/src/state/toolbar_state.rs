@@ -1126,9 +1126,25 @@ impl ChartToolbarState {
             }
 
             // === Timeframe selector — emit event for app to reload data ===
+            //
+            // `ResolutionKind::Param` dropdown items carry the
+            // `RESOLUTION_PARAM_ITEM_PREFIX` id prefix (owner doctrine
+            // 2026-07-08: the TF button is the universal resolution picker)
+            // — the id itself encodes the numeric value, so this dispatches
+            // straight to `UpdateChartTypeParam` without needing to know the
+            // active chart_type. Plain `tf_*` ids (Time/Interval) keep the
+            // existing `ChangeTimeframe` flow unchanged.
             "timeframe_selector" => {
-                eprintln!("[ChartToolbar] timeframe: {}", item_id);
-                vec![ChartOutEvent::ChangeTimeframe { timeframe_id: item_id.to_string() }]
+                if let Some(value_str) = item_id.strip_prefix(crate::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
+                    eprintln!("[ChartToolbar] resolution param: {}", value_str);
+                    match value_str.parse::<f64>() {
+                        Ok(value) => vec![ChartOutEvent::UpdateChartTypeParam { value }],
+                        Err(_) => vec![ChartOutEvent::Consumed],
+                    }
+                } else {
+                    eprintln!("[ChartToolbar] timeframe: {}", item_id);
+                    vec![ChartOutEvent::ChangeTimeframe { timeframe_id: item_id.to_string() }]
+                }
             }
 
             // === Layout menu — internal split / expand ===

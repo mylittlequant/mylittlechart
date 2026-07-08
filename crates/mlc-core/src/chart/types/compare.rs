@@ -386,6 +386,7 @@ mod tests {
                 low: 95.0,
                 close: 100.0,
                 volume: 1000.0,
+                ..Default::default()
             },
             Bar {
                 timestamp: 2000,
@@ -394,6 +395,7 @@ mod tests {
                 low: 98.0,
                 close: 105.0,
                 volume: 1000.0,
+                ..Default::default()
             },
             Bar {
                 timestamp: 3000,
@@ -402,6 +404,7 @@ mod tests {
                 low: 100.0,
                 close: 110.0,
                 volume: 1000.0,
+                ..Default::default()
             },
         ]
     }

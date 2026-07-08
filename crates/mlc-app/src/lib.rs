@@ -5062,6 +5062,11 @@ impl ChartApp {
             // depth — RAM-only, no persisted field (SWC).
             let active_ct_str: Option<&'static str> = self.panel_app.panel_grid.active_container_id()
                 .and_then(|cid| self.chart_type_for_chart(cid));
+            // TF button resolution-picker label (owner doctrine 2026-07-08):
+            // the active window's live `chart_type_param`, read when the
+            // active chart_type is `ResolutionKind::Param`.
+            let active_ct_param: Option<f64> = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_param_for_chart(cid));
             let allowed_tfs = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 cid.map(|cid| {
@@ -5089,6 +5094,7 @@ impl ChartApp {
                 presets_guard_tb.values(),
                 allowed_tfs.as_ref(),
                 active_ct_str,
+                active_ct_param,
                 chart_type_data_modes.as_ref(),
             );
             drop(bubble_guard_tb);
@@ -5775,6 +5781,8 @@ impl ChartApp {
         // shell-web/native toolbar-duty binding invariant.
         let active_ct_str: Option<&'static str> = self.panel_app.panel_grid.active_container_id()
             .and_then(|cid| self.chart_type_for_chart(cid));
+        let active_ct_param: Option<f64> = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.chart_type_param_for_chart(cid));
         let allowed_tfs = self.panel_app.panel_grid.active_container_id().map(|cid| {
             let chart_type = self.chart_type_for_chart(cid).unwrap_or("candles");
             let active_series = self.active_series_for_chart(cid);
@@ -5799,6 +5807,7 @@ impl ChartApp {
             presets_guard_tb2.values(),
             allowed_tfs.as_ref(),
             active_ct_str,
+            active_ct_param,
             chart_type_data_modes.as_ref(),
         );
         drop(bubble_guard_tb2);

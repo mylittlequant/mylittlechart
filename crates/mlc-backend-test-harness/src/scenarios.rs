@@ -30,6 +30,7 @@ fn make_bar(ts: i64, close: f64) -> Bar {
         low: close,
         close,
         volume: 1.0,
+        ..Default::default()
     }
 }
 

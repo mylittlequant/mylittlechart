@@ -729,6 +729,24 @@ impl ChartApp {
                         .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                         .collect();
 
+                // Caterpillar-bug fix (2026-07-08): `bar.timestamp` is seconds-
+                // truncated from dig3's ms-native `open_time` — the trade-agg
+                // family (range/volume/tick/dollar bars, tick TFs) can close
+                // more than once inside the same wall-clock second, so a
+                // seconds-only same-bar test collapses genuinely distinct
+                // bars into one (mutate instead of append) or vice versa.
+                // Every window hitting this arm is `is_derived` (see the
+                // filter above), so compare by `derived_ts_ms` whenever the
+                // incoming bar actually carries one; kline's own `BarUpdate`
+                // never reaches this arm (routed to the recalc path instead
+                // via the non-derived branch), so this does not touch the
+                // seconds-keyed kline path.
+                let bar_ts_identity: Option<i64> = if bar.derived_ts_ms != 0 {
+                    Some(bar.derived_ts_ms)
+                } else {
+                    Some(bar.timestamp)
+                };
+
                 for bid_bu in &target_bubbles_bu {
                     let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
                         // bars-ownership gate: footprint is in the is_derived
@@ -740,8 +758,10 @@ impl ChartApp {
                         if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
                             return false;
                         }
-                        let last_ts = bubble.bars.last().map(|b| b.timestamp);
-                        if last_ts == Some(bar.timestamp) {
+                        let last_ts_identity = bubble.bars.last().map(|b| {
+                            if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
+                        });
+                        if last_ts_identity == bar_ts_identity {
                             if let Some(last) = bubble.last_bar_mut() {
                                 last.open   = bar.open;
                                 last.high   = bar.high;
@@ -889,6 +909,7 @@ impl ChartApp {
                                 bubble.append_bar(mlc_core::Bar {
                                     timestamp: new_candle_start,
                                     open: *price, high: *price, low: *price, close: *price, volume: *quantity,
+                                    derived_ts_ms: 0,
                                 });
                                 (true, needs_bf)
                             } else {
@@ -905,6 +926,7 @@ impl ChartApp {
                             bubble.append_bar(mlc_core::Bar {
                                 timestamp: candle_start,
                                 open: *price, high: *price, low: *price, close: *price, volume: *quantity,
+                                derived_ts_ms: 0,
                             });
                             (true, false)
                         }

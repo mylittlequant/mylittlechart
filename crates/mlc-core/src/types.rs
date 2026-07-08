@@ -674,6 +674,22 @@ pub struct Bar {
     pub close: f64,
     /// Trading volume
     pub volume: f64,
+    /// Source-native millisecond identity, verbatim from the upstream event
+    /// (dig3 `BarPoint.open_time` for trade-agg/derived bars, `Kline.open_time`
+    /// for plain kline). `0` when unset (client-side aggregated candles built
+    /// from raw trades, tests/fixtures).
+    ///
+    /// `timestamp` (seconds) is a lossy truncation of this value for
+    /// sub-second-close bar families (range/volume/tick/dollar/imbalance/run)
+    /// — multiple distinct bars can close inside the same wall-clock second,
+    /// collapsing onto one `timestamp` and defeating same-bar / merge-by-ts
+    /// identity checks (2026-07-08 caterpillar-bug investigation). Callers
+    /// doing same-bar or merge-by-timestamp comparisons for the derived-bar
+    /// family should compare `derived_ts_ms` when nonzero and fall back to
+    /// `timestamp` otherwise — never widen `timestamp` itself to ms (huge
+    /// blast radius across the mlc-wide seconds convention).
+    #[serde(default)]
+    pub derived_ts_ms: i64,
 }
 
 impl Bar {
@@ -686,6 +702,7 @@ impl Bar {
             low,
             close,
             volume: 0.0,
+            derived_ts_ms: 0,
         }
     }
 
@@ -698,6 +715,7 @@ impl Bar {
             low,
             close,
             volume,
+            derived_ts_ms: 0,
         }
     }
 

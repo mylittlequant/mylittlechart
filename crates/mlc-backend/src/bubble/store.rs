@@ -660,11 +660,22 @@ impl BubbleStore {
     /// timestamp (last-write-wins on collision — the live ring's version of
     /// any overlapping bar takes priority), sorted oldest→newest. Returns the
     /// merged series so the caller can build the matching `BubbleEvent`.
+    ///
+    /// Keyed by `(timestamp, derived_ts_ms)` rather than `timestamp` alone
+    /// (2026-07-08 caterpillar-bug fix): `DerivedBarsPrepended` batches (the
+    /// trade-agg family's lazy-deepen path) reuse this same merge, and a
+    /// range/volume/tick/dollar bar can close more than once inside one
+    /// wall-clock second — a bare `timestamp` key silently collapsed those
+    /// into one bar. `derived_ts_ms` is `0` for bars that don't carry a
+    /// ms-native identity (client-aggregated candles), which still sorts and
+    /// dedups correctly against the seconds-only bars it was written against.
+    /// `BTreeMap`'s tuple ordering sorts by `timestamp` first, so the
+    /// oldest→newest invariant is unchanged for kline's ScrollBarsLoaded path.
     pub fn merge_scroll_bars(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) -> Vec<mlc_core::Bar> {
         let Some(b) = self.bubbles.get_mut(&bid) else { return Vec::new() };
-        let mut by_ts: std::collections::BTreeMap<i64, mlc_core::Bar> = std::collections::BTreeMap::new();
-        for bar in bars { by_ts.insert(bar.timestamp, *bar); }
-        for bar in &b.bars { by_ts.insert(bar.timestamp, *bar); }
+        let mut by_ts: std::collections::BTreeMap<(i64, i64), mlc_core::Bar> = std::collections::BTreeMap::new();
+        for bar in bars { by_ts.insert((bar.timestamp, bar.derived_ts_ms), *bar); }
+        for bar in &b.bars { by_ts.insert((bar.timestamp, bar.derived_ts_ms), *bar); }
         let merged: Vec<mlc_core::Bar> = by_ts.into_values().collect();
         b.replace_bars(merged.clone());
         merged
@@ -738,6 +749,7 @@ mod park_unpark_tests {
         let c = store.create_bubble("SOLUSDT".to_string(), Timeframe::h1());
         store.append_bar(a, mlc_core::Bar {
             timestamp: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, volume: 1.0,
+            ..Default::default()
         });
 
         // Extract only `a` and `b` — `c` must stay behind untouched.
