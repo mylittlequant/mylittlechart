@@ -13,7 +13,7 @@ use mlc_backend::BubbleEvent;
 use mlc_core::state::Timeframe;
 use mlc_core::ids::BubbleId;
 use mlc_core::types::Bar;
-use mlc_backend_data_bridge::{LiveUpdate, BarStreamKind};
+use mlc_backend_data_bridge::LiveUpdate;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -88,7 +88,6 @@ pub fn data_plane_bars_loaded() -> HarnessResult<()> {
         symbol: "BTCUSDT".to_string(),
         timeframe: "1h".to_string(),
         bars: bars.clone(),
-        source: BarStreamKind::Kline,
     })?;
 
     let events = h.tick(16);
@@ -129,7 +128,6 @@ pub fn data_plane_bars_no_bubble() -> HarnessResult<()> {
         symbol: "ETHUSDT".to_string(),
         timeframe: "1h".to_string(),
         bars: vec![make_bar(1_700_000_000, 3_000.0)],
-        source: BarStreamKind::Kline,
     })?;
     let events = h.tick(16);
     let saw_zero = events.iter().any(|e| matches!(e, BubbleEvent::BarsLoaded { bid: BubbleId(0), .. }));
@@ -153,7 +151,6 @@ pub fn data_plane_pass_through_bar_update() -> HarnessResult<()> {
         symbol: "BTCUSDT".to_string(),
         timeframe: "1h".to_string(),
         bar: make_bar(1_700_000_000, 50_000.0),
-        source: BarStreamKind::Kline,
     })?;
     let events = h.tick(16);
     let n = events.iter().filter(|e| matches!(e, BubbleEvent::BarUpdatePassthrough { .. })).count();
@@ -933,7 +930,6 @@ pub fn body_stream_scroll_bars_merges_with_live_tail(h: &mut BackendHarness) -> 
         symbol: "BTCUSDT".to_string(),
         timeframe: "1h".to_string(),
         bars: live_tail.clone(),
-        source: BarStreamKind::Kline,
     })?;
     let _ = h.tick(16);
     // Now simulate scroll-left: REST returned an OLDER page [990..1000).
@@ -1193,7 +1189,6 @@ pub fn body_multi_symbol_bars_isolation(h: &mut BackendHarness) -> HarnessResult
         symbol: "BTCUSDT".to_string(),
         timeframe: "1h".to_string(),
         bars: bars_btc.clone(),
-        source: BarStreamKind::Kline,
     })?;
     h.inject(LiveUpdate::BarsLoaded {
         exchange_id: ExchangeId::Binance,
@@ -1201,7 +1196,6 @@ pub fn body_multi_symbol_bars_isolation(h: &mut BackendHarness) -> HarnessResult
         symbol: "ETHUSDT".to_string(),
         timeframe: "1h".to_string(),
         bars: bars_eth.clone(),
-        source: BarStreamKind::Kline,
     })?;
     let _ = h.tick(16);
 

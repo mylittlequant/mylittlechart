@@ -324,31 +324,25 @@ impl ChartApp {
                                 self.core.bubbles_mut().set_timeframe(bid, tf.clone());
                             }
                         }
-                        // Fetch data for the new timeframe. A tick TF subscribes to the
-                        // dig3 TickBar stream (N trades/bar); a time TF fetches klines.
-                        // Either way switch ABORTS any prior tick subscription so a
-                        // stale tick forwarder can't keep feeding the window.
+                        // Fetch klines for the new timeframe. Tick TFs are no
+                        // longer reachable through this handler (removed from
+                        // the TF dropdown 2026-07-08 — they now live as the
+                        // `tick_bar` chart_type's own `chart_type_param`, see
+                        // `hydration_impl.rs`'s legacy-preset migration), so
+                        // this is unconditionally the kline path.
                         if !symbol.is_empty() {
                             let eid_str = self.active_exchange.as_str();
                             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
                             } else {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at_tf);
-                                // Drop the OLD time-TF kline forwarder so it stops piping
-                                // 1h BarUpdates to the broadcast after the user switched
-                                // to 1m. abort_kline_bars is a no-op for tick TFs (the
-                                // prior tick subscription is owned by abort_tick_bars).
+                                // Drop the OLD kline forwarder so it stops piping
+                                // 1h BarUpdates to the broadcast after the user
+                                // switched to 1m.
                                 if let Some(ref prev_tf) = prev_tf_opt {
-                                    if prev_tf.tick_count().is_none() {
-                                        self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
-                                    }
+                                    self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
                                 }
-                                if let Some(count) = tf.tick_count() {
-                                    self.core.request_tick_bars(self.active_exchange, &symbol, at, count);
-                                } else {
-                                    self.core.abort_tick_bars(self.active_exchange, &symbol, at);
-                                    self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
-                                }
+                                self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
                             }
                         }
                         // Propagate new timeframe to all leaves in the same sync group.
@@ -477,7 +471,6 @@ impl ChartApp {
                                     .get(eid_str).copied().unwrap_or(true);
                                 if connector_enabled {
                                     let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                    let on_tick_tf = tf.tick_count().is_some();
 
                                     // Audit D9 step 2: release the outgoing kline
                                     // forwarder when leaving kline-family for a
@@ -519,7 +512,7 @@ impl ChartApp {
                                     // 441d623d dropped the kline backdrop (footprint IS
                                     // its own OHLC series). It now releases the shared
                                     // kline forwarder like every other derived type.
-                                    if was_kline_family && is_derived_target && !on_tick_tf {
+                                    if was_kline_family && is_derived_target {
                                         let still_needed = self.panel_app.panel_grid.containers().iter()
                                             .any(|(other_cid, _)| {
                                                 if *other_cid == cid { return false; }
@@ -723,14 +716,13 @@ impl ChartApp {
                                         // Render-family (candles/bars/line/...) shares
                                         // `subscribe_kline_bars` with the legacy `_`
                                         // fallback arm below, which only fired when
-                                        // NOT on a tick TF (tick TF flips into the
-                                        // derived path) and NOT a render-only switch
-                                        // (bars already loaded — re-requesting would
-                                        // trigger the fresh-load viewport jump this
-                                        // arc is fixing). Every other (derived)
-                                        // chart_type always fires, matching the
-                                        // per-arm behavior this table replaces.
-                                        let skip = is_render_family(Some(ct)) && (on_tick_tf || render_only_switch);
+                                        // NOT a render-only switch (bars already
+                                        // loaded — re-requesting would trigger the
+                                        // fresh-load viewport jump this arc is
+                                        // fixing). Every other (derived) chart_type
+                                        // always fires, matching the per-arm
+                                        // behavior this table replaces.
+                                        let skip = is_render_family(Some(ct)) && render_only_switch;
                                         if !skip {
                                             let bar_count = self.core.user().profile().domain.bar_count as usize;
                                             let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
@@ -792,7 +784,7 @@ impl ChartApp {
                                     } else {
                                         // Unknown chart_type (legacy preset) — fall
                                         // through to plain kline.
-                                        if !on_tick_tf && !render_only_switch {
+                                        if !render_only_switch {
                                             self.core.request_kline(
                                                 self.active_exchange, &symbol, &tf, at,
                                                 None,

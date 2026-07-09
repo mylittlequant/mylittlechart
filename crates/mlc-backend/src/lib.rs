@@ -65,7 +65,7 @@ use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
 use mlc_backend_data_bridge::{
     DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource,
-    SharedTradeSeries, SharedOrderBookTracker, BarStreamKind,
+    SharedTradeSeries, SharedOrderBookTracker,
 };
 use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
@@ -1241,7 +1241,7 @@ impl BackendCore {
 
             match update {
                 // ── BarsLoaded ─────────────────────────────────────────────────
-                LiveUpdate::BarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, source } => {
+                LiveUpdate::BarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars } => {
                     let bids_for_instrument = self.bubbles()
                         .bubbles_for_instrument(exchange_id.as_str(), account_type.short_label(), &symbol);
                     if bids_for_instrument.is_empty() {
@@ -1265,24 +1265,7 @@ impl BackendCore {
                             // anchor collapses, leaving the viewport pinned to
                             // the historic index whenever bars grow underneath).
                             let mut mgr = self.bubbles_mut();
-                            // Trade-agg cold-seed batch (range/tick/volume/
-                            // dollar/imbalance/run bar — Task 1 batching):
-                            // the bridge has no window/bubble access to know
-                            // the bubble's own timeframe label ("100t",
-                            // user-picked range size, etc.), so it sends an
-                            // empty `tf_name` for this case. Resolve the
-                            // REAL per-bubble timeframe here instead of
-                            // trusting the event field — react.rs's window
-                            // match requires `win_tf.name == tf_name` in
-                            // addition to `current_tag_id == bid`; an empty
-                            // or wrong tf_name would silently fail that
-                            // match and leave `pending_symbol_load` stuck.
-                            let is_derived_batch = source == BarStreamKind::Derived;
-                            let tf_name = if is_derived_batch {
-                                mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default()
-                            } else {
-                                tf_name.clone()
-                            };
+                            let tf_name = tf_name.clone();
                             // Raw kline layer (unified-data-plane Stage Э1):
                             // ADDITIVE write, UNCONDITIONAL (fixed Э3) —
                             // independent of `bars_source` AND of the
@@ -1290,34 +1273,24 @@ impl BackendCore {
                             // `BackfillComplete`/`ScrollBarsLoaded` arms. A
                             // bubble can hold an independent Э3 "1m"
                             // fold-feed kline sub whose Phase-A page must
-                            // still reach `kline_layers["1m"]`. Genuine
-                            // kline data ONLY (`source == Kline`) — the
-                            // trade-agg family's cold-seed replay
-                            // (`source == Derived`) has no real per-bubble TF
-                            // identity and must never pollute a kline layer.
-                            if source == BarStreamKind::Kline {
-                                for bar in &bars {
-                                    mgr.kline_layer_push_live(bid, &tf_name, *bar);
-                                }
+                            // still reach `kline_layers["1m"]`.
+                            for bar in &bars {
+                                mgr.kline_layer_push_live(bid, &tf_name, *bar);
                             }
                             // bars-ownership + TF-identity gate for the
                             // DISPLAY write only: a footprint-owned bubble's
                             // bar series is written by `FootprintUpdate` —
-                            // never here. The trade-agg cold-seed batch
-                            // (`is_derived_batch`) always writes (it already
-                            // resolved `tf_name` to the bubble's own TF
-                            // above, so the TF check is a no-op tautology for
-                            // it); a genuine kline Phase-A/backfill batch
-                            // writes ONLY when `tf_name` matches the bubble's
-                            // OWN active timeframe — the check that stops an
-                            // independent "1m" fold-feed sub (Э3) on a
-                            // renko/pnf/kagi/three_line_break bubble (still
+                            // never here. A genuine kline Phase-A/backfill
+                            // batch writes ONLY when `tf_name` matches the
+                            // bubble's OWN active timeframe — the check that
+                            // stops an independent "1m" fold-feed sub (Э3) on
+                            // a renko/pnf/kagi/three_line_break bubble (still
                             // `bars_source == Kline`) from wholesale-
                             // replacing `bubble.bars` with 1m candles when
                             // the bubble's real active tf is something else
                             // entirely.
                             let display_writable = mgr.bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc
-                                && (is_derived_batch || mgr.timeframe(bid).map(|tf| tf.name.as_str()) == Some(tf_name.as_str()));
+                                && mgr.timeframe(bid).map(|tf| tf.name.as_str()) == Some(tf_name.as_str());
                             if !display_writable {
                                 drop(mgr);
                                 continue;
@@ -1362,9 +1335,9 @@ impl BackendCore {
                         // bars-ownership + TF-identity gate for the DISPLAY
                         // write only: kline REST backfill on the bubble's OWN
                         // active timeframe is the only legitimate writer of
-                        // `bubble.bars` here (the trade-agg family has its own
-                        // dedicated `DerivedBarsPrepended` for scroll-left/
-                        // lazy-deepen). The TF check (added Э3) is what stops
+                        // `bubble.bars` here (the trade-agg family folds
+                        // client-side via `TradeFoldRuntime`/`FoldRuntime`,
+                        // unified-data-plane Э5b). The TF check (added Э3) is what stops
                         // an independent "1m" fold-feed sub on a renko/pnf/
                         // kagi/three_line_break bubble (still `bars_source ==
                         // Kline`, since those four never stamp `TradeAggBars`)
@@ -1454,7 +1427,7 @@ impl BackendCore {
                 // ── BarUpdate — pass-through ────────────────────────────────────
                 // Bubble write depends on per-window `is_derived` / `chart_type` flags;
                 // reactor owns the full arm.
-                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, timeframe: bar_tf_name, bar, source } => {
+                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, timeframe: bar_tf_name, bar } => {
                     // Raw kline layer (unified-data-plane Stage Э1, keying
                     // fixed in Э3): ADDITIVE live-tick write, independent of
                     // `bars_source`/chart_type — every bubble on this
@@ -1463,13 +1436,10 @@ impl BackendCore {
                     // the bubble's `timeframe` happens to be set to right
                     // now. A bubble can hold an independent "1m" fold-feed
                     // subscription (Э3 FoldRuntime) while its own `timeframe`
-                    // is a different wall-clock TF (or a tick TF) — keying
-                    // off the bubble's own field here would have silently
-                    // written "1m" live ticks into e.g. the "1h" layer.
-                    // Genuine kline ticks only (`source == Kline`); the
-                    // trade-agg family's derived ticks (`source == Derived`,
-                    // empty `bar_tf_name`) must never land in a kline layer.
-                    if source == BarStreamKind::Kline && !bar_tf_name.is_empty() {
+                    // is a different wall-clock TF — keying off the bubble's
+                    // own field here would have silently written "1m" live
+                    // ticks into e.g. the "1h" layer.
+                    if !bar_tf_name.is_empty() {
                         let at_label = bar_at.short_label();
                         for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &bar_sym) {
                             self.bubbles_mut().kline_layer_push_live(bid, &bar_tf_name, bar);
@@ -1505,55 +1475,6 @@ impl BackendCore {
                         symbol: bar_sym,
                         bar,
                     });
-                }
-
-                // ── DerivedBarsPrepended ─────────────────────────────────────────
-                // Lazy-deepen / scroll-left batch for the counted-bar family
-                // (range_bar/volume_bar/tick_bar/dollar_bar — all share
-                // `bubble.bars` with kline, see `resolve_active_series`'s
-                // mapping). Reuses the SAME `merge_scroll_bars` + `ScrollBarsAppended`
-                // path `ScrollBarsLoaded` uses above — bars are immutable once
-                // emitted (unlike kline's in-progress last bar), so a
-                // timestamp merge is exact and the kline ts-anchor reconcile
-                // in react.rs applies verbatim, no separate arm needed.
-                LiveUpdate::DerivedBarsPrepended { exchange_id, account_type: at, symbol: sym, bars } => {
-                    if bars.is_empty() { continue; }
-                    let at_label = at.short_label().to_string();
-                    let bids = self.bubbles()
-                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
-                    for bid in bids {
-                        // react.rs's ScrollBarsAppended handler filters
-                        // candidate windows by `win_tf.name == *tf_name`, so
-                        // this must carry the bubble's OWN current timeframe
-                        // name (not an invented placeholder) for the match to
-                        // succeed against `timeframe_for_chart`.
-                        let tf_name = self.bubbles().timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
-                        let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate: this event is the trade-agg
-                        // family's OWN dedicated scroll-left/lazy-deepen
-                        // writer — it must land ONLY on a `TradeAggBars`-
-                        // owned bubble, never on a `Kline`-owned window (the
-                        // observed live bug: a range_bar bubble stayed
-                        // default-`Kline`-owned pre-fix and could be stomped
-                        // by an unrelated kline write) nor a footprint one.
-                        if mgr.bars_source(bid) != crate::bubble::BarsSource::TradeAggBars {
-                            continue;
-                        }
-                        let prev_bars = mgr.bars(bid).to_vec();
-                        let merged = mgr.merge_scroll_bars(bid, &bars);
-                        drop(mgr);
-                        let prepend_count = merged.len().saturating_sub(prev_bars.len());
-                        events.push(BubbleEvent::ScrollBarsAppended {
-                            bid,
-                            exchange_id,
-                            symbol: sym.clone(),
-                            account_type: at_label.clone(),
-                            timeframe: tf_name,
-                            bars: merged,
-                            prev_bars,
-                            prepend_count,
-                        });
-                    }
                 }
 
                 // ── TradeUpdate — pass-through ──────────────────────────────────
@@ -1963,22 +1884,6 @@ impl BackendCore {
         force: bool,
     ) {
         self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);
-    }
-
-    /// Subscribe to a tick-count aggregated bar stream (e.g. 100t/1000t).
-    pub fn request_tick_bars(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        account_type: AccountType,
-        count: u32,
-    ) {
-        self.bridge.request_tick_bars(exchange_id, symbol, account_type, count);
-    }
-
-    /// Abort the active tick-bar subscription for an instrument (TF switch away).
-    pub fn abort_tick_bars(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        self.bridge.abort_tick_bars(exchange_id, symbol, account_type);
     }
 
     /// Abort the active kline forwarder for an instrument + timeframe.

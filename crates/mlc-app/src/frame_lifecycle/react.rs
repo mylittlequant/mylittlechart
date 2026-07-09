@@ -549,16 +549,13 @@ impl ChartApp {
                 // once for the bubble this event actually landed on.
                 //
                 // Task 2 (derived-prepend-fold-plan-2026-07-07, "one batch
-                // now, one batch lazy"): this event is shared by TWO
-                // producers — kline's `ScrollBarsLoaded` REST path (sets
-                // `scroll_fetch_in_flight`) and the trade-agg family's
-                // `DerivedBarsPrepended` prepend-fold (never touches this
-                // flag). Reading `scroll_fetch_in_flight` BEFORE clearing it
-                // is exactly how we tell "this was the kline scroll-left
-                // page landing" from "this was a derived-family prepend
-                // that happens to reuse the same merge/anchor machinery" —
-                // the lazy follow-up prefetch below is kline-only by design
-                // (Task 2 scope).
+                // now, one batch lazy"): kline's `ScrollBarsLoaded` REST path
+                // is the sole producer of this event (sets
+                // `scroll_fetch_in_flight`) — the trade-agg family's own
+                // scroll-left deepen now runs entirely client-side via
+                // `TradeFoldRuntime`/`FoldRuntime` (unified-data-plane Э5b),
+                // never touching this flag or this event. The lazy follow-up
+                // prefetch below is kline-only by design (Task 2 scope).
                 let was_kline_scroll_fetch = self.core.bubbles()
                     .with_bubble(*bid, |b| b.scroll_fetch_in_flight)
                     .unwrap_or(false);
@@ -716,17 +713,19 @@ impl ChartApp {
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
                             let at = self.account_type_for_chart(*cid)?;
-                            let is_tick_tf = self.timeframe_for_chart(*cid).map(|tf| tf.is_tick()).unwrap_or(false);
                             // NOT footprint: its bars come from FootprintUpdate
                             // and its viewport bookkeeping is driven exclusively
                             // by the FootprintBarAppended arm — letting a live
                             // kline BarUpdate through here could consume the
                             // one-shot cold snap against an empty/foreign series
-                            // before the first footprint bar ever lands.
-                            let derived_chart_type = self.chart_type_for_chart(*cid)
+                            // before the first footprint bar ever lands. Covers
+                            // tick_bar (unified-data-plane Э5b: tick-TF kline
+                            // windows are migrated to chart_type="tick_bar" on
+                            // hydration, see `hydration_impl.rs`) as well as
+                            // range/volume/dollar/imbalance/run bars.
+                            let is_derived = self.chart_type_for_chart(*cid)
                                 .map(crate::active_series::chart_type_is_trade_agg_bar)
                                 .unwrap_or(false);
-                            let is_derived = is_tick_tf || derived_chart_type;
                             Some((*cid, (sym, at, is_derived)))
                         })
                         .collect()
@@ -742,15 +741,18 @@ impl ChartApp {
                         .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
                         .collect();
 
-                // Trade-agg-bar-owned subset of `target_bubbles_bu` (excludes
-                // tick-TF kline windows) — used below to defensively stamp
-                // `bars_source` on the first derived bar that arrives for a
-                // bubble the subscribe-time `clear_slot_trade_agg_bars` stamp
-                // somehow missed (stale hydration path, future caller that
-                // bypasses the `SubscribeOps` table). Belt-and-suspenders:
-                // the OPS table stamp is the single source of truth in the
-                // normal path, this only guards against that invariant
-                // silently regressing.
+                // Trade-agg-bar-owned bubbles (same set as `target_bubbles_bu`
+                // now that `is_derived` above is exactly
+                // `chart_type_is_trade_agg_bar` — computed separately rather
+                // than reused so the two intents stay independently readable)
+                // — used below to defensively stamp `bars_source` on the
+                // first derived bar that arrives for a bubble the
+                // subscribe-time `clear_slot_trade_agg_bars` stamp somehow
+                // missed (stale hydration path, future caller that bypasses
+                // the `SubscribeOps` table). Belt-and-suspenders: the OPS
+                // table stamp is the single source of truth in the normal
+                // path, this only guards against that invariant silently
+                // regressing.
                 let trade_agg_bids_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     instrument_by_cid_bu.iter()
                         .filter(|(cid, (sym, at, _))| {
@@ -764,7 +766,7 @@ impl ChartApp {
 
                 // Caterpillar-bug fix (2026-07-08): `bar.timestamp` is seconds-
                 // truncated from dig3's ms-native `open_time` — the trade-agg
-                // family (range/volume/tick/dollar bars, tick TFs) can close
+                // family (range/volume/tick/dollar/imbalance/run bars) can close
                 // more than once inside the same wall-clock second, so a
                 // seconds-only same-bar test collapses genuinely distinct
                 // bars into one (mutate instead of append) or vice versa.
@@ -783,15 +785,15 @@ impl ChartApp {
                 for bid_bu in &target_bubbles_bu {
                     let is_trade_agg_owner = trade_agg_bids_bu.contains(bid_bu);
                     let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
-                        // bars-ownership gate: `BarUpdate` is a dual-purpose
-                        // writer here — live kline ticks for tick-TF windows
-                        // (`Kline`-owned) AND live trade-agg-bar-family ticks
-                        // for range/volume/tick/dollar/imbalance/run windows
-                        // (`TradeAggBars`-owned, per-bar station output) both
-                        // legitimately land through this same event type, so
-                        // only `FootprintOhlc` is blocked — footprint gets its
-                        // bars from `FootprintUpdate` instead and must never
-                        // have a live kline/derived `BarUpdate` interleave.
+                        // bars-ownership gate: `BarUpdate` carries live
+                        // trade-agg-bar-family ticks (range/volume/tick/
+                        // dollar/imbalance/run, `TradeAggBars`-owned —
+                        // produced by the client-side `TradeFoldRuntime`/
+                        // `FoldRuntime` for this bubble) through this event
+                        // type, so only `FootprintOhlc` is blocked —
+                        // footprint gets its bars from `FootprintUpdate`
+                        // instead and must never have a live derived
+                        // `BarUpdate` interleave.
                         if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
                             return false;
                         }
@@ -909,25 +911,26 @@ impl ChartApp {
                         })
                         .collect()
                 };
-                // Excludes tick-TF kline windows (their real live source IS raw
-                // trades) AND trade-agg-bar windows (range/volume/tick/dollar/
-                // imbalance/run bars) — the latter's `bubble.timeframe` stays an
-                // ordinary wall-clock value (e.g. "15m", never re-stamped on
-                // chart-type switch, see `chart_out_events.rs:690-694`), so an
-                // `is_tick()`-only gate let raw trades build a SECOND, ordinary-
-                // OHLC candle series into the SAME `bubble.bars` the station's
-                // `BarUpdatePassthrough` writes for these windows (root cause
-                // fixed 2026-07-08). `chart_type_is_trade_agg_bar` is the same
-                // registry-driven check `BarUpdatePassthrough`'s bars-ownership
-                // gate above uses — single source of truth.
+                // Excludes trade-agg-bar windows (range/volume/tick/dollar/
+                // imbalance/run bars — tick-TF kline windows are migrated to
+                // chart_type="tick_bar" on hydration, see
+                // `hydration_impl.rs`) — their bars come from the client-side
+                // `TradeFoldRuntime` (`trade_fold_on_live_trade`, fired earlier
+                // in `tick_writers` for the SAME live trade this event is a
+                // passthrough of), never from this wall-clock candle builder.
+                // Without this exclusion, raw trades would build a SECOND,
+                // ordinary-OHLC candle series into the SAME `bubble.bars` the
+                // fold's `BarUpdatePassthrough` output writes for these
+                // windows (root cause fixed 2026-07-08, preserved by the
+                // unified-data-plane Э5b cutover). `chart_type_is_trade_agg_bar`
+                // is the same registry-driven check `BarUpdatePassthrough`'s
+                // bars-ownership gate above uses — single source of truth.
                 let derived_cids_tu: std::collections::HashSet<mlc_core::state::ChartId> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter(|cid| {
-                            let is_tick_tf = self.timeframe_for_chart(**cid).map(|tf| tf.is_tick()).unwrap_or(false);
-                            let is_trade_agg_bar = self.chart_type_for_chart(**cid)
+                            self.chart_type_for_chart(**cid)
                                 .map(crate::active_series::chart_type_is_trade_agg_bar)
-                                .unwrap_or(false);
-                            is_tick_tf || is_trade_agg_bar
+                                .unwrap_or(false)
                         })
                         .copied()
                         .collect()
@@ -959,10 +962,10 @@ impl ChartApp {
                         // bars-ownership gate: only a `Kline`-owned bubble may
                         // have a wall-clock candle built from raw trades here.
                         // Footprint-owned bubbles get their OHLC from
-                        // FootprintUpdate (the tick-TF exclusion above never
-                        // fires for footprint — its TF is a time bucket like
-                        // "1m" — so this bars_source check is footprint's only
-                        // protection in this arm). Trade-agg-bar bubbles are
+                        // FootprintUpdate (its TF is a time bucket like "1m",
+                        // never trade-agg-bar-excluded upstream — so this
+                        // bars_source check is footprint's only protection in
+                        // this arm). Trade-agg-bar bubbles are
                         // already excluded upstream via `derived_cids_tu`
                         // (`chart_type_is_trade_agg_bar`), but gating on "Kline
                         // owns" rather than naming FootprintOhlc alone makes
@@ -1490,10 +1493,8 @@ impl ChartApp {
             // venue the cold seed (`backfill::trades_recent`, capped e.g. 60
             // trades on Bybit spot) can complete ZERO buckets for a chart_type
             // with a large threshold (tick_bar(100), volume_bar(1000)) — the
-            // `derived_bar_sub_body` ring-peek only sends `LiveUpdate::
-            // BarsLoaded` `if !points.is_empty()` (bridge.rs), so on a
-            // zero-bucket seed that event NEVER fires and `pending_symbol_load`
-            // is never cleared by the normal `BarsLoaded` fresh-load path —
+            // `TradeFoldRuntime::reseed` replay produces no output at all on a
+            // zero-bucket seed, so no fresh-load-clearing event fires —
             // CONFIRMED HANG until enough live trades finally complete the
             // first bucket (could be arbitrarily long on a low-volume symbol).
             //

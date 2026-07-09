@@ -63,13 +63,7 @@ impl ChartApp {
                     // subscribes through the normal kline-family path after
                     // load — mirrors the `columns`/`histogram` chart_type-id
                     // migration precedent already handled below by
-                    // `by_id(...).unwrap_or("candles")`. `DataBubbleSnapshot`
-                    // carries a `timeframe` too but no `chart_type` field (it
-                    // stays window-resident, S1 note above) — the window loop
-                    // below is the only migration site needed; the bubble's
-                    // `timeframe` is overwritten from `snap.timeframe` during
-                    // the restore pass further down, so fixing it up here is
-                    // sufficient for both.
+                    // `by_id(...).unwrap_or("candles")`.
                     for w in preset.windows.iter_mut() {
                         if let Some(count) = w.timeframe.tick_count() {
                             eprintln!(
@@ -79,6 +73,29 @@ impl ChartApp {
                             w.chart_type = "tick_bar".to_string();
                             w.chart_type_param = count as f64;
                             w.timeframe = mlc_core::state::Timeframe::m1();
+                        }
+                    }
+                    // `DataBubbleSnapshot` carries its OWN `timeframe` too (no
+                    // `chart_type` field — stays window-resident, S1 note
+                    // above), and it is what actually lands live: the bubble
+                    // restore pass further down (`restore_from_snapshots`)
+                    // reads `preset.bubbles` directly, `clear()`s any bubble
+                    // the window loop above may have touched, and installs
+                    // this snapshot's `timeframe` verbatim — the window-side
+                    // fix at the migration above never reaches the bubble.
+                    // Without this second pass a legacy tick-TF preset keeps
+                    // `bubble.timeframe.is_tick() == true` after load even
+                    // though `chart_type` correctly becomes `"tick_bar"`
+                    // (stamped from the migrated window snapshot later in
+                    // this fn) — a stale tick weight surviving on the one
+                    // field every `timeframe_for_chart` read actually uses.
+                    for b in preset.bubbles.iter_mut() {
+                        if b.timeframe.is_tick() {
+                            eprintln!(
+                                "[ChartApp] migrating legacy tick TF '{}' (bubble {}) -> timeframe=1m (chart_type migrated via window snapshot)",
+                                b.timeframe.name, b.id,
+                            );
+                            b.timeframe = mlc_core::state::Timeframe::m1();
                         }
                     }
                     let prep_us = _t_prep.elapsed().as_micros();

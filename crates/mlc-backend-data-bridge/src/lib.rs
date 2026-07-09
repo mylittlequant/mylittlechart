@@ -51,7 +51,7 @@ pub mod backfill_engine;
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
     SharedTradeSeries, SharedOrderBookTracker, HistoryDepthWire,
-    BarStreamKind, RawTradeWire,
+    RawTradeWire,
 };
 pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState};
 pub use provider::LiveDataProvider;

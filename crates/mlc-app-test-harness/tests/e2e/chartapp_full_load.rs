@@ -17,7 +17,7 @@ use mlc_app::ChartApp;
 use mlc_app::chart_container::ChartContainer;
 use mlc_core::Bar;
 use mlc_core::state::{generate_chart_id, Timeframe};
-use mlc_backend_data_bridge::{DataBridge, LiveUpdate, BarStreamKind};
+use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 use digdigdig3::{ExchangeId, AccountType};
 
 fn mk_bars(n: usize) -> Vec<Bar> {
@@ -110,7 +110,6 @@ fn four_tabs_same_instrument_all_bubbles_get_bars_after_tick() {
         symbol: "BTCUSDT".to_string(),
         timeframe: "1m".to_string(),
         bars: bars.clone(),
-        source: BarStreamKind::Kline,
     }).expect("broadcast send");
 
     // Give broadcast a moment to land in the receiver.
@@ -158,7 +157,6 @@ fn live_bug_repro_chart_with_phantom_bubble_still_gets_bars() {
         symbol: "BTCUSDT".to_string(),
         timeframe: "1m".to_string(),
         bars: bars.clone(),
-        source: BarStreamKind::Kline,
     }).expect("broadcast send");
 
     std::thread::sleep(Duration::from_millis(50));
@@ -193,7 +191,6 @@ fn bars_loaded_for_different_instrument_does_not_pollute_eth_tab() {
         symbol: "BTCUSDT".to_string(),
         timeframe: "1m".to_string(),
         bars: btc_bars,
-        source: BarStreamKind::Kline,
     }).expect("send");
 
     std::thread::sleep(Duration::from_millis(50));

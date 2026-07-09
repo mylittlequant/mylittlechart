@@ -1701,13 +1701,7 @@ impl ChartApp {
             }
             let at = crate::account_type_from_label(&at_label);
             self.core.ensure_connector(resolved_exchange);
-            if let Some(count) = tf.tick_count() {
-                // Tick TF peer: subscribe to the dig3 TickBar stream.
-                self.core.request_tick_bars(resolved_exchange, &symbol, at, count);
-            } else {
-                self.core.abort_tick_bars(resolved_exchange, &symbol, at);
-                self.core.request_kline(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
-            }
+            self.core.request_kline(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
             eprintln!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf

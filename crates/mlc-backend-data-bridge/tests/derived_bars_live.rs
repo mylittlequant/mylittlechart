@@ -18,15 +18,16 @@
 //! per test under the runner's per-test timeout (300 s for the wasm
 //! WebDriver session, 60 s default for native `tokio::test`).
 //!
-//! Unified-data-plane Э5a/Э5 (station-derived wipe): range_bar/volume_bar/
-//! dollar_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/
-//! renko/pnf/kagi/three_line_break/tpo/cvd now fold client-side over the
+//! Unified-data-plane Э5a/Э5/Э5b (station-derived wipe): range_bar/
+//! volume_bar/tick_bar/dollar_bar/tick_imbalance_bar/volume_imbalance_bar/
+//! run_bar/footprint/renko/pnf/kagi/three_line_break/tpo/cvd (including the
+//! tick-TF kline path, which is migrated to the `tick_bar` chart_type on
+//! hydration — see `hydration_impl.rs`) now fold client-side over the
 //! bubble's own kline/trade layer (`mlc-backend::chart_type` fold
 //! machinery) — their station-derived `DataBridge::request_*` entry points
-//! are gone, so the matching tests were removed here too. `tick_bars` (the
-//! tick-TF kline path), funding rate, open interest, DOM heatmap, and
-//! liquidation all still subscribe through the station and keep their
-//! coverage below.
+//! are gone, so the matching tests were removed here too. Funding rate,
+//! open interest, DOM heatmap, and liquidation all still subscribe through
+//! the station and keep their coverage below.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,8 +40,6 @@ use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 use wasm_bindgen_test::wasm_bindgen_test_configure;
 #[cfg(target_arch = "wasm32")]
 wasm_bindgen_test_configure!(run_in_browser);
-
-const MAX_WAIT_SECS: u64 = 35;
 
 // ── cross-platform helpers ──────────────────────────────────────────────────
 
@@ -105,21 +104,6 @@ where F: Fn(&LiveUpdate) -> bool,
     }
 }
 
-fn assert_bar_for(symbol: &str, ev: Option<LiveUpdate>, label: &str) {
-    let Some(LiveUpdate::BarUpdate { symbol: s, bar, .. }) = ev else {
-        panic!(
-            "[{label}] no BarUpdate for {symbol} within {MAX_WAIT_SECS}s — bridge \
-             request_*_bars dispatch broken, or station aggregator not emitting"
-        );
-    };
-    assert_eq!(s, symbol, "[{label}] BarUpdate symbol mismatch");
-    assert!(bar.close > 0.0, "[{label}] BarUpdate.close must be positive");
-    log(&format!(
-        "[derived-live {label}] OK first bar: ts={} o={} h={} l={} c={} v={}",
-        bar.timestamp, bar.open, bar.high, bar.low, bar.close, bar.volume
-    ));
-}
-
 /// Generates a single async test fn carrying BOTH attribute stacks — one
 /// active per target. wasm32 gets `#[wasm_bindgen_test]`; native gets
 /// `#[tokio::test(flavor="multi_thread")]`. Both targets exercise the same
@@ -138,19 +122,6 @@ macro_rules! dual_test {
         async fn $name() { $body.await }
     };
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Tick-TF kline path (still station-derived)
-// ════════════════════════════════════════════════════════════════════════════
-
-dual_test!(derived_live_tick_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_tick_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 10);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "tick_bars(10)");
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 // Funding rate + Open Interest
