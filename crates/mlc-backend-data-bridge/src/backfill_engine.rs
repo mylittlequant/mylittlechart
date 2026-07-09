@@ -174,10 +174,21 @@ impl RampState {
     }
 
     /// Whether this layer needs any more fetching right now: not already
-    /// in flight, not exhausted, and (if a target is set) not yet satisfied.
-    pub fn needs_more(&self) -> bool {
+    /// in flight, not exhausted, and — for the AUTO-ENSURE phase only, when
+    /// `gate_on_target` is `true` — (if a target is set) not yet satisfied.
+    ///
+    /// `target` gates EXCLUSIVELY the auto-ensure ramp phase
+    /// (`ensure_kline_backfill`/`ensure_trade_backfill`). Scroll-pressure
+    /// driven runs (`on_kline_scroll_pressure`/`on_trade_scroll_pressure`)
+    /// pass `gate_on_target: false` here — pressure keeps loading past a
+    /// satisfied target, unbounded until the venue itself goes dry (owner
+    /// doctrine 2026-07-09).
+    pub fn needs_more(&self, gate_on_target: bool) -> bool {
         if self.in_flight || self.exhausted {
             return false;
+        }
+        if !gate_on_target {
+            return true;
         }
         match self.target {
             Some(t) => self.loaded < t,
@@ -186,15 +197,21 @@ impl RampState {
     }
 
     /// Pages to request in the NEXT group, honoring the ramp progression
-    /// (1 → 1 → 2 → 4 → … capped at [`MAX_RAMP_PAGES_PER_GROUP`]) and never
-    /// requesting more pages than needed to reach a set `target`.
-    pub fn next_group_pages(&self, page_size: usize) -> u32 {
+    /// (1 → 1 → 2 → 4 → … capped at [`MAX_RAMP_PAGES_PER_GROUP`]).
+    ///
+    /// When `gate_on_target` is `true` (auto-ensure phase), never requests
+    /// more pages than needed to reach a set `target`. When `false`
+    /// (scroll-pressure phase), `target` is ignored entirely — the ramp
+    /// step is the only bound, per the same doctrine as [`Self::needs_more`].
+    pub fn next_group_pages(&self, page_size: usize, gate_on_target: bool) -> u32 {
         let mut pages = self.ramp_step.clamp(1, MAX_RAMP_PAGES_PER_GROUP);
-        if let Some(target) = self.target {
-            if page_size > 0 {
-                let remaining = target.saturating_sub(self.loaded);
-                let pages_needed = remaining.div_ceil(page_size).max(1) as u32;
-                pages = pages.min(pages_needed);
+        if gate_on_target {
+            if let Some(target) = self.target {
+                if page_size > 0 {
+                    let remaining = target.saturating_sub(self.loaded);
+                    let pages_needed = remaining.div_ceil(page_size).max(1) as u32;
+                    pages = pages.min(pages_needed);
+                }
             }
         }
         pages
@@ -332,7 +349,7 @@ impl DataBridge {
                 // adopt it so `needs_more` can converge.
                 state.target = target_bars.map(|t| t as usize);
             }
-            if !state.needs_more() {
+            if !state.needs_more(true) {
                 return false;
             }
             state.begin_flight();
@@ -353,7 +370,7 @@ impl DataBridge {
         self.spawn_bg_pub(async move {
             run_kline_ramp(
                 fetch_hub, tx, engine, key, exchange_id, account_type,
-                symbol_str, wire_sym, interval, tf_name,
+                symbol_str, wire_sym, interval, tf_name, true,
             ).await;
         });
     }
@@ -375,6 +392,12 @@ impl DataBridge {
     /// does not re-derive the geometry itself (that stays call-site work,
     /// documented at the `tick.rs` call site) — it only accepts the boolean
     /// "pressure now" and drives the ramp.
+    ///
+    /// `target` (if any adopted by a prior/concurrent
+    /// [`Self::ensure_kline_backfill`] call for the same key) is IGNORED for
+    /// this run: pressure keeps loading past a satisfied target, unbounded
+    /// until the venue itself goes dry (owner doctrine 2026-07-09 — target
+    /// gates only the auto-ensure phase).
     pub fn on_kline_scroll_pressure(
         &self,
         exchange_id: ExchangeId,
@@ -412,7 +435,7 @@ impl DataBridge {
         self.spawn_bg_pub(async move {
             run_kline_ramp(
                 fetch_hub, tx, engine, key, exchange_id, account_type,
-                symbol_str, wire_sym, interval, tf_name,
+                symbol_str, wire_sym, interval, tf_name, false,
             ).await;
         });
     }
@@ -421,7 +444,10 @@ impl DataBridge {
 /// Shared ramp-group runner for both the cold path and the scroll-pressure
 /// path — fetches `next_group_pages()` anchored kline pages sequentially,
 /// emitting each one as it arrives (never accumulate-then-emit), then ends
-/// the flight (advancing the ramp for the next group).
+/// the flight (advancing the ramp for the next group). `gate_on_target`
+/// selects the phase: `true` for the auto-ensure path (target bounds the
+/// run), `false` for the scroll-pressure path (target ignored — unbounded
+/// until venue-dry).
 async fn run_kline_ramp(
     fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
     tx: tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -433,6 +459,7 @@ async fn run_kline_ramp(
     wire_sym: String,
     interval: String,
     tf_name: String,
+    gate_on_target: bool,
 ) {
     // Readiness barrier — same pattern as the legacy backfill/scroll fns.
     {
@@ -455,7 +482,7 @@ async fn run_kline_ramp(
     }
 
     let page_size = KLINE_PAGE_SIZE;
-    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size));
+    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
     let mut is_first_page_of_run = engine.with_state(&key, |s| s.groups_completed == 0 && s.oldest_anchor.is_none());
 
     for _ in 0..group_pages {
@@ -521,7 +548,7 @@ async fn run_kline_ramp(
         if venue_wall {
             break;
         }
-        let done = engine.with_state(&key, |s| !s.needs_more());
+        let done = engine.with_state(&key, |s| !s.needs_more(gate_on_target));
         if done {
             break;
         }
@@ -557,7 +584,7 @@ impl DataBridge {
             if state.target.is_none() && target.is_some() {
                 state.target = target;
             }
-            if !state.needs_more() {
+            if !state.needs_more(true) {
                 return false;
             }
             state.begin_flight();
@@ -574,7 +601,7 @@ impl DataBridge {
         let engine = self.backfill_engine();
 
         self.spawn_bg_pub(async move {
-            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym).await;
+            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, true).await;
         });
     }
 
@@ -583,6 +610,11 @@ impl DataBridge {
     /// trades. Wired for Э4 consumption; exercised directly by unit tests
     /// today (no live viewport caller yet — Э4 owns the trade-layer
     /// scroll trigger).
+    ///
+    /// `target` (if any adopted by a prior/concurrent
+    /// [`Self::ensure_trade_backfill`] call for the same key) is IGNORED for
+    /// this run — same unbounded-pressure doctrine as
+    /// [`Self::on_kline_scroll_pressure`].
     pub fn on_trade_scroll_pressure(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
 
@@ -605,7 +637,7 @@ impl DataBridge {
         let engine = self.backfill_engine();
 
         self.spawn_bg_pub(async move {
-            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym).await;
+            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, false).await;
         });
     }
 }
@@ -619,7 +651,8 @@ impl DataBridge {
 /// `agg_trades_paginated` does internally for its own multi-page walk,
 /// without needing any dig3-side addition (the walk is simple enough to own
 /// bridge-side, since `agg_trades_paginated` does not expose a resumable
-/// cursor across separate calls).
+/// cursor across separate calls). `gate_on_target` selects the phase — see
+/// [`run_kline_ramp`]'s doc for the same split.
 async fn run_trade_ramp(
     fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
     tx: tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -629,6 +662,7 @@ async fn run_trade_ramp(
     account_type: AccountType,
     symbol_str: String,
     wire_sym: String,
+    gate_on_target: bool,
 ) {
     {
         let mut attempts = 0;
@@ -673,7 +707,7 @@ async fn run_trade_ramp(
     }
 
     let page_size = TRADE_PAGE_SIZE;
-    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size));
+    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
 
     for i in 0..group_pages {
         let cold_this_page = is_cold && i == 0;
@@ -729,7 +763,7 @@ async fn run_trade_ramp(
             }
         }
 
-        let done = engine.with_state(&key, |s| !s.needs_more());
+        let done = engine.with_state(&key, |s| !s.needs_more(gate_on_target));
         if done {
             break;
         }
@@ -803,44 +837,79 @@ mod tests {
     //! Pure ramp/state-machine unit tests — no network, no runtime, `--lib`
     //! fast. Exercises the 1→1→2→4 progression, quiet-period reset,
     //! single-flight guard, and the exhaustion latch per the task gate.
+    //!
+    //! Contract pinned here (2026-07-09 fix): `exhausted` means venue-dry
+    //! ONLY (empty page or a capability wall) — reaching `target` is a
+    //! silent stop, never an `exhausted` event. `target` gates exclusively
+    //! the auto-ensure phase (`gate_on_target: true`); the scroll-pressure
+    //! phase (`gate_on_target: false`) ignores `target` entirely and keeps
+    //! firing until the venue itself goes dry.
 
     use super::*;
 
     #[test]
     fn fresh_state_needs_more_with_no_target() {
         let s = RampState::default();
-        assert!(s.needs_more());
-        assert_eq!(s.next_group_pages(500), 1);
+        assert!(s.needs_more(true));
+        assert_eq!(s.next_group_pages(500, true), 1);
     }
 
     #[test]
     fn fresh_state_with_target_zero_loaded_needs_more() {
         let s = RampState::new(Some(2000));
-        assert!(s.needs_more());
+        assert!(s.needs_more(true));
     }
 
     #[test]
-    fn satisfied_target_does_not_need_more() {
+    fn satisfied_target_does_not_need_more_in_auto_phase() {
         let mut s = RampState::new(Some(500));
         s.loaded = 500;
-        assert!(!s.needs_more());
+        assert!(!s.needs_more(true));
         let mut s2 = RampState::new(Some(500));
         s2.loaded = 600;
-        assert!(!s2.needs_more());
+        assert!(!s2.needs_more(true));
+    }
+
+    #[test]
+    fn satisfied_target_still_needs_more_in_pressure_phase() {
+        // The core of the item-2 fix: pressure-driven calls pass
+        // `gate_on_target: false` and must ignore a satisfied (or even
+        // over-satisfied) target completely.
+        let mut s = RampState::new(Some(500));
+        s.loaded = 500;
+        assert!(!s.needs_more(true), "auto phase must consider this satisfied");
+        assert!(s.needs_more(false), "pressure phase must ignore target and keep loading");
+
+        let mut s2 = RampState::new(Some(500));
+        s2.loaded = 10_000; // way past target
+        assert!(s2.needs_more(false), "pressure phase unbounded even far past target");
+    }
+
+    #[test]
+    fn next_group_pages_ignores_target_when_gate_is_false() {
+        let mut s = RampState::new(Some(600));
+        s.loaded = 500; // only 100 remaining toward target
+        s.ramp_step = MAX_RAMP_PAGES_PER_GROUP;
+        // Auto phase: clamped to what's needed to reach target (1 page).
+        assert_eq!(s.next_group_pages(500, true), 1);
+        // Pressure phase: target ignored entirely, full ramp step used.
+        assert_eq!(s.next_group_pages(500, false), MAX_RAMP_PAGES_PER_GROUP);
     }
 
     #[test]
     fn in_flight_blocks_needs_more() {
         let mut s = RampState::default();
         s.begin_flight();
-        assert!(!s.needs_more());
+        assert!(!s.needs_more(true));
+        assert!(!s.needs_more(false));
     }
 
     #[test]
     fn exhausted_blocks_needs_more_even_with_open_target() {
         let mut s = RampState::new(Some(10_000));
         s.exhausted = true;
-        assert!(!s.needs_more());
+        assert!(!s.needs_more(true));
+        assert!(!s.needs_more(false), "venue-dry latch blocks pressure phase too, target aside");
     }
 
     #[test]
@@ -898,14 +967,14 @@ mod tests {
         s.loaded = 1000; // 200 remaining
         // page_size 500 -> ceil(200/500) = 1 page needed, even though ramp
         // allows up to MAX_RAMP_PAGES_PER_GROUP.
-        assert_eq!(s.next_group_pages(500), 1);
+        assert_eq!(s.next_group_pages(500, true), 1);
     }
 
     #[test]
     fn next_group_pages_respects_ramp_when_target_is_far() {
         let mut s = RampState::new(Some(1_000_000));
         s.ramp_step = 4;
-        assert_eq!(s.next_group_pages(500), 4);
+        assert_eq!(s.next_group_pages(500, true), 4);
     }
 
     #[test]
@@ -934,10 +1003,11 @@ mod tests {
     #[test]
     fn single_flight_guard_prevents_concurrent_begin() {
         let mut s = RampState::default();
-        assert!(s.needs_more());
+        assert!(s.needs_more(true));
         s.begin_flight();
         assert!(s.in_flight);
-        assert!(!s.needs_more(), "a second caller must not start while in_flight");
+        assert!(!s.needs_more(true), "a second caller must not start while in_flight");
+        assert!(!s.needs_more(false), "in_flight blocks pressure phase too");
         s.end_flight();
         assert!(!s.in_flight);
     }
@@ -1001,5 +1071,96 @@ mod tests {
         engine.with_state(&key_b, |s| s.loaded = 20);
         assert_eq!(engine.snapshot(&key_a).map(|s| s.loaded), Some(10));
         assert_eq!(engine.snapshot(&key_b).map(|s| s.loaded), Some(20));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Contract-pinning tests (2026-07-09 fix): target-reached is a silent
+    // stop, never `exhausted`; pressure ignores target and keeps loading
+    // past it; only venue-dry (wall-shaped) reasons latch `exhausted`.
+    // These simulate the runner loop's page-outcome/emission decisions
+    // directly against `RampState` (no network/runtime needed).
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Mirrors the emission decision the real `run_kline_ramp`/
+    /// `run_trade_ramp` loops make per page: `exhausted` reported on the
+    /// `LayerBackfilled` event is driven SOLELY by the venue-shaped signal
+    /// (`venue_dry`), never by whether `target` was reached.
+    fn simulate_page_exhausted_flag(venue_dry: bool) -> bool {
+        venue_dry
+    }
+
+    #[test]
+    fn target_reached_stops_auto_phase_without_exhausted_event_and_pressure_still_fires() {
+        let mut s = RampState::new(Some(1000));
+
+        // Auto phase loads two full, non-dry pages and reaches target.
+        s.begin_flight();
+        s.record_page(500, Some(500), false);
+        assert!(!simulate_page_exhausted_flag(false), "page 1: venue not dry, no exhausted event");
+        s.end_flight();
+
+        s.begin_flight();
+        s.record_page(500, Some(0), false);
+        assert!(!simulate_page_exhausted_flag(false), "page 2: venue not dry, no exhausted event, even though target now satisfied");
+        s.end_flight();
+
+        assert_eq!(s.loaded, 1000);
+        assert!(!s.exhausted, "target reached must NOT latch exhausted");
+        assert!(!s.needs_more(true), "auto phase quietly stops once target is satisfied");
+
+        // Scroll-pressure phase must still fire and load MORE, ignoring the
+        // already-satisfied target entirely.
+        assert!(s.needs_more(false), "pressure phase ignores satisfied target and keeps loading");
+        s.begin_flight();
+        s.record_page(500, Some(0), false);
+        s.end_flight();
+        assert_eq!(s.loaded, 1500, "pressure phase loaded MORE past the target");
+        assert!(!s.exhausted, "still not exhausted — venue kept delivering non-dry pages");
+    }
+
+    #[test]
+    fn venue_dry_latches_exhausted_and_blocks_all_further_fires_even_under_pressure() {
+        let mut s = RampState::new(Some(1_000_000)); // target far away, irrelevant here
+
+        s.begin_flight();
+        s.record_page(500, Some(500), false);
+        s.end_flight();
+
+        // Venue goes dry: empty page.
+        s.begin_flight();
+        s.record_page(0, None, true);
+        assert!(simulate_page_exhausted_flag(true), "empty page: venue-dry exhausted event fires");
+        s.end_flight();
+
+        assert!(s.exhausted, "venue-dry latches exhausted permanently");
+        assert!(!s.needs_more(true), "auto phase blocked by the latch");
+        assert!(!s.needs_more(false), "pressure phase ALSO blocked by the latch — target distance is irrelevant once venue-dry");
+    }
+
+    #[test]
+    fn wall_shaped_truncation_latches_but_target_shaped_stop_does_not() {
+        // Wall-shaped: a capability wall (RestWindow max_back / single-page
+        // kline_backpage=false / RecentOnly tier) reported on a page that
+        // still returned data — this DOES latch exhausted, because it is a
+        // venue-side signal, not a target-side one.
+        let mut wall = RampState::new(Some(1_000_000));
+        wall.begin_flight();
+        let venue_wall = true; // e.g. TruncationReason::VenueWindowCap
+        wall.record_page(200, Some(100), venue_wall);
+        assert!(simulate_page_exhausted_flag(venue_wall));
+        wall.end_flight();
+        assert!(wall.exhausted, "wall-shaped truncation reason latches exhausted");
+
+        // Target-shaped: the run stops only because `loaded >= target`
+        // (auto phase `needs_more(true)` goes false) — this must NEVER
+        // latch `exhausted`, regardless of how the loop decides to break.
+        let mut target = RampState::new(Some(500));
+        target.begin_flight();
+        target.record_page(500, Some(0), false); // venue fully served the page, not dry
+        assert!(!simulate_page_exhausted_flag(false));
+        target.end_flight();
+        assert!(!target.exhausted, "target-shaped stop must NOT latch exhausted");
+        assert!(!target.needs_more(true), "auto phase correctly stops (target satisfied)");
+        assert!(target.needs_more(false), "but the layer is NOT exhausted — pressure can still pull more");
     }
 }

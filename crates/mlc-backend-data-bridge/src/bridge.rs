@@ -738,8 +738,17 @@ pub enum LiveUpdate {
         /// Bars/trades prepended by this page (0 on the terminal exhaustion
         /// notification, which carries `exhausted: true` with no data).
         prepended: usize,
-        /// `true` on the final notification for this backfill run — venue
-        /// exhaustion, venue wall, or target reached.
+        /// `true` STRICTLY on venue-dry: an empty page from the venue, or a
+        /// capability wall (`RestWindow` max-back reached, single-page
+        /// `kline_backpage=false`, `RecentOnly` tier exhausting its one
+        /// shallow fetch). Reaching a caller-supplied `target` is NOT
+        /// exhaustion — the auto-ensure ramp phase (see
+        /// `BackfillEngine`/`RampState::needs_more`) just stops fetching
+        /// quietly without emitting a terminal event; consumers keying a
+        /// "history capped" badge off this field
+        /// (`HistoryDepth::Capped`) would otherwise show it for
+        /// perfectly-satisfied targets where deeper history in fact exists
+        /// on the venue.
         exhausted: bool,
     },
 }
