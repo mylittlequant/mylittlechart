@@ -385,11 +385,6 @@ fn run_render_loop(
             let chart_type = active_cid
                 .and_then(|cid| st.chart.chart_type_for_chart(cid))
                 .unwrap_or("<none>");
-            // F4 (viewport doctrine audit 2026-07-07): flag moved from the
-            // window to the bubble it guards.
-            let seed_in_flight = active_bid
-                .and_then(|bid| st.chart.with_bubble(bid, |b| b.derived_seed_in_flight.is_some()))
-                .unwrap_or(false);
             let (view_start, bar_spacing, chart_width, bar_count_vp) = active_cid
                 .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
                 .map(|w| (
@@ -414,7 +409,6 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&dbg, &"fp_first_ts".into(), &fp_first_ts.into());
             let _ = js_sys::Reflect::set(&dbg, &"fp_last_ts".into(), &fp_last_ts.into());
             let _ = js_sys::Reflect::set(&dbg, &"fp_last_cum_delta".into(), &fp_last_cum_delta.into());
-            let _ = js_sys::Reflect::set(&dbg, &"seed_in_flight".into(), &seed_in_flight.into());
             // Indicator introspection (owner report 2026-07-05: VOLUME
             // neither auto-added nor visible in the picker) — expose whether
             // the definition registered and what instances the active bubble

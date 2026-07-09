@@ -755,9 +755,9 @@ impl ChartApp {
 
             // Unified-data-plane Э3: fold-type scroll-left pressure feeds the
             // `BackfillEngine` ramp over the shared "1m" layer. No clear, no
-            // teardown, no `derived_seed_in_flight` bookkeeping — deeper
-            // pages arrive progressively via `LayerBackfilled`, which
-            // re-folds in place (`tick_writers`' `LayerBackfilled` arm).
+            // teardown, no in-flight bookkeeping — deeper pages arrive
+            // progressively via `LayerBackfilled`, which re-folds in place
+            // (`tick_writers`' `LayerBackfilled` arm).
             for (_cid_req, symbol, exchange, account_type) in fold_scroll_pressure_requests {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
@@ -768,11 +768,10 @@ impl ChartApp {
 
             // Unified-data-plane Э4: trade-fold-type scroll-left pressure
             // feeds the `BackfillEngine` ramp over the shared trade layer.
-            // No clear, no teardown, no `derived_seed_in_flight` bookkeeping
-            // — deeper pages arrive progressively via
-            // `LayerBackfilled{layer:"trades"}`, which re-folds in place
-            // (`tick_writers`' `LayerBackfilled` arm) — mirrors the fold-type
-            // loop above.
+            // No clear, no teardown, no in-flight bookkeeping — deeper pages
+            // arrive progressively via `LayerBackfilled{layer:"trades"}`,
+            // which re-folds in place (`tick_writers`' `LayerBackfilled` arm)
+            // — mirrors the fold-type loop above.
             for (_cid_req, symbol, exchange, account_type) in trade_fold_scroll_pressure_requests {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);

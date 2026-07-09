@@ -552,8 +552,7 @@ impl ChartApp {
                 // now, one batch lazy"): this event is shared by TWO
                 // producers — kline's `ScrollBarsLoaded` REST path (sets
                 // `scroll_fetch_in_flight`) and the trade-agg family's
-                // `DerivedBarsPrepended` prepend-fold (driven by
-                // `derived_seed_in_flight` instead, never touches this
+                // `DerivedBarsPrepended` prepend-fold (never touches this
                 // flag). Reading `scroll_fetch_in_flight` BEFORE clearing it
                 // is exactly how we tell "this was the kline scroll-left
                 // page landing" from "this was a derived-family prepend

@@ -68,11 +68,11 @@ use mlc_core::state::Timeframe;
 use digdigdig3::core::websocket::KlineInterval;
 use crate::convert::timeframe_to_interval;
 
-/// First-paint warm depth for a fresh tick_bar / CVD overlay subscription —
-/// the two [`DataBridge::spawn_derived_lazy_deepen`] callers left after the
-/// station-derived wipe (unified-data-plane Э5a; range/volume/dollar/
-/// imbalance/run bars, footprint, renko/pnf/kagi/three_line_break/tpo now
-/// fold client-side).
+/// First-paint warm depth for a fresh tick_bar subscription — the only
+/// [`DataBridge::spawn_derived_lazy_deepen`] caller left after the
+/// station-derived wipe (unified-data-plane Э5a/Э5; range/volume/dollar/
+/// imbalance/run bars, footprint, renko/pnf/kagi/three_line_break/tpo/cvd
+/// now fold client-side).
 ///
 /// Owner rule 2026-07-05: cold-open must show data in seconds — seed a
 /// shallow 10k window first, then ONE background batch deepens it further
@@ -199,10 +199,11 @@ pub enum OrderbookSource {
 ///
 /// Overlays are per-instrument sub-pane / strip subscriptions that coexist
 /// with any chart_type. They pair with derived / kline charts, not replace
-/// them (e.g. Footprint + CVD).
+/// them (e.g. Footprint + Open Interest). CVD is no longer here — it folds
+/// client-side from the trade layer (unified-data-plane Stage Э5, see
+/// `BackendCore::subscribe_cvd_fold`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OverlayKind {
-    Cvd,
     OpenInterest,
     FundingRate,
 }
@@ -409,27 +410,6 @@ pub enum LiveUpdate {
         event: digdigdig3::PositionUpdateEvent,
     },
 
-    /// Cumulative Volume Delta scalar update from `Stream::CvdLine`.
-    /// One event per upstream trade.
-    CvdLineUpdate {
-        exchange_id: ExchangeId,
-        account_type: AccountType,
-        symbol: String,
-        point: digdigdig3_station::data::ScalarBarPoint,
-    },
-
-    /// Batch of OLDER CVD scalar samples spliced in front of the live window
-    /// by [`digdigdig3_station::Station::rewarm_derived`] — one-pass
-    /// front-merge (oldest→newest, all at/older than the pre-deepen window
-    /// head) instead of thousands of per-point `CvdLineUpdate`s each
-    /// triggering an O(n) out-of-order upsert in the same frame drain.
-    CvdHistoryPrepended {
-        exchange_id: ExchangeId,
-        account_type: AccountType,
-        symbol: String,
-        points: Vec<digdigdig3_station::data::ScalarBarPoint>,
-    },
-
     /// Live Open Interest event from a `Stream::OpenInterest` subscription.
     /// Each event carries the current absolute OI value; the delta is
     /// computed in the forwarder by subtracting the previous OI level.
@@ -617,27 +597,27 @@ pub struct DataBridge {
     /// re-fetching data that is already cached.
     oldest_fetched_ts: Arc<Mutex<HashMap<FetchKey, i64>>>,
     /// Current warm-seed depth (`warm_n` last requested from the station) for
-    /// each derived-chart-type subscription (tick_bar / CVD overlay after the
-    /// station-derived wipe), keyed by `(ExchangeId, symbol, AccountType,
-    /// Stream)`. `Stream` (not a bespoke enum) is reused as the flavor
-    /// discriminant. Absent entry = never reseeded yet, fall back to the
-    /// initial cold-open depth ([`DERIVED_INITIAL_WARM_N`]). Populated by
+    /// the tick_bar subscription (the only derived-chart-type subscription
+    /// left after the station-derived wipe), keyed by `(ExchangeId, symbol,
+    /// AccountType, Stream)`. `Stream` (not a bespoke enum) is reused as the
+    /// flavor discriminant. Absent entry = never reseeded yet, fall back to
+    /// the initial cold-open depth ([`DERIVED_INITIAL_WARM_N`]). Populated by
     /// [`DataBridge::spawn_derived_lazy_deepen`]; read by
     /// [`DataBridge::derived_warm_for_key`].
     derived_warm_state: Arc<Mutex<HashMap<(ExchangeId, String, AccountType, digdigdig3_station::Stream), usize>>>,
     /// The currently-active derived `Stream` for each instrument, keyed by
     /// `(ExchangeId, symbol, AccountType)` — same key shape as `derived_subs`.
     ///
-    /// Currently-active derived `Stream` per instrument (tick_bar / CVD
-    /// overlay after the station-derived wipe — unified-data-plane Э5a).
+    /// Currently-active derived `Stream` per instrument (tick_bar — the only
+    /// kind left after the station-derived wipe, unified-data-plane Э5a/Э5).
     /// Recorded by [`Self::record_active_stream`] right alongside inserting
     /// into `derived_subs`, and read by [`Self::derived_active_still`] to
     /// build the `spawn_derived_lazy_deepen` still-active predicate.
     derived_active_stream: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), digdigdig3_station::Stream>>>,
-    /// Single-flight guard for the cold-open lazy deepen (tick_bar / CVD —
-    /// the only two `spawn_derived_lazy_deepen` callers left after the
-    /// station-derived wipe), keyed by `Stream` since a chart-type switch can
-    /// leave a different kind's pager running for the same instrument.
+    /// Single-flight guard for the cold-open lazy deepen (tick_bar — the
+    /// only `spawn_derived_lazy_deepen` caller left after the station-derived
+    /// wipe), keyed by `Stream` since a chart-type switch can leave a
+    /// different kind's pager running for the same instrument.
     derived_deepen_in_flight: Arc<Mutex<HashSet<(ExchangeId, String, AccountType, digdigdig3_station::Stream)>>>,
     /// Per-key live orderbook reconstructors.
     ///
@@ -714,16 +694,17 @@ pub struct DataBridge {
     /// the 30s grace unsubscribe fires) — otherwise stale TickBar forwarders
     /// keep emitting BarUpdate into the same window. Guarded by `std::sync::Mutex`.
     derived_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), BgJoinHandle>>>,
-    /// Active overlay subscription task handles — CVD, Open Interest, Funding
+    /// Active overlay subscription task handles — Open Interest, Funding
     /// Rate. Keyed by `(ExchangeId, symbol, AccountType, OverlayKind)`.
     ///
     /// Overlays are NOT chart types: they coexist with any chart_type on the
-    /// same instrument (e.g. footprint + CVD sub-pane is footprint's canonical
-    /// pairing). Before this slot existed they shared `derived_subs` and
-    /// clobbered each other — enabling CVD right after `request_footprint`
-    /// aborted the just-spawned footprint forwarder (both keyed by the plain
-    /// instrument triplet). Kind is part of the key so different overlays on
-    /// the same instrument are independent.
+    /// same instrument. Before this slot existed they shared `derived_subs`
+    /// and clobbered each other — e.g. enabling an overlay right after
+    /// `request_footprint` aborted the just-spawned footprint forwarder (both
+    /// keyed by the plain instrument triplet). Kind is part of the key so
+    /// different overlays on the same instrument are independent. CVD used
+    /// to live here too; it now folds client-side (unified-data-plane Stage
+    /// Э5, see `BackendCore::subscribe_cvd_fold`) and never touches this map.
     overlay_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType, OverlayKind), BgJoinHandle>>>,
     /// Tracks which `(ExchangeId, AccountType, symbol, timeframe)` keys already
     /// have a live `Stream::Kline` forwarder spawned by `request_bars`.
@@ -1859,20 +1840,6 @@ impl DataBridge {
         self.abort_derived_sub(exchange_id, symbol, account_type);
     }
 
-    /// Cancel the CVD overlay subscription for an instrument.
-    ///
-    /// Called when the last CVD indicator instance for an instrument is
-    /// removed (`ChartApp::unsubscribe_cvd_line_if_last`). No-op when no
-    /// CVD sub is live.
-    pub fn unsubscribe_cvd_line(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        account_type: AccountType,
-    ) {
-        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::Cvd);
-    }
-
     /// Cancel the Open Interest overlay subscription for an instrument.
     pub fn unsubscribe_open_interest(
         &self,
@@ -1891,48 +1858,6 @@ impl DataBridge {
         account_type: AccountType,
     ) {
         self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::FundingRate);
-    }
-
-    /// Subscribe to the Cumulative Volume Delta line for an instrument.
-    ///
-    /// CVD is an overlay — it lives in `overlay_subs` keyed by
-    /// `(instrument, OverlayKind::Cvd)`, independent of the `derived_subs`
-    /// slot the active chart_type uses. Dual-run alongside the client-side
-    /// CVD fold (`mlc-app/src/input/overlay.rs::subscribe_cvd_line_for_indicator_add`)
-    /// — both stay wired to the same `CvdSampleAppended` destination, so they
-    /// coexist without a second bubble slot (unified-data-plane Э4).
-    pub fn request_cvd_line(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        account_type: AccountType,
-    ) {
-        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::Cvd);
-        let station = self.station.clone();
-        let tx = self.tx.clone();
-        let symbol_str = symbol.to_string();
-        let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::Cvd);
-        let stream = digdigdig3_station::Stream::CvdLine;
-        let prev_achieved = self.derived_warm_for_key(exchange_id, symbol, account_type, &stream);
-        let warm_n = DERIVED_INITIAL_WARM_N;
-        let handle = self.spawn_cvd_sub(
-            station, tx, exchange_id, account_type,
-            symbol_str, symbol_wire, stream.clone(), warm_n,
-        );
-        if let Ok(mut subs) = self.overlay_subs.lock() {
-            subs.insert(sub_key.clone(), handle);
-        }
-        // CVD is an overlay, not a primary chart_type — it never populates
-        // `derived_active_stream` (see `record_active_stream`'s doc comment
-        // and this method's own doc comment above), so its still-active
-        // check reads `overlay_subs` membership directly instead of using
-        // `Self::derived_active_still`.
-        let overlay_subs = self.overlay_subs.clone();
-        let still_active = move || overlay_subs.lock().is_ok_and(|m| m.contains_key(&sub_key));
-        self.spawn_derived_lazy_deepen(
-            exchange_id, symbol, account_type, stream, warm_n, prev_achieved, still_active,
-        );
     }
 
     // ── DOM Heatmap subscription (C12) ───────────────────────────────────────
@@ -2429,8 +2354,8 @@ impl DataBridge {
     /// Abort the active overlay subscription for a given kind on an instrument.
     ///
     /// Cheap idempotent no-op when the slot is empty. Called before every
-    /// `request_cvd_line` / `request_open_interest` / `request_funding_rate`
-    /// so re-subscribes replace, not stack.
+    /// `request_open_interest` / `request_funding_rate` so re-subscribes
+    /// replace, not stack.
     fn abort_overlay_sub(
         &self,
         exchange_id: ExchangeId,
@@ -2491,23 +2416,6 @@ impl DataBridge {
         warm_n: usize,
     ) -> BgJoinHandle {
         self.spawn_bg_join(derived_bar_sub_body(
-            station, tx, exchange_id, account_type, symbol_canonical, symbol_wire, stream, warm_n, None,
-        ))
-    }
-
-    /// Spawn a CVD station subscriber.
-    fn spawn_cvd_sub(
-        &self,
-        station: std::sync::Arc<digdigdig3_station::Station>,
-        tx: tokio::sync::broadcast::Sender<LiveUpdate>,
-        exchange_id: ExchangeId,
-        account_type: AccountType,
-        symbol_canonical: String,
-        symbol_wire: String,
-        stream: digdigdig3_station::Stream,
-        warm_n: usize,
-    ) -> BgJoinHandle {
-        self.spawn_bg_join(cvd_sub_body(
             station, tx, exchange_id, account_type, symbol_canonical, symbol_wire, stream, warm_n, None,
         ))
     }
@@ -3760,7 +3668,6 @@ fn derived_stream_to_kind(stream: &digdigdig3_station::Stream) -> StationKind {
         Stream::RenkoBar(b, r) => StationKind::RenkoBar(*b, *r),
         Stream::PnfBar(b, r) => StationKind::PnfBar(*b, *r),
         Stream::KagiBar(r) => StationKind::KagiBar(*r),
-        Stream::CvdLine => StationKind::CvdLine,
         Stream::ThreeLineBreak { lines_back } => StationKind::ThreeLineBreak { lines_back: *lines_back },
         Stream::TpoProfile(freq, src) => StationKind::TpoProfile(*freq, *src),
         _ => StationKind::Trade,
@@ -3796,9 +3703,9 @@ enum DerivedRewarmOutcome {
     Fallback,
 }
 
-/// Shared prepend-fold driver for the 10 rewarm-capable derived kinds
+/// Shared prepend-fold driver for the 9 rewarm-capable derived kinds
 /// (renko/pnf/kagi/three_line_break/range_bar/volume_bar/tick_bar/
-/// dollar_bar/cvd/tpo — NOT footprint, which has its own dedicated
+/// dollar_bar/tpo — NOT footprint, which has its own dedicated
 /// `rewarm_footprint`/`request_deeper_footprint_seed` path, and NOT
 /// tick_imbalance_bar/volume_imbalance_bar/run_bar, which cannot rewarm at
 /// all).
@@ -3863,12 +3770,12 @@ async fn rewarm_and_emit_derived_prepend(
         return DerivedRewarmOutcome::Exhausted;
     }
     let symbol = symbol_canonical.to_string();
-    // Station-derived wipe (unified-data-plane Э5a): the only caller left
+    // Station-derived wipe (unified-data-plane Э5a/Э5): the only caller left
     // for this fn is `spawn_derived_lazy_deepen` via `request_tick_bars`, so
     // `stream` is always `Stream::TickBar` and `station.rewarm_derived` can
     // only ever return `RewarmedPoints::Bar` for that key. The other
     // `RewarmedPoints` variants correspond to station series kinds
-    // (renko/pnf/kagi/three_line_break/cvd/tpo) no `Stream` this module
+    // (renko/pnf/kagi/three_line_break/tpo) no `Stream` this module
     // constructs can produce anymore — kept as an exhaustive match (the
     // enum is foreign, owned by `digdigdig3-station`) but treated as an
     // unreachable-in-practice fallback rather than dead `LiveUpdate`
@@ -3896,11 +3803,11 @@ async fn rewarm_and_emit_derived_prepend(
 }
 
 /// Liveness probe for `rewarm_derived`'s ring, across every concrete output
-/// type the 10 rewarm-capable kinds can produce. `station.series::<BarPoint>`
+/// type the 9 rewarm-capable kinds can produce. `station.series::<BarPoint>`
 /// alone (checked by the caller before this) only covers the counted-bar
 /// family — this covers the rest so the scroll-left/lazy-deepen paths can
 /// tell "ring exists, rewarm should work" from "no forwarder registered,
-/// fall back to teardown" for renko/pnf/kagi/tlb/cvd/tpo too.
+/// fall back to teardown" for renko/pnf/kagi/tlb/tpo too.
 fn station_derived_ring_alive(
     station: &digdigdig3_station::Station,
     key: &StationSeriesKey,
@@ -3914,7 +3821,6 @@ fn station_derived_ring_alive(
         Stream::ThreeLineBreak { .. } => {
             station.series::<digdigdig3_station::data::ThreeLineBreakLinePoint>(key).is_some()
         }
-        Stream::CvdLine => station.series::<digdigdig3_station::data::ScalarBarPoint>(key).is_some(),
         Stream::TpoProfile(_, _) => station.series::<digdigdig3_station::data::TpoSessionPoint>(key).is_some(),
         // RangeBar/VolumeBar/TickBar/DollarBar already checked via BarPoint
         // by the caller; any other variant is not rewarm-capable.
@@ -3923,8 +3829,8 @@ fn station_derived_ring_alive(
 }
 
 /// Oldest point's `timestamp_ms()` currently in the rewarm-capable ring for
-/// `key`/`stream`, across every concrete output type the 10 kinds can
-/// produce (counted-bar family `BarPoint` plus the 9 covered by
+/// `key`/`stream`, across every concrete output type the 9 kinds can
+/// produce (counted-bar family `BarPoint` plus the 8 covered by
 /// [`station_derived_ring_alive`]).
 ///
 /// Read via `.snapshot().first()` (async `RwLock` read) — infrequent call
@@ -3955,7 +3861,6 @@ async fn oldest_derived_ts(
         Stream::PnfBar(_, _) => oldest_of!(digdigdig3_station::data::PnfColumnPoint),
         Stream::KagiBar(_) => oldest_of!(digdigdig3_station::data::KagiSegmentPoint),
         Stream::ThreeLineBreak { .. } => oldest_of!(digdigdig3_station::data::ThreeLineBreakLinePoint),
-        Stream::CvdLine => oldest_of!(digdigdig3_station::data::ScalarBarPoint),
         Stream::TpoProfile(_, _) => oldest_of!(digdigdig3_station::data::TpoSessionPoint),
         _ => None,
     }
@@ -4145,89 +4050,6 @@ async fn derived_bar_sub_body(
     }
 }
 
-/// Body of [`DataBridge::spawn_cvd_sub`] — see its doc comment.
-/// `warm_n`/`first_ok_tx`: see [`derived_bar_sub_body`]'s doc comment.
-async fn cvd_sub_body(
-    station: std::sync::Arc<digdigdig3_station::Station>,
-    tx: tokio::sync::broadcast::Sender<LiveUpdate>,
-    exchange_id: ExchangeId,
-    account_type: AccountType,
-    symbol_canonical: String,
-    symbol_wire: String,
-    stream: digdigdig3_station::Stream,
-    warm_n: usize,
-    mut first_ok_tx: Option<tokio::sync::oneshot::Sender<usize>>,
-) {
-    let stream_label = format!("{:?}", stream);
-    let mut respawn_n: u32 = 0;
-    loop {
-        // Deep warm seed on chart-open (design doc: dig3-station-0325-
-        // derived-seeding-2026-07-04.md, risk register — 50k native /
-        // 10k wasm for browser REST latency/CORS bounds).
-        let sub_set = digdigdig3_station::SubscriptionSet::new().add_with_warm(
-            exchange_id, symbol_canonical.clone(), account_type, [stream.clone()], warm_n,
-        );
-        let mut report = match station.subscribe(sub_set).await {
-            Ok(r) => r,
-            Err(e) => {
-                crate::dlog!("[Bridge::cvd-fwd subscribe FAILED] respawn={} {:?} {} wire={}: {:?}",
-                    respawn_n, exchange_id, symbol_canonical, symbol_wire, e);
-                if respawn_n == 0 { if let Some(tx0) = first_ok_tx.take() { let _ = tx0.send(0); } }
-                return;
-            }
-        };
-        if !report.failed.is_empty() && report.ok.is_empty() {
-            if respawn_n == 0 { if let Some(tx0) = first_ok_tx.take() { let _ = tx0.send(0); } }
-            return;
-        }
-        if respawn_n == 0 {
-            if let Some(tx0) = first_ok_tx.take() { let _ = tx0.send(report.ok.len()); }
-        }
-        // Pull-then-live: replay the station's Series<ScalarBarPoint>
-        // ring on the first subscribe of this task (see
-        // derived_bar_sub_body for full rationale). Batched as ONE
-        // `CvdHistoryPrepended` (Task 1) — its mlc-backend handler pushes
-        // into `bubble.cvd_line` and emits ONE `CvdSampleAppended` (same
-        // downstream fan-out `CvdLineUpdate`'s live path drives: the CVD
-        // indicator pane recalc), so batching the seed is behavior-identical
-        // to the per-point replay it replaces, just one event instead of N.
-        if respawn_n == 0 {
-            if let Some(key) = report.ok.first() {
-                emit_seed_history_depth(
-                    &tx, exchange_id, account_type, &symbol_canonical,
-                    stream_to_chart_type(&stream), &report, key,
-                );
-                if let Some(station_series) = station.series::<digdigdig3_station::data::ScalarBarPoint>(key) {
-                    let points = station_series.read().await.snapshot();
-                    crate::dlog!(
-                        "[Bridge::cvd-fwd ring-peek] {:?} {} n={}",
-                        exchange_id, symbol_canonical, points.len(),
-                    );
-                    if !points.is_empty() {
-                        let _ = tx.send(LiveUpdate::CvdHistoryPrepended {
-                            exchange_id, account_type,
-                            symbol: symbol_canonical.clone(),
-                            points,
-                        });
-                    }
-                }
-            }
-        }
-        while let Some(ev) = report.handle.recv().await {
-            if let digdigdig3_station::Event::CvdLine { point, .. } = ev {
-                let _ = tx.send(LiveUpdate::CvdLineUpdate {
-                    exchange_id, account_type,
-                    symbol: symbol_canonical.clone(),
-                    point,
-                });
-            }
-        }
-        crate::dlog!("[Bridge::cvd-fwd cycle ended] respawn={} {:?} {} stream={}, respawning in 1s",
-            respawn_n, exchange_id, symbol_canonical, stream_label);
-        respawn_n = respawn_n.wrapping_add(1);
-        sleep_ms(1000).await;
-    }
-}
 
 /// Compound key for in-flight fetch dedup + oldest-ts tracking.
 ///

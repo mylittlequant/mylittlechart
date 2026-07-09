@@ -6,11 +6,11 @@ use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 
 impl ChartApp {
     /// After a CVD indicator instance was just added to `bid` (created on
-    /// `chart_id`'s window), ensure the real aggressor-CVD subscription
-    /// (`Stream::CvdLine`) is live for the instrument — unless the window
-    /// is a footprint chart, which already carries real per-bar buy/sell
-    /// in `bubble.footprint_bars` (Phase 1's delta builder prefers that
-    /// source; a second CvdLine subscription would be redundant).
+    /// `chart_id`'s window), install the client-side CVD companion fold
+    /// (`BackendCore::subscribe_cvd_fold`) for the instrument — unless the
+    /// window is a footprint chart, which already carries real per-bar
+    /// buy/sell in `bubble.footprint_bars` (Phase 1's delta builder prefers
+    /// that source; a second CVD fold would be redundant).
     ///
     /// No-op if `chart_id` is `None`, the chart has no resolvable
     /// instrument, or the connector for its exchange is disabled.
@@ -37,14 +37,16 @@ impl ChartApp {
             return;
         }
         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.subscribe_cvd_line(exchange_id, &symbol, at_dig3);
-        // Unified-data-plane Stage Э4: install the client-side CVD companion
-        // fold alongside the (still-live, dual-run) station-derived
-        // subscription above — `bubble.append_cvd`/`BubbleEvent::CvdSampleAppended`
-        // is the SAME destination `LiveUpdate::CvdLineUpdate` already writes,
-        // so the two co-exist without a second bubble slot. `bid` is
-        // resolved from `cid`'s current tag (same lookup pattern the
-        // `unsubscribe` counterpart below uses via `bid` directly).
+        // Unified-data-plane Stage Э5: the client-side CVD companion fold is
+        // the ONLY CVD data path now (station-derived `request_cvd_line`
+        // removed) — `bid` is resolved from `cid`'s current tag (same
+        // lookup pattern the `unsubscribe` counterpart below uses via `bid`
+        // directly). `subscribe_cvd_fold` internally ensures the trade layer
+        // is network-fed (`subscribe_trades` + `ensure_trade_backfill`) and
+        // reseeds synchronously from whatever the layer already holds — a
+        // fresh bubble with an empty trade layer gets its backfill kicked
+        // off right here, and the reseed output (if any) is applied via the
+        // returned event.
         if let Some(bid) = self.bubble_for_chart(cid) {
             let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
             if let Some(ev) = self.core.subscribe_cvd_fold(bid, exchange_id, &symbol, at_dig3, Some(derived_target)) {
@@ -58,8 +60,8 @@ impl ChartApp {
     }
 
     /// After the last CVD indicator instance for an instrument was removed
-    /// (`bid` no longer has any `type_id == "cvd"` instance), cancel the
-    /// real aggressor-CVD subscription and clear the cached samples.
+    /// (`bid` no longer has any `type_id == "cvd"` instance), drop the CVD
+    /// companion fold runtime and clear the cached samples.
     ///
     /// Reads `bid`'s own resolvable instrument directly (does not depend on
     /// which window triggered the delete) so peer-instance cleanup — see
@@ -73,20 +75,9 @@ impl ChartApp {
         if still_has_cvd {
             return;
         }
-        let Some(symbol) = self.core.bubbles().symbol(bid).map(String::from) else { return };
-        if symbol.is_empty() {
-            return;
-        }
-        let Some(at) = self.core.bubbles().account_type_typed(bid) else { return };
-        let exchange = self.core.bubbles().exchange(bid).map(String::from).unwrap_or_default();
-        let exchange_id = digdigdig3::ExchangeId::from_str(&exchange)
-            .unwrap_or(self.active_exchange);
-        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.unsubscribe_cvd_line(exchange_id, &symbol, at_dig3);
-        // Unified-data-plane Stage Э4: drop the CVD companion fold runtime
-        // alongside the station-derived unsubscribe — `active_cvd_fold` has
-        // its own independent lifecycle (see `DataBubble.active_cvd_fold`
-        // doc comment), not touched by `clear_derived_slots`/`clear_cvd`.
+        // Unified-data-plane Stage Э5: no station-derived unsubscribe left —
+        // `active_cvd_fold` is the only CVD runtime, torn down alongside the
+        // cached samples in one bubble mutation.
         self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
             bubble.clear_cvd();
             bubble.active_cvd_fold = None;

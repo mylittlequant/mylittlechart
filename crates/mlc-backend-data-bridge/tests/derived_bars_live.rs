@@ -18,16 +18,15 @@
 //! per test under the runner's per-test timeout (300 s for the wasm
 //! WebDriver session, 60 s default for native `tokio::test`).
 //!
-//! Unified-data-plane Э5a (station-derived wipe): range_bar/volume_bar/
+//! Unified-data-plane Э5a/Э5 (station-derived wipe): range_bar/volume_bar/
 //! dollar_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/
-//! renko/pnf/kagi/three_line_break/tpo now fold client-side over the
+//! renko/pnf/kagi/three_line_break/tpo/cvd now fold client-side over the
 //! bubble's own kline/trade layer (`mlc-backend::chart_type` fold
 //! machinery) — their station-derived `DataBridge::request_*` entry points
 //! are gone, so the matching tests were removed here too. `tick_bars` (the
-//! tick-TF kline path), `cvd_line` (still dual-run — see
-//! `mlc-app/src/input/overlay.rs`), funding rate, open interest, DOM
-//! heatmap, and liquidation all still subscribe through the station and
-//! keep their coverage below.
+//! tick-TF kline path), funding rate, open interest, DOM heatmap, and
+//! liquidation all still subscribe through the station and keep their
+//! coverage below.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -151,24 +150,6 @@ dual_test!(derived_live_tick_bars, async {
         matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
     }).await;
     assert_bar_for("BTCUSDT", ev, "tick_bars(10)");
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// CVD overlay (dual-run alongside the client-side fold — see
-// mlc-app/src/input/overlay.rs::subscribe_cvd_line_for_indicator_add)
-// ════════════════════════════════════════════════════════════════════════════
-
-dual_test!(derived_live_cvd_line, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_cvd_line(ExchangeId::Binance, "BTCUSDT", AccountType::Spot);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::CvdLineUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::CvdLineUpdate { symbol, point, .. }) = ev else {
-        panic!("no CvdLineUpdate within {MAX_WAIT_SECS}s — cvd dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    log(&format!("[derived-live cvd] OK ts={} value={}", point.ts_ms, point.value));
 });
 
 // ════════════════════════════════════════════════════════════════════════════

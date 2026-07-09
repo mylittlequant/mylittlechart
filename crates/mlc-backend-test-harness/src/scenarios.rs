@@ -1305,44 +1305,6 @@ pub fn multi_symbol_mini_ticker_cache_keys() -> HarnessResult<()> {
 // react.rs delivery check).
 // ==========================================================================
 
-// ==========================================================================
-// Derived bars stream coverage: CVD. Station-derived wipe (unified-data-
-// plane Э5a) demoted renko/pnf/kagi/tpo/three_line_break/footprint to
-// client-side folds (no `LiveUpdate` arm left to inject here) — CVD is the
-// one overlay still reaching the bridge as a real station stream (dual-run
-// alongside its client-side fold, see `mlc-app/src/input/overlay.rs`).
-// ==========================================================================
-
-pub fn body_stream_cvd_scalar_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::ScalarBarPoint {
-        ts_ms: 1_700_000_000_000,
-        value: 123.45,
-    };
-    h.inject(LiveUpdate::CvdLineUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::CvdSampleAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("cvd", "no CvdSampleAppended emitted"));
-    }
-    let cvd_len = h.core.bubbles().cvd_line(bid).map(|v| v.len()).unwrap_or(0);
-    if cvd_len != 1 {
-        return Err(err("cvd", format!("bubble.cvd_line: {} != 1", cvd_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_cvd_scalar_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_cvd_scalar_writes_bubble(&mut h)
-}
-
 pub fn body_stream_dom_trade_dot_passthrough(h: &mut BackendHarness) -> HarnessResult<()> {
     let dot = mlc_core::chart::dom_heatmap::DomTradeDot {
         ts_ms: 1_700_000_000_000,
@@ -1487,11 +1449,9 @@ pub fn sync_scenarios() -> Vec<(&'static str, fn() -> HarnessResult<()>)> {
         ("multi_symbol_trade_passthrough_independent", multi_symbol_trade_passthrough_independent),
         ("multi_symbol_mini_ticker_cache_keys", multi_symbol_mini_ticker_cache_keys),
         // Derived bars (aggTrades-fueled) — backend re-emits to the bubble store.
-        // Station-derived wipe (unified-data-plane Э5a): renko/pnf/kagi/tpo/
-        // three_line_break/footprint now fold client-side (no `LiveUpdate`
-        // arm left to inject here) — only the CVD overlay still reaches the
-        // bridge as a real station stream.
-        ("stream_cvd_scalar_writes_bubble", stream_cvd_scalar_writes_bubble),
+        // Station-derived wipe (unified-data-plane Э5a/Э5): renko/pnf/kagi/
+        // tpo/three_line_break/footprint/cvd now fold client-side (no
+        // `LiveUpdate` arm left to inject here).
         ("stream_dom_trade_dot_passthrough", stream_dom_trade_dot_passthrough),
         // Alert delivery on cross
         ("alerts_straddle_fires_on_cross", alerts_straddle_fires_on_cross),

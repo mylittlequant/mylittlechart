@@ -135,15 +135,13 @@ pub enum DeepenKind {
     /// `LiveUpdate::*HistoryPrepended` event; reactor uses
     /// `reconcile_derived_series`' prepend-shift the same way kline does.
     /// Covers renko/pnf/kagi/three_line_break/range_bar/volume_bar/tick_bar/
-    /// dollar_bar/cvd/tpo (derived-prepend-fold-plan-2026-07-07, Phase 1).
+    /// dollar_bar/cvd/tpo (derived-prepend-fold-plan-2026-07-07, Phase 1) and,
+    /// since unified-data-plane Stage Э4, tick_imbalance_bar/
+    /// volume_imbalance_bar/run_bar too — full refold from the raw trade
+    /// layer reproduces byte-identical EMA state, so the teardown+respawn
+    /// requirement these three used to need no longer applies (see the
+    /// `tick_imbalance_bar` row's doc comment below).
     DerivedPrependFold,
-    /// Teardown+respawn of the dig3-station subscription with doubled warm_n
-    /// — reactor uses `reconcile_derived_series` + `derived_series_stamp`.
-    /// Restricted to tick_imbalance_bar/volume_imbalance_bar/run_bar: their
-    /// fold state is an EMA carried over the ENTIRE history, not
-    /// reconstructible from already-emitted output (see
-    /// `Station::rewarm_derived`'s `RewarmUnsupported` doc comment).
-    DerivedTeardownRespawn,
     /// No deepen support (dom/liq heatmaps have ring-buffer state, no history extension).
     Unsupported,
 }
@@ -706,10 +704,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         // `digdigdig3_station::folds::TradeToTickImbalanceDerived` — a
         // fresh machine instance replaying the whole trade tape reproduces
         // byte-identical EMA state), so the old "EMA not reconstructible
-        // from emitted output" limitation that forced
-        // `DerivedTeardownRespawn` under the STATION-side derived pipeline
-        // no longer applies to the client-side fold path. Full refold from
-        // raw trades IS the reconstruction.
+        // from emitted output" limitation that forced a teardown+respawn
+        // deepen under the STATION-side derived pipeline no longer applies
+        // to the client-side fold path. Full refold from raw trades IS the
+        // reconstruction.
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,

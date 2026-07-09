@@ -304,38 +304,6 @@ pub struct ChartContainer {
     /// `ChartApp::sync_sub_panes_from_manager`.
     pub sub_pane_above_main: std::collections::HashSet<u64>,
 
-    /// P0 V2 follow-up (viewport doctrine audit 2026-07-07): records
-    /// `bar_count` at the moment `reset_derived_stamp_for_deepen` fires a
-    /// zoom-out lazy-deepen reseed. The zero-frame itself is already guarded
-    /// (`bar_count > 0` gate in `resize_geometry`), but the gap between
-    /// `clear_slot` zeroing the series and the reseed's replay landing can
-    /// span one or more frames (network round-trip) with `bar_count` at a
-    /// small transient value while `view_start` sits at the pre-reseed
-    /// position (often far larger than the transient `bar_count`). Every one
-    /// of those frames is individually non-zero, so the existing guard
-    /// doesn't cover them: `resize_geometry`'s max_vs clamp fires each frame
-    /// and hard-writes `view_start` down to the tiny transient `bar_count`,
-    /// and by the time the replay lands the viewport has been dragged to the
-    /// wrong spot. `Some(fired_bar_count)` suppresses that clamp
-    /// (`resize_geometry`) and the Auto-mode glue-snap
-    /// (`reconcile_derived_series`, whose `was_glued` check is vacuously true
-    /// while `bar_count` is still tiny) until the replay's `new_len` reaches
-    /// `fired_bar_count` again. Cleared by
-    /// `begin_fresh_load`/`begin_fresh_load_keep_pending` (a fresh load
-    /// supersedes any pending reseed) and by the reseed-in-flight timeout in
-    /// `frame_lifecycle/tick.rs` (a failed/short reseed must not disable the
-    /// clamp forever). RAM-only — not persisted, not restored by hydration,
-    /// `None` on every fresh `ChartContainer` (`new_with_provider`,
-    /// `clone_for_split_shell`).
-    ///
-    /// Reachability (derived-prepend-fold-plan-2026-07-07, Task 3): only
-    /// `reset_derived_stamp_for_deepen` ever sets this to `Some` — and that
-    /// fn is only called from the teardown+respawn deepen path (the 3 EMA
-    /// kinds: tick_imbalance_bar/volume_imbalance_bar/run_bar — see
-    /// `chart_type_deepen_is_teardown`). Every other derived kind rewarms
-    /// `Station::rewarm_derived` in place with no clear/reset, so this field
-    /// stays `None` for their entire lifetime.
-    pub(crate) reseed_clamp_guard: Option<usize>,
 }
 
 /// Default number of empty bars shown to the right of the last candle
@@ -494,7 +462,6 @@ impl ChartContainer {
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),
-            reseed_clamp_guard: None,
         }
     }
 
@@ -1194,9 +1161,6 @@ impl ChartContainer {
             data_error: None,
             inner_docking: make_inner_docking_with_main_chart(new_panel_id),
             sub_pane_above_main: std::collections::HashSet::new(),
-            // Sibling starts with no pending reseed of its own — a split
-            // never fires `reset_derived_stamp_for_deepen`.
-            reseed_clamp_guard: None,
         }
     }
 
@@ -1869,9 +1833,6 @@ impl ChartContainer {
         self.viewport.view_start = 0.0;
         self.pending_symbol_load = true;
         self.derived_series_stamp = None;
-        // A fresh load supersedes any pending reseed — the cold snap that
-        // follows will place the viewport regardless.
-        self.reseed_clamp_guard = None;
     }
 
     /// Same reset as [`begin_fresh_load`] but does NOT set
@@ -1885,42 +1846,6 @@ impl ChartContainer {
     pub fn begin_fresh_load_keep_pending(&mut self) {
         self.viewport.bar_count = 0;
         self.viewport.view_start = 0.0;
-        self.derived_series_stamp = None;
-        // See `begin_fresh_load` — a fresh load supersedes any pending reseed.
-        self.reseed_clamp_guard = None;
-    }
-
-    /// Reset the derived-series bookkeeping (`bar_count` + `derived_series_stamp`)
-    /// WITHOUT touching `view_start`, in preparation for a zoom-out-triggered
-    /// lazy-deepen reseed of a derived slot (`bubble.<derived>_bars`).
-    ///
-    /// Rationale: the tick-level derived-deepen trigger clears the bubble's
-    /// derived array (`bubble.clear_renko()`/`clear_pnf()`/etc. in
-    /// `frame_lifecycle/tick.rs`) and then re-subscribes with a doubled
-    /// warm_n, streaming the fresh, deeper ring back one brick per
-    /// `LiveUpdate::*BarUpdate`. If we leave `derived_series_stamp = Some(...)`
-    /// pointing at the OLD (shallow) series, the first post-clear
-    /// `reconcile_derived_series` call sees `new_len=1` against the stale
-    /// `(old_head, old_last)` — computes a garbage `prepended=1` shift and
-    /// stomps `bar_count` from its stale count to 1, producing a one-frame
-    /// viewport jump. Clearing the stamp routes that first reactor pass
-    /// through the `None` branch of `reconcile_derived_series`, which adopts
-    /// `new_len` without touching `view_start` — subsequent bricks then land
-    /// on a valid stamp and correctly shift `view_start` by prepended-count
-    /// as they extend backward in time.
-    ///
-    /// UNLIKE `begin_fresh_load`, this preserves `view_start` (the user is
-    /// mid-history, zooming out — they want their current position held,
-    /// not snapped to end) and does NOT arm `needs_snap_after_backfill`
-    /// (which would snap to end on the first brick).
-    pub fn reset_derived_stamp_for_deepen(&mut self) {
-        // P0 V2 follow-up: record the pre-reseed depth so `resize_geometry`
-        // and `reconcile_derived_series` can recognize the multi-frame
-        // replay that follows (bar_count climbs 1, 2, 3, ... back up to this
-        // value) and suppress the clamp/glue-snap until it completes. See
-        // `reseed_clamp_guard`'s doc comment for the full mechanism.
-        self.reseed_clamp_guard = Some(self.viewport.bar_count.max(1));
-        self.viewport.bar_count = 0;
         self.derived_series_stamp = None;
     }
 
@@ -2178,48 +2103,11 @@ impl ChartContainer {
         // report 2026-07-05: "can't scroll the chart into the future").
         // TV semantics: scrolling right is free as long as SOME data stays
         // visible — so the invalid state is only "zero data bars on
-        // screen", not "past the snap margin".
-        // P0 V2 (viewport doctrine audit 2026-07-07): a derived deepen
-        // deliberately zeroes `bar_count` while preserving `view_start`
-        // across the async reseed gap (`reset_derived_stamp_for_deepen`) —
-        // this clamp running against that transient `bar_count == 0` window
-        // defeated the no-jump guarantee by hard-writing `view_start`
-        // toward 0 every frame until the reseed landed. Skip entirely while
-        // the series is transiently empty; nothing to clamp against anyway.
-        //
-        // P0 V2 follow-up: the zero-frame itself was never the whole story —
-        // between `clear_slot` zeroing the series and the reseed's replay
-        // landing, `bar_count` can pass through small transient values for
-        // one or more frames (network round-trip) while `view_start` still
-        // holds the pre-reseed position (typically far larger than these
-        // transient counts). Each of those frames has `bar_count > 0`, so
-        // the guard above never covers them: this clamp fired every frame
-        // of the gap and hard-wrote `view_start` down to track the tiny
-        // transient `bar_count`, parking the viewport in the wrong place
-        // once the reseed finally landed. `reseed_clamp_guard` (set by
-        // `reset_derived_stamp_for_deepen`, cleared once
-        // `reconcile_derived_series` sees the replay reach the pre-reseed
-        // depth) spans exactly that window — skip the clamp for its whole
-        // duration, not just the single zero-frame.
-        //
-        // Reachability (derived-prepend-fold-plan-2026-07-07, Task 3):
-        // `reset_derived_stamp_for_deepen` — and therefore this guard — is
-        // now armed ONLY by the teardown+respawn path (the 3 EMA kinds:
-        // tick_imbalance_bar/volume_imbalance_bar/run_bar; see
-        // `chart_type_deepen_is_teardown`) and released by either the
-        // normal reconcile above or the 10s in-flight timeout backstop in
-        // `frame_lifecycle/tick.rs`. Every other derived kind rides
-        // `Station::rewarm_derived` in place (no clear_slot, no stamp
-        // reset, this guard never arms for them) — see the plan doc's
-        // Phase 3 for the full cutover. The teardown replay itself also
-        // lands as ONE batched `LiveUpdate::BarsLoaded`/`RenkoHistoryPrepended`-
-        // shaped event now (Task 1), not a per-point trickle — the guard
-        // stays as a defensive span across the (now much shorter) gap
-        // rather than a strict per-frame necessity.
+        // screen", not "past the snap margin". Skip entirely while the
+        // series is transiently empty; nothing to clamp against anyway.
         if self.viewport.bar_count > 0
             && self.viewport.bar_spacing > 0.0
             && self.viewport.chart_width > 0.0
-            && self.reseed_clamp_guard.is_none()
         {
             // Owner 2026-07-06: 3-bar minimum was too aggressive — at
             // deep zoom (2 visible bars) the clamp blocked Manual-mode
@@ -2387,19 +2275,6 @@ impl ChartContainer {
     ///   mode is Follow.
     pub fn reconcile_derived_series(&mut self, series: crate::active_series::ActiveSeries<'_>) {
         let new_len = series.len();
-        // P0 V2 follow-up: the reseed replay set up by
-        // `reset_derived_stamp_for_deepen` has caught back up to (or past)
-        // the pre-reseed depth — the transient small-`bar_count` window is
-        // over, release the `resize_geometry` clamp and the glue-snap
-        // suppression below. Read the guard before this point mutates it so
-        // the glue-snap suppression still applies to THIS reconcile pass
-        // (the one that observes the replay complete).
-        let reseeding = self.reseed_clamp_guard.is_some();
-        if let Some(fired) = self.reseed_clamp_guard {
-            if new_len >= fired {
-                self.reseed_clamp_guard = None;
-            }
-        }
         if self.needs_snap_after_backfill {
             if new_len > 0 && self.viewport.chart_width > 0.0 && self.viewport.bar_spacing > 0.0 {
                 self.viewport.bar_count = new_len;
@@ -2467,17 +2342,8 @@ impl ChartContainer {
                 }
                 self.viewport.bar_count = new_len;
                 let tail_grew = new_last > old_last;
-                // P0 V2 follow-up: while a reseed replay is in flight,
-                // `was_glued` is meaningless — `bc0` is a transient small
-                // count from mid-replay, not the real pre-reseed depth, so
-                // the comparison against `vs0 + visible_f` (which still holds
-                // the pre-reseed `view_start`) is vacuously true. A live tick
-                // landing mid-replay with `tail_grew` would otherwise fire a
-                // spurious Auto-mode glue-snap. Follow-mode is left alone —
-                // it's an explicit user mode and converges correctly once the
-                // replay finishes.
                 if self.price_scale.scale_mode.is_follow()
-                    || (tail_grew && was_glued && !reseeding && self.price_scale.scale_mode == ScaleMode::Auto)
+                    || (tail_grew && was_glued && self.price_scale.scale_mode == ScaleMode::Auto)
                 {
                     self.snap_to_end(DEFAULT_SNAP_MARGIN);
                 }

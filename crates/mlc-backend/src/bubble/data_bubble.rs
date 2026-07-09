@@ -247,7 +247,8 @@ pub struct DataBubble {
     /// Kagi segments. Written by `KagiBarUpdate`.
     pub kagi_segments: Option<Vec<mlc_core::types::KagiSegment>>,
 
-    /// Cumulative Volume Delta samples. Written by `CvdLineUpdate`.
+    /// Cumulative Volume Delta samples. Written by the client-side CVD
+    /// companion fold (`active_cvd_fold`, unified-data-plane Stage Э4/Э5).
     pub cvd_line: Option<Vec<mlc_core::types::CvdSample>>,
 
     /// TPO Market Profile session snapshots. Written by `TpoProfileUpdate`.
@@ -325,21 +326,6 @@ pub struct DataBubble {
     /// exactly one prefetch pair, never an unbounded chain. Runtime-only
     /// state — not persisted to disk.
     pub scroll_prefetch_done: bool,
-
-    /// `Some((started, fired_bar_count))` while a derived-chart-type deeper-
-    /// seed request (renko/pnf/kagi/three_line_break, counted-bar family,
-    /// footprint, CVD, TPO) is in flight for this bubble, `None` otherwise.
-    ///
-    /// `fired_bar_count` is the series length observed at fire time (same
-    /// length used for the left-edge threshold check) — the successful-
-    /// reconcile clear compares the post-deepen length against it so the
-    /// flag drops as soon as the reseed actually grew the series, instead
-    /// of waiting out the full 10s timeout backstop (F5). Sibling of
-    /// `scroll_fetch_started`/`scroll_fetch_in_flight` for the derived-
-    /// reseed path — kline scroll-left and derived reseed are mutually
-    /// exclusive per-bubble operations that share the same left-edge
-    /// trigger in `tick.rs`, so they need independent in-flight guards.
-    pub derived_seed_in_flight: Option<(web_time::Instant, usize)>,
 
     /// How much real history backs the active chart_type's series right now.
     /// See [`HistoryDepth`]. Reset to `Unknown` on every chart-type switch
@@ -478,7 +464,6 @@ impl DataBubble {
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
-            derived_seed_in_flight: None,
             history_depth: HistoryDepth::default(),
             kline_layers: HashMap::new(),
             trade_layer: RawLayer::new(DEFAULT_TRADE_LAYER_CAPACITY),
@@ -835,7 +820,6 @@ impl Clone for DataBubble {
             scroll_fetch_in_flight: self.scroll_fetch_in_flight,
             scroll_fetch_started: self.scroll_fetch_started,
             scroll_prefetch_done: self.scroll_prefetch_done,
-            derived_seed_in_flight: self.derived_seed_in_flight,
             history_depth: self.history_depth,
             kline_layers: self.kline_layers.clone(),
             trade_layer: self.trade_layer.clone(),

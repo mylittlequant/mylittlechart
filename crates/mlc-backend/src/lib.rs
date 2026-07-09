@@ -1818,70 +1818,6 @@ impl BackendCore {
                     events.push(BubbleEvent::TradingUpdate { update });
                 }
 
-                // ── CvdLineUpdate ───────────────────────────────────────────────
-                LiveUpdate::CvdLineUpdate { exchange_id, account_type: at, symbol: sym, point } => {
-                    let at_label = at.short_label().to_string();
-                    let sample = mlc_core::types::CvdSample {
-                        ts_ms: point.ts_ms,
-                        value: point.value,
-                    };
-                    let bids = self.bubbles()
-                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
-                    for bid in bids {
-                        {
-                            self.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                bubble.append_cvd(sample);
-                            });
-                        }
-                        events.push(BubbleEvent::CvdSampleAppended {
-                            bid,
-                            exchange_id,
-                            symbol: sym.clone(),
-                            account_type: at_label.clone(),
-                        });
-                    }
-                }
-
-                // ── CvdHistoryPrepended ───────────────────────────────────────────
-                // Lazy-deepen / scroll-left batch — see `RenkoHistoryPrepended`
-                // above for the front-merge rationale. `append_cvd` is a plain
-                // push (CVD is a running total, not an upsert-by-ts store), so
-                // the dedup-by-`ts_ms` cut against the live head is done here
-                // directly rather than reusing `append_cvd` in a loop.
-                LiveUpdate::CvdHistoryPrepended { exchange_id, account_type: at, symbol: sym, points } => {
-                    if points.is_empty() { continue; }
-                    let at_label = at.short_label().to_string();
-                    let converted: Vec<mlc_core::types::CvdSample> = points.iter().map(|point| {
-                        mlc_core::types::CvdSample { ts_ms: point.ts_ms, value: point.value }
-                    }).collect();
-                    let bids = self.bubbles()
-                        .bubbles_for_instrument(exchange_id.as_str(), &at_label, sym.as_str());
-                    for bid in bids {
-                        self.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                            let store = bubble.cvd_line.get_or_insert_with(Vec::new);
-                            let head = store.first().map(|s| s.ts_ms);
-                            let older: Vec<&mlc_core::types::CvdSample> = converted.iter()
-                                .filter(|s| head.is_none_or(|h| s.ts_ms <= h))
-                                .collect();
-                            if older.is_empty() { return; }
-                            let boundary_replaced = head.is_some_and(|h| {
-                                older.last().is_some_and(|s| s.ts_ms == h)
-                            });
-                            let skip = usize::from(boundary_replaced);
-                            let old = std::mem::take(store);
-                            store.reserve(older.len() + old.len());
-                            store.extend(older.into_iter().cloned());
-                            store.extend(old.into_iter().skip(skip));
-                        });
-                        events.push(BubbleEvent::CvdSampleAppended {
-                            bid,
-                            exchange_id,
-                            symbol: sym.clone(),
-                            account_type: at_label.clone(),
-                        });
-                    }
-                }
-
                 // ── OpenInterestUpdate ──────────────────────────────────────────
                 // Write target depends on per-app `oi_show` window flag — pass through.
                 LiveUpdate::OpenInterestUpdate { exchange_id, account_type: at, symbol: sym, point } => {
@@ -2110,24 +2046,6 @@ impl BackendCore {
     /// Cancel the Funding Rate overlay subscription for an instrument.
     pub fn unsubscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.bridge.unsubscribe_funding_rate(exchange_id, symbol, account_type);
-    }
-
-    /// Subscribe to the Cumulative Volume Delta overlay line for an instrument.
-    pub fn subscribe_cvd_line(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        self.bridge.request_cvd_line(exchange_id, symbol, account_type);
-    }
-
-    /// Cancel the CVD overlay subscription for an instrument.
-    pub fn unsubscribe_cvd_line(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        self.bridge.unsubscribe_cvd_line(exchange_id, symbol, account_type);
-    }
-
-    /// Clear cached CVD samples on a bubble after its CVD subscription is torn down.
-    ///
-    /// Pairs with [`BackendCore::unsubscribe_cvd_line`] — callers invoke both
-    /// when the last CVD indicator instance for an instrument is removed.
-    pub fn clear_cvd_slot(&self, bid: BubbleId) {
-        self.bubbles_mut().with_bubble_mut(bid, |b| b.clear_cvd());
     }
 
     /// Ensure a connector for `exchange_id` is connected, spawning it if needed.
@@ -2834,15 +2752,15 @@ impl BackendCore {
     }
 
     // =========================================================================
-    // === Client-side CVD companion fold (unified-data-plane Stage Э4) ======
+    // === Client-side CVD companion fold (unified-data-plane Stage Э4/Э5) ====
     // =========================================================================
 
     /// Install (or replace) `bid`'s [`bubble::TradeFoldRuntime`] CVD
     /// companion runtime, ensure the trade layer is network-fed, and reseed
     /// synchronously from whatever the layer already holds. Called from
-    /// `subscribe_cvd_line_for_indicator_add` (mlc-app) alongside the
-    /// existing `subscribe_cvd_line` station-derived subscribe — the two
-    /// live side-by-side during this stage (Э5 removes the station path).
+    /// `subscribe_cvd_line_for_indicator_add` (mlc-app) — the ONLY CVD data
+    /// path since Stage Э5 removed the station-derived `request_cvd_line`
+    /// subscribe.
     pub fn subscribe_cvd_fold(
         &self,
         bid: BubbleId,
