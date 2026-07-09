@@ -1441,7 +1441,12 @@ impl BackendCore {
                     // ticks into e.g. the "1h" layer.
                     if !bar_tf_name.is_empty() {
                         let at_label = bar_at.short_label();
-                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &bar_sym) {
+                        // NOTE: bind the bid list BEFORE the loop — a read
+                        // guard living in the `for` scrutinee stays alive for
+                        // the whole loop body, and `bubbles_mut()` inside
+                        // would re-enter the RwLock (wasm: instant abort).
+                        let layer_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &bar_sym);
+                        for bid in layer_bids {
                             self.bubbles_mut().kline_layer_push_live(bid, &bar_tf_name, bar);
                             // Client-side view fold (unified-data-plane Э3):
                             // every bubble that has installed a FoldRuntime
@@ -1495,7 +1500,9 @@ impl BackendCore {
                         qty: quantity,
                         is_buyer_maker,
                     };
-                    for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                    // Guard-lifetime note: bind before looping (see BarUpdate arm).
+                    let trade_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
+                    for bid in trade_bids {
                         self.bubbles_mut().trade_layer_push_live(bid, raw_trade);
                         // Client-side trade fold (unified-data-plane Э4):
                         // every bubble that has installed a `TradeFoldRuntime`
@@ -1546,7 +1553,9 @@ impl BackendCore {
                         qty: t.qty,
                         is_buyer_maker: t.is_buyer_maker,
                     }).collect();
-                    for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                    // Guard-lifetime note: bind before looping (see BarUpdate arm).
+                    let prepend_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
+                    for bid in prepend_bids {
                         self.bubbles_mut().trade_layer_prepend_batch(bid, raw_trades.clone());
                     }
                 }
@@ -1658,7 +1667,9 @@ impl BackendCore {
                 LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, .. } => {
                     if layer == "kline:1m" {
                         let at_label = account_type.short_label();
-                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                        // Guard-lifetime note: bind before looping (see BarUpdate arm).
+                        let fold_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
+                        for bid in fold_bids {
                             let has_fold = self.bubbles().with_bubble(bid, |b| b.active_fold.is_some()).unwrap_or(false);
                             if !has_fold { continue; }
                             let layer_snapshot: crate::bubble::RawLayer<Bar> = match self.bubbles().kline_layer(bid, "1m") {
@@ -1689,7 +1700,9 @@ impl BackendCore {
                         }
                     } else if layer == "trades" {
                         let at_label = account_type.short_label();
-                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                        // Guard-lifetime note: bind before looping (see BarUpdate arm).
+                        let tfold_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
+                        for bid in tfold_bids {
                             let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = match self.bubbles().trade_layer(bid) {
                                 Some(l) => l.clone(),
                                 None => continue,
