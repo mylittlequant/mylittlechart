@@ -40,8 +40,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use digdigdig3::core::types::TradeHistoryTier;
+use digdigdig3::core::types::{ArchiveSpec, TradeHistoryTier};
 use digdigdig3::{AccountType, ExchangeId};
+#[cfg(not(target_arch = "wasm32"))]
+use digdigdig3_station::archive::RawTrade;
 
 use crate::bridge::{DataBridge, LiveUpdate, RawTradeWire, bar_point_to_bar, sleep_ms};
 
@@ -150,6 +152,14 @@ pub struct RampState {
     /// the ramp to 1 after a quiet period. `None` before the first pressure
     /// signal (cold path never needs this — it ramps unconditionally).
     pub last_pressure_at: Option<web_time::Instant>,
+    /// Trade layer only: this key has transitioned from live REST
+    /// pagination into bulk daily-archive-file mode (Э6-Ф3 — see
+    /// `run_trade_ramp`'s `RecentOnly`/`RestWindow` archive-chaining
+    /// branches). Once `true`, one ramp "page" is one archive day file
+    /// instead of one REST page. Latched like `exhausted` — a key never
+    /// leaves archive mode once entered (only a fresh instrument/layer
+    /// identity, i.e. a new key, starts outside it again).
+    pub archive_mode: bool,
 }
 
 impl Default for RampState {
@@ -163,6 +173,7 @@ impl Default for RampState {
             target: None,
             loaded: 0,
             last_pressure_at: None,
+            archive_mode: false,
         }
     }
 }
@@ -187,6 +198,22 @@ impl RampState {
         if self.in_flight || self.exhausted {
             return false;
         }
+        self.target_satisfied(gate_on_target)
+    }
+
+    /// The `target`-satisfaction half of [`Self::needs_more`], WITHOUT the
+    /// `in_flight`/`exhausted` gates — for mid-group continuation checks
+    /// made from INSIDE a runner loop that itself holds the single-flight
+    /// guard for the whole group's duration (`in_flight` is `true` from
+    /// `begin_flight()` at group start until `end_flight()` at group end,
+    /// so `needs_more` would unconditionally read `false` for every page
+    /// after the first one in the same group — this is the fix for that:
+    /// [`run_archive_group`] uses this instead of `needs_more` to decide
+    /// whether to fetch the NEXT day within the group it is already
+    /// running). `gate_on_target: true` = auto-ensure phase (stop once
+    /// `loaded >= target`); `false` = scroll-pressure phase (`target`
+    /// ignored, always more wanted) — same split as `needs_more`.
+    pub fn target_satisfied(&self, gate_on_target: bool) -> bool {
         if !gate_on_target {
             return true;
         }
@@ -277,6 +304,18 @@ impl RampState {
     pub fn end_flight(&mut self) {
         self.in_flight = false;
         self.advance_ramp();
+    }
+
+    /// Trade layer only: transition into bulk daily-archive-file mode
+    /// instead of latching `exhausted` — called at the exact site that
+    /// would otherwise have declared the venue's live REST tier dry (a
+    /// `RecentOnly` venue's one-and-only shallow fetch just landed, or a
+    /// `RestWindow` venue's cursor walk just hit its `max_back_ms` wall) but
+    /// a [`digdigdig3::core::types::TradeArchiveCapabilities::for_account`]
+    /// spec exists for this key. Idempotent — entering archive mode twice is
+    /// a no-op (latch semantics, same as `exhausted`).
+    pub fn enter_archive_mode(&mut self) {
+        self.archive_mode = true;
     }
 }
 
@@ -642,6 +681,263 @@ impl DataBridge {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Archive-day chaining (Э6-Ф3) — bulk daily-archive files continuing a
+// trade ramp once the venue's live REST tier bottoms out (`RecentOnly`'s one
+// shallow fetch, or `RestWindow`'s `max_back_ms` wall).
+//
+// `cfg(not(target_arch = "wasm32"))` for the whole block: the native fetch
+// path (`digdigdig3_station::archive::fetch_archive_day`) and its error type
+// (`ArchiveDayError`) only exist off wasm (the browser CORS-proxy fetch path
+// is Ф4 scope) — see `digdigdig3-station/src/archive/mod.rs`'s own
+// `cfg(not(target_arch = "wasm32")) mod fetch;` gate. On wasm this whole
+// section compiles out and `run_trade_ramp`'s archive call sites fall back
+// unchanged to the pre-existing latch-on-wall behavior (see the
+// `cfg(target_arch = "wasm32")` arms inline in `run_trade_ramp` below).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Consecutive mid-range 404s treated as a boundary (venues delist symbols —
+/// a long-dead symbol's archive host stops publishing new days without ever
+/// reporting a single contiguous "genuinely too old" 404 run, so a handful
+/// of gap days in a row is reclassified as "this symbol's archive effectively
+/// ends here" rather than skipped forever).
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_CONSECUTIVE_MID_RANGE_404S: u32 = 5;
+
+/// Outcome of fetching ONE archive day file, in the pure vocabulary the ramp
+/// chaining logic reasons about — decouples the classification rules (unit
+/// tested below) from the network call itself.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArchiveDayOutcome {
+    /// Day file fetched and parsed successfully (rows may be empty — an
+    /// empty-but-200 day is data, not a 404, and does not affect the walk).
+    Rows(Vec<RawTrade>),
+    /// 404 AT OR BELOW the `since_ms` boundary date — the archive host's
+    /// retention floor has been reached; latch exhausted.
+    BoundaryReached,
+    /// 404 INSIDE the range (above the boundary date) — a data gap, skip
+    /// this day and continue to the next older one, NOT exhausted.
+    Gap,
+    /// Non-404 failure (transport/HTTP-status/decode) — transient, caller
+    /// stops this group without latching exhausted (retried on the next
+    /// group/pressure signal).
+    TransientError,
+}
+
+/// Pure classification: turn one day-fetch `Result` plus "is this date at or
+/// below the boundary floor" into an [`ArchiveDayOutcome`]. No network, no
+/// I/O — the entire boundary/gap/error decision lives here so it is directly
+/// unit-testable against synthetic `Result`s.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn classify_archive_day_result(
+    result: Result<Vec<RawTrade>, digdigdig3_station::archive::ArchiveDayError>,
+    date_at_or_below_floor: bool,
+) -> ArchiveDayOutcome {
+    match result {
+        Ok(rows) => ArchiveDayOutcome::Rows(rows),
+        Err(digdigdig3_station::archive::ArchiveDayError::NotFound(_)) => {
+            if date_at_or_below_floor {
+                ArchiveDayOutcome::BoundaryReached
+            } else {
+                ArchiveDayOutcome::Gap
+            }
+        }
+        Err(_) => ArchiveDayOutcome::TransientError,
+    }
+}
+
+/// Trim rows whose `ts_ms` falls at or after `oldest_loaded_ms` — the
+/// overlap guard for the RestWindow → archive continuation seam: REST pages
+/// already cover `[wall..now)`, so an archive day whose rows overlap that
+/// range must not re-introduce duplicates (final dedup-by-ts happens at
+/// prepend, but trimming here avoids re-emitting whole redundant days).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn trim_rows_at_or_after(rows: Vec<RawTrade>, oldest_loaded_ms: Option<i64>) -> Vec<RawTrade> {
+    match oldest_loaded_ms {
+        Some(floor) => rows.into_iter().filter(|r| r.ts_ms < floor).collect(),
+        None => rows,
+    }
+}
+
+/// One archive day fetch call, boxed so the runner can be driven by either
+/// the real native network fetch or a synthetic mock in tests — the
+/// trait/closure seam requested for archive-chaining test coverage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type DayFetch = Arc<
+    dyn Fn(
+            ArchiveSpec,
+            String,
+            chrono::NaiveDate,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Vec<RawTrade>, digdigdig3_station::archive::ArchiveDayError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+/// Real native day-fetch seam — thin wrapper over
+/// [`digdigdig3_station::archive::fetch_archive_day`]. `cfg(not(wasm32))`:
+/// the native fetch path uses `reqwest` directly against the archive host
+/// (no CORS proxy needed off-browser); wasm chaining is Ф4 scope and this
+/// function does not exist on that target — [`run_trade_ramp`]'s archive
+/// arms are themselves `cfg(not(wasm32))`-gated so the whole chain compiles
+/// out cleanly on wasm rather than calling a stub.
+#[cfg(not(target_arch = "wasm32"))]
+fn native_day_fetch() -> DayFetch {
+    Arc::new(|spec, symbol, date| {
+        Box::pin(async move { digdigdig3_station::archive::fetch_archive_day(&spec, &symbol, date).await })
+    })
+}
+
+/// Walk one ramp GROUP of archive day files for `key`, oldest-file-per-page,
+/// via `fetcher` (the real native fetch in production, a mock in tests).
+/// The per-day overlap guard (trimming rows at or after whatever
+/// `oldest_anchor` is at the time each day lands) is re-read from the engine
+/// state per-day rather than passed in once — see the module doc block
+/// above [`ArchiveDayOutcome`].
+///
+/// Mirrors [`run_kline_ramp`]/[`run_trade_ramp`]'s REST loops: one page
+/// (here, one day file) emitted the instant it arrives, single-flight
+/// already held by the caller, `gate_on_target` honored via
+/// `RampState::needs_more`/`next_group_pages` exactly as the REST arms use
+/// it — GROUP size is still a rate limiter, not a depth cap.
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_archive_group(
+    fetcher: &DayFetch,
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    engine: &BackfillEngine,
+    key: &BackfillKey,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_str: &str,
+    wire_sym: &str,
+    spec: ArchiveSpec,
+    gate_on_target: bool,
+) {
+    let page_size = TRADE_PAGE_SIZE;
+    let group_pages = engine.with_state(key, |s| s.next_group_pages(page_size, gate_on_target));
+
+    let oldest_loaded = engine.with_state(key, |s| s.oldest_anchor);
+    let mut days = match oldest_loaded {
+        Some(ms) => digdigdig3_station::archive::DayIterator::resume_before(ms, spec.since_ms),
+        None => digdigdig3_station::archive::DayIterator::new(spec.since_ms),
+    };
+
+    let mut consecutive_mid_range_404s: u32 = 0;
+    let mut pages_landed: u32 = 0;
+
+    // Bounded by `group_pages` successfully-landed days, not by raw loop
+    // iterations — a run of gap days must not eat into the group's page
+    // budget (that would starve a group down to zero real pages on a
+    // gappy symbol). The mid-range-404 counter above is the actual
+    // circuit breaker against a truly dead symbol looping forever.
+    while pages_landed < group_pages {
+        let Some(date) = days.next() else {
+            // Walk exhausted its own floor without a 404 — genuinely out of
+            // days to try; treat as boundary reached.
+            engine.with_state(key, |s| s.exhausted = true);
+            let _ = tx.send(LiveUpdate::LayerBackfilled {
+                exchange_id, symbol: symbol_str.to_string(), account_type,
+                layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+            });
+            break;
+        };
+
+        let date_at_or_below_floor = {
+            let floor_secs = spec.since_ms.div_euclid(1000);
+            let floor_date = chrono::DateTime::from_timestamp(floor_secs, 0)
+                .map(|dt| dt.date_naive())
+                .unwrap_or(date);
+            date <= floor_date
+        };
+
+        let result = fetcher(spec, wire_sym.to_string(), date).await;
+        let outcome = classify_archive_day_result(result, date_at_or_below_floor);
+
+        match outcome {
+            ArchiveDayOutcome::Rows(rows) => {
+                consecutive_mid_range_404s = 0;
+                pages_landed += 1;
+                let oldest_loaded_now = engine.with_state(key, |s| s.oldest_anchor);
+                let trimmed = trim_rows_at_or_after(rows, oldest_loaded_now);
+                emit_archive_day_page(tx, engine, key, exchange_id, account_type, symbol_str, &trimmed, false);
+            }
+            ArchiveDayOutcome::BoundaryReached => {
+                engine.with_state(key, |s| s.exhausted = true);
+                let _ = tx.send(LiveUpdate::LayerBackfilled {
+                    exchange_id, symbol: symbol_str.to_string(), account_type,
+                    layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                });
+                break;
+            }
+            ArchiveDayOutcome::Gap => {
+                consecutive_mid_range_404s += 1;
+                if consecutive_mid_range_404s >= MAX_CONSECUTIVE_MID_RANGE_404S {
+                    // A run of mid-range 404s this long means the symbol's
+                    // archive effectively ends here (delisted) — treat as
+                    // boundary, not an infinite skip.
+                    engine.with_state(key, |s| s.exhausted = true);
+                    let _ = tx.send(LiveUpdate::LayerBackfilled {
+                        exchange_id, symbol: symbol_str.to_string(), account_type,
+                        layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                    });
+                    break;
+                }
+                crate::dlog!(
+                    "[BackfillEngine] archive: gap day {date} for {exchange_id:?}/{symbol_str} — skipping, continuing older"
+                );
+                continue;
+            }
+            ArchiveDayOutcome::TransientError => {
+                crate::dlog!(
+                    "[BackfillEngine] archive: transient fetch error for {date} on {exchange_id:?}/{symbol_str} — stopping group, not exhausted"
+                );
+                break;
+            }
+        }
+
+        // `needs_more` would read `false` here unconditionally (`in_flight`
+        // has been `true` for the whole group since the caller's
+        // `begin_flight()`) — use the target-only half instead. See
+        // `RampState::target_satisfied`'s doc for why.
+        let done = engine.with_state(key, |s| !s.target_satisfied(gate_on_target));
+        if done {
+            break;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn emit_archive_day_page(
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    engine: &BackfillEngine,
+    key: &BackfillKey,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol: &str,
+    rows: &[RawTrade],
+    exhausted: bool,
+) {
+    let wire: Vec<RawTradeWire> = rows.iter().map(|r| RawTradeWire {
+        ts_ms: r.ts_ms,
+        price: r.price,
+        qty: r.qty,
+        is_buyer_maker: r.is_buyer_maker,
+    }).collect();
+    let prepended = wire.len();
+    let new_oldest = wire.iter().map(|t| t.ts_ms).min();
+    engine.with_state(key, |s| s.record_page(prepended, new_oldest, exhausted));
+    if prepended > 0 {
+        let _ = tx.send(LiveUpdate::TradeHistoryPrepended {
+            exchange_id, account_type, symbol: symbol.to_string(), trades: wire,
+        });
+    }
+    let _ = tx.send(LiveUpdate::LayerBackfilled {
+        exchange_id, symbol: symbol.to_string(), account_type,
+        layer: LayerId::Trades.wire_label(), prepended, exhausted,
+    });
+}
+
 /// Shared ramp-group runner for the trade layer. The first page of a fresh
 /// key (no `oldest_anchor` yet) uses the capability-aware seed
 /// (`agg_trades_paginated`, which itself falls back to `trades_recent` for
@@ -653,6 +949,16 @@ impl DataBridge {
 /// bridge-side, since `agg_trades_paginated` does not expose a resumable
 /// cursor across separate calls). `gate_on_target` selects the phase — see
 /// [`run_kline_ramp`]'s doc for the same split.
+///
+/// Archive chaining (Э6-Ф3, native only — `cfg(not(wasm32))`): when the
+/// venue's `TradeArchiveCapabilities::for_account` declares a spec for this
+/// key, the site that would otherwise latch `exhausted` on a `RecentOnly`
+/// venue's one shallow fetch, or a `RestWindow` venue's `max_back_ms` wall,
+/// instead calls [`RampState::enter_archive_mode`] and continues the SAME
+/// group budget via [`run_archive_group`] — the ramp step, single-flight
+/// guard, and `needs_more`/`target` gating are shared unchanged across both
+/// REST and archive pages for one key. On wasm the archive arms are absent
+/// (Ф4 scope) and the pre-existing latch-on-wall behavior is unchanged.
 async fn run_trade_ramp(
     fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
     tx: tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -689,8 +995,42 @@ async fn run_trade_ramp(
     };
     let tier = rest.trade_history_capabilities().tier_for(account_type);
     let is_cold = engine.with_state(&key, |s| s.oldest_anchor.is_none() && s.groups_completed == 0);
+    // On wasm, archive chaining is Ф4 scope — force `None` unconditionally
+    // so every `archive_spec.is_some()` branch below folds to the
+    // pre-existing latch-on-wall behavior at compile time, with no
+    // per-branch `cfg` needed past this point (only the two actual
+    // network-call sites, `native_day_fetch`/`run_archive_group`, stay
+    // `cfg(not(wasm32))`-gated).
+    #[cfg(not(target_arch = "wasm32"))]
+    let archive_spec = rest.trade_archive_capabilities().for_account(account_type);
+    #[cfg(target_arch = "wasm32")]
+    let archive_spec: Option<ArchiveSpec> = None;
+    let already_in_archive_mode = engine.with_state(&key, |s| s.archive_mode);
 
-    // RecentOnly: exactly one shallow fetch, then latch exhausted — never
+    // A key already latched into archive mode by a PRIOR run (REST tier
+    // already exhausted last time) skips straight back to the day walk —
+    // never re-attempts the REST tier once archive mode is entered.
+    #[cfg(not(target_arch = "wasm32"))]
+    if already_in_archive_mode {
+        if let Some(spec) = archive_spec {
+            run_archive_group(
+                &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                &symbol_str, &wire_sym, spec, gate_on_target,
+            ).await;
+        } else {
+            // Spec disappeared (shouldn't happen — capability declarations
+            // are static per connector) — fail safe to exhausted rather
+            // than loop forever with no fetcher.
+            engine.with_state(&key, |s| s.exhausted = true);
+        }
+        engine.with_state(&key, RampState::end_flight);
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = already_in_archive_mode;
+
+    // RecentOnly: exactly one shallow fetch, then either chain into the
+    // archive (if the venue declares one) or latch exhausted — never
     // hammer an endpoint the venue caps to a single call.
     if let TradeHistoryTier::RecentOnly { max_trades } = tier {
         if is_cold {
@@ -698,8 +1038,25 @@ async fn run_trade_ramp(
             let (trades, _outcome) = digdigdig3_station::backfill::trades_recent(
                 &fetch_hub, exchange_id, account_type, &wire_sym, cap,
             ).await;
-            emit_trade_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &trades, true);
+            // Do NOT latch exhausted here even though this is the venue's
+            // only shallow REST page — a chained archive continues the
+            // ramp for this key on the very next call.
+            let latch_exhausted = archive_spec.is_none();
+            emit_trade_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &trades, latch_exhausted);
+            if archive_spec.is_some() {
+                engine.with_state(&key, RampState::enter_archive_mode);
+            }
         } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(spec) = archive_spec {
+                engine.with_state(&key, RampState::enter_archive_mode);
+                run_archive_group(
+                    &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                    &symbol_str, &wire_sym, spec, gate_on_target,
+                ).await;
+                engine.with_state(&key, RampState::end_flight);
+                return;
+            }
             engine.with_state(&key, |s| s.exhausted = true);
         }
         engine.with_state(&key, RampState::end_flight);
@@ -721,8 +1078,29 @@ async fn run_trade_ramp(
                     | Some(digdigdig3_station::backfill::TruncationReason::VenueRecentOnly)
             );
             let min_id = points.iter().map(|p| p.agg_id).min();
-            let exhausted_here = points.is_empty() || venue_wall;
-            emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), exhausted_here);
+            let venue_dry = points.is_empty();
+            let exhausted_here = venue_dry || venue_wall;
+            // A `RestWindow` wall chains into the archive instead of
+            // latching, when the venue declares one; a genuinely empty
+            // page (true venue-dry, no wall) still latches even with an
+            // archive spec — nothing older exists to chain into.
+            let chain_to_archive = venue_wall && !venue_dry && archive_spec.is_some();
+            let latch_now = exhausted_here && !chain_to_archive;
+            emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), latch_now);
+            if chain_to_archive {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(spec) = archive_spec {
+                    engine.with_state(&key, RampState::enter_archive_mode);
+                    let remaining = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
+                    if remaining > 0 {
+                        run_archive_group(
+                            &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                            &symbol_str, &wire_sym, spec, gate_on_target,
+                        ).await;
+                    }
+                }
+                break;
+            }
             if exhausted_here {
                 break;
             }
@@ -756,8 +1134,30 @@ async fn run_trade_ramp(
             };
             let was_partial = points.len() < page_size;
             let min_id = points.iter().map(|p| p.agg_id).min();
-            let exhausted_here = points.is_empty() || was_partial;
-            emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), exhausted_here);
+            // A short (partial) page on a `RestWindow` venue's resumable
+            // walk means the cursor just crossed `max_back_ms` — the same
+            // wall the cold seed's `VenueWindowCap` reports, just observed
+            // on a later page. An empty page is genuine venue-dry.
+            let venue_dry = points.is_empty();
+            let exhausted_here = venue_dry || was_partial;
+            let chain_to_archive = was_partial && !venue_dry && archive_spec.is_some()
+                && matches!(tier, TradeHistoryTier::RestWindow { .. });
+            let latch_now = exhausted_here && !chain_to_archive;
+            emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), latch_now);
+            if chain_to_archive {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(spec) = archive_spec {
+                    engine.with_state(&key, RampState::enter_archive_mode);
+                    let remaining = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
+                    if remaining > 0 {
+                        run_archive_group(
+                            &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                            &symbol_str, &wire_sym, spec, gate_on_target,
+                        ).await;
+                    }
+                }
+                break;
+            }
             if exhausted_here {
                 break;
             }
@@ -1162,5 +1562,384 @@ mod tests {
         assert!(!target.exhausted, "target-shaped stop must NOT latch exhausted");
         assert!(!target.needs_more(true), "auto phase correctly stops (target satisfied)");
         assert!(target.needs_more(false), "but the layer is NOT exhausted — pressure can still pull more");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Archive-day chaining (Э6-Ф3, native only). `RampState::archive_mode`
+    // pure transitions, `classify_archive_day_result`/`trim_rows_at_or_after`
+    // pure decision fns, and `run_archive_group` end-to-end driven through
+    // the `DayFetch` mock-closure seam — no network in any of these.
+    // ─────────────────────────────────────────────────────────────────────
+    #[cfg(not(target_arch = "wasm32"))]
+    mod archive_chaining {
+        use super::*;
+        use digdigdig3_station::archive::ArchiveDayError;
+        use digdigdig3::core::types::{ArchiveFormat, ArchiveSchema};
+
+        fn spec_with_since(since_ms: i64) -> ArchiveSpec {
+            ArchiveSpec {
+                host: "example.test",
+                url_pattern: "/{symbol}/{date}.csv.gz",
+                format: ArchiveFormat::CsvGz,
+                schema: ArchiveSchema::BybitSpot,
+                since_ms,
+            }
+        }
+
+        fn trade(ts_ms: i64) -> RawTrade {
+            RawTrade { ts_ms, price: 1.0, qty: 1.0, is_buyer_maker: false }
+        }
+
+        // ── RampState::archive_mode pure transitions ────────────────────
+
+        #[test]
+        fn enter_archive_mode_is_idempotent_and_does_not_alone_block_needs_more() {
+            let mut s = RampState::default();
+            assert!(!s.archive_mode);
+            s.enter_archive_mode();
+            assert!(s.archive_mode);
+            assert!(s.needs_more(true), "archive_mode alone does not latch exhausted");
+            s.enter_archive_mode();
+            assert!(s.archive_mode, "idempotent — entering twice stays true");
+        }
+
+        #[test]
+        fn archive_mode_key_still_respects_exhausted_latch() {
+            let mut s = RampState::default();
+            s.enter_archive_mode();
+            s.record_page(0, None, true); // boundary reached
+            assert!(s.exhausted);
+            assert!(!s.needs_more(true));
+            assert!(!s.needs_more(false), "exhausted latch blocks pressure phase too, archive_mode aside");
+        }
+
+        // ── classify_archive_day_result: pure boundary/gap/error rules ──
+
+        #[test]
+        fn classify_rows_on_success() {
+            let rows = vec![trade(1_000), trade(2_000)];
+            let outcome = classify_archive_day_result(Ok(rows.clone()), false);
+            assert_eq!(outcome, ArchiveDayOutcome::Rows(rows));
+        }
+
+        #[test]
+        fn classify_not_found_at_floor_is_boundary() {
+            let outcome = classify_archive_day_result(
+                Err(ArchiveDayError::NotFound("http://x".to_string())),
+                true,
+            );
+            assert_eq!(outcome, ArchiveDayOutcome::BoundaryReached);
+        }
+
+        #[test]
+        fn classify_not_found_mid_range_is_gap() {
+            let outcome = classify_archive_day_result(
+                Err(ArchiveDayError::NotFound("http://x".to_string())),
+                false,
+            );
+            assert_eq!(outcome, ArchiveDayOutcome::Gap);
+        }
+
+        #[test]
+        fn classify_non_404_is_transient_error_regardless_of_floor() {
+            let http_err = classify_archive_day_result(
+                Err(ArchiveDayError::HttpStatus { status: 500, url: "http://x".to_string() }),
+                true,
+            );
+            assert_eq!(http_err, ArchiveDayOutcome::TransientError);
+            let decode_err = classify_archive_day_result(
+                Err(ArchiveDayError::Decode("bad gzip".to_string())),
+                false,
+            );
+            assert_eq!(decode_err, ArchiveDayOutcome::TransientError);
+        }
+
+        // ── trim_rows_at_or_after: overlap guard ────────────────────────
+
+        #[test]
+        fn trim_rows_removes_rows_at_or_after_floor() {
+            let rows = vec![trade(100), trade(500), trade(999), trade(1000), trade(1500)];
+            let trimmed = trim_rows_at_or_after(rows, Some(1000));
+            let ts: Vec<i64> = trimmed.iter().map(|r| r.ts_ms).collect();
+            assert_eq!(ts, vec![100, 500, 999], "1000 and 1500 are >= floor, must be dropped");
+        }
+
+        #[test]
+        fn trim_rows_no_floor_is_noop() {
+            let rows = vec![trade(100), trade(500)];
+            let trimmed = trim_rows_at_or_after(rows.clone(), None);
+            assert_eq!(trimmed, rows);
+        }
+
+        // ── run_archive_group: end-to-end via the DayFetch mock seam ────
+
+        /// Build a `DayFetch` from a plain closure over `(symbol, date) ->
+        /// Result<Vec<RawTrade>, ArchiveDayError>` — the mock seam used by
+        /// every test below in place of live network `fetch_archive_day`.
+        fn mock_fetcher<F>(f: F) -> DayFetch
+        where
+            F: Fn(&str, chrono::NaiveDate) -> Result<Vec<RawTrade>, ArchiveDayError> + Send + Sync + 'static,
+        {
+            let f = Arc::new(f);
+            Arc::new(move |_spec, symbol, date| {
+                let f = f.clone();
+                Box::pin(async move { f(&symbol, date) })
+            })
+        }
+
+        fn day(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+            chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap_or_default()
+        }
+
+        fn day_ms(y: i32, m: u32, d: u32) -> i64 {
+            day(y, m, d).and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis()
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_walks_days_and_emits_wire_prepend() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Bybit, "BTCUSDT".to_string(), AccountType::Spot, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            let since = day_ms(2026, 1, 1);
+            let spec = spec_with_since(since);
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            // Every day the walk visits returns two rows — mock never hits
+            // network. `DayIterator::new` starts at "yesterday UTC" which is
+            // test-environment-dependent, so instead exercise the resumable
+            // walk directly by seeding `oldest_anchor` to a fixed recent day
+            // and letting `resume_before` walk deterministically downward
+            // from there.
+            engine.with_state(&key, |s| s.oldest_anchor = Some(day_ms(2026, 1, 10)));
+            engine.with_state(&key, |s| s.ramp_step = 3); // group of 3 days this call
+
+            let fetcher = mock_fetcher(move |_symbol, date| {
+                Ok(vec![trade(date.and_hms_opt(1, 0, 0).unwrap_or_default().and_utc().timestamp_millis())])
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            let mut prepended_batches = 0;
+            let mut layer_events = 0;
+            while let Ok(update) = rx.try_recv() {
+                match update {
+                    LiveUpdate::TradeHistoryPrepended { trades, .. } => {
+                        prepended_batches += 1;
+                        assert_eq!(trades.len(), 1);
+                    }
+                    LiveUpdate::LayerBackfilled { layer, .. } => {
+                        assert_eq!(layer, "trades");
+                        layer_events += 1;
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(prepended_batches, 3, "3-day group emits 3 TradeHistoryPrepended batches");
+            assert_eq!(layer_events, 3, "one LayerBackfilled per landed day");
+            assert_eq!(engine.snapshot(&key).map(|s| s.loaded), Some(3));
+            assert!(!engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(true), "mid-walk, not yet at boundary");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_boundary_404_latches_exhausted() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Bybit, "BTCUSDT".to_string(), AccountType::Spot, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            let since = day_ms(2026, 1, 5);
+            let spec = spec_with_since(since);
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            // Resume starts at 2026-01-04 (day before the seeded oldest
+            // 2026-01-05) — immediately AT the floor, so the very first
+            // fetch call 404s and must latch as boundary, not a gap.
+            engine.with_state(&key, |s| s.oldest_anchor = Some(day_ms(2026, 1, 5)));
+            engine.with_state(&key, |s| s.ramp_step = 8);
+
+            let fetcher = mock_fetcher(|_symbol, _date| {
+                Err(ArchiveDayError::NotFound("http://x".to_string()))
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            assert!(engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(false), "404 at/below floor must latch exhausted");
+            let mut saw_exhausted_event = false;
+            while let Ok(update) = rx.try_recv() {
+                if let LiveUpdate::LayerBackfilled { exhausted: true, prepended: 0, .. } = update {
+                    saw_exhausted_event = true;
+                }
+            }
+            assert!(saw_exhausted_event);
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_mid_range_404_skips_not_exhausted() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Bybit, "BTCUSDT".to_string(), AccountType::Spot, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            // Wide floor so mid-walk 404s are gaps, not boundary.
+            let spec = spec_with_since(day_ms(2020, 1, 1));
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            engine.with_state(&key, |s| s.oldest_anchor = Some(day_ms(2026, 1, 10)));
+            engine.with_state(&key, |s| s.ramp_step = 2); // wants 2 LANDED days
+
+            // First day visited (2026-01-09) 404s (gap, skip), second
+            // (2026-01-08) succeeds, third (2026-01-07) succeeds — group
+            // wants 2 landed pages, so it stops after the 3rd fetch call.
+            let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let call_count_cl = call_count.clone();
+            let fetcher = mock_fetcher(move |_symbol, date| {
+                call_count_cl.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if date == day(2026, 1, 9) {
+                    Err(ArchiveDayError::NotFound("http://x".to_string()))
+                } else {
+                    Ok(vec![trade(date.and_hms_opt(1, 0, 0).unwrap_or_default().and_utc().timestamp_millis())])
+                }
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3, "gap day does not count toward the landed-page budget");
+            assert!(!engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(true), "mid-range 404 must NOT latch exhausted");
+            assert_eq!(engine.snapshot(&key).map(|s| s.loaded), Some(2), "only the 2 successful days counted as loaded");
+
+            let mut prepended_batches = 0;
+            while let Ok(update) = rx.try_recv() {
+                if let LiveUpdate::TradeHistoryPrepended { .. } = update {
+                    prepended_batches += 1;
+                }
+            }
+            assert_eq!(prepended_batches, 2);
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_consecutive_mid_range_404s_latch_as_boundary() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Bybit, "BTCUSDT".to_string(), AccountType::Spot, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            // Wide floor: every 404 the mock returns is classified as a gap
+            // by distance-to-floor alone — the consecutive-run breaker must
+            // be what stops the walk, not the boundary check.
+            let spec = spec_with_since(day_ms(2000, 1, 1));
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            engine.with_state(&key, |s| s.oldest_anchor = Some(day_ms(2026, 1, 20)));
+            engine.with_state(&key, |s| s.ramp_step = MAX_RAMP_PAGES_PER_GROUP); // want as many as possible
+
+            let fetcher = mock_fetcher(|_symbol, _date| {
+                Err(ArchiveDayError::NotFound("http://x".to_string()))
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            assert!(
+                engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(false),
+                "MAX_CONSECUTIVE_MID_RANGE_404S consecutive gaps must latch exhausted (delisted-symbol heuristic)"
+            );
+            let mut saw_exhausted_event = false;
+            while let Ok(update) = rx.try_recv() {
+                if let LiveUpdate::LayerBackfilled { exhausted: true, .. } = update {
+                    saw_exhausted_event = true;
+                }
+            }
+            assert!(saw_exhausted_event);
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_transient_error_stops_group_without_latching() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Bybit, "BTCUSDT".to_string(), AccountType::Spot, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            let spec = spec_with_since(day_ms(2000, 1, 1));
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            engine.with_state(&key, |s| s.oldest_anchor = Some(day_ms(2026, 1, 10)));
+            engine.with_state(&key, |s| s.ramp_step = 4);
+
+            let fetcher = mock_fetcher(|_symbol, _date| {
+                Err(ArchiveDayError::HttpStatus { status: 503, url: "http://x".to_string() })
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            assert!(!engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(true), "transient error must not latch exhausted");
+            assert_eq!(engine.snapshot(&key).map(|s| s.loaded), Some(0));
+            let mut saw_any_event = false;
+            while let Ok(_update) = rx.try_recv() {
+                saw_any_event = true;
+            }
+            assert!(!saw_any_event, "transient error breaks the group with no emission at all for that failed day");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn run_archive_group_overlap_guard_trims_rows_at_or_after_oldest_loaded() {
+            let engine = BackfillEngine::new();
+            let key: BackfillKey = (ExchangeId::Binance, "BTCUSDT".to_string(), AccountType::FuturesCross, LayerId::Trades);
+            engine.with_state(&key, RampState::begin_flight);
+
+            // Simulates the RestWindow → archive continuation seam: REST
+            // already loaded down to `oldest_anchor`, so the FIRST archive
+            // day (which straddles that boundary) must have its overlapping
+            // rows trimmed before being counted/emitted.
+            let wall_ms = day_ms(2026, 1, 10) + 12 * 60 * 60 * 1000; // noon on the 10th
+            engine.with_state(&key, |s| s.oldest_anchor = Some(wall_ms));
+            engine.with_state(&key, |s| s.ramp_step = 1);
+
+            let spec = spec_with_since(day_ms(2000, 1, 1));
+            let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+
+            // resume_before(wall_ms, ...) starts at 2026-01-09 (day BEFORE
+            // the day containing wall_ms) — that day's rows are entirely
+            // before the wall, so nothing should be trimmed here. Exercise
+            // the trim directly at the boundary day instead by using a
+            // fetcher that returns rows straddling `wall_ms` regardless of
+            // which date is requested (day-boundary semantics are already
+            // covered by `resume_before`'s own unit tests in dig3-station).
+            let wall = wall_ms;
+            let fetcher = mock_fetcher(move |_symbol, date| {
+                let base = date.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis();
+                Ok(vec![
+                    trade(base + 1_000),          // well before any wall
+                    trade(wall - 1),               // just before the wall — kept
+                    trade(wall),                   // AT the wall — trimmed
+                    trade(wall + 60_000),          // after the wall — trimmed
+                ])
+            });
+
+            run_archive_group(
+                &fetcher, &tx, &engine, &key, ExchangeId::Binance, AccountType::FuturesCross,
+                "BTCUSDT", "BTCUSDT", spec, true,
+            ).await;
+
+            let mut all_ts: Vec<i64> = Vec::new();
+            while let Ok(update) = rx.try_recv() {
+                if let LiveUpdate::TradeHistoryPrepended { trades, .. } = update {
+                    all_ts.extend(trades.iter().map(|t| t.ts_ms));
+                }
+            }
+            assert!(!all_ts.contains(&wall), "row exactly at the overlap floor must be trimmed");
+            assert!(!all_ts.contains(&(wall + 60_000)), "row after the overlap floor must be trimmed");
+            assert!(all_ts.contains(&(wall - 1)), "row just before the overlap floor is kept");
+        }
     }
 }

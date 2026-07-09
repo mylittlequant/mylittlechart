@@ -1054,6 +1054,22 @@ impl DataBridge {
     /// served intervals from ones only reachable via live trade aggregation
     /// (`TradeToBarDerived`, no REST history) — see
     /// `nemo/docs/mlc/plans/resolution-availability-2026-07-08.md` Phase 3.
+    /// Bulk daily trade-archive capability for `exchange_id`, per account
+    /// type.
+    ///
+    /// Thin wrapper over `ExchangeHub::trade_archive_capabilities` — `None`
+    /// if the exchange isn't connected yet (mirrors the hub's own `None`
+    /// contract). Consumed by `BackfillEngine::run_trade_ramp` to decide
+    /// whether a `RecentOnly`/`RestWindow` venue can chain into deep
+    /// archive-day-file history once its live REST tier bottoms out — see
+    /// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
+    pub fn trade_archive_capabilities(
+        &self,
+        exchange_id: ExchangeId,
+    ) -> Option<digdigdig3::core::types::TradeArchiveCapabilities> {
+        self.hub.trade_archive_capabilities(exchange_id)
+    }
+
     pub fn kline_interval_capabilities(
         &self,
         exchange_id: ExchangeId,
