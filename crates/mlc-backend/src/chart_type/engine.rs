@@ -50,17 +50,23 @@ pub enum SubscribeParams {
     Interval { interval: &'static str },
 }
 
-/// Data-plane engine ops for a chart type. Composes `DataBridge`
-/// (subscribe/abort) with `DataBubble` (slot clear/bookkeeping stamp). Kept
-/// next to `mlc-backend`'s `BackendCore` since only this crate can legally
-/// name both types.
+/// Data-plane engine ops for a chart type. Composes `DataBridge` (subscribe)
+/// with `DataBubble` (slot clear/bookkeeping stamp). Kept next to
+/// `mlc-backend`'s `BackendCore` since only this crate can legally name both
+/// types.
 ///
 /// Not `Clone`-derived on purpose — the ops table is `&'static` and shared.
 pub struct SubscribeOps {
-    /// Fire the appropriate `bridge.request_*` for this chart type.
-    /// Takes `&DataBridge` + instrument coords + `SubscribeParams`.
-    /// Returns `()` — subscribe methods are fire-and-forget.
-    pub subscribe: fn(&DataBridge, ExchangeId, &str, Dig3AccountType, &Timeframe, SubscribeParams),
+    /// Fire the appropriate `bridge.request_*` for this chart type, or
+    /// `None` for the 13 fold/trade-fold types (unified-data-plane Э3/Э4) —
+    /// their real network trigger is `BackendCore::subscribe_fold_chart_type`/
+    /// `subscribe_trade_fold_chart_type`, called by every caller of this
+    /// table ALONGSIDE (not through) `ops.subscribe`, guarded by
+    /// `is_fold_chart_type`/`is_trade_fold_chart_type` before this field is
+    /// ever read — an honest `None` reflects that this fn-pointer is never
+    /// actually invoked for those 13 rows, rather than a live no-op stub.
+    /// Kline family + dom/liq heatmap keep a real subscribe fn.
+    pub subscribe: Option<fn(&DataBridge, ExchangeId, &str, Dig3AccountType, &Timeframe, SubscribeParams)>,
 
     /// Clear the bubble slot(s) that this chart type writes into (renko_bars,
     /// pnf_columns, kagi_segments, three_line_break, tpo_sessions,
@@ -68,10 +74,6 @@ pub struct SubscribeOps {
     /// bar family). Also stamps `bars_source` and `mark_footprint_pending`
     /// where relevant.
     pub clear_slot: fn(&mut DataBubble),
-
-    /// Abort any live subscription for this chart type (idempotent). Called
-    /// before switching AWAY from this type. Wraps `bridge.abort_*` calls.
-    pub abort: fn(&DataBridge, ExchangeId, &str, Dig3AccountType, &Timeframe),
 }
 
 // ---------------------------------------------------------------------------
@@ -96,54 +98,6 @@ fn subscribe_kline_bars(
         _ => 300,
     };
     bridge.request_bars(eid, symbol, tf, at, None, Some(bar_count), true);
-}
-
-/// Unified-data-plane Stage Э3: range_bar/volume_bar/dollar_bar/renko/pnf/
-/// kagi/three_line_break no longer open a station-side derived subscription
-/// through the `SubscribeOps` table — they are client-side folds over the
-/// bubble's own "1m" kline layer, installed and reseeded by
-/// `BackendCore::subscribe_fold_chart_type` (called alongside `ops.subscribe`
-/// at every one of this table's 3 call sites — see
-/// `chart_out_events.rs`/`ignite_derived_windows`). This fn-pointer slot is
-/// kept as a documented no-op (not removed) so `ops_by_id` stays a complete
-/// table for the 24 registered chart types and the `every_registry_id_has_ops`
-/// test keeps passing; the REAL network trigger for these 7 types is
-/// `subscribe_fold_chart_type`'s "ensure 1m kline layer" step. The old
-/// `bridge.request_range_bars`/etc. station-derived paths are left intact on
-/// `DataBridge` (Э5 demolition, not this stage) — simply uncalled from here.
-fn subscribe_fold_noop(
-    _bridge: &DataBridge,
-    _eid: ExchangeId,
-    _symbol: &str,
-    _at: Dig3AccountType,
-    _tf: &Timeframe,
-    _params: SubscribeParams,
-) {
-}
-
-/// Unified-data-plane Stage Э4: tick_bar/tick_imbalance_bar/
-/// volume_imbalance_bar/run_bar/footprint/tpo no longer open a station-side
-/// derived subscription through this table — they are client-side folds
-/// over the bubble's own trade layer, installed and reseeded by
-/// `BackendCore::subscribe_trade_fold_chart_type` (called alongside
-/// `ops.subscribe` at every one of this table's 3 call sites — see
-/// `chart_out_events.rs`). This fn-pointer slot is kept as a documented
-/// no-op (not removed) so `ops_by_id` stays a complete table for every
-/// registered chart type and the `every_registry_id_has_ops` test keeps
-/// passing; the REAL network trigger for these 6 types is
-/// `subscribe_trade_fold_chart_type`'s "ensure trade layer feed" step.
-/// Mirrors [`subscribe_fold_noop`]'s role for the kline-sufficient family.
-/// The old `bridge.request_tick_bars`/`request_footprint`/etc. station-
-/// derived paths are left intact on `DataBridge` (Э5 demolition, not this
-/// stage) — simply uncalled from here.
-fn subscribe_trade_fold_noop(
-    _bridge: &DataBridge,
-    _eid: ExchangeId,
-    _symbol: &str,
-    _at: Dig3AccountType,
-    _tf: &Timeframe,
-    _params: SubscribeParams,
-) {
 }
 
 /// Whether footprint on `(exchange_id, account_type)` must run hybrid
@@ -295,83 +249,42 @@ fn clear_slot_liq_heatmap(bubble: &mut DataBubble) {
 }
 
 // ---------------------------------------------------------------------------
-// Abort fns
-// ---------------------------------------------------------------------------
-
-/// Kline/render-family abort — releases the live `Stream::Kline` forwarder
-/// for the given TF.
-fn abort_kline(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3AccountType, tf: &Timeframe) {
-    bridge.abort_kline_bars(eid, symbol, at, &tf.name);
-}
-
-/// Every derived chart type (trade-agg bars, price-action transforms, tpo,
-/// the two heatmaps) shares one `derived_subs` slot in `DataBridge` — a
-/// single `abort_derived_chart` call releases whichever stream was live.
-fn abort_derived(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3AccountType, _tf: &Timeframe) {
-    bridge.abort_derived_chart(eid, symbol, at);
-}
-
-/// Unified-data-plane Stage Э3: the 7 fold types hold no station-side
-/// derived subscription to abort (see [`subscribe_fold_noop`]) — their "1m"
-/// kline feed is the SAME continuous per-bubble layer feed every chart type
-/// shares (Stage Э1), never torn down on a chart-type switch. Dropping
-/// `bubble.active_fold` (bubble-mutating, so it happens at the call sites
-/// alongside `ops.clear_slot` — this fn-pointer has no bubble access) is
-/// the only per-switch cleanup these types need.
-fn abort_fold_noop(_bridge: &DataBridge, _eid: ExchangeId, _symbol: &str, _at: Dig3AccountType, _tf: &Timeframe) {
-}
-
-/// Unified-data-plane Stage Э4: the 6 trade-fed fold types (tick_bar/
-/// tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/tpo) hold no
-/// station-side derived subscription to abort either — their trade-layer
-/// feed is the SAME continuous per-bubble layer feed every chart type
-/// shares (Stage Э1), never torn down on a chart-type switch. Footprint's
-/// (possibly hybrid) kline backdrop is likewise left running — same
-/// rationale [`subscribe_trade_fold_noop`]'s doc comment gives for not
-/// calling `abort_kline_bars` here. Dropping `bubble.active_trade_fold`
-/// (bubble-mutating, so it happens at the call sites alongside
-/// `ops.clear_slot` — this fn-pointer has no bubble access) is the only
-/// per-switch cleanup these types need. Mirrors [`abort_fold_noop`]'s role
-/// for the kline-sufficient family.
-fn abort_trade_fold_noop(_bridge: &DataBridge, _eid: ExchangeId, _symbol: &str, _at: Dig3AccountType, _tf: &Timeframe) {
-}
-
-// ---------------------------------------------------------------------------
 // Static table
 // ---------------------------------------------------------------------------
 
 static OPS: &[(&str, SubscribeOps)] = &[
-    ("candles", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("bars", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("hollow_candles", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("heikin_ashi", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("line", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("step_line", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("line_markers", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("hlc_area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("baseline", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("range_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
-    ("volume_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
-    // Unified-data-plane Stage Э4: tick_bar/tick_imbalance_bar/volume_imbalance_bar/
-    // run_bar/footprint/tpo no longer open a station-side derived subscription
-    // through this table either — client-side folds over the bubble's own
-    // trade layer (`BackendCore::subscribe_trade_fold_chart_type`), installed
-    // at the same 3 `chart_out_events.rs` call sites the Э3 cutover uses. See
-    // `subscribe_trade_fold_noop`'s doc comment (mirrors `subscribe_fold_noop`).
-    ("tick_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
-    ("dollar_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
-    ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
-    ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
-    ("run_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
-    ("renko", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_renko, abort: abort_fold_noop }),
-    ("pnf", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_pnf, abort: abort_fold_noop }),
-    ("kagi", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_kagi, abort: abort_fold_noop }),
-    ("three_line_break", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_three_line_break, abort: abort_fold_noop }),
-    ("footprint", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_footprint, abort: abort_trade_fold_noop }),
-    ("tpo", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_tpo, abort: abort_trade_fold_noop }),
-    ("dom_heatmap", SubscribeOps { subscribe: subscribe_dom_heatmap, clear_slot: clear_slot_dom_heatmap, abort: abort_derived }),
-    ("liquidation_heatmap", SubscribeOps { subscribe: subscribe_liq_heatmap, clear_slot: clear_slot_liq_heatmap, abort: abort_derived }),
+    ("candles", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("bars", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("hollow_candles", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("heikin_ashi", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("line", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("step_line", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("line_markers", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("area", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("hlc_area", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    ("baseline", SubscribeOps { subscribe: Some(subscribe_kline_bars), clear_slot: clear_slot_kline_bars }),
+    // Unified-data-plane Э3/Э4: the 13 fold/trade-fold types below install/
+    // reseed their client-side `FoldRuntime`/`TradeFoldRuntime` through
+    // `BackendCore::subscribe_fold_chart_type`/`subscribe_trade_fold_chart_type`
+    // instead of `ops.subscribe` — every caller of this table checks
+    // `is_fold_chart_type`/`is_trade_fold_chart_type` BEFORE ever reading
+    // `ops.subscribe`, so `None` here is never actually dereferenced in
+    // practice; it is the honest value for "no station-side subscribe fn".
+    ("range_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("volume_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("tick_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("dollar_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("tick_imbalance_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("volume_imbalance_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("run_bar", SubscribeOps { subscribe: None, clear_slot: clear_slot_trade_agg_bars }),
+    ("renko", SubscribeOps { subscribe: None, clear_slot: clear_slot_renko }),
+    ("pnf", SubscribeOps { subscribe: None, clear_slot: clear_slot_pnf }),
+    ("kagi", SubscribeOps { subscribe: None, clear_slot: clear_slot_kagi }),
+    ("three_line_break", SubscribeOps { subscribe: None, clear_slot: clear_slot_three_line_break }),
+    ("footprint", SubscribeOps { subscribe: None, clear_slot: clear_slot_footprint }),
+    ("tpo", SubscribeOps { subscribe: None, clear_slot: clear_slot_tpo }),
+    ("dom_heatmap", SubscribeOps { subscribe: Some(subscribe_dom_heatmap), clear_slot: clear_slot_dom_heatmap }),
+    ("liquidation_heatmap", SubscribeOps { subscribe: Some(subscribe_liq_heatmap), clear_slot: clear_slot_liq_heatmap }),
 ];
 
 /// Look up the `SubscribeOps` for a chart_type id. `None` for unknown ids.

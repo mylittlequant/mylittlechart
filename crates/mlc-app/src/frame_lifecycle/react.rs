@@ -1231,19 +1231,6 @@ impl ChartApp {
                     // compensation, right-edge follow — all inside the intent
                     // method (owner viewport doctrine 2026-07-05).
                     window.reconcile_derived_series(series);
-                    // F5 (viewport doctrine audit 2026-07-07): clear the
-                    // derived in-flight guard as soon as the deepen actually
-                    // grew the series, instead of waiting out the 10s
-                    // timeout backstop in tick.rs (which still applies if
-                    // the reseed silently stalls).
-                    let new_len = series.len();
-                    self.core.bubbles_mut().with_bubble_mut(*bid, |b| {
-                        if let Some((_, fired_len)) = b.derived_seed_in_flight {
-                            if new_len > fired_len {
-                                b.derived_seed_in_flight = None;
-                            }
-                        }
-                    });
                     // VPLOCKSTEP (viewport doctrine audit 2026-07-07,
                     // mechanism #2): footprint's viewport bookkeeping keys
                     // off `bubble.bars` while the renderer clamps against

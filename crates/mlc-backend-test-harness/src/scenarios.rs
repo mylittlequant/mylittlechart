@@ -1306,160 +1306,12 @@ pub fn multi_symbol_mini_ticker_cache_keys() -> HarnessResult<()> {
 // ==========================================================================
 
 // ==========================================================================
-// Derived bars stream coverage: Footprint / Renko / PnF / Kagi / CVD / TPO /
-// ThreeLineBreak. All seven derive from aggTrades upstream of the station,
-// but at the broadcast layer they arrive as LiveUpdate::<Variant>{ point }
-// — bridge already re-emits the station Event so we can inject directly.
-// Each scenario asserts the matching *Appended BubbleEvent and verifies the
-// per-derived store on the bubble actually grew.
+// Derived bars stream coverage: CVD. Station-derived wipe (unified-data-
+// plane Э5a) demoted renko/pnf/kagi/tpo/three_line_break/footprint to
+// client-side folds (no `LiveUpdate` arm left to inject here) — CVD is the
+// one overlay still reaching the bridge as a real station stream (dual-run
+// alongside its client-side fold, see `mlc-app/src/input/overlay.rs`).
 // ==========================================================================
-
-pub fn body_stream_footprint_update_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::FootprintPoint {
-        open_time: 1_700_000_000_000,
-        open: 50_000.0, high: 50_050.0, low: 49_900.0, close: 50_025.0,
-        volume: 12.5,
-        // (price, buy_vol, sell_vol)
-        levels: vec![
-            (50_000.0, 1.5, 0.5),
-            (50_025.0, 2.0, 1.0),
-            (50_050.0, 0.5, 1.0),
-        ],
-    };
-    h.inject(LiveUpdate::FootprintUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::FootprintBarAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("footprint", "no FootprintBarAppended emitted"));
-    }
-    let fp_len = h.core.bubbles().footprint_bars(bid).map(|v| v.len()).unwrap_or(0);
-    if fp_len != 1 {
-        return Err(err("footprint", format!("bubble.footprint_bars: {} != 1", fp_len)));
-    }
-    // The arm also mirrors OHLC into bubble.bars so the standard candle layer
-    // can render historical context — sanity check that grew too.
-    let bars_len = h.core.bubbles().bars(bid).len();
-    if bars_len != 1 {
-        return Err(err("footprint", format!("bubble.bars mirror: {} != 1", bars_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_footprint_update_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_footprint_update_writes_bubble(&mut h)
-}
-
-pub fn body_stream_renko_brick_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::RenkoBrickPoint {
-        open_time: 1_700_000_000_000,
-        bottom: 49_900.0,
-        top: 50_000.0,
-        up: true,
-        volume: 5.5,
-        trades_count: 12,
-    };
-    h.inject(LiveUpdate::RenkoBarUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::RenkoBarAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("renko", "no RenkoBarAppended emitted"));
-    }
-    let renko_len = h.core.bubbles().renko_bars(bid).map(|v| v.len()).unwrap_or(0);
-    if renko_len != 1 {
-        return Err(err("renko", format!("bubble.renko_bars: {} != 1", renko_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_renko_brick_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_renko_brick_writes_bubble(&mut h)
-}
-
-pub fn body_stream_pnf_column_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::PnfColumnPoint {
-        open_time: 1_700_000_000_000,
-        column_id: 1,
-        is_x: true,
-        bottom: 50_000.0,
-        top: 50_300.0,
-        volume: 10.0,
-        trades_count: 50,
-    };
-    h.inject(LiveUpdate::PnfBarUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-        box_size: 100.0,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::PnfBarAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("pnf", "no PnfBarAppended emitted"));
-    }
-    let pnf_len = h.core.bubbles().pnf_columns(bid).map(|v| v.len()).unwrap_or(0);
-    if pnf_len != 1 {
-        return Err(err("pnf", format!("bubble.pnf_columns: {} != 1", pnf_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_pnf_column_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_pnf_column_writes_bubble(&mut h)
-}
-
-pub fn body_stream_kagi_segment_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::KagiSegmentPoint {
-        open_time: 1_700_000_000_000,
-        start_price: 50_000.0,
-        end_price: 50_300.0,
-        up: true,
-        yang: true,
-        is_connector: false,
-    };
-    h.inject(LiveUpdate::KagiBarUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::KagiBarAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("kagi", "no KagiBarAppended emitted"));
-    }
-    let kagi_len = h.core.bubbles().kagi_segments(bid).map(|v| v.len()).unwrap_or(0);
-    if kagi_len != 1 {
-        return Err(err("kagi", format!("bubble.kagi_segments: {} != 1", kagi_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_kagi_segment_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_kagi_segment_writes_bubble(&mut h)
-}
 
 pub fn body_stream_cvd_scalar_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
     let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
@@ -1489,80 +1341,6 @@ pub fn body_stream_cvd_scalar_writes_bubble(h: &mut BackendHarness) -> HarnessRe
 pub fn stream_cvd_scalar_writes_bubble() -> HarnessResult<()> {
     let mut h = BackendHarness::fresh();
     body_stream_cvd_scalar_writes_bubble(&mut h)
-}
-
-pub fn body_stream_tpo_session_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::TpoSessionPoint {
-        open_time: 1_700_000_000_000,
-        tick_size: 1.0,
-        session_high: 50_500.0,
-        session_low: 49_500.0,
-        poc_price: 50_000.0,
-        vah_price: 50_300.0,
-        val_price: 49_700.0,
-        rows: vec![
-            (49_500.0, vec!['A']),
-            (50_000.0, vec!['A', 'B', 'C']),
-            (50_500.0, vec!['C']),
-        ],
-    };
-    h.inject(LiveUpdate::TpoProfileUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::TpoSessionUpdated { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("tpo", "no TpoSessionUpdated emitted"));
-    }
-    let tpo_len = h.core.bubbles().tpo_sessions(bid).map(|v| v.len()).unwrap_or(0);
-    if tpo_len != 1 {
-        return Err(err("tpo", format!("bubble.tpo_sessions: {} != 1", tpo_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_tpo_session_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_tpo_session_writes_bubble(&mut h)
-}
-
-pub fn body_stream_three_line_break_writes_bubble(h: &mut BackendHarness) -> HarnessResult<()> {
-    let bid = register_bubble(h, ExchangeId::Binance, AccountType::Spot, "BTCUSDT", Timeframe::h1());
-    let point = digdigdig3_station::data::ThreeLineBreakLinePoint {
-        ts_open: 1_700_000_000_000,
-        ts_close: 1_700_000_060_000,
-        open: 50_000.0,
-        close: 50_200.0,
-        volume: 8.0,
-        direction: 0,
-    };
-    h.inject(LiveUpdate::ThreeLineBreakUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::Spot,
-        symbol: "BTCUSDT".to_string(),
-        point,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::TlbLineAppended { bid: ev_bid, .. } if *ev_bid == bid));
-    if !hit {
-        return Err(err("tlb", "no TlbLineAppended emitted"));
-    }
-    let tlb_len = h.core.bubbles().three_line_break(bid).map(|v| v.len()).unwrap_or(0);
-    if tlb_len != 1 {
-        return Err(err("tlb", format!("bubble.three_line_break: {} != 1", tlb_len)));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_three_line_break_writes_bubble() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_three_line_break_writes_bubble(&mut h)
 }
 
 pub fn body_stream_dom_trade_dot_passthrough(h: &mut BackendHarness) -> HarnessResult<()> {
@@ -1708,14 +1486,12 @@ pub fn sync_scenarios() -> Vec<(&'static str, fn() -> HarnessResult<()>)> {
         ("multi_symbol_bars_isolation", multi_symbol_bars_isolation),
         ("multi_symbol_trade_passthrough_independent", multi_symbol_trade_passthrough_independent),
         ("multi_symbol_mini_ticker_cache_keys", multi_symbol_mini_ticker_cache_keys),
-        // Derived bars (aggTrades-fueled) — backend re-emits to the bubble store
-        ("stream_footprint_update_writes_bubble", stream_footprint_update_writes_bubble),
-        ("stream_renko_brick_writes_bubble", stream_renko_brick_writes_bubble),
-        ("stream_pnf_column_writes_bubble", stream_pnf_column_writes_bubble),
-        ("stream_kagi_segment_writes_bubble", stream_kagi_segment_writes_bubble),
+        // Derived bars (aggTrades-fueled) — backend re-emits to the bubble store.
+        // Station-derived wipe (unified-data-plane Э5a): renko/pnf/kagi/tpo/
+        // three_line_break/footprint now fold client-side (no `LiveUpdate`
+        // arm left to inject here) — only the CVD overlay still reaches the
+        // bridge as a real station stream.
         ("stream_cvd_scalar_writes_bubble", stream_cvd_scalar_writes_bubble),
-        ("stream_tpo_session_writes_bubble", stream_tpo_session_writes_bubble),
-        ("stream_three_line_break_writes_bubble", stream_three_line_break_writes_bubble),
         ("stream_dom_trade_dot_passthrough", stream_dom_trade_dot_passthrough),
         // Alert delivery on cross
         ("alerts_straddle_fires_on_cross", alerts_straddle_fires_on_cross),

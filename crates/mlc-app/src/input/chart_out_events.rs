@@ -778,8 +778,8 @@ impl ChartApp {
                                                         self.react_to_bubble_event(&ev, now_ms());
                                                     }
                                                 }
-                                            } else {
-                                                (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                            } else if let Some(subscribe) = ops.subscribe {
+                                                subscribe(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                             }
                                         }
                                         // The CVD sub-pane companion for footprint
@@ -938,8 +938,8 @@ impl ChartApp {
                                             self.react_to_bubble_event(&ev, now_ms());
                                         }
                                     }
-                                } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
-                                    (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(active_ct).and_then(|ops| ops.subscribe) {
+                                    subscribe(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                 }
                             }
                         }
@@ -2672,8 +2672,8 @@ impl ChartApp {
                         self.react_to_bubble_event(&ev, now_ms());
                     }
                 }
-            } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
-                (ops.subscribe)(self.core.bridge_handle(), eid, &sym, at, &tf, params);
+            } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(ct).and_then(|ops| ops.subscribe) {
+                subscribe(self.core.bridge_handle(), eid, &sym, at, &tf, params);
             }
             eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);
         }

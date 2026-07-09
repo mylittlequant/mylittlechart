@@ -547,40 +547,30 @@ impl ChartApp {
         //
         // Routes by chart_type family (2026-07-04 derived-seed fix — see
         // `nemo/docs/mlc/plans/dig3-station-0325-derived-seeding-2026-07-04.md`,
-        // corrected 2026-07-07 — derived-prepend-fold-plan-2026-07-07.md):
+        // corrected 2026-07-07 — derived-prepend-fold-plan-2026-07-07.md,
+        // station-derived wipe unified-data-plane Э5a):
         // - Kline family (candles/line/area/.../histogram/columns) →
         //   `request_scroll_bars` (existing kline machinery, untouched).
-        // - Everything `chart_type_is_derived_seed` (renko/pnf/kagi/
-        //   three_line_break/range_bar/tick_bar/volume_bar/dollar_bar/
-        //   tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/tpo) →
-        //   `request_deeper_derived_seed` via `request_deeper_seed_for_active`.
-        //   `footprint` IS in this branch (its `ChartTypeKind` is
-        //   `OrderflowSlotted`, not `RenderOnly`) even though its rendered
-        //   series still piggybacks `bubble.bars` — its bridge-side deepen
-        //   (`request_deeper_footprint_seed`) has been in-place since the
-        //   `rewarm_footprint` cutover. Below, `chart_type_deepen_is_teardown`
-        //   further splits this branch: only the 3 EMA kinds (tick_imbalance_
-        //   bar/volume_imbalance_bar/run_bar) still clear+reset for a full
-        //   teardown+respawn — every other kind here (including footprint)
-        //   rides `Station::rewarm_derived`/`rewarm_footprint` in place with
-        //   no clear.
+        // - Fold types (both families) → `BackfillEngine` scroll-pressure
+        //   below. dom_heatmap/liquidation_heatmap have `DeepenKind::Unsupported`
+        //   — they never scroll-deepen at all, so no third branch is needed
+        //   here anymore (the old `is_derived`/`request_deeper_seed_for_active`
+        //   path only ever reached those two types after the wipe, and both
+        //   are always a no-op there).
         //
         // The leftmost-rendered-bar read now goes through `active_series_for_chart`
         // (`ts_ms_at(0)` / `len()`) instead of hardcoding `bubble.bars` — the old
         // code read `bubble.bars.first().timestamp` unconditionally and always
         // called `request_scroll_bars`, which silently extended klines even for
-        // chart types that don't render them (renko/pnf/kagi/... kept re-fetching
-        // kline history nobody looked at, and NEVER deepened their own series).
+        // chart types that don't render them.
         {
             let mut scroll_requests: Vec<(mlc_core::state::ChartId, String, String, String, mlc_core::instrument::AccountType)> = Vec::new();
-            let mut derived_seed_requests: Vec<(mlc_core::state::ChartId, &'static str, String, String, mlc_core::instrument::AccountType)> = Vec::new();
             // Unified-data-plane Э3: scroll-left pressure for the 7 fold
             // types reroutes to `BackfillEngine::on_kline_scroll_pressure`
-            // over the shared "1m" layer instead of
-            // `request_deeper_seed_for_active`'s teardown+respawn — the
-            // deeper history arrives as an ordinary ramped kline page
-            // (`ScrollBarsLoaded`/`BackfillComplete` + `LayerBackfilled`),
-            // and `LayerBackfilled`'s `tick_writers` arm re-folds in place.
+            // over the shared "1m" layer — the deeper history arrives as an
+            // ordinary ramped kline page (`ScrollBarsLoaded`/`BackfillComplete`
+            // + `LayerBackfilled`), and `LayerBackfilled`'s `tick_writers` arm
+            // re-folds in place.
             let mut fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> = Vec::new();
             // Unified-data-plane Э4: scroll-left pressure for the 6 trade-
             // fed fold types reroutes to `BackfillEngine::on_trade_scroll_pressure`
@@ -638,64 +628,21 @@ impl ChartApp {
                 // footprint/tpo) share the SAME "guarded internally by
                 // BackfillEngine, no history_depth gate" treatment as the 7
                 // kline-sufficient fold types — just over the trade layer
-                // instead of the "1m" kline layer. Checked BEFORE
-                // `is_derived` so a trade-fold type never falls into the
-                // teardown+respawn branch below (their registry rows still
-                // have `ChartTypeKind != RenderOnly`, so
-                // `chart_type_is_derived_seed` would otherwise say `true`).
+                // instead of the "1m" kline layer.
                 let is_trade_fold = !is_fold && mlc_backend::chart_type::is_trade_fold_chart_type(chart_type);
-                let is_derived = !is_fold && !is_trade_fold && crate::active_series::chart_type_is_derived_seed(chart_type);
                 let Some(bid_scroll) = bid_by_chart.get(cid_scroll).copied() else { continue; };
 
-                // hybrid-data-modes-plan-2026-07-08, Step 2: a `LiveOnly`
-                // bubble (RecentOnly venue — Bybit 60/1000, KuCoin 100, ...)
-                // has no venue-side history at all, ever, for this
-                // instrument+chart_type. Skip BEFORE arming
-                // `derived_seed_in_flight` (10s timeout bookkeeping) or
-                // firing the one wasted rewarm/trades_recent REST call every
-                // scroll-left crossing would otherwise cost. `Capped` still
-                // attempts to deepen (there may be more history up to the
-                // wall); `Unknown` (seed not yet reported, or a chart_type
-                // that never populates `history_depth`) never blocks —
-                // default behavior preserved. Fold types (both families)
-                // don't use `history_depth`/`is_deepen_blocked` at all — the
-                // `BackfillEngine`'s own `exhausted` latch on the "1m"/trade
-                // layer is the equivalent stop condition, checked internally
-                // by `on_kline_scroll_pressure`/`on_trade_scroll_pressure`.
-                if is_derived {
-                    let depth = self.core.bubbles().history_depth(bid_scroll);
-                    if depth.is_deepen_blocked() {
-                        continue;
-                    }
-                }
-
-                // Per-chart-type-family in-flight guard: kline scroll and
-                // derived reseed are mutually exclusive per bubble but need
-                // independent flags — see `derived_seed_in_flight`'s doc
-                // comment on `DataBubble`. Fold types (both families) skip
-                // this guard entirely — `BackfillEngine::RampState.in_flight`
-                // is the single-flight guard for the "1m"/trade layer,
-                // already internal to `on_kline_scroll_pressure`/
-                // `on_trade_scroll_pressure`.
+                // Per-chart-type-family in-flight guard: fold types (both
+                // families) skip this guard entirely —
+                // `BackfillEngine::RampState.in_flight` is the single-flight
+                // guard for the "1m"/trade layer, already internal to
+                // `on_kline_scroll_pressure`/`on_trade_scroll_pressure`.
+                // Every other chart_type (kline family; dom_heatmap/
+                // liquidation_heatmap never reach this loop meaningfully —
+                // `DeepenKind::Unsupported`, no scroll-deepen at all) uses the
+                // plain kline scroll-fetch in-flight flag below.
                 if is_fold || is_trade_fold {
                     // no-op: guarded internally by BackfillEngine
-                } else if is_derived {
-                    let in_flight = self.core.bubbles().with_bubble(bid_scroll, |b| b.derived_seed_in_flight).flatten();
-                    if let Some((started, _)) = in_flight {
-                        if started.elapsed() > std::time::Duration::from_secs(10) {
-                            crate::dlog!("[ChartApp] derived_seed_in_flight timeout, resetting for chart {:?}", cid_scroll);
-                            self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| b.derived_seed_in_flight = None);
-                            // P0 V2 follow-up: a failed/short reseed must not
-                            // leave `reseed_clamp_guard` armed forever — that
-                            // would permanently disable `resize_geometry`'s
-                            // end-clamp for this window. The in-flight flag
-                            // and the clamp guard both track the same reseed
-                            // attempt, so they're released together.
-                            window.reseed_clamp_guard = None;
-                        } else {
-                            continue;
-                        }
-                    }
                 } else {
                     let in_flight = self.core.bubbles().with_bubble(bid_scroll, |b| b.scroll_fetch_in_flight).unwrap_or(false);
                     if in_flight {
@@ -763,17 +710,6 @@ impl ChartApp {
                         win_exch_sc.clone(),
                         *win_at_sc,
                     ));
-                } else if is_derived {
-                    self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
-                        b.derived_seed_in_flight = Some((web_time::Instant::now(), bar_count_scroll));
-                    });
-                    derived_seed_requests.push((
-                        *cid_scroll,
-                        chart_type,
-                        win_sym_sc.clone(),
-                        win_exch_sc.clone(),
-                        *win_at_sc,
-                    ));
                 } else {
                     self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
                         b.scroll_fetch_in_flight = true;
@@ -815,72 +751,6 @@ impl ChartApp {
                 if let Some(tf) = parse_timeframe_name(&tf_name) {
                     self.core.request_scroll_backfill(eid, &symbol, &tf, at, oldest_ts, 500);
                 }
-            }
-
-            for (cid_req, chart_type, symbol, exchange, account_type) in derived_seed_requests {
-                // derived-prepend-fold-plan-2026-07-07, Step 5: only the 3
-                // EMA kinds (tick_imbalance_bar/volume_imbalance_bar/run_bar)
-                // still teardown+respawn — their fold state cannot be
-                // reconstructed from emitted output (see
-                // `Station::rewarm_derived`'s `RewarmUnsupported` doc
-                // comment). Every other derived chart_type now rides
-                // `Station::rewarm_derived` in place: the live station
-                // subscription never stops, older points are spliced in
-                // FRONT of the existing rendered slot, and arrive as ONE
-                // batched `LiveUpdate::*HistoryPrepended` event that
-                // `reconcile_derived_series`'s stamp-based prepend-shift
-                // already handles correctly — clearing the slot first would
-                // throw away exactly the data being extended.
-                if crate::active_series::chart_type_deepen_is_teardown(chart_type) {
-                    // Drop the stale (shorter) rendered slot BEFORE the reseed
-                    // lands — the station-side ring-peek replay in `spawn_*_sub`
-                    // (see `derived_bar_sub_body`/`renko_sub_body`/etc.) always
-                    // replays the FULL newly-seeded ring on respawn, so clearing
-                    // here and letting the replay repopulate is correct and
-                    // avoids ever concatenating the old (shallow) series with the
-                    // new (deep) one. Bar-family kinds (range/tick/volume/dollar/
-                    // imbalance/run) share `bubble.bars` with kline — cleared via
-                    // `clear_bars()`, same as `resolve_active_series`'s mapping
-                    // for those chart_types.
-                    //
-                    // In LOCKSTEP: reset the requesting window's derived-series
-                    // bookkeeping (`bar_count` + `derived_series_stamp`). Without
-                    // this, the first post-clear `reconcile_derived_series` call
-                    // (fired by the first `LiveUpdate::*BarUpdate` from the
-                    // replay) sees `new_len=1` against the STALE
-                    // `(old_head, old_last)` stamp, computes a garbage
-                    // `prepended=1` shift, and stomps `bar_count` from its stale
-                    // count to 1 — producing the one-frame viewport jump the
-                    // owner reports on zoom-out lazy-deepen. Preserving
-                    // `view_start` here is deliberate: zoom-out means the user
-                    // is mid-history and expects the position to hold, NOT to
-                    // snap to end (unlike `ChangeChartType` which resets to
-                    // fresh right-edge). See
-                    // `ChartContainer::reset_derived_stamp_for_deepen`.
-                    // "cvd" never reaches this branch: it isn't registered
-                    // in `mlc_core::chart_type` (demoted from chart_type to
-                    // overlay), so `chart_type_deepen_is_teardown("cvd")`
-                    // resolves via `by_id(..).unwrap_or(false)` to `false` —
-                    // CVD always takes the rewarm-in-place `else` path below
-                    // (derived-prepend-fold-plan-2026-07-07, Task 3: removed
-                    // the dead `chart_type == "cvd"` clear_cvd fallback that
-                    // could never execute).
-                    if let Some(bid) = self.bubble_for_chart(cid_req) {
-                        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                            if let Some(ops) = mlc_backend::chart_type::ops_by_id(chart_type) {
-                                (ops.clear_slot)(bubble);
-                            }
-                        });
-                    }
-                    if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid_req) {
-                        window.reset_derived_stamp_for_deepen();
-                    }
-                }
-
-                let eid = digdigdig3::ExchangeId::from_str(&exchange)
-                    .unwrap_or(digdigdig3::ExchangeId::Binance);
-                let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                self.core.bridge_handle().request_deeper_seed_for_active(eid, &symbol, at);
             }
 
             // Unified-data-plane Э3: fold-type scroll-left pressure feeds the

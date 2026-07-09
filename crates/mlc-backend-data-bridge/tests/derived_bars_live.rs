@@ -1,4 +1,4 @@
-//! mlc-backend-data-bridge dual-target e2e: every derived-bar / typed-derived
+//! mlc-backend-data-bridge dual-target e2e: every surviving station-derived
 //! subscription type must produce REAL data from REAL exchanges within
 //! a few seconds. Shared `body_*` async fns are exercised on BOTH
 //! targets:
@@ -17,6 +17,17 @@
 //! Each test has its own `DataBridge` instance — keeps total wall-clock
 //! per test under the runner's per-test timeout (300 s for the wasm
 //! WebDriver session, 60 s default for native `tokio::test`).
+//!
+//! Unified-data-plane Э5a (station-derived wipe): range_bar/volume_bar/
+//! dollar_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/
+//! renko/pnf/kagi/three_line_break/tpo now fold client-side over the
+//! bubble's own kline/trade layer (`mlc-backend::chart_type` fold
+//! machinery) — their station-derived `DataBridge::request_*` entry points
+//! are gone, so the matching tests were removed here too. `tick_bars` (the
+//! tick-TF kline path), `cvd_line` (still dual-run — see
+//! `mlc-app/src/input/overlay.rs`), funding rate, open interest, DOM
+//! heatmap, and liquidation all still subscribe through the station and
+//! keep their coverage below.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -130,7 +141,7 @@ macro_rules! dual_test {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BarUpdate-family derived bars (7)
+// Tick-TF kline path (still station-derived)
 // ════════════════════════════════════════════════════════════════════════════
 
 dual_test!(derived_live_tick_bars, async {
@@ -142,125 +153,10 @@ dual_test!(derived_live_tick_bars, async {
     assert_bar_for("BTCUSDT", ev, "tick_bars(10)");
 });
 
-dual_test!(derived_live_range_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_range_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 5_00_000_000);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "range_bars($5)");
-});
-
-dual_test!(derived_live_volume_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_volume_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 5_000_000);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "volume_bars(0.05 BTC)");
-});
-
-dual_test!(derived_live_dollar_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_dollar_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 5_000);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "dollar_bars($5k)");
-});
-
-dual_test!(derived_live_tick_imbalance_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_tick_imbalance_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 20, 50);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "tick_imbalance_bars(α=20% min=50)");
-});
-
-dual_test!(derived_live_volume_imbalance_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_volume_imbalance_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 20, 50);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "volume_imbalance_bars(α=20% min=50)");
-});
-
-dual_test!(derived_live_run_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_run_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 20, 50);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::BarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    assert_bar_for("BTCUSDT", ev, "run_bars(α=20% min=50)");
-});
-
 // ════════════════════════════════════════════════════════════════════════════
-// Typed derived (6)
+// CVD overlay (dual-run alongside the client-side fold — see
+// mlc-app/src/input/overlay.rs::subscribe_cvd_line_for_indicator_add)
 // ════════════════════════════════════════════════════════════════════════════
-
-dual_test!(derived_live_footprint, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_footprint(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, "1m");
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::FootprintUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::FootprintUpdate { symbol, point, .. }) = ev else {
-        panic!("no FootprintUpdate within {MAX_WAIT_SECS}s — footprint dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    assert!(!point.levels.is_empty(), "FootprintPoint.levels must not be empty");
-    log(&format!("[derived-live footprint(1m)] OK levels={} open={} close={}",
-        point.levels.len(), point.open, point.close));
-});
-
-dual_test!(derived_live_renko_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_renko_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 50_00_000_000, 1);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::RenkoBarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::RenkoBarUpdate { symbol, point, .. }) = ev else {
-        panic!("no RenkoBarUpdate within {MAX_WAIT_SECS}s — renko dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    assert!(point.top > point.bottom);
-    log(&format!("[derived-live renko($50)] OK bottom={} top={} up={} vol={}",
-        point.bottom, point.top, point.up, point.volume));
-});
-
-dual_test!(derived_live_pnf_bars, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_pnf_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 25_00_000_000, 3);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::PnfBarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::PnfBarUpdate { symbol, point, .. }) = ev else {
-        panic!("no PnfBarUpdate within {MAX_WAIT_SECS}s — pnf dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    log(&format!("[derived-live pnf($25,3)] OK col_id={} is_x={} bottom={} top={}",
-        point.column_id, point.is_x, point.bottom, point.top));
-});
-
-dual_test!(derived_live_kagi_bars, async {
-    let (bridge, mut probe) = boot().await;
-    // Reversal $10 (×1e8 = 10_00_000_000). $50 reversal is too rare on a 35s
-    // window in flat-tape regimes — native sometimes covers it via the warm-
-    // start agg-trade seed, but on a wasm cold start with no upstream-Trade
-    // pre-warm the first reversal can lag past the deadline.
-    bridge.request_kagi_bars(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 10_00_000_000);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::KagiBarUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::KagiBarUpdate { symbol, point, .. }) = ev else {
-        panic!("no KagiBarUpdate within {MAX_WAIT_SECS}s — kagi dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    log(&format!("[derived-live kagi($10)] OK start={} end={} up={}",
-        point.start_price, point.end_price, point.up));
-});
 
 dual_test!(derived_live_cvd_line, async {
     let (bridge, mut probe) = boot().await;
@@ -273,20 +169,6 @@ dual_test!(derived_live_cvd_line, async {
     };
     assert_eq!(symbol, "BTCUSDT");
     log(&format!("[derived-live cvd] OK ts={} value={}", point.ts_ms, point.value));
-});
-
-dual_test!(derived_live_three_line_break, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_three_line_break(ExchangeId::Binance, "BTCUSDT", AccountType::Spot, 3);
-    let ev = wait_for(&mut probe, MAX_WAIT_SECS, |u| {
-        matches!(u, LiveUpdate::ThreeLineBreakUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::ThreeLineBreakUpdate { symbol, point, .. }) = ev else {
-        panic!("no ThreeLineBreakUpdate within {MAX_WAIT_SECS}s — TLB dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    log(&format!("[derived-live tlb(3)] OK open={} close={} dir={}",
-        point.open, point.close, point.direction));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -361,32 +243,6 @@ dual_test!(derived_live_dom_trade_dot, async {
     assert!(dot.price > 0.0, "trade dot price must be positive");
     log(&format!("[derived-live dom-trade-dot] OK ts={} price={} qty={}",
         dot.ts_ms, dot.price, dot.quantity));
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// TPO
-// ════════════════════════════════════════════════════════════════════════════
-
-// TPO with `TpoSource::TradeBucket` + `freq_minutes=1` publishes a snapshot
-// per upstream Trade tick (~30-100/s). The wasm cold-start race was fixed
-// in dig3-station (relay no longer breaks on broadcast Lagged) so the
-// first snapshot lands inside ~1-2s on both targets.
-dual_test!(derived_live_tpo_profile, async {
-    let (bridge, mut probe) = boot().await;
-    bridge.request_tpo(
-        ExchangeId::Binance, "BTCUSDT", AccountType::Spot,
-        1, digdigdig3_station::TpoSource::TradeBucket,
-    );
-    let ev = wait_for(&mut probe, 30, |u| {
-        matches!(u, LiveUpdate::TpoProfileUpdate { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::TpoProfileUpdate { symbol, point, .. }) = ev else {
-        panic!("no TpoProfileUpdate within 30s — TPO dispatch broken");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    assert!(point.session_high >= point.session_low);
-    log(&format!("[derived-live tpo(1m,trade)] OK open_time={} hi={} lo={} poc={} rows={}",
-        point.open_time, point.session_high, point.session_low, point.poc_price, point.rows.len()));
 });
 
 // ════════════════════════════════════════════════════════════════════════════

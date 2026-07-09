@@ -109,47 +109,14 @@ async fn multi_symbol_mini_ticker_cache_keys() {
 }
 
 // ─── Derived bars (aggTrades-fueled) ─────────────────────────────────────────
-
-#[wasm_bindgen_test]
-async fn stream_footprint_update_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_footprint_update_writes_bubble(&mut h));
-}
-
-#[wasm_bindgen_test]
-async fn stream_renko_brick_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_renko_brick_writes_bubble(&mut h));
-}
-
-#[wasm_bindgen_test]
-async fn stream_pnf_column_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_pnf_column_writes_bubble(&mut h));
-}
-
-#[wasm_bindgen_test]
-async fn stream_kagi_segment_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_kagi_segment_writes_bubble(&mut h));
-}
+// Station-derived wipe (unified-data-plane Э5a): renko/pnf/kagi/tpo/
+// three_line_break/footprint now fold client-side — CVD is the one overlay
+// still reaching the bridge as a real station stream.
 
 #[wasm_bindgen_test]
 async fn stream_cvd_scalar_writes_bubble() {
     let mut h = fresh().await;
     unwrap(scenarios::body_stream_cvd_scalar_writes_bubble(&mut h));
-}
-
-#[wasm_bindgen_test]
-async fn stream_tpo_session_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_tpo_session_writes_bubble(&mut h));
-}
-
-#[wasm_bindgen_test]
-async fn stream_three_line_break_writes_bubble() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_three_line_break_writes_bubble(&mut h));
 }
 
 #[wasm_bindgen_test]
