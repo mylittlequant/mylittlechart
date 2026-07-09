@@ -151,6 +151,7 @@ pub fn data_plane_pass_through_bar_update() -> HarnessResult<()> {
         exchange_id: ExchangeId::Binance,
         account_type: AccountType::Spot,
         symbol: "BTCUSDT".to_string(),
+        timeframe: "1h".to_string(),
         bar: make_bar(1_700_000_000, 50_000.0),
         source: BarStreamKind::Kline,
     })?;

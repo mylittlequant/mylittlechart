@@ -735,7 +735,27 @@ impl ChartApp {
                                             let bar_count = self.core.user().profile().domain.bar_count as usize;
                                             let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
                                             let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count, tick_size);
-                                            (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                            // Unified-data-plane Э3: the 7 kline-sufficient
+                                            // fold types install/reseed a client-side
+                                            // `FoldRuntime` INSTEAD of `ops.subscribe`
+                                            // opening a station-side derived sub — that
+                                            // fn-pointer slot is a documented no-op for
+                                            // these 7 (see `subscribe_fold_noop`).
+                                            if mlc_backend::chart_type::is_fold_chart_type(ct) {
+                                                if let (Some(bid), Some(fold_params)) = (
+                                                    self.bubble_for_chart(cid),
+                                                    mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
+                                                ) {
+                                                    let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
+                                                    if let Some(ev) = self.core.subscribe_fold_chart_type(
+                                                        bid, ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
+                                                    ) {
+                                                        self.react_to_bubble_event(&ev, 0);
+                                                    }
+                                                }
+                                            } else {
+                                                (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                            }
                                         }
                                         // The CVD sub-pane companion for footprint
                                         // is handled uniformly by
@@ -855,9 +875,27 @@ impl ChartApp {
                                     window.begin_fresh_load();
                                     window.needs_snap_after_backfill = true;
                                 }
-                                if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
-                                    let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
-                                    let params = build_subscribe_params(active_ct, value, chart_interval, bar_count, tick_size);
+                                let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+                                let params = build_subscribe_params(active_ct, value, chart_interval, bar_count, tick_size);
+                                // Unified-data-plane Э3, param-change path: for
+                                // the 7 fold types this is a pure re-fold — new
+                                // params → fresh machine → reseed from the SAME
+                                // "1m" layer, zero network. See the
+                                // `ChangeChartType` arm above for the matching
+                                // chart-type-switch cutover.
+                                if mlc_backend::chart_type::is_fold_chart_type(active_ct) {
+                                    if let (Some(bid), Some(fold_params)) = (
+                                        bid,
+                                        mlc_backend::chart_type::fold_params_from_subscribe_params(active_ct, params),
+                                    ) {
+                                        let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
+                                        if let Some(ev) = self.core.subscribe_fold_chart_type(
+                                            bid, active_ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
+                                        ) {
+                                            self.react_to_bubble_event(&ev, 0);
+                                        }
+                                    }
+                                } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
                                     (ops.subscribe)(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
                                 }
                             }
@@ -2539,10 +2577,26 @@ impl ChartApp {
                 });
             }
             self.core.ensure_connector(eid);
-            if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
-                let bar_count = self.core.user().profile().domain.bar_count as usize;
-                let tick_size = self.resolve_tick_size(eid.as_str(), &sym, bid);
-                let params = build_subscribe_params(ct, param, iv, bar_count, tick_size);
+            let bar_count = self.core.user().profile().domain.bar_count as usize;
+            let tick_size = self.resolve_tick_size(eid.as_str(), &sym, bid);
+            let params = build_subscribe_params(ct, param, iv, bar_count, tick_size);
+            // Unified-data-plane Э3: restored windows on one of the 7 fold
+            // types install/reseed a `FoldRuntime` instead of an
+            // `ops.subscribe` station derived sub — mirrors the
+            // `ChangeChartType`/`UpdateChartTypeParam` cutover above.
+            if mlc_backend::chart_type::is_fold_chart_type(ct) {
+                if let (Some(bid), Some(fold_params)) = (
+                    bid,
+                    mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
+                ) {
+                    let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
+                    if let Some(ev) = self.core.subscribe_fold_chart_type(
+                        bid, ct, fold_params, eid, &sym, at, Some(derived_target),
+                    ) {
+                        self.react_to_bubble_event(&ev, 0);
+                    }
+                }
+            } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
                 (ops.subscribe)(self.core.bridge_handle(), eid, &sym, at, &tf, params);
             }
             eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);

@@ -15,6 +15,7 @@ mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", packa
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 digdigdig3 = "=0.3.31"
+digdigdig3-station = "=0.3.31"
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

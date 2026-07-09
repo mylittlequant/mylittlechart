@@ -15,7 +15,7 @@ use digdigdig3::{AccountType as Dig3AccountType, ExchangeId};
 use mlc_backend_data_bridge::{DataBridge, TpoSource};
 use mlc_core::state::Timeframe;
 
-use crate::bubble::{BarsSource, DataBubble};
+use crate::bubble::{BarsSource, DataBubble, FoldParams};
 
 /// Type-erased subscribe parameters, one variant per parametric-subscribe
 /// shape found in `bridge.request_*` signatures. Populated by callers
@@ -98,34 +98,27 @@ fn subscribe_kline_bars(
     bridge.request_bars(eid, symbol, tf, at, None, Some(bar_count), true);
 }
 
-fn subscribe_range_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
+/// Unified-data-plane Stage Э3: range_bar/volume_bar/dollar_bar/renko/pnf/
+/// kagi/three_line_break no longer open a station-side derived subscription
+/// through the `SubscribeOps` table — they are client-side folds over the
+/// bubble's own "1m" kline layer, installed and reseeded by
+/// `BackendCore::subscribe_fold_chart_type` (called alongside `ops.subscribe`
+/// at every one of this table's 3 call sites — see
+/// `chart_out_events.rs`/`ignite_derived_windows`). This fn-pointer slot is
+/// kept as a documented no-op (not removed) so `ops_by_id` stays a complete
+/// table for the 24 registered chart types and the `every_registry_id_has_ops`
+/// test keeps passing; the REAL network trigger for these 7 types is
+/// `subscribe_fold_chart_type`'s "ensure 1m kline layer" step. The old
+/// `bridge.request_range_bars`/etc. station-derived paths are left intact on
+/// `DataBridge` (Э5 demolition, not this stage) — simply uncalled from here.
+fn subscribe_fold_noop(
+    _bridge: &DataBridge,
+    _eid: ExchangeId,
+    _symbol: &str,
+    _at: Dig3AccountType,
     _tf: &Timeframe,
-    params: SubscribeParams,
+    _params: SubscribeParams,
 ) {
-    let scaled = match params {
-        SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64,
-        _ => (10.0_f64 * 1e8) as u64, // default 10.0 units
-    };
-    bridge.request_range_bars(eid, symbol, at, scaled);
-}
-
-fn subscribe_volume_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let scaled = match params {
-        SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64,
-        _ => (1000.0_f64 * 1e8) as u64, // default 1000.0 units
-    };
-    bridge.request_volume_bars(eid, symbol, at, scaled);
 }
 
 fn subscribe_tick_bar(
@@ -141,21 +134,6 @@ fn subscribe_tick_bar(
         _ => 100, // default 100 trades
     };
     bridge.request_tick_bars(eid, symbol, at, count);
-}
-
-fn subscribe_dollar_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let threshold = match params {
-        SubscribeParams::Threshold { threshold_u64 } => threshold_u64,
-        _ => 1_000_000, // default $1,000,000
-    };
-    bridge.request_dollar_bars(eid, symbol, at, threshold);
 }
 
 fn subscribe_tick_imbalance_bar(
@@ -201,66 +179,6 @@ fn subscribe_run_bar(
         _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
     };
     bridge.request_run_bars(eid, symbol, at, alpha_x100, min_ticks);
-}
-
-fn subscribe_renko(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let (scaled, reversal) = match params {
-        SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64, reversal),
-        _ => ((10.0_f64 * 1e8) as u64, 2), // default 10.0 units, reversal=2
-    };
-    bridge.request_renko_bars(eid, symbol, at, scaled, reversal);
-}
-
-fn subscribe_pnf(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let (scaled, reversal) = match params {
-        SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64, reversal),
-        _ => ((10.0_f64 * 1e8) as u64, 3), // default 10.0 units, reversal=3
-    };
-    bridge.request_pnf_bars(eid, symbol, at, scaled, reversal);
-}
-
-fn subscribe_kagi(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let scaled = match params {
-        SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64,
-        _ => (10.0_f64 * 1e8) as u64, // default 10.0 units
-    };
-    bridge.request_kagi_bars(eid, symbol, at, scaled);
-}
-
-fn subscribe_three_line_break(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let lines_back = match params {
-        SubscribeParams::LinesBack { lines_back } => lines_back,
-        _ => 3, // default lookback=3
-    };
-    bridge.request_three_line_break(eid, symbol, at, lines_back);
 }
 
 fn subscribe_tpo(
@@ -486,6 +404,16 @@ fn abort_footprint(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3A
     bridge.abort_derived_chart(eid, symbol, at);
 }
 
+/// Unified-data-plane Stage Э3: the 7 fold types hold no station-side
+/// derived subscription to abort (see [`subscribe_fold_noop`]) — their "1m"
+/// kline feed is the SAME continuous per-bubble layer feed every chart type
+/// shares (Stage Э1), never torn down on a chart-type switch. Dropping
+/// `bubble.active_fold` (bubble-mutating, so it happens at the call sites
+/// alongside `ops.clear_slot` — this fn-pointer has no bubble access) is
+/// the only per-switch cleanup these types need.
+fn abort_fold_noop(_bridge: &DataBridge, _eid: ExchangeId, _symbol: &str, _at: Dig3AccountType, _tf: &Timeframe) {
+}
+
 // ---------------------------------------------------------------------------
 // Static table
 // ---------------------------------------------------------------------------
@@ -501,17 +429,17 @@ static OPS: &[(&str, SubscribeOps)] = &[
     ("area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
     ("hlc_area", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
     ("baseline", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
-    ("range_bar", SubscribeOps { subscribe: subscribe_range_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
-    ("volume_bar", SubscribeOps { subscribe: subscribe_volume_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("range_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
+    ("volume_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
     ("tick_bar", SubscribeOps { subscribe: subscribe_tick_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
-    ("dollar_bar", SubscribeOps { subscribe: subscribe_dollar_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("dollar_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
     ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_tick_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
     ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_volume_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
     ("run_bar", SubscribeOps { subscribe: subscribe_run_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
-    ("renko", SubscribeOps { subscribe: subscribe_renko, clear_slot: clear_slot_renko, abort: abort_derived }),
-    ("pnf", SubscribeOps { subscribe: subscribe_pnf, clear_slot: clear_slot_pnf, abort: abort_derived }),
-    ("kagi", SubscribeOps { subscribe: subscribe_kagi, clear_slot: clear_slot_kagi, abort: abort_derived }),
-    ("three_line_break", SubscribeOps { subscribe: subscribe_three_line_break, clear_slot: clear_slot_three_line_break, abort: abort_derived }),
+    ("renko", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_renko, abort: abort_fold_noop }),
+    ("pnf", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_pnf, abort: abort_fold_noop }),
+    ("kagi", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_kagi, abort: abort_fold_noop }),
+    ("three_line_break", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_three_line_break, abort: abort_fold_noop }),
     ("footprint", SubscribeOps { subscribe: subscribe_footprint, clear_slot: clear_slot_footprint, abort: abort_footprint }),
     ("tpo", SubscribeOps { subscribe: subscribe_tpo, clear_slot: clear_slot_tpo, abort: abort_derived }),
     ("dom_heatmap", SubscribeOps { subscribe: subscribe_dom_heatmap, clear_slot: clear_slot_dom_heatmap, abort: abort_derived }),
@@ -521,6 +449,84 @@ static OPS: &[(&str, SubscribeOps)] = &[
 /// Look up the `SubscribeOps` for a chart_type id. `None` for unknown ids.
 pub fn ops_by_id(id: &str) -> Option<&'static SubscribeOps> {
     OPS.iter().find(|(k, _)| *k == id).map(|(_, v)| v)
+}
+
+// ---------------------------------------------------------------------------
+// Client-side fold cutover (unified-data-plane Stage Э3)
+// ---------------------------------------------------------------------------
+
+/// The 7 kline-sufficient chart types that fold client-side over the
+/// bubble's own "1m" kline layer instead of opening a station-side derived
+/// subscription (see [`subscribe_fold_noop`]/[`abort_fold_noop`] above).
+pub const FOLD_CHART_TYPES: &[&str] = &[
+    "range_bar", "volume_bar", "dollar_bar", "renko", "pnf", "kagi", "three_line_break",
+];
+
+/// Whether `chart_type` is one of the 7 client-side fold types.
+pub fn is_fold_chart_type(chart_type: &str) -> bool {
+    FOLD_CHART_TYPES.contains(&chart_type)
+}
+
+/// Narrow a resolved `SubscribeParams` (ticks × tick_size already applied at
+/// the `chart_out_events.rs` UI seam — see `build_subscribe_params`) into
+/// the scalar [`FoldParams`] shape [`crate::bubble::FoldRuntime`] needs.
+/// Returns `None` for any chart_type outside the 7 fold types, or when
+/// `params` doesn't carry the shape that chart_type expects (defensive —
+/// mirrors the `_ => default` fallback every `subscribe_*` fn used before
+/// this cutover).
+pub fn fold_params_from_subscribe_params(chart_type: &str, params: SubscribeParams) -> Option<FoldParams> {
+    match chart_type {
+        "range_bar" => {
+            let scaled_units = match params {
+                SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
+                _ => 10.0,
+            };
+            Some(FoldParams { scaled_units, ..Default::default() })
+        }
+        "volume_bar" => {
+            let scaled_units = match params {
+                SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
+                _ => 1000.0,
+            };
+            Some(FoldParams { scaled_units, ..Default::default() })
+        }
+        "dollar_bar" => {
+            let threshold = match params {
+                SubscribeParams::Threshold { threshold_u64 } => threshold_u64 as f64,
+                _ => 1_000_000.0,
+            };
+            Some(FoldParams { threshold, ..Default::default() })
+        }
+        "renko" => {
+            let (scaled_units, reversal) = match params {
+                SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64 as f64 / 1e8, reversal),
+                _ => (10.0, 2),
+            };
+            Some(FoldParams { scaled_units, reversal, ..Default::default() })
+        }
+        "pnf" => {
+            let (scaled_units, reversal) = match params {
+                SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64 as f64 / 1e8, reversal),
+                _ => (10.0, 3),
+            };
+            Some(FoldParams { scaled_units, reversal, box_size: scaled_units, ..Default::default() })
+        }
+        "kagi" => {
+            let scaled_units = match params {
+                SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
+                _ => 10.0,
+            };
+            Some(FoldParams { scaled_units, ..Default::default() })
+        }
+        "three_line_break" => {
+            let lines_back = match params {
+                SubscribeParams::LinesBack { lines_back } => lines_back,
+                _ => 3,
+            };
+            Some(FoldParams { lines_back, ..Default::default() })
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

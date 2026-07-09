@@ -9,4 +9,5 @@ pub mod engine;
 pub use engine::{
     SubscribeOps, SubscribeParams, ops_by_id,
     is_footprint_hybrid, clear_slot_footprint_hybrid_aware,
+    FOLD_CHART_TYPES, is_fold_chart_type, fold_params_from_subscribe_params,
 };

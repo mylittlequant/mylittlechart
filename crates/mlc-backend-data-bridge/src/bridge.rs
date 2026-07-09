@@ -291,6 +291,16 @@ pub enum LiveUpdate {
         exchange_id: ExchangeId,
         account_type: AccountType,
         symbol: String,
+        /// Kline timeframe name (e.g. `"1m"`, `"1h"`) for `source == Kline`;
+        /// empty for `source == Derived` (trade-agg-family ticks have no
+        /// wall-clock TF identity — same convention `LiveUpdate::BarsLoaded`
+        /// already uses for its own `Derived`-source arm). Added
+        /// (unified-data-plane Э3) so `tick_writers`' raw kline-layer write
+        /// keys off the EVENT's own timeframe instead of assuming it always
+        /// matches whichever bubble happens to share the instrument — a
+        /// bubble can hold an independent Э3 "1m" fold-feed subscription
+        /// while its own `timeframe` field is a different wall-clock TF.
+        timeframe: String,
         bar: Bar,
         /// See [`BarStreamKind`] — `Kline` for `kline-fwd`'s live ticks,
         /// `Derived` for `derived-bar-fwd`'s trade-agg-family ticks.
@@ -1735,6 +1745,7 @@ impl DataBridge {
                             account_type,
                             // Emit canonical form so app-side symbol == bubble.symbol.
                             symbol: station_symbol_canonical.clone(),
+                            timeframe: station_tf_name.clone(),
                             bar,
                             source: BarStreamKind::Kline,
                         });
@@ -5675,6 +5686,7 @@ async fn derived_bar_sub_body(
                     exchange_id,
                     account_type,
                     symbol: symbol_canonical.clone(),
+                    timeframe: String::new(),
                     bar,
                     source: BarStreamKind::Derived,
                 });

@@ -383,6 +383,19 @@ pub struct DataBubble {
     /// [`DEFAULT_TRADE_LAYER_CAPACITY`]; overridden via
     /// [`Self::set_layer_capacities`].
     pub trade_layer_capacity: usize,
+
+    // =========================================================================
+    // === Client-side view fold (unified-data-plane Stage Э3, 2026-07-09) ====
+    // =========================================================================
+
+    /// Installed when this bubble's active chart_type is one of the 7
+    /// kline-sufficient fold types (range_bar/volume_bar/dollar_bar/renko/
+    /// pnf/kagi/three_line_break) — `None` otherwise. See
+    /// `crate::bubble::view_fold` module doc. Not carried across `Clone`
+    /// (fold machines are stateful, non-`Clone` accumulators with no
+    /// rollback support — a cloned bubble re-installs its own runtime on
+    /// the next subscribe rather than sharing fold state).
+    pub active_fold: Option<super::view_fold::FoldRuntime>,
 }
 
 
@@ -452,6 +465,7 @@ impl DataBubble {
             trade_layer: RawLayer::new(DEFAULT_TRADE_LAYER_CAPACITY),
             kline_layer_capacity: DEFAULT_KLINE_LAYER_CAPACITY,
             trade_layer_capacity: DEFAULT_TRADE_LAYER_CAPACITY,
+            active_fold: None,
         }
     }
 
@@ -659,6 +673,18 @@ impl DataBubble {
     /// `ChartApp::unsubscribe_cvd_line_if_last` when the last CVD instance
     /// for the bubble is removed.
     pub fn clear_derived_slots(&mut self, keep: Option<&str>) {
+        // Unified-data-plane Э3: the fold runtime is stateful accumulator
+        // tied to the OLD chart_type/params — every caller of this method
+        // (`ChangeChartType`, `UpdateChartTypeParam`, `ignite_derived_windows`)
+        // always follows with a fresh `subscribe_fold_chart_type` call for
+        // the NEW target when it's one of the 7 fold types, which reinstalls
+        // a fresh runtime. Dropping it unconditionally here (even when
+        // `keep` names a fold type — a param change on the SAME type still
+        // needs a brand-new machine instance, see `FoldRuntime::reseed`'s
+        // doc comment on why fold state has no in-place update) mirrors the
+        // "always a fresh re-subscribe follows" invariant already documented
+        // above for the other derived slots.
+        self.active_fold = None;
         if keep != Some("renko") { self.clear_renko(); }
         if keep != Some("pnf") { self.clear_pnf(); }
         if keep != Some("kagi") { self.clear_kagi(); }
@@ -790,6 +816,8 @@ impl Clone for DataBubble {
             trade_layer: self.trade_layer.clone(),
             kline_layer_capacity: self.kline_layer_capacity,
             trade_layer_capacity: self.trade_layer_capacity,
+            // Not carried across Clone — see field doc comment.
+            active_fold: None,
         }
     }
 }

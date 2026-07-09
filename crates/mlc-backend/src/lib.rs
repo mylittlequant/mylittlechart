@@ -1265,17 +1265,6 @@ impl BackendCore {
                             // anchor collapses, leaving the viewport pinned to
                             // the historic index whenever bars grow underneath).
                             let mut mgr = self.bubbles_mut();
-                            // bars-ownership gate: a footprint-owned bubble's
-                            // bar series is written by FootprintUpdate; a kline
-                            // REST load for the same instrument (another
-                            // window, hydration seed) must not stomp it. This
-                            // SAME `BarsLoaded` event is also the trade-agg
-                            // cold-seed batch's own writer (see the comment
-                            // below), so a `TradeAggBars`-owned bubble must
-                            // stay writable here — only `FootprintOhlc` blocks.
-                            if mgr.bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc {
-                                continue;
-                            }
                             // Trade-agg cold-seed batch (range/tick/volume/
                             // dollar/imbalance/run bar — Task 1 batching):
                             // the bridge has no window/bubble access to know
@@ -1288,26 +1277,53 @@ impl BackendCore {
                             // addition to `current_tag_id == bid`; an empty
                             // or wrong tf_name would silently fail that
                             // match and leave `pending_symbol_load` stuck.
-                            let tf_name = if tf_name.is_empty() {
+                            let is_derived_batch = source == BarStreamKind::Derived;
+                            let tf_name = if is_derived_batch {
                                 mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default()
                             } else {
                                 tf_name.clone()
                             };
-                            let prev_bars = mgr.bars(bid).to_vec();
-                            mgr.replace_bars(bid, bars.clone());
                             // Raw kline layer (unified-data-plane Stage Э1):
-                            // ADDITIVE write, independent of `bars_source` —
-                            // this is raw storage, not the active display
-                            // series. Genuine kline data ONLY: the trade-agg
-                            // family's cold-seed replay carries
-                            // `source == Derived` and must never pollute a
-                            // kline layer (it has no real per-bubble TF
-                            // identity — see `BarStreamKind`).
+                            // ADDITIVE write, UNCONDITIONAL (fixed Э3) —
+                            // independent of `bars_source` AND of the
+                            // bubble's own active TF, same rationale as the
+                            // `BackfillComplete`/`ScrollBarsLoaded` arms. A
+                            // bubble can hold an independent Э3 "1m"
+                            // fold-feed kline sub whose Phase-A page must
+                            // still reach `kline_layers["1m"]`. Genuine
+                            // kline data ONLY (`source == Kline`) — the
+                            // trade-agg family's cold-seed replay
+                            // (`source == Derived`) has no real per-bubble TF
+                            // identity and must never pollute a kline layer.
                             if source == BarStreamKind::Kline {
                                 for bar in &bars {
                                     mgr.kline_layer_push_live(bid, &tf_name, *bar);
                                 }
                             }
+                            // bars-ownership + TF-identity gate for the
+                            // DISPLAY write only: a footprint-owned bubble's
+                            // bar series is written by `FootprintUpdate` —
+                            // never here. The trade-agg cold-seed batch
+                            // (`is_derived_batch`) always writes (it already
+                            // resolved `tf_name` to the bubble's own TF
+                            // above, so the TF check is a no-op tautology for
+                            // it); a genuine kline Phase-A/backfill batch
+                            // writes ONLY when `tf_name` matches the bubble's
+                            // OWN active timeframe — the check that stops an
+                            // independent "1m" fold-feed sub (Э3) on a
+                            // renko/pnf/kagi/three_line_break bubble (still
+                            // `bars_source == Kline`) from wholesale-
+                            // replacing `bubble.bars` with 1m candles when
+                            // the bubble's real active tf is something else
+                            // entirely.
+                            let display_writable = mgr.bars_source(bid) != crate::bubble::BarsSource::FootprintOhlc
+                                && (is_derived_batch || mgr.timeframe(bid).map(|tf| tf.name.as_str()) == Some(tf_name.as_str()));
+                            if !display_writable {
+                                drop(mgr);
+                                continue;
+                            }
+                            let prev_bars = mgr.bars(bid).to_vec();
+                            mgr.replace_bars(bid, bars.clone());
                             drop(mgr);
                             events.push(BubbleEvent::BarsLoaded {
                                 bid,
@@ -1331,25 +1347,38 @@ impl BackendCore {
                         // bubble.bars before overwrite so the reactor's
                         // capture_view_anchor sees real prior state.
                         let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate: unlike the `BarsLoaded` arm
-                        // above, kline REST backfill is the ONLY legitimate
-                        // writer here (the trade-agg family has its own
+                        // Raw kline layer (unified-data-plane Stage Э1, fixed
+                        // Э3): ADDITIVE write, UNCONDITIONAL — independent of
+                        // `bars_source` AND of the bubble's own active TF. A
+                        // bubble can hold an independent Э3 "1m" fold-feed
+                        // kline sub (range/volume/dollar/renko/pnf/kagi/
+                        // three_line_break) whose `BackfillComplete` pages
+                        // must reach `kline_layers["1m"]` even when the
+                        // bubble's OWN active tf/chart_type is something else
+                        // entirely — moved above both gates below.
+                        for bar in &bars {
+                            mgr.kline_layer_push_live(bid, &tf_name, *bar);
+                        }
+                        // bars-ownership + TF-identity gate for the DISPLAY
+                        // write only: kline REST backfill on the bubble's OWN
+                        // active timeframe is the only legitimate writer of
+                        // `bubble.bars` here (the trade-agg family has its own
                         // dedicated `DerivedBarsPrepended` for scroll-left/
-                        // lazy-deepen) — gate on "Kline owns" so both
-                        // `FootprintOhlc` and `TradeAggBars` bubbles are
-                        // protected from this write.
-                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline {
+                        // lazy-deepen). The TF check (added Э3) is what stops
+                        // an independent "1m" fold-feed sub on a renko/pnf/
+                        // kagi/three_line_break bubble (still `bars_source ==
+                        // Kline`, since those four never stamp `TradeAggBars`)
+                        // from wholesale-replacing `bubble.bars` with 1m
+                        // candles when the bubble's real active tf is, say,
+                        // "1h" — `bars_source` alone does not encode "which
+                        // TF this bubble is actually displaying".
+                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline
+                            || mgr.timeframe(bid).map(|tf| tf.name.as_str()) != Some(tf_name.as_str())
+                        {
                             continue;
                         }
                         let prev_bars = mgr.bars(bid).to_vec();
                         mgr.replace_bars(bid, bars.clone());
-                        // Raw kline layer (unified-data-plane Stage Э1):
-                        // ADDITIVE write, independent of `bars_source` —
-                        // `BackfillComplete` only ever carries genuine kline
-                        // data (see the bars-ownership comment above).
-                        for bar in &bars {
-                            mgr.kline_layer_push_live(bid, &tf_name, *bar);
-                        }
                         drop(mgr);
                         events.push(BubbleEvent::BackfillCompleted {
                             bid,
@@ -1378,11 +1407,27 @@ impl BackendCore {
                         .bubbles_for_instrument(exchange_id.as_str(), &at_label, &symbol);
                     for bid in bids {
                         let mut mgr = self.bubbles_mut();
-                        // bars-ownership gate: kline REST scroll is the ONLY
-                        // legitimate writer here (see BackfillComplete arm) —
-                        // gate on "Kline owns" so both `FootprintOhlc` and
-                        // `TradeAggBars` bubbles are protected.
-                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline {
+                        // Raw kline layer (unified-data-plane Stage Э1, fixed
+                        // Э3): ADDITIVE prepend, UNCONDITIONAL — `ScrollBarsLoaded`
+                        // only ever carries genuine kline data for `tf_name`,
+                        // independent of which chart_type/`bars_source` this
+                        // bubble's ACTIVE display currently owns. Moved above
+                        // the bars-ownership gate below: a `TradeAggBars`- or
+                        // `FootprintOhlc`-owned bubble can simultaneously hold
+                        // an independent Э3 "1m" fold-feed kline sub, whose
+                        // pages must still reach the raw layer even though
+                        // the display write right below is correctly skipped
+                        // for it.
+                        mgr.kline_layer_prepend_batch(bid, &tf_name, bars.clone());
+                        // bars-ownership + TF-identity gate for the DISPLAY
+                        // write only (see the matching comment on
+                        // `BackfillComplete` above for the full rationale):
+                        // kline REST scroll on the bubble's OWN active
+                        // timeframe is the only legitimate writer of
+                        // `bubble.bars` here.
+                        if mgr.bars_source(bid) != crate::bubble::BarsSource::Kline
+                            || mgr.timeframe(bid).map(|tf| tf.name.as_str()) != Some(tf_name.as_str())
+                        {
                             continue;
                         }
                         // Snapshot BEFORE the merge so the reactor's anchor
@@ -1392,11 +1437,6 @@ impl BackendCore {
                         // the merge would collapse the anchor.
                         let prev_bars = mgr.bars(bid).to_vec();
                         let merged = mgr.merge_scroll_bars(bid, &bars);
-                        // Raw kline layer (unified-data-plane Stage Э1):
-                        // ADDITIVE prepend — `ScrollBarsLoaded` only ever
-                        // carries genuine kline data (bars-ownership gate
-                        // above).
-                        mgr.kline_layer_prepend_batch(bid, &tf_name, bars.clone());
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
                             bid,
@@ -1414,19 +1454,40 @@ impl BackendCore {
                 // ── BarUpdate — pass-through ────────────────────────────────────
                 // Bubble write depends on per-window `is_derived` / `chart_type` flags;
                 // reactor owns the full arm.
-                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, bar, source } => {
-                    // Raw kline layer (unified-data-plane Stage Э1): ADDITIVE
-                    // live-tick write, independent of `bars_source`/chart_type
-                    // — every bubble on this instrument gets the tick in its
-                    // OWN timeframe's layer. Genuine kline ticks only
-                    // (`source == Kline`); the trade-agg family's derived
-                    // ticks (`source == Derived`) must never land in a kline
-                    // layer.
-                    if source == BarStreamKind::Kline {
+                LiveUpdate::BarUpdate { exchange_id, account_type: bar_at, symbol: bar_sym, timeframe: bar_tf_name, bar, source } => {
+                    // Raw kline layer (unified-data-plane Stage Э1, keying
+                    // fixed in Э3): ADDITIVE live-tick write, independent of
+                    // `bars_source`/chart_type — every bubble on this
+                    // instrument gets the tick written into the layer named
+                    // by the EVENT's OWN `timeframe` field, not whichever TF
+                    // the bubble's `timeframe` happens to be set to right
+                    // now. A bubble can hold an independent "1m" fold-feed
+                    // subscription (Э3 FoldRuntime) while its own `timeframe`
+                    // is a different wall-clock TF (or a tick TF) — keying
+                    // off the bubble's own field here would have silently
+                    // written "1m" live ticks into e.g. the "1h" layer.
+                    // Genuine kline ticks only (`source == Kline`); the
+                    // trade-agg family's derived ticks (`source == Derived`,
+                    // empty `bar_tf_name`) must never land in a kline layer.
+                    if source == BarStreamKind::Kline && !bar_tf_name.is_empty() {
                         let at_label = bar_at.short_label();
                         for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &bar_sym) {
-                            if let Some(tf_name) = self.bubbles().timeframe(bid).map(|tf| tf.name.clone()) {
-                                self.bubbles_mut().kline_layer_push_live(bid, &tf_name, bar);
+                            self.bubbles_mut().kline_layer_push_live(bid, &bar_tf_name, bar);
+                            // Client-side view fold (unified-data-plane Э3):
+                            // every bubble that has installed a FoldRuntime
+                            // for one of the 7 kline-sufficient chart types
+                            // folds this SAME "1m" tick incrementally — the
+                            // fold only ever consumes the "1m" layer (see
+                            // `bubble::view_fold` module doc), so other TFs'
+                            // live ticks are a no-op here (`fold_on_live_1m`
+                            // itself is a no-op when `active_fold` is `None`,
+                            // but the TF gate avoids feeding an installed
+                            // "1m" fold a tick from an unrelated TF sub on
+                            // the same bubble).
+                            if bar_tf_name == "1m" {
+                                if let Some(ev) = self.fold_on_live_1m(bid, bar, exchange_id, &bar_sym, at_label) {
+                                    events.push(ev);
+                                }
                             }
                         }
                     }
@@ -1630,15 +1691,50 @@ impl BackendCore {
                     // Collected on-demand; no action.
                 }
 
-                // ── LayerBackfilled (unified-data-plane Э2) ──────────────────────
-                // Layer-level notification only — the actual `kline_layers`/
-                // `trade_layer` write already happened via the
-                // `ScrollBarsLoaded`/`BackfillComplete` arms above (kline) or
-                // `trade_layer_prepend_batch` (trades, once Э4 wires a
-                // consumer). No writer keys off this event yet; it exists so
-                // Э3/Э4 client-side folds have a layer-scoped signal to
-                // subscribe to instead of the active-series-shaped events.
-                LiveUpdate::LayerBackfilled { .. } => {}
+                // ── LayerBackfilled (unified-data-plane Э2, consumed Э3) ─────────
+                // The actual `kline_layers` write already happened via the
+                // `ScrollBarsLoaded`/`BackfillComplete` arms above — this is
+                // the layer-scoped SIGNAL. For `layer == "kline:1m"`, every
+                // bubble on this instrument that has installed a `FoldRuntime`
+                // (one of the 7 kline-sufficient chart types) re-folds from
+                // scratch over the now-deeper layer and replaces its output
+                // slot wholesale — cheap in-memory recompute, no network.
+                // `trade_layer_prepend_batch` (trades) has no fold consumer
+                // yet (Э4).
+                LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, .. } => {
+                    if layer == "kline:1m" {
+                        let at_label = account_type.short_label();
+                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                            let has_fold = self.bubbles().with_bubble(bid, |b| b.active_fold.is_some()).unwrap_or(false);
+                            if !has_fold { continue; }
+                            let layer_snapshot: crate::bubble::RawLayer<Bar> = match self.bubbles().kline_layer(bid, "1m") {
+                                Some(l) => l.clone(),
+                                None => continue,
+                            };
+                            let outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                b.active_fold.as_mut().map(|f| (f.reseed(&layer_snapshot), f.chart_type()))
+                            }).flatten();
+                            let Some((outputs, chart_type)) = outputs_and_type else { continue; };
+                            if let Some(ev) = self.apply_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, &symbol, at_label) {
+                                events.push(ev);
+                            }
+                            // History-depth badge (venue exhaustion / wall):
+                            // the "1m" layer ramp has stopped for good — the
+                            // active fold's history is as deep as it will
+                            // ever get. Mirrors the station-derived path's
+                            // own `HistoryDepthWire::Capped` report.
+                            if exhausted {
+                                let achieved = layer_snapshot.len();
+                                if self.bubbles_mut().set_history_depth(bid, chart_type, crate::bubble::HistoryDepth::Capped { achieved }) {
+                                    events.push(BubbleEvent::HistoryDepthReported {
+                                        bid, exchange_id, symbol: symbol.clone(), account_type: at_label.to_string(),
+                                        chart_type, depth: crate::bubble::HistoryDepth::Capped { achieved },
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // ── Trading (Order / Balance / Position) ─────────────────────────
                 LiveUpdate::OrderUpdate { .. }
@@ -2832,6 +2928,213 @@ impl BackendCore {
     /// constructor parameter in their own right.
     pub fn bridge_arc(&self) -> Arc<DataBridge> {
         self.bridge.clone()
+    }
+
+    // =========================================================================
+    // === Client-side view fold (unified-data-plane Stage Э3, 2026-07-09) ====
+    // =========================================================================
+
+    /// Install (or replace) `bid`'s [`bubble::FoldRuntime`] for one of the 7
+    /// kline-sufficient chart types, ensure the bubble's shared "1m" kline
+    /// layer is network-fed, and reseed synchronously from whatever the
+    /// layer already holds (instant if warm, empty if this is the very
+    /// first touch and the async backfill hasn't landed a page yet).
+    ///
+    /// Entirely synchronous except the "ensure network feed" step (fire-and-
+    /// forget `request_bars`/`ensure_kline_backfill`, same async machinery
+    /// every other chart type already uses for its OWN kline sub — no new
+    /// network primitive). The reseed itself touches zero network: it folds
+    /// whatever `kline_layers["1m"]` already contains in memory.
+    ///
+    /// Returns the [`BubbleEvent`] the caller should feed through
+    /// `ChartApp::react_to_bubble_event` to run the same viewport reconcile
+    /// (`seed_fresh_load`/`reconcile_derived_series`) a station-driven
+    /// `tick_writers` event would have triggered — `None` when `bid` doesn't
+    /// resolve to a live bubble.
+    pub fn subscribe_fold_chart_type(
+        &self,
+        bid: BubbleId,
+        chart_type: &'static str,
+        params: crate::bubble::FoldParams,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        derived_kline_target: Option<u32>,
+    ) -> Option<BubbleEvent> {
+        let one_minute = Timeframe::new("1m", 60_000);
+        // Live feed: idempotent per (eid, at, symbol, "1m") — a cheap no-op
+        // if another window already opened this exact kline sub.
+        self.bridge.request_bars(exchange_id, symbol, &one_minute, account_type, None, None, false);
+        // History: ramped backfill toward `derived_kline_target` (profile-
+        // configurable, default handled by the caller) — progressive, every
+        // page lands via the existing `ScrollBarsLoaded`/`BackfillComplete`
+        // + `LayerBackfilled` writers already wired in `tick_writers`.
+        self.bridge.ensure_kline_backfill(exchange_id, symbol, &one_minute, account_type, derived_kline_target);
+
+        let fold = crate::bubble::FoldRuntime::new(chart_type, params, exchange_id, symbol)?;
+        self.reseed_fold(bid, fold, exchange_id, symbol, account_type)
+    }
+
+    /// Re-seed `bid`'s existing (or freshly-installed) fold runtime from the
+    /// bubble's current "1m" kline layer snapshot, replace the output slot
+    /// wholesale, and return the reconcile-triggering [`BubbleEvent`].
+    fn reseed_fold(
+        &self,
+        bid: BubbleId,
+        mut fold: crate::bubble::FoldRuntime,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<BubbleEvent> {
+        let layer_snapshot: crate::bubble::RawLayer<Bar> = self.bubbles()
+            .kline_layer(bid, "1m")
+            .cloned()
+            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let outputs = fold.reseed(&layer_snapshot);
+        let chart_type = fold.chart_type();
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.active_fold = Some(fold));
+        let account_type_label = account_type.short_label().to_string();
+        self.apply_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, symbol, &account_type_label)
+    }
+
+    /// Replace `bid`'s fold output slot wholesale with `outputs` (a full
+    /// reseed's worth of points, oldest-first) and build the matching
+    /// reconcile-triggering [`BubbleEvent`]. Shared by
+    /// [`Self::reseed_fold`] (install/param-change/chart-type-switch path)
+    /// and the `LiveUpdate::LayerBackfilled` arm in [`Self::tick_writers`]
+    /// (scroll-deepen refold path) — both are "the layer got deeper, redo
+    /// the full fold" operations that differ only in WHEN they fire, not in
+    /// how the result lands.
+    fn apply_fold_reseed_outputs(
+        &self,
+        bid: BubbleId,
+        chart_type: &'static str,
+        outputs: Vec<crate::bubble::FoldOutput>,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let symbol = symbol.to_string();
+        let account_type_label = account_type_label.to_string();
+        let event = match chart_type {
+            "range_bar" | "volume_bar" | "dollar_bar" => {
+                let bars: Vec<Bar> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::FoldOutput::Bar(b) => Some(b),
+                    _ => None,
+                }).collect();
+                let mut mgr = self.bubbles_mut();
+                let prev_bars = mgr.bars(bid).to_vec();
+                let tf_name = mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
+                mgr.replace_bars(bid, bars.clone());
+                drop(mgr);
+                BubbleEvent::BarsLoaded {
+                    bid, exchange_id, symbol, account_type: account_type_label,
+                    timeframe: tf_name, bars, prev_bars,
+                }
+            }
+            "renko" => {
+                let bricks: Vec<mlc_core::types::RenkoBrick> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::FoldOutput::Renko(b) => Some(b),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.renko_bars = Some(bricks));
+                BubbleEvent::RenkoBarAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            "pnf" => {
+                let cols: Vec<mlc_core::types::PnfColumn> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::FoldOutput::Pnf(c) => Some(c),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.pnf_columns = Some(cols));
+                BubbleEvent::PnfBarAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            "kagi" => {
+                let segs: Vec<mlc_core::types::KagiSegment> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::FoldOutput::Kagi(s) => Some(s),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.kagi_segments = Some(segs));
+                BubbleEvent::KagiBarAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            "three_line_break" => {
+                let lines: Vec<mlc_core::types::ThreeLineBreakLine> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::FoldOutput::ThreeLineBreak(l) => Some(l),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.three_line_break = Some(lines));
+                BubbleEvent::TlbLineAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            _ => return None,
+        };
+        Some(event)
+    }
+
+    /// Fold one live "1m" kline tick into `bid`'s active fold runtime, if
+    /// installed, and append/mutate-last the output into the bubble's slot.
+    /// `exchange_id`/`symbol`/`account_type_label` are the SAME identity the
+    /// triggering `LiveUpdate::BarUpdate` event carried (`tick_writers` is
+    /// the only caller) — not re-derived from the bubble, since a bubble
+    /// might not even be the primary owner of this instrument key. Returns
+    /// the reconcile-triggering [`BubbleEvent`], `None` when the bubble has
+    /// no active fold runtime (not one of the 7 fold types) or the fold
+    /// produced nothing (duplicate/absorbed tick).
+    fn fold_on_live_1m(
+        &self,
+        bid: BubbleId,
+        bar: Bar,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let output = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.active_fold.as_mut().and_then(|f| f.on_live_1m(&bar))
+        }).flatten()?;
+        let symbol = symbol.to_string();
+        let account_type_label = account_type_label.to_string();
+
+        match output {
+            crate::bubble::FoldOutput::Bar(new_bar) => {
+                let mut mgr = self.bubbles_mut();
+                let last_ts_identity = mgr.bars(bid).last().map(|b| {
+                    if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
+                });
+                let new_ts_identity = if new_bar.derived_ts_ms != 0 { new_bar.derived_ts_ms } else { new_bar.timestamp };
+                if last_ts_identity == Some(new_ts_identity) {
+                    mgr.with_bubble_mut(bid, |b| {
+                        if let Some(last) = b.last_bar_mut() {
+                            last.open = new_bar.open;
+                            last.high = new_bar.high;
+                            last.low = new_bar.low;
+                            last.close = new_bar.close;
+                            last.volume = new_bar.volume;
+                        }
+                    });
+                } else {
+                    mgr.with_bubble_mut(bid, |b| b.append_bar(new_bar));
+                }
+                drop(mgr);
+                Some(BubbleEvent::BarUpdatePassthrough {
+                    exchange_id, account_type: account_type_label, symbol,
+                    bar: self.bubbles().bars(bid).last().copied().unwrap_or(new_bar),
+                })
+            }
+            crate::bubble::FoldOutput::Renko(brick) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.append_renko(brick));
+                Some(BubbleEvent::RenkoBarAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+            crate::bubble::FoldOutput::Pnf(col) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.append_pnf(col));
+                Some(BubbleEvent::PnfBarAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+            crate::bubble::FoldOutput::Kagi(seg) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.append_kagi(seg));
+                Some(BubbleEvent::KagiBarAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+            crate::bubble::FoldOutput::ThreeLineBreak(line) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.append_three_line_break(line));
+                Some(BubbleEvent::TlbLineAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+        }
     }
 }
 
