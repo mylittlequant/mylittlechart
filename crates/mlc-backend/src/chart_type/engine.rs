@@ -100,12 +100,56 @@ fn subscribe_kline_bars(
     bridge.request_bars(eid, symbol, tf, at, None, Some(bar_count), true);
 }
 
+/// Pure join: deep trade history is available exactly when `tier` is
+/// `RestDeep`/`RestWindow`, **or** `archive` is `Some` (the venue publishes
+/// a bulk daily trade-archive the backfill engine can chain into once the
+/// live tier bottoms out). `RecentOnly` with `archive == None` is the only
+/// case that resolves `false` — the sole tier with no path to deep history
+/// at all.
+///
+/// Split out from [`deep_trade_history_available`] so the decision itself
+/// (no `DataBridge`/network dependency) is unit-testable in isolation.
+fn deep_from_caps(
+    tier: digdigdig3::core::types::TradeHistoryTier,
+    archive: Option<digdigdig3::core::types::ArchiveSpec>,
+) -> bool {
+    let rest_deep = matches!(
+        tier,
+        digdigdig3::core::types::TradeHistoryTier::RestDeep { .. }
+            | digdigdig3::core::types::TradeHistoryTier::RestWindow { .. },
+    );
+    rest_deep || archive.is_some()
+}
+
+/// Whether deep trade history is available for `(eid, at)` on `bridge` —
+/// true when the venue's live REST tier already reaches back arbitrarily
+/// far (`RestDeep`) or far-but-bounded (`RestWindow`), **or** the venue
+/// publishes a bulk daily trade-archive the backfill engine can chain into
+/// once the live tier bottoms out (`ArchiveSpec` via
+/// `TradeArchiveCapabilities::for_account`). `RecentOnly` with no archive is
+/// the only case that resolves `false`.
+///
+/// Sibling of [`crate::deep_trade_history_available`] (same join, `Dig3AccountType`
+/// already resolved here vs `mlc_core::instrument::AccountType` there —
+/// callers in this module already hold the dig3 type) — single source of
+/// truth for "does this venue have trade depth", consulted by
+/// [`is_footprint_hybrid`] below. `None` (exchange not connected yet)
+/// propagates capability-unknown.
+///
+/// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
+pub fn deep_trade_history_available(bridge: &DataBridge, eid: ExchangeId, at: Dig3AccountType) -> Option<bool> {
+    let caps = bridge.trade_history_capabilities(eid)?;
+    let archive = bridge.trade_archive_capabilities(eid)
+        .and_then(|archive| archive.for_account(at));
+    Some(deep_from_caps(caps.tier_for(at), archive))
+}
+
 /// Whether footprint on `(exchange_id, account_type)` must run hybrid
 /// (kline backdrop + live-built clusters) instead of the full-takeover
-/// path — true exactly when the venue's trade-history capability is the
-/// `RecentOnly` tier (no REST pagination exists at all, so a `DeepTrades`
-/// chart_type has no history to page in once `bubble.bars` is cleared and
-/// the kline sub is aborted).
+/// path — true exactly when [`deep_trade_history_available`] resolves
+/// `false` (no live REST depth AND no archive: a `DeepTrades` chart_type
+/// has no history to page in once `bubble.bars` is cleared and the kline
+/// sub is aborted).
 ///
 /// `pub` (not crate-private) — `mlc-app`'s `ChangeChartType`/
 /// `UpdateChartTypeInterval` handlers (`chart_out_events.rs`) call this
@@ -114,18 +158,16 @@ fn subscribe_kline_bars(
 /// the SAME capability check the footprint trade-fold install uses (Stage
 /// Э4 — `BackendCore::subscribe_trade_fold_chart_type`'s caller resolves
 /// this to decide `bars_source`) — see
-/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3.
+/// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3 and
+/// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
 ///
 /// `None` capability (exchange not connected yet) is treated as NOT
 /// hybrid — "unknown" must not force hybrid on a venue that may in fact be
 /// deep; the ordinary full-takeover path is the safer default until the
 /// capability is actually known.
 pub fn is_footprint_hybrid(bridge: &DataBridge, eid: ExchangeId, at: Dig3AccountType) -> bool {
-    bridge.trade_history_capabilities(eid)
-        .map(|caps| matches!(
-            caps.tier_for(at),
-            digdigdig3::core::types::TradeHistoryTier::RecentOnly { .. },
-        ))
+    deep_trade_history_available(bridge, eid, at)
+        .map(|deep| !deep)
         .unwrap_or(false)
 }
 
@@ -456,5 +498,50 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(ids.len(), sorted.len());
+    }
+
+    fn dummy_archive_spec() -> digdigdig3::core::types::ArchiveSpec {
+        digdigdig3::core::types::ArchiveSpec {
+            host: "public.bybit.com",
+            url_pattern: "/spot/{symbol}/{symbol}_{date}.csv.gz",
+            format: digdigdig3::core::types::ArchiveFormat::CsvGz,
+            schema: digdigdig3::core::types::ArchiveSchema::BybitSpot,
+            since_ms: 0,
+        }
+    }
+
+    // deep_from_caps — the pure join `deep_trade_history_available`/
+    // `BackendCore::deep_trade_history_available` both delegate to.
+
+    #[test]
+    fn deep_from_caps_rest_deep_is_always_deep() {
+        let tier = digdigdig3::core::types::TradeHistoryTier::RestDeep {
+            cursor: digdigdig3::core::types::HistoryCursor::FromId,
+        };
+        assert!(deep_from_caps(tier, None));
+        assert!(deep_from_caps(tier, Some(dummy_archive_spec())));
+    }
+
+    #[test]
+    fn deep_from_caps_rest_window_is_always_deep() {
+        let tier = digdigdig3::core::types::TradeHistoryTier::RestWindow {
+            cursor: digdigdig3::core::types::HistoryCursor::TsWindow,
+            max_back_ms: 86_400_000,
+        };
+        assert!(deep_from_caps(tier, None));
+    }
+
+    #[test]
+    fn deep_from_caps_recent_only_with_archive_is_deep() {
+        // Bybit spot: RecentOnly{60} live tier, but public.bybit.com day-file
+        // archive fills the gap — must resolve deep, not hybrid/live-only.
+        let tier = digdigdig3::core::types::TradeHistoryTier::RecentOnly { max_trades: 60 };
+        assert!(deep_from_caps(tier, Some(dummy_archive_spec())));
+    }
+
+    #[test]
+    fn deep_from_caps_recent_only_without_archive_is_shallow() {
+        let tier = digdigdig3::core::types::TradeHistoryTier::RecentOnly { max_trades: 1000 };
+        assert!(!deep_from_caps(tier, None));
     }
 }

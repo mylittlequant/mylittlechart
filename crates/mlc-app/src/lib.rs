@@ -1529,13 +1529,14 @@ impl ChartApp {
 
     /// Whether the footprint bucket dropdown (`ResolutionKind::Interval`)
     /// should mark every item "live only" for the ACTIVE window's (exchange,
-    /// account_type) — true exactly when the venue's trade-history
-    /// capability is the `RecentOnly` tier, mirroring `mlc_backend::
-    /// chart_type::is_footprint_hybrid` (the same capability check that
-    /// drives footprint's kline-backdrop hybrid subscribe path). `false`
-    /// when there is no active window or the capability isn't known yet
-    /// (exchange not connected) — safer default, matches
-    /// `is_footprint_hybrid`'s own `None`-is-not-hybrid contract.
+    /// account_type) — true exactly when `mlc_backend::chart_type::
+    /// is_footprint_hybrid` resolves hybrid (no deep REST tier AND no trade
+    /// archive — the same capability check that drives footprint's
+    /// kline-backdrop hybrid subscribe path; an archive-backed `RecentOnly`
+    /// venue, e.g. Bybit spot, resolves `false` here). `false` when there is
+    /// no active window or the capability isn't known yet (exchange not
+    /// connected) — safer default, matches `is_footprint_hybrid`'s own
+    /// `None`-is-not-hybrid contract.
     pub fn footprint_live_only(&self) -> bool {
         let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
             return false;

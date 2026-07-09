@@ -1033,11 +1033,13 @@ impl DataBridge {
     ///
     /// Thin wrapper over `ExchangeHub::trade_history_capabilities` — `None`
     /// if the exchange isn't connected yet (mirrors the hub's own `None`
-    /// contract). Consumed by the footprint hybrid switch point
-    /// (`mlc-backend::chart_type::engine::subscribe_footprint`) to decide
-    /// whether a `RecentOnly` venue keeps the kline backdrop alive instead
-    /// of taking over `bubble.bars` — see
-    /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3.
+    /// contract). Raw input to `mlc-backend::chart_type::engine::
+    /// deep_trade_history_available` (joined with `trade_archive_capabilities`
+    /// below), which is what actually decides the footprint hybrid switch —
+    /// a `RecentOnly` venue with an archive spec is no longer treated as
+    /// hybrid by that join — see
+    /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3 and
+    /// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
     pub fn trade_history_capabilities(
         &self,
         exchange_id: ExchangeId,

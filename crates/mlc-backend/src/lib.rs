@@ -2068,9 +2068,41 @@ impl BackendCore {
         self.bridge.collect_metrics()
     }
 
+    /// Whether deep trade history is available for `(exchange_id,
+    /// account_type)` — true when the venue's live REST tier already reaches
+    /// back arbitrarily far (`RestDeep`) or far-but-bounded (`RestWindow`),
+    /// **or** the venue publishes a bulk daily trade-archive the backfill
+    /// engine can chain into once the live tier bottoms out (`ArchiveSpec`
+    /// via `TradeArchiveCapabilities::for_account`). `RecentOnly` with no
+    /// archive is the only case that resolves `false` — the sole tier with
+    /// no path to deep history at all.
+    ///
+    /// Single source of truth for "does this venue have trade depth" —
+    /// every consumer that used to read `TradeHistoryTier` bare (dropdown
+    /// marks, footprint hybrid/takeover switch) goes through this instead,
+    /// so an archive-backed `RecentOnly` venue (Bybit spot) is treated
+    /// identically to a `RestDeep` one. `None` (exchange not connected yet)
+    /// propagates capability-unknown to the caller rather than guessing.
+    ///
+    /// Thin wrapper over [`crate::chart_type::deep_trade_history_available`]
+    /// (same join, `Dig3AccountType` there vs `mlc_core::instrument::
+    /// AccountType` here — this facade does the conversion) — that sibling
+    /// is what [`crate::chart_type::is_footprint_hybrid`] consults, so both
+    /// entry points share one implementation.
+    ///
+    /// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
+    pub fn deep_trade_history_available(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> Option<bool> {
+        let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+        crate::chart_type::deep_trade_history_available(&self.bridge, exchange_id, dig3_at)
+    }
+
     /// Whether `chart_type` would run in hybrid/live-only mode on
     /// `(exchange_id, account_type)` — resolved from `ChartTypeDef::
-    /// data_requirement` + the venue's `TradeHistoryCapabilities`. `None`
+    /// data_requirement` + [`Self::deep_trade_history_available`]. `None`
     /// exchange-not-connected or an unrecognized `chart_type` id resolves to
     /// `Unknown` (dropdown shows no marker rather than a wrong one).
     ///
@@ -2103,18 +2135,13 @@ impl BackendCore {
         match def.data_requirement {
             DataRequirement::Klines | DataRequirement::LiveFeed => DataMode::Full,
             DataRequirement::DeepTrades => {
-                let Some(caps) = self.bridge.trade_history_capabilities(exchange_id) else {
+                let Some(deep) = self.deep_trade_history_available(exchange_id, account_type) else {
                     return DataMode::Unknown;
                 };
-                let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                let is_recent_only = matches!(
-                    caps.tier_for(dig3_at),
-                    digdigdig3::core::types::TradeHistoryTier::RecentOnly { .. },
-                );
-                match (is_recent_only, chart_type) {
-                    (false, _) => DataMode::Full,
-                    (true, "footprint") => DataMode::Hybrid,
-                    (true, _) => DataMode::LiveOnly,
+                match (deep, chart_type) {
+                    (true, _) => DataMode::Full,
+                    (false, "footprint") => DataMode::Hybrid,
+                    (false, _) => DataMode::LiveOnly,
                 }
             }
         }
