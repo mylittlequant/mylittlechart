@@ -374,17 +374,23 @@ pub struct ChartRenderState<'a> {
     pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
     /// True when the chart type is non-temporal (renko / pnf / kagi /
     /// three_line_break). These types render on a derived series whose
-    /// `bars` shadow has no fixed calendar cadence — the X-axis MUST label
-    /// only real elements and never extrapolate synthetic future/past
-    /// timestamps. Forwarded to `TimeScale::generate_ticks` to bypass the
-    /// uniform-spacing heuristic entirely.
+    /// `bars` shadow carries each element's real open timestamp but no
+    /// fixed calendar cadence — the X-axis must resolve calendar boundaries
+    /// only to real elements and never extrapolate synthetic future/past
+    /// timestamps. Forwarded to `TimeScale::generate_ticks`, which routes
+    /// `true` through the auto calendar grid (round boundaries snapped to
+    /// the nearest real element, falling back to the raw per-element picker
+    /// only when the calendar grid finds no usable step).
     pub non_temporal_axis: bool,
     /// True for the counted-bar family (range/tick/volume/dollar/tick-imbalance/
-    /// volume-imbalance/run bars) — hides the vertical time GRID only. Unlike
-    /// `non_temporal_axis`, calendar/time labels stay visible: counted bars
-    /// carry real per-bar timestamps, so the non-uniform tick path still
-    /// labels them meaningfully; only the uniform-spacing grid lines are
-    /// misleading and get suppressed.
+    /// volume-imbalance/run bars). Historically hid the vertical time grid
+    /// (non-uniform per-bar spacing had no calendar cadence to draw a grid
+    /// from); `TimeScale::generate_ticks` now routes this family through the
+    /// same auto calendar grid as kline charts, so `mlc-app-layout::grid`
+    /// no longer reads this field to gate the grid — kept as chart-type
+    /// registry metadata (`ChartTypeDef::hides_time_grid`,
+    /// `active_series::chart_type_hides_time_grid`) for any future consumer
+    /// that needs the "is this a counted-bar type" classification.
     pub hide_time_grid: bool,
     /// History depth backing the bubble's active series (hybrid-data-modes-
     /// plan-2026-07-08, Step 6) — mirrors `mlc_backend::bubble::
@@ -394,20 +400,6 @@ pub struct ChartRenderState<'a> {
 }
 
 impl<'a> ChartRenderState<'a> {
-    /// Non-temporal chart types (renko / pnf / kagi / three_line_break) have
-    /// no honest calendar mapping on the X axis — the standard time grid and
-    /// calendar labels are hidden automatically for them. Detected from the
-    /// populated derived slot (in addition to the explicit flag) so it holds
-    /// in EVERY render path, including ones that never run the app-layer
-    /// ts-shadow swap.
-    pub fn non_temporal(&self) -> bool {
-        self.non_temporal_axis
-            || self.renko_bars.is_some()
-            || self.pnf_columns.is_some()
-            || self.kagi_segments.is_some()
-            || self.three_line_break.is_some()
-    }
-
     /// True when there is ANY series data to paint — either kline `bars`, or
     /// a populated own-slot for a chart type that renders from a derived
     /// series (footprint / renko / PnF / Kagi / three-line-break / TPO /

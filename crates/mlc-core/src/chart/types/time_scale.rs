@@ -361,6 +361,40 @@ impl TimeScale {
         }
     }
 
+    /// Convert timestamp to the NEAREST real bar index, clamped at the ends
+    /// of `bars` — never extrapolates. Used by
+    /// [`Self::generate_calendar_grid_ticks`]: a calendar boundary outside
+    /// `[bars[0].timestamp, bars[last].timestamp]` has no honest bar to
+    /// attach to, so it maps to whichever real end bar is closest instead of
+    /// fabricating a synthetic index past the data (unlike
+    /// [`Self::timestamp_to_bar_idx`], which extrapolates for the uniform
+    /// kline path's off-screen padding).
+    fn timestamp_to_bar_idx_nearest_clamped(ts: i64, bars: &[Bar]) -> usize {
+        if bars.is_empty() {
+            return 0;
+        }
+        let last = bars.len() - 1;
+        if ts <= bars[0].timestamp {
+            return 0;
+        }
+        if ts >= bars[last].timestamp {
+            return last;
+        }
+        match bars.binary_search_by_key(&ts, |b| b.timestamp) {
+            Ok(idx) => idx,
+            Err(idx) => {
+                // idx is the insertion point (0 < idx <= last since ts is
+                // strictly between bars[0] and bars[last] here). Compare the
+                // neighbor on each side and keep the closer one.
+                let before = idx - 1;
+                let after = idx;
+                let d_before = (ts - bars[before].timestamp).abs();
+                let d_after = (bars[after].timestamp - ts).abs();
+                if d_before <= d_after { before } else { after }
+            }
+        }
+    }
+
     /// Grid cell constraints (in pixels)
     const MIN_CELL_WIDTH: f64 = 50.0;
     const MAX_CELL_WIDTH: f64 = 250.0;
@@ -451,20 +485,34 @@ impl TimeScale {
         }
 
         // Non-temporal chart types (renko / pnf / kagi / three_line_break)
-        // render on a derived series with no fixed calendar cadence — the
-        // uniform/non-uniform heuristic below is meaningless for them (a
-        // 2-element renko can look "uniform") and the padded-extrapolation
-        // path further down would fabricate calendar labels past the last
-        // real element. Always use the per-bar path, which only emits
-        // candidates from real `bars`, and return before any extrapolation.
+        // render on a derived series backed by the ts-shadow built from
+        // each brick/column/segment/line's real open timestamp
+        // (`active_series::to_bar_shadow` — OHLC-zeroed `Bar`s, but the
+        // `timestamp` field is genuine emission-order data, not synthetic).
+        // That means a real auto calendar grid IS meaningful for them: walk
+        // round calendar boundaries and snap each to its nearest real
+        // element, same as the counted-bar family below. Only fall back to
+        // the pure per-bar picker (no cadence, candidates = the elements'
+        // own timestamps) when the calendar generator can't find a usable
+        // step — degenerate shadows (e.g. a 2-element renko, or every
+        // element sharing one timestamp) — so the strip is never left blank.
         if is_non_temporal {
-            self.generate_per_bar_ticks(
+            self.generate_calendar_grid_ticks(
                 &mut ticks,
                 bars,
                 viewport,
                 &measure_text,
                 format_settings,
             );
+            if ticks.is_empty() {
+                self.generate_per_bar_ticks(
+                    &mut ticks,
+                    bars,
+                    viewport,
+                    &measure_text,
+                    format_settings,
+                );
+            }
             ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
             return ticks;
         }
@@ -472,18 +520,29 @@ impl TimeScale {
         // Detect non-uniform bar spacing (range/volume/tick bars). When the
         // max gap between adjacent bars is > 2× the median gap, the existing
         // `day_width_px` interval dispatch picks labels at wrong timestamps
-        // (the boundary cells skip over real bars). Switch to the LWC
-        // per-bar weight path: fill_weights → one candidate per bar with the
-        // calendar-boundary weight, picker accepts in weight-desc order.
+        // (the boundary cells skip over real bars). These bars carry real
+        // per-bar close timestamps — route them through the same auto
+        // calendar grid as uniform kline charts (round boundaries snapped to
+        // the nearest real bar), falling back to the LWC per-bar weight path
+        // only if the calendar generator yields nothing (e.g. too few bars).
         let non_uniform = bars.len() >= 3 && is_non_uniform(bars);
         if non_uniform {
-            self.generate_per_bar_ticks(
+            self.generate_calendar_grid_ticks(
                 &mut ticks,
                 bars,
                 viewport,
                 &measure_text,
                 format_settings,
             );
+            if ticks.is_empty() {
+                self.generate_per_bar_ticks(
+                    &mut ticks,
+                    bars,
+                    viewport,
+                    &measure_text,
+                    format_settings,
+                );
+            }
             ticks.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
             return ticks;
         }
@@ -597,6 +656,221 @@ impl TimeScale {
         }
 
         // Reuse the bilateral-gap picker.
+        self.select_ticks_with_spacing(ticks, candidates, viewport, measure_text, format_settings);
+    }
+
+    /// Auto calendar grid for non-uniform-time series (counted-bar family:
+    /// range/volume/dollar/tick/imbalance/run bars; also renko/pnf/kagi/
+    /// three_line_break when their ts-shadow carries real per-element
+    /// timestamps). Unlike [`Self::generate_per_bar_ticks`] (candidates =
+    /// the bars' own irregular timestamps, no cadence), this walks ROUND
+    /// calendar boundaries — the same step ladder klines use — across the
+    /// visible time range and maps each boundary to the nearest real bar by
+    /// timestamp. Pixel spacing between resulting gridlines is therefore
+    /// non-uniform (bars are index-positioned); that is the intended model.
+    ///
+    /// Density is derived from the MEDIAN inter-bar duration over the
+    /// visible slice (not last-10 mean, which the uniform path uses) —
+    /// robust to bursts where several bars land in the same second and a
+    /// mean would understate the true cadence.
+    fn generate_calendar_grid_ticks<F>(
+        &self,
+        ticks: &mut Vec<TimeTick>,
+        bars: &[Bar],
+        viewport: &Viewport,
+        measure_text: &F,
+        format_settings: Option<&TimeFormatSettings>,
+    ) where
+        F: Fn(&str) -> f64,
+    {
+        if bars.len() < 2 {
+            return;
+        }
+
+        // Visible bar range (same ±50 pad discipline as the other pickers).
+        let visible_bars = viewport.visible_bars() as i64;
+        let start_bar = ((viewport.view_start.floor() as i64) - 50)
+            .max(0)
+            .min(bars.len() as i64 - 1) as usize;
+        let end_bar = (((viewport.view_start as i64) + visible_bars + 50) as usize)
+            .min(bars.len() - 1);
+        if end_bar <= start_bar {
+            return;
+        }
+
+        // Median inter-bar duration over the visible slice.
+        let mut gaps: Vec<i64> = Vec::with_capacity(end_bar - start_bar);
+        for i in (start_bar + 1)..=end_bar {
+            let g = bars[i].timestamp - bars[i - 1].timestamp;
+            if g > 0 { gaps.push(g); }
+        }
+        if gaps.is_empty() {
+            return;
+        }
+        gaps.sort_unstable();
+        let median_interval = gaps[gaps.len() / 2].max(1);
+
+        let start_ts = bars[start_bar].timestamp;
+        let end_ts = bars[end_bar].timestamp;
+        if end_ts <= start_ts {
+            return;
+        }
+
+        // Same day_width_px density measure the uniform path uses, driven
+        // off the median interval instead of the last-10-bar mean.
+        let bars_per_day = (DAY / median_interval).max(1);
+        let day_width_px = bars_per_day as f64 * viewport.bar_spacing;
+
+        // Raw boundary candidates: (timestamp, weight), round calendar
+        // boundaries only — no per-bar timestamps here.
+        let mut boundaries: Vec<(i64, TickMarkWeight)> = Vec::new();
+
+        if day_width_px > 4.0 * Self::MIN_CELL_WIDTH {
+            // Intraday regime: same divisor ladder as generate_intraday_ticks.
+            let (time_interval, weight) = if day_width_px > 86400.0 * Self::MIN_CELL_WIDTH {
+                (SECOND, TickMarkWeight::Second)
+            } else if day_width_px > 17280.0 * Self::MIN_CELL_WIDTH {
+                (5 * SECOND, TickMarkWeight::Second)
+            } else if day_width_px > 8640.0 * Self::MIN_CELL_WIDTH {
+                (10 * SECOND, TickMarkWeight::Second)
+            } else if day_width_px > 2880.0 * Self::MIN_CELL_WIDTH {
+                (30 * SECOND, TickMarkWeight::Second)
+            } else if day_width_px > 1440.0 * Self::MIN_CELL_WIDTH {
+                (MINUTE, TickMarkWeight::Minute1)
+            } else if day_width_px > 288.0 * Self::MIN_CELL_WIDTH {
+                (5 * MINUTE, TickMarkWeight::Minute5)
+            } else if day_width_px > 48.0 * Self::MIN_CELL_WIDTH {
+                (30 * MINUTE, TickMarkWeight::Minute30)
+            } else if day_width_px > 24.0 * Self::MIN_CELL_WIDTH {
+                (HOUR, TickMarkWeight::Hour)
+            } else if day_width_px > 6.0 * Self::MIN_CELL_WIDTH {
+                (4 * HOUR, TickMarkWeight::Hour4)
+            } else {
+                (12 * HOUR, TickMarkWeight::Hour4)
+            };
+
+            // Day boundaries for context (midnight UTC), same as the
+            // uniform intraday path's `add_day_boundaries`, but without a
+            // `bars`/`bar_interval` extrapolation dependency — walked
+            // directly off the calendar.
+            let (mut year, mut month, mut day, _, _, _) = timestamp_to_date(start_ts);
+            let mut day_ts = date_to_timestamp(year, month, day, 0, 0, 0);
+            if day_ts > start_ts {
+                day -= 1;
+                if day < 1 {
+                    month -= 1;
+                    if month < 1 { year -= 1; month = 12; }
+                    day = days_in_month(year, month);
+                }
+                day_ts = date_to_timestamp(year, month, day, 0, 0, 0);
+            }
+            while day_ts <= end_ts {
+                let w = if day == 1 { TickMarkWeight::Month } else { TickMarkWeight::Day };
+                boundaries.push((day_ts, w));
+                day += 1;
+                if day > days_in_month(year, month) {
+                    day = 1;
+                    month += 1;
+                    if month > 12 { month = 1; year += 1; }
+                }
+                day_ts = date_to_timestamp(year, month, day, 0, 0, 0);
+            }
+
+            // Intraday boundaries within the calendar day walk.
+            let first_boundary = (start_ts / time_interval) * time_interval;
+            let mut boundary_ts = first_boundary;
+            while boundary_ts <= end_ts {
+                let (_, _, _, hour, _, _) = timestamp_to_date(boundary_ts);
+                if hour != 0 {
+                    boundaries.push((boundary_ts, weight));
+                }
+                boundary_ts += time_interval;
+            }
+        } else {
+            // Daily/monthly regime: same DAY_STEPS ladder as generate_daily_ticks.
+            let mut step_days: i32 = 0;
+            for &step in Self::DAY_STEPS.iter().rev() {
+                let cell_width = day_width_px * step as f64;
+                if (Self::MIN_CELL_WIDTH..=Self::MAX_CELL_WIDTH).contains(&cell_width) {
+                    step_days = step;
+                    break;
+                }
+            }
+            if step_days == 0 {
+                let max_step_width = day_width_px * 5.0;
+                step_days = if max_step_width < Self::MIN_CELL_WIDTH { 0 } else { 5 };
+            }
+
+            if step_days == 0 {
+                // Too zoomed out even for the 5-day step: months only.
+                let (mut year, mut month, _, _, _, _) = timestamp_to_date(start_ts);
+                loop {
+                    let ts = date_to_timestamp(year, month, 1, 0, 0, 0);
+                    if ts > end_ts { break; }
+                    if ts >= start_ts - 31 * DAY {
+                        boundaries.push((ts, TickMarkWeight::Month));
+                    }
+                    month += 1;
+                    if month > 12 { month = 1; year += 1; }
+                }
+            } else {
+                let (mut year, mut month, _, _, _, _) = timestamp_to_date(start_ts);
+                month -= 1;
+                if month < 1 { year -= 1; month = 12; }
+                loop {
+                    let month_start = date_to_timestamp(year, month, 1, 0, 0, 0);
+                    if month_start > end_ts + 31 * DAY { break; }
+                    if month_start >= start_ts - 31 * DAY {
+                        let month_days = days_in_month(year, month);
+                        let tick_days = Self::get_tick_days(month_days, step_days);
+                        for &day in tick_days {
+                            let ts = date_to_timestamp(year, month, day, 0, 0, 0);
+                            if ts < start_ts - DAY || ts > end_ts + DAY { continue; }
+                            let w = if day == 1 { TickMarkWeight::Month } else { TickMarkWeight::Day };
+                            boundaries.push((ts, w));
+                        }
+                    }
+                    month += 1;
+                    if month > 12 { month = 1; year += 1; }
+                }
+            }
+        }
+
+        if boundaries.is_empty() {
+            return;
+        }
+
+        // Resolve each boundary to the nearest real bar (clamped, no
+        // extrapolation), then dedup consecutive boundaries landing on the
+        // same bar index — keep the higher-weight tick.
+        boundaries.sort_by_key(|&(ts, _)| ts);
+        let mut by_bar: Vec<(usize, i64, TickMarkWeight)> = Vec::with_capacity(boundaries.len());
+        for (ts, weight) in boundaries {
+            let idx = Self::timestamp_to_bar_idx_nearest_clamped(ts, &bars[..=end_bar]);
+            if idx < start_bar {
+                continue;
+            }
+            match by_bar.last_mut() {
+                Some(last) if last.0 == idx => {
+                    // Same bar as the previous boundary — keep whichever
+                    // carries the higher calendar weight (day > hour > minute).
+                    if weight > last.2 {
+                        last.1 = ts;
+                        last.2 = weight;
+                    }
+                }
+                _ => by_bar.push((idx, ts, weight)),
+            }
+        }
+
+        let candidates: Vec<(i64, f64, TickMarkWeight, i64)> = by_bar
+            .into_iter()
+            .map(|(idx, ts, weight)| {
+                let x = viewport.bar_to_x_f64(idx as f64);
+                (idx as i64, x, weight, ts)
+            })
+            .collect();
+
         self.select_ticks_with_spacing(ticks, candidates, viewport, measure_text, format_settings);
     }
 
@@ -1210,5 +1484,245 @@ mod tests {
 
         assert!(TickMarkWeight::Day.is_medium());
         assert!(!TickMarkWeight::Hour.is_medium());
+    }
+
+    // =========================================================================
+    // Calendar auto-grid tests (owner two-axis model, step 1)
+    // =========================================================================
+
+    /// Wide fixed-width label measurer — keeps the bilateral-gap picker from
+    /// rejecting candidates purely because a test's synthetic zoom level
+    /// makes `bar_spacing` tiny relative to a real font metric. Individual
+    /// tests still assert on real spacing/dedup behavior, not on how many
+    /// ticks survive the picker's pixel-collision check.
+    fn narrow_measure(_s: &str) -> f64 {
+        20.0
+    }
+
+    fn test_viewport(bar_count: usize, bar_spacing: f64, chart_width: f64) -> Viewport {
+        Viewport {
+            view_start: 0.0,
+            bar_spacing,
+            bar_width_ratio: 0.8,
+            chart_width,
+            chart_height: 400.0,
+            bar_count,
+        }
+    }
+
+    /// Build a synthetic non-uniform series: a 5-minute base cadence with
+    /// periodic bursts (3 bars 10s apart every 10th bar) and one large gap
+    /// (2 hours) near the tail — triggers `is_non_uniform` (max gap > 2x
+    /// median over the last-100-gap sample window) and exercises both the
+    /// burst-density and gap-collapse paths of the calendar generator in one
+    /// series. Kept under 100 total bars so every feature (bursts + the
+    /// gap) falls inside `is_non_uniform`'s last-100-gap sample window
+    /// regardless of how the burst injection shifts total bar count.
+    fn synthetic_non_uniform_bars() -> Vec<Bar> {
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 3, 1, 0, 0, 0);
+        for i in 0..60 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            if i == 45 {
+                // One large gap: 2 hours instead of 5 minutes.
+                ts += 2 * HOUR;
+            } else if i % 10 == 0 && i > 0 {
+                // Burst: two extra bars 10s apart right after this one.
+                ts += 10;
+                bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+                ts += 10;
+                bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+                ts += 5 * MINUTE;
+            } else {
+                ts += 5 * MINUTE;
+            }
+        }
+        bars
+    }
+
+    #[test]
+    fn test_calendar_grid_non_uniform_ticks_on_round_boundaries() {
+        let bars = synthetic_non_uniform_bars();
+        assert!(is_non_uniform(&bars), "fixture must actually be non-uniform");
+
+        let viewport = test_viewport(bars.len(), 8.0, 1200.0);
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        assert!(!ticks.is_empty(), "calendar generator must produce ticks for a non-uniform series");
+
+        for tick in &ticks {
+            let idx = tick.bar_idx as usize;
+            assert!(idx < bars.len(), "tick.bar_idx must reference a real bar");
+            // Every tick must land exactly on a real bar's x position —
+            // calendar boundaries are resolved to the nearest bar, never a
+            // synthetic fractional position.
+            assert_eq!(tick.x, viewport.bar_to_x_f64(idx as f64));
+        }
+
+        // No two ticks may share a bar_idx (dedup invariant).
+        let mut seen: Vec<i64> = ticks.iter().map(|t| t.bar_idx).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), before, "duplicate bar_idx across ticks — dedup failed");
+    }
+
+    #[test]
+    fn test_calendar_grid_dedup_keeps_higher_weight_on_gap_collapse() {
+        // Two bars separated by a gap wide enough that several calendar
+        // day-boundaries fall strictly between them with nothing to attach
+        // to except these two bars — they must all collapse onto whichever
+        // of the two bars is nearest, deduped to one tick per bar, and the
+        // survivor at each bar must carry the highest-weight boundary that
+        // collapsed onto it (Day/Month over lower intraday weights).
+        let start = date_to_timestamp(2024, 1, 1, 0, 0, 0);
+        let end = date_to_timestamp(2024, 1, 10, 0, 0, 0); // 9-day gap
+        let bars = vec![
+            Bar::new(start, 0.0, 0.0, 0.0, 0.0),
+            Bar::new(end, 0.0, 0.0, 0.0, 0.0),
+        ];
+
+        let viewport = test_viewport(bars.len(), 40.0, 1200.0);
+        let scale = TimeScale::new();
+        let mut ticks = Vec::new();
+        scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
+
+        // Every emitted tick must reference one of the two real bars only.
+        for t in &ticks {
+            assert!(t.bar_idx == 0 || t.bar_idx == 1, "boundary must clamp to a real bar, got {}", t.bar_idx);
+        }
+        // At most one tick per bar (dedup).
+        let idx0_count = ticks.iter().filter(|t| t.bar_idx == 0).count();
+        let idx1_count = ticks.iter().filter(|t| t.bar_idx == 1).count();
+        assert!(idx0_count <= 1);
+        assert!(idx1_count <= 1);
+    }
+
+    #[test]
+    fn test_calendar_grid_ends_clamped_no_extrapolation() {
+        // A short series where the visible viewport pad (±50 bars) would,
+        // under the OLD extrapolating `timestamp_to_bar_idx`, project
+        // boundaries into negative/beyond-length indices. The clamped
+        // resolver must never emit a bar_idx outside [0, bars.len()-1].
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 6, 15, 8, 0, 0);
+        for _ in 0..5 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += MINUTE;
+        }
+
+        let viewport = test_viewport(bars.len(), 8.0, 1200.0);
+        let scale = TimeScale::new();
+        let mut ticks = Vec::new();
+        scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
+
+        for t in &ticks {
+            assert!(t.bar_idx >= 0 && (t.bar_idx as usize) < bars.len());
+        }
+    }
+
+    #[test]
+    fn test_calendar_grid_uniform_kline_path_unchanged() {
+        // Uniform 1-hour kline series must still dispatch through
+        // `generate_intraday_ticks`/`generate_daily_ticks` (the
+        // `is_non_uniform` gate must NOT fire for a regular cadence), and
+        // must still emit Hour-weight ticks with "HH:MM"-shaped labels —
+        // pinning the pre-existing uniform-path behavior byte-identical.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 5, 1, 0, 0, 0);
+        for _ in 0..300 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += HOUR;
+        }
+        assert!(!is_non_uniform(&bars), "uniform hourly series must not be flagged non-uniform");
+
+        // Zoom level chosen so day_width_px > 4*MIN_CELL_WIDTH (intraday
+        // mode) — bars_per_day = 24, so bar_spacing=10 -> day_width_px=240 > 200.
+        let viewport = test_viewport(bars.len(), 10.0, 1200.0);
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        assert!(!ticks.is_empty(), "uniform kline path must still produce ticks");
+        assert!(
+            ticks.iter().any(|t| t.weight == TickMarkWeight::Hour || t.weight == TickMarkWeight::Day || t.weight == TickMarkWeight::Month),
+            "expected calendar-weighted ticks from the uniform intraday/daily dispatch"
+        );
+        for t in &ticks {
+            if matches!(t.weight, TickMarkWeight::Hour) {
+                assert!(t.label.contains(':'), "Hour-weight label must be HH:MM shaped, got {:?}", t.label);
+            }
+        }
+    }
+
+    #[test]
+    fn test_calendar_grid_uniform_daily_step_pins_month_and_day_weights() {
+        // Zoomed far out on a uniform daily-kline series — must still route
+        // through `generate_daily_ticks` (day_width_px small) and produce
+        // Month/Day-weighted ticks, same as before this change.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2023, 1, 1, 0, 0, 0);
+        for _ in 0..400 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += DAY;
+        }
+        let viewport = test_viewport(bars.len(), 1.0, 800.0);
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        assert!(!ticks.is_empty());
+        assert!(
+            ticks.iter().all(|t| matches!(t.weight, TickMarkWeight::Month | TickMarkWeight::Day | TickMarkWeight::Year)),
+            "zoomed-out daily kline series must only emit calendar-scale weights, got {:?}",
+            ticks.iter().map(|t| t.weight).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_calendar_grid_renko_shadow_gets_real_calendar_ticks() {
+        // Mirrors `active_series::to_bar_shadow()`'s renko/pnf/kagi/3lb
+        // output: OHLC-zeroed `Bar`s whose `timestamp` is each brick's real
+        // open time, at irregular (price-driven) intervals. Confirms the
+        // renko-family finding: since the shadow carries genuine
+        // timestamps, `is_non_temporal=true` now routes through the same
+        // calendar generator instead of the old blank-strip suppression.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 4, 10, 6, 0, 0);
+        // Irregular brick formation times: price action speeds up and slows
+        // down, so gaps between bricks vary widely (30s to 40min).
+        let gaps = [30, 45, 300, 1800, 60, 2400, 90, 120, 3000, 15, 600, 2100];
+        for (i, g) in gaps.iter().enumerate() {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += *g;
+            let _ = i;
+        }
+        bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+
+        let viewport = test_viewport(bars.len(), 12.0, 1200.0);
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, true);
+
+        assert!(!ticks.is_empty(), "renko-shadow series with real timestamps must get calendar ticks, not a blank strip");
+        for t in &ticks {
+            let idx = t.bar_idx as usize;
+            assert!(idx < bars.len());
+            assert_eq!(t.x, viewport.bar_to_x_f64(idx as f64));
+        }
+    }
+
+    #[test]
+    fn test_calendar_grid_degenerate_shadow_falls_back_to_per_bar() {
+        // A 2-element renko shadow has no usable calendar step (median gap
+        // needs >=2 samples in the visible slice) — the calendar generator
+        // must yield nothing and `generate_ticks` must fall back to the
+        // per-bar picker so the strip is never left blank.
+        let bars = vec![
+            Bar::new(1_700_000_000, 0.0, 0.0, 0.0, 0.0),
+            Bar::new(1_700_000_600, 0.0, 0.0, 0.0, 0.0),
+        ];
+        let viewport = test_viewport(bars.len(), 12.0, 1200.0);
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, true);
+        assert!(!ticks.is_empty(), "degenerate shadow must still fall back to per-bar ticks, not blank");
     }
 }

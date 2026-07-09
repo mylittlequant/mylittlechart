@@ -285,13 +285,15 @@ pub fn draw_time_scale(
     // Note: Scale borders are now drawn by draw_scale_borders() in layout/render.rs
     // to ensure consistent full-rectangle borders around all scale areas.
 
-    // Non-temporal chart types (renko/pnf/kagi/3lb): no honest calendar
-    // mapping exists — draw the empty strip only, no date labels (owner
-    // decision 2026-07-04; degenerate month/extrapolated labels are worse
-    // than none).
-    if state.non_temporal() {
-        return;
-    }
+    // Non-temporal chart types (renko/pnf/kagi/3lb) render on a derived
+    // series whose ts-shadow carries real per-element timestamps
+    // (`active_series::to_bar_shadow`) — `generate_ticks` routes them
+    // through the auto calendar grid (round boundaries snapped to the
+    // nearest real element), same as the counted-bar family. When that
+    // yields no usable step (degenerate shadow, e.g. 2 elements) it falls
+    // back to the per-bar picker internally; only a genuinely empty `bars`
+    // slice produces zero ticks, which the loop below is a no-op for — no
+    // separate blank-strip branch needed here.
 
     // Use pre-computed ticks if available, otherwise generate on-demand
     let owned_ticks;

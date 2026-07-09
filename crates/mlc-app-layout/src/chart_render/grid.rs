@@ -60,10 +60,17 @@ pub fn draw_grid(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         }
     }
 
-    // Draw vertical grid lines (time intervals). Hidden entirely for
-    // non-temporal chart types — a calendar grid over renko/pnf/kagi/3lb
-    // columns is meaningless (owner decision 2026-07-04).
-    if grid.vert_lines.visible && !state.non_temporal() && !state.hide_time_grid {
+    // Draw vertical grid lines (time intervals). `hide_time_grid` (counted-bar
+    // family: range/volume/dollar/tick/imbalance/run bars) and the derived
+    // slot check that used to live in `ChartRenderState::non_temporal()`
+    // (renko/pnf/kagi/3lb) used to blanket-suppress the grid because the old
+    // per-bar tick path had no calendar cadence to draw a meaningful grid
+    // from. `generate_ticks` now routes both families through the auto
+    // calendar grid (round boundaries snapped to the nearest real bar/
+    // element) whenever it can find a usable step, so neither flag gates the
+    // grid anymore — `ticks` is empty only when there is genuinely nothing
+    // to draw, and the loop below is a no-op.
+    if grid.vert_lines.visible {
         ctx.set_stroke_color(&theme.grid_line);
         ctx.set_stroke_width(1.0);
 
@@ -149,8 +156,10 @@ pub fn draw_grid_extended(
     }
 
     // Draw vertical grid lines (time intervals) - extended to full bounds.
-    // Hidden for non-temporal chart types (same rule as `draw_grid`).
-    if grid.vert_lines.visible && !state.non_temporal() && !state.hide_time_grid {
+    // Same rule as `draw_grid` — neither `hide_time_grid` nor
+    // `non_temporal()` gates the grid anymore now that `generate_ticks`
+    // routes both families through the auto calendar grid.
+    if grid.vert_lines.visible {
         ctx.set_stroke_color(&theme.grid_line);
         ctx.set_stroke_width(1.0);
 
