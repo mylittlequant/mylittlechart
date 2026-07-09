@@ -762,9 +762,11 @@ impl DataBubble {
 
     /// Seed the raw kline layer for timeframe `tf` with a fresh Phase-A
     /// block — see [`RawLayer::seed_block`]. Get-or-creates the layer like
-    /// [`Self::kline_layer_mut`].
-    pub fn kline_layer_seed_block(&mut self, tf: &str, block: Vec<mlc_core::Bar>) {
-        self.kline_layer_mut(tf).seed_block(block);
+    /// [`Self::kline_layer_mut`]. Returns the count of points from `block`
+    /// that were actually new (replaces of an already-stored key don't
+    /// count).
+    pub fn kline_layer_seed_block(&mut self, tf: &str, block: Vec<mlc_core::Bar>) -> usize {
+        self.kline_layer_mut(tf).seed_block(block)
     }
 
     /// Read-only access to the raw trade layer.
