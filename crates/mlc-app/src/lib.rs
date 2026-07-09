@@ -3053,6 +3053,12 @@ impl ChartApp {
             self.sidebar_state.connector_enabled = profile.domain.connector_enabled.clone();
         }
 
+        // Archive CORS-proxy base (unified-data-plane Э6-Ф4) — always from
+        // profile (process-level config, not per-window). Only meaningful on
+        // wasm (native archive fetches ignore it), but cheap enough to set
+        // unconditionally rather than special-case native here.
+        mlc_backend_data_bridge::set_archive_proxy_base(profile.domain.data_load.archive_proxy_base.clone());
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

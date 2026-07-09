@@ -193,6 +193,19 @@ pub struct DataLoadSettings {
     /// this field pick up the same default as a fresh profile.
     #[serde(default = "default_derived_trade_target")]
     pub derived_trade_target: u32,
+
+    /// CORS proxy base URL for wasm archive day-file fetches
+    /// (unified-data-plane Э6-Ф4). Browsers cannot cross-origin GET the
+    /// bulk trade-archive hosts (`public.bybit.com`, `data.binance.vision`)
+    /// directly — the wasm build routes those requests through this proxy
+    /// in prefix mode (`{archive_proxy_base}/{host}/{path}`). Native
+    /// fetches ignore this field entirely (direct HTTPS, no CORS concern
+    /// off-browser). Default `http://127.0.0.1:17800` (the local
+    /// `digdigdig3-proxy` dev instance — configurable, owner doctrine).
+    /// `#[serde(default)]` — older profiles missing this field pick up the
+    /// same default as a fresh profile.
+    #[serde(default = "default_archive_proxy_base")]
+    pub archive_proxy_base: String,
 }
 
 impl Default for DataLoadSettings {
@@ -206,6 +219,7 @@ impl Default for DataLoadSettings {
             trade_layer_capacity: default_trade_layer_capacity(),
             derived_kline_target: default_derived_kline_target(),
             derived_trade_target: default_derived_trade_target(),
+            archive_proxy_base: default_archive_proxy_base(),
         }
     }
 }
@@ -726,6 +740,10 @@ fn default_derived_kline_target() -> u32 {
 
 fn default_derived_trade_target() -> u32 {
     10_000
+}
+
+fn default_archive_proxy_base() -> String {
+    "http://127.0.0.1:17800".to_string()
 }
 
 // =============================================================================

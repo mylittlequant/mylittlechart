@@ -91,6 +91,43 @@ macro_rules! dlog {
     };
 }
 
+// ── Archive CORS-proxy base (wasm day-file fetch, Э6-Ф4) ─────────────────────
+// Browsers cannot cross-origin GET the archive hosts (`public.bybit.com`,
+// `data.binance.vision`) directly — `backfill_engine::run_trade_ramp`'s
+// archive-chaining path routes wasm day-file fetches through a CORS proxy
+// (`digdigdig3-proxy`, prefix mode) instead. Native fetches pass `None`
+// through unchanged (direct HTTPS, no CORS concern off-browser).
+//
+// `RwLock<Option<String>>` rather than `OnceLock` — unlike `DEBUG_LOG` (an
+// env var, fixed for the process lifetime), this value is a live-editable
+// profile setting (`UserProfile.domain.data_load.archive_proxy_base`) that
+// can change if the user edits settings and the profile is re-applied, so
+// the setter must be callable more than once.
+static ARCHIVE_PROXY_BASE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Set the CORS proxy base used for wasm archive day-file fetches. Called
+/// from the profile-apply path (`ChartApp::apply_profile_state` and
+/// equivalent shell-side profile hydration) with
+/// `profile.domain.data_load.archive_proxy_base`. A no-op write lock
+/// poisoning (a prior panic while holding the lock) falls back to the
+/// poisoned guard's data rather than propagating — losing one proxy-base
+/// update is preferable to panicking the whole profile-apply path.
+pub fn set_archive_proxy_base(base: String) {
+    let mut guard = ARCHIVE_PROXY_BASE.write().unwrap_or_else(|e| e.into_inner());
+    *guard = if base.is_empty() { None } else { Some(base) };
+}
+
+/// Current CORS proxy base, if one has been set via
+/// [`set_archive_proxy_base`]. `None` before the profile has been applied
+/// once (native archive fetches never read this — they always pass `None`
+/// through regardless of this value).
+pub fn archive_proxy_base() -> Option<String> {
+    ARCHIVE_PROXY_BASE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 // ── Process-relative clock (startup-freeze diagnostics) ──────────────────────
 // A single monotonic origin captured the first time it is queried. Bridge
 // startup logs stamp every connect/symbol milestone with `elapsed_ms()` so the

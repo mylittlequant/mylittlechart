@@ -42,7 +42,6 @@ use std::sync::{Arc, Mutex};
 
 use digdigdig3::core::types::{ArchiveSpec, TradeHistoryTier};
 use digdigdig3::{AccountType, ExchangeId};
-#[cfg(not(target_arch = "wasm32"))]
 use digdigdig3_station::archive::RawTrade;
 
 use crate::bridge::{DataBridge, LiveUpdate, RawTradeWire, bar_point_to_bar, sleep_ms};
@@ -682,18 +681,16 @@ impl DataBridge {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Archive-day chaining (Э6-Ф3) — bulk daily-archive files continuing a
-// trade ramp once the venue's live REST tier bottoms out (`RecentOnly`'s one
-// shallow fetch, or `RestWindow`'s `max_back_ms` wall).
+// Archive-day chaining (Э6-Ф3 native + Э6-Ф4 wasm) — bulk daily-archive
+// files continuing a trade ramp once the venue's live REST tier bottoms out
+// (`RecentOnly`'s one shallow fetch, or `RestWindow`'s `max_back_ms` wall).
 //
-// `cfg(not(target_arch = "wasm32"))` for the whole block: the native fetch
-// path (`digdigdig3_station::archive::fetch_archive_day`) and its error type
-// (`ArchiveDayError`) only exist off wasm (the browser CORS-proxy fetch path
-// is Ф4 scope) — see `digdigdig3-station/src/archive/mod.rs`'s own
-// `cfg(not(target_arch = "wasm32")) mod fetch;` gate. On wasm this whole
-// section compiles out and `run_trade_ramp`'s archive call sites fall back
-// unchanged to the pre-existing latch-on-wall behavior (see the
-// `cfg(target_arch = "wasm32")` arms inline in `run_trade_ramp` below).
+// Runs on both native and wasm32 — `digdigdig3_station::archive::
+// fetch_archive_day` itself transport-splits (native = direct reqwest;
+// wasm = reqwest's browser-fetch backend through the CORS proxy). The only
+// wasm-specific piece here is `proxy_base`, threaded through `day_fetch`
+// into the real fetch call (`None` on native, `Some(base)` on wasm — see
+// `mlc_backend_data_bridge::archive_proxy_base()`).
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Consecutive mid-range 404s treated as a boundary (venues delist symbols —
@@ -701,13 +698,11 @@ impl DataBridge {
 /// reporting a single contiguous "genuinely too old" 404 run, so a handful
 /// of gap days in a row is reclassified as "this symbol's archive effectively
 /// ends here" rather than skipped forever).
-#[cfg(not(target_arch = "wasm32"))]
 pub const MAX_CONSECUTIVE_MID_RANGE_404S: u32 = 5;
 
 /// Outcome of fetching ONE archive day file, in the pure vocabulary the ramp
 /// chaining logic reasons about — decouples the classification rules (unit
 /// tested below) from the network call itself.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArchiveDayOutcome {
     /// Day file fetched and parsed successfully (rows may be empty — an
@@ -729,7 +724,6 @@ pub enum ArchiveDayOutcome {
 /// below the boundary floor" into an [`ArchiveDayOutcome`]. No network, no
 /// I/O — the entire boundary/gap/error decision lives here so it is directly
 /// unit-testable against synthetic `Result`s.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn classify_archive_day_result(
     result: Result<Vec<RawTrade>, digdigdig3_station::archive::ArchiveDayError>,
     date_at_or_below_floor: bool,
@@ -752,7 +746,6 @@ pub fn classify_archive_day_result(
 /// already cover `[wall..now)`, so an archive day whose rows overlap that
 /// range must not re-introduce duplicates (final dedup-by-ts happens at
 /// prepend, but trimming here avoids re-emitting whole redundant days).
-#[cfg(not(target_arch = "wasm32"))]
 pub fn trim_rows_at_or_after(rows: Vec<RawTrade>, oldest_loaded_ms: Option<i64>) -> Vec<RawTrade> {
     match oldest_loaded_ms {
         Some(floor) => rows.into_iter().filter(|r| r.ts_ms < floor).collect(),
@@ -761,8 +754,21 @@ pub fn trim_rows_at_or_after(rows: Vec<RawTrade>, oldest_loaded_ms: Option<i64>)
 }
 
 /// One archive day fetch call, boxed so the runner can be driven by either
-/// the real native network fetch or a synthetic mock in tests — the
-/// trait/closure seam requested for archive-chaining test coverage.
+/// the real network fetch or a synthetic mock in tests — the trait/closure
+/// seam requested for archive-chaining test coverage. Takes `(spec, symbol,
+/// date)` only — the mock seam predates the wasm proxy-base plumbing and
+/// stays that shape; `day_fetch(proxy_base)` below closes over the proxy
+/// base instead of threading it through this type, so the mock closures in
+/// `tests::archive_chaining` are unaffected by the wasm work.
+///
+/// `Send + Sync` on the closure and its returned future are native-only:
+/// they're required there because `run_trade_ramp`/`run_archive_group` are
+/// driven through `DataBridge::spawn_bg_pub`'s native arm (`tokio::spawn`,
+/// cross-thread). On wasm the inner future crosses the browser's `fetch`
+/// JS bridge (`wasm_bindgen_futures::JsFuture`, `Rc`-backed) and is
+/// fundamentally `!Send` — but wasm is single-threaded and
+/// `spawn_bg_pub`'s wasm arm (`wasm_bindgen_futures::spawn_local`) has no
+/// `Send` bound either, so dropping it here is sound, not a workaround.
 #[cfg(not(target_arch = "wasm32"))]
 pub type DayFetch = Arc<
     dyn Fn(
@@ -775,17 +781,31 @@ pub type DayFetch = Arc<
         + Sync,
 >;
 
-/// Real native day-fetch seam — thin wrapper over
-/// [`digdigdig3_station::archive::fetch_archive_day`]. `cfg(not(wasm32))`:
-/// the native fetch path uses `reqwest` directly against the archive host
-/// (no CORS proxy needed off-browser); wasm chaining is Ф4 scope and this
-/// function does not exist on that target — [`run_trade_ramp`]'s archive
-/// arms are themselves `cfg(not(wasm32))`-gated so the whole chain compiles
-/// out cleanly on wasm rather than calling a stub.
-#[cfg(not(target_arch = "wasm32"))]
-fn native_day_fetch() -> DayFetch {
-    Arc::new(|spec, symbol, date| {
-        Box::pin(async move { digdigdig3_station::archive::fetch_archive_day(&spec, &symbol, date).await })
+/// Wasm counterpart of [`DayFetch`] — same shape, no `Send`/`Sync` bounds.
+/// See the native `DayFetch` doc comment for why this is sound rather than
+/// a workaround.
+#[cfg(target_arch = "wasm32")]
+pub type DayFetch = Arc<
+    dyn Fn(
+        ArchiveSpec,
+        String,
+        chrono::NaiveDate,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<RawTrade>, digdigdig3_station::archive::ArchiveDayError>>>,
+    >,
+>;
+
+/// Real day-fetch seam — thin wrapper over
+/// [`digdigdig3_station::archive::fetch_archive_day`], closing over
+/// `proxy_base` (`None` on native — direct HTTPS to the archive host, no
+/// CORS concern off-browser; `Some(base)` on wasm — routed through the CORS
+/// proxy, see `digdigdig3-station::archive::fetch::proxied_url`).
+fn day_fetch(proxy_base: Option<String>) -> DayFetch {
+    Arc::new(move |spec, symbol, date| {
+        let proxy_base = proxy_base.clone();
+        Box::pin(async move {
+            digdigdig3_station::archive::fetch_archive_day(&spec, &symbol, date, proxy_base.as_deref()).await
+        })
     })
 }
 
@@ -801,7 +821,6 @@ fn native_day_fetch() -> DayFetch {
 /// already held by the caller, `gate_on_target` honored via
 /// `RampState::needs_more`/`next_group_pages` exactly as the REST arms use
 /// it — GROUP size is still a rate limiter, not a depth cap.
-#[cfg(not(target_arch = "wasm32"))]
 async fn run_archive_group(
     fetcher: &DayFetch,
     tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -907,7 +926,6 @@ async fn run_archive_group(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn emit_archive_day_page(
     tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
     engine: &BackfillEngine,
@@ -995,26 +1013,22 @@ async fn run_trade_ramp(
     };
     let tier = rest.trade_history_capabilities().tier_for(account_type);
     let is_cold = engine.with_state(&key, |s| s.oldest_anchor.is_none() && s.groups_completed == 0);
-    // On wasm, archive chaining is Ф4 scope — force `None` unconditionally
-    // so every `archive_spec.is_some()` branch below folds to the
-    // pre-existing latch-on-wall behavior at compile time, with no
-    // per-branch `cfg` needed past this point (only the two actual
-    // network-call sites, `native_day_fetch`/`run_archive_group`, stay
-    // `cfg(not(wasm32))`-gated).
-    #[cfg(not(target_arch = "wasm32"))]
     let archive_spec = rest.trade_archive_capabilities().for_account(account_type);
-    #[cfg(target_arch = "wasm32")]
-    let archive_spec: Option<ArchiveSpec> = None;
+    // Wasm needs the CORS proxy base to reach the archive hosts (browsers
+    // cannot cross-origin GET `public.bybit.com` / `data.binance.vision`
+    // directly); native passes `None` straight through to a direct fetch.
+    // Read once per run — `day_fetch` closes over it for every day-file
+    // call this group makes.
+    let proxy_base = crate::archive_proxy_base();
     let already_in_archive_mode = engine.with_state(&key, |s| s.archive_mode);
 
     // A key already latched into archive mode by a PRIOR run (REST tier
     // already exhausted last time) skips straight back to the day walk —
     // never re-attempts the REST tier once archive mode is entered.
-    #[cfg(not(target_arch = "wasm32"))]
     if already_in_archive_mode {
         if let Some(spec) = archive_spec {
             run_archive_group(
-                &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                &day_fetch(proxy_base), &tx, &engine, &key, exchange_id, account_type,
                 &symbol_str, &wire_sym, spec, gate_on_target,
             ).await;
         } else {
@@ -1026,8 +1040,6 @@ async fn run_trade_ramp(
         engine.with_state(&key, RampState::end_flight);
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    let _ = already_in_archive_mode;
 
     // RecentOnly: exactly one shallow fetch, then either chain into the
     // archive (if the venue declares one) or latch exhausted — never
@@ -1047,11 +1059,10 @@ async fn run_trade_ramp(
                 engine.with_state(&key, RampState::enter_archive_mode);
             }
         } else {
-            #[cfg(not(target_arch = "wasm32"))]
             if let Some(spec) = archive_spec {
                 engine.with_state(&key, RampState::enter_archive_mode);
                 run_archive_group(
-                    &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                    &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
                     &symbol_str, &wire_sym, spec, gate_on_target,
                 ).await;
                 engine.with_state(&key, RampState::end_flight);
@@ -1088,13 +1099,12 @@ async fn run_trade_ramp(
             let latch_now = exhausted_here && !chain_to_archive;
             emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), latch_now);
             if chain_to_archive {
-                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(spec) = archive_spec {
                     engine.with_state(&key, RampState::enter_archive_mode);
                     let remaining = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
                     if remaining > 0 {
                         run_archive_group(
-                            &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                            &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
                             &symbol_str, &wire_sym, spec, gate_on_target,
                         ).await;
                     }
@@ -1145,13 +1155,12 @@ async fn run_trade_ramp(
             let latch_now = exhausted_here && !chain_to_archive;
             emit_trade_agg_page(&tx, &engine, &key, exchange_id, account_type, &symbol_str, &points, min_id.map(|v| v as i64), latch_now);
             if chain_to_archive {
-                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(spec) = archive_spec {
                     engine.with_state(&key, RampState::enter_archive_mode);
                     let remaining = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
                     if remaining > 0 {
                         run_archive_group(
-                            &native_day_fetch(), &tx, &engine, &key, exchange_id, account_type,
+                            &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
                             &symbol_str, &wire_sym, spec, gate_on_target,
                         ).await;
                     }
@@ -1565,11 +1574,17 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // Archive-day chaining (Э6-Ф3, native only). `RampState::archive_mode`
-    // pure transitions, `classify_archive_day_result`/`trim_rows_at_or_after`
-    // pure decision fns, and `run_archive_group` end-to-end driven through
-    // the `DayFetch` mock-closure seam — no network in any of these.
-    // ─────────────────────────────────────────────────────────────────────
+    // Archive-day chaining (Э6-Ф3 native + Э6-Ф4 wasm). `RampState::
+    // archive_mode` pure transitions, `classify_archive_day_result`/
+    // `trim_rows_at_or_after` pure decision fns, and `run_archive_group`
+    // end-to-end driven through the `DayFetch` mock-closure seam — no
+    // network in any of these. The production code under test (`run_archive_
+    // group`, `day_fetch`, `classify_archive_day_result`, `trim_rows_at_or_
+    // after`) compiles and runs on both native and wasm32; this test module
+    // stays native-only ONLY because `#[tokio::test(flavor = "multi_thread")]`
+    // needs a multi-thread tokio runtime that does not exist on wasm32 (wasm
+    // tests run under `wasm_bindgen_test`, not tokio) — a test-harness
+    // constraint, not a production-code gate.
     #[cfg(not(target_arch = "wasm32"))]
     mod archive_chaining {
         use super::*;
