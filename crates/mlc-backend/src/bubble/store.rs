@@ -96,6 +96,8 @@ impl BubbleStore {
             kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
             trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
+            active_trade_fold: None,
+            active_cvd_fold: None,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -154,6 +156,8 @@ impl BubbleStore {
             kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
             trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
+            active_trade_fold: None,
+            active_cvd_fold: None,
         };
         self.bubbles.insert(id, bubble);
         id

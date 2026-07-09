@@ -750,7 +750,32 @@ impl ChartApp {
                                                     if let Some(ev) = self.core.subscribe_fold_chart_type(
                                                         bid, ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
                                                     ) {
-                                                        self.react_to_bubble_event(&ev, 0);
+                                                        self.react_to_bubble_event(&ev, now_ms());
+                                                    }
+                                                }
+                                            } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
+                                                // Unified-data-plane Э4: the 6 trade-fed
+                                                // chart types install/reseed a client-side
+                                                // `TradeFoldRuntime` over the bubble's own
+                                                // trade layer INSTEAD of `ops.subscribe`
+                                                // opening a station-side derived sub —
+                                                // mirrors the Э3 branch above one layer
+                                                // over (trades, not "1m" klines). Footprint's
+                                                // `bars_source` was already stamped by
+                                                // `clear_slot_footprint_hybrid_aware` above
+                                                // (or `ops.clear_slot` for every other trade-
+                                                // fold type) BEFORE this fires — the fold
+                                                // reseed reads it to decide the OHLC mirror.
+                                                if let (Some(bid), Some(fold_params)) = (
+                                                    self.bubble_for_chart(cid),
+                                                    mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
+                                                ) {
+                                                    let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+                                                    if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                                                        bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                                                        self.active_exchange, &symbol, at, Some(derived_target),
+                                                    ) {
+                                                        self.react_to_bubble_event(&ev, now_ms());
                                                     }
                                                 }
                                             } else {
@@ -892,7 +917,25 @@ impl ChartApp {
                                         if let Some(ev) = self.core.subscribe_fold_chart_type(
                                             bid, active_ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
                                         ) {
-                                            self.react_to_bubble_event(&ev, 0);
+                                            self.react_to_bubble_event(&ev, now_ms());
+                                        }
+                                    }
+                                } else if mlc_backend::chart_type::is_trade_fold_chart_type(active_ct) {
+                                    // Unified-data-plane Э4, param-change path: for
+                                    // the 6 trade-fed types this is a full refold —
+                                    // new params → fresh machine → replay the SAME
+                                    // trade layer, zero network. Mirrors the Э3
+                                    // branch above one layer over.
+                                    if let (Some(bid), Some(fold_params)) = (
+                                        bid,
+                                        mlc_backend::chart_type::trade_fold_params_from_subscribe_params(active_ct, params),
+                                    ) {
+                                        let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+                                        if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                                            bid, active_ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                                            self.active_exchange, &symbol, at, Some(derived_target),
+                                        ) {
+                                            self.react_to_bubble_event(&ev, now_ms());
                                         }
                                     }
                                 } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
@@ -2523,7 +2566,22 @@ impl ChartApp {
                 None, Some(bar_count), true,
             );
         }
-        self.core.bridge_handle().request_footprint(self.active_exchange, &symbol, at, interval);
+        // Unified-data-plane Э4: footprint's bucket-interval change is a
+        // new fold machine (`TradeToFootprintDerived::new(new_interval_ms)`)
+        // + full refold over the SAME trade layer, zero network for the
+        // clusters themselves — mirrors `ChangeChartType`'s trade-fold
+        // branch. The hybrid kline backdrop re-request above is unchanged
+        // (still real network, still gated by `fp_hybrid_backdrop`).
+        if let Some(bid) = self.bubble_for_chart(cid) {
+            let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+            let fold_params = mlc_backend::bubble::FoldParams { interval_ms, ..Default::default() };
+            if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                bid, "footprint", fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                self.active_exchange, &symbol, at, Some(derived_target),
+            ) {
+                self.react_to_bubble_event(&ev, now_ms());
+            }
+        }
     }
 
     /// Ignite the derived-pipeline for every restored window whose chart_type
@@ -2593,7 +2651,25 @@ impl ChartApp {
                     if let Some(ev) = self.core.subscribe_fold_chart_type(
                         bid, ct, fold_params, eid, &sym, at, Some(derived_target),
                     ) {
-                        self.react_to_bubble_event(&ev, 0);
+                        self.react_to_bubble_event(&ev, now_ms());
+                    }
+                }
+            } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
+                // Unified-data-plane Э4: restored windows on one of the 6
+                // trade-fold types install/reseed a `TradeFoldRuntime`
+                // instead of an `ops.subscribe` station derived sub —
+                // mirrors the `ChangeChartType`/`UpdateChartTypeParam`
+                // cutover above.
+                if let (Some(bid), Some(fold_params)) = (
+                    bid,
+                    mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
+                ) {
+                    let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+                    if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                        bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                        eid, &sym, at, Some(derived_target),
+                    ) {
+                        self.react_to_bubble_event(&ev, now_ms());
                     }
                 }
             } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
@@ -2826,6 +2902,27 @@ impl ChartApp {
 /// and the column grid is unreadable.
 pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
     mlc_core::chart_type::by_id(chart_type).and_then(|d| d.min_bar_spacing)
+}
+
+/// Current wall-clock time in milliseconds — the same
+/// `tick.rs`/`frame_lifecycle`-style clock source `react_to_bubble_event`
+/// expects for its `now_ms` parameter (used to timestamp alert-crossing
+/// checks and similar tick-relative bookkeeping the reactor runs per
+/// event). SWC audit fix: the 3 direct `react_to_bubble_event(&ev, 0)` call
+/// sites in this file (`ChangeChartType`/`UpdateChartTypeParam`/
+/// `ignite_derived_windows`'s fold-install paths) used to pass a hardcoded
+/// `0` instead of the real tick time — those call sites fire OUTSIDE the
+/// normal `tick()`/`react_to_events` drain (they're synchronous side
+/// effects of a user-triggered chart-type switch), so there is no
+/// `current_time_ms` already in scope to thread through; this helper
+/// resolves it the same way `chart_out_events.rs`'s own TF-gate check
+/// already does a few hundred lines up (`allowed_timeframes`'s `now_ms`
+/// local).
+fn now_ms() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// Map a `chart_type` id + its raw UI param/interval into the

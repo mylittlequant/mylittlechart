@@ -121,117 +121,29 @@ fn subscribe_fold_noop(
 ) {
 }
 
-fn subscribe_tick_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
+/// Unified-data-plane Stage Э4: tick_bar/tick_imbalance_bar/
+/// volume_imbalance_bar/run_bar/footprint/tpo no longer open a station-side
+/// derived subscription through this table — they are client-side folds
+/// over the bubble's own trade layer, installed and reseeded by
+/// `BackendCore::subscribe_trade_fold_chart_type` (called alongside
+/// `ops.subscribe` at every one of this table's 3 call sites — see
+/// `chart_out_events.rs`). This fn-pointer slot is kept as a documented
+/// no-op (not removed) so `ops_by_id` stays a complete table for every
+/// registered chart type and the `every_registry_id_has_ops` test keeps
+/// passing; the REAL network trigger for these 6 types is
+/// `subscribe_trade_fold_chart_type`'s "ensure trade layer feed" step.
+/// Mirrors [`subscribe_fold_noop`]'s role for the kline-sufficient family.
+/// The old `bridge.request_tick_bars`/`request_footprint`/etc. station-
+/// derived paths are left intact on `DataBridge` (Э5 demolition, not this
+/// stage) — simply uncalled from here.
+fn subscribe_trade_fold_noop(
+    _bridge: &DataBridge,
+    _eid: ExchangeId,
+    _symbol: &str,
+    _at: Dig3AccountType,
     _tf: &Timeframe,
-    params: SubscribeParams,
+    _params: SubscribeParams,
 ) {
-    let count = match params {
-        SubscribeParams::Count { count_u32 } => count_u32,
-        _ => 100, // default 100 trades
-    };
-    bridge.request_tick_bars(eid, symbol, at, count);
-}
-
-fn subscribe_tick_imbalance_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let (alpha_x100, min_ticks) = match params {
-        SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
-        _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
-    };
-    bridge.request_tick_imbalance_bars(eid, symbol, at, alpha_x100, min_ticks);
-}
-
-fn subscribe_volume_imbalance_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let (alpha_x100, min_ticks) = match params {
-        SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
-        _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
-    };
-    bridge.request_volume_imbalance_bars(eid, symbol, at, alpha_x100, min_ticks);
-}
-
-fn subscribe_run_bar(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let (alpha_x100, min_ticks) = match params {
-        SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
-        _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
-    };
-    bridge.request_run_bars(eid, symbol, at, alpha_x100, min_ticks);
-}
-
-fn subscribe_tpo(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let freq_u16 = match params {
-        SubscribeParams::Freq { freq_u16 } => freq_u16,
-        _ => 30, // default 30-min letter buckets
-    };
-    bridge.request_tpo(eid, symbol, at, freq_u16, TpoSource::TradeBucket);
-}
-
-/// Footprint's subscribe is NOT a bare wrapper — it's the network half of a
-/// 5-step atomic op (see prior audit). Order: abort the OLD kline sub before
-/// flipping to footprint OHLC, then request the footprint stream. The bubble
-/// mutations (clear_bars / mark_footprint_pending / bars_source /
-/// set_timeframe) live in `clear_slot_footprint` and the caller's
-/// `set_timeframe` call — dispatch order is `clear_slot()` then
-/// `subscribe()`, same as today's `ChangeChartType` footprint arm.
-///
-/// Hybrid switch point (hybrid-data-modes-plan-2026-07-08, Step 3): on a
-/// `RecentOnly` venue (no REST pagination for trade history at all —
-/// Bybit/KuCoin-class), footprint cannot be a full takeover — there is no
-/// history to page in once `bubble.bars` is cleared and the kline sub is
-/// aborted. Instead the kline sub is left running as a backdrop; footprint
-/// accumulates live-only in `footprint_bars` alongside it. On every other
-/// tier (`RestDeep`/`RestWindow`) the existing full-takeover behavior is
-/// unchanged — `abort_kline_bars` still fires before `request_footprint`.
-fn subscribe_footprint(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    tf: &Timeframe,
-    params: SubscribeParams,
-) {
-    let interval = match params {
-        SubscribeParams::Interval { interval } => interval,
-        _ => "1m",
-    };
-    if !is_footprint_hybrid(bridge, eid, at) {
-        bridge.abort_kline_bars(eid, symbol, at, &tf.name); // unchanged full-takeover path
-    }
-    // RecentOnly (hybrid): kline sub is NOT aborted here — it keeps writing
-    // bubble.bars as the backdrop. `request_footprint` never touches the
-    // kline forwarder (it only manages `derived_subs`), so leaving the
-    // abort call out is sufficient to keep it alive.
-    bridge.request_footprint(eid, symbol, at, interval);
 }
 
 /// Whether footprint on `(exchange_id, account_type)` must run hybrid
@@ -245,7 +157,9 @@ fn subscribe_footprint(
 /// `UpdateChartTypeInterval` handlers (`chart_out_events.rs`) call this
 /// directly to decide `clear_slot_footprint`'s hybrid branch and the
 /// backdrop-kline-resubscribe-at-bucket-interval step, both of which need
-/// the SAME capability check `subscribe_footprint` uses here — see
+/// the SAME capability check the footprint trade-fold install uses (Stage
+/// Э4 — `BackendCore::subscribe_trade_fold_chart_type`'s caller resolves
+/// this to decide `bars_source`) — see
 /// `nemo/docs/mlc/plans/hybrid-data-modes-plan-2026-07-08.md` Step 3.
 ///
 /// `None` capability (exchange not connected yet) is treated as NOT
@@ -397,13 +311,6 @@ fn abort_derived(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3Acc
     bridge.abort_derived_chart(eid, symbol, at);
 }
 
-/// Footprint holds both a (possibly still-live) kline forwarder AND a
-/// derived-subs slot — release both unconditionally.
-fn abort_footprint(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3AccountType, tf: &Timeframe) {
-    bridge.abort_kline_bars(eid, symbol, at, &tf.name);
-    bridge.abort_derived_chart(eid, symbol, at);
-}
-
 /// Unified-data-plane Stage Э3: the 7 fold types hold no station-side
 /// derived subscription to abort (see [`subscribe_fold_noop`]) — their "1m"
 /// kline feed is the SAME continuous per-bubble layer feed every chart type
@@ -412,6 +319,21 @@ fn abort_footprint(bridge: &DataBridge, eid: ExchangeId, symbol: &str, at: Dig3A
 /// alongside `ops.clear_slot` — this fn-pointer has no bubble access) is
 /// the only per-switch cleanup these types need.
 fn abort_fold_noop(_bridge: &DataBridge, _eid: ExchangeId, _symbol: &str, _at: Dig3AccountType, _tf: &Timeframe) {
+}
+
+/// Unified-data-plane Stage Э4: the 6 trade-fed fold types (tick_bar/
+/// tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/tpo) hold no
+/// station-side derived subscription to abort either — their trade-layer
+/// feed is the SAME continuous per-bubble layer feed every chart type
+/// shares (Stage Э1), never torn down on a chart-type switch. Footprint's
+/// (possibly hybrid) kline backdrop is likewise left running — same
+/// rationale [`subscribe_trade_fold_noop`]'s doc comment gives for not
+/// calling `abort_kline_bars` here. Dropping `bubble.active_trade_fold`
+/// (bubble-mutating, so it happens at the call sites alongside
+/// `ops.clear_slot` — this fn-pointer has no bubble access) is the only
+/// per-switch cleanup these types need. Mirrors [`abort_fold_noop`]'s role
+/// for the kline-sufficient family.
+fn abort_trade_fold_noop(_bridge: &DataBridge, _eid: ExchangeId, _symbol: &str, _at: Dig3AccountType, _tf: &Timeframe) {
 }
 
 // ---------------------------------------------------------------------------
@@ -431,17 +353,23 @@ static OPS: &[(&str, SubscribeOps)] = &[
     ("baseline", SubscribeOps { subscribe: subscribe_kline_bars, clear_slot: clear_slot_kline_bars, abort: abort_kline }),
     ("range_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
     ("volume_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
-    ("tick_bar", SubscribeOps { subscribe: subscribe_tick_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    // Unified-data-plane Stage Э4: tick_bar/tick_imbalance_bar/volume_imbalance_bar/
+    // run_bar/footprint/tpo no longer open a station-side derived subscription
+    // through this table either — client-side folds over the bubble's own
+    // trade layer (`BackendCore::subscribe_trade_fold_chart_type`), installed
+    // at the same 3 `chart_out_events.rs` call sites the Э3 cutover uses. See
+    // `subscribe_trade_fold_noop`'s doc comment (mirrors `subscribe_fold_noop`).
+    ("tick_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
     ("dollar_bar", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_fold_noop }),
-    ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_tick_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
-    ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_volume_imbalance_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
-    ("run_bar", SubscribeOps { subscribe: subscribe_run_bar, clear_slot: clear_slot_trade_agg_bars, abort: abort_derived }),
+    ("tick_imbalance_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
+    ("volume_imbalance_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
+    ("run_bar", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_trade_agg_bars, abort: abort_trade_fold_noop }),
     ("renko", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_renko, abort: abort_fold_noop }),
     ("pnf", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_pnf, abort: abort_fold_noop }),
     ("kagi", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_kagi, abort: abort_fold_noop }),
     ("three_line_break", SubscribeOps { subscribe: subscribe_fold_noop, clear_slot: clear_slot_three_line_break, abort: abort_fold_noop }),
-    ("footprint", SubscribeOps { subscribe: subscribe_footprint, clear_slot: clear_slot_footprint, abort: abort_footprint }),
-    ("tpo", SubscribeOps { subscribe: subscribe_tpo, clear_slot: clear_slot_tpo, abort: abort_derived }),
+    ("footprint", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_footprint, abort: abort_trade_fold_noop }),
+    ("tpo", SubscribeOps { subscribe: subscribe_trade_fold_noop, clear_slot: clear_slot_tpo, abort: abort_trade_fold_noop }),
     ("dom_heatmap", SubscribeOps { subscribe: subscribe_dom_heatmap, clear_slot: clear_slot_dom_heatmap, abort: abort_derived }),
     ("liquidation_heatmap", SubscribeOps { subscribe: subscribe_liq_heatmap, clear_slot: clear_slot_liq_heatmap, abort: abort_derived }),
 ];
@@ -528,6 +456,74 @@ pub fn fold_params_from_subscribe_params(chart_type: &str, params: SubscribePara
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Trade-fed fold cutover (unified-data-plane Stage Э4)
+// ---------------------------------------------------------------------------
+
+/// The 6 trade-fed chart types that fold client-side over the bubble's own
+/// trade layer instead of opening a station-side derived subscription (see
+/// [`subscribe_trade_fold_noop`]/[`abort_trade_fold_noop`] above).
+pub const TRADE_FOLD_CHART_TYPES: &[&str] = &[
+    "tick_bar", "tick_imbalance_bar", "volume_imbalance_bar", "run_bar", "footprint", "tpo",
+];
+
+/// Whether `chart_type` is one of the 6 client-side trade-fold types.
+pub fn is_trade_fold_chart_type(chart_type: &str) -> bool {
+    TRADE_FOLD_CHART_TYPES.contains(&chart_type)
+}
+
+/// Narrow a resolved `SubscribeParams` (see `build_subscribe_params`) into
+/// the scalar [`FoldParams`] shape [`crate::bubble::TradeFoldRuntime`] needs.
+/// Returns `None` for any chart_type outside the 6 trade-fold types, or when
+/// `params` doesn't carry the shape that chart_type expects (defensive —
+/// mirrors [`fold_params_from_subscribe_params`]'s same fallback discipline,
+/// and the `_ => default` fallback every dead `subscribe_*` fn used before
+/// this cutover).
+pub fn trade_fold_params_from_subscribe_params(chart_type: &str, params: SubscribeParams) -> Option<FoldParams> {
+    match chart_type {
+        "tick_bar" => {
+            let count = match params {
+                SubscribeParams::Count { count_u32 } => count_u32,
+                _ => 100, // default 100 trades
+            };
+            Some(FoldParams { count, ..Default::default() })
+        }
+        "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+            let (alpha_x100, min_ticks) = match params {
+                SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
+                _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
+            };
+            Some(FoldParams { alpha: alpha_x100 as f64 / 100.0, min_ticks, ..Default::default() })
+        }
+        "footprint" => {
+            let interval = match params {
+                SubscribeParams::Interval { interval } => interval,
+                _ => "1m",
+            };
+            let interval_ms = digdigdig3_station::folds::interval_to_ms(interval).unwrap_or(60_000);
+            Some(FoldParams { interval_ms, ..Default::default() })
+        }
+        "tpo" => {
+            let freq_u16 = match params {
+                SubscribeParams::Freq { freq_u16 } => freq_u16,
+                _ => 30, // default 30-min letter buckets
+            };
+            Some(FoldParams { freq_minutes: freq_u16, ..Default::default() })
+        }
+        _ => None,
+    }
+}
+
+/// Default [`TpoSource`] the trade-fold cutover installs for `"tpo"` — the
+/// UI has no source selector today (the pre-cutover `subscribe_tpo` always
+/// hardcoded `TpoSource::TradeBucket`), so this constant preserves that
+/// exact behavior. `mlc-app` passes this through
+/// `BackendCore::subscribe_trade_fold_chart_type`'s `tpo_source` parameter —
+/// change this single constant (or thread a real per-bubble selector
+/// through the call sites) to switch the default without touching the fold
+/// machinery itself.
+pub const DEFAULT_TPO_SOURCE: TpoSource = TpoSource::TradeBucket;
 
 #[cfg(test)]
 mod tests {

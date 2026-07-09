@@ -701,7 +701,16 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: Some("Alpha: 0.20"),
         }),
         inline_default: Some("50"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        // Unified-data-plane Stage Э4: full refold from the raw trade layer
+        // over-writes the EMA state each time (see
+        // `digdigdig3_station::folds::TradeToTickImbalanceDerived` — a
+        // fresh machine instance replaying the whole trade tape reproduces
+        // byte-identical EMA state), so the old "EMA not reconstructible
+        // from emitted output" limitation that forced
+        // `DerivedTeardownRespawn` under the STATION-side derived pipeline
+        // no longer applies to the client-side fold path. Full refold from
+        // raw trades IS the reconstruction.
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "T" },
@@ -727,7 +736,9 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: Some("Alpha: 0.20"),
         }),
         inline_default: Some("50"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        // See "tick_imbalance_bar" row above — Э4 full refold from raw
+        // trades supersedes the teardown+respawn requirement.
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "V" },
@@ -753,7 +764,9 @@ static REGISTRY: &[ChartTypeDef] = &[
             fixed_note: Some("Alpha: 0.20"),
         }),
         inline_default: Some("50"),
-        deepen_kind: DeepenKind::DerivedTeardownRespawn,
+        // See "tick_imbalance_bar" row above — Э4 full refold from raw
+        // trades supersedes the teardown+respawn requirement.
+        deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "RN" },

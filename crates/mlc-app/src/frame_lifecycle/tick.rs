@@ -582,6 +582,13 @@ impl ChartApp {
             // (`ScrollBarsLoaded`/`BackfillComplete` + `LayerBackfilled`),
             // and `LayerBackfilled`'s `tick_writers` arm re-folds in place.
             let mut fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> = Vec::new();
+            // Unified-data-plane Э4: scroll-left pressure for the 6 trade-
+            // fed fold types reroutes to `BackfillEngine::on_trade_scroll_pressure`
+            // over the shared trade layer, one layer over from the fold
+            // list above (trades instead of "1m" klines) — mirrors it
+            // exactly, including the `LayerBackfilled{layer:"trades"}`
+            // re-fold-in-place consumer (`tick_writers`).
+            let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> = Vec::new();
             let max_loaded = self.core.user().profile().domain.data_load.max_loaded_bars;
 
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
@@ -626,7 +633,18 @@ impl ChartApp {
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let chart_type = chart_type_by_chart.get(cid_scroll).copied().unwrap_or("candles");
                 let is_fold = mlc_backend::chart_type::is_fold_chart_type(chart_type);
-                let is_derived = !is_fold && crate::active_series::chart_type_is_derived_seed(chart_type);
+                // Unified-data-plane Э4: the 6 trade-fed fold types
+                // (tick_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/
+                // footprint/tpo) share the SAME "guarded internally by
+                // BackfillEngine, no history_depth gate" treatment as the 7
+                // kline-sufficient fold types — just over the trade layer
+                // instead of the "1m" kline layer. Checked BEFORE
+                // `is_derived` so a trade-fold type never falls into the
+                // teardown+respawn branch below (their registry rows still
+                // have `ChartTypeKind != RenderOnly`, so
+                // `chart_type_is_derived_seed` would otherwise say `true`).
+                let is_trade_fold = !is_fold && mlc_backend::chart_type::is_trade_fold_chart_type(chart_type);
+                let is_derived = !is_fold && !is_trade_fold && crate::active_series::chart_type_is_derived_seed(chart_type);
                 let Some(bid_scroll) = bid_by_chart.get(cid_scroll).copied() else { continue; };
 
                 // hybrid-data-modes-plan-2026-07-08, Step 2: a `LiveOnly`
@@ -639,11 +657,11 @@ impl ChartApp {
                 // attempts to deepen (there may be more history up to the
                 // wall); `Unknown` (seed not yet reported, or a chart_type
                 // that never populates `history_depth`) never blocks —
-                // default behavior preserved. Fold types don't use
-                // `history_depth`/`is_deepen_blocked` at all — the
-                // `BackfillEngine`'s own `exhausted` latch on the "1m" layer
-                // is the equivalent stop condition, checked internally by
-                // `on_kline_scroll_pressure`.
+                // default behavior preserved. Fold types (both families)
+                // don't use `history_depth`/`is_deepen_blocked` at all — the
+                // `BackfillEngine`'s own `exhausted` latch on the "1m"/trade
+                // layer is the equivalent stop condition, checked internally
+                // by `on_kline_scroll_pressure`/`on_trade_scroll_pressure`.
                 if is_derived {
                     let depth = self.core.bubbles().history_depth(bid_scroll);
                     if depth.is_deepen_blocked() {
@@ -654,11 +672,12 @@ impl ChartApp {
                 // Per-chart-type-family in-flight guard: kline scroll and
                 // derived reseed are mutually exclusive per bubble but need
                 // independent flags — see `derived_seed_in_flight`'s doc
-                // comment on `DataBubble`. Fold types skip this guard
-                // entirely — `BackfillEngine::RampState.in_flight` is the
-                // single-flight guard for the "1m" layer, already internal
-                // to `on_kline_scroll_pressure`.
-                if is_fold {
+                // comment on `DataBubble`. Fold types (both families) skip
+                // this guard entirely — `BackfillEngine::RampState.in_flight`
+                // is the single-flight guard for the "1m"/trade layer,
+                // already internal to `on_kline_scroll_pressure`/
+                // `on_trade_scroll_pressure`.
+                if is_fold || is_trade_fold {
                     // no-op: guarded internally by BackfillEngine
                 } else if is_derived {
                     let in_flight = self.core.bubbles().with_bubble(bid_scroll, |b| b.derived_seed_in_flight).flatten();
@@ -732,6 +751,13 @@ impl ChartApp {
 
                 if is_fold {
                     fold_scroll_pressure_requests.push((
+                        *cid_scroll,
+                        win_sym_sc.clone(),
+                        win_exch_sc.clone(),
+                        *win_at_sc,
+                    ));
+                } else if is_trade_fold {
+                    trade_fold_scroll_pressure_requests.push((
                         *cid_scroll,
                         win_sym_sc.clone(),
                         win_exch_sc.clone(),
@@ -868,6 +894,20 @@ impl ChartApp {
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
                 let one_minute = mlc_core::state::Timeframe::new("1m", 60_000);
                 self.core.bridge_handle().on_kline_scroll_pressure(eid, &symbol, &one_minute, at);
+            }
+
+            // Unified-data-plane Э4: trade-fold-type scroll-left pressure
+            // feeds the `BackfillEngine` ramp over the shared trade layer.
+            // No clear, no teardown, no `derived_seed_in_flight` bookkeeping
+            // — deeper pages arrive progressively via
+            // `LayerBackfilled{layer:"trades"}`, which re-folds in place
+            // (`tick_writers`' `LayerBackfilled` arm) — mirrors the fold-type
+            // loop above.
+            for (_cid_req, symbol, exchange, account_type) in trade_fold_scroll_pressure_requests {
+                let eid = digdigdig3::ExchangeId::from_str(&exchange)
+                    .unwrap_or(digdigdig3::ExchangeId::Binance);
+                let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+                self.core.bridge_handle().on_trade_scroll_pressure(eid, &symbol, at);
             }
         }
 

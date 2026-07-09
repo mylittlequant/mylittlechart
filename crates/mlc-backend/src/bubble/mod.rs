@@ -10,4 +10,7 @@ pub use store::{BubbleStore, InstrumentKey};
 pub use render::{build_chart_render_state, ChartWindowRenderInputs};
 pub use facade::{BubbleView, Bubbles, BubblesMut};
 pub use raw_layer::{RawLayer, RawTrade};
-pub use view_fold::{bar_to_bar_point, FoldOutput, FoldParams, FoldRuntime};
+pub use view_fold::{
+    bar_to_bar_point, raw_trade_to_trade_point, FoldOutput, FoldParams, FoldRuntime,
+    TradeFoldOutput, TradeFoldRuntime,
+};

@@ -396,6 +396,25 @@ pub struct DataBubble {
     /// rollback support — a cloned bubble re-installs its own runtime on
     /// the next subscribe rather than sharing fold state).
     pub active_fold: Option<super::view_fold::FoldRuntime>,
+
+    /// Installed when this bubble's active chart_type is one of the trade-
+    /// fed fold types (tick_bar/tick_imbalance_bar/volume_imbalance_bar/
+    /// run_bar/footprint/tpo) — unified-data-plane Stage Э4. `None`
+    /// otherwise. Not carried across `Clone` — same stateful-accumulator
+    /// rationale as `active_fold`.
+    pub active_trade_fold: Option<super::view_fold::TradeFoldRuntime>,
+
+    /// Installed when the CVD companion indicator is live for this bubble's
+    /// instrument (unified-data-plane Stage Э4). Independent of
+    /// `active_trade_fold`/`active_fold` — CVD is an indicator overlay, not
+    /// a chart_type, so it can be installed here alongside EITHER a
+    /// kline-fold OR a trade-fold active chart_type (a footprint window
+    /// with a CVD companion instance both wants `active_trade_fold`'s
+    /// `"footprint"` machine AND this `"cvd"` machine at once — sharing one
+    /// slot between them would make the two fight over it). Not carried
+    /// across `Clone` — same stateful-accumulator rationale as
+    /// `active_fold`.
+    pub active_cvd_fold: Option<super::view_fold::TradeFoldRuntime>,
 }
 
 
@@ -466,6 +485,8 @@ impl DataBubble {
             kline_layer_capacity: DEFAULT_KLINE_LAYER_CAPACITY,
             trade_layer_capacity: DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
+            active_trade_fold: None,
+            active_cvd_fold: None,
         }
     }
 
@@ -669,22 +690,26 @@ impl DataBubble {
     /// was demoted from a chart_type to a real compute-catalog indicator
     /// instance, independent of `chart_type` (like `oi_delta`/
     /// `funding_rate`, which were never in this list either) — its
-    /// lifecycle is now owned by `clear_cvd()` called from
-    /// `ChartApp::unsubscribe_cvd_line_if_last` when the last CVD instance
-    /// for the bubble is removed.
+    /// lifecycle (both `cvd_line` and, since unified-data-plane Stage Э4,
+    /// `active_cvd_fold`) is owned by `clear_cvd()` /
+    /// `ChartApp::unsubscribe_cvd_line_if_last`, called when the last CVD
+    /// instance for the bubble is removed.
     pub fn clear_derived_slots(&mut self, keep: Option<&str>) {
-        // Unified-data-plane Э3: the fold runtime is stateful accumulator
-        // tied to the OLD chart_type/params — every caller of this method
-        // (`ChangeChartType`, `UpdateChartTypeParam`, `ignite_derived_windows`)
-        // always follows with a fresh `subscribe_fold_chart_type` call for
-        // the NEW target when it's one of the 7 fold types, which reinstalls
-        // a fresh runtime. Dropping it unconditionally here (even when
-        // `keep` names a fold type — a param change on the SAME type still
-        // needs a brand-new machine instance, see `FoldRuntime::reseed`'s
-        // doc comment on why fold state has no in-place update) mirrors the
-        // "always a fresh re-subscribe follows" invariant already documented
-        // above for the other derived slots.
+        // Unified-data-plane Э3/Э4: both fold runtimes are stateful
+        // accumulators tied to the OLD chart_type/params — every caller of
+        // this method (`ChangeChartType`, `UpdateChartTypeParam`,
+        // `ignite_derived_windows`) always follows with a fresh
+        // `subscribe_fold_chart_type` call for the NEW target when it's one
+        // of the fold types, which reinstalls a fresh runtime. Dropping them
+        // unconditionally here (even when `keep` names a fold type — a
+        // param change on the SAME type still needs a brand-new machine
+        // instance, see `FoldRuntime::reseed`'s doc comment on why fold
+        // state has no in-place update) mirrors the "always a fresh
+        // re-subscribe follows" invariant already documented above for the
+        // other derived slots. `active_cvd_fold` is untouched here — its
+        // lifecycle is independent of chart_type (see doc comment above).
         self.active_fold = None;
+        self.active_trade_fold = None;
         if keep != Some("renko") { self.clear_renko(); }
         if keep != Some("pnf") { self.clear_pnf(); }
         if keep != Some("kagi") { self.clear_kagi(); }
@@ -818,6 +843,8 @@ impl Clone for DataBubble {
             trade_layer_capacity: self.trade_layer_capacity,
             // Not carried across Clone — see field doc comment.
             active_fold: None,
+            active_trade_fold: None,
+            active_cvd_fold: None,
         }
     }
 }

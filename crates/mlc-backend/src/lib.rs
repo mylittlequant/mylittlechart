@@ -1488,6 +1488,14 @@ impl BackendCore {
                                 if let Some(ev) = self.fold_on_live_1m(bid, bar, exchange_id, &bar_sym, at_label) {
                                     events.push(ev);
                                 }
+                                // Trade-fed fold family (Э4): only the TPO
+                                // Kline1m flavour consumes "1m" bars — every
+                                // other trade-fed runtime's `on_live_1m` is a
+                                // documented no-op (see
+                                // `TradeFoldRuntime::on_live_1m`).
+                                if let Some(ev) = self.trade_fold_on_live_1m(bid, bar, exchange_id, &bar_sym, at_label) {
+                                    events.push(ev);
+                                }
                             }
                         }
                     }
@@ -1568,6 +1576,28 @@ impl BackendCore {
                     };
                     for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
                         self.bubbles_mut().trade_layer_push_live(bid, raw_trade);
+                        // Client-side trade fold (unified-data-plane Э4):
+                        // every bubble that has installed a `TradeFoldRuntime`
+                        // for one of the 6 trade-fed chart types folds this
+                        // SAME live trade incrementally — no-op when
+                        // `active_trade_fold` is `None` (not a trade-fed
+                        // chart_type) or the runtime is the TPO Kline1m
+                        // flavour (folds `Event::Bar`, not `Event::Trade` —
+                        // see `TradeFoldRuntime::on_live_trade`'s no-op
+                        // guard). Independent of the CVD companion fold
+                        // below — a bubble can have BOTH installed at once.
+                        if let Some(ev) = self.trade_fold_on_live_trade(bid, raw_trade, exchange_id, &symbol, at_label) {
+                            events.push(ev);
+                        }
+                        // CVD companion fold: independent slot, independent
+                        // lifecycle (installed by `subscribe_cvd_fold` when
+                        // a CVD indicator instance is added, not by a
+                        // chart_type switch) — see `DataBubble.active_cvd_fold`
+                        // doc comment for why it isn't merged into
+                        // `active_trade_fold`.
+                        if let Some(ev) = self.cvd_fold_on_live_trade(bid, raw_trade, exchange_id, &symbol, at_label) {
+                            events.push(ev);
+                        }
                     }
                     events.push(BubbleEvent::TradeUpdatePassthrough {
                         exchange_id,
@@ -1691,16 +1721,19 @@ impl BackendCore {
                     // Collected on-demand; no action.
                 }
 
-                // ── LayerBackfilled (unified-data-plane Э2, consumed Э3) ─────────
-                // The actual `kline_layers` write already happened via the
-                // `ScrollBarsLoaded`/`BackfillComplete` arms above — this is
-                // the layer-scoped SIGNAL. For `layer == "kline:1m"`, every
+                // ── LayerBackfilled (unified-data-plane Э2, consumed Э3+Э4) ──────
+                // The actual `kline_layers`/`trade_layer` write already
+                // happened via the `ScrollBarsLoaded`/`BackfillComplete`/
+                // `TradeHistoryPrepended` arms above — this is the
+                // layer-scoped SIGNAL. For `layer == "kline:1m"`, every
                 // bubble on this instrument that has installed a `FoldRuntime`
                 // (one of the 7 kline-sufficient chart types) re-folds from
                 // scratch over the now-deeper layer and replaces its output
                 // slot wholesale — cheap in-memory recompute, no network.
-                // `trade_layer_prepend_batch` (trades) has no fold consumer
-                // yet (Э4).
+                // `layer == "trades"` (Э4): same in-place refold, but for
+                // `active_trade_fold` (6 trade-fed chart types) AND
+                // `active_cvd_fold` (CVD companion) — a bubble may have
+                // BOTH installed at once.
                 LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, .. } => {
                     if layer == "kline:1m" {
                         let at_label = account_type.short_label();
@@ -1730,6 +1763,48 @@ impl BackendCore {
                                         bid, exchange_id, symbol: symbol.clone(), account_type: at_label.to_string(),
                                         chart_type, depth: crate::bubble::HistoryDepth::Capped { achieved },
                                     });
+                                }
+                            }
+                        }
+                    } else if layer == "trades" {
+                        let at_label = account_type.short_label();
+                        for bid in self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol) {
+                            let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = match self.bubbles().trade_layer(bid) {
+                                Some(l) => l.clone(),
+                                None => continue,
+                            };
+                            let empty_kline: crate::bubble::RawLayer<Bar> = crate::bubble::RawLayer::new(0);
+
+                            let has_trade_fold = self.bubbles().with_bubble(bid, |b| b.active_trade_fold.is_some()).unwrap_or(false);
+                            if has_trade_fold {
+                                let outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                    b.active_trade_fold.as_mut().map(|f| (f.reseed(&trade_snapshot, &empty_kline), f.chart_type()))
+                                }).flatten();
+                                if let Some((outputs, chart_type)) = outputs_and_type {
+                                    if let Some(ev) = self.apply_trade_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, &symbol, at_label) {
+                                        events.push(ev);
+                                    }
+                                    if exhausted {
+                                        let achieved = trade_snapshot.len();
+                                        if self.bubbles_mut().set_history_depth(bid, chart_type, crate::bubble::HistoryDepth::Capped { achieved }) {
+                                            events.push(BubbleEvent::HistoryDepthReported {
+                                                bid, exchange_id, symbol: symbol.clone(), account_type: at_label.to_string(),
+                                                chart_type, depth: crate::bubble::HistoryDepth::Capped { achieved },
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            let has_cvd_fold = self.bubbles().with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
+                            if has_cvd_fold {
+                                let outputs = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                    b.active_cvd_fold.as_mut().map(|f| f.reseed(&trade_snapshot, &empty_kline))
+                                }).flatten();
+                                if let Some(outputs) = outputs {
+                                    if let Some(ev) = self.apply_trade_fold_reseed_outputs(bid, "cvd", outputs, exchange_id, &symbol, at_label) {
+                                        events.push(ev);
+                                    }
                                 }
                             }
                         }
@@ -3135,6 +3210,372 @@ impl BackendCore {
                 Some(BubbleEvent::TlbLineAppended { bid, exchange_id, symbol, account_type: account_type_label })
             }
         }
+    }
+
+    // =========================================================================
+    // === Client-side trade fold (unified-data-plane Stage Э4, 2026-07-09) ===
+    // =========================================================================
+
+    /// Install (or replace) `bid`'s [`bubble::TradeFoldRuntime`] for one of
+    /// the trade-fed chart types (tick_bar/tick_imbalance_bar/
+    /// volume_imbalance_bar/run_bar/footprint/tpo), ensure the bubble's
+    /// trade layer is network-fed (continuous live subscribe + ramped
+    /// backfill toward `derived_trade_target`), and reseed synchronously
+    /// from whatever the layer already holds. Mirrors
+    /// [`Self::subscribe_fold_chart_type`] exactly, one layer over (trade
+    /// layer instead of the shared "1m" kline layer) — see that method's
+    /// doc comment for the synchronous/async split rationale.
+    ///
+    /// `tpo_source` is ignored for every chart_type except `"tpo"` — see
+    /// [`crate::bubble::TradeFoldMachine::new`]'s doc comment.
+    ///
+    /// The `"tpo"` Kline1m flavour also needs the "1m" kline layer
+    /// network-fed (same as [`Self::subscribe_fold_chart_type`]'s callers
+    /// use for the 7 kline-sufficient types) — handled here too so a caller
+    /// never has to remember to call both entrypoints for that one flavour.
+    pub fn subscribe_trade_fold_chart_type(
+        &self,
+        bid: BubbleId,
+        chart_type: &'static str,
+        params: crate::bubble::FoldParams,
+        tpo_source: mlc_backend_data_bridge::TpoSource,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        derived_trade_target: Option<u32>,
+    ) -> Option<BubbleEvent> {
+        // Live feed: `subscribe_trades` is idempotent per (eid, at, symbol)
+        // and already fires the first shallow `ensure_trade_backfill` page
+        // (see its doc comment) — calling it again here is a cheap no-op
+        // when another window/indicator already opened the same trade sub.
+        self.subscribe_trades(exchange_id, symbol, account_type);
+        // History: ramped backfill toward `derived_trade_target`.
+        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, derived_trade_target.map(|t| t as usize));
+
+        if matches!(chart_type, "tpo") && matches!(tpo_source, mlc_backend_data_bridge::TpoSource::Kline1m) {
+            let one_minute = Timeframe::new("1m", 60_000);
+            self.bridge.request_bars(exchange_id, symbol, &one_minute, account_type, None, None, false);
+            self.bridge.ensure_kline_backfill(exchange_id, symbol, &one_minute, account_type, None);
+        }
+
+        let fold = crate::bubble::TradeFoldRuntime::new(chart_type, params, tpo_source, exchange_id, symbol)?;
+        self.reseed_trade_fold(bid, fold, exchange_id, symbol, account_type)
+    }
+
+    /// Re-seed `bid`'s existing (or freshly-installed) trade-fold runtime
+    /// from the bubble's current trade-layer (and, for TPO Kline1m, "1m"
+    /// kline-layer) snapshot, replace the output slot wholesale, and return
+    /// the reconcile-triggering [`BubbleEvent`].
+    fn reseed_trade_fold(
+        &self,
+        bid: BubbleId,
+        mut fold: crate::bubble::TradeFoldRuntime,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<BubbleEvent> {
+        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
+            .trade_layer(bid)
+            .cloned()
+            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let kline_snapshot: crate::bubble::RawLayer<Bar> = self.bubbles()
+            .kline_layer(bid, "1m")
+            .cloned()
+            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let outputs = fold.reseed(&trade_snapshot, &kline_snapshot);
+        let chart_type = fold.chart_type();
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.active_trade_fold = Some(fold));
+        let account_type_label = account_type.short_label().to_string();
+        self.apply_trade_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, symbol, &account_type_label)
+    }
+
+    /// Replace `bid`'s trade-fold output slot wholesale with `outputs` (a
+    /// full reseed's worth of points, oldest-first) and build the matching
+    /// reconcile-triggering [`BubbleEvent`]. Shared by
+    /// [`Self::reseed_trade_fold`] and the `LiveUpdate::LayerBackfilled` arm
+    /// in [`Self::tick_writers`] (scroll-deepen refold path for
+    /// `layer == "trades"`) — mirrors [`Self::apply_fold_reseed_outputs`]'s
+    /// role for the kline-fold family.
+    fn apply_trade_fold_reseed_outputs(
+        &self,
+        bid: BubbleId,
+        chart_type: &'static str,
+        outputs: Vec<crate::bubble::TradeFoldOutput>,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let symbol = symbol.to_string();
+        let account_type_label = account_type_label.to_string();
+        let event = match chart_type {
+            "tick_bar" | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+                let bars: Vec<Bar> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::TradeFoldOutput::Bar(b) => Some(b),
+                    _ => None,
+                }).collect();
+                let mut mgr = self.bubbles_mut();
+                let prev_bars = mgr.bars(bid).to_vec();
+                let tf_name = mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
+                mgr.replace_bars(bid, bars.clone());
+                drop(mgr);
+                BubbleEvent::BarsLoaded {
+                    bid, exchange_id, symbol, account_type: account_type_label,
+                    timeframe: tf_name, bars, prev_bars,
+                }
+            }
+            "footprint" => {
+                let bars: Vec<mlc_core::types::FootprintBar> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::TradeFoldOutput::Footprint(b) => Some(b),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| {
+                    // Fold-sourced footprint mirrors the OHLC ONLY when this
+                    // bubble is on the full-takeover path (`bars_source ==
+                    // FootprintOhlc`) — same gate the station-derived
+                    // `LiveUpdate::FootprintUpdate` arm uses. Hybrid mode
+                    // (RecentOnly venue, `bars_source` stays `Kline`) leaves
+                    // `bubble.bars` alone — the kline backdrop writer owns
+                    // it (see `Self::trade_fold_on_live_trade`'s hybrid
+                    // handling for the matching live-path rule).
+                    if b.bars_source == crate::bubble::BarsSource::FootprintOhlc {
+                        let ohlc: Vec<mlc_core::Bar> = bars.iter().map(|fb| mlc_core::Bar::with_volume(
+                            fb.open_time / 1000, fb.open, fb.high, fb.low, fb.close, fb.volume,
+                        )).collect();
+                        b.replace_bars(ohlc);
+                    }
+                    b.footprint_bars = Some(bars);
+                });
+                BubbleEvent::FootprintBarAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            "tpo" => {
+                let sessions: Vec<mlc_core::types::TpoSession> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::TradeFoldOutput::Tpo(s) => Some(s),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| {
+                    // Dedup consecutive same-`open_time` snapshots (the fold
+                    // emits one output per upstream event — many trades/bars
+                    // share the same session until it rolls) down to the
+                    // LAST snapshot per session, then cap to the same
+                    // recency window the live station-derived path uses
+                    // (`MAX_TPO_SESSIONS = 11`).
+                    let mut deduped: Vec<mlc_core::types::TpoSession> = Vec::new();
+                    for s in sessions {
+                        match deduped.last_mut() {
+                            Some(last) if last.open_time == s.open_time => *last = s,
+                            _ => deduped.push(s),
+                        }
+                    }
+                    const MAX_TPO_SESSIONS: usize = 11;
+                    if deduped.len() > MAX_TPO_SESSIONS {
+                        let drop_n = deduped.len() - MAX_TPO_SESSIONS;
+                        deduped.drain(0..drop_n);
+                    }
+                    b.tpo_sessions = Some(deduped);
+                });
+                BubbleEvent::TpoSessionUpdated { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            "cvd" => {
+                let samples: Vec<mlc_core::types::CvdSample> = outputs.into_iter().filter_map(|o| match o {
+                    crate::bubble::TradeFoldOutput::Cvd(s) => Some(s),
+                    _ => None,
+                }).collect();
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.cvd_line = Some(samples));
+                BubbleEvent::CvdSampleAppended { bid, exchange_id, symbol, account_type: account_type_label }
+            }
+            _ => return None,
+        };
+        Some(event)
+    }
+
+    /// Fold one live trade tick into `bid`'s active trade-fold runtime, if
+    /// installed, and append/upsert the output into the bubble's slot.
+    /// Mirrors [`Self::fold_on_live_1m`]'s role for the kline-fold family —
+    /// `exchange_id`/`symbol`/`account_type_label` are the SAME identity the
+    /// triggering `LiveUpdate::TradeUpdate` event carried. Returns the
+    /// reconcile-triggering [`BubbleEvent`], `None` when the bubble has no
+    /// active trade-fold runtime or the fold produced nothing.
+    fn trade_fold_on_live_trade(
+        &self,
+        bid: BubbleId,
+        trade: crate::bubble::RawTrade,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let output = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.active_trade_fold.as_mut().and_then(|f| f.on_live_trade(&trade))
+        }).flatten()?;
+        let symbol = symbol.to_string();
+        let account_type_label = account_type_label.to_string();
+
+        match output {
+            crate::bubble::TradeFoldOutput::Bar(new_bar) => {
+                let mut mgr = self.bubbles_mut();
+                let last_ts_identity = mgr.bars(bid).last().map(|b| {
+                    if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
+                });
+                let new_ts_identity = if new_bar.derived_ts_ms != 0 { new_bar.derived_ts_ms } else { new_bar.timestamp };
+                if last_ts_identity == Some(new_ts_identity) {
+                    mgr.with_bubble_mut(bid, |b| {
+                        if let Some(last) = b.last_bar_mut() {
+                            last.open = new_bar.open;
+                            last.high = new_bar.high;
+                            last.low = new_bar.low;
+                            last.close = new_bar.close;
+                            last.volume = new_bar.volume;
+                        }
+                    });
+                } else {
+                    mgr.with_bubble_mut(bid, |b| b.append_bar(new_bar));
+                }
+                drop(mgr);
+                Some(BubbleEvent::BarUpdatePassthrough {
+                    exchange_id, account_type: account_type_label, symbol,
+                    bar: self.bubbles().bars(bid).last().copied().unwrap_or(new_bar),
+                })
+            }
+            crate::bubble::TradeFoldOutput::Footprint(new_bar) => {
+                let mirror_ohlc = self.bubbles().bars_source(bid) == crate::bubble::BarsSource::FootprintOhlc;
+                self.bubbles_mut().with_bubble_mut(bid, |b| {
+                    let ohlc_ts = new_bar.open_time / 1000;
+                    let store = b.footprint_bars.get_or_insert_with(Vec::new);
+                    match store.last_mut() {
+                        Some(last) if last.open_time == new_bar.open_time => *last = new_bar.clone(),
+                        _ => store.push(new_bar.clone()),
+                    }
+                    // Hybrid mode (RecentOnly venue): `mirror_ohlc == false`
+                    // — the kline backdrop writer owns `bubble.bars`, same
+                    // gate `LiveUpdate::FootprintUpdate`'s station-derived
+                    // arm already uses (see that arm's doc comment).
+                    if mirror_ohlc {
+                        let ohlc = mlc_core::Bar::with_volume(
+                            ohlc_ts, new_bar.open, new_bar.high, new_bar.low, new_bar.close, new_bar.volume,
+                        );
+                        match b.bars.last_mut() {
+                            Some(last) if last.timestamp == ohlc_ts => *last = ohlc,
+                            _ => b.append_bar(ohlc),
+                        }
+                    }
+                });
+                Some(BubbleEvent::FootprintBarAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+            crate::bubble::TradeFoldOutput::Tpo(session) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| {
+                    let store = b.tpo_sessions.get_or_insert_with(Vec::new);
+                    match store.last_mut() {
+                        Some(last) if last.open_time == session.open_time => *last = session,
+                        _ => {
+                            store.push(session);
+                            const MAX_TPO_SESSIONS: usize = 11;
+                            while store.len() > MAX_TPO_SESSIONS {
+                                store.remove(0);
+                            }
+                        }
+                    }
+                });
+                Some(BubbleEvent::TpoSessionUpdated { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+            crate::bubble::TradeFoldOutput::Cvd(sample) => {
+                self.bubbles_mut().with_bubble_mut(bid, |b| b.append_cvd(sample));
+                Some(BubbleEvent::CvdSampleAppended { bid, exchange_id, symbol, account_type: account_type_label })
+            }
+        }
+    }
+
+    /// Fold one live "1m" kline tick into `bid`'s active trade-fold runtime
+    /// IF it's the TPO Kline1m flavour (every other trade-fed chart_type's
+    /// runtime is a no-op for `Event::Bar` — see
+    /// [`crate::bubble::TradeFoldRuntime::on_live_1m`]). Mirrors
+    /// [`Self::fold_on_live_1m`]'s upsert-into-`tpo_sessions` shape.
+    fn trade_fold_on_live_1m(
+        &self,
+        bid: BubbleId,
+        bar: Bar,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let session = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.active_trade_fold.as_mut().and_then(|f| f.on_live_1m(&bar))
+        }).flatten().and_then(|o| match o {
+            crate::bubble::TradeFoldOutput::Tpo(s) => Some(s),
+            _ => None,
+        })?;
+        let symbol = symbol.to_string();
+        let account_type_label = account_type_label.to_string();
+        self.bubbles_mut().with_bubble_mut(bid, |b| {
+            let store = b.tpo_sessions.get_or_insert_with(Vec::new);
+            match store.last_mut() {
+                Some(last) if last.open_time == session.open_time => *last = session,
+                _ => {
+                    store.push(session);
+                    const MAX_TPO_SESSIONS: usize = 11;
+                    while store.len() > MAX_TPO_SESSIONS {
+                        store.remove(0);
+                    }
+                }
+            }
+        });
+        Some(BubbleEvent::TpoSessionUpdated { bid, exchange_id, symbol, account_type: account_type_label })
+    }
+
+    // =========================================================================
+    // === Client-side CVD companion fold (unified-data-plane Stage Э4) ======
+    // =========================================================================
+
+    /// Install (or replace) `bid`'s [`bubble::TradeFoldRuntime`] CVD
+    /// companion runtime, ensure the trade layer is network-fed, and reseed
+    /// synchronously from whatever the layer already holds. Called from
+    /// `subscribe_cvd_line_for_indicator_add` (mlc-app) alongside the
+    /// existing `subscribe_cvd_line` station-derived subscribe — the two
+    /// live side-by-side during this stage (Э5 removes the station path).
+    pub fn subscribe_cvd_fold(
+        &self,
+        bid: BubbleId,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        derived_trade_target: Option<u32>,
+    ) -> Option<BubbleEvent> {
+        self.subscribe_trades(exchange_id, symbol, account_type);
+        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, derived_trade_target.map(|t| t as usize));
+
+        let mut fold = crate::bubble::TradeFoldRuntime::new(
+            "cvd", crate::bubble::FoldParams::default(), mlc_backend_data_bridge::TpoSource::TradeBucket,
+            exchange_id, symbol,
+        )?;
+        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
+            .trade_layer(bid)
+            .cloned()
+            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let outputs = fold.reseed(&trade_snapshot, &crate::bubble::RawLayer::new(0));
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.active_cvd_fold = Some(fold));
+        let account_type_label = account_type.short_label().to_string();
+        self.apply_trade_fold_reseed_outputs(bid, "cvd", outputs, exchange_id, symbol, &account_type_label)
+    }
+
+    /// Fold one live trade tick into `bid`'s active CVD companion runtime,
+    /// if installed. Mirrors [`Self::trade_fold_on_live_trade`]'s CVD arm,
+    /// scoped to the independent `active_cvd_fold` slot.
+    fn cvd_fold_on_live_trade(
+        &self,
+        bid: BubbleId,
+        trade: crate::bubble::RawTrade,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Option<BubbleEvent> {
+        let sample = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.active_cvd_fold.as_mut().and_then(|f| f.on_live_trade(&trade))
+        }).flatten().and_then(|o| match o {
+            crate::bubble::TradeFoldOutput::Cvd(s) => Some(s),
+            _ => None,
+        })?;
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.append_cvd(sample));
+        Some(BubbleEvent::CvdSampleAppended {
+            bid, exchange_id, symbol: symbol.to_string(), account_type: account_type_label.to_string(),
+        })
     }
 }
 

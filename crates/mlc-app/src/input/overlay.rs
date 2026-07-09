@@ -38,6 +38,23 @@ impl ChartApp {
         }
         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
         self.core.subscribe_cvd_line(exchange_id, &symbol, at_dig3);
+        // Unified-data-plane Stage Э4: install the client-side CVD companion
+        // fold alongside the (still-live, dual-run) station-derived
+        // subscription above — `bubble.append_cvd`/`BubbleEvent::CvdSampleAppended`
+        // is the SAME destination `LiveUpdate::CvdLineUpdate` already writes,
+        // so the two co-exist without a second bubble slot. `bid` is
+        // resolved from `cid`'s current tag (same lookup pattern the
+        // `unsubscribe` counterpart below uses via `bid` directly).
+        if let Some(bid) = self.bubble_for_chart(cid) {
+            let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+            if let Some(ev) = self.core.subscribe_cvd_fold(bid, exchange_id, &symbol, at_dig3, Some(derived_target)) {
+                let now_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                self.react_to_bubble_event(&ev, now_ms);
+            }
+        }
     }
 
     /// After the last CVD indicator instance for an instrument was removed
@@ -66,7 +83,14 @@ impl ChartApp {
             .unwrap_or(self.active_exchange);
         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
         self.core.unsubscribe_cvd_line(exchange_id, &symbol, at_dig3);
-        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_cvd());
+        // Unified-data-plane Stage Э4: drop the CVD companion fold runtime
+        // alongside the station-derived unsubscribe — `active_cvd_fold` has
+        // its own independent lifecycle (see `DataBubble.active_cvd_fold`
+        // doc comment), not touched by `clear_derived_slots`/`clear_cvd`.
+        self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+            bubble.clear_cvd();
+            bubble.active_cvd_fold = None;
+        });
     }
 
     /// Handle clicks on widgets registered with the "ind_overlay:" prefix.

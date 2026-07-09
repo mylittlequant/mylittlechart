@@ -30,17 +30,45 @@
 //! `KlineDeltaState` folds the repeated same-`open_time` updates into
 //! incremental Δ-volume synthetic trades internally (see
 //! `digdigdig3_station::derived::KlineDeltaState`'s doc comment).
+//!
+//! # Trade-fed folds (unified-data-plane Stage Э4)
+//!
+//! `tick_bar` / `tick_imbalance_bar` / `volume_imbalance_bar` / `run_bar` /
+//! `footprint` / `tpo` (both [`TpoSource`] flavours), plus the CVD companion
+//! line, fold the bubble's own `trade_layer` (`DataBubble::trade_layer`) —
+//! real trades, never synthetic legs. [`TradeFoldRuntime::reseed`] replays
+//! the ENTIRE trade layer chronologically through a fresh machine instance
+//! (see `DerivedStream`'s "no rollback, replay from scratch" contract,
+//! mirrored from the kline-fold family above); [`TradeFoldRuntime::on_live_trade`]
+//! folds one live trade tick.
+//!
+//! `TpoFromKline1mDerived` (the kline-sourced TPO flavour) is the one
+//! exception that still folds the "1m" kline layer like the Э3 family — it
+//! is included in [`TradeFoldMachine`] anyway (rather than staying in
+//! [`FoldMachine`]) because TPO's chart_type installs exactly ONE runtime
+//! regardless of which `TpoSource` the caller picked, and the two TPO
+//! flavours share the same output type ([`mlc_core::types::TpoSession`]) and
+//! the same bubble slot (`tpo_sessions`) — splitting them across two
+//! `FoldRuntime` families would only duplicate the reseed/live-fold
+//! dispatch in `mlc-backend/src/lib.rs` for no benefit. See
+//! [`TradeFoldRuntime::reseed`]'s doc comment for how the Kline1m flavour's
+//! reseed differs (it replays the bubble's "1m" layer, passed in
+//! alongside the trade layer, instead of the trade layer itself).
 
 use digdigdig3::core::types::ExchangeId;
 use digdigdig3::core::websocket::KlineInterval;
+use digdigdig3_station::data::TradePoint;
 use digdigdig3_station::folds::{
-    kline_to_synthetic_trades, DerivedStream, TradeToDollarBarDerived, TradeToKagiBarDerived,
-    TradeToPnfBarDerived, TradeToRangeBarDerived, TradeToRenkoBarDerived,
-    TradeToThreeLineBreakDerived, TradeToVolumeBarDerived,
+    kline_to_synthetic_trades, DerivedStream, TpoFromKline1mDerived, TpoFromTradeDerived,
+    TradeToCvdLineDerived, TradeToDollarBarDerived, TradeToFootprintDerived,
+    TradeToKagiBarDerived, TradeToPnfBarDerived, TradeToRangeBarDerived, TradeToRenkoBarDerived,
+    TradeToRunBarDerived, TradeToThreeLineBreakDerived, TradeToTickBarDerived,
+    TradeToTickImbalanceDerived, TradeToVolumeBarDerived, TradeToVolumeImbalanceDerived,
 };
 use digdigdig3_station::subscription::Event;
+use digdigdig3_station::TpoSource;
 
-use super::raw_layer::RawLayer;
+use super::raw_layer::{RawLayer, RawTrade};
 
 /// Milliseconds per 1-minute kline bar — the only layer these 7 fold
 /// machines ever consume (kline-sufficient family, see module doc).
@@ -226,11 +254,15 @@ fn tlb_point_to_line(p: &digdigdig3_station::data::ThreeLineBreakLinePoint) -> m
     }
 }
 
-/// Final-unit parameters for constructing a [`FoldMachine`] — the SAME
-/// resolved values `SubscribeParams` carries at the `chart_out_events.rs`
-/// UI seam (ticks × tick_size already applied there; this struct is the
-/// fold-specific narrowing of that enum, since a fold machine needs exactly
-/// one shape rather than the full 10-variant `SubscribeParams` union).
+/// Final-unit parameters for constructing a [`FoldMachine`]/[`TradeFoldMachine`]
+/// — the SAME resolved values `SubscribeParams` carries at the
+/// `chart_out_events.rs` UI seam (ticks × tick_size already applied there;
+/// this struct is the fold-specific narrowing of that enum, since a fold
+/// machine needs exactly one shape rather than the full `SubscribeParams`
+/// union). Shared by both fold families (kline-sufficient + trade-fed,
+/// unified-data-plane Stages Э3 + Э4) rather than split into two structs —
+/// every field below is meaningful to exactly one machine kind, same
+/// "narrow union of scalars" shape `SubscribeParams` itself already uses.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FoldParams {
     pub scaled_units: f64,
@@ -240,6 +272,19 @@ pub struct FoldParams {
     /// Only meaningful for `pnf` — carried through to `PnfColumn::box_size`
     /// (not part of the dig3 fold machine's own state).
     pub box_size: f64,
+    /// `tick_bar`: trades per bar (`Kind::TickBar`'s `n`).
+    pub count: u32,
+    /// `tick_imbalance_bar` / `volume_imbalance_bar` / `run_bar`: EMA
+    /// smoothing factor (already divided by 100 — e.g. `0.20`).
+    pub alpha: f64,
+    /// `tick_imbalance_bar` / `volume_imbalance_bar` / `run_bar`: sanity-
+    /// floor tick count, also the EMA seed.
+    pub min_ticks: u32,
+    /// `footprint`: time-bucket width in milliseconds
+    /// (`TradeToFootprintDerived::new`'s `interval_ms`).
+    pub interval_ms: i64,
+    /// `tpo` (both flavours): letter-bucket width in minutes.
+    pub freq_minutes: u16,
 }
 
 /// Per-bubble client-side fold runtime (unified-data-plane Stage Э3).
@@ -354,6 +399,392 @@ impl FoldRuntime {
             point,
         };
         self.machine.on_event(&ev, self.params.box_size)
+    }
+}
+
+// =============================================================================
+// Trade-fed folds (unified-data-plane Stage Э4)
+// =============================================================================
+
+/// Convert a bubble-side [`RawTrade`] into the
+/// `digdigdig3_station::data::TradePoint` shape the trade-fed fold machines
+/// expect.
+///
+/// Field mapping:
+/// - `ts_ms` / `price` / `quantity` ← verbatim.
+/// - `side` ← derived from `is_buyer_maker`. `RawTrade.is_buyer_maker` is
+///   filled EXCLUSIVELY by `mlc-backend-data-bridge::bridge`'s
+///   `LiveUpdate::TradeUpdate` emitter, which sets it as
+///   `is_buyer_maker: point.side == 0` (see `bridge.rs`, the station-trade
+///   forwarder) — i.e. the bridge's own convention is
+///   `is_buyer_maker == (TradePoint.side == 0)`. This converter inverts that
+///   exact relation (`side = if is_buyer_maker { 0 } else { 1 }`) to
+///   reconstruct a `TradePoint.side` that round-trips losslessly through the
+///   bridge's already-established convention — NOT the canonical
+///   dig3-connector convention documented on `TradePoint::from_public`
+///   (`is_buyer_maker=true → TradeSide::Sell → side=1`), which the bridge's
+///   own emitter does not currently follow (a pre-existing mislabel outside
+///   this task's scope, left as-is so `RawTrade` consumers stay internally
+///   consistent with each other).
+/// - `trade_id_hash` ← `0` (absent). `RawTrade` carries no trade id (the
+///   bridge's `LiveUpdate::TradeUpdate` never forwarded one) — none of the
+///   trade-fed fold machines read `trade_id_hash` (it exists on `TradePoint`
+///   only for on-disk dedup, a station-side concern this client-side path
+///   never touches), so a synthesized `0` is safe and matches
+///   `FoldMachine`'s existing "absent field → documented zero" convention
+///   (see `bar_to_bar_point`'s `quote_volume`/`trades_count` doc above).
+pub fn raw_trade_to_trade_point(trade: &RawTrade) -> TradePoint {
+    let side = if trade.is_buyer_maker { 0 } else { 1 };
+    TradePoint {
+        ts_ms: trade.ts_ms,
+        price: trade.price,
+        quantity: trade.qty,
+        side,
+        trade_id_hash: 0,
+    }
+}
+
+/// One trade-fed fold machine instance, keyed by which chart_type /
+/// companion series it computes. Mirrors [`FoldMachine`] for the trade-fed
+/// family (unified-data-plane Stage Э4) — every variant is fed real
+/// `Event::Trade`s (never synthetic legs) in chronological order.
+pub enum TradeFoldMachine {
+    TickBar(TradeToTickBarDerived),
+    TickImbalanceBar(TradeToTickImbalanceDerived),
+    VolumeImbalanceBar(TradeToVolumeImbalanceDerived),
+    RunBar(TradeToRunBarDerived),
+    Footprint(TradeToFootprintDerived),
+    TpoTrade(TpoFromTradeDerived),
+    /// TPO's kline-sourced flavour — folds the "1m" kline layer, not the
+    /// trade layer. Included here (not in [`FoldMachine`]) so both TPO
+    /// flavours share one runtime family / one bubble slot — see this
+    /// module's doc comment "Trade-fed folds" section.
+    TpoKline1m(TpoFromKline1mDerived),
+    Cvd(TradeToCvdLineDerived),
+}
+
+/// One trade-fed fold machine's output for a single upstream event.
+#[derive(Clone, Debug)]
+pub enum TradeFoldOutput {
+    Bar(mlc_core::Bar),
+    Footprint(mlc_core::types::FootprintBar),
+    Tpo(mlc_core::types::TpoSession),
+    Cvd(mlc_core::types::CvdSample),
+}
+
+impl TradeFoldMachine {
+    /// Construct the machine for `chart_type` from resolved [`FoldParams`].
+    /// Returns `None` for any chart_type outside the trade-fed family.
+    ///
+    /// `tpo_source` selects which TPO flavour to install when
+    /// `chart_type == "tpo"` — ignored otherwise. `"cvd"` is not a
+    /// registered chart_type (it's an indicator instance — see
+    /// `mlc-app/src/input/overlay.rs`) but is accepted here as a synthetic
+    /// id so the CVD companion line shares this same construction/reseed
+    /// machinery.
+    pub fn new(chart_type: &str, params: &FoldParams, tpo_source: TpoSource) -> Option<Self> {
+        match chart_type {
+            "tick_bar" => Some(TradeFoldMachine::TickBar(TradeToTickBarDerived::new(params.count as u32))),
+            "tick_imbalance_bar" => Some(TradeFoldMachine::TickImbalanceBar(
+                TradeToTickImbalanceDerived::new(params.alpha, params.min_ticks),
+            )),
+            "volume_imbalance_bar" => Some(TradeFoldMachine::VolumeImbalanceBar(
+                TradeToVolumeImbalanceDerived::new(params.alpha, params.min_ticks),
+            )),
+            "run_bar" => Some(TradeFoldMachine::RunBar(TradeToRunBarDerived::new(params.alpha, params.min_ticks))),
+            "footprint" => Some(TradeFoldMachine::Footprint(TradeToFootprintDerived::new(params.interval_ms))),
+            "tpo" => match tpo_source {
+                TpoSource::TradeBucket => Some(TradeFoldMachine::TpoTrade(TpoFromTradeDerived::new(params.freq_minutes))),
+                TpoSource::Kline1m => Some(TradeFoldMachine::TpoKline1m(TpoFromKline1mDerived::new(params.freq_minutes))),
+            },
+            "cvd" => Some(TradeFoldMachine::Cvd(TradeToCvdLineDerived::new(true))),
+            _ => None,
+        }
+    }
+
+    /// Chart-type id this machine computes — `"cvd"` for the CVD companion
+    /// (see [`Self::new`]'s doc comment on the synthetic id).
+    pub fn chart_type(&self) -> &'static str {
+        match self {
+            TradeFoldMachine::TickBar(_) => "tick_bar",
+            TradeFoldMachine::TickImbalanceBar(_) => "tick_imbalance_bar",
+            TradeFoldMachine::VolumeImbalanceBar(_) => "volume_imbalance_bar",
+            TradeFoldMachine::RunBar(_) => "run_bar",
+            TradeFoldMachine::Footprint(_) => "footprint",
+            TradeFoldMachine::TpoTrade(_) | TradeFoldMachine::TpoKline1m(_) => "tpo",
+            TradeFoldMachine::Cvd(_) => "cvd",
+        }
+    }
+
+    /// Whether this machine folds `Event::Trade` (the trade layer) — `false`
+    /// only for [`TradeFoldMachine::TpoKline1m`], which folds `Event::Bar`
+    /// over the "1m" kline layer instead.
+    pub fn feeds_on_trades(&self) -> bool {
+        !matches!(self, TradeFoldMachine::TpoKline1m(_))
+    }
+
+    fn on_trade_event(&mut self, ev: &Event) -> Option<TradeFoldOutput> {
+        match self {
+            TradeFoldMachine::TickBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::TickImbalanceBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::VolumeImbalanceBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::RunBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::Footprint(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Footprint(footprint_point_to_bar(&p))),
+            TradeFoldMachine::TpoTrade(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
+            TradeFoldMachine::TpoKline1m(_) => None,
+            TradeFoldMachine::Cvd(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Cvd(mlc_core::types::CvdSample { ts_ms: p.ts_ms, value: p.value })),
+        }
+    }
+
+    fn on_bar_event(&mut self, ev: &Event) -> Option<TradeFoldOutput> {
+        match self {
+            TradeFoldMachine::TpoKline1m(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
+            _ => None,
+        }
+    }
+}
+
+/// Convert a `digdigdig3_station::data::FootprintPoint` into the
+/// `mlc_core::types::FootprintBar` shape the bubble renders. Mirrors the
+/// conversion `mlc-backend/src/lib.rs`'s `LiveUpdate::FootprintUpdate` arm
+/// already performs for the station-derived path (tick size inferred from
+/// the level grid, static extras stamped via `compute_static_extras`) —
+/// duplicated here (not shared) because the station-derived path's version
+/// lives in `lib.rs` and reads a different point type's field layout
+/// one-for-one; a shared helper would need to abstract over both callers'
+/// slightly different surrounding upsert/cumulative-delta bookkeeping for no
+/// real gain. `cumulative_delta` is left at the default `0.0` — the caller
+/// (`apply_trade_fold_reseed_outputs`/`trade_fold_on_live_trade` in
+/// `mlc-backend/src/lib.rs`) stamps it from the running per-bubble total,
+/// same as the station-derived path.
+fn footprint_point_to_bar(p: &digdigdig3_station::data::FootprintPoint) -> mlc_core::types::FootprintBar {
+    let mut bar = mlc_core::types::FootprintBar {
+        open_time: p.open_time,
+        open: p.open,
+        high: p.high,
+        low: p.low,
+        close: p.close,
+        volume: p.volume,
+        levels: p.levels.iter()
+            .map(|(price, buy_vol, sell_vol)| mlc_core::types::FootprintLevel {
+                price: *price,
+                buy_vol: *buy_vol,
+                sell_vol: *sell_vol,
+                is_single_print: false,
+                is_unfinished: false,
+            })
+            .collect(),
+        cumulative_delta: 0.0,
+        stacked_ask_start: None,
+        stacked_ask_len: None,
+        stacked_bid_start: None,
+        stacked_bid_len: None,
+        is_absorption: false,
+    };
+    let tick_size = {
+        let mut step = f64::INFINITY;
+        for w in bar.levels.windows(2) {
+            let d = (w[1].price - w[0].price).abs();
+            if d > 0.0 && d < step { step = d; }
+        }
+        if step.is_finite() { step } else { 1.0 }
+    };
+    bar.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
+    bar
+}
+
+/// Convert a `digdigdig3_station::data::TpoSessionPoint` into the
+/// `mlc_core::types::TpoSession` shape the bubble renders — field-for-field,
+/// same mapping `mlc-backend/src/lib.rs`'s `LiveUpdate::TpoProfileUpdate` arm
+/// already performs for the station-derived path.
+fn tpo_point_to_session(p: &digdigdig3_station::data::TpoSessionPoint) -> mlc_core::types::TpoSession {
+    mlc_core::types::TpoSession {
+        open_time: p.open_time,
+        tick_size: p.tick_size,
+        session_high: p.session_high,
+        session_low: p.session_low,
+        poc_price: p.poc_price,
+        vah_price: p.vah_price,
+        val_price: p.val_price,
+        rows: p.rows.clone(),
+    }
+}
+
+/// Per-bubble client-side trade-fold runtime (unified-data-plane Stage Э4).
+///
+/// Installed when the bubble's active chart_type is one of the trade-fed
+/// family (`tick_bar`/`tick_imbalance_bar`/`volume_imbalance_bar`/`run_bar`/
+/// `footprint`/`tpo`), or when the CVD companion indicator is active for
+/// this bubble's instrument (synthetic `"cvd"` chart_type, see
+/// [`TradeFoldMachine::new`]'s doc comment). Reseeded from the bubble's own
+/// `trade_layer` (or, for the `tpo` Kline1m flavour, the "1m" kline layer)
+/// on install/param-change/chart-type-switch, then fed one trade (or 1m bar,
+/// for Kline1m TPO) at a time as the layer receives live appends.
+///
+/// Distinct type from [`FoldRuntime`] (not a third enum variant on it) —
+/// the two families fold different upstream layers (trade vs kline) and
+/// produce disjoint output shapes; keeping them separate avoids a
+/// `FoldOutput`/`TradeFoldOutput` union nobody needs (every caller already
+/// knows statically which family a chart_type belongs to via
+/// `chart_type::is_fold_chart_type` / `chart_type::is_trade_fold_chart_type`).
+pub struct TradeFoldRuntime {
+    machine: TradeFoldMachine,
+    chart_type: &'static str,
+    /// Construction params, kept verbatim so [`Self::reseed`] can rebuild a
+    /// byte-identical fresh machine — same no-rollback rationale as
+    /// [`FoldRuntime::reseed`]'s doc comment.
+    params: FoldParams,
+    tpo_source: TpoSource,
+    exchange: ExchangeId,
+    symbol: String,
+    /// Running per-bubble footprint CVD total — `Footprint`-only bookkeeping
+    /// (mirrors the station-derived path's `set_cumulative_delta` chain in
+    /// `mlc-backend/src/lib.rs`), reset on every [`Self::reseed`] (a reseed
+    /// replays the WHOLE trade layer from scratch, so the running total must
+    /// restart at `0.0` rather than carry over stale state from before the
+    /// reseed).
+    footprint_cvd: f64,
+}
+
+impl TradeFoldRuntime {
+    /// Install a fresh runtime for `chart_type` with `params`. Returns
+    /// `None` for any chart_type outside the trade-fed family (including the
+    /// synthetic `"cvd"` id — see [`TradeFoldMachine::new`]).
+    pub fn new(
+        chart_type: &str,
+        params: FoldParams,
+        tpo_source: TpoSource,
+        exchange: ExchangeId,
+        symbol: &str,
+    ) -> Option<Self> {
+        let machine = TradeFoldMachine::new(chart_type, &params, tpo_source)?;
+        let chart_type = machine.chart_type();
+        Some(Self {
+            machine,
+            chart_type,
+            params,
+            tpo_source,
+            exchange,
+            symbol: symbol.to_string(),
+            footprint_cvd: 0.0,
+        })
+    }
+
+    /// Chart-type id this runtime computes (`"cvd"` for the CVD companion).
+    pub fn chart_type(&self) -> &'static str {
+        self.chart_type
+    }
+
+    /// Construction params this runtime is currently folding with.
+    pub fn params(&self) -> FoldParams {
+        self.params
+    }
+
+    /// Whether this runtime folds the trade layer (`true`) or the "1m" kline
+    /// layer (`false`, TPO Kline1m flavour only).
+    pub fn feeds_on_trades(&self) -> bool {
+        self.machine.feeds_on_trades()
+    }
+
+    /// Cold-seed / re-seed by replaying the bubble's ENTIRE trade layer
+    /// chronologically through a fresh machine instance — real trades, no
+    /// synthetic legs, no kline baseline (unlike [`FoldRuntime::reseed`]'s
+    /// kline-fold contract, there is no "in-progress last bar" concept for a
+    /// trade tape: every trade is already a complete, immutable event).
+    ///
+    /// For the TPO Kline1m flavour, replays `kline_layer` (the "1m" bars)
+    /// instead — `trade_layer` is ignored for that one variant. Every other
+    /// variant ignores `kline_layer`.
+    ///
+    /// Returns every output the replay produced, oldest-first — the caller
+    /// replaces the bubble's output slot wholesale with this.
+    pub fn reseed(
+        &mut self,
+        trade_layer: &RawLayer<RawTrade>,
+        kline_layer: &RawLayer<mlc_core::Bar>,
+    ) -> Vec<TradeFoldOutput> {
+        // Fresh machine per reseed — see `FoldRuntime::reseed`'s doc comment
+        // for the no-rollback rationale this mirrors verbatim.
+        if let Some(fresh) = TradeFoldMachine::new(self.chart_type, &self.params, self.tpo_source) {
+            self.machine = fresh;
+        }
+        self.footprint_cvd = 0.0;
+
+        let mut outputs = Vec::new();
+        if self.machine.feeds_on_trades() {
+            for trade in trade_layer.iter() {
+                let point = raw_trade_to_trade_point(trade);
+                let ev = Event::Trade {
+                    exchange: self.exchange,
+                    symbol: self.symbol.clone(),
+                    point,
+                };
+                if let Some(out) = self.machine.on_trade_event(&ev) {
+                    outputs.push(self.stamp_footprint_cvd(out));
+                }
+            }
+        } else {
+            for bar in kline_layer.iter() {
+                let point = bar_to_bar_point(bar);
+                let ev = Event::Bar {
+                    exchange: self.exchange,
+                    symbol: self.symbol.clone(),
+                    timeframe: KlineInterval::new("1m"),
+                    point,
+                };
+                if let Some(out) = self.machine.on_bar_event(&ev) {
+                    outputs.push(out);
+                }
+            }
+        }
+        outputs
+    }
+
+    /// Fold one live trade tick. No-op (`None`) for the TPO Kline1m flavour
+    /// — use [`Self::on_live_1m`] for that one instead.
+    pub fn on_live_trade(&mut self, trade: &RawTrade) -> Option<TradeFoldOutput> {
+        if !self.machine.feeds_on_trades() {
+            return None;
+        }
+        let point = raw_trade_to_trade_point(trade);
+        let ev = Event::Trade {
+            exchange: self.exchange,
+            symbol: self.symbol.clone(),
+            point,
+        };
+        let out = self.machine.on_trade_event(&ev)?;
+        Some(self.stamp_footprint_cvd(out))
+    }
+
+    /// Fold one live "1m" kline tick — TPO Kline1m flavour only, no-op
+    /// (`None`) for every other trade-fed chart_type.
+    pub fn on_live_1m(&mut self, bar: &mlc_core::Bar) -> Option<TradeFoldOutput> {
+        if self.machine.feeds_on_trades() {
+            return None;
+        }
+        let ev = Event::Bar {
+            exchange: self.exchange,
+            symbol: self.symbol.clone(),
+            timeframe: KlineInterval::new("1m"),
+            point: bar_to_bar_point(bar),
+        };
+        self.machine.on_bar_event(&ev)
+    }
+
+    /// Footprint-only: stamp the running per-bubble CVD total onto a freshly
+    /// folded `FootprintBar` and advance the total — mirrors the
+    /// station-derived path's `set_cumulative_delta` chain
+    /// (`mlc-backend/src/lib.rs`'s `LiveUpdate::FootprintUpdate` arm). A
+    /// no-op passthrough for every other output variant.
+    fn stamp_footprint_cvd(&mut self, out: TradeFoldOutput) -> TradeFoldOutput {
+        match out {
+            TradeFoldOutput::Footprint(mut bar) => {
+                bar.set_cumulative_delta(self.footprint_cvd);
+                self.footprint_cvd = bar.cumulative_delta;
+                TradeFoldOutput::Footprint(bar)
+            }
+            other => other,
+        }
     }
 }
 
@@ -510,5 +941,338 @@ mod tests {
         let mut fold = FoldRuntime::new("volume_bar", params, ExchangeId::Binance, "BTCUSDT").expect("volume_bar is a fold type");
         let outputs = fold.reseed(&layer);
         assert!(outputs.is_empty());
+    }
+
+    // =========================================================================
+    // Trade-fed folds (unified-data-plane Stage Э4)
+    // =========================================================================
+
+    fn trade(ts_ms: i64, price: f64, qty: f64, is_buyer_maker: bool) -> RawTrade {
+        RawTrade { ts_ms, price, qty, is_buyer_maker }
+    }
+
+    #[test]
+    fn raw_trade_to_trade_point_maps_fields_and_inverts_is_buyer_maker() {
+        // is_buyer_maker=true -> side=0 (reconstructs the bridge's own
+        // `is_buyer_maker: point.side == 0` convention exactly — see
+        // `raw_trade_to_trade_point`'s doc comment).
+        let t = trade(1_000, 42.5, 3.25, true);
+        let p = raw_trade_to_trade_point(&t);
+        assert_eq!(p.ts_ms, 1_000);
+        assert_eq!(p.price, 42.5);
+        assert_eq!(p.quantity, 3.25);
+        assert_eq!(p.side, 0);
+        assert_eq!(p.trade_id_hash, 0);
+
+        let t2 = trade(2_000, 10.0, 1.0, false);
+        let p2 = raw_trade_to_trade_point(&t2);
+        assert_eq!(p2.side, 1);
+    }
+
+    /// A trending series of trades with alternating direction bursts — gives
+    /// tick_bar/footprint/tpo/cvd enough signal to produce non-trivial
+    /// output (mirrors `trending_layer`'s rationale for the kline-fold
+    /// tests above).
+    fn trending_trade_layer(n: usize) -> RawLayer<RawTrade> {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        let mut price = 100.0;
+        for i in 0..n {
+            let ts_ms = (i as i64 + 1) * 1000;
+            // Alternate buy/sell bursts of 5 so imbalance/run machines see
+            // real signal instead of a single infinite run.
+            let is_buyer_maker = (i / 5) % 2 == 0;
+            price += if is_buyer_maker { -0.5 } else { 0.5 };
+            layer.push_live(trade(ts_ms, price, 1.0, is_buyer_maker));
+        }
+        layer
+    }
+
+    fn trade_fold_outputs_debug(outputs: &[TradeFoldOutput]) -> Vec<String> {
+        outputs.iter().map(|o| format!("{o:?}")).collect()
+    }
+
+    #[test]
+    fn trade_fold_machine_new_returns_none_for_non_trade_fold_chart_type() {
+        let params = FoldParams::default();
+        assert!(TradeFoldMachine::new("candles", &params, TpoSource::TradeBucket).is_none());
+        assert!(TradeFoldMachine::new("range_bar", &params, TpoSource::TradeBucket).is_none());
+    }
+
+    #[test]
+    fn trade_fold_runtime_new_returns_none_for_non_trade_fold_chart_type() {
+        let params = FoldParams::default();
+        assert!(TradeFoldRuntime::new("candles", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").is_none());
+    }
+
+    #[test]
+    fn tick_bar_reseed_is_deterministic_for_same_layer_and_params() {
+        let layer = trending_trade_layer(30);
+        let params = FoldParams { count: 5, ..Default::default() };
+        let mut fold_a = TradeFoldRuntime::new("tick_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("tick_bar is a trade fold type");
+        let mut fold_b = TradeFoldRuntime::new("tick_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("tick_bar is a trade fold type");
+
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let out_a = fold_a.reseed(&layer, &empty_kline);
+        let out_b = fold_b.reseed(&layer, &empty_kline);
+        assert!(!out_a.is_empty(), "30 trades at 5 ticks/bar must produce at least one bar");
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_b));
+
+        // Re-seeding the SAME runtime a second time over the SAME layer
+        // reproduces identical output (fresh machine per reseed, no
+        // leftover state).
+        let out_a_again = fold_a.reseed(&layer, &empty_kline);
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_a_again));
+    }
+
+    #[test]
+    fn tick_bar_reseed_with_different_params_produces_different_cut_of_same_input() {
+        let layer = trending_trade_layer(30);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let mut fold_tight = TradeFoldRuntime::new(
+            "tick_bar", FoldParams { count: 3, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("tick_bar is a trade fold type");
+        let mut fold_wide = TradeFoldRuntime::new(
+            "tick_bar", FoldParams { count: 15, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("tick_bar is a trade fold type");
+
+        let out_tight = fold_tight.reseed(&layer, &empty_kline);
+        let out_wide = fold_wide.reseed(&layer, &empty_kline);
+        let distinct_bars = |outputs: &[TradeFoldOutput]| -> usize {
+            let mut open_times: Vec<i64> = outputs.iter().filter_map(|o| match o {
+                TradeFoldOutput::Bar(b) => Some(if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }),
+                _ => None,
+            }).collect();
+            open_times.dedup();
+            open_times.len()
+        };
+        let tight_bars = distinct_bars(&out_tight);
+        let wide_bars = distinct_bars(&out_wide);
+        // A smaller tick count per bar must cut MORE bars than a larger one
+        // over the same trade tape.
+        assert!(tight_bars > wide_bars, "tight={tight_bars} wide={wide_bars}");
+    }
+
+    #[test]
+    fn tick_imbalance_bar_param_sensitivity() {
+        // A one-sided run (every trade buyer-initiated) gives the running
+        // imbalance |theta| a monotonic climb of exactly 1 per tick — a
+        // deterministic, strongly-biased signal (unlike `trending_trade_layer`'s
+        // alternating bursts, which cancel out and never cross a large
+        // `min_ticks` threshold within a short tape).
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        for i in 0..200 {
+            layer.push_live(trade((i as i64 + 1) * 1000, 100.0 + i as f64 * 0.01, 1.0, true));
+        }
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let mut fold_low = TradeFoldRuntime::new(
+            "tick_imbalance_bar", FoldParams { alpha: 0.20, min_ticks: 5, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("tick_imbalance_bar is a trade fold type");
+        let mut fold_high = TradeFoldRuntime::new(
+            "tick_imbalance_bar", FoldParams { alpha: 0.20, min_ticks: 40, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("tick_imbalance_bar is a trade fold type");
+
+        let out_low = fold_low.reseed(&layer, &empty_kline);
+        let out_high = fold_high.reseed(&layer, &empty_kline);
+        assert!(!out_low.is_empty());
+        assert!(!out_high.is_empty());
+        let distinct_bars = |outputs: &[TradeFoldOutput]| -> usize {
+            let mut open_times: Vec<i64> = outputs.iter().filter_map(|o| match o {
+                TradeFoldOutput::Bar(b) => Some(if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }),
+                _ => None,
+            }).collect();
+            open_times.dedup();
+            open_times.len()
+        };
+        // A lower min_ticks seed (smaller close threshold) must close MORE
+        // bars than a higher one over the same one-sided trade tape.
+        assert!(distinct_bars(&out_low) > distinct_bars(&out_high));
+    }
+
+    #[test]
+    fn run_bar_reseed_is_deterministic() {
+        let layer = trending_trade_layer(40);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let params = FoldParams { alpha: 0.20, min_ticks: 10, ..Default::default() };
+        let mut fold_a = TradeFoldRuntime::new("run_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("run_bar is a trade fold type");
+        let mut fold_b = TradeFoldRuntime::new("run_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("run_bar is a trade fold type");
+        let out_a = fold_a.reseed(&layer, &empty_kline);
+        let out_b = fold_b.reseed(&layer, &empty_kline);
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_b));
+    }
+
+    #[test]
+    fn volume_imbalance_bar_reseed_is_deterministic() {
+        let layer = trending_trade_layer(40);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let params = FoldParams { alpha: 0.20, min_ticks: 10, ..Default::default() };
+        let mut fold_a = TradeFoldRuntime::new("volume_imbalance_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("volume_imbalance_bar is a trade fold type");
+        let mut fold_b = TradeFoldRuntime::new("volume_imbalance_bar", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("volume_imbalance_bar is a trade fold type");
+        let out_a = fold_a.reseed(&layer, &empty_kline);
+        let out_b = fold_b.reseed(&layer, &empty_kline);
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_b));
+    }
+
+    /// Footprint bucket correctness on a synthetic trade sequence: two
+    /// trades in the same 1000ms bucket must land in ONE `FootprintPoint`
+    /// (merged OHLCV + both price levels present), a trade in the next
+    /// bucket must open a NEW point.
+    #[test]
+    fn footprint_fold_buckets_trades_by_interval_and_tracks_buy_sell_levels() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        // Bucket 0 [0, 1000): two trades, one buy one sell, different
+        // prices. `raw_trade_to_trade_point`: is_buyer_maker=true -> side=0
+        // (Buy aggressor), is_buyer_maker=false -> side=1 (Sell aggressor).
+        layer.push_live(trade(100, 100.0, 2.0, true));  // buy (aggressor)
+        layer.push_live(trade(500, 101.0, 3.0, false)); // sell (aggressor)
+        // Bucket 1 [1000, 2000): one trade.
+        layer.push_live(trade(1_200, 102.0, 1.0, true)); // buy
+
+        let params = FoldParams { interval_ms: 1_000, ..Default::default() };
+        let mut fold = TradeFoldRuntime::new("footprint", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT")
+            .expect("footprint is a trade fold type");
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let outputs = fold.reseed(&layer, &empty_kline);
+
+        let footprints: Vec<mlc_core::types::FootprintBar> = outputs.into_iter().filter_map(|o| match o {
+            TradeFoldOutput::Footprint(b) => Some(b),
+            _ => None,
+        }).collect();
+        assert!(!footprints.is_empty());
+
+        // The bucket-0 emissions (before the bucket rolls) must carry BOTH
+        // levels once the second trade has been folded — check the LAST
+        // bucket-0 emission (upsert semantics: current bucket re-emits on
+        // every trade).
+        let bucket0_final = footprints.iter().rev()
+            .find(|b| b.open_time == 0)
+            .expect("bucket 0 (open_time=0) must have at least one emission");
+        assert_eq!(bucket0_final.levels.len(), 2, "bucket 0 must carry both distinct price levels");
+        let has_buy_100 = bucket0_final.levels.iter().any(|l| (l.price - 100.0).abs() < 1e-9 && l.buy_vol > 0.0);
+        let has_sell_101 = bucket0_final.levels.iter().any(|l| (l.price - 101.0).abs() < 1e-9 && l.sell_vol > 0.0);
+        assert!(has_buy_100, "price=100.0 must carry buy volume from the buyer-aggressor trade");
+        assert!(has_sell_101, "price=101.0 must carry sell volume from the seller-aggressor trade");
+
+        // Bucket 1 is a distinct emission with its own open_time.
+        let bucket1 = footprints.iter().find(|b| b.open_time == 1_000);
+        assert!(bucket1.is_some(), "the third trade at ts=1200 must open bucket open_time=1000");
+    }
+
+    #[test]
+    fn footprint_fold_reseed_is_deterministic() {
+        let layer = trending_trade_layer(50);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let params = FoldParams { interval_ms: 5_000, ..Default::default() };
+        let mut fold_a = TradeFoldRuntime::new("footprint", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("footprint is a trade fold type");
+        let mut fold_b = TradeFoldRuntime::new("footprint", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("footprint is a trade fold type");
+        let out_a = fold_a.reseed(&layer, &empty_kline);
+        let out_b = fold_b.reseed(&layer, &empty_kline);
+        assert!(!out_a.is_empty());
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_b));
+    }
+
+    #[test]
+    fn footprint_fold_bucket_switch_produces_different_cut() {
+        let layer = trending_trade_layer(50);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let mut fold_fine = TradeFoldRuntime::new(
+            "footprint", FoldParams { interval_ms: 1_000, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("footprint is a trade fold type");
+        let mut fold_coarse = TradeFoldRuntime::new(
+            "footprint", FoldParams { interval_ms: 30_000, ..Default::default() },
+            TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT",
+        ).expect("footprint is a trade fold type");
+        let out_fine = fold_fine.reseed(&layer, &empty_kline);
+        let out_coarse = fold_coarse.reseed(&layer, &empty_kline);
+        let distinct_buckets = |outputs: &[TradeFoldOutput]| -> usize {
+            let mut opens: Vec<i64> = outputs.iter().filter_map(|o| match o {
+                TradeFoldOutput::Footprint(b) => Some(b.open_time),
+                _ => None,
+            }).collect();
+            opens.dedup();
+            opens.len()
+        };
+        // A finer bucket interval must cut MORE distinct footprint buckets
+        // than a coarser one over the same 50-second trade tape.
+        assert!(distinct_buckets(&out_fine) > distinct_buckets(&out_coarse));
+    }
+
+    #[test]
+    fn tpo_trade_fold_reseed_produces_session_output() {
+        let layer = trending_trade_layer(50);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let params = FoldParams { freq_minutes: 30, ..Default::default() };
+        let mut fold = TradeFoldRuntime::new("tpo", params, TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("tpo is a trade fold type");
+        assert!(fold.feeds_on_trades());
+        let outputs = fold.reseed(&layer, &empty_kline);
+        assert!(!outputs.is_empty());
+        assert!(outputs.iter().all(|o| matches!(o, TradeFoldOutput::Tpo(_))));
+    }
+
+    #[test]
+    fn tpo_kline1m_fold_does_not_feed_on_trades_but_feeds_on_1m_bars() {
+        let params = FoldParams { freq_minutes: 30, ..Default::default() };
+        let mut fold = TradeFoldRuntime::new("tpo", params, TpoSource::Kline1m, ExchangeId::Binance, "BTCUSDT").expect("tpo is a trade fold type");
+        assert!(!fold.feeds_on_trades());
+
+        // Trade-only reseed must produce nothing for the Kline1m flavour.
+        let trade_layer = trending_trade_layer(20);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let outputs = fold.reseed(&trade_layer, &empty_kline);
+        assert!(outputs.is_empty(), "Kline1m TPO must ignore the trade layer entirely");
+
+        // Kline-only reseed must produce session output.
+        let mut kline_layer: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let mut price = 100.0;
+        for i in 0..20 {
+            let ts_sec = (i as i64 + 1) * 60;
+            let open = price;
+            price += 1.0;
+            kline_layer.push_live(bar(ts_sec, open, price + 1.0, open - 1.0, price, 5.0));
+        }
+        let empty_trades: RawLayer<RawTrade> = RawLayer::new(0);
+        let outputs2 = fold.reseed(&empty_trades, &kline_layer);
+        assert!(!outputs2.is_empty(), "Kline1m TPO must fold the 1m kline layer");
+    }
+
+    #[test]
+    fn cvd_fold_reseed_is_deterministic_and_running_total() {
+        let layer = trending_trade_layer(20);
+        let empty_kline: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        let mut fold_a = TradeFoldRuntime::new("cvd", FoldParams::default(), TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("cvd is a trade fold type");
+        let mut fold_b = TradeFoldRuntime::new("cvd", FoldParams::default(), TpoSource::TradeBucket, ExchangeId::Binance, "BTCUSDT").expect("cvd is a trade fold type");
+        let out_a = fold_a.reseed(&layer, &empty_kline);
+        let out_b = fold_b.reseed(&layer, &empty_kline);
+        assert_eq!(out_a.len(), 20, "every trade must emit one CVD sample");
+        assert_eq!(trade_fold_outputs_debug(&out_a), trade_fold_outputs_debug(&out_b));
+
+        // Last sample's value equals the sum of signed trade quantities
+        // (buy=+qty, sell=-qty) — a running total, not a per-bucket reset.
+        let last_value = out_a.iter().rev().find_map(|o| match o {
+            TradeFoldOutput::Cvd(s) => Some(s.value),
+            _ => None,
+        }).expect("at least one CVD sample");
+        let expected: f64 = (0..20).map(|i| {
+            let is_buyer_maker = (i / 5) % 2 == 0;
+            if is_buyer_maker { -1.0 } else { 1.0 }
+        }).sum();
+        assert!((last_value - expected).abs() < 1e-9, "last={last_value} expected={expected}");
+    }
+
+    #[test]
+    fn trade_fold_disjoint_from_kline_fold_chart_types() {
+        // Sanity guard: the two fold families must never overlap on the
+        // same chart_type id (would make `is_fold_chart_type` and
+        // `is_trade_fold_chart_type` both true for the same string, which
+        // the `chart_type::engine` dispatch assumes never happens).
+        let kline_types = ["range_bar", "volume_bar", "dollar_bar", "renko", "pnf", "kagi", "three_line_break"];
+        let trade_types = ["tick_bar", "tick_imbalance_bar", "volume_imbalance_bar", "run_bar", "footprint", "tpo"];
+        for k in kline_types {
+            assert!(!trade_types.contains(&k), "{k} must not be in both fold families");
+        }
     }
 }

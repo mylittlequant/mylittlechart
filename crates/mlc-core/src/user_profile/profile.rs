@@ -184,6 +184,15 @@ pub struct DataLoadSettings {
     /// unified-data-plane Stage Э3). Default 10_000 (~6.9 days of 1m bars).
     #[serde(default = "default_derived_kline_target")]
     pub derived_kline_target: u32,
+
+    /// Target depth (raw trades) the `BackfillEngine` ramps the shared
+    /// trade layer toward for the trade-fed client-side fold chart types
+    /// (tick_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/
+    /// tpo, plus the CVD companion line — unified-data-plane Stage Э4).
+    /// Default 10_000 trades. `#[serde(default)]` — older profiles missing
+    /// this field pick up the same default as a fresh profile.
+    #[serde(default = "default_derived_trade_target")]
+    pub derived_trade_target: u32,
 }
 
 impl Default for DataLoadSettings {
@@ -196,6 +205,7 @@ impl Default for DataLoadSettings {
             kline_layer_capacity: default_kline_layer_capacity(),
             trade_layer_capacity: default_trade_layer_capacity(),
             derived_kline_target: default_derived_kline_target(),
+            derived_trade_target: default_derived_trade_target(),
         }
     }
 }
@@ -711,6 +721,10 @@ fn default_trade_layer_capacity() -> u32 {
 }
 
 fn default_derived_kline_target() -> u32 {
+    10_000
+}
+
+fn default_derived_trade_target() -> u32 {
     10_000
 }
 
