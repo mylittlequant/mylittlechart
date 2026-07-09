@@ -760,6 +760,13 @@ impl DataBubble {
         self.kline_layers.get(tf)
     }
 
+    /// Seed the raw kline layer for timeframe `tf` with a fresh Phase-A
+    /// block — see [`RawLayer::seed_block`]. Get-or-creates the layer like
+    /// [`Self::kline_layer_mut`].
+    pub fn kline_layer_seed_block(&mut self, tf: &str, block: Vec<mlc_core::Bar>) {
+        self.kline_layer_mut(tf).seed_block(block);
+    }
+
     /// Read-only access to the raw trade layer.
     pub fn trade_layer(&self) -> &RawLayer<RawTrade> {
         &self.trade_layer

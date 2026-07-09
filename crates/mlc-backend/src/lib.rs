@@ -134,8 +134,10 @@ pub enum BubbleEvent {
     /// Scroll-fetch bars (left-extend) written into one bubble.
     ///
     /// `prev_bars` is the snapshot of `bubble.bars` taken in `tick_writers`
-    /// *before* `merge_scroll_bars` prepended the older page. Same rationale
-    /// as `BarsLoaded`/`BackfillCompleted` (see doc comment above `BarsLoaded`):
+    /// *before* the raw kline layer's prepend (`kline_layer_prepend_batch`)
+    /// and the display rebuild from that layer (P0 fix 2026-07-09, see the
+    /// `ScrollBarsLoaded` arm) landed. Same rationale as
+    /// `BarsLoaded`/`BackfillCompleted` (see doc comment above `BarsLoaded`):
     /// re-reading the bubble after the merge gives back the already-front-
     /// extended array, and `capture_view_anchor` would then index `view_start`
     /// into the NEW array — collapsing the anchor onto a bar `prepend_count`
@@ -1274,9 +1276,20 @@ impl BackendCore {
                             // bubble can hold an independent Э3 "1m"
                             // fold-feed kline sub whose Phase-A page must
                             // still reach `kline_layers["1m"]`.
-                            for bar in &bars {
-                                mgr.kline_layer_push_live(bid, &tf_name, *bar);
-                            }
+                            //
+                            // `seed_block` (not a `push_live` loop, fixed P0
+                            // 2026-07-09): `BarsLoaded` is always the
+                            // right-edge Phase-A page for a (re-)subscribe.
+                            // A `RampState` that survived a chart-type/TF
+                            // round-trip can keep extending this SAME
+                            // `kline_layers[tf]` older-ward from an anchor
+                            // that predates the fresh page by months — a
+                            // plain per-bar `push_live` loop would leave that
+                            // stale block sitting under the fresh one with a
+                            // gap between them. `seed_block` detects that
+                            // disjoint case and resets the layer to the
+                            // fresh block instead.
+                            mgr.kline_layer_seed_block(bid, &tf_name, bars.clone());
                             // bars-ownership + TF-identity gate for the
                             // DISPLAY write only: a footprint-owned bubble's
                             // bar series is written by `FootprintUpdate` —
@@ -1296,7 +1309,19 @@ impl BackendCore {
                                 continue;
                             }
                             let prev_bars = mgr.bars(bid).to_vec();
-                            mgr.replace_bars(bid, bars.clone());
+                            // Display = a VIEW of the continuous layer, not a
+                            // separate replace target (P0 fix 2026-07-09):
+                            // rebuilding from the layer snapshot instead of
+                            // the raw event page means a later
+                            // `ScrollBarsLoaded` prepend (which only ever
+                            // touches the layer) stays visible in
+                            // `bubble.bars` without a second merge step. Falls
+                            // back to the event's own bars when the layer
+                            // read is empty (defensive only — `seed_block`
+                            // just wrote into it above).
+                            let display_bars = mgr.kline_layer_snapshot(bid, &tf_name);
+                            let display_bars = if display_bars.is_empty() { bars.clone() } else { display_bars };
+                            mgr.replace_bars(bid, display_bars.clone());
                             drop(mgr);
                             events.push(BubbleEvent::BarsLoaded {
                                 bid,
@@ -1304,7 +1329,7 @@ impl BackendCore {
                                 symbol: symbol.clone(),
                                 account_type: account_type.short_label().to_string(),
                                 timeframe: tf_name,
-                                bars: bars.clone(),
+                                bars: display_bars,
                                 prev_bars,
                             });
                         }
@@ -1329,9 +1354,14 @@ impl BackendCore {
                         // must reach `kline_layers["1m"]` even when the
                         // bubble's OWN active tf/chart_type is something else
                         // entirely — moved above both gates below.
-                        for bar in &bars {
-                            mgr.kline_layer_push_live(bid, &tf_name, *bar);
-                        }
+                        //
+                        // `seed_block` (fixed P0 2026-07-09): same rationale
+                        // as the `BarsLoaded` arm — `BackfillComplete` is
+                        // also a right-edge Phase-A-class page (the ladder's
+                        // final page), not a scroll-left prepend, so a stale
+                        // disjoint layer tail must reset rather than leave a
+                        // gap under the fresh page.
+                        mgr.kline_layer_seed_block(bid, &tf_name, bars.clone());
                         // bars-ownership + TF-identity gate for the DISPLAY
                         // write only: kline REST backfill on the bubble's OWN
                         // active timeframe is the only legitimate writer of
@@ -1351,7 +1381,11 @@ impl BackendCore {
                             continue;
                         }
                         let prev_bars = mgr.bars(bid).to_vec();
-                        mgr.replace_bars(bid, bars.clone());
+                        // Display = a VIEW of the continuous layer — see the
+                        // matching comment on the `BarsLoaded` arm above.
+                        let display_bars = mgr.kline_layer_snapshot(bid, &tf_name);
+                        let display_bars = if display_bars.is_empty() { bars.clone() } else { display_bars };
+                        mgr.replace_bars(bid, display_bars.clone());
                         drop(mgr);
                         events.push(BubbleEvent::BackfillCompleted {
                             bid,
@@ -1359,7 +1393,7 @@ impl BackendCore {
                             symbol: symbol.clone(),
                             account_type: account_type.short_label().to_string(),
                             timeframe: tf_name.clone(),
-                            bars: bars.clone(),
+                            bars: display_bars,
                             prev_bars,
                         });
                     }
@@ -1369,11 +1403,14 @@ impl BackendCore {
                 // The bridge's `request_scroll_bars` REST path returns ONLY the
                 // older page (bars older than `before_ts`). Replacing bubble.bars
                 // with that page wholesale would drop every live / right-edge
-                // bar the chart has accumulated since seed. Merge by timestamp
-                // (last-write-wins so the live ring's version of any overlapping
-                // bar takes priority), then sort oldest→newest. Pre-cutover native
-                // worked because the legacy path concatenated server-side; this
-                // branch is the merge that path used to do for us.
+                // bar the chart has accumulated since seed. The raw kline layer
+                // absorbs the page via `prepend_batch` (seam-deduped, sorted
+                // oldest→newest); the DISPLAY array is then rebuilt from that
+                // SAME layer (P0 fix 2026-07-09, see the arm body) instead of
+                // running its own separate merge — a display-only merge could
+                // drift from the layer's contiguous truth whenever the two
+                // arrays' prior states diverged (the exact kline-display-
+                // corruption mechanism this fix closes).
                 LiveUpdate::ScrollBarsLoaded { exchange_id, account_type, symbol, timeframe: tf_name, bars, prepend_count } => {
                     let at_label = account_type.short_label().to_string();
                     let bids = self.bubbles()
@@ -1407,9 +1444,29 @@ impl BackendCore {
                         // capture can index `view_start` into the OLD (pre-
                         // prepend) coordinate space. See `ScrollBarsAppended`
                         // doc comment for why re-reading the bubble after
-                        // the merge would collapse the anchor.
+                        // the merge would collapse the anchor. `prepend_count`
+                        // is untouched by the display-write change below — it
+                        // is the engine's own count of bars prepended into
+                        // the raw layer above (`kline_layer_prepend_batch`),
+                        // forwarded straight from the `LiveUpdate` event, and
+                        // the reactor never recomputes it from `bars.len()`.
                         let prev_bars = mgr.bars(bid).to_vec();
-                        let merged = mgr.merge_scroll_bars(bid, &bars);
+                        // Display = a VIEW of the continuous layer (P0 fix
+                        // 2026-07-09): the layer write above already merged
+                        // this page in with correct seam dedup; rebuild
+                        // `bubble.bars` from that SAME layer instead of a
+                        // second, display-only `merge_scroll_bars` pass that
+                        // only ever saw the display array's own (potentially
+                        // already-corrupted) prior state. Falls back to the
+                        // event's own bars when the layer read is empty
+                        // (defensive only — the prepend above just wrote
+                        // into it, so this only triggers if the bubble
+                        // itself vanished between the two facade calls,
+                        // which `kline_layer_snapshot`/`replace_bars` both
+                        // already no-op on).
+                        let display_bars = mgr.kline_layer_snapshot(bid, &tf_name);
+                        let display_bars = if display_bars.is_empty() { bars.clone() } else { display_bars };
+                        mgr.replace_bars(bid, display_bars.clone());
                         drop(mgr);
                         events.push(BubbleEvent::ScrollBarsAppended {
                             bid,
@@ -1417,7 +1474,7 @@ impl BackendCore {
                             symbol: symbol.clone(),
                             account_type: at_label.clone(),
                             timeframe: tf_name.clone(),
-                            bars: merged,
+                            bars: display_bars,
                             prev_bars,
                             prepend_count,
                         });

@@ -193,6 +193,12 @@ impl<'a> Bubbles<'a> {
         self.store.kline_layer(bid, tf)
     }
 
+    /// Full chronological snapshot of the raw kline layer for timeframe
+    /// `tf`, oldest-first. Empty if missing/untouched.
+    pub fn kline_layer_snapshot(&self, bid: BubbleId, tf: &str) -> Vec<mlc_core::Bar> {
+        self.store.kline_layer_snapshot(bid, tf)
+    }
+
     /// Raw trade layer (unified-data-plane Stage Э1).
     pub fn trade_layer(&self, bid: BubbleId) -> Option<&super::raw_layer::RawLayer<super::raw_layer::RawTrade>> {
         self.store.trade_layer(bid)
@@ -394,10 +400,6 @@ impl<'a> BubblesMut<'a> {
         self.store.replace_bars(bid, bars)
     }
 
-    pub fn merge_scroll_bars(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) -> Vec<mlc_core::Bar> {
-        self.store.merge_scroll_bars(bid, bars)
-    }
-
     pub fn set_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
         self.store.set_bars(bid, bars)
     }
@@ -412,6 +414,18 @@ impl<'a> BubblesMut<'a> {
     /// `tf` (unified-data-plane Stage Э1).
     pub fn kline_layer_prepend_batch(&mut self, bid: BubbleId, tf: &str, bars: Vec<mlc_core::Bar>) {
         self.store.kline_layer_prepend_batch(bid, tf, bars)
+    }
+
+    /// Phase-A / re-subscribe write into a bubble's raw kline layer for
+    /// timeframe `tf` — see [`BubbleStore::kline_layer_seed_block`].
+    pub fn kline_layer_seed_block(&mut self, bid: BubbleId, tf: &str, block: Vec<mlc_core::Bar>) {
+        self.store.kline_layer_seed_block(bid, tf, block)
+    }
+
+    /// Full chronological snapshot of the raw kline layer for timeframe
+    /// `tf`, oldest-first. Empty if missing/untouched.
+    pub fn kline_layer_snapshot(&self, bid: BubbleId, tf: &str) -> Vec<mlc_core::Bar> {
+        self.store.kline_layer_snapshot(bid, tf)
     }
 
     /// Live-tick write into a bubble's raw trade layer (unified-data-plane

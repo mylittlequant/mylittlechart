@@ -193,6 +193,57 @@ impl<T: ChronoKey> RawLayer<T> {
     pub fn clear(&mut self) {
         self.points.clear();
     }
+
+    /// Seed the layer with a fresh "right-edge" block (a Phase-A initial
+    /// load / re-subscribe page — always the newest window for the
+    /// instrument, not a scroll-left backfill page).
+    ///
+    /// Two cases:
+    /// - Layer empty, or the block overlaps/abuts the layer's current
+    ///   newest point within tolerance: each point is folded in via
+    ///   [`Self::push_live`] (append-or-replace-last), so a stale-but-
+    ///   CONTIGUOUS layer (e.g. a `RampState` that survived a TF round-trip
+    ///   and kept extending the SAME instrument older-ward) simply grows —
+    ///   this is the common, correct path.
+    /// - Layer non-empty AND disjoint from the block (the gap between the
+    ///   layer's `newest_ts` and the block's oldest key is more than double
+    ///   the block's own typical point-to-point step — i.e. a real time gap
+    ///   with nothing bridging it, e.g. the app was closed for a week and
+    ///   reopened, or a stale `RampState` ladder left the layer anchored
+    ///   months behind): the stale data would otherwise sit UNDER the fresh
+    ///   block with a hole between them. Reset the layer to just the fresh
+    ///   block instead of storing a gapped ring — see the
+    ///   `unified-data-plane` doc + P0 kline-display-corruption fix
+    ///   (2026-07-09). A single-point block has no step to measure — treated
+    ///   as contiguous (never resets) since one point alone can't establish
+    ///   a gap.
+    pub fn seed_block(&mut self, block: Vec<T>)
+    where
+        T: Clone,
+    {
+        if block.is_empty() {
+            return;
+        }
+        let mut sorted = block;
+        sorted.sort_by_key(|p| p.chrono_key());
+
+        if let Some(newest) = self.newest_ts() {
+            let block_oldest = sorted[0].chrono_key();
+            let typical_step = sorted.windows(2)
+                .map(|w| (w[1].chrono_key() - w[0].chrono_key()).max(0))
+                .max();
+            let disjoint = match typical_step {
+                Some(step) if step > 0 => block_oldest - newest > step * 2,
+                _ => false,
+            };
+            if disjoint {
+                self.clear();
+            }
+        }
+        for point in sorted {
+            self.push_live(point);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -321,5 +372,68 @@ mod tests {
         layer.clear();
         assert!(layer.is_empty());
         assert_eq!(layer.oldest_ts(), None);
+    }
+
+    #[test]
+    fn seed_block_on_empty_layer_just_inserts() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(10);
+        layer.seed_block(vec![trade(200, 2.0), trade(100, 1.0), trade(300, 3.0)]);
+        assert_eq!(
+            layer.snapshot(),
+            vec![trade(100, 1.0), trade(200, 2.0), trade(300, 3.0)]
+        );
+    }
+
+    #[test]
+    fn seed_block_contiguous_with_stale_tail_grows_in_place() {
+        // Stale layer ends at ts=100 with step 100 established by (100,200,300..).
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(100);
+        layer.push_live(trade(100, 1.0));
+        layer.push_live(trade(200, 2.0));
+        layer.push_live(trade(300, 3.0));
+
+        // Fresh block starts right after the stale tail (step 100, gap 100 <= 2*100).
+        layer.seed_block(vec![trade(400, 4.0), trade(500, 5.0)]);
+
+        assert_eq!(
+            layer.snapshot(),
+            vec![trade(100, 1.0), trade(200, 2.0), trade(300, 3.0), trade(400, 4.0), trade(500, 5.0)],
+            "contiguous seed must extend the layer, not reset it"
+        );
+    }
+
+    #[test]
+    fn seed_block_disjoint_from_stale_tail_resets_to_fresh_block() {
+        // Stale layer is a ladder from a prior session, months (huge gap) behind.
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(100);
+        layer.push_live(trade(100, 1.0));
+        layer.push_live(trade(200, 2.0));
+        layer.push_live(trade(300, 3.0)); // step = 100, newest_ts = 300
+
+        // Fresh PhaseA block is far in the future relative to the established
+        // step — a real gap, not a next-page continuation.
+        layer.seed_block(vec![trade(100_000, 10.0), trade(100_100, 11.0)]);
+
+        assert_eq!(
+            layer.snapshot(),
+            vec![trade(100_000, 10.0), trade(100_100, 11.0)],
+            "disjoint seed must reset the layer to the fresh block, no gapped ring"
+        );
+    }
+
+    #[test]
+    fn seed_block_single_point_never_resets() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(100);
+        layer.push_live(trade(100, 1.0));
+        layer.push_live(trade(200, 2.0));
+
+        // A single-point block has no measurable step — treated as
+        // contiguous, appended rather than resetting the layer.
+        layer.seed_block(vec![trade(100_000, 99.0)]);
+
+        assert_eq!(
+            layer.snapshot(),
+            vec![trade(100, 1.0), trade(200, 2.0), trade(100_000, 99.0)]
+        );
     }
 }

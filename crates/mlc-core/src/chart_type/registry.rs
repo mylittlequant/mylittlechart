@@ -126,8 +126,9 @@ pub enum DataMode {
 /// How a chart_type's history is deepened on scroll-to-edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeepenKind {
-    /// Kline REST-page prepend via `request_scroll_bars` + `merge_scroll_bars` — sorted-append,
-    /// reactor uses `capture_view_anchor`/`reconcile_view_keep_anchor`.
+    /// Kline REST-page prepend via `request_scroll_bars` + the raw kline
+    /// layer's `prepend_batch`/display-rebuild in `tick_writers` — sorted-
+    /// append, reactor uses `capture_view_anchor`/`reconcile_view_keep_anchor`.
     KlinePrepend,
     /// In-place prepend-fold via `Station::rewarm_derived` — the live station
     /// subscription keeps running, older points are spliced in front of the

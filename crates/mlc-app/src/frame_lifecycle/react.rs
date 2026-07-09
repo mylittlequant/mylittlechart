@@ -625,11 +625,12 @@ impl ChartApp {
                 };
 
                 // Pre-merge snapshot from event: pinned to bubble.bars state
-                // BEFORE tick_writers' merge_scroll_bars ran. `capture_view_anchor`
-                // must index `view_start` into this OLD coordinate space (pre-
-                // prepend), otherwise the anchor collapses onto a bar
-                // `prepend_count` positions further back in time than what was
-                // actually visible before the merge. See BubbleEvent::
+                // BEFORE tick_writers' layer prepend + display rebuild ran
+                // (P0 fix 2026-07-09). `capture_view_anchor` must index
+                // `view_start` into this OLD coordinate space (pre-prepend),
+                // otherwise the anchor collapses onto a bar `prepend_count`
+                // positions further back in time than what was actually
+                // visible before the merge. See BubbleEvent::
                 // ScrollBarsAppended doc comment (mlc-backend/src/lib.rs).
                 let prev_bars_for_anchor: &[mlc_core::Bar] = prev_bars;
 

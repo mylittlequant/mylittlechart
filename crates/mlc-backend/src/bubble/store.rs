@@ -608,6 +608,19 @@ impl BubbleStore {
         self.bubbles.get(&bid)?.kline_layer(tf)
     }
 
+    /// Full chronological snapshot of the raw kline layer for timeframe
+    /// `tf`, oldest-first. Empty if the bubble is missing or the timeframe
+    /// has never been touched — callers distinguish "no layer yet" from
+    /// "empty layer" the same way (both read as `Vec::new()`), since the
+    /// only legitimate use (kline-family display rebuild in `tick_writers`)
+    /// falls back to the event's own bars in either case.
+    pub fn kline_layer_snapshot(&self, bid: BubbleId, tf: &str) -> Vec<mlc_core::Bar> {
+        self.bubbles.get(&bid)
+            .and_then(|b| b.kline_layer(tf))
+            .map(|l| l.snapshot())
+            .unwrap_or_default()
+    }
+
     /// Raw trade layer for a bubble known by id directly. `None` if the
     /// bubble is missing.
     pub fn trade_layer(&self, bid: BubbleId) -> Option<&super::raw_layer::RawLayer<super::raw_layer::RawTrade>> {
@@ -720,30 +733,6 @@ impl BubbleStore {
         }
     }
 
-    /// Merge a page of scroll-loaded bars into the existing series by
-    /// timestamp (last-write-wins on collision — the live ring's version of
-    /// any overlapping bar takes priority), sorted oldest→newest. Returns the
-    /// merged series so the caller can build the matching `BubbleEvent`.
-    ///
-    /// Keyed by `(timestamp, derived_ts_ms)` rather than `timestamp` alone
-    /// (2026-07-08 caterpillar-bug fix): a bar can close more than once
-    /// inside one wall-clock second — a bare `timestamp` key silently
-    /// collapsed those into one bar. `derived_ts_ms` is `0` for bars that
-    /// don't carry a ms-native identity (client-aggregated candles), which
-    /// still sorts and dedups correctly against the seconds-only bars it was
-    /// written against. `BTreeMap`'s tuple ordering sorts by `timestamp`
-    /// first, so the oldest→newest invariant is unchanged for kline's
-    /// ScrollBarsLoaded path.
-    pub fn merge_scroll_bars(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) -> Vec<mlc_core::Bar> {
-        let Some(b) = self.bubbles.get_mut(&bid) else { return Vec::new() };
-        let mut by_ts: std::collections::BTreeMap<(i64, i64), mlc_core::Bar> = std::collections::BTreeMap::new();
-        for bar in bars { by_ts.insert((bar.timestamp, bar.derived_ts_ms), *bar); }
-        for bar in &b.bars { by_ts.insert((bar.timestamp, bar.derived_ts_ms), *bar); }
-        let merged: Vec<mlc_core::Bar> = by_ts.into_values().collect();
-        b.replace_bars(merged.clone());
-        merged
-    }
-
     /// Replace a bubble's entire OHLC series (restore/hydration path — same
     /// underlying write as `replace_bars`, distinct name for call-site intent
     /// clarity between "live tick" and "restore").
@@ -772,6 +761,18 @@ impl BubbleStore {
     pub fn kline_layer_prepend_batch(&mut self, bid: BubbleId, tf: &str, bars: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.kline_layer_mut(tf).prepend_batch(bars);
+        }
+    }
+
+    /// Phase-A / re-subscribe write into a bubble's raw kline layer for
+    /// timeframe `tf` — see [`super::raw_layer::RawLayer::seed_block`]. Resets
+    /// the layer to just `block` when it is disjoint from a stale layer tail
+    /// (e.g. a `RampState` that survived a TF round-trip and kept extending
+    /// a now-orphaned ladder); otherwise grows the layer in place. No-op for
+    /// an unknown bubble.
+    pub fn kline_layer_seed_block(&mut self, bid: BubbleId, tf: &str, block: Vec<mlc_core::Bar>) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.kline_layer_seed_block(tf, block);
         }
     }
 
@@ -897,5 +898,92 @@ mod park_unpark_tests {
 
         assert!(store.exists(window_a_bid), "window A's bubble must survive parking window B's preset");
         assert!(!parked_b.exists(window_a_bid), "extraction must not leak window A's bubble into window B's payload");
+    }
+}
+
+#[cfg(test)]
+mod kline_layer_display_rebuild_tests {
+    //! Store-level coverage for the P0 kline-display-corruption fix
+    //! (2026-07-09): `tick_writers`' kline-family display writers now
+    //! rebuild `bubble.bars` from the raw kline layer instead of writing a
+    //! second, disconnected array. These tests exercise the store methods
+    //! `tick_writers` actually calls (`kline_layer_seed_block`,
+    //! `kline_layer_prepend_batch`, `kline_layer_snapshot`) directly,
+    //! without going through the full `LiveUpdate`/`BubbleEvent` plumbing.
+
+    use super::*;
+    use mlc_core::Bar;
+
+    fn bar(ts: i64, close: f64) -> Bar {
+        Bar {
+            timestamp: ts,
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1.0,
+            ..Default::default()
+        }
+    }
+
+    /// Layer [t0..t100] (via seed) + ScrollBars-style prepend page
+    /// [t-50..t0) → the layer snapshot is one contiguous, oldest-first run
+    /// covering both — exactly what the `ScrollBarsLoaded` arm's display
+    /// rebuild reads.
+    #[test]
+    fn prepend_into_seeded_layer_yields_contiguous_snapshot() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+
+        let seed: Vec<Bar> = (0..=100).step_by(10).map(|t| bar(t, 100.0 + t as f64)).collect();
+        store.kline_layer_seed_block(bid, "1H", seed.clone());
+
+        let older_page: Vec<Bar> = (-50..0).step_by(10).map(|t| bar(t, 50.0 + t as f64)).collect();
+        store.kline_layer_prepend_batch(bid, "1H", older_page.clone());
+
+        let snapshot = store.kline_layer_snapshot(bid, "1H");
+        assert_eq!(snapshot.len(), older_page.len() + seed.len(), "contiguous merge count");
+        assert_eq!(snapshot.first().map(|b| b.timestamp), older_page.first().map(|b| b.timestamp));
+        assert_eq!(snapshot.last().map(|b| b.timestamp), seed.last().map(|b| b.timestamp));
+        // Strictly increasing timestamps — no hole, no duplicate seam.
+        for w in snapshot.windows(2) {
+            assert!(w[1].timestamp > w[0].timestamp, "snapshot must be strictly chronological, no gap/dup at the seam");
+        }
+    }
+
+    /// Phase-A on a bubble whose layer has never been touched: the display
+    /// writers fall back to the event's own bars (mirrors the
+    /// `display_bars.is_empty()` fallback in `tick_writers`).
+    #[test]
+    fn empty_layer_snapshot_signals_fallback_to_event_bars() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+
+        let snapshot = store.kline_layer_snapshot(bid, "1H");
+        assert!(snapshot.is_empty(), "untouched layer must read back empty, driving the event-bars fallback");
+    }
+
+    /// Phase-A fresh block disjoint from a stale layer tail (e.g. a
+    /// `RampState` that survived a chart-type/TF round-trip and kept
+    /// extending a now-orphaned ladder months behind): the layer resets to
+    /// just the fresh block — no gapped ring, no split display axis.
+    #[test]
+    fn disjoint_seed_resets_layer_to_fresh_block() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+
+        // Stale ladder: hourly bars, step = 3_600_000 ms, newest at t=7_200_000.
+        let stale: Vec<Bar> = (0..3).map(|i| bar(i * 3_600_000, 100.0 + i as f64)).collect();
+        store.kline_layer_seed_block(bid, "1H", stale);
+
+        // Fresh PhaseA block: "now", months later — a real gap relative to
+        // the established hourly step, not a next-page continuation.
+        let fresh_base = 3_600_000_i64 * 24 * 90; // ~90 days later
+        let fresh: Vec<Bar> = (0..3).map(|i| bar(fresh_base + i * 3_600_000, 200.0 + i as f64)).collect();
+        store.kline_layer_seed_block(bid, "1H", fresh.clone());
+
+        let snapshot = store.kline_layer_snapshot(bid, "1H");
+        assert_eq!(snapshot.len(), fresh.len(), "disjoint seed must reset, not accumulate a gapped ring");
+        assert_eq!(snapshot.first().map(|b| b.timestamp), Some(fresh_base));
     }
 }
