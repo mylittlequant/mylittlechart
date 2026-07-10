@@ -726,9 +726,22 @@ impl Bar {
     /// boundary math in the live aggregation path stays in seconds).
     /// Callers that need the time-axis unit go through this one method
     /// instead of repeating `* 1000` everywhere.
+    ///
+    /// Prefers `derived_ts_ms` when set (the genuine sub-second-accurate
+    /// upstream ms value — see its doc) and falls back to
+    /// `timestamp * 1000` only when unset. For every producer that sets
+    /// `derived_ts_ms` (`kline_to_bar`, `bar_point_to_bar`, the
+    /// renko/pnf/kagi/tlb/cvd/tpo ts-shadow builders) `derived_ts_ms` is
+    /// already `timestamp * 1000` to sub-second precision, so this is a
+    /// no-op for them and only changes the result for the sub-second-
+    /// close derived-bar family where `timestamp` alone is lossy.
     #[inline]
     pub fn ts_ms(&self) -> i64 {
-        self.timestamp.saturating_mul(1000)
+        if self.derived_ts_ms != 0 {
+            self.derived_ts_ms
+        } else {
+            self.timestamp.saturating_mul(1000)
+        }
     }
 
     /// Returns true if this bar closed higher than it opened

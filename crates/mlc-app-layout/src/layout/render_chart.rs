@@ -29,6 +29,7 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_volume_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
+    draw_dom_heatmap_conditional, draw_liquidation_heatmap_conditional,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
@@ -2565,7 +2566,9 @@ pub fn render_main_chart_primitives(
 /// This renders:
 /// 1. Background
 /// 2. Grid
-/// 3. Series (candles, bars, line, area, etc.)
+/// 3. Background heat overlays (DOM / Liquidation heatmap, when enabled)
+/// 4. Series (candles, bars, line, area, etc.)
+/// 5. Volume Profile overlay (when enabled)
 ///
 /// Used internally by render_chart_window.
 /// Crosshair is cursor-dependent and is drawn by render_chart_overlay.
@@ -2582,10 +2585,22 @@ pub fn render_chart(
     // 2. Grid
     draw_grid(ctx, state);
 
-    // 3. Series (candles, bars, line, area, etc.)
+    // 3. DOM Heatmap / Liquidation Heatmap background overlays (chart-type →
+    // overlay migration) — draw BEFORE the main series so the heat layers
+    // paint UNDER candles/bars/line/etc on ANY chart type, same visual as
+    // when these were their own full-pane chart types. Both fns no-op
+    // silently when their ring-buffer ref is `None` (overlay off or no data
+    // yet) — the presence check lives inside `draw_{dom,liquidation}_heatmap_conditional`,
+    // reading `state.dom_heatmap_ref`/`state.liq_heatmap_ref`, which
+    // `build_chart_render_state` already gates on the window's
+    // `dom_heatmap_show`/`liq_heatmap_show` flags.
+    draw_dom_heatmap_conditional(ctx, state);
+    draw_liquidation_heatmap_conditional(ctx, state);
+
+    // 4. Series (candles, bars, line, area, etc.)
     draw_series(ctx, state, config.chart_type);
 
-    // 4. Volume Profile overlay (when enabled).
+    // 5. Volume Profile overlay (when enabled).
     if let Some(vp) = state.vp_overlay {
         draw_volume_profile_overlay(ctx, state, vp);
     }
@@ -3162,6 +3177,7 @@ pub fn render_full_chart_panel(
         use_prev_close: data.state.use_prev_close,
         footprint_bars: data.state.footprint_bars,
         footprint_display: data.state.footprint_display,
+        tick_intensity: data.state.tick_intensity,
         renko_bars: data.state.renko_bars,
         three_line_break: data.state.three_line_break,
         pnf_columns: data.state.pnf_columns,
@@ -3604,6 +3620,7 @@ pub fn render_chart_overlay(
         use_prev_close: state.use_prev_close,
         footprint_bars: state.footprint_bars,
         footprint_display: state.footprint_display,
+        tick_intensity: state.tick_intensity,
         renko_bars: state.renko_bars,
         three_line_break: state.three_line_break,
         pnf_columns: state.pnf_columns,

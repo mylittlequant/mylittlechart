@@ -401,10 +401,12 @@ impl ChartApp {
                     "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
                     "volume_imbalance_bar" => Some("volume_imbalance_bar"),
                     "run_bar"              => Some("run_bar"),
-                    // ── DOM Heatmap (C12) ──────────────────────────────────────
-                    "dom_heatmap"          => Some("dom_heatmap"),
-                    // ── Liquidation Heatmap (C13) ──────────────────────────────
-                    "liquidation_heatmap"  => Some("liquidation_heatmap"),
+                    // "dom_heatmap"/"liquidation_heatmap" REMOVED (chart-type →
+                    // overlay migration) — both are now builtin overlay
+                    // indicators (ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay
+                    // above), not chart_type switch targets. Legacy preset ids
+                    // fall into the `_` arm below and hydrate to "candles" via
+                    // `hydration_impl.rs`'s `by_id(...).unwrap_or("candles")`.
                     _ => {
                         eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
                         None
@@ -1248,6 +1250,92 @@ impl ChartApp {
                                     );
                                 } else {
                                     self.core.unsubscribe_funding_rate(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
+            // === DOM Heatmap overlay (C12; chart-type → overlay migration) ===
+            // Mirrors ToggleOpenInterestOverlay/ToggleFundingRateStrip above —
+            // same per-window bool flag + subscribe/unsubscribe pair, but the
+            // ring-buffer state (`bubble.dom_heatmap`/`dom_trade_dots`) and
+            // subscribe/clear-slot fns are the SAME ones `dom_heatmap` used
+            // as a chart_type; only the trigger moved.
+            ChartOutEvent::ToggleDomHeatmapOverlay => {
+                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                if let Some(cid) = cid_opt {
+                    let symbol_opt = self.symbol_for_chart(cid);
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            let connector_enabled = self.sidebar_state.connector_enabled
+                                .get(eid_str).copied().unwrap_or(true);
+                            if connector_enabled {
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+                                let dom_show_now = {
+                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                        w.dom_heatmap_show = !w.dom_heatmap_show;
+                                        eprintln!("[ChartApp] dom_heatmap_show toggled -> {}", w.dom_heatmap_show);
+                                        w.dom_heatmap_show
+                                    } else { false }
+                                };
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                        mlc_backend::chart_type::clear_slot_dom_heatmap(bubble);
+                                    });
+                                }
+                                if dom_show_now {
+                                    self.core.subscribe_dom_heatmap(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                } else {
+                                    self.core.unsubscribe_dom_heatmap(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                state_mutated = true;
+            }
+            // === Liquidation Heatmap overlay (C13; chart-type → overlay migration) ===
+            // Mirrors ToggleDomHeatmapOverlay above.
+            ChartOutEvent::ToggleLiquidationHeatmapOverlay => {
+                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                if let Some(cid) = cid_opt {
+                    let symbol_opt = self.symbol_for_chart(cid);
+                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
+                        if !symbol.is_empty() {
+                            let eid_str = self.active_exchange.as_str();
+                            let connector_enabled = self.sidebar_state.connector_enabled
+                                .get(eid_str).copied().unwrap_or(true);
+                            if connector_enabled {
+                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+                                let liq_show_now = {
+                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                                        w.liq_heatmap_show = !w.liq_heatmap_show;
+                                        eprintln!("[ChartApp] liq_heatmap_show toggled -> {}", w.liq_heatmap_show);
+                                        w.liq_heatmap_show
+                                    } else { false }
+                                };
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                        mlc_backend::chart_type::clear_slot_liq_heatmap(bubble);
+                                    });
+                                }
+                                if liq_show_now {
+                                    self.core.subscribe_liquidation_heatmap(
+                                        self.active_exchange, &symbol, at,
+                                    );
+                                } else {
+                                    self.core.unsubscribe_liquidation_heatmap(
                                         self.active_exchange, &symbol, at,
                                     );
                                 }
@@ -2579,7 +2667,11 @@ impl ChartApp {
     /// Ignite the derived-pipeline for every restored window whose chart_type
     /// is derived (footprint / renko / pnf / kagi / three_line_break / tpo /
     /// range_bar / volume_bar / tick_bar / dollar_bar / *_imbalance_bar /
-    /// run_bar / dom_heatmap / liquidation_heatmap).
+    /// run_bar). DOM Heatmap / Liquidation Heatmap are NOT chart_types
+    /// anymore (chart-type → overlay migration) — their restore-time
+    /// re-ignition is handled by the hydration path's
+    /// `dom_heatmap_show`/`liq_heatmap_show` mapping instead (see
+    /// `persistence/hydration_impl.rs`), not this fn.
     ///
     /// The startup / new-window post-load loops only fire kline `request_bars`;
     /// a hydrated derived window never went through `ChangeChartType`'s Step 6,
@@ -2668,6 +2760,64 @@ impl ChartApp {
                 subscribe(self.core.bridge_handle(), eid, &sym, at, &tf, params);
             }
             eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);
+        }
+    }
+
+    /// Ignite the live overlay subscription for every restored window whose
+    /// `dom_heatmap_show`/`liq_heatmap_show` flag came back `true` — either
+    /// a genuine user preference (never persisted today, see the doctrine
+    /// note on `oi_show`/`funding_show`; RAM-only view state always
+    /// defaults to `false`) or the chart-type → overlay migration's
+    /// hydration mapping (`persistence/hydration_impl.rs`), which flips the
+    /// flag `true` for a legacy `chart_type = "dom_heatmap"`/
+    /// `"liquidation_heatmap"` snapshot so the overlay comes back visually
+    /// equivalent to the old chart_type. Sibling of `ignite_derived_windows`
+    /// — same startup/new-window post-load timing, called right after it.
+    pub(crate) fn ignite_legacy_heatmap_overlays(&mut self) {
+        let dom_targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> =
+            self.panel_app.panel_grid.containers().iter()
+                .filter_map(|(cid, w)| {
+                    if !w.dom_heatmap_show { return None; }
+                    let sym = self.symbol_for_chart(*cid)?;
+                    if sym.is_empty() { return None; }
+                    let exch = self.exchange_for_chart(*cid)?;
+                    let at = self.account_type_for_chart(*cid)?;
+                    Some((*cid, sym.to_string(), exch.to_string(), at))
+                })
+                .collect();
+        for (cid, sym, exch, at) in dom_targets {
+            let eid = digdigdig3::ExchangeId::from_str(&exch)
+                .unwrap_or(digdigdig3::ExchangeId::Binance);
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+            self.core.ensure_connector(eid);
+            self.core.subscribe_dom_heatmap(eid, &sym, at_dig3);
+            eprintln!("[ChartApp] ignited DOM heatmap overlay for restored window {:?}", cid);
+        }
+
+        let liq_targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> =
+            self.panel_app.panel_grid.containers().iter()
+                .filter_map(|(cid, w)| {
+                    if !w.liq_heatmap_show { return None; }
+                    let sym = self.symbol_for_chart(*cid)?;
+                    if sym.is_empty() { return None; }
+                    let exch = self.exchange_for_chart(*cid)?;
+                    let at = self.account_type_for_chart(*cid)?;
+                    Some((*cid, sym.to_string(), exch.to_string(), at))
+                })
+                .collect();
+        for (cid, sym, exch, at) in liq_targets {
+            let eid = digdigdig3::ExchangeId::from_str(&exch)
+                .unwrap_or(digdigdig3::ExchangeId::Binance);
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+            self.core.ensure_connector(eid);
+            self.core.subscribe_liquidation_heatmap(eid, &sym, at_dig3);
+            eprintln!("[ChartApp] ignited Liquidation heatmap overlay for restored window {:?}", cid);
         }
     }
 
@@ -2917,6 +3067,34 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Resolve the code-side default for a `ResolutionKind::Param` chart_type's
+/// numeric parameter: the registry's `inline_default` when present, else the
+/// FIRST preset in its `param_spec.options` ladder — parsed as `f64`.
+///
+/// This is the single source of truth for "what value does this chart_type
+/// subscribe at before the user has picked anything" — the toolbar button
+/// label (`panel_app.rs`'s `tf_button_label`) and the settings-modal dropdown
+/// (`chart_settings.rs::ChartTypeParamSpec::current_label`) BOTH already
+/// apply the SAME `inline_default`-first / `options.first()`-fallback rule
+/// for the `param <= 0.0` sentinel state, so [`build_subscribe_params`] must
+/// fall back to that exact same value — otherwise the toolbar can display
+/// one default (e.g. three_line_break's `inline_default` "3") while the
+/// backend silently subscribes at the ladder's first preset ("2") instead
+/// (bug found 2026-07-10: tick_bar showed "1T" pre-first-pick but subscribed
+/// count=100 — `TICK_BAR_OPTIONS.first() == "1"` vs the old hardcoded `100`
+/// fallback here; the `inline_default` field exists precisely because a
+/// type's canonical default is not always its ladder's first entry — e.g.
+/// three_line_break's `inline_default` "3" vs `options.first()` "2"). `None`
+/// when the type has no `param_spec` (not a Param chart_type, or a registry
+/// drift) — callers keep their own last-resort literal for that defensive
+/// case.
+fn default_chart_type_param(ct: &str) -> Option<f64> {
+    let def = mlc_core::chart_type::by_id(ct)?;
+    let spec = def.param_spec?;
+    let raw = def.inline_default.or_else(|| spec.options.first().map(|o| o.value_id))?;
+    raw.parse::<f64>().ok()
+}
+
 /// Map a `chart_type` id + its raw UI param/interval into the
 /// `SubscribeParams` shape the [`mlc_backend::chart_type::SubscribeOps`]
 /// table expects (chart-type registry arc, Step 10). One choke point for
@@ -2932,6 +3110,14 @@ fn now_ms() -> u64 {
 /// before the value leaves the UI layer for the engine — every other
 /// chart_type's `param` is unaffected and keeps its pre-existing unit
 /// (contract count / volume / dollar notional / trade count).
+///
+/// Every `param <= 0.0` (pre-first-pick sentinel) branch below falls back to
+/// [`default_chart_type_param`] — the registry's first preset — so the
+/// toolbar/modal's displayed default and the value actually subscribed can
+/// never diverge (see that fn's doc comment for the bug this closes). The
+/// literal after `.unwrap_or(..)` is a defensive last resort only, hit when
+/// the registry entry has no `param_spec` at all (should not happen for
+/// these ids — guarded by an `Э4`/`Э3` regression test).
 fn build_subscribe_params(
     ct: &str,
     param: f64,
@@ -2940,51 +3126,385 @@ fn build_subscribe_params(
     tick_size: f64,
 ) -> mlc_backend::chart_type::SubscribeParams {
     use mlc_backend::chart_type::SubscribeParams;
+    let default_param = || default_chart_type_param(ct);
+    // Fixed non-editable constants (renko/pnf reversal, imbalance/run alpha)
+    // read from the registry row (chart-type-engine-consolidation B3, S3) —
+    // no longer independently hardcoded per arm below. `unwrap_or` literals
+    // are the registry's own canonical defaults (mirrors `FixedConsts::NONE`
+    // for any type without a fixed constant), not an independent source.
+    let fixed_consts = mlc_core::chart_type::by_id(ct).map(|d| d.fixed_consts).unwrap_or(mlc_core::chart_type::FixedConsts::NONE);
     match ct {
         "range_bar" | "kagi" => {
-            let ticks = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { default_param().unwrap_or(10.0) };
             let units = ticks * tick_size;
             SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
         }
         "volume_bar" => {
-            let units = if param > 0.0 { param } else { 1000.0 };
+            let units = if param > 0.0 { param } else { default_param().unwrap_or(1000.0) };
             SubscribeParams::ScaledUnits { scaled_u64: (units * 1e8) as u64 }
         }
         "renko" => {
-            let ticks = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { default_param().unwrap_or(10.0) };
             let units = ticks * tick_size;
-            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 2 }
+            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: fixed_consts.reversal.unwrap_or(2) }
         }
         "pnf" => {
-            let ticks = if param > 0.0 { param } else { 10.0 };
+            let ticks = if param > 0.0 { param } else { default_param().unwrap_or(10.0) };
             let units = ticks * tick_size;
-            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: 3 }
+            SubscribeParams::ScaledUnitsWithReversal { scaled_u64: (units * 1e8) as u64, reversal: fixed_consts.reversal.unwrap_or(3) }
         }
         "dollar_bar" => {
-            SubscribeParams::Threshold { threshold_u64: if param > 0.0 { param as u64 } else { 1_000_000 } }
+            let threshold = if param > 0.0 { param } else { default_param().unwrap_or(1_000_000.0) };
+            SubscribeParams::Threshold { threshold_u64: threshold as u64 }
         }
         "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
+            let min_ticks = if param > 0.0 { param } else { default_param().unwrap_or(50.0) };
             SubscribeParams::MinTicks {
-                alpha_x100: 20,
-                min_ticks: if param > 0.0 { param as u32 } else { 50 },
+                alpha_x100: fixed_consts.alpha_x100.unwrap_or(20),
+                min_ticks: min_ticks as u32,
             }
         }
         "tick_bar" => {
-            SubscribeParams::Count { count_u32: if param > 0.0 { param as u32 } else { 100 } }
+            let count = if param > 0.0 { param } else { default_param().unwrap_or(100.0) };
+            SubscribeParams::Count { count_u32: count as u32 }
         }
         "three_line_break" => {
+            let lines_back = if param > 0.0 { param } else { default_param().unwrap_or(3.0) };
             SubscribeParams::LinesBack {
-                lines_back: if param > 0.0 { (param as u8).max(1) } else { 3 },
+                lines_back: (lines_back as u8).max(1),
             }
         }
         "tpo" => {
-            SubscribeParams::Freq { freq_u16: if param > 0.0 { param as u16 } else { 30 } }
+            let freq = if param > 0.0 { param } else { default_param().unwrap_or(30.0) };
+            SubscribeParams::Freq { freq_u16: freq as u16 }
         }
         "footprint" => {
             let iv = if !interval.is_empty() { interval } else { "1m" };
             SubscribeParams::Interval { interval: iv }
         }
-        "dom_heatmap" | "liquidation_heatmap" => SubscribeParams::None,
         _ => SubscribeParams::Kline { bar_count },
+    }
+}
+
+// =============================================================================
+// Regression tests — UI param value -> SubscribeParams -> FoldParams
+// =============================================================================
+//
+// Closes the 2026-07-10 bug: toolbar "1T" selected for tick_bar subscribed
+// at count=100 instead of count=1. Covers every `ResolutionKind::Param`
+// chart_type on both the trade-fold (Э4) and kline-fold (Э3) families —
+// the UI-selected value must survive `build_subscribe_params` into the
+// matching `SubscribeParams` variant, and from there into `FoldParams`
+// unmangled. Also asserts the `param <= 0.0` sentinel default now equals
+// the registry's own first preset (`default_chart_type_param`), so the
+// toolbar's displayed default and the backend's subscribed default can
+// never diverge again.
+#[cfg(test)]
+mod subscribe_params_regression_tests {
+    use super::{build_subscribe_params, default_chart_type_param};
+    use mlc_backend::chart_type::{
+        fold_params_from_subscribe_params, trade_fold_params_from_subscribe_params,
+        SubscribeParams,
+    };
+
+    const BAR_COUNT: usize = 300;
+    const TICK_SIZE: f64 = 1.0;
+
+    /// tick_bar: "1T"/"500T" (and every other registry preset) must carry
+    /// through as the EXACT `FoldParams::count`, not the old hardcoded 100
+    /// fallback.
+    #[test]
+    fn tick_bar_param_carries_selected_count() {
+        for &(picked, expected_count) in &[(1.0, 1u32), (10.0, 10), (100.0, 100), (500.0, 500)] {
+            let params = build_subscribe_params("tick_bar", picked, "1m", BAR_COUNT, TICK_SIZE);
+            assert!(
+                matches!(params, SubscribeParams::Count { count_u32 } if count_u32 == expected_count),
+                "tick_bar param {picked} did not produce SubscribeParams::Count{{{expected_count}}}: {params:?}",
+            );
+            let fold = trade_fold_params_from_subscribe_params("tick_bar", params)
+                .expect("tick_bar is a registered trade-fold chart_type");
+            assert_eq!(
+                fold.count, expected_count,
+                "tick_bar param {picked} did not reach FoldParams::count",
+            );
+        }
+    }
+
+    /// tick_bar's `param <= 0.0` sentinel (pre-first-pick) must fall back to
+    /// the registry's `inline_default` ("100"), the SAME value the toolbar
+    /// button label shows for that sentinel — not an independently
+    /// hardcoded literal, and not `TICK_BAR_OPTIONS.first()` ("1") either.
+    #[test]
+    fn tick_bar_sentinel_default_matches_registry_inline_default() {
+        let registry_default = default_chart_type_param("tick_bar").expect("tick_bar has a param_spec");
+        assert_eq!(registry_default, 100.0, "tick_bar's inline_default drifted from \"100\"");
+
+        let params = build_subscribe_params("tick_bar", 0.0, "1m", BAR_COUNT, TICK_SIZE);
+        let fold = trade_fold_params_from_subscribe_params("tick_bar", params)
+            .expect("tick_bar is a registered trade-fold chart_type");
+        assert_eq!(
+            fold.count, registry_default as u32,
+            "tick_bar sentinel default diverged from the registry's inline_default (the exact 2026-07-10 bug)",
+        );
+    }
+
+    /// tick_imbalance_bar / volume_imbalance_bar / run_bar: the UI-selected
+    /// `min_ticks` must carry through, not silently default to (alpha=20,
+    /// min_ticks=50).
+    #[test]
+    fn imbalance_and_run_family_param_carries_selected_min_ticks() {
+        for ct in ["tick_imbalance_bar", "volume_imbalance_bar", "run_bar"] {
+            for &(picked, expected_min_ticks) in &[(10.0, 10u32), (25.0, 25), (250.0, 250)] {
+                let params = build_subscribe_params(ct, picked, "1m", BAR_COUNT, TICK_SIZE);
+                assert!(
+                    matches!(
+                        params,
+                        SubscribeParams::MinTicks { alpha_x100: 20, min_ticks } if min_ticks == expected_min_ticks
+                    ),
+                    "{ct} param {picked} did not produce SubscribeParams::MinTicks{{20, {expected_min_ticks}}}: {params:?}",
+                );
+                let fold = trade_fold_params_from_subscribe_params(ct, params)
+                    .unwrap_or_else(|| panic!("{ct} is a registered trade-fold chart_type"));
+                assert_eq!(
+                    fold.min_ticks, expected_min_ticks,
+                    "{ct} param {picked} did not reach FoldParams::min_ticks",
+                );
+                assert_eq!(fold.alpha, 0.20, "{ct} alpha should stay the fixed 0.20 (no UI control for it)");
+            }
+        }
+    }
+
+    /// Imbalance/run family sentinel default (`param <= 0.0`) must match
+    /// the registry's `inline_default` ("50"), NOT `IMBALANCE_RUN_OPTIONS
+    /// .first() == "10"`.
+    #[test]
+    fn imbalance_and_run_family_sentinel_default_matches_registry_inline_default() {
+        for ct in ["tick_imbalance_bar", "volume_imbalance_bar", "run_bar"] {
+            let registry_default = default_chart_type_param(ct).unwrap_or_else(|| panic!("{ct} has a param_spec"));
+            assert_eq!(registry_default, 50.0, "{ct}'s inline_default drifted from \"50\"");
+
+            let params = build_subscribe_params(ct, 0.0, "1m", BAR_COUNT, TICK_SIZE);
+            let fold = trade_fold_params_from_subscribe_params(ct, params)
+                .unwrap_or_else(|| panic!("{ct} is a registered trade-fold chart_type"));
+            assert_eq!(
+                fold.min_ticks, registry_default as u32,
+                "{ct} sentinel default diverged from the registry's inline_default",
+            );
+        }
+    }
+
+    /// footprint (control case — the probe confirmed this family already
+    /// worked): interval string must carry through unmangled into
+    /// `FoldParams::interval_ms`.
+    #[test]
+    fn footprint_interval_carries_selected_bucket() {
+        for &(picked, expected_ms) in &[("1m", 60_000i64), ("5m", 300_000), ("1h", 3_600_000)] {
+            let params = build_subscribe_params("footprint", 0.0, picked, BAR_COUNT, TICK_SIZE);
+            assert!(
+                matches!(params, SubscribeParams::Interval { interval } if interval == picked),
+                "footprint interval {picked} did not produce SubscribeParams::Interval: {params:?}",
+            );
+            let fold = trade_fold_params_from_subscribe_params("footprint", params)
+                .expect("footprint is a registered trade-fold chart_type");
+            assert_eq!(fold.interval_ms, expected_ms, "footprint interval {picked} did not reach FoldParams::interval_ms");
+        }
+    }
+
+    /// tpo: freq_minutes must carry the UI-selected value, not silently
+    /// default to 30.
+    #[test]
+    fn tpo_param_carries_selected_freq() {
+        for &(picked, expected_freq) in &[(5.0, 5u16), (15.0, 15), (60.0, 60)] {
+            let params = build_subscribe_params("tpo", picked, "1m", BAR_COUNT, TICK_SIZE);
+            let fold = trade_fold_params_from_subscribe_params("tpo", params)
+                .expect("tpo is a registered trade-fold chart_type");
+            assert_eq!(fold.freq_minutes, expected_freq, "tpo param {picked} did not reach FoldParams::freq_minutes");
+        }
+    }
+
+    /// range_bar / kagi: ticks * tick_size must carry through into
+    /// `FoldParams::scaled_units` (kline-fold Э3 family, the twin to Э4
+    /// above). Uses a non-1.0 tick_size to also pin the multiplication.
+    #[test]
+    fn range_bar_and_kagi_param_carries_selected_ticks_scaled() {
+        let tick_size = 0.5;
+        for ct in ["range_bar", "kagi"] {
+            for &picked_ticks in &[1.0, 10.0, 50.0] {
+                let params = build_subscribe_params(ct, picked_ticks, "1m", BAR_COUNT, tick_size);
+                let fold = fold_params_from_subscribe_params(ct, params)
+                    .unwrap_or_else(|| panic!("{ct} is a registered kline-fold chart_type"));
+                let expected_units = picked_ticks * tick_size;
+                assert!(
+                    (fold.scaled_units - expected_units).abs() < 1e-6,
+                    "{ct} ticks {picked_ticks} * tick_size {tick_size} did not reach FoldParams::scaled_units \
+                     (got {}, expected {expected_units})",
+                    fold.scaled_units,
+                );
+            }
+        }
+    }
+
+    /// renko / pnf: same ticks*tick_size carry as range_bar/kagi, plus a
+    /// fixed reversal count baked at the UI seam (not user-editable today).
+    #[test]
+    fn renko_and_pnf_param_carries_selected_ticks_scaled() {
+        let tick_size = 2.0;
+        for (ct, expected_reversal) in [("renko", 2u8), ("pnf", 3u8)] {
+            let picked_ticks = 20.0;
+            let params = build_subscribe_params(ct, picked_ticks, "1m", BAR_COUNT, tick_size);
+            let fold = fold_params_from_subscribe_params(ct, params)
+                .unwrap_or_else(|| panic!("{ct} is a registered kline-fold chart_type"));
+            let expected_units = picked_ticks * tick_size;
+            assert!(
+                (fold.scaled_units - expected_units).abs() < 1e-6,
+                "{ct} ticks {picked_ticks} * tick_size {tick_size} did not reach FoldParams::scaled_units",
+            );
+            assert_eq!(fold.reversal, expected_reversal, "{ct} reversal did not match its fixed UI-seam constant");
+        }
+    }
+
+    /// volume_bar: UI param carries straight through as `scaled_units`
+    /// (no tick_size scaling — volume is contract count, not price).
+    #[test]
+    fn volume_bar_param_carries_selected_units() {
+        for &picked in &[0.1, 5.0, 1000.0] {
+            let params = build_subscribe_params("volume_bar", picked, "1m", BAR_COUNT, TICK_SIZE);
+            let fold = fold_params_from_subscribe_params("volume_bar", params)
+                .expect("volume_bar is a registered kline-fold chart_type");
+            assert!(
+                (fold.scaled_units - picked).abs() < 1e-6,
+                "volume_bar param {picked} did not reach FoldParams::scaled_units (got {})",
+                fold.scaled_units,
+            );
+        }
+    }
+
+    /// dollar_bar: UI param carries straight through as `threshold`.
+    #[test]
+    fn dollar_bar_param_carries_selected_threshold() {
+        for &picked in &[1_000.0, 100_000.0, 10_000_000.0] {
+            let params = build_subscribe_params("dollar_bar", picked, "1m", BAR_COUNT, TICK_SIZE);
+            let fold = fold_params_from_subscribe_params("dollar_bar", params)
+                .expect("dollar_bar is a registered kline-fold chart_type");
+            assert!(
+                (fold.threshold - picked).abs() < 1e-6,
+                "dollar_bar param {picked} did not reach FoldParams::threshold (got {})",
+                fold.threshold,
+            );
+        }
+    }
+
+    /// three_line_break: UI param carries through as `lines_back`.
+    #[test]
+    fn three_line_break_param_carries_selected_lines_back() {
+        for &(picked, expected) in &[(2.0, 2u8), (4.0, 4), (6.0, 6)] {
+            let params = build_subscribe_params("three_line_break", picked, "1m", BAR_COUNT, TICK_SIZE);
+            let fold = fold_params_from_subscribe_params("three_line_break", params)
+                .expect("three_line_break is a registered kline-fold chart_type");
+            assert_eq!(fold.lines_back, expected, "three_line_break param {picked} did not reach FoldParams::lines_back");
+        }
+    }
+
+    /// Every kline-fold family's sentinel default must match its registry's
+    /// `inline_default` (when set) or first preset otherwise (same class of
+    /// fix as the trade-fold assertions above). range_bar/kagi/three_line_break
+    /// each have an `inline_default` that differs from `options.first()` —
+    /// this pins that `inline_default` wins.
+    #[test]
+    fn kline_fold_family_sentinel_defaults_match_registry_inline_default() {
+        let cases: &[(&str, f64)] = &[
+            ("range_bar", 8.0),
+            ("kagi", 50.0),
+            ("renko", 10.0),
+            ("pnf", 10.0),
+            ("volume_bar", 10.0),
+            ("dollar_bar", 100_000.0),
+            ("three_line_break", 3.0),
+        ];
+        for &(ct, expected_default) in cases {
+            let registry_default = default_chart_type_param(ct).unwrap_or_else(|| panic!("{ct} has a param_spec"));
+            assert_eq!(
+                registry_default, expected_default,
+                "{ct}'s inline_default drifted",
+            );
+        }
+    }
+
+    /// Extract the single numeric "quantity" a fold machine's `FoldParams`
+    /// carries for its own `MachineKind` — the shape-specific counterpart to
+    /// [`default_chart_type_param`]'s label-side value, so the two can be
+    /// compared numerically without hand-listing which `FoldParams` field
+    /// belongs to which chart_type (chart-type-engine-consolidation B4,
+    /// T2.3). `renko`/`pnf` compare `scaled_units` (ticks BEFORE the
+    /// `tick_size` multiplication — divided back out by the caller), not
+    /// `reversal` (fixed, not user-editable, already covered by
+    /// `renko_and_pnf_param_carries_selected_ticks_scaled`).
+    fn fold_params_numeric_quantity(machine: mlc_core::chart_type::MachineKind, fold: mlc_backend::bubble::FoldParams) -> Option<f64> {
+        use mlc_core::chart_type::MachineKind;
+        match machine {
+            MachineKind::RangeBar | MachineKind::VolumeBar | MachineKind::Renko | MachineKind::Pnf | MachineKind::Kagi => Some(fold.scaled_units),
+            MachineKind::DollarBar => Some(fold.threshold),
+            MachineKind::ThreeLineBreak => Some(fold.lines_back as f64),
+            MachineKind::TickBar => Some(fold.count as f64),
+            MachineKind::TickImbalance | MachineKind::VolumeImbalance | MachineKind::RunBar => Some(fold.min_ticks as f64),
+            MachineKind::Tpo => Some(fold.freq_minutes as f64),
+            // footprint's "quantity" is the interval string, not a scalar —
+            // covered separately by `footprint_interval_carries_selected_bucket`.
+            MachineKind::Footprint | MachineKind::None => None,
+        }
+    }
+
+    /// Label == subscribe coherence, generalized over the WHOLE registry
+    /// (chart-type-engine-consolidation B4, T2.3): for every row with a
+    /// `param_spec` (the toolbar/modal numeric-param surface), the default
+    /// the toolbar button LABEL shows ([`default_chart_type_param`]) must
+    /// numerically equal the value the sentinel (`param <= 0.0`, "no pick
+    /// yet") subscribe path actually derives via `build_subscribe_params` ->
+    /// `fold_params_for`/`fold_params_for` (kline-fold and trade-fold both
+    /// route through the same `fold_params_for`, dispatched by `def.machine`
+    /// — see `mlc-backend::chart_type::engine`). Replaces hand-listing every
+    /// chart_type id with one loop over `mlc_core::chart_type::all()`; the
+    /// hand-written per-family tests above stay as focused documentation of
+    /// WHICH `SubscribeParams`/`FoldParams` field each family uses, this
+    /// test is the drift guard that catches a FUTURE registry row silently
+    /// diverging from its own default.
+    ///
+    /// `range_bar`/`kagi`/`renko`/`pnf` divide the multiplied result back by
+    /// `tick_size` before comparing — their `param_spec` is denominated in
+    /// TICKS, `build_subscribe_params` converts to absolute price units
+    /// before it ever reaches `fold_params_for` (see that fn's doc comment).
+    #[test]
+    fn every_param_spec_row_label_default_matches_subscribe_default() {
+        let tick_size = 1.0;
+        for def in mlc_core::chart_type::all() {
+            if def.param_spec.is_none() {
+                continue;
+            }
+            let label_default = default_chart_type_param(def.id)
+                .unwrap_or_else(|| panic!("{}: has param_spec but no parseable default", def.id));
+
+            let params = build_subscribe_params(def.id, 0.0, "1m", BAR_COUNT, tick_size);
+            let fold = mlc_backend::chart_type::fold_params_for(def, params);
+            let Some(fold) = fold else {
+                // footprint: param_spec is None for it (see registry doc
+                // comment), so this branch is unreachable for it — every
+                // OTHER param_spec row has a concrete `machine`.
+                panic!("{}: has param_spec but fold_params_for returned None", def.id);
+            };
+            let Some(subscribed_default) = fold_params_numeric_quantity(def.machine, fold) else {
+                continue; // footprint-shaped output, no single scalar to compare
+            };
+
+            let expected = if matches!(def.id, "range_bar" | "kagi" | "renko" | "pnf") {
+                label_default * tick_size
+            } else {
+                label_default
+            };
+            assert!(
+                (subscribed_default - expected).abs() < 1e-6,
+                "{}: toolbar label default ({label_default}) disagrees with sentinel subscribe default \
+                 (derived {subscribed_default}, expected {expected})", def.id,
+            );
+        }
     }
 }

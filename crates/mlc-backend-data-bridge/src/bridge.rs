@@ -177,10 +177,17 @@ pub enum OrderbookSource {
 /// them (e.g. Footprint + Open Interest). CVD is no longer here — it folds
 /// client-side from the trade layer (unified-data-plane Stage Э5, see
 /// `BackendCore::subscribe_cvd_fold`).
+///
+/// `DomHeatmap`/`LiquidationHeatmap` (chart-type → overlay migration) moved
+/// here from the single-slot `derived_subs` table — they must coexist with
+/// whatever chart_type's own derived subscription (footprint, renko, ...)
+/// is active on the same bubble, exactly like OpenInterest/FundingRate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OverlayKind {
     OpenInterest,
     FundingRate,
+    DomHeatmap,
+    LiquidationHeatmap,
 }
 
 /// Updates sent from async tasks to the sync chart thread.
@@ -1722,30 +1729,33 @@ impl DataBridge {
         self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::FundingRate);
     }
 
-    // ── DOM Heatmap subscription (C12) ───────────────────────────────────────
+    // ── DOM Heatmap overlay subscription (C12) ───────────────────────────────
 
-    /// Subscribe to the combined OrderBook + Trade stream for the DOM heatmap
-    /// chart-type (C12).
+    /// Subscribe to the combined OrderBook + Trade stream for the DOM
+    /// Heatmap overlay (C12; chart-type → overlay migration).
     ///
     /// Spawns two tasks:
     /// 1. `OrderBook` station stream → `LiveUpdate::DomHeatmapSnapshot` per event.
     /// 2. `Trade` station stream → `LiveUpdate::DomTradeDot` per event.
     ///
-    /// Both tasks share the same `derived_subs` slot via a combined `JoinHandle`
-    /// that cancels both on abort.  Calling `abort_derived_sub` (triggered by any
-    /// chart_type switch) stops both tasks.
+    /// Both tasks share the same `overlay_subs` slot (keyed by
+    /// `OverlayKind::DomHeatmap`) via a combined `JoinHandle` that cancels
+    /// both on abort — coexists with whatever derived subscription the
+    /// chart_type itself owns (footprint, renko, ...), unlike the
+    /// single-slot `derived_subs` table this used before the migration.
+    /// Call [`Self::unsubscribe_dom_heatmap`] to stop both tasks.
     pub fn request_dom_heatmap(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
     ) {
-        self.abort_derived_sub(exchange_id, symbol, account_type);
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::DomHeatmap);
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_canonical = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::DomHeatmap);
 
         let tx_clone = tx.clone();
         let sym_ob = symbol_canonical.clone();
@@ -1848,34 +1858,48 @@ impl DataBridge {
             crate::dlog!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);
         });
 
-        if let Ok(mut subs) = self.derived_subs.lock() {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
             subs.insert(sub_key, handle);
         }
     }
 
-    // ── Liquidation Heatmap subscription (C13) ───────────────────────────────
+    /// Cancel the DOM Heatmap overlay subscription for an instrument.
+    pub fn unsubscribe_dom_heatmap(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::DomHeatmap);
+    }
 
-    /// Subscribe to `Stream::Liquidation` and `Stream::LiquidationBucket` for the
-    /// liquidation heatmap chart-type (C13).
+    // ── Liquidation Heatmap overlay subscription (C13) ───────────────────────
+
+    /// Subscribe to `Stream::Liquidation` and `Stream::LiquidationBucket` for
+    /// the Liquidation Heatmap overlay (C13; chart-type → overlay migration).
     ///
     /// Two tasks are spawned inside a single `JoinHandle`:
     /// 1. `Stream::Liquidation` → `LiveUpdate::LiquidationEvent` per event.
     /// 2. `Stream::LiquidationBucket` → `LiveUpdate::LiquidationBucketUpdate` per poll.
     ///
     /// If an exchange only supports one stream, the other will receive `WireAbsent`
-    /// and exit silently.  Both tasks share the same `derived_subs` slot.
+    /// and exit silently. Both tasks share the same `overlay_subs` slot (keyed
+    /// by `OverlayKind::LiquidationHeatmap`) — coexists with whatever derived
+    /// subscription the chart_type itself owns, unlike the single-slot
+    /// `derived_subs` table this used before the migration. Call
+    /// [`Self::unsubscribe_liquidation_heatmap`] to stop both tasks.
     pub fn request_liquidation_heatmap(
         &self,
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
     ) {
-        self.abort_derived_sub(exchange_id, symbol, account_type);
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::LiquidationHeatmap);
         let station = self.station.clone();
         let tx = self.tx.clone();
         let symbol_canonical = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let sub_key = (exchange_id, symbol.to_string(), account_type, OverlayKind::LiquidationHeatmap);
 
         let tx_liq = tx.clone();
         let sym_liq = symbol_canonical.clone();
@@ -1947,9 +1971,19 @@ impl DataBridge {
             crate::dlog!("[Bridge::liq-heatmap-liq exited] {:?} {}", exchange_id, sym_liq);
         });
 
-        if let Ok(mut subs) = self.derived_subs.lock() {
+        if let Ok(mut subs) = self.overlay_subs.lock() {
             subs.insert(sub_key, handle);
         }
+    }
+
+    /// Cancel the Liquidation Heatmap overlay subscription for an instrument.
+    pub fn unsubscribe_liquidation_heatmap(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_overlay_sub(exchange_id, symbol, account_type, OverlayKind::LiquidationHeatmap);
     }
 
     /// Subscribe to the Open Interest stream for an instrument (C15).

@@ -232,6 +232,16 @@ pub struct DataBubble {
     /// ownership.
     pub bars_source: BarsSource,
 
+    /// Stale-array tripwire (K1 lifecycle groundwork, chart-type-engine-
+    /// consolidation B2). Bumped by every [`Self::replace_bars`]/
+    /// [`Self::clear_bars`] call — the install/subscribe paths
+    /// (`subscribe_fold_chart_type`/`subscribe_trade_fold_chart_type`/the
+    /// plain kline path) record the generation they installed, and
+    /// `debug_assert_generation` (render.rs) dlog-warns when the render
+    /// snapshot's active generation disagrees with this stamp. Diagnostic
+    /// only in this brick — never read by any non-debug code path.
+    pub bars_generation: mlc_core::chart_type::BarsGeneration,
+
     /// Footprint cluster bars. Written by `FootprintUpdate`.
     pub footprint_bars: Option<Vec<mlc_core::types::FootprintBar>>,
 
@@ -446,6 +456,7 @@ impl DataBubble {
             connection_status: ConnectionStatus::default(),
             bars: Vec::new(),
             bars_source: BarsSource::default(),
+            bars_generation: mlc_core::chart_type::BarsGeneration::NONE,
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -482,10 +493,34 @@ impl DataBubble {
     // no callbacks. Consumers pull state and run their own reconcile.
     // =========================================================================
 
-    pub fn replace_bars(&mut self, bars: Vec<mlc_core::Bar>) { self.bars = bars; }
+    /// Replace `bars` wholesale and bump [`Self::bars_generation`] to a
+    /// fresh stamp for the bubble's CURRENT `chart_type`/`chart_type_param`
+    /// — every full reseed/refold ends in a `replace_bars` call, so this is
+    /// the one choke point that needs to record "the array now belongs to
+    /// generation N" (see [`mlc_core::chart_type::BarsGeneration`]'s doc
+    /// comment).
+    pub fn replace_bars(&mut self, bars: Vec<mlc_core::Bar>) {
+        self.bars = bars;
+        self.bump_bars_generation();
+    }
     pub fn append_bar(&mut self, bar: mlc_core::Bar) { self.bars.push(bar); }
     pub fn last_bar_mut(&mut self) -> Option<&mut mlc_core::Bar> { self.bars.last_mut() }
-    pub fn clear_bars(&mut self) { self.bars.clear(); }
+    /// Clear `bars` and bump [`Self::bars_generation`] — a chart-type
+    /// switch's `clear_slot_*` always precedes the NEXT type's install, so
+    /// the stale generation left over from the OLD type must not survive
+    /// to be mistaken for the new one.
+    pub fn clear_bars(&mut self) {
+        self.bars.clear();
+        self.bump_bars_generation();
+    }
+
+    /// Stamp a fresh [`mlc_core::chart_type::BarsGeneration`] for the
+    /// bubble's current `chart_type`/`chart_type_param`. `param_bits` is
+    /// the param's raw bit pattern (`f64::to_bits`) — a diagnostic
+    /// fingerprint, not a replay key, so lossy reinterpretation is fine.
+    fn bump_bars_generation(&mut self) {
+        self.bars_generation = self.bars_generation.bump(self.chart_type, self.chart_type_param.to_bits());
+    }
 
     pub fn append_footprint(&mut self, bar: mlc_core::types::FootprintBar) {
         self.footprint_bars.get_or_insert_with(Vec::new).push(bar);
@@ -679,6 +714,13 @@ impl DataBubble {
     /// `active_cvd_fold`) is owned by `clear_cvd()` /
     /// `ChartApp::unsubscribe_cvd_line_if_last`, called when the last CVD
     /// instance for the bubble is removed.
+    ///
+    /// `dom_heatmap`/`liq_heatmap` are ALSO deliberately NOT in this list
+    /// (chart-type → overlay migration, mirrors the CVD/OI/Funding
+    /// precedent above) — their lifecycle is independent of `chart_type`,
+    /// owned by `ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay`'s
+    /// handler via `mlc_backend::chart_type::clear_slot_{dom,liq}_heatmap`,
+    /// called when the overlay is toggled off (not on chart-type switch).
     pub fn clear_derived_slots(&mut self, keep: Option<&str>) {
         // Unified-data-plane Э3/Э4: both fold runtimes are stateful
         // accumulators tied to the OLD chart_type/params — every caller of
@@ -700,14 +742,6 @@ impl DataBubble {
         if keep != Some("kagi") { self.clear_kagi(); }
         if keep != Some("three_line_break") { self.clear_three_line_break(); }
         if keep != Some("tpo") { self.clear_tpo(); }
-        if keep != Some("dom_heatmap") {
-            self.clear_dom_heatmap();
-            self.clear_dom_trade_dots();
-        }
-        if keep != Some("liquidation_heatmap") {
-            self.clear_liq_heatmap();
-            self.clear_liq_dots();
-        }
     }
 
     /// Record a seed/deepen depth report for `chart_type`. Returns `true`
@@ -811,6 +845,7 @@ impl Clone for DataBubble {
             // === Per-Kind storage (Phase X0) ===
             bars: self.bars.clone(),
             bars_source: self.bars_source,
+            bars_generation: self.bars_generation,
             footprint_bars: self.footprint_bars.clone(),
             renko_bars: self.renko_bars.clone(),
             three_line_break: self.three_line_break.clone(),

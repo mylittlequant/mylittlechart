@@ -12,9 +12,20 @@
 //! migrates them over.
 
 pub mod registry;
+pub mod identity;
+pub mod generation;
 
 pub use registry::{
     all, by_id, BarsSourceKind, ChartTypeDef, ChartTypeGroup, ChartTypeKind,
     ChartTypeParamOption, ChartTypeParamSpec, DataMode, DataRequirement,
-    DeepenKind, ResolutionKind, SeriesVariant, RESOLUTION_PARAM_ITEM_PREFIX,
+    DeepenKind, FixedConsts, IdentityKey, MachineKind, RenderPolicy,
+    ResolutionKind, SeriesVariant, WickPolicy, RESOLUTION_PARAM_ITEM_PREFIX,
 };
+pub use identity::{
+    bar_identity, bar_identity_key_fn, cvd_identity, cvd_identity_key_fn,
+    footprint_identity, footprint_identity_key_fn, kagi_identity,
+    kagi_identity_key_fn, merge_last_wins, pnf_identity, pnf_identity_key_fn,
+    renko_identity, renko_identity_key_fn, three_line_break_identity,
+    three_line_break_identity_key_fn, tpo_identity, tpo_identity_key_fn,
+};
+pub use generation::BarsGeneration;

@@ -190,6 +190,7 @@ impl ChartApp {
                                         panel_state.show_columns = snap.show_columns;
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.footprint_display = snap.footprint_display;
+                                        panel_state.tick_intensity = snap.tick_intensity;
                                         self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                         // Restored drawings are written into the window's
                                         // bubble further below, once `auto_bid` is known
@@ -500,6 +501,7 @@ impl ChartApp {
                                     ps.show_columns = snap.show_columns;
                                     ps.show_baseline = snap.show_baseline;
                                     ps.footprint_display = snap.footprint_display;
+                                    ps.tick_intensity = snap.tick_intensity;
                                     panel_patches.push((window.chart_panel_id, ps));
                                     // Restore drawings into the window's current bubble
                                     // directly — no separate per-window DrawingManager
@@ -607,9 +609,25 @@ impl ChartApp {
                     // outside footprint. Legacy `"columns"`/`"histogram"` ids no
                     // longer exist in the registry — `by_id(...).unwrap_or` below
                     // naturally migrates them to "candles" on restore.
+                    // Chart-type → overlay migration hydration mapping: a
+                    // snapshot saved BEFORE the migration can still carry
+                    // `chart_type = "dom_heatmap"`/`"liquidation_heatmap"`
+                    // (removed from the registry — `by_id(...).unwrap_or`
+                    // below already migrates the chart_type itself to
+                    // "candles"). Collected here (read-only over `snap`) so
+                    // the corresponding overlay can be enabled on the
+                    // window AFTER this loop, once `dom_heatmap_show`/
+                    // `liq_heatmap_show` graceful hydration is applied below.
+                    let mut legacy_dom_overlay_windows: Vec<mlc_core::ids::ChartId> = Vec::new();
+                    let mut legacy_liq_overlay_windows: Vec<mlc_core::ids::ChartId> = Vec::new();
                     for snap in &preset.windows {
                         let chart_id = mlc_core::ids::ChartId(snap.window_id);
                         let Some(bid) = self.bubble_for_chart(chart_id) else { continue };
+                        match snap.chart_type.as_str() {
+                            "dom_heatmap" => legacy_dom_overlay_windows.push(chart_id),
+                            "liquidation_heatmap" => legacy_liq_overlay_windows.push(chart_id),
+                            _ => {}
+                        }
                         let static_ct: &'static str = mlc_core::chart_type::by_id(snap.chart_type.as_str())
                             .map(|d| d.id)
                             .unwrap_or("candles");
@@ -621,6 +639,26 @@ impl ChartApp {
                         self.core.bubbles_mut().set_chart_type(bid, static_ct);
                         self.core.bubbles_mut().set_chart_type_param(bid, snap.chart_type_param);
                         self.core.bubbles_mut().set_chart_type_interval(bid, static_iv);
+                    }
+                    // Graceful hydration (chart-type → overlay migration):
+                    // flip the per-window overlay flag on for every legacy
+                    // dom_heatmap/liquidation_heatmap window — the migrated
+                    // chart_type is "candles" (set above), and the overlay
+                    // now carries the same visual the old chart_type used to
+                    // own. Subscribing the live overlay stream itself is
+                    // deferred to `ignite_derived_windows`'s sibling
+                    // `ignite_legacy_heatmap_overlays` call (post-load loop,
+                    // same timing as `ignite_derived_windows`) — this loop
+                    // only sets the flag so it round-trips through render.
+                    for chart_id in &legacy_dom_overlay_windows {
+                        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(chart_id) {
+                            window.dom_heatmap_show = true;
+                        }
+                    }
+                    for chart_id in &legacy_liq_overlay_windows {
+                        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(chart_id) {
+                            window.liq_heatmap_show = true;
+                        }
                     }
                     let bubbles_us = _t_bubbles.elapsed().as_micros();
 
@@ -1418,6 +1456,12 @@ impl ChartApp {
                     // §3.4: derived windows go through the shared helper —
                     // same code path as startup / new-window Post-LoadPreset paths.
                     self.ignite_derived_windows();
+                    // DOM/Liquidation heatmap overlays whose `dom_heatmap_show`/
+                    // `liq_heatmap_show` came back true (chart-type → overlay
+                    // migration hydration mapping, applied above) — sibling of
+                    // `ignite_derived_windows`, same call-site shape as the
+                    // startup/new-window post-load loops in `lib.rs`.
+                    self.ignite_legacy_heatmap_overlays();
                     eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
                     // Default companions (klines → VOLUME, footprint → CVD)
                     // for the freshly hydrated windows — ChangeChartType

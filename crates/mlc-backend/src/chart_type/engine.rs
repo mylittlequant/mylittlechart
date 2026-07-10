@@ -24,8 +24,6 @@ use crate::bubble::{BarsSource, DataBubble, FoldParams};
 /// `chart_type_interval` bubble fields.
 #[derive(Clone, Copy, Debug)]
 pub enum SubscribeParams {
-    /// No parameters (dom_heatmap, liquidation_heatmap).
-    None,
     /// Kline / render-family: reload plain kline bars at the current TF.
     /// `bar_count` = user profile's bar_count target (currently passed at
     /// call site).
@@ -171,28 +169,6 @@ pub fn is_footprint_hybrid(bridge: &DataBridge, eid: ExchangeId, at: Dig3Account
         .unwrap_or(false)
 }
 
-fn subscribe_dom_heatmap(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    _params: SubscribeParams,
-) {
-    bridge.request_dom_heatmap(eid, symbol, at);
-}
-
-fn subscribe_liq_heatmap(
-    bridge: &DataBridge,
-    eid: ExchangeId,
-    symbol: &str,
-    at: Dig3AccountType,
-    _tf: &Timeframe,
-    _params: SubscribeParams,
-) {
-    bridge.request_liquidation_heatmap(eid, symbol, at);
-}
-
 // ---------------------------------------------------------------------------
 // Clear-slot fns
 // ---------------------------------------------------------------------------
@@ -278,16 +254,23 @@ pub fn clear_slot_footprint_hybrid_aware(bubble: &mut DataBubble, hybrid: bool) 
     }
 }
 
-fn clear_slot_dom_heatmap(bubble: &mut DataBubble) {
+/// Clear the DOM Heatmap overlay's bubble ring-buffer state.
+///
+/// `pub` (not table-private) — chart-type → overlay migration moved the
+/// trigger from `ChangeChartType`'s per-chart-type `SubscribeOps.clear_slot`
+/// dispatch to `ChartOutEvent::ToggleDomHeatmapOverlay`'s handler
+/// (`mlc-app::chart_out_events`), which calls this directly. Does NOT stamp
+/// `bars_source` — the overlay never owns the bubble's kline series.
+pub fn clear_slot_dom_heatmap(bubble: &mut DataBubble) {
     bubble.clear_dom_heatmap();
     bubble.clear_dom_trade_dots();
-    bubble.bars_source = BarsSource::Kline;
 }
 
-fn clear_slot_liq_heatmap(bubble: &mut DataBubble) {
+/// Clear the Liquidation Heatmap overlay's bubble ring-buffer state.
+/// See [`clear_slot_dom_heatmap`] doc comment — same migration, same shape.
+pub fn clear_slot_liq_heatmap(bubble: &mut DataBubble) {
     bubble.clear_liq_heatmap();
     bubble.clear_liq_dots();
-    bubble.bars_source = BarsSource::Kline;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,8 +308,10 @@ static OPS: &[(&str, SubscribeOps)] = &[
     ("three_line_break", SubscribeOps { subscribe: None, clear_slot: clear_slot_three_line_break }),
     ("footprint", SubscribeOps { subscribe: None, clear_slot: clear_slot_footprint }),
     ("tpo", SubscribeOps { subscribe: None, clear_slot: clear_slot_tpo }),
-    ("dom_heatmap", SubscribeOps { subscribe: Some(subscribe_dom_heatmap), clear_slot: clear_slot_dom_heatmap }),
-    ("liquidation_heatmap", SubscribeOps { subscribe: Some(subscribe_liq_heatmap), clear_slot: clear_slot_liq_heatmap }),
+    // "dom_heatmap" / "liquidation_heatmap" REMOVED (chart-type → overlay
+    // migration) — [`clear_slot_dom_heatmap`]/[`clear_slot_liq_heatmap`] are
+    // now called directly by the overlay toggle handler, not through this
+    // per-chart-type table. See their doc comments above.
 ];
 
 /// Look up the `SubscribeOps` for a chart_type id. `None` for unknown ids.
@@ -340,76 +325,167 @@ pub fn ops_by_id(id: &str) -> Option<&'static SubscribeOps> {
 
 /// The 7 kline-sufficient chart types that fold client-side over the
 /// bubble's own "1m" kline layer instead of opening a station-side derived
-/// subscription (see [`subscribe_fold_noop`]/[`abort_fold_noop`] above).
-pub const FOLD_CHART_TYPES: &[&str] = &[
-    "range_bar", "volume_bar", "dollar_bar", "renko", "pnf", "kagi", "three_line_break",
-];
+/// subscription. Registry-driven (chart-type-engine-consolidation B3, S1):
+/// membership is every row whose `machine` is a kline-fold
+/// [`mlc_core::chart_type::MachineKind`] variant (everything the
+/// [`MachineKind`](mlc_core::chart_type::MachineKind) doc comment classifies
+/// as folding the "1m" layer, not the trade layer — mirrors
+/// `crate::bubble::FoldMachine`'s variant set exactly).
+pub fn fold_chart_types() -> impl Iterator<Item = &'static str> {
+    mlc_core::chart_type::all().iter().filter_map(|def| {
+        matches!(
+            def.machine,
+            mlc_core::chart_type::MachineKind::RangeBar
+                | mlc_core::chart_type::MachineKind::VolumeBar
+                | mlc_core::chart_type::MachineKind::DollarBar
+                | mlc_core::chart_type::MachineKind::Renko
+                | mlc_core::chart_type::MachineKind::Pnf
+                | mlc_core::chart_type::MachineKind::Kagi
+                | mlc_core::chart_type::MachineKind::ThreeLineBreak
+        )
+        .then_some(def.id)
+    })
+}
 
 /// Whether `chart_type` is one of the 7 client-side fold types.
 pub fn is_fold_chart_type(chart_type: &str) -> bool {
-    FOLD_CHART_TYPES.contains(&chart_type)
+    fold_chart_types().any(|id| id == chart_type)
+}
+
+/// Registry-driven default fallback for a chart_type's numeric param
+/// (chart-type-engine-consolidation B3, S3) — the SAME "`inline_default` or
+/// ladder's first preset" rule `mlc-app::input::chart_out_events::
+/// default_chart_type_param` applies at the UI seam, duplicated here (not
+/// shared as a cross-crate call — `mlc-app` cannot be a dependency of
+/// `mlc-backend`) so [`fold_params_for`]'s defensive fallback branch reads
+/// from the SAME single source of truth (the registry row) instead of an
+/// independent literal. Only reachable when `params` doesn't carry the
+/// `SubscribeParams` shape `def.machine` expects — `chart_out_events.rs`'s
+/// `build_subscribe_params` always produces the matching variant in
+/// practice, so this is a last-resort default, not a live UI path.
+fn registry_default_param(def: &mlc_core::chart_type::ChartTypeDef) -> f64 {
+    def.inline_default
+        .or_else(|| def.param_spec.and_then(|spec| spec.options.first().map(|o| o.value_id)))
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .unwrap_or(0.0)
 }
 
 /// Narrow a resolved `SubscribeParams` (ticks × tick_size already applied at
 /// the `chart_out_events.rs` UI seam — see `build_subscribe_params`) into
-/// the scalar [`FoldParams`] shape [`crate::bubble::FoldRuntime`] needs.
-/// Returns `None` for any chart_type outside the 7 fold types, or when
-/// `params` doesn't carry the shape that chart_type expects (defensive —
-/// mirrors the `_ => default` fallback every `subscribe_*` fn used before
-/// this cutover).
-pub fn fold_params_from_subscribe_params(chart_type: &str, params: SubscribeParams) -> Option<FoldParams> {
-    match chart_type {
-        "range_bar" => {
+/// the scalar [`FoldParams`] shape [`crate::bubble::FoldRuntime`]/
+/// [`crate::bubble::TradeFoldRuntime`] needs — ONE registry-driven function
+/// (chart-type-engine-consolidation B3, S3) covering both the kline-fold
+/// (Э3) and trade-fold (Э4) families, dispatched on `def.machine` instead of
+/// two separate `chart_type: &str` forward matches. Returns `None` for any
+/// chart_type outside the 13 fold+trade-fold types, or when the registry
+/// lookup misses.
+///
+/// Fixed non-editable constants (renko/pnf reversal, imbalance/run alpha)
+/// come from `def.fixed_consts` — no longer independently hardcoded here.
+/// The defensive `params` shape-mismatch fallback (see
+/// [`registry_default_param`]'s doc comment) reads the registry's
+/// `inline_default`/ladder-first value instead of an independent literal —
+/// closes the exact class of drift the 2026-07-10 "1T subscribes 100"
+/// bug was ([`registry_default_param`]'s doc comment).
+pub fn fold_params_for(def: &mlc_core::chart_type::ChartTypeDef, params: SubscribeParams) -> Option<FoldParams> {
+    use mlc_core::chart_type::MachineKind;
+    match def.machine {
+        MachineKind::RangeBar => {
             let scaled_units = match params {
                 SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
-                _ => 10.0,
+                _ => registry_default_param(def),
             };
             Some(FoldParams { scaled_units, ..Default::default() })
         }
-        "volume_bar" => {
+        MachineKind::VolumeBar => {
             let scaled_units = match params {
                 SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
-                _ => 1000.0,
+                _ => registry_default_param(def),
             };
             Some(FoldParams { scaled_units, ..Default::default() })
         }
-        "dollar_bar" => {
+        MachineKind::DollarBar => {
             let threshold = match params {
                 SubscribeParams::Threshold { threshold_u64 } => threshold_u64 as f64,
-                _ => 1_000_000.0,
+                _ => registry_default_param(def),
             };
             Some(FoldParams { threshold, ..Default::default() })
         }
-        "renko" => {
+        MachineKind::Renko => {
+            let default_reversal = def.fixed_consts.reversal.unwrap_or(2);
             let (scaled_units, reversal) = match params {
                 SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64 as f64 / 1e8, reversal),
-                _ => (10.0, 2),
+                _ => (registry_default_param(def), default_reversal),
             };
             Some(FoldParams { scaled_units, reversal, ..Default::default() })
         }
-        "pnf" => {
+        MachineKind::Pnf => {
+            let default_reversal = def.fixed_consts.reversal.unwrap_or(3);
             let (scaled_units, reversal) = match params {
                 SubscribeParams::ScaledUnitsWithReversal { scaled_u64, reversal } => (scaled_u64 as f64 / 1e8, reversal),
-                _ => (10.0, 3),
+                _ => (registry_default_param(def), default_reversal),
             };
             Some(FoldParams { scaled_units, reversal, box_size: scaled_units, ..Default::default() })
         }
-        "kagi" => {
+        MachineKind::Kagi => {
             let scaled_units = match params {
                 SubscribeParams::ScaledUnits { scaled_u64 } => scaled_u64 as f64 / 1e8,
-                _ => 10.0,
+                _ => registry_default_param(def),
             };
             Some(FoldParams { scaled_units, ..Default::default() })
         }
-        "three_line_break" => {
+        MachineKind::ThreeLineBreak => {
             let lines_back = match params {
                 SubscribeParams::LinesBack { lines_back } => lines_back,
-                _ => 3,
+                _ => registry_default_param(def) as u8,
             };
             Some(FoldParams { lines_back, ..Default::default() })
         }
-        _ => None,
+        MachineKind::TickBar => {
+            let count = match params {
+                SubscribeParams::Count { count_u32 } => count_u32,
+                _ => registry_default_param(def) as u32,
+            };
+            Some(FoldParams { count, ..Default::default() })
+        }
+        MachineKind::TickImbalance | MachineKind::VolumeImbalance | MachineKind::RunBar => {
+            let default_alpha_x100 = def.fixed_consts.alpha_x100.unwrap_or(20);
+            let (alpha_x100, min_ticks) = match params {
+                SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
+                _ => (default_alpha_x100, registry_default_param(def) as u32),
+            };
+            Some(FoldParams { alpha: alpha_x100 as f64 / 100.0, min_ticks, ..Default::default() })
+        }
+        MachineKind::Footprint => {
+            let interval = match params {
+                SubscribeParams::Interval { interval } => interval,
+                _ => def.inline_default.unwrap_or("1m"),
+            };
+            let interval_ms = digdigdig3_station::folds::interval_to_ms(interval).unwrap_or(60_000);
+            Some(FoldParams { interval_ms, ..Default::default() })
+        }
+        MachineKind::Tpo => {
+            let freq_u16 = match params {
+                SubscribeParams::Freq { freq_u16 } => freq_u16,
+                _ => registry_default_param(def) as u16,
+            };
+            Some(FoldParams { freq_minutes: freq_u16, ..Default::default() })
+        }
+        MachineKind::None => None,
     }
+}
+
+/// `&str`-id wrapper over [`fold_params_for`] — resolves `chart_type` via
+/// the registry then delegates. Kept for the existing call sites (`mlc-app`)
+/// that only have the chart_type string in scope; returns `None` for any
+/// chart_type outside the 7 kline-fold types (registry lookup miss, or a
+/// `def.machine` outside the kline-fold family).
+pub fn fold_params_from_subscribe_params(chart_type: &str, params: SubscribeParams) -> Option<FoldParams> {
+    let def = mlc_core::chart_type::by_id(chart_type)?;
+    if !fold_chart_types().any(|id| id == chart_type) {
+        return None;
+    }
+    fold_params_for(def, params)
 }
 
 // ---------------------------------------------------------------------------
@@ -417,57 +493,43 @@ pub fn fold_params_from_subscribe_params(chart_type: &str, params: SubscribePara
 // ---------------------------------------------------------------------------
 
 /// The 6 trade-fed chart types that fold client-side over the bubble's own
-/// trade layer instead of opening a station-side derived subscription (see
-/// [`subscribe_trade_fold_noop`]/[`abort_trade_fold_noop`] above).
-pub const TRADE_FOLD_CHART_TYPES: &[&str] = &[
-    "tick_bar", "tick_imbalance_bar", "volume_imbalance_bar", "run_bar", "footprint", "tpo",
-];
+/// trade layer instead of opening a station-side derived subscription.
+/// Registry-driven (chart-type-engine-consolidation B3, S1): membership is
+/// every row whose `machine` is a trade-fold
+/// [`mlc_core::chart_type::MachineKind`] variant — mirrors
+/// `crate::bubble::TradeFoldMachine`'s variant set exactly (`Cvd` excluded:
+/// the CVD companion is not a registry row, see that module's doc comment).
+pub fn trade_fold_chart_types() -> impl Iterator<Item = &'static str> {
+    mlc_core::chart_type::all().iter().filter_map(|def| {
+        matches!(
+            def.machine,
+            mlc_core::chart_type::MachineKind::TickBar
+                | mlc_core::chart_type::MachineKind::TickImbalance
+                | mlc_core::chart_type::MachineKind::VolumeImbalance
+                | mlc_core::chart_type::MachineKind::RunBar
+                | mlc_core::chart_type::MachineKind::Footprint
+                | mlc_core::chart_type::MachineKind::Tpo
+        )
+        .then_some(def.id)
+    })
+}
 
 /// Whether `chart_type` is one of the 6 client-side trade-fold types.
 pub fn is_trade_fold_chart_type(chart_type: &str) -> bool {
-    TRADE_FOLD_CHART_TYPES.contains(&chart_type)
+    trade_fold_chart_types().any(|id| id == chart_type)
 }
 
-/// Narrow a resolved `SubscribeParams` (see `build_subscribe_params`) into
-/// the scalar [`FoldParams`] shape [`crate::bubble::TradeFoldRuntime`] needs.
-/// Returns `None` for any chart_type outside the 6 trade-fold types, or when
-/// `params` doesn't carry the shape that chart_type expects (defensive —
-/// mirrors [`fold_params_from_subscribe_params`]'s same fallback discipline,
-/// and the `_ => default` fallback every dead `subscribe_*` fn used before
-/// this cutover).
+/// `&str`-id wrapper over [`fold_params_for`] — see
+/// [`fold_params_from_subscribe_params`]'s doc comment for the same
+/// rationale (kept for existing `mlc-app` call sites that only have the
+/// chart_type string in scope). Returns `None` for any chart_type outside
+/// the 6 trade-fold types.
 pub fn trade_fold_params_from_subscribe_params(chart_type: &str, params: SubscribeParams) -> Option<FoldParams> {
-    match chart_type {
-        "tick_bar" => {
-            let count = match params {
-                SubscribeParams::Count { count_u32 } => count_u32,
-                _ => 100, // default 100 trades
-            };
-            Some(FoldParams { count, ..Default::default() })
-        }
-        "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar" => {
-            let (alpha_x100, min_ticks) = match params {
-                SubscribeParams::MinTicks { alpha_x100, min_ticks } => (alpha_x100, min_ticks),
-                _ => (20, 50), // default alpha=20 (0.20), min_ticks=50
-            };
-            Some(FoldParams { alpha: alpha_x100 as f64 / 100.0, min_ticks, ..Default::default() })
-        }
-        "footprint" => {
-            let interval = match params {
-                SubscribeParams::Interval { interval } => interval,
-                _ => "1m",
-            };
-            let interval_ms = digdigdig3_station::folds::interval_to_ms(interval).unwrap_or(60_000);
-            Some(FoldParams { interval_ms, ..Default::default() })
-        }
-        "tpo" => {
-            let freq_u16 = match params {
-                SubscribeParams::Freq { freq_u16 } => freq_u16,
-                _ => 30, // default 30-min letter buckets
-            };
-            Some(FoldParams { freq_minutes: freq_u16, ..Default::default() })
-        }
-        _ => None,
+    let def = mlc_core::chart_type::by_id(chart_type)?;
+    if !trade_fold_chart_types().any(|id| id == chart_type) {
+        return None;
     }
+    fold_params_for(def, params)
 }
 
 /// Default [`TpoSource`] the trade-fold cutover installs for `"tpo"` — the
@@ -489,6 +551,70 @@ mod tests {
         for def in mlc_core::chart_type::all() {
             assert!(ops_by_id(def.id).is_some(), "no SubscribeOps for chart_type {}", def.id);
         }
+    }
+
+    /// Registry-derived membership (B3, S1) must reproduce the exact 7/6
+    /// sets the pre-derivation hand-written `const` slices carried, and the
+    /// two families must be disjoint from each other and from `is_fold_chart_type`'s
+    /// complement.
+    #[test]
+    fn fold_and_trade_fold_chart_types_membership_pinned() {
+        let fold: Vec<&str> = fold_chart_types().collect();
+        assert_eq!(
+            fold,
+            vec!["range_bar", "volume_bar", "dollar_bar", "renko", "pnf", "kagi", "three_line_break"],
+        );
+        let trade_fold: Vec<&str> = trade_fold_chart_types().collect();
+        assert_eq!(
+            trade_fold,
+            vec!["tick_bar", "tick_imbalance_bar", "volume_imbalance_bar", "run_bar", "footprint", "tpo"],
+        );
+        for id in &fold {
+            assert!(is_fold_chart_type(id));
+            assert!(!is_trade_fold_chart_type(id));
+        }
+        for id in &trade_fold {
+            assert!(is_trade_fold_chart_type(id));
+            assert!(!is_fold_chart_type(id));
+        }
+    }
+
+    /// `fold_params_for`'s fixed-constant arms must read `def.fixed_consts`,
+    /// not an independent literal (B3, S3) — renko/pnf reversal,
+    /// imbalance/run alpha.
+    #[test]
+    fn fold_params_for_fixed_consts_match_registry() {
+        let renko = mlc_core::chart_type::by_id("renko").unwrap();
+        let out = fold_params_for(renko, SubscribeParams::Kline { bar_count: 1 }).unwrap();
+        assert_eq!(out.reversal, renko.fixed_consts.reversal.unwrap());
+
+        let pnf = mlc_core::chart_type::by_id("pnf").unwrap();
+        let out = fold_params_for(pnf, SubscribeParams::Kline { bar_count: 1 }).unwrap();
+        assert_eq!(out.reversal, pnf.fixed_consts.reversal.unwrap());
+
+        for id in ["tick_imbalance_bar", "volume_imbalance_bar", "run_bar"] {
+            let def = mlc_core::chart_type::by_id(id).unwrap();
+            let out = fold_params_for(def, SubscribeParams::Kline { bar_count: 1 }).unwrap();
+            let expected_alpha = def.fixed_consts.alpha_x100.unwrap() as f64 / 100.0;
+            assert_eq!(out.alpha, expected_alpha, "{id} alpha mismatch");
+        }
+    }
+
+    /// Defensive shape-mismatch fallback (`params` not the expected
+    /// variant) must read the registry's `inline_default`/ladder-first
+    /// value, not an independent literal — closes the volume_bar/dollar_bar
+    /// drift that existed before B3, S3 (fallback `1000.0`/`1_000_000.0`
+    /// vs registry `inline_default` `"10.0"`/`"100000"`).
+    #[test]
+    fn fold_params_for_defensive_fallback_matches_registry_inline_default() {
+        let mismatched = SubscribeParams::Kline { bar_count: 1 };
+        let volume_bar = mlc_core::chart_type::by_id("volume_bar").unwrap();
+        let out = fold_params_for(volume_bar, mismatched).unwrap();
+        assert_eq!(out.scaled_units, 10.0, "volume_bar fallback must match inline_default \"10.0\"");
+
+        let dollar_bar = mlc_core::chart_type::by_id("dollar_bar").unwrap();
+        let out = fold_params_for(dollar_bar, mismatched).unwrap();
+        assert_eq!(out.threshold, 100_000.0, "dollar_bar fallback must match inline_default \"100000\"");
     }
 
     #[test]

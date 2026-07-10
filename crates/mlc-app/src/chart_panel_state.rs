@@ -66,6 +66,22 @@ pub struct ChartPanelState {
     /// Footprint cluster display toggles (ABS markers / volume text / heat
     /// intensity). Unused for every other chart type.
     pub footprint_display: FootprintDisplayOptions,
+    /// Tick-bar body-opacity intensity toggle (modulate by trade-count
+    /// volume, `draw_tick_bars`'s `(vol/max_vol).sqrt().clamp(0.25,1.0)`
+    /// formula). Default `false` — plain solid bodies exactly like
+    /// `draw_candles`. Unused for every other chart type.
+    pub tick_intensity: bool,
+    /// Wick-suppression override for the bar family (range_bar / volume_bar
+    /// / dollar_bar) — those three render WITHOUT wicks by default (their
+    /// open/high/low pins are chained-continuity artifacts, not genuine
+    /// intrabar excursions the way candle wicks are); this toggle re-enables
+    /// them per-panel. Default `false`. The effective wick flag for those
+    /// three chart types is `state.wick_enabled && bar_family_wicks`
+    /// (`ChartRenderState::wicks_effective`, precomputed at render-state
+    /// build time — `chart_type` itself is not threaded into the renderer).
+    /// Unused (has no visual effect) for every other chart type — tick_bar /
+    /// imbalance_bar / run_bar keep wicks unconditionally (canon).
+    pub bar_family_wicks: bool,
 }
 
 impl ChartPanelState {
@@ -96,6 +112,15 @@ impl ChartPanelState {
             watermark: Some(Watermark::default()),
             tooltip: Tooltip::default(),
             footprint_display: FootprintDisplayOptions::default(),
+            // Registry-derived (chart-type-engine-consolidation B3, S5) —
+            // fresh panels start on "candles" (`show_candles: true` above);
+            // `RenderPolicy::bar_family_wicks_default` resolves to `false`
+            // for candles' `WickPolicy::Always` (no toggle concept), same
+            // value the independent literal used to hardcode.
+            tick_intensity: false,
+            bar_family_wicks: mlc_core::chart_type::by_id("candles")
+                .map(|d| d.render_policy.bar_family_wicks_default())
+                .unwrap_or(false),
         }
     }
 }

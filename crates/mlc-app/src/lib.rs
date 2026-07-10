@@ -183,20 +183,27 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
 
 /// Map a catalog `type_id` chosen from the unified indicator picker to the
 /// [`mlc_core::events::ChartOutEvent`] Toggle variant that drives it, if it
-/// is one of the three opaque host-driven overlays (Volume Profile / OI
-/// Delta / Funding Rate). These ids carry the `overlay_` prefix in mli's
-/// catalog (`mylittleindicators::bar_indicators::overlay::overlay_catalog`)
-/// specifically so they can never collide with the real compute-indicator
-/// id `volume_profile`. Returns `None` for every other catalog id — callers
-/// fall through to the regular `IndicatorManager::add` path. CVD is NOT one
-/// of these — it is a real compute-catalog indicator (mli `BarIndicatorId::
-/// Cvd`, catalog id "CVD") that always goes through the regular `add` path.
+/// is one of the five opaque host-driven overlays (Volume Profile / OI
+/// Delta / Funding Rate / DOM Heatmap / Liquidation Heatmap). These ids
+/// carry the `overlay_` prefix in mli's catalog
+/// (`mylittleindicators::bar_indicators::overlay::overlay_catalog`)
+/// specifically so they can never collide with a real compute-indicator id.
+/// Returns `None` for every other catalog id — callers fall through to the
+/// regular `IndicatorManager::add` path. CVD is NOT one of these — it is a
+/// real compute-catalog indicator (mli `BarIndicatorId::Cvd`, catalog id
+/// "CVD") that always goes through the regular `add` path.
+///
+/// `overlay_dom_heatmap`/`overlay_liquidation_heatmap` (chart-type →
+/// overlay migration) were previously `chart_type` registry entries; they
+/// now follow the exact same opaque-overlay shape as OI Delta/Funding Rate.
 pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::ChartOutEvent> {
     use mlc_core::events::ChartOutEvent;
     match type_id {
         "overlay_volume_profile" => Some(ChartOutEvent::ToggleVolumeProfileOverlay),
         "overlay_oi_delta" => Some(ChartOutEvent::ToggleOpenInterestOverlay),
         "overlay_funding_rate" => Some(ChartOutEvent::ToggleFundingRateStrip),
+        "overlay_dom_heatmap" => Some(ChartOutEvent::ToggleDomHeatmapOverlay),
+        "overlay_liquidation_heatmap" => Some(ChartOutEvent::ToggleLiquidationHeatmapOverlay),
         _ => None,
     }
 }
@@ -1843,7 +1850,7 @@ impl ChartApp {
                     "footprint" | "range_bar" | "volume_bar" | "tick_bar"
                     | "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar"
                     | "run_bar" | "renko" | "pnf" | "kagi" | "three_line_break"
-                    | "tpo" | "dom_heatmap" | "liquidation_heatmap"
+                    | "tpo"
                 ) {
                     continue;
                 }
@@ -1856,6 +1863,11 @@ impl ChartApp {
             // any REST response can. §3.4 (handoff 2026-07-06) widened from
             // footprint-only to the whole derived family.
             app.ignite_derived_windows();
+            // DOM/Liquidation heatmap overlays whose `dom_heatmap_show`/
+            // `liq_heatmap_show` came back true (chart-type → overlay
+            // migration hydration mapping) — sibling of the derived-windows
+            // ignition above.
+            app.ignite_legacy_heatmap_overlays();
             // Default companions (klines → VOLUME, footprint → CVD) for
             // restored windows — ChangeChartType never ran for them.
             app.sync_default_indicators_for_all_windows();
@@ -2818,7 +2830,7 @@ impl ChartApp {
                         "footprint" | "range_bar" | "volume_bar" | "tick_bar"
                         | "dollar_bar" | "tick_imbalance_bar" | "volume_imbalance_bar"
                         | "run_bar" | "renko" | "pnf" | "kagi" | "three_line_break"
-                        | "tpo" | "dom_heatmap" | "liquidation_heatmap"
+                        | "tpo"
                     ) {
                         continue;
                     }
@@ -2830,6 +2842,7 @@ impl ChartApp {
                 // Derived windows: ignite the matching pipeline + ownership
                 // stamp (see the startup post-load loop for rationale).
                 app.ignite_derived_windows();
+                app.ignite_legacy_heatmap_overlays();
                 app.sync_default_indicators_for_all_windows();
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
 
@@ -3695,6 +3708,7 @@ impl ChartApp {
                 // (with_bubble takes its own read lock internally).
                 let overlay_ts_shadow = chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let overlay_bubble_mgr = self.core.bubbles();
+                let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -3705,7 +3719,15 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    dom_heatmap_show: window.dom_heatmap_show,
+                    liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: overlay_panel.footprint_display,
+                    tick_intensity: overlay_panel.tick_intensity,
+                    wicks_effective: crate::active_series::effective_wick_flag(
+                        overlay_chart_type,
+                        self.panel_app.chart_settings_state.instrument_wick_enabled,
+                        overlay_panel.bar_family_wicks,
+                    ),
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -3725,7 +3747,6 @@ impl ChartApp {
                         render_state.bars = shadow;
                         render_state.non_temporal_axis = true;
                     }
-                    let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                     render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_chart_type);
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
@@ -3796,6 +3817,7 @@ impl ChartApp {
             // Audit D8: resolve BEFORE taking the bubbles() read guard below.
             let single_overlay_ts_shadow = single_overlay_cid.and_then(|cid| self.ts_shadow_for_chart(cid));
             let single_overlay_bubble_mgr = self.core.bubbles();
+            let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                 viewport: window.viewport(),
                 price_scale: window.price_scale(),
@@ -3806,7 +3828,15 @@ impl ChartApp {
                 vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
+                dom_heatmap_show: window.dom_heatmap_show,
+                liq_heatmap_show: window.liq_heatmap_show,
                 footprint_display: single_panel.footprint_display,
+                tick_intensity: single_panel.tick_intensity,
+                wicks_effective: crate::active_series::effective_wick_flag(
+                    single_chart_type,
+                    self.panel_app.chart_settings_state.instrument_wick_enabled,
+                    single_panel.bar_family_wicks,
+                ),
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
@@ -3823,7 +3853,6 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
-                let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_chart_type);
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
@@ -4081,6 +4110,7 @@ impl ChartApp {
                 // Audit D8: resolve BEFORE taking the bubbles() read guard below.
                 let split_ts_shadow = leaf_chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let split_bubble_mgr = self.core.bubbles();
+                let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -4091,7 +4121,15 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    dom_heatmap_show: window.dom_heatmap_show,
+                    liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: split_panel.footprint_display,
+                    tick_intensity: split_panel.tick_intensity,
+                    wicks_effective: crate::active_series::effective_wick_flag(
+                        split_chart_type,
+                        self.panel_app.chart_settings_state.instrument_wick_enabled,
+                        split_panel.bar_family_wicks,
+                    ),
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -4111,7 +4149,6 @@ impl ChartApp {
                     render_state.bars = shadow;
                     render_state.non_temporal_axis = true;
                 }
-                let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(split_chart_type);
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
@@ -4692,6 +4729,7 @@ impl ChartApp {
                     content_rect.width,
                     content_rect.height,
                 );
+                let single_window_chart_type_for_wicks = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -4702,7 +4740,15 @@ impl ChartApp {
                     vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
+                    dom_heatmap_show: window.dom_heatmap_show,
+                    liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: single_window_panel.footprint_display,
+                    tick_intensity: single_window_panel.tick_intensity,
+                    wicks_effective: crate::active_series::effective_wick_flag(
+                        single_window_chart_type_for_wicks,
+                        self.panel_app.chart_settings_state.instrument_wick_enabled,
+                        single_window_panel.bar_family_wicks,
+                    ),
                 };
                 single_window_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -8914,6 +8960,8 @@ impl ChartApp {
                     mlc_core::chart::FootprintHeatIntensity::Normal => "Normal".to_string(),
                     mlc_core::chart::FootprintHeatIntensity::High => "High".to_string(),
                 },
+                tick_intensity: css.tick_intensity,
+                bar_family_wicks: css.bar_family_wicks,
                 precision_label: precision_lbl.clone(),
                 timezone_label: tz_label.clone(),
                 use_24h: time_fmt_use_24h,

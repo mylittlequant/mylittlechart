@@ -55,6 +55,15 @@ pub struct InstrumentSettings {
     /// Footprint heat-fill intensity label ("Low" / "Normal" / "High").
     /// Unused when `chart_type != "footprint"`.
     pub footprint_heat_intensity_label: String,
+    /// Tick-bar checkbox: modulate body opacity by trade-count intensity
+    /// (`(vol/max_vol).sqrt().clamp(0.25,1.0)`, wick stays full opacity).
+    /// Default `false` — plain solid bodies exactly like `draw_candles`.
+    /// Unused when `chart_type != "tick_bar"`.
+    pub tick_intensity: bool,
+    /// Bar-family "Wicks" checkbox: re-enable wicks for range_bar /
+    /// volume_bar / dollar_bar, which render WITHOUT wicks by default.
+    /// Default `false`. Unused for every other chart type.
+    pub bar_family_wicks: bool,
     /// Precision display label (e.g. "Авто", "2 (0.00)")
     pub precision_label: String,
     /// Timezone display label (e.g., "(UTC+3) Москва")

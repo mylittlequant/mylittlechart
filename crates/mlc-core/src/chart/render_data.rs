@@ -333,6 +333,12 @@ pub struct ChartRenderState<'a> {
     /// intensity) — per-panel config, mirrors `ChartPanelState::footprint_display`.
     /// Unused for every other chart type.
     pub footprint_display: FootprintDisplayOptions,
+    /// Tick-bar body-opacity intensity toggle — per-panel config, mirrors
+    /// `ChartPanelState::tick_intensity`. When `false` (default),
+    /// `draw_tick_bars` renders plain solid bodies exactly like
+    /// `draw_candles`; when `true` it restores the volume-modulated alpha
+    /// formula. Unused for every other chart type.
+    pub tick_intensity: bool,
     /// Renko brick data. When `Some(_)` and chart_type == "renko" the
     /// renko renderer draws filled rect bricks; otherwise renko dispatch
     /// renders nothing.
@@ -362,15 +368,17 @@ pub struct ChartRenderState<'a> {
     /// Funding Rate cells for the strip renderer (C15).
     /// `None` when the toggle is off or no data has arrived yet.
     pub funding_rate_ref: Option<&'a [crate::types::FundingRateCell]>,
-    /// DOM heatmap buffer for the `dom_heatmap` chart-type (C12).
-    /// `None` for all other chart types.
+    /// DOM Heatmap background overlay buffer (C12; chart-type → overlay
+    /// migration). `None` when the `dom_heatmap_show` window flag is off or
+    /// no data has arrived yet — mirrors `oi_delta_ref`/`funding_rate_ref`.
     pub dom_heatmap_ref: Option<&'a crate::chart::dom_heatmap::DomHeatmapBuffer>,
-    /// DOM heatmap trade-circle overlay (C12).
+    /// DOM Heatmap trade-circle overlay (C12). Same gate as `dom_heatmap_ref`.
     pub dom_trade_dots_ref: Option<&'a [crate::chart::dom_heatmap::DomTradeDot]>,
-    /// Liquidation heatmap buffer for the `liquidation_heatmap` chart-type (C13).
-    /// `None` for all other chart types.
+    /// Liquidation Heatmap background overlay buffer (C13; chart-type →
+    /// overlay migration). `None` when the `liq_heatmap_show` window flag
+    /// is off or no data has arrived yet — mirrors `oi_delta_ref`/`funding_rate_ref`.
     pub liq_heatmap_ref: Option<&'a crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
-    /// Liquidation dot overlay for the `liquidation_heatmap` chart-type (C13).
+    /// Liquidation Heatmap dot overlay (C13). Same gate as `liq_heatmap_ref`.
     pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
     /// True when the chart type is non-temporal (renko / pnf / kagi /
     /// three_line_break). These types render on a derived series whose
@@ -402,12 +410,17 @@ pub struct ChartRenderState<'a> {
 impl<'a> ChartRenderState<'a> {
     /// True when there is ANY series data to paint — either kline `bars`, or
     /// a populated own-slot for a chart type that renders from a derived
-    /// series (footprint / renko / PnF / Kagi / three-line-break / TPO /
-    /// DOM heatmap / liquidation heatmap). The kline-loading skeleton gate
-    /// must NOT blank these chart types just because klines haven't landed
-    /// yet — their primary data lives in the own-slot, not in `bars`. CVD
-    /// is not in this list — it renders through the normal indicator
-    /// sub-pane system, not `ChartRenderState`.
+    /// series (footprint / renko / PnF / Kagi / three-line-break / TPO).
+    /// The kline-loading skeleton gate must NOT blank these chart types just
+    /// because klines haven't landed yet — their primary data lives in the
+    /// own-slot, not in `bars`. CVD is not in this list — it renders through
+    /// the normal indicator sub-pane system, not `ChartRenderState`.
+    ///
+    /// DOM heatmap / liquidation heatmap are ALSO not in this list
+    /// (chart-type → overlay migration) — they are background overlays on
+    /// top of whatever real chart_type is active, never the sole series on
+    /// the pane, so their presence must not suppress the loading skeleton
+    /// for the underlying chart type.
     pub fn has_any_series_data(&self) -> bool {
         !self.bars.is_empty()
             // `Some(empty)` = footprint subscribed, seed in flight
@@ -419,8 +432,6 @@ impl<'a> ChartRenderState<'a> {
             || self.kagi_segments.is_some_and(|s| !s.is_empty())
             || self.three_line_break.is_some_and(|s| !s.is_empty())
             || self.tpo_sessions.is_some_and(|s| !s.is_empty())
-            || self.dom_heatmap_ref.is_some()
-            || self.liq_heatmap_ref.is_some()
     }
 }
 

@@ -922,6 +922,49 @@ fn render_instrument_settings(
             ctx.fill_text(note, x, row_y + row_height / 2.0);
             row_y += row_height;
         }
+
+        // Render-policy-gated toggle rows (chart-type-engine-consolidation
+        // B3, S5) — `def.render_policy` replaces the hand-written
+        // chart_type string/list gates below (was `chart_type == "tick_bar"`
+        // / `matches!(.., "range_bar" | "volume_bar" | "dollar_bar")`).
+        let render_policy = mlc_core::chart_type::by_id(&settings.chart_type)
+            .map(|d| d.render_policy);
+
+        // Row: "Volume intensity" checkbox — gated by `intensity_toggle`
+        // (today: tick_bar only). Gates `draw_tick_bars`'s
+        // body-opacity-by-trade-count formula; default off (plain solid
+        // bodies, matches `draw_candles`).
+        if render_policy.is_some_and(|p| p.intensity_toggle) {
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tick_intensity, theme);
+            result.content_items.push(("instrument:tick_intensity".to_string(), check_rect));
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Volume intensity", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+        }
+
+        // Row: "Wicks" checkbox — gated by `WickPolicy::Toggle` (today:
+        // range_bar/volume_bar/dollar_bar only). These three render WITHOUT
+        // wicks by default (their open/high/low pins are chained-continuity
+        // artifacts, not genuine intrabar excursions the way candle wicks
+        // are) — this toggle re-enables them. Gates the effective flag
+        // `wick_enabled && bar_family_wicks` computed at `ChartRenderState`
+        // build time (`render.rs`'s `wicks_effective`), NOT threaded as raw
+        // `chart_type` into the renderer.
+        if render_policy.is_some_and(|p| matches!(p.wicks, mlc_core::chart_type::WickPolicy::Toggle { .. })) {
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.bar_family_wicks, theme);
+            result.content_items.push(("instrument:bar_family_wicks".to_string(), check_rect));
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Wicks", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+        }
         row_y += 16.0;
     }
 
@@ -2273,6 +2316,13 @@ pub struct ChartTypeParamSpec {
     /// Optional muted note under the control for a fixed, non-editable
     /// companion value (e.g. pnf's hardcoded reversal=3).
     pub fixed_note: Option<String>,
+    /// Registry's `inline_default` value_id (when set) — mirrors
+    /// `mlc_core::chart_type::ChartTypeDef::inline_default`. Wins over
+    /// `options.first()` for the `0.0` sentinel label, same rule as
+    /// `default_chart_type_param` (mlc-app/src/input/chart_out_events.rs)
+    /// and the toolbar's `tf_button_label` (panel_app.rs) — label and
+    /// subscribe must always agree.
+    pub inline_default: Option<&'static str>,
 }
 
 impl ChartTypeParamSpec {
@@ -2283,10 +2333,15 @@ impl ChartTypeParamSpec {
     /// subscribe).
     fn current_label(&self, numeric_value: f64) -> String {
         if numeric_value <= 0.0 {
-            // Sentinel: nothing user-set yet — show the first (code-side
-            // default) preset rather than "0".
-            return self.options.first()
-                .map(|o| o.label.to_string())
+            // Sentinel: nothing user-set yet — show the registry's
+            // `inline_default` preset (falling back to the ladder's first
+            // entry when unset) rather than "0".
+            let inline_label = self.inline_default.and_then(|d| {
+                self.options.iter().find(|o| o.value_id == d).map(|o| o.label.to_string())
+            });
+            return inline_label
+                .or_else(|| self.inline_default.map(str::to_string))
+                .or_else(|| self.options.first().map(|o| o.label.to_string()))
                 .unwrap_or_default();
         }
         self.options.iter()
@@ -2324,7 +2379,8 @@ fn format_trimmed_f64(v: f64) -> String {
 /// rendered by a dedicated block, not this generic numeric-param catalog —
 /// see `render_footprint_settings_block`.
 pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
-    let core_spec = mlc_core::chart_type::by_id(chart_type)?.param_spec?;
+    let def = mlc_core::chart_type::by_id(chart_type)?;
+    let core_spec = def.param_spec?;
     Some(ChartTypeParamSpec {
         section_title: core_spec.section_title.to_string(),
         row_label: core_spec.row_label.to_string(),
@@ -2332,5 +2388,6 @@ pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
             .map(|o| ChartTypeParamOption { value_id: o.value_id, label: o.label })
             .collect(),
         fixed_note: core_spec.fixed_note.map(str::to_string),
+        inline_default: def.inline_default,
     })
 }

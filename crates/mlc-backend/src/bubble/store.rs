@@ -71,6 +71,7 @@ impl BubbleStore {
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             bars_source: crate::bubble::data_bubble::BarsSource::default(),
+            bars_generation: mlc_core::chart_type::BarsGeneration::NONE,
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -130,6 +131,7 @@ impl BubbleStore {
             // === Per-Kind storage (Phase X0) ===
             bars: Vec::new(),
             bars_source: crate::bubble::data_bubble::BarsSource::default(),
+            bars_generation: mlc_core::chart_type::BarsGeneration::NONE,
             footprint_bars: None,
             renko_bars: None,
             three_line_break: None,
@@ -279,8 +281,25 @@ impl BubbleStore {
     /// whichever chart_type is CURRENTLY active on the bubble, so a switch
     /// invalidates whatever the previous type's seed reported (see
     /// `HistoryDepth`'s doc comment).
+    ///
+    /// Also resets `chart_type_param` back to its `0.0` pre-first-pick
+    /// sentinel when `ct` actually differs from the bubble's current
+    /// `chart_type` (param-spec ladders are per-family — e.g.
+    /// `tick_imbalance_bar`'s `min_ticks=50` leftover has no business
+    /// surviving a switch to `tick_bar`'s `count` axis). Re-selecting the
+    /// SAME type (no-op switch, or a render-only style change already routed
+    /// elsewhere) leaves the user's dialed-in param untouched. Without this,
+    /// `mlc-app`'s `ChangeChartType` handler read the stale cross-family
+    /// value straight into `build_subscribe_params` — the toolbar label
+    /// (which independently falls back to the NEW type's own first registry
+    /// preset for the sentinel) and the actual subscribed value would
+    /// diverge (bug found 2026-07-10, tick_bar showed "1T" but subscribed at
+    /// a leftover/hardcoded default instead).
     pub fn set_chart_type(&mut self, bid: BubbleId, ct: &'static str) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        if bubble.chart_type != ct {
+            bubble.chart_type_param = 0.0;
+        }
         bubble.chart_type = ct;
         bubble.history_depth = crate::bubble::data_bubble::HistoryDepth::default();
         true
@@ -536,6 +555,14 @@ impl BubbleStore {
         self.bubbles.get(&bid).map(|b| b.bars.as_slice()).unwrap_or(&[])
     }
 
+    /// Stale-array tripwire stamp (K1 lifecycle groundwork, chart-type-
+    /// engine-consolidation B2). See
+    /// [`mlc_core::chart_type::BarsGeneration`]'s doc comment. Unknown
+    /// bubble reads as `BarsGeneration::NONE`.
+    pub fn bars_generation(&self, bid: BubbleId) -> mlc_core::chart_type::BarsGeneration {
+        self.bubbles.get(&bid).map(|b| b.bars_generation).unwrap_or_default()
+    }
+
     /// Footprint cluster bars, if any have been written.
     pub fn footprint_bars(&self, bid: BubbleId) -> Option<&[mlc_core::types::FootprintBar]> {
         self.bubbles.get(&bid)?.footprint_bars.as_deref()
@@ -730,6 +757,15 @@ impl BubbleStore {
     pub fn replace_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.replace_bars(bars);
+        }
+    }
+
+    /// Clear a bubble's entire OHLC series. Mirrors [`Self::replace_bars`]
+    /// — both bump [`DataBubble::bars_generation`] (see
+    /// [`mlc_core::chart_type::BarsGeneration`]'s doc comment).
+    pub fn clear_bars(&mut self, bid: BubbleId) {
+        if let Some(b) = self.bubbles.get_mut(&bid) {
+            b.clear_bars();
         }
     }
 
@@ -985,5 +1021,141 @@ mod kline_layer_display_rebuild_tests {
         let snapshot = store.kline_layer_snapshot(bid, "1H");
         assert_eq!(snapshot.len(), fresh.len(), "disjoint seed must reset, not accumulate a gapped ring");
         assert_eq!(snapshot.first().map(|b| b.timestamp), Some(fresh_base));
+    }
+}
+
+#[cfg(test)]
+mod bars_generation_tests {
+    //! Stale-array tripwire coverage (K1 lifecycle groundwork, chart-type-
+    //! engine-consolidation B2) — `BarsGeneration` is bumped by every
+    //! `replace_bars`/`clear_bars` call and stamped for the bubble's
+    //! CURRENT `chart_type`; a switch that clears/replaces after
+    //! `set_chart_type` must leave the new type's name on the stamp, and a
+    //! stamp that still names the OLD type (the exact bug class this brick
+    //! surfaces) is what `mlc-backend::bubble::render::debug_assert_generation`
+    //! detects at render time.
+
+    use super::*;
+    use mlc_core::chart_type::BarsGeneration;
+    use mlc_core::Bar;
+
+    fn bar(ts: i64, close: f64) -> Bar {
+        Bar { timestamp: ts, open: close, high: close, low: close, close, volume: 1.0, ..Default::default() }
+    }
+
+    #[test]
+    fn fresh_bubble_starts_at_none_generation() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        assert_eq!(store.bars_generation(bid), BarsGeneration::NONE);
+    }
+
+    #[test]
+    fn replace_bars_stamps_generation_for_current_chart_type() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_chart_type(bid, "range_bar");
+        store.replace_bars(bid, vec![bar(1, 1.0)]);
+        let gen = store.bars_generation(bid);
+        assert_eq!(gen.chart_type, "range_bar");
+        assert_eq!(gen.seq, 1);
+    }
+
+    #[test]
+    fn chart_type_switch_then_replace_bumps_to_new_type_and_seq() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_chart_type(bid, "range_bar");
+        store.replace_bars(bid, vec![bar(1, 1.0)]);
+        let gen_before = store.bars_generation(bid);
+        assert_eq!(gen_before.chart_type, "range_bar");
+
+        // Switch: clear_slot (clear_bars) THEN set_chart_type THEN reseed
+        // (replace_bars) — mirrors the real `ChangeChartType` handler's
+        // ordering (`chart_out_events.rs`: set_chart_type precedes the
+        // subscribe/reseed dispatch).
+        store.clear_bars(bid);
+        store.set_chart_type(bid, "volume_bar");
+        store.replace_bars(bid, vec![bar(2, 2.0)]);
+
+        let gen_after = store.bars_generation(bid);
+        assert_eq!(gen_after.chart_type, "volume_bar");
+        assert!(gen_after.seq > gen_before.seq, "generation must be monotonic across a chart-type switch");
+        assert_ne!(gen_after, gen_before);
+    }
+
+    #[test]
+    fn stamp_reflects_bubble_chart_type_at_call_time_not_a_stale_snapshot() {
+        // Mirrors the exact bug class `debug_assert_generation` exists to
+        // catch: if a `replace_bars` call ever landed BEFORE `set_chart_type`
+        // for the new type, the stamp would (correctly) still name the OLD
+        // type — proving the stamp is a live snapshot of `chart_type` at
+        // bump time, not a value threaded in from the caller.
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_chart_type(bid, "candles");
+        store.replace_bars(bid, vec![bar(1, 1.0)]);
+        assert_eq!(store.bars_generation(bid).chart_type, "candles");
+
+        // Simulate the race: bars replaced BEFORE the chart_type flip lands.
+        store.replace_bars(bid, vec![bar(2, 2.0)]);
+        assert_eq!(
+            store.bars_generation(bid).chart_type, "candles",
+            "stamp must still read the bubble's chart_type at the time of the call"
+        );
+        store.set_chart_type(bid, "line");
+        assert_eq!(
+            store.bars_generation(bid).chart_type, "candles",
+            "set_chart_type alone (no bars write) must not retroactively re-stamp the generation"
+        );
+    }
+
+    #[test]
+    fn clear_bars_bumps_generation_too() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_chart_type(bid, "renko");
+        store.replace_bars(bid, vec![bar(1, 1.0)]);
+        let after_replace = store.bars_generation(bid);
+        store.clear_bars(bid);
+        let after_clear = store.bars_generation(bid);
+        assert!(after_clear.seq > after_replace.seq);
+        assert_eq!(after_clear.chart_type, "renko");
+    }
+
+    /// Test the `debug_assert_generation` check fn directly (chart-type-
+    /// engine-consolidation B4, T2.4) — it is warn-only (dlog, never
+    /// panics), so a print-capture assertion isn't feasible; instead this
+    /// pins the exact MISMATCH CONDITION the fn is documented to detect
+    /// (`gen.chart_type != bubble.chart_type`, the dlog trigger) by
+    /// reproducing the race from `stamp_reflects_bubble_chart_type_at_call_time_not_a_stale_snapshot`
+    /// and reading the raw `DataBubble` the fn actually inspects.
+    #[test]
+    fn debug_assert_generation_detects_stale_chart_type_mismatch() {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+
+        // Fresh bubble, matching generation (chart_type unset == "" both
+        // sides via BarsGeneration::NONE) — no mismatch, no panic.
+        let fresh = store.bubble(bid).expect("bubble exists");
+        crate::bubble::render::debug_assert_generation(fresh);
+
+        // Install "candles" and stamp a real generation for it.
+        store.set_chart_type(bid, "candles");
+        store.replace_bars(bid, vec![bar(1, 1.0)]);
+        let matched = store.bubble(bid).expect("bubble exists");
+        assert_eq!(matched.bars_generation.chart_type, matched.chart_type, "sanity: freshly-stamped bubble must match");
+        crate::bubble::render::debug_assert_generation(matched); // no panic — matching stamp
+
+        // Switch chart_type WITHOUT a follow-up bars write — the exact
+        // stale-array shape: the stamp still names "candles" while the
+        // bubble's live chart_type has already moved to "line".
+        store.set_chart_type(bid, "line");
+        let stale = store.bubble(bid).expect("bubble exists");
+        assert_ne!(
+            stale.bars_generation.chart_type, stale.chart_type,
+            "the exact mismatch debug_assert_generation's dlog branch fires on",
+        );
+        crate::bubble::render::debug_assert_generation(stale); // must not panic — warn-only tripwire
     }
 }

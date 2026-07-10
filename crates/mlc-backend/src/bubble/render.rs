@@ -29,10 +29,63 @@ pub struct ChartWindowRenderInputs<'a> {
     pub oi_show: bool,
     /// Funding Rate display gate (window-local view state).
     pub funding_show: bool,
+    /// DOM Heatmap overlay display gate (window-local view state,
+    /// chart-type → overlay migration — mirrors `oi_show`/`funding_show`).
+    pub dom_heatmap_show: bool,
+    /// Liquidation Heatmap overlay display gate (window-local view state,
+    /// chart-type → overlay migration — mirrors `oi_show`/`funding_show`).
+    pub liq_heatmap_show: bool,
     /// Footprint display toggles (ABS markers / volume text / heat
     /// intensity) — per-panel view state, mirrors `oi_show`/`funding_show`.
     pub footprint_display: FootprintDisplayOptions,
+    /// Tick-bar body-opacity intensity toggle — per-panel view state,
+    /// mirrors `footprint_display`.
+    pub tick_intensity: bool,
+    /// Precomputed effective wick flag — `draw_candles`' `state.wick_enabled`
+    /// gate. The caller resolves this ONCE, here, from the global "Wick"
+    /// checkbox combined with the bar-family override: for range_bar /
+    /// volume_bar / dollar_bar the effective flag is
+    /// `instrument_wick_enabled && panel.bar_family_wicks` (those three
+    /// render WITHOUT wicks by default — their open/high/low pins are
+    /// chained-continuity artifacts, not genuine intrabar excursions);
+    /// every other chart type keeps the plain `instrument_wick_enabled`
+    /// value. Resolved at the render-state build boundary (this struct) —
+    /// `chart_type` itself is NOT threaded into the renderer.
+    pub wicks_effective: bool,
 }
+
+/// Dev-only stale-array tripwire (K1 lifecycle groundwork, chart-type-
+/// engine-consolidation B2). Compares `bid`'s bubble's stamped
+/// [`mlc_core::chart_type::BarsGeneration`] against the chart_type the
+/// bubble currently claims — a mismatch means `bubble.bars` was never
+/// re-stamped for the ACTIVE chart_type (a `replace_bars`/`clear_bars` call
+/// got skipped somewhere on the install/switch path), i.e. exactly the
+/// stale-array class this brick exists to surface. `BarsGeneration::NONE`
+/// (never stamped — bubble created but never folded/loaded) is not a
+/// mismatch on its own; a genuinely fresh bubble is expected to start
+/// there.
+///
+/// Debug-only (native `debug_assertions` OR wasm dev builds, gated through
+/// the existing `dlog!`/`debug_log_enabled` mechanism so release/prod stays
+/// silent and zero-cost) — warns via `dlog!`, never panics: this is a
+/// visibility tool, not an invariant enforcement (K1 brick, not yet built).
+#[cfg(debug_assertions)]
+pub fn debug_assert_generation(bubble: &DataBubble) {
+    let gen = bubble.bars_generation;
+    if gen == mlc_core::chart_type::BarsGeneration::NONE {
+        return;
+    }
+    if gen.chart_type != bubble.chart_type {
+        mlc_backend_data_bridge::dlog!(
+            "[bars_generation] STALE ARRAY: bubble {:?} chart_type={} but bars stamped for generation chart_type={} (seq={}) — render snapshot may be showing the wrong series",
+            bubble.id, bubble.chart_type, gen.chart_type, gen.seq
+        );
+    }
+}
+
+/// No-op in release builds — see the `debug_assertions` twin above.
+#[cfg(not(debug_assertions))]
+pub fn debug_assert_generation(_bubble: &DataBubble) {}
 
 /// Build a `ChartRenderState` from window render inputs and the associated bubble.
 ///
@@ -52,6 +105,7 @@ pub fn build_chart_render_state<'a>(
     grid: &'a GridOptions,
     legend: &'a Legend,
 ) -> ChartRenderState<'a> {
+    debug_assert_generation(bubble);
     ChartRenderState {
         viewport: window.viewport,
         price_scale: window.price_scale,
@@ -70,10 +124,11 @@ pub fn build_chart_render_state<'a>(
         scale_settings: Some(window.scale_settings),
         body_enabled: true,
         border_enabled: true,
-        wick_enabled: true,
+        wick_enabled: window.wicks_effective,
         use_prev_close: false,
         footprint_bars: bubble.footprint_bars.as_deref(),
         footprint_display: window.footprint_display,
+        tick_intensity: window.tick_intensity,
         renko_bars: bubble.renko_bars.as_deref(),
         three_line_break: bubble.three_line_break.as_deref(),
         pnf_columns: bubble.pnf_columns.as_deref(),
@@ -86,10 +141,10 @@ pub fn build_chart_render_state<'a>(
         // storage is unconditional on bubble.
         oi_delta_ref: if window.oi_show { bubble.oi_delta.as_deref() } else { None },
         funding_rate_ref: if window.funding_show { bubble.funding_rate.as_deref() } else { None },
-        dom_heatmap_ref: bubble.dom_heatmap.as_ref(),
-        dom_trade_dots_ref: bubble.dom_trade_dots.as_deref(),
-        liq_heatmap_ref: bubble.liq_heatmap.as_ref(),
-        liq_dots_ref: bubble.liq_dots.as_deref(),
+        dom_heatmap_ref: if window.dom_heatmap_show { bubble.dom_heatmap.as_ref() } else { None },
+        dom_trade_dots_ref: if window.dom_heatmap_show { bubble.dom_trade_dots.as_deref() } else { None },
+        liq_heatmap_ref: if window.liq_heatmap_show { bubble.liq_heatmap.as_ref() } else { None },
+        liq_dots_ref: if window.liq_heatmap_show { bubble.liq_dots.as_deref() } else { None },
         // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
         // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)
         // is swapped into `bars` after this state is built.

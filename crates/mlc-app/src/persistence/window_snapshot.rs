@@ -83,6 +83,8 @@ pub fn build_chart_window_snapshot(
         chart_type_param,
         chart_type_interval,
         footprint_display: panel.footprint_display,
+        tick_intensity: panel.tick_intensity,
+        bar_family_wicks: panel.bar_family_wicks,
         show_candles: panel.show_candles,
         show_bars: panel.show_bars,
         show_hollow_candles: panel.show_hollow_candles,
@@ -151,6 +153,7 @@ mod json_compat_tests {
         panel.footprint_display.show_abs_markers = false;
         panel.footprint_display.show_volume_text = false;
         panel.footprint_display.heat_intensity = mlc_core::chart::FootprintHeatIntensity::High;
+        panel.tick_intensity = true;
 
         let snap = build_chart_window_snapshot(
             &window,
@@ -184,6 +187,7 @@ mod json_compat_tests {
         assert!(json.contains("\"chart_type_param\":25.5"));
         assert!(json.contains("\"chart_type_interval\":\"5m\""));
         assert!(json.contains("\"footprint_display\""));
+        assert!(json.contains("\"tick_intensity\":true"));
         assert!(json.contains("\"show_candles\":true"));
         assert!(json.contains("\"pre_tag_indicator_ids\":[1,2,3]"));
 
@@ -199,6 +203,7 @@ mod json_compat_tests {
         assert!(!restored.footprint_display.show_abs_markers);
         assert!(!restored.footprint_display.show_volume_text);
         assert_eq!(restored.footprint_display.heat_intensity, mlc_core::chart::FootprintHeatIntensity::High);
+        assert!(restored.tick_intensity);
     }
 
     /// Old preset JSON (pre-2026-07-05, no `chart_type_param`/
@@ -233,6 +238,7 @@ mod json_compat_tests {
         obj.remove("chart_type_param");
         obj.remove("chart_type_interval");
         obj.remove("footprint_display");
+        obj.remove("tick_intensity");
         let old_json = serde_json::to_string(&json_value).expect("stripped snapshot must serialize");
 
         let restored: mlc_core::preset::snapshots::ChartWindowSnapshot =
@@ -240,5 +246,6 @@ mod json_compat_tests {
         assert_eq!(restored.chart_type_param, 0.0);
         assert_eq!(restored.chart_type_interval, "1m");
         assert_eq!(restored.footprint_display, mlc_core::chart::render_data::FootprintDisplayOptions::default());
+        assert!(!restored.tick_intensity);
     }
 }

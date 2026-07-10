@@ -190,15 +190,38 @@ impl<'a> ActiveSeries<'a> {
     /// `&[Bar]`) — callers should prefer borrowing directly in that case;
     /// this method exists for the derived variants.
     pub fn to_bar_shadow(&self) -> Vec<Bar> {
+        // Renko/Pnf/Kagi/Tlb `open_time`/`ts_ms()` are all millisecond
+        // timestamps verbatim from the upstream event (see `RenkoBrick::
+        // ts_ms`, `PnfColumn::ts_ms`, `KagiSegment::ts_ms`,
+        // `ThreeLineBreakLine::ts_ms` — every one returns its ms field
+        // unchanged). `Bar.timestamp` is a SECONDS contract (see doc on
+        // `Bar::timestamp`), so each ms value must be divided down and the
+        // verbatim ms preserved in `derived_ts_ms` — mirrors the
+        // `timestamp = open_time/1000`, `derived_ts_ms = open_time`
+        // convention used by `kline_to_bar`/`bar_point_to_bar`.
         match self {
             ActiveSeries::Bars(s) => s.to_vec(),
-            ActiveSeries::Renko(s) => s.iter().map(|b| Bar::new(b.open_time, 0.0, 0.0, 0.0, 0.0)).collect(),
-            ActiveSeries::Pnf(s) => s.iter().map(|c| Bar::new(c.open_time, 0.0, 0.0, 0.0, 0.0)).collect(),
-            ActiveSeries::Kagi(s) => s.iter().map(|k| Bar::new(k.open_time, 0.0, 0.0, 0.0, 0.0)).collect(),
-            ActiveSeries::Tlb(s) => s.iter().map(|l| Bar::new(l.ts_ms(), 0.0, 0.0, 0.0, 0.0)).collect(),
-            ActiveSeries::Cvd(s) => s.iter().map(|c| Bar::new(c.ts_ms / 1000, 0.0, 0.0, 0.0, 0.0)).collect(),
-            ActiveSeries::Tpo(s) => s.iter().map(|t| Bar::new(t.open_time, 0.0, 0.0, 0.0, 0.0)).collect(),
+            ActiveSeries::Renko(s) => s.iter().map(|b| ms_to_bar_shadow(b.open_time)).collect(),
+            ActiveSeries::Pnf(s) => s.iter().map(|c| ms_to_bar_shadow(c.open_time)).collect(),
+            ActiveSeries::Kagi(s) => s.iter().map(|k| ms_to_bar_shadow(k.open_time)).collect(),
+            ActiveSeries::Tlb(s) => s.iter().map(|l| ms_to_bar_shadow(l.ts_ms())).collect(),
+            ActiveSeries::Cvd(s) => s.iter().map(|c| ms_to_bar_shadow(c.ts_ms)).collect(),
+            ActiveSeries::Tpo(s) => s.iter().map(|t| ms_to_bar_shadow(t.open_time)).collect(),
         }
+    }
+}
+
+/// Build an OHLC-zeroed shadow `Bar` from a millisecond timestamp, matching
+/// the `timestamp = ms/1000` / `derived_ts_ms = ms` convention used
+/// everywhere else a ms-native event is lowered into a `Bar` (see
+/// `kline_to_bar` in `mlc-backend-data-bridge/src/convert.rs` and
+/// `bar_point_to_bar` in `mlc-backend/src/bubble/view_fold.rs`).
+#[inline]
+fn ms_to_bar_shadow(ts_ms: i64) -> Bar {
+    Bar {
+        timestamp: ts_ms / 1000,
+        derived_ts_ms: ts_ms,
+        ..Bar::new(0, 0.0, 0.0, 0.0, 0.0)
     }
 }
 
@@ -227,6 +250,39 @@ impl<'a> ActiveSeries<'a> {
 /// their axis IS temporal — just non-uniform.
 pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
     mlc_core::chart_type::by_id(chart_type).map(|d| d.hides_time_grid).unwrap_or(false)
+}
+
+/// Effective wick flag for `mlc_backend::bubble::ChartWindowRenderInputs::wicks_effective`
+/// — `draw_candles`' `state.wick_enabled` gate, precomputed here (once, at
+/// the render-state build boundary) so `chart_type` is never threaded into
+/// the renderer itself.
+///
+/// Registry-driven (K0 contract, B2 — `ChartTypeDef::render_policy`; first
+/// live consumer of the field, proving the contract ahead of B3's full
+/// consumer compression): `WickPolicy::Always` keeps the plain
+/// `instrument_wick_enabled` global setting unchanged (candle family, and —
+/// today's reality, unchanged by this rewrite — tick_bar/tick_imbalance_bar/
+/// volume_imbalance_bar/run_bar, whose draw fns either ignore
+/// `wick_enabled` entirely or share `draw_candles` without a bar-family
+/// override); `WickPolicy::Off` forces wicks off regardless of the global
+/// toggle (non-candle primitives whose draw fn never reads
+/// `state.wick_enabled` at all); `WickPolicy::Toggle { .. }` is
+/// range_bar/volume_bar/dollar_bar — their open/high/low pins are
+/// chained-continuity artifacts (canonical range-bar/visual-continuity open
+/// = prev bar's close), not genuine intrabar excursions the way candle
+/// wicks are, so `bar_family_wicks` (per-panel settings toggle) is required
+/// on top of the global toggle to show them. Unknown/unregistered
+/// chart_type ids (defensive fallback, mirrors `chart_type_is_derived_seed`)
+/// keep the plain global toggle.
+pub fn effective_wick_flag(chart_type: &str, instrument_wick_enabled: bool, bar_family_wicks: bool) -> bool {
+    let Some(def) = mlc_core::chart_type::by_id(chart_type) else {
+        return instrument_wick_enabled;
+    };
+    match def.render_policy.wicks {
+        mlc_core::chart_type::WickPolicy::Always => instrument_wick_enabled,
+        mlc_core::chart_type::WickPolicy::Off => false,
+        mlc_core::chart_type::WickPolicy::Toggle { .. } => instrument_wick_enabled && bar_family_wicks,
+    }
 }
 
 /// `chart_type`s whose scroll-left backfill must go through

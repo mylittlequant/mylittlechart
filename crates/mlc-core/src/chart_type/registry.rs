@@ -49,9 +49,6 @@ pub enum ChartTypeKind {
     /// Orderflow types with their own bubble slot + reactor path via BubbleEvent::*Appended:
     /// footprint, tpo.
     OrderflowSlotted,
-    /// Orderflow types with ring-buffer bubble state, bypass ActiveSeries: dom_heatmap,
-    /// liquidation_heatmap.
-    OrderflowRingBuffer,
 }
 
 /// Mirrors `mlc-app::active_series::ActiveSeries`'s variant family — which
@@ -98,9 +95,6 @@ pub enum DataRequirement {
     /// goes hybrid (footprint) or shows empty-space-before-live (counted
     /// bars).
     DeepTrades,
-    /// No history concept at all — always live-only by nature, on every
-    /// venue (dom/liquidation heatmap).
-    LiveFeed,
 }
 
 /// Resolved data-availability class for one chart_type on the active
@@ -143,8 +137,6 @@ pub enum DeepenKind {
     /// requirement these three used to need no longer applies (see the
     /// `tick_imbalance_bar` row's doc comment below).
     DerivedPrependFold,
-    /// No deepen support (dom/liq heatmaps have ring-buffer state, no history extension).
-    Unsupported,
 }
 
 /// Which resolution/granularity concept the TF toolbar button and its
@@ -182,6 +174,145 @@ pub enum ResolutionKind {
 /// dependency on the app layer; the id itself carries the numeric value, so
 /// dispatch never needs to know the active chart_type.
 pub const RESOLUTION_PARAM_ITEM_PREFIX: &str = "reso_param:";
+
+/// Which client-side fold machine (if any) computes a chart_type's series —
+/// a pure identifier, no `digdigdig3_station` dependency (mlc-core stays
+/// dig3-blind; `mlc-backend::bubble::view_fold` maps each variant to its
+/// concrete `TradeTo*Derived`/`TpoFrom*Derived` machine type). Kills the
+/// forward matches in `FoldMachine::new`/`TradeFoldMachine::new` (chart_type
+/// str → machine) and the reverse matches in `FoldMachine::chart_type`/
+/// `TradeFoldMachine::chart_type` (machine → chart_type str) — both become a
+/// single match on this enum (chart-type-engine-consolidation B3, S1/S2).
+///
+/// `Tpo` covers both `TpoSource` flavours (`TradeBucket`/`Kline1m`) — the
+/// registry has one `tpo` row regardless of source; `tpo_source` is a
+/// separate runtime selector (`view_fold.rs::TradeFoldMachine::new`'s
+/// `tpo_source` parameter), not a registry axis. `Cvd` is deliberately NOT a
+/// variant — the CVD companion line is not a registry row (see this module's
+/// header doc comment) and keeps its own direct construction in
+/// `view_fold.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineKind {
+    /// Plain render-only types and any chart_type with no client-side fold
+    /// machine at all.
+    None,
+    RangeBar,
+    VolumeBar,
+    DollarBar,
+    Renko,
+    Pnf,
+    Kagi,
+    ThreeLineBreak,
+    TickBar,
+    TickImbalance,
+    VolumeImbalance,
+    RunBar,
+    Footprint,
+    Tpo,
+}
+
+// ── K0 contract additions (chart-type-engine-consolidation B2, 2026-07-10) ──
+//
+// Additive-only extension of the registry contract: identity keys for the
+// reseed last-wins merge (today hand-written per arm in
+// `mlc-backend::lib::apply_fold_reseed_outputs` /
+// `apply_trade_fold_reseed_outputs`), render policy (today hardcoded in
+// `mlc-app::active_series::effective_wick_flag` and threaded per-toggle
+// fields), and the fixed numeric constants that today live only inside
+// `mlc-app::input::chart_out_events::build_subscribe_params`. Existing
+// consumers are unchanged by this step (B3 compresses them onto these
+// fields); the registry becomes the single source of truth for future
+// consumers and the first live one (`effective_wick_flag`).
+
+/// Which field on a fold/trade-fold output shape identifies "the same bar,
+/// re-emitted" for the reseed last-wins collapse (see
+/// `mlc_core::chart_type::merge_last_wins`). Mirrors the per-arm rules
+/// hand-written today in `apply_fold_reseed_outputs` /
+/// `apply_trade_fold_reseed_outputs` exactly — one row per distinct rule,
+/// not per chart_type, so the mapping stays legible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityKey {
+    /// No reseed-merge concept — plain kline-render / line/area types never
+    /// go through a fold reseed at all.
+    None,
+    /// `Bar.derived_ts_ms` when non-zero, else `Bar.timestamp`. Used by the
+    /// three kline-sufficient counted-bar types (range/volume/dollar) and
+    /// the four trade-fed counted-bar types (tick/tick_imbalance/
+    /// volume_imbalance/run) — all six share `FoldOutput::Bar` /
+    /// `TradeFoldOutput::Bar`'s shape and `fold_on_live_1m`'s upsert rule.
+    DerivedTsMsOrTimestamp,
+    /// `open_time` field (renko/pnf/kagi bricks-columns-segments; footprint
+    /// and tpo bars/sessions).
+    OpenTime,
+    /// `ts_open` field (three_line_break's own timestamp naming).
+    TsOpen,
+    /// `ts_ms` field (cvd samples).
+    TsMs,
+}
+
+/// Whether/how a chart_type's candle-body wicks render — mirrors
+/// `effective_wick_flag`'s literal logic today (hardcoded
+/// `"range_bar"|"volume_bar"|"dollar_bar"` match).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WickPolicy {
+    /// Wicks always follow the global instrument toggle unconditionally
+    /// (candle-family render-only types).
+    Always,
+    /// Wicks never render regardless of the global toggle (non-candle
+    /// primitives whose draw fn doesn't consume `wick_enabled` at all —
+    /// renko/pnf/kagi/tlb/tpo/footprint/lines/areas).
+    Off,
+    /// Wicks follow the global instrument toggle AND a per-panel override
+    /// default (range_bar/volume_bar/dollar_bar: open/high/low pins on
+    /// these are chained-continuity artifacts, not genuine intrabar
+    /// excursions, so they default OFF even when the global toggle is on).
+    Toggle { default: bool },
+}
+
+/// Render-policy facet of a chart_type — today's `effective_wick_flag`
+/// literal plus the `tick_intensity` per-panel toggle gate
+/// (`ChartWindowRenderInputs::tick_intensity`, currently threaded
+/// unconditionally for every chart_type from panel state; this field marks
+/// which types actually have a meaningful intensity toggle at all).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderPolicy {
+    pub wicks: WickPolicy,
+    pub intensity_toggle: bool,
+}
+
+impl RenderPolicy {
+    /// Per-panel `bar_family_wicks` override's initial value for this
+    /// policy — `WickPolicy::Toggle { default }`'s `default`, `false` for
+    /// `Always`/`Off` (no toggle concept, the field is inert per
+    /// `ChartPanelState::bar_family_wicks`'s doc comment). Used at panel
+    /// init (chart-type-engine-consolidation B3, S5) so the field's default
+    /// is registry-derived rather than an independently hardcoded `false`.
+    pub fn bar_family_wicks_default(self) -> bool {
+        match self.wicks {
+            WickPolicy::Toggle { default } => default,
+            WickPolicy::Always | WickPolicy::Off => false,
+        }
+    }
+}
+
+/// Fixed (non-user-editable) numeric constants baked into a chart_type's
+/// fold machine — today hardcoded only inside
+/// `chart_out_events::build_subscribe_params` (renko reversal=2, pnf
+/// reversal=3, imbalance/run alpha=0.20). Mirrors the `fixed_note` strings
+/// already shown in each row's `param_spec` ("Reversal: 2" / "Reversal: 3" /
+/// "Alpha: 0.20") — this is the machine-readable counterpart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedConsts {
+    /// Renko/pnf reversal-brick count. `None` for every other type.
+    pub reversal: Option<u8>,
+    /// Tick/volume-imbalance and run-bar EMA alpha, ×100 (20 == 0.20) to
+    /// stay integer/Eq/const-friendly. `None` for every other type.
+    pub alpha_x100: Option<u16>,
+}
+
+impl FixedConsts {
+    pub const NONE: FixedConsts = FixedConsts { reversal: None, alpha_x100: None };
+}
 
 /// One preset option in a `ChartTypeParamSpec`'s dropdown.
 #[derive(Clone, Copy, Debug)]
@@ -243,6 +374,16 @@ pub struct ChartTypeDef {
     /// Which resolution concept the TF toolbar button/dropdown surfaces for
     /// this chart_type (owner doctrine 2026-07-08). See [`ResolutionKind`].
     pub resolution: ResolutionKind,
+    /// Reseed last-wins merge key (K0 contract, B2). See [`IdentityKey`].
+    pub identity: IdentityKey,
+    /// Wick/intensity render facet (K0 contract, B2). See [`RenderPolicy`].
+    pub render_policy: RenderPolicy,
+    /// Fixed non-editable fold-machine constants (K0 contract, B2). See
+    /// [`FixedConsts`].
+    pub fixed_consts: FixedConsts,
+    /// Which client-side fold machine (if any) computes this chart_type's
+    /// series (K0 contract, B3, S1). See [`MachineKind`].
+    pub machine: MachineKind,
 }
 
 // ── TPO's TF whitelist ("minutes and up") ───────────────────────────────────
@@ -264,11 +405,15 @@ static FOOTPRINT_TF_WHITELIST: &[&str] = &[
 
 // ── param_spec option tables (mirrors chart_settings.rs::chart_type_param_spec) ──
 
-// Price-quantized price-action family (range_bar/renko/pnf/kagi) shares one
-// ladder — owner doctrine 2026-07-08 resolution-axes rework: `param` for
-// these four is now denominated in INSTRUMENT TICKS (not absolute price).
+// Price-quantized price-action family (range_bar/renko/pnf/kagi) — owner
+// doctrine 2026-07-08 resolution-axes rework: `param` for these four is
+// denominated in INSTRUMENT TICKS (not absolute price).
 // `build_subscribe_params` (mlc-app/src/input/chart_out_events.rs) converts
-// `price_units = ticks * tick_size` at subscribe time.
+// `price_units = ticks * tick_size` at subscribe time. Per-type ladder split
+// 2026-07-10: renko/pnf keep this shared box-size-in-ticks ladder (canon for
+// both); range_bar and kagi have their OWN ladders below (see their doc
+// comments) — box-size-in-ticks is not the right granularity for a range
+// bar's threshold or a kagi reversal amount.
 static RENKO_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "1", label: "1" },
     ChartTypeParamOption { value_id: "2", label: "2" },
@@ -280,8 +425,31 @@ static RENKO_OPTIONS: &[ChartTypeParamOption] = &[
 ];
 
 static PNF_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
-static KAGI_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
-static RANGE_BAR_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
+
+// Kagi's reversal-amount ladder is its own — a much coarser NT-family
+// progression than renko/pnf's box-size ticks (2026-07-10 per-type param
+// ladder split). `inline_default` = "50".
+static KAGI_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "10", label: "10" },
+    ChartTypeParamOption { value_id: "20", label: "20" },
+    ChartTypeParamOption { value_id: "50", label: "50" },
+    ChartTypeParamOption { value_id: "100", label: "100" },
+    ChartTypeParamOption { value_id: "250", label: "250" },
+    ChartTypeParamOption { value_id: "500", label: "500" },
+];
+
+// Range bar's own NT-family ladder — distinct from renko/pnf's box-size
+// ticks (2026-07-10 per-type param ladder split). `inline_default` = "8".
+static RANGE_BAR_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "4", label: "4" },
+    ChartTypeParamOption { value_id: "8", label: "8" },
+    ChartTypeParamOption { value_id: "12", label: "12" },
+    ChartTypeParamOption { value_id: "16", label: "16" },
+    ChartTypeParamOption { value_id: "24", label: "24" },
+    ChartTypeParamOption { value_id: "30", label: "30" },
+    ChartTypeParamOption { value_id: "50", label: "50" },
+    ChartTypeParamOption { value_id: "100", label: "100" },
+];
 
 static THREE_LINE_BREAK_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "2", label: "2" },
@@ -364,6 +532,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "bars",
@@ -385,6 +557,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "hollow_candles",
@@ -406,6 +582,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "heikin_ashi",
@@ -427,6 +607,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     // ── Lines ────────────────────────────────────────────────────────────
     ChartTypeDef {
@@ -449,6 +633,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "step_line",
@@ -470,6 +658,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "line_markers",
@@ -491,6 +683,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     // ── Areas & Columns ──────────────────────────────────────────────────
     ChartTypeDef {
@@ -513,6 +709,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "hlc_area",
@@ -534,6 +734,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     ChartTypeDef {
         id: "baseline",
@@ -555,6 +759,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::None,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::None,
     },
     // ── Batched Bars (kline re-cuts) ────────────────────────────────────
     ChartTypeDef {
@@ -584,11 +792,15 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: RANGE_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("10"),
+        inline_default: Some("8"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "R" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::RangeBar,
     },
     ChartTypeDef {
         id: "volume_bar",
@@ -620,6 +832,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "V" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::VolumeBar,
     },
     ChartTypeDef {
         id: "dollar_bar",
@@ -651,6 +867,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "$" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::DollarBar,
     },
     // ── Trade Bars (genuinely trade-fed) ────────────────────────────────
     ChartTypeDef {
@@ -678,6 +898,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "T" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: true },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::TickBar,
     },
     ChartTypeDef {
         id: "tick_imbalance_bar",
@@ -713,6 +937,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "T" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
+        machine: MachineKind::TickImbalance,
     },
     ChartTypeDef {
         id: "volume_imbalance_bar",
@@ -741,6 +969,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "V" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
+        machine: MachineKind::VolumeImbalance,
     },
     ChartTypeDef {
         id: "run_bar",
@@ -769,6 +1001,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "RN" },
+        identity: IdentityKey::DerivedTsMsOrTimestamp,
+        render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
+        fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
+        machine: MachineKind::RunBar,
     },
     // ── Price Action ─────────────────────────────────────────────────────
     ChartTypeDef {
@@ -797,6 +1033,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "B" },
+        identity: IdentityKey::OpenTime,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts { reversal: Some(2), alpha_x100: None },
+        machine: MachineKind::Renko,
     },
     ChartTypeDef {
         id: "pnf",
@@ -823,6 +1063,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "B" },
+        identity: IdentityKey::OpenTime,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts { reversal: Some(3), alpha_x100: None },
+        machine: MachineKind::Pnf,
     },
     ChartTypeDef {
         id: "kagi",
@@ -844,11 +1088,15 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: KAGI_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("10"),
+        inline_default: Some("50"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "RV" },
+        identity: IdentityKey::OpenTime,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::Kagi,
     },
     ChartTypeDef {
         id: "three_line_break",
@@ -875,6 +1123,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: true,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "L" },
+        identity: IdentityKey::TsOpen,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::ThreeLineBreak,
     },
     // ── Orderflow (heterogeneous) ────────────────────────────────────────
     ChartTypeDef {
@@ -905,6 +1157,10 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: true,
         resolution: ResolutionKind::Interval,
+        identity: IdentityKey::OpenTime,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::Footprint,
     },
     ChartTypeDef {
         id: "tpo",
@@ -935,49 +1191,23 @@ static REGISTRY: &[ChartTypeDef] = &[
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
+        identity: IdentityKey::OpenTime,
+        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        fixed_consts: FixedConsts::NONE,
+        machine: MachineKind::Tpo,
     },
-    ChartTypeDef {
-        id: "dom_heatmap",
-        label: "DOM Heatmap",
-        icon_id: "Histogram",
-        group: ChartTypeGroup::Orderflow,
-        kind: ChartTypeKind::OrderflowRingBuffer,
-        series_variant: SeriesVariant::Bars,
-        bars_source: BarsSourceKind::Kline,
-        data_requirement: DataRequirement::LiveFeed,
-        hides_time_grid: false,
-        hides_tf_picker: false,
-        tf_whitelist: None,
-        min_bar_spacing: None,
-        default_indicators: &[],
-        param_spec: None,
-        inline_default: None,
-        deepen_kind: DeepenKind::Unsupported,
-        needs_ts_shadow: false,
-        has_bespoke_settings_block: false,
-        resolution: ResolutionKind::Time,
-    },
-    ChartTypeDef {
-        id: "liquidation_heatmap",
-        label: "Liquidation Heatmap",
-        icon_id: "Activity",
-        group: ChartTypeGroup::Orderflow,
-        kind: ChartTypeKind::OrderflowRingBuffer,
-        series_variant: SeriesVariant::Bars,
-        bars_source: BarsSourceKind::Kline,
-        data_requirement: DataRequirement::LiveFeed,
-        hides_time_grid: false,
-        hides_tf_picker: false,
-        tf_whitelist: None,
-        min_bar_spacing: None,
-        default_indicators: &[],
-        param_spec: None,
-        inline_default: None,
-        deepen_kind: DeepenKind::Unsupported,
-        needs_ts_shadow: false,
-        has_bespoke_settings_block: false,
-        resolution: ResolutionKind::Time,
-    },
+    // "dom_heatmap" / "liquidation_heatmap" REMOVED (chart-type → overlay
+    // migration, mirrors Bookmap/ATAS/Coinglass): both are now builtin
+    // overlay indicators (`overlay_dom_heatmap` / `overlay_liquidation_heatmap`
+    // in the mli catalog, added/removed via the indicators picker on ANY
+    // chart type) instead of their own chart_type registry rows. Draw
+    // functions (`draw_dom_heatmap`/`draw_liquidation_heatmap`) and bubble
+    // ring-buffer storage are unchanged — only the trigger moved from a
+    // chart-type switch to `ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay`.
+    // Legacy snapshots with `chart_type = "dom_heatmap"`/`"liquidation_heatmap"`
+    // hydrate to `"candles"` (via `by_id(...).unwrap_or("candles")`) with the
+    // corresponding overlay auto-enabled — see
+    // `mlc-app/src/persistence/hydration_impl.rs`.
 ];
 
 /// All chart-type rows.
@@ -1019,7 +1249,7 @@ mod tests {
 
     #[test]
     fn count_matches_expected() {
-        assert_eq!(all().len(), 25);
+        assert_eq!(all().len(), 23);
     }
 
     #[test]
@@ -1039,6 +1269,171 @@ mod tests {
         // Placeholder — enum forces this at compile time. Kept for future assertions.
         for d in all() {
             let _ = d.group;
+        }
+    }
+
+    // ── K0 contract completeness (chart-type-engine-consolidation B2) ──────
+
+    /// `IdentityKey` must exactly match the per-arm rules hand-written today
+    /// in `mlc-backend::lib::apply_fold_reseed_outputs` /
+    /// `apply_trade_fold_reseed_outputs` (see this module's `IdentityKey`
+    /// doc comment for the mapping). `RenderOnly` types never go through a
+    /// fold reseed → `IdentityKey::None`; every other kind has a concrete
+    /// key.
+    #[test]
+    fn identity_key_matches_reseed_arms() {
+        let expected: &[(&str, IdentityKey)] = &[
+            ("candles", IdentityKey::None),
+            ("bars", IdentityKey::None),
+            ("hollow_candles", IdentityKey::None),
+            ("heikin_ashi", IdentityKey::None),
+            ("line", IdentityKey::None),
+            ("step_line", IdentityKey::None),
+            ("line_markers", IdentityKey::None),
+            ("area", IdentityKey::None),
+            ("hlc_area", IdentityKey::None),
+            ("baseline", IdentityKey::None),
+            ("range_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("volume_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("dollar_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("tick_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("tick_imbalance_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("volume_imbalance_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("run_bar", IdentityKey::DerivedTsMsOrTimestamp),
+            ("renko", IdentityKey::OpenTime),
+            ("pnf", IdentityKey::OpenTime),
+            ("kagi", IdentityKey::OpenTime),
+            ("three_line_break", IdentityKey::TsOpen),
+            ("footprint", IdentityKey::OpenTime),
+            ("tpo", IdentityKey::OpenTime),
+        ];
+        assert_eq!(expected.len(), all().len(), "expected table must cover every registry row");
+        for (id, key) in expected {
+            let d = by_id(id).unwrap_or_else(|| panic!("missing registry row: {id}"));
+            assert_eq!(d.identity, *key, "identity mismatch for {id}");
+        }
+    }
+
+    /// `RenderOnly` types never carry a fold identity (no reseed concept) —
+    /// every `TradeAggBar`/`PriceActionTransform`/`OrderflowSlotted` type
+    /// does.
+    #[test]
+    fn render_only_types_have_no_identity() {
+        for d in all() {
+            if d.kind == ChartTypeKind::RenderOnly {
+                assert_eq!(d.identity, IdentityKey::None, "{} is RenderOnly but carries a fold identity", d.id);
+            } else {
+                assert_ne!(d.identity, IdentityKey::None, "{} is not RenderOnly but has no fold identity", d.id);
+            }
+        }
+    }
+
+    /// `RenderPolicy` must match today's `effective_wick_flag` reality: only
+    /// range_bar/volume_bar/dollar_bar are `Toggle`; only tick_bar has
+    /// `intensity_toggle: true`.
+    #[test]
+    fn render_policy_matches_effective_wick_flag_reality() {
+        for d in all() {
+            let is_toggle = matches!(d.render_policy.wicks, WickPolicy::Toggle { .. });
+            let expect_toggle = matches!(d.id, "range_bar" | "volume_bar" | "dollar_bar");
+            assert_eq!(is_toggle, expect_toggle, "wick Toggle policy mismatch for {}", d.id);
+            let expect_intensity = d.id == "tick_bar";
+            assert_eq!(d.render_policy.intensity_toggle, expect_intensity, "intensity_toggle mismatch for {}", d.id);
+        }
+    }
+
+    /// `FixedConsts` must exactly mirror each row's `param_spec.fixed_note`
+    /// string (renko "Reversal: 2", pnf "Reversal: 3",
+    /// tick_imbalance/volume_imbalance/run "Alpha: 0.20") — the two are
+    /// meant to describe the SAME constant, one human-readable, one
+    /// machine-readable.
+    #[test]
+    fn fixed_consts_matches_param_spec_fixed_note() {
+        let renko = by_id("renko").unwrap();
+        assert_eq!(renko.fixed_consts.reversal, Some(2));
+        assert_eq!(renko.param_spec.unwrap().fixed_note, Some("Reversal: 2"));
+
+        let pnf = by_id("pnf").unwrap();
+        assert_eq!(pnf.fixed_consts.reversal, Some(3));
+        assert_eq!(pnf.param_spec.unwrap().fixed_note, Some("Reversal: 3"));
+
+        for id in ["tick_imbalance_bar", "volume_imbalance_bar", "run_bar"] {
+            let d = by_id(id).unwrap();
+            assert_eq!(d.fixed_consts.alpha_x100, Some(20), "{id} alpha mismatch");
+            assert_eq!(d.param_spec.unwrap().fixed_note, Some("Alpha: 0.20"), "{id} fixed_note mismatch");
+        }
+
+        // Every other row carries no fixed consts.
+        for d in all() {
+            if matches!(d.id, "renko" | "pnf" | "tick_imbalance_bar" | "volume_imbalance_bar" | "run_bar") {
+                continue;
+            }
+            assert_eq!(d.fixed_consts, FixedConsts::NONE, "{} should have no fixed consts", d.id);
+        }
+    }
+
+    /// `MachineKind` must exactly match `IdentityKey::None`-ness (B3, S1) —
+    /// every `RenderOnly` type has no fold machine and vice versa. Also pins
+    /// the exact id → variant mapping so a future registry row can't drift
+    /// silently from `view_fold.rs`'s single `MachineKind` match.
+    #[test]
+    fn machine_kind_matches_identity_and_is_pinned() {
+        let expected: &[(&str, MachineKind)] = &[
+            ("candles", MachineKind::None),
+            ("bars", MachineKind::None),
+            ("hollow_candles", MachineKind::None),
+            ("heikin_ashi", MachineKind::None),
+            ("line", MachineKind::None),
+            ("step_line", MachineKind::None),
+            ("line_markers", MachineKind::None),
+            ("area", MachineKind::None),
+            ("hlc_area", MachineKind::None),
+            ("baseline", MachineKind::None),
+            ("range_bar", MachineKind::RangeBar),
+            ("volume_bar", MachineKind::VolumeBar),
+            ("dollar_bar", MachineKind::DollarBar),
+            ("tick_bar", MachineKind::TickBar),
+            ("tick_imbalance_bar", MachineKind::TickImbalance),
+            ("volume_imbalance_bar", MachineKind::VolumeImbalance),
+            ("run_bar", MachineKind::RunBar),
+            ("renko", MachineKind::Renko),
+            ("pnf", MachineKind::Pnf),
+            ("kagi", MachineKind::Kagi),
+            ("three_line_break", MachineKind::ThreeLineBreak),
+            ("footprint", MachineKind::Footprint),
+            ("tpo", MachineKind::Tpo),
+        ];
+        assert_eq!(expected.len(), all().len(), "expected table must cover every registry row");
+        for (id, machine) in expected {
+            let d = by_id(id).unwrap_or_else(|| panic!("missing registry row: {id}"));
+            assert_eq!(d.machine, *machine, "machine mismatch for {id}");
+            assert_eq!(
+                d.machine == MachineKind::None,
+                d.identity == IdentityKey::None,
+                "{id}: machine/identity None-ness disagree",
+            );
+        }
+    }
+
+    /// `RenderPolicy::bar_family_wicks_default` (B3, S5) must return the
+    /// `Toggle { default }` value for the 3 bar-family types, and `false`
+    /// for every other row (no toggle concept).
+    #[test]
+    fn bar_family_wicks_default_matches_wick_policy() {
+        for d in all() {
+            let expected = match d.render_policy.wicks {
+                WickPolicy::Toggle { default } => default,
+                WickPolicy::Always | WickPolicy::Off => false,
+            };
+            assert_eq!(
+                d.render_policy.bar_family_wicks_default(), expected,
+                "{} bar_family_wicks_default mismatch", d.id,
+            );
+        }
+        // Today's 3 bar-family rows all default OFF.
+        for id in ["range_bar", "volume_bar", "dollar_bar"] {
+            let d = by_id(id).unwrap();
+            assert!(!d.render_policy.bar_family_wicks_default(), "{id} should default OFF");
         }
     }
 }

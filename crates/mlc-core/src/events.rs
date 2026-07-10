@@ -137,6 +137,15 @@ pub enum ChartOutEvent {
     /// Toggle the Funding Rate strip at the bottom of the active chart.
     ToggleFundingRateStrip,
 
+    // === DOM Heatmap (C12) / Liquidation Heatmap (C13) — chart-type →
+    // overlay migration: both were `chart_type` registry entries, now
+    // builtin overlay indicators that draw under the main series of ANY
+    // chart type. Mirrors the OI Delta / Funding Rate toggle shape above. ===
+    /// Toggle the DOM Heatmap background overlay on the active chart.
+    ToggleDomHeatmapOverlay,
+    /// Toggle the Liquidation Heatmap background overlay on the active chart.
+    ToggleLiquidationHeatmapOverlay,
+
     // === Theme (app-global) ===
     SetTheme(&'static str),
     SetStyle(&'static str),

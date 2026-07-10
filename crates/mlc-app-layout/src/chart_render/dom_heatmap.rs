@@ -1,7 +1,15 @@
 //! DOM Heatmap renderer (C12) — Bookmap-style time-by-price depth heatmap.
 //!
+//! Builtin overlay (chart-type → overlay migration) — renders as a
+//! background layer UNDER the main series on ANY chart_type, toggled via
+//! the indicators picker (`overlay_dom_heatmap` in the mli catalog) →
+//! `ChartOutEvent::ToggleDomHeatmapOverlay`. Was previously its own
+//! full-pane `chart_type` ("dom_heatmap").
+//!
 //! Reads `state.dom_heatmap_ref` and `state.dom_trade_dots_ref` that were
-//! populated by the `DomHeatmapSnapshot` / `DomTradeDot` live-update arms.
+//! populated by the `DomHeatmapSnapshot` / `DomTradeDot` live-update arms,
+//! already gated on the window's `dom_heatmap_show` flag by
+//! `build_chart_render_state`.
 //!
 //! ## Axis strategy: virtual-index axis
 //!
@@ -37,14 +45,14 @@ fn ask_color(alpha: f64) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", 0xe7, 0x4c, 0x3c, a)
 }
 
-/// Draw the DOM heatmap chart-type, conditional on `state.dom_heatmap_ref`
-/// being populated.
+/// Draw the DOM Heatmap background overlay, conditional on
+/// `state.dom_heatmap_ref` being populated (overlay enabled AND at least
+/// one snapshot has landed).
 ///
-/// Matches the `fn(&mut dyn RenderContext, &ChartRenderState)` shape needed
-/// by the chart-type `DrawOps` table (`crate::chart_type::draw_ops`) — the
-/// ring-buffer presence check that used to live inline in
-/// `render_chart.rs::draw_series` now lives here instead. No-ops silently
-/// when the buffer is absent, same as before.
+/// Called unconditionally from `render_chart::render_chart`'s overlay pass
+/// (before `draw_series`, so the heat layer paints under the main series on
+/// ANY chart type) — no-ops silently when the ref is absent (overlay off or
+/// no data yet).
 pub fn draw_dom_heatmap_conditional(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     if let Some(buf) = state.dom_heatmap_ref {
         draw_dom_heatmap(ctx, state, buf, state.dom_trade_dots_ref);
@@ -60,8 +68,13 @@ pub fn draw_dom_heatmap(
     buf: &DomHeatmapBuffer,
     trade_dots: Option<&[DomTradeDot]>,
 ) {
+    // Chart-type → overlay migration: this is now a background layer under
+    // whatever real chart_type is active (candles/bars/line/...), never the
+    // sole content of the pane — an empty buffer (overlay just enabled,
+    // first snapshot in flight) must silently paint nothing instead of the
+    // full-pane waiting spinner `draw_waiting_placeholder` used when this
+    // was its own chart_type with nothing else on screen.
     if buf.cells.is_empty() {
-        super::draw_waiting_placeholder(ctx, state, "DOM Heatmap: waiting for live data…");
         return;
     }
 

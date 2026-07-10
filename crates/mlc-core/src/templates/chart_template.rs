@@ -86,6 +86,8 @@ impl ChartTemplate {
                 footprint_buy_color: "#26a69a".to_string(),
                 footprint_sell_color: "#ef5350".to_string(),
                 footprint_heat_intensity_label: "Normal".to_string(),
+                tick_intensity: false,
+                bar_family_wicks: false,
                 precision_label: "Авто".to_string(),
                 timezone_label: TimeFormatSettings { timezone_offset_hours: 0, ..TimeFormatSettings::default() }.timezone_label(),
                 use_24h: true,

@@ -187,7 +187,26 @@ impl ChartApp {
                         // `restore_scale_mode` (set by cold preset-load paths)
                         // overrides this inside `reconcile_view_fresh` when present.
                         window.seed_fresh_load(new_bars, series);
-                        window.pending_symbol_load = false;
+                        // Fix 3 (chart-type-engine-consolidation B1): keep the
+                        // loading skeleton up until the event that actually
+                        // delivers series data — mirrors the derived-Appended
+                        // arm's guard below (`window.pending_symbol_load &&
+                        // !series.is_empty()`). An install-time fold reseed
+                        // that produces zero output bars (chart-type switch /
+                        // param change landing before the re-armed backfill's
+                        // first page arrives — fix 1/2 above) used to
+                        // unconditionally clear `pending_symbol_load` right
+                        // here, which made `has_any_series_data()`'s skeleton
+                        // gate irrelevant: the window itself no longer
+                        // considered itself "pending", so nothing re-triggers
+                        // the cold-snap/loading-state bookkeeping once real
+                        // bars land later via `LayerBackfilled`'s refold.
+                        // Clearing only on non-empty matches the contract the
+                        // derived-slot chart types (renko/pnf/kagi/tlb/tpo/
+                        // footprint) already had.
+                        if !series.is_empty() {
+                            window.pending_symbol_load = false;
+                        }
                         if window.needs_snap_after_backfill
                             && !series.is_empty()
                             && window.viewport().chart_width > 0.0
@@ -831,10 +850,6 @@ impl ChartApp {
                     }
                 }
 
-                let bu_bubble_bars: Vec<mlc_core::Bar> = target_bubbles_bu.iter().next()
-                    .map(|b| self.core.bubbles().bars(*b).to_vec())
-                    .unwrap_or_default();
-
                 for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
                         Some(t) => t,
@@ -849,12 +864,32 @@ impl ChartApp {
                     if window.pending_symbol_load {
                         window.pending_symbol_load = false;
                     }
-                    // These windows are gated `is_derived` (range/volume/tick/
-                    // footprint/dollar/imbalance/run) — the station writes
-                    // that series directly INTO bubble.bars, so it IS the
-                    // kline array for this chart_type family (audit D8
-                    // resolution table) — plain `Bars` wrap is correct here.
-                    let series = crate::active_series::ActiveSeries::Bars(&bu_bubble_bars);
+                    // Resolved PER WINDOW (not once from an arbitrary member
+                    // of `target_bubbles_bu`, which is an unordered HashSet):
+                    // distinct windows on the same (symbol, account_type) can
+                    // own distinct bubbles (different chart-type params, e.g.
+                    // two range_bar windows with different range sizes, or
+                    // range_bar + volume_bar both on the same instrument —
+                    // `bubble_for_chart` resolves per-window via the tag
+                    // system, not per-instrument). Broadcasting one bubble's
+                    // array length to every window's viewport bookkeeping
+                    // (cold-snap/autoscale/bar_count/advance) parked the
+                    // viewport mid-history whenever the picked bubble's bar
+                    // count diverged from a given window's own series.
+                    let Some(bid_for_window) = self.core.tags().tag_for_chart(*cid_bu) else {
+                        continue;
+                    };
+                    let bu_bubble_bars_owned: Vec<mlc_core::Bar> =
+                        self.core.bubbles().bars(bid_for_window).to_vec();
+                    // These windows are gated `is_derived` == trade-agg-bar
+                    // family (range/volume/tick/dollar/imbalance/run) — the
+                    // station writes that series directly INTO bubble.bars,
+                    // so it IS the kline array for this chart_type family
+                    // (audit D8 resolution table) — plain `Bars` wrap is
+                    // correct here. Footprint is NOT part of this arm (it
+                    // reaches viewport bookkeeping via `FootprintBarAppended`
+                    // instead, see the exclusion comment above).
+                    let series = crate::active_series::ActiveSeries::Bars(&bu_bubble_bars_owned);
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(series);
                     }

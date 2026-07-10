@@ -1824,8 +1824,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "tick_imbalance_bar" | "tickimbalancebar" => Some(ICON_BAR_CHART),
         "volume_imbalance_bar" | "volumeimbalancebar" => Some(ICON_BAR_CHART),
         "run_bar" | "runbar" => Some(ICON_BAR_CHART),
-        "dom_heatmap" | "domheatmap" => Some(ICON_HISTOGRAM),
-        "liquidation_heatmap" | "liquidationheatmap" => Some(ICON_HISTOGRAM),
+        // "dom_heatmap"/"liquidation_heatmap" REMOVED (chart-type → overlay
+        // migration) — both are now indicator-picker overlay entries whose
+        // icon resolves via the generic "histogram"/"activity" arms below.
 
         // Drawing tools
         "trend_line" | "trendline" => Some(ICON_TREND_LINE),

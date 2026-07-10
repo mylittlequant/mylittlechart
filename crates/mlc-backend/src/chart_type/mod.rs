@@ -9,7 +9,9 @@ pub mod engine;
 pub use engine::{
     SubscribeOps, SubscribeParams, ops_by_id,
     deep_trade_history_available, is_footprint_hybrid, clear_slot_footprint_hybrid_aware,
-    FOLD_CHART_TYPES, is_fold_chart_type, fold_params_from_subscribe_params,
-    TRADE_FOLD_CHART_TYPES, is_trade_fold_chart_type, trade_fold_params_from_subscribe_params,
+    fold_chart_types, is_fold_chart_type, fold_params_from_subscribe_params,
+    trade_fold_chart_types, is_trade_fold_chart_type, trade_fold_params_from_subscribe_params,
+    fold_params_for,
     DEFAULT_TPO_SOURCE,
+    clear_slot_dom_heatmap, clear_slot_liq_heatmap,
 };

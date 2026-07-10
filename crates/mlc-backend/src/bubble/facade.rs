@@ -131,6 +131,13 @@ impl<'a> Bubbles<'a> {
         self.store.bars_source(bid)
     }
 
+    /// Stale-array tripwire stamp (K1 lifecycle groundwork, chart-type-
+    /// engine-consolidation B2). See
+    /// [`mlc_core::chart_type::BarsGeneration`]'s doc comment.
+    pub fn bars_generation(&self, bid: BubbleId) -> mlc_core::chart_type::BarsGeneration {
+        self.store.bars_generation(bid)
+    }
+
     /// History depth backing the bubble's currently-active chart_type.
     pub fn history_depth(&self, bid: BubbleId) -> super::data_bubble::HistoryDepth {
         self.store.history_depth(bid)

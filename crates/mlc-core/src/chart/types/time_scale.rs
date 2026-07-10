@@ -673,6 +673,16 @@ impl TimeScale {
     /// visible slice (not last-10 mean, which the uniform path uses) —
     /// robust to bursts where several bars land in the same second and a
     /// mean would understate the true cadence.
+    ///
+    /// Extends into the FUTURE region (right of the last real bar) when the
+    /// viewport looks past it, mirroring the uniform kline path's off-screen
+    /// pad (`generate_ticks`'s `end_bar + 50` walk via the extrapolating
+    /// `timestamp_to_bar_idx`): the boundary walk's `end_ts` is extended by
+    /// forward extrapolation off `median_interval`, and boundaries beyond
+    /// the last real bar's timestamp resolve to a forward-extrapolated bar
+    /// index instead of clamping to the last real bar. Boundaries within
+    /// `[start_bar, end_bar]` still resolve via the clamped nearest-bar
+    /// search, unchanged from before this extension.
     fn generate_calendar_grid_ticks<F>(
         &self,
         ticks: &mut Vec<TimeTick>,
@@ -711,9 +721,26 @@ impl TimeScale {
         let median_interval = gaps[gaps.len() / 2].max(1);
 
         let start_ts = bars[start_bar].timestamp;
-        let end_ts = bars[end_bar].timestamp;
+        let mut end_ts = bars[end_bar].timestamp;
         if end_ts <= start_ts {
             return;
+        }
+
+        // Viewport-driven right bound, mirroring the uniform kline path's
+        // `end_bar = (view_start + visible_bars).ceil() + 50` off-screen pad
+        // (`generate_ticks`, ~line 565/568). When the viewport looks past
+        // the last real bar, extend the boundary walk's `end_ts` by forward
+        // extrapolation from the last real bar using the median interval
+        // computed above, so the calendar walk covers the future region
+        // just like the uniform path's `bar_idx_to_timestamp` extrapolation.
+        let last_real_idx = bars.len() as i64 - 1;
+        let end_bar_vp = (viewport.view_start + visible_bars as f64).ceil() as i64 + 50;
+        if end_bar_vp > last_real_idx {
+            let beyond = end_bar_vp - last_real_idx;
+            let extrapolated_end_ts = bars[last_real_idx as usize].timestamp + beyond * median_interval;
+            if extrapolated_end_ts > end_ts {
+                end_ts = extrapolated_end_ts;
+            }
         }
 
         // Same day_width_px density measure the uniform path uses, driven
@@ -840,14 +867,29 @@ impl TimeScale {
             return;
         }
 
-        // Resolve each boundary to the nearest real bar (clamped, no
-        // extrapolation), then dedup consecutive boundaries landing on the
-        // same bar index — keep the higher-weight tick.
+        // Resolve each boundary to a bar index — real bars in
+        // `[start_bar, end_bar]` resolve via the clamped nearest-bar search
+        // (byte-identical to the pre-fix behavior, pinned by existing
+        // tests); boundaries beyond the last real bar's timestamp resolve
+        // via forward extrapolation off `median_interval` instead of
+        // clamping to `end_bar` (the future-region fix) — same fractional
+        // step + rounding style (`floor`-toward-zero integer division) the
+        // uniform kline path's `timestamp_to_bar_idx` uses for its own
+        // forward-extrapolation branch. Then dedup consecutive boundaries
+        // landing on the same bar index — keep the higher-weight tick. This
+        // applies across the real/extrapolated boundary too: a real-region
+        // boundary and an extrapolated one that round to the same index
+        // still collapse to one tick.
         boundaries.sort_by_key(|&(ts, _)| ts);
-        let mut by_bar: Vec<(usize, i64, TickMarkWeight)> = Vec::with_capacity(boundaries.len());
+        let last_ts = bars[end_bar].timestamp;
+        let mut by_bar: Vec<(i64, i64, TickMarkWeight)> = Vec::with_capacity(boundaries.len());
         for (ts, weight) in boundaries {
-            let idx = Self::timestamp_to_bar_idx_nearest_clamped(ts, &bars[..=end_bar]);
-            if idx < start_bar {
+            let idx: i64 = if ts > last_ts {
+                end_bar as i64 + (ts - last_ts) / median_interval
+            } else {
+                Self::timestamp_to_bar_idx_nearest_clamped(ts, &bars[..=end_bar]) as i64
+            };
+            if idx < start_bar as i64 {
                 continue;
             }
             match by_bar.last_mut() {
@@ -867,7 +909,7 @@ impl TimeScale {
             .into_iter()
             .map(|(idx, ts, weight)| {
                 let x = viewport.bar_to_x_f64(idx as f64);
-                (idx as i64, x, weight, ts)
+                (idx, x, weight, ts)
             })
             .collect();
 
@@ -1552,12 +1594,14 @@ mod tests {
         assert!(!ticks.is_empty(), "calendar generator must produce ticks for a non-uniform series");
 
         for tick in &ticks {
-            let idx = tick.bar_idx as usize;
-            assert!(idx < bars.len(), "tick.bar_idx must reference a real bar");
-            // Every tick must land exactly on a real bar's x position —
-            // calendar boundaries are resolved to the nearest bar, never a
-            // synthetic fractional position.
-            assert_eq!(tick.x, viewport.bar_to_x_f64(idx as f64));
+            // A tick can now reference a forward-extrapolated index beyond
+            // the last real bar (future-region extension, 2026-07-09) — only
+            // reject indices before the first real bar. Every tick must
+            // still land exactly on its bar index's x position — calendar
+            // boundaries are resolved to the nearest (or extrapolated) bar,
+            // never a synthetic fractional position.
+            assert!(tick.bar_idx >= 0, "tick.bar_idx must not be negative for this fixture");
+            assert_eq!(tick.x, viewport.bar_to_x_f64(tick.bar_idx as f64));
         }
 
         // No two ticks may share a bar_idx (dedup invariant).
@@ -1572,10 +1616,12 @@ mod tests {
     fn test_calendar_grid_dedup_keeps_higher_weight_on_gap_collapse() {
         // Two bars separated by a gap wide enough that several calendar
         // day-boundaries fall strictly between them with nothing to attach
-        // to except these two bars — they must all collapse onto whichever
-        // of the two bars is nearest, deduped to one tick per bar, and the
-        // survivor at each bar must carry the highest-weight boundary that
-        // collapsed onto it (Day/Month over lower intraday weights).
+        // to except these two bars (plus, since the future-region extension
+        // 2026-07-09, the extrapolated tail past bar 1) — every boundary
+        // must collapse onto a real or forward-extrapolated bar index,
+        // deduped to one tick per index, and the survivor at each index
+        // must carry the highest-weight boundary that collapsed onto it
+        // (Day/Month over lower intraday weights).
         let start = date_to_timestamp(2024, 1, 1, 0, 0, 0);
         let end = date_to_timestamp(2024, 1, 10, 0, 0, 0); // 9-day gap
         let bars = vec![
@@ -1588,23 +1634,35 @@ mod tests {
         let mut ticks = Vec::new();
         scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
 
-        // Every emitted tick must reference one of the two real bars only.
+        // Every emitted tick must reference bar 0, bar 1, or a
+        // forward-extrapolated index beyond bar 1 (never before bar 0).
         for t in &ticks {
-            assert!(t.bar_idx == 0 || t.bar_idx == 1, "boundary must clamp to a real bar, got {}", t.bar_idx);
+            assert!(t.bar_idx >= 0, "boundary must not resolve before the first real bar, got {}", t.bar_idx);
         }
-        // At most one tick per bar (dedup).
+        // At most one tick per bar index (dedup) — check the two real bars
+        // specifically, same as before this fix.
         let idx0_count = ticks.iter().filter(|t| t.bar_idx == 0).count();
         let idx1_count = ticks.iter().filter(|t| t.bar_idx == 1).count();
         assert!(idx0_count <= 1);
         assert!(idx1_count <= 1);
+        // Dedup invariant holds globally too — no bar_idx repeats.
+        let mut seen: Vec<i64> = ticks.iter().map(|t| t.bar_idx).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), before, "duplicate bar_idx across ticks — dedup failed");
     }
 
     #[test]
-    fn test_calendar_grid_ends_clamped_no_extrapolation() {
-        // A short series where the visible viewport pad (±50 bars) would,
-        // under the OLD extrapolating `timestamp_to_bar_idx`, project
-        // boundaries into negative/beyond-length indices. The clamped
-        // resolver must never emit a bar_idx outside [0, bars.len()-1].
+    fn test_calendar_grid_backward_still_clamped_forward_extrapolates() {
+        // A short series where the visible viewport pad (±50 bars) sits
+        // mostly BEFORE the first real bar (view_start = 0.0, so the
+        // backward pad clamps to `start_bar = 0`) and, since the
+        // future-region extension (2026-07-09), legitimately extends past
+        // the last real bar on the forward side (`end_bar_vp = ceil(0 +
+        // visible_bars) + 50` comfortably exceeds this 5-bar fixture).
+        // Backward indices must still never go negative; forward indices
+        // are now allowed — and expected — to exceed `bars.len() - 1`.
         let mut bars = Vec::new();
         let mut ts = date_to_timestamp(2024, 6, 15, 8, 0, 0);
         for _ in 0..5 {
@@ -1618,8 +1676,14 @@ mod tests {
         scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
 
         for t in &ticks {
-            assert!(t.bar_idx >= 0 && (t.bar_idx as usize) < bars.len());
+            assert!(t.bar_idx >= 0, "backward indices must still clamp at 0, got {}", t.bar_idx);
         }
+        assert!(
+            ticks.iter().any(|t| (t.bar_idx as usize) >= bars.len()),
+            "viewport pad exceeds this fixture's length — expected at least one \
+             forward-extrapolated tick beyond the last real bar, got {:?}",
+            ticks.iter().map(|t| t.bar_idx).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1704,9 +1768,12 @@ mod tests {
 
         assert!(!ticks.is_empty(), "renko-shadow series with real timestamps must get calendar ticks, not a blank strip");
         for t in &ticks {
-            let idx = t.bar_idx as usize;
-            assert!(idx < bars.len());
-            assert_eq!(t.x, viewport.bar_to_x_f64(idx as f64));
+            // Indices beyond `bars.len() - 1` are legitimate
+            // forward-extrapolated future-region ticks (2026-07-09) — only
+            // reject a negative index. `x` must still match the same index's
+            // linear position regardless of real-vs-extrapolated.
+            assert!(t.bar_idx >= 0);
+            assert_eq!(t.x, viewport.bar_to_x_f64(t.bar_idx as f64));
         }
     }
 
@@ -1724,5 +1791,108 @@ mod tests {
         let scale = TimeScale::new();
         let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, true);
         assert!(!ticks.is_empty(), "degenerate shadow must still fall back to per-bar ticks, not blank");
+    }
+
+    // =========================================================================
+    // Future-region extension + ts-shadow-units regression (2026-07-09)
+    // =========================================================================
+
+    #[test]
+    fn test_calendar_grid_extends_past_last_bar_when_viewport_looks_forward() {
+        // Viewport panned so `view_start` sits near the end of the data —
+        // `end_bar_vp = ceil(view_start + visible_bars) + 50` reaches well
+        // past the last real bar. The generator must produce calendar
+        // ticks with `bar_idx > last real index`, at median-spaced calendar
+        // boundaries extrapolated forward from the last real bar — mirrors
+        // the uniform kline path's off-screen future padding.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 3, 1, 0, 0, 0);
+        for _ in 0..80 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += HOUR;
+        }
+        let last_real_idx = bars.len() - 1;
+
+        // Pan the viewport so view_start is near the tail: visible_bars ≈
+        // chart_width/bar_spacing = 1200/8 = 150, so view_start = 60 pushes
+        // the ±50 pad well past `last_real_idx` (79).
+        let mut viewport = test_viewport(bars.len(), 8.0, 1200.0);
+        viewport.view_start = 60.0;
+
+        let scale = TimeScale::new();
+        let mut ticks = Vec::new();
+        scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
+
+        assert!(!ticks.is_empty(), "calendar generator must still produce ticks when panned near the tail");
+        assert!(
+            ticks.iter().any(|t| (t.bar_idx as usize) > last_real_idx),
+            "expected at least one tick past the last real bar (idx > {}), got {:?}",
+            last_real_idx,
+            ticks.iter().map(|t| t.bar_idx).collect::<Vec<_>>()
+        );
+        // Every future-region tick's x must still be the plain linear
+        // projection from its (possibly beyond-length) index — no clamping.
+        for t in &ticks {
+            assert_eq!(t.x, viewport.bar_to_x_f64(t.bar_idx as f64));
+        }
+        // Dedup invariant still holds in the extended region.
+        let mut seen: Vec<i64> = ticks.iter().map(|t| t.bar_idx).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), before, "duplicate bar_idx across ticks — dedup failed in future region");
+    }
+
+    #[test]
+    fn test_calendar_grid_seconds_scale_shadow_gets_intraday_step() {
+        // Regression for the ts-shadow unit-corruption bug (FIX A,
+        // 2026-07-09): before the fix, `to_bar_shadow()` wrote a
+        // millisecond `open_time` verbatim into `Bar.timestamp` (a SECONDS
+        // field), inflating a 1-2 minute real cadence into an apparent
+        // ~1970-01-18 gap of ~1000x, which `generate_calendar_grid_ticks`'s
+        // `median_interval`-driven `day_width_px` measure would then
+        // misclassify as a multi-day/month cadence (DAY_STEPS regime)
+        // instead of intraday. Pin the CORRECT contract here: a bars array
+        // with genuinely seconds-scale timestamps at a 60-120s cadence must
+        // route through the intraday regime (Minute-family weights), never
+        // the DAY_STEPS regime (Month/Day weights only), when the viewport
+        // is zoomed in tight enough to resolve minute-level ticks.
+        // Start well away from midnight and span several hours so the
+        // single Day/Month day-boundary tick (highest weight, picked first
+        // by `select_ticks_with_spacing`) doesn't index-collide with every
+        // Minute-weight candidate — a short few-bar fixture starting at
+        // midnight puts the lone Day boundary at bar_idx 0, which swallows
+        // every nearby Minute tick via the bilateral index-gap check.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2024, 3, 1, 6, 0, 0);
+        let gap_pattern = [60, 120, 90, 60, 60, 120, 90, 60, 120, 60];
+        for i in 0..200 {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += gap_pattern[i % gap_pattern.len()];
+        }
+
+        // Tight zoom (large bar_spacing) so day_width_px clears the
+        // intraday threshold for a ~90s median cadence:
+        // bars_per_day = 86400/90 = 960, day_width_px = 960 * 40 = 38400,
+        // well past 4*MIN_CELL_WIDTH (200).
+        let viewport = test_viewport(bars.len(), 40.0, 1200.0);
+        let scale = TimeScale::new();
+        let mut ticks = Vec::new();
+        scale.generate_calendar_grid_ticks(&mut ticks, &bars, &viewport, &narrow_measure, None);
+
+        assert!(!ticks.is_empty(), "seconds-scale shadow must produce ticks");
+        assert!(
+            ticks.iter().any(|t| matches!(
+                t.weight,
+                TickMarkWeight::Second | TickMarkWeight::Minute1 | TickMarkWeight::Minute5 | TickMarkWeight::Minute30 | TickMarkWeight::Hour | TickMarkWeight::Hour4
+            )),
+            "seconds-scale 1-2min-gap bars must get an INTRADAY step, got weights {:?}",
+            ticks.iter().map(|t| t.weight).collect::<Vec<_>>()
+        );
+        assert!(
+            !ticks.iter().all(|t| matches!(t.weight, TickMarkWeight::Day | TickMarkWeight::Month | TickMarkWeight::Year)),
+            "seconds-scale shadow must NOT be misclassified into the DAY_STEPS regime, got weights {:?}",
+            ticks.iter().map(|t| t.weight).collect::<Vec<_>>()
+        );
     }
 }

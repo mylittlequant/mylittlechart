@@ -1,7 +1,15 @@
 //! Liquidation Heatmap renderer (C13) — Hyblock/CoinGlass-style time-by-price liquidation heatmap.
 //!
+//! Builtin overlay (chart-type → overlay migration) — renders as a
+//! background layer UNDER the main series on ANY chart_type, toggled via
+//! the indicators picker (`overlay_liquidation_heatmap` in the mli catalog)
+//! → `ChartOutEvent::ToggleLiquidationHeatmapOverlay`. Was previously its
+//! own full-pane `chart_type` ("liquidation_heatmap").
+//!
 //! Reads `state.liq_heatmap_ref` and `state.liq_dots_ref` that were populated
-//! by the `LiquidationEvent` / `LiquidationBucketUpdate` live-update arms.
+//! by the `LiquidationEvent` / `LiquidationBucketUpdate` live-update arms,
+//! already gated on the window's `liq_heatmap_show` flag by
+//! `build_chart_render_state`.
 //!
 //! ## Axis strategy: virtual-index axis
 //!
@@ -34,14 +42,14 @@ fn short_liq_color(alpha: f64) -> String {
     format!("#{:02x}{:02x}{:02x}{:02x}", 0x2e, 0xcc, 0x71, a)
 }
 
-/// Draw the liquidation heatmap chart-type, conditional on
-/// `state.liq_heatmap_ref` being populated.
+/// Draw the Liquidation Heatmap background overlay, conditional on
+/// `state.liq_heatmap_ref` being populated (overlay enabled AND at least
+/// one event/bucket has landed).
 ///
-/// Matches the `fn(&mut dyn RenderContext, &ChartRenderState)` shape needed
-/// by the chart-type `DrawOps` table (`crate::chart_type::draw_ops`) — the
-/// ring-buffer presence check that used to live inline in
-/// `render_chart.rs::draw_series` now lives here instead. No-ops silently
-/// when the buffer is absent, same as before.
+/// Called unconditionally from `render_chart::render_chart`'s overlay pass
+/// (before `draw_series`, so the heat layer paints under the main series on
+/// ANY chart type) — no-ops silently when the ref is absent (overlay off or
+/// no data yet).
 pub fn draw_liquidation_heatmap_conditional(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     if let Some(buf) = state.liq_heatmap_ref {
         draw_liquidation_heatmap(ctx, state, buf, state.liq_dots_ref);
@@ -57,8 +65,13 @@ pub fn draw_liquidation_heatmap(
     buf: &LiquidationHeatmapBuffer,
     dots: Option<&[LiquidationDot]>,
 ) {
+    // Chart-type → overlay migration: this is now a background layer under
+    // whatever real chart_type is active (candles/bars/line/...), never the
+    // sole content of the pane — an empty buffer (overlay just enabled,
+    // first event/bucket in flight) must silently paint nothing instead of
+    // the full-pane waiting spinner `draw_waiting_placeholder` used when
+    // this was its own chart_type with nothing else on screen.
     if buf.cells.is_empty() {
-        super::draw_waiting_placeholder(ctx, state, "Liquidation Heatmap: waiting for live data…");
         return;
     }
 

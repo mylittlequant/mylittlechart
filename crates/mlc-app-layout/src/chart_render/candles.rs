@@ -448,14 +448,17 @@ pub fn draw_volume_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     draw_candles(ctx, state);
 }
 
-/// Draw Tick Bars — standard candle with body opacity scaled by volume
-/// (NinjaTrader-inspired intensity coding).
+/// Draw Tick Bars — standard candle, optionally with body opacity scaled by
+/// volume (NinjaTrader-inspired intensity coding).
 ///
 /// Tick bars are derived in dig3-station's `TradeToTickBarDerived`. Each
-/// bar consumed N trades regardless of price or volume, so we encode the
-/// "trade intensity" of each bar by modulating its body opacity. High-volume
-/// bars (more aggressive participants in the same trade count) render
-/// fully opaque; low-volume bars render dimmed. Wicks always full opacity.
+/// bar consumed N trades regardless of price or volume. When
+/// `state.tick_intensity` is enabled (Instrument tab → "Volume intensity"
+/// checkbox, default OFF), we encode the "trade intensity" of each bar by
+/// modulating its body opacity — high-volume bars (more aggressive
+/// participants in the same trade count) render fully opaque, low-volume
+/// bars render dimmed, wicks always full opacity. When disabled (default),
+/// renders identically to `draw_candles` — plain solid bodies.
 pub fn draw_tick_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let rect = &state.chart_rect;
     let viewport = state.viewport;
@@ -468,7 +471,7 @@ pub fn draw_tick_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let (start, end) = viewport.visible_range();
     let bounds = rect.bounds();
 
-    let max_vol = max_volume_in_range(bars, start, end);
+    let max_vol = if state.tick_intensity { max_volume_in_range(bars, start, end) } else { 0.0 };
 
     for i in start..end {
         if i >= bars.len() { break; }
@@ -478,7 +481,7 @@ pub fn draw_tick_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
         let base_color = if is_up { &theme.candle_up } else { &theme.candle_down };
         let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
-        let body_alpha = if max_vol > 0.0 {
+        let body_alpha = if state.tick_intensity && max_vol > 0.0 {
             (bar.volume / max_vol).sqrt().clamp(0.25, 1.0)
         } else { 1.0 };
         let body_color = apply_alpha_to_color(base_color, body_alpha);

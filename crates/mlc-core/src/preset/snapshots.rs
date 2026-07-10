@@ -181,6 +181,21 @@ pub struct ChartWindowSnapshot {
     /// heat intensity — pixel-identical to the pre-toggle render).
     #[serde(default)]
     pub footprint_display: crate::chart::render_data::FootprintDisplayOptions,
+    /// Tick-bar body-opacity intensity toggle. Mirrors
+    /// `ChartPanelState::tick_intensity`. Unused for every other chart
+    /// type. Additive field (2026-07-10); old presets deserialize via
+    /// `#[serde(default)]` and land on `false` (pixel-identical to the
+    /// pre-toggle render — plain solid bodies).
+    #[serde(default)]
+    pub tick_intensity: bool,
+    /// Bar-family "Wicks" re-enable toggle (range_bar/volume_bar/dollar_bar
+    /// render WITHOUT wicks by default). Mirrors
+    /// `ChartPanelState::bar_family_wicks`. Unused for every other chart
+    /// type. Additive field (2026-07-10); old presets deserialize via
+    /// `#[serde(default)]` and land on `false` (pixel-identical to the
+    /// pre-toggle render — no wicks for the bar family).
+    #[serde(default)]
+    pub bar_family_wicks: bool,
     // --- Series visibility ---
     /// Show filled candlesticks.
     pub show_candles: bool,

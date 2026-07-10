@@ -727,6 +727,13 @@ pub struct ChartSettingsState {
     pub footprint_show_abs_markers: bool,
     /// Footprint checkbox: draw per-cell buy/sell volume numbers.
     pub footprint_show_volume_text: bool,
+    /// Tick-bar checkbox: modulate body opacity by trade-count intensity.
+    /// Default `false` — plain solid bodies exactly like `draw_candles`.
+    pub tick_intensity: bool,
+    /// Bar-family "Wicks" checkbox: re-enable wicks for range_bar /
+    /// volume_bar / dollar_bar (they render WITHOUT wicks by default).
+    /// Default `false`.
+    pub bar_family_wicks: bool,
     /// Whether the user is drag-selecting text in the active text input.
     pub text_select_dragging: bool,
     // ---- Template UI state ----
@@ -763,6 +770,8 @@ impl Default for ChartSettingsState {
             instrument_wick_enabled: true,
             footprint_show_abs_markers: true,
             footprint_show_volume_text: true,
+            tick_intensity: false,
+            bar_family_wicks: false,
             text_select_dragging: false,
             template_dropdown_open: false,
             applied_template_id: None,

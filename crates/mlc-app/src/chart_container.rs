@@ -134,6 +134,20 @@ pub struct ChartContainer {
     /// (Per-window display gate; storage lives on the bubble — Phase X0.)
     pub funding_show: bool,
 
+    /// When `true` the DOM Heatmap background overlay is rendered under the
+    /// main series on this chart, regardless of chart_type (chart-type →
+    /// overlay migration). Per-window display gate; ring-buffer storage
+    /// lives on the bubble (`DataBubble::dom_heatmap`/`dom_trade_dots`),
+    /// mirrors `oi_show`/`funding_show`.
+    pub dom_heatmap_show: bool,
+
+    /// When `true` the Liquidation Heatmap background overlay is rendered
+    /// under the main series on this chart, regardless of chart_type
+    /// (chart-type → overlay migration). Per-window display gate;
+    /// ring-buffer storage lives on the bubble
+    /// (`DataBubble::liq_heatmap`/`liq_dots`), mirrors `oi_show`/`funding_show`.
+    pub liq_heatmap_show: bool,
+
     // === Viewport & Scales ===
     /// Viewport state (pan/zoom). PRIVATE — single-writer: all mutation
     /// goes through the intent methods below (`pan`, `zoom_at`,
@@ -419,6 +433,8 @@ impl ChartContainer {
             vp_show: false,
             oi_show: false,
             funding_show: false,
+            dom_heatmap_show: false,
+            liq_heatmap_show: false,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -1099,6 +1115,8 @@ impl ChartContainer {
             vp_show: self.vp_show,
             oi_show: self.oi_show,
             funding_show: self.funding_show,
+            dom_heatmap_show: self.dom_heatmap_show,
+            liq_heatmap_show: self.liq_heatmap_show,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

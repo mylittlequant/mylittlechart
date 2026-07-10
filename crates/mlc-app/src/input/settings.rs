@@ -212,6 +212,8 @@ impl ChartApp {
 
             css.footprint_show_abs_markers = inst.footprint_show_abs_markers;
             css.footprint_show_volume_text = inst.footprint_show_volume_text;
+            css.tick_intensity = inst.tick_intensity;
+            css.bar_family_wicks = inst.bar_family_wicks;
             let heat_intensity = mlc_core::chart::FootprintHeatIntensity::from_id(
                 &inst.footprint_heat_intensity_label.to_lowercase(),
             );
@@ -219,13 +221,17 @@ impl ChartApp {
             // Footprint display gates actually drive the renderer (unlike
             // the JC checkboxes above, which are UI-cache only — see recon
             // 2026-07-05 §4b) — write through to the live per-panel state
-            // too, not just the modal's UI cache.
+            // too, not just the modal's UI cache. `tick_intensity` /
+            // `bar_family_wicks` follow the same rule (mirrors
+            // `footprint_display`).
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
                 let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                 panel.footprint_display.show_abs_markers = inst.footprint_show_abs_markers;
                 panel.footprint_display.show_volume_text = inst.footprint_show_volume_text;
                 panel.footprint_display.heat_intensity = heat_intensity;
+                panel.tick_intensity = inst.tick_intensity;
+                panel.bar_family_wicks = inst.bar_family_wicks;
             }
         }
 
@@ -301,6 +307,24 @@ impl ChartApp {
                         panel.footprint_display.show_volume_text = new_value;
                     }
                     eprintln!("[ChartApp] instrument:footprint_show_volume_text = {}", new_value);
+                }
+                "tick_intensity" => {
+                    let new_value = !self.panel_app.chart_settings_state.tick_intensity;
+                    self.panel_app.chart_settings_state.tick_intensity = new_value;
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tick_intensity = new_value;
+                    }
+                    eprintln!("[ChartApp] instrument:tick_intensity = {}", new_value);
+                }
+                "bar_family_wicks" => {
+                    let new_value = !self.panel_app.chart_settings_state.bar_family_wicks;
+                    self.panel_app.chart_settings_state.bar_family_wicks = new_value;
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.bar_family_wicks = new_value;
+                    }
+                    eprintln!("[ChartApp] instrument:bar_family_wicks = {}", new_value);
                 }
                 "use_24h" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {

@@ -136,31 +136,33 @@ impl FoldMachine {
     /// (ticks × tick_size for range/renko/pnf/kagi is applied by the
     /// caller BEFORE this — see `chart_out_events.rs::build_subscribe_params`).
     /// Returns `None` for any chart_type outside the 7 kline-sufficient
-    /// fold types.
+    /// fold types (registry lookup miss, or `machine` outside this family —
+    /// see [`mlc_core::chart_type::MachineKind`]).
+    ///
+    /// Single registry-driven match (chart-type-engine-consolidation B3,
+    /// S2) — was a hand-written `chart_type: &str` forward match; the
+    /// `chart_type` string is looked up once via `mlc_core::chart_type::by_id`
+    /// and dispatched on `def.machine`, the SAME pure-id enum
+    /// [`crate::chart_type::fold_chart_types`] iterates to derive its
+    /// membership list.
     pub fn new(chart_type: &str, params: &FoldParams) -> Option<Self> {
-        match chart_type {
-            "range_bar" => Some(FoldMachine::RangeBar(TradeToRangeBarDerived::new(params.scaled_units))),
-            "volume_bar" => Some(FoldMachine::VolumeBar(TradeToVolumeBarDerived::new(params.scaled_units))),
-            "dollar_bar" => Some(FoldMachine::DollarBar(TradeToDollarBarDerived::new(params.threshold))),
-            "renko" => Some(FoldMachine::Renko(TradeToRenkoBarDerived::new(params.scaled_units, params.reversal))),
-            "pnf" => Some(FoldMachine::Pnf(TradeToPnfBarDerived::new(params.scaled_units, params.reversal))),
-            "kagi" => Some(FoldMachine::Kagi(TradeToKagiBarDerived::new(params.scaled_units))),
-            "three_line_break" => Some(FoldMachine::ThreeLineBreak(TradeToThreeLineBreakDerived::new(params.lines_back as usize))),
-            _ => None,
-        }
-    }
-
-    /// Chart-type id this machine computes — used to re-derive the output
-    /// slot without carrying a separate tag.
-    pub fn chart_type(&self) -> &'static str {
-        match self {
-            FoldMachine::RangeBar(_) => "range_bar",
-            FoldMachine::VolumeBar(_) => "volume_bar",
-            FoldMachine::DollarBar(_) => "dollar_bar",
-            FoldMachine::Renko(_) => "renko",
-            FoldMachine::Pnf(_) => "pnf",
-            FoldMachine::Kagi(_) => "kagi",
-            FoldMachine::ThreeLineBreak(_) => "three_line_break",
+        use mlc_core::chart_type::MachineKind;
+        let machine = mlc_core::chart_type::by_id(chart_type)?.machine;
+        match machine {
+            MachineKind::RangeBar => Some(FoldMachine::RangeBar(TradeToRangeBarDerived::new(params.scaled_units))),
+            MachineKind::VolumeBar => Some(FoldMachine::VolumeBar(TradeToVolumeBarDerived::new(params.scaled_units))),
+            MachineKind::DollarBar => Some(FoldMachine::DollarBar(TradeToDollarBarDerived::new(params.threshold))),
+            MachineKind::Renko => Some(FoldMachine::Renko(TradeToRenkoBarDerived::new(params.scaled_units, params.reversal))),
+            MachineKind::Pnf => Some(FoldMachine::Pnf(TradeToPnfBarDerived::new(params.scaled_units, params.reversal))),
+            MachineKind::Kagi => Some(FoldMachine::Kagi(TradeToKagiBarDerived::new(params.scaled_units))),
+            MachineKind::ThreeLineBreak => Some(FoldMachine::ThreeLineBreak(TradeToThreeLineBreakDerived::new(params.lines_back as usize))),
+            MachineKind::None
+            | MachineKind::TickBar
+            | MachineKind::TickImbalance
+            | MachineKind::VolumeImbalance
+            | MachineKind::RunBar
+            | MachineKind::Footprint
+            | MachineKind::Tpo => None,
         }
     }
 
@@ -177,21 +179,40 @@ impl FoldMachine {
     }
 
     /// Feed one upstream `Event` (synthetic trade leg during reseed, or a
-    /// live `Event::Bar` Δ-tick), converting whatever `BarPoint`/output the
-    /// machine emits into the bubble-side [`FoldOutput`] shape.
+    /// live `Event::Bar` Δ-tick), converting whatever the machine emits into
+    /// the bubble-side [`FoldOutput`] shape.
+    ///
+    /// Returns EVERY output produced by this single call, oldest-first: any
+    /// fully-closed intermediate elements drained via
+    /// [`DerivedStream::take_pending`] (gap-crossing range bars, multi-brick
+    /// Renko moves — see `digdigdig3-station::derived` module doc) come
+    /// FIRST, followed by the normal `Option` return (the latest, possibly
+    /// still in-progress element) LAST if present. Every other machine kind
+    /// never populates a pending queue, so this is a 0- or 1-element `Vec`
+    /// for them — identical shape to the pre-pending-queue single `Option`.
     ///
     /// `box_size` is only meaningful for `Pnf` (the box width isn't carried
     /// on `PnfColumnPoint` itself — mirrors `LiveUpdate::PnfBarUpdate`'s
     /// `box_size` side-channel in `mlc-backend-data-bridge`).
-    fn on_event(&mut self, ev: &Event, box_size: f64) -> Option<FoldOutput> {
+    fn on_event(&mut self, ev: &Event, box_size: f64) -> Vec<FoldOutput> {
         match self {
-            FoldMachine::RangeBar(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
-            FoldMachine::VolumeBar(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
-            FoldMachine::DollarBar(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
-            FoldMachine::Renko(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Renko(renko_point_to_brick(&p))),
-            FoldMachine::Pnf(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Pnf(pnf_point_to_column(&p, box_size))),
-            FoldMachine::Kagi(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Kagi(kagi_point_to_segment(&p))),
-            FoldMachine::ThreeLineBreak(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::ThreeLineBreak(tlb_point_to_line(&p))),
+            FoldMachine::RangeBar(m) => {
+                let final_out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| FoldOutput::Bar(bar_point_to_bar(&p)))
+                    .chain(final_out.map(|p| FoldOutput::Bar(bar_point_to_bar(&p))))
+                    .collect()
+            }
+            FoldMachine::VolumeBar(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Bar(bar_point_to_bar(&p))).into_iter().collect(),
+            FoldMachine::DollarBar(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Bar(bar_point_to_bar(&p))).into_iter().collect(),
+            FoldMachine::Renko(m) => {
+                let final_out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| FoldOutput::Renko(renko_point_to_brick(&p)))
+                    .chain(final_out.map(|p| FoldOutput::Renko(renko_point_to_brick(&p))))
+                    .collect()
+            }
+            FoldMachine::Pnf(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Pnf(pnf_point_to_column(&p, box_size))).into_iter().collect(),
+            FoldMachine::Kagi(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::Kagi(kagi_point_to_segment(&p))).into_iter().collect(),
+            FoldMachine::ThreeLineBreak(m) => m.on_upstream_event(ev, 0).map(|p| FoldOutput::ThreeLineBreak(tlb_point_to_line(&p))).into_iter().collect(),
         }
     }
 }
@@ -314,8 +335,12 @@ impl FoldRuntime {
     /// Install a fresh runtime for `chart_type` with `params`. Returns
     /// `None` for any chart_type outside the 7 kline-sufficient fold types.
     pub fn new(chart_type: &str, params: FoldParams, exchange: ExchangeId, symbol: &str) -> Option<Self> {
+        // Registry `id` field (B3, S2) — resolved ONCE here as the `&'static
+        // str` this runtime carries; `FoldMachine::new` re-resolves the same
+        // row internally to dispatch on `def.machine` (single registry-driven
+        // match, no per-variant `chart_type()` reverse match needed).
+        let chart_type = mlc_core::chart_type::by_id(chart_type)?.id;
         let machine = FoldMachine::new(chart_type, &params)?;
-        let chart_type = machine.chart_type();
         Some(Self {
             machine,
             chart_type,
@@ -372,9 +397,7 @@ impl FoldRuntime {
         for bar in closed {
             let point = bar_to_bar_point(bar);
             for synth in kline_to_synthetic_trades(&point, ONE_MINUTE_MS, self.exchange, &self.symbol) {
-                if let Some(out) = self.machine.on_event(&synth, self.params.box_size) {
-                    outputs.push(out);
-                }
+                outputs.extend(self.machine.on_event(&synth, self.params.box_size));
             }
         }
         if let Some(last_bar) = last.first() {
@@ -389,7 +412,13 @@ impl FoldRuntime {
     /// directly — the machine's embedded `KlineDeltaState` folds repeated
     /// same-`open_time` updates into incremental Δ-volume synthetic trades
     /// internally (see `digdigdig3_station::derived::KlineDeltaState`).
-    pub fn on_live_1m(&mut self, bar: &mlc_core::Bar) -> Option<FoldOutput> {
+    ///
+    /// Returns EVERY output produced by this single live tick, oldest-first
+    /// (see [`FoldMachine::on_event`]'s doc comment) — a gap-crossing 1m
+    /// delta-tick can close several intermediate range bars / Renko bricks
+    /// in one call; the caller (`mlc-backend/src/lib.rs`'s `fold_on_live_1m`)
+    /// applies the same upsert/append logic to each element in order.
+    pub fn on_live_1m(&mut self, bar: &mlc_core::Bar) -> Vec<FoldOutput> {
         let point = bar_to_bar_point(bar);
         self.last_live_open_time = Some(point.open_time);
         let ev = Event::Bar {
@@ -481,24 +510,43 @@ impl TradeFoldMachine {
     /// registered chart_type (it's an indicator instance — see
     /// `mlc-app/src/input/overlay.rs`) but is accepted here as a synthetic
     /// id so the CVD companion line shares this same construction/reseed
-    /// machinery.
+    /// machinery — checked BEFORE the registry lookup since `by_id("cvd")`
+    /// is always `None` (see [`mlc_core::chart_type::MachineKind`]'s doc
+    /// comment on why `Cvd` is deliberately not a variant).
+    ///
+    /// Single registry-driven match for every OTHER id (chart-type-engine-
+    /// consolidation B3, S2) — was a hand-written `chart_type: &str` forward
+    /// match; dispatches on `def.machine`, the SAME pure-id enum
+    /// [`crate::chart_type::trade_fold_chart_types`] iterates to derive its
+    /// membership list.
     pub fn new(chart_type: &str, params: &FoldParams, tpo_source: TpoSource) -> Option<Self> {
-        match chart_type {
-            "tick_bar" => Some(TradeFoldMachine::TickBar(TradeToTickBarDerived::new(params.count as u32))),
-            "tick_imbalance_bar" => Some(TradeFoldMachine::TickImbalanceBar(
+        use mlc_core::chart_type::MachineKind;
+        if chart_type == "cvd" {
+            return Some(TradeFoldMachine::Cvd(TradeToCvdLineDerived::new(true)));
+        }
+        let machine = mlc_core::chart_type::by_id(chart_type)?.machine;
+        match machine {
+            MachineKind::TickBar => Some(TradeFoldMachine::TickBar(TradeToTickBarDerived::new(params.count as u32))),
+            MachineKind::TickImbalance => Some(TradeFoldMachine::TickImbalanceBar(
                 TradeToTickImbalanceDerived::new(params.alpha, params.min_ticks),
             )),
-            "volume_imbalance_bar" => Some(TradeFoldMachine::VolumeImbalanceBar(
+            MachineKind::VolumeImbalance => Some(TradeFoldMachine::VolumeImbalanceBar(
                 TradeToVolumeImbalanceDerived::new(params.alpha, params.min_ticks),
             )),
-            "run_bar" => Some(TradeFoldMachine::RunBar(TradeToRunBarDerived::new(params.alpha, params.min_ticks))),
-            "footprint" => Some(TradeFoldMachine::Footprint(TradeToFootprintDerived::new(params.interval_ms))),
-            "tpo" => match tpo_source {
+            MachineKind::RunBar => Some(TradeFoldMachine::RunBar(TradeToRunBarDerived::new(params.alpha, params.min_ticks))),
+            MachineKind::Footprint => Some(TradeFoldMachine::Footprint(TradeToFootprintDerived::new(params.interval_ms))),
+            MachineKind::Tpo => match tpo_source {
                 TpoSource::TradeBucket => Some(TradeFoldMachine::TpoTrade(TpoFromTradeDerived::new(params.freq_minutes))),
                 TpoSource::Kline1m => Some(TradeFoldMachine::TpoKline1m(TpoFromKline1mDerived::new(params.freq_minutes))),
             },
-            "cvd" => Some(TradeFoldMachine::Cvd(TradeToCvdLineDerived::new(true))),
-            _ => None,
+            MachineKind::None
+            | MachineKind::RangeBar
+            | MachineKind::VolumeBar
+            | MachineKind::DollarBar
+            | MachineKind::Renko
+            | MachineKind::Pnf
+            | MachineKind::Kagi
+            | MachineKind::ThreeLineBreak => None,
         }
     }
 
@@ -523,23 +571,71 @@ impl TradeFoldMachine {
         !matches!(self, TradeFoldMachine::TpoKline1m(_))
     }
 
-    fn on_trade_event(&mut self, ev: &Event) -> Option<TradeFoldOutput> {
+    /// Returns EVERY output produced by this single call, oldest-first (see
+    /// [`FoldMachine::on_event`]'s doc comment). None of the trade-fed
+    /// machines currently populate a pending queue (`take_pending` stays at
+    /// its default empty), so this is always a 0- or 1-element `Vec` today —
+    /// wired uniformly so a future trade-fed multi-output machine needs no
+    /// signature change here.
+    fn on_trade_event(&mut self, ev: &Event) -> Vec<TradeFoldOutput> {
         match self {
-            TradeFoldMachine::TickBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
-            TradeFoldMachine::TickImbalanceBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
-            TradeFoldMachine::VolumeImbalanceBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
-            TradeFoldMachine::RunBar(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
-            TradeFoldMachine::Footprint(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Footprint(footprint_point_to_bar(&p))),
-            TradeFoldMachine::TpoTrade(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
-            TradeFoldMachine::TpoKline1m(_) => None,
-            TradeFoldMachine::Cvd(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Cvd(mlc_core::types::CvdSample { ts_ms: p.ts_ms, value: p.value })),
+            TradeFoldMachine::TickBar(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::TickImbalanceBar(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::VolumeImbalanceBar(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::RunBar(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::Footprint(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Footprint(footprint_point_to_bar(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Footprint(footprint_point_to_bar(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::TpoTrade(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))))
+                    .collect()
+            }
+            TradeFoldMachine::TpoKline1m(_) => Vec::new(),
+            TradeFoldMachine::Cvd(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Cvd(mlc_core::types::CvdSample { ts_ms: p.ts_ms, value: p.value }))
+                    .chain(out.map(|p| TradeFoldOutput::Cvd(mlc_core::types::CvdSample { ts_ms: p.ts_ms, value: p.value })))
+                    .collect()
+            }
         }
     }
 
-    fn on_bar_event(&mut self, ev: &Event) -> Option<TradeFoldOutput> {
+    /// Returns EVERY output produced by this single call — see
+    /// [`Self::on_trade_event`]'s doc comment.
+    fn on_bar_event(&mut self, ev: &Event) -> Vec<TradeFoldOutput> {
         match self {
-            TradeFoldMachine::TpoKline1m(m) => m.on_upstream_event(ev, 0).map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
-            _ => None,
+            TradeFoldMachine::TpoKline1m(m) => {
+                let out = m.on_upstream_event(ev, 0);
+                m.take_pending().into_iter().map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p)))
+                    .chain(out.map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))))
+                    .collect()
+            }
+            _ => Vec::new(),
         }
     }
 }
@@ -719,7 +815,7 @@ impl TradeFoldRuntime {
                     symbol: self.symbol.clone(),
                     point,
                 };
-                if let Some(out) = self.machine.on_trade_event(&ev) {
+                for out in self.machine.on_trade_event(&ev) {
                     outputs.push(self.stamp_footprint_cvd(out));
                 }
             }
@@ -732,19 +828,23 @@ impl TradeFoldRuntime {
                     timeframe: KlineInterval::new("1m"),
                     point,
                 };
-                if let Some(out) = self.machine.on_bar_event(&ev) {
-                    outputs.push(out);
-                }
+                outputs.extend(self.machine.on_bar_event(&ev));
             }
         }
         outputs
     }
 
-    /// Fold one live trade tick. No-op (`None`) for the TPO Kline1m flavour
-    /// — use [`Self::on_live_1m`] for that one instead.
-    pub fn on_live_trade(&mut self, trade: &RawTrade) -> Option<TradeFoldOutput> {
+    /// Fold one live trade tick. Empty for the TPO Kline1m flavour — use
+    /// [`Self::on_live_1m`] for that one instead.
+    ///
+    /// Returns EVERY output produced by this single live trade, oldest-first
+    /// (see [`FoldMachine::on_event`]'s doc comment) — today always 0 or 1
+    /// elements (no trade-fed machine currently populates a pending queue),
+    /// kept as a `Vec` for symmetry with [`FoldRuntime::on_live_1m`] and to
+    /// need no signature change if a future trade-fed machine gains one.
+    pub fn on_live_trade(&mut self, trade: &RawTrade) -> Vec<TradeFoldOutput> {
         if !self.machine.feeds_on_trades() {
-            return None;
+            return Vec::new();
         }
         let point = raw_trade_to_trade_point(trade);
         let ev = Event::Trade {
@@ -752,15 +852,17 @@ impl TradeFoldRuntime {
             symbol: self.symbol.clone(),
             point,
         };
-        let out = self.machine.on_trade_event(&ev)?;
-        Some(self.stamp_footprint_cvd(out))
+        self.machine.on_trade_event(&ev).into_iter()
+            .map(|out| self.stamp_footprint_cvd(out))
+            .collect()
     }
 
-    /// Fold one live "1m" kline tick — TPO Kline1m flavour only, no-op
-    /// (`None`) for every other trade-fed chart_type.
-    pub fn on_live_1m(&mut self, bar: &mlc_core::Bar) -> Option<TradeFoldOutput> {
+    /// Fold one live "1m" kline tick — TPO Kline1m flavour only, empty for
+    /// every other trade-fed chart_type. See [`Self::on_live_trade`]'s doc
+    /// comment for the `Vec` return shape rationale.
+    pub fn on_live_1m(&mut self, bar: &mlc_core::Bar) -> Vec<TradeFoldOutput> {
         if self.machine.feeds_on_trades() {
-            return None;
+            return Vec::new();
         }
         let ev = Event::Bar {
             exchange: self.exchange,
@@ -901,6 +1003,74 @@ mod tests {
         assert!(tight_bars > wide_bars, "tight={tight_bars} wide={wide_bars}");
     }
 
+    /// A single closed 1m bar whose synthetic-trade path contains one leg
+    /// that jumps the price by $10 while `range=$1` must fold into a chain
+    /// of ~10 range bars — the dig3-side pending-queue fix
+    /// (`digdigdig3-station::derived::TradeToRangeBarDerived`) must surface
+    /// EVERY chained bar through `FoldMachine::on_event`'s `Vec` return, not
+    /// just the last one. Asserts both the count and that each bar's `open`
+    /// equals the previous bar's `close` (chained-open stitching, unbroken
+    /// across the whole reseed).
+    #[test]
+    fn reseed_range_bar_gap_crossing_kline_leg_produces_chained_bars() {
+        let mut layer: RawLayer<mlc_core::Bar> = RawLayer::new(0);
+        // Bullish bar (close >= open): synthetic path is O -> L -> H -> C.
+        // With low == open and high == close, the O->L leg is a no-op and
+        // the L->H leg alone carries the full $10 jump in ONE synthetic
+        // trade — exactly the single-event multi-bar-close scenario under
+        // test. A second (in-progress) bar follows so the first bar is not
+        // the "possibly in-progress last bar" `reseed` special-cases (that
+        // one is excluded from the synthetic-trade fold and instead seeds
+        // the live Δ-tick baseline — see `FoldRuntime::reseed`'s doc
+        // comment).
+        layer.push_live(bar(60, 100.0, 110.0, 100.0, 110.0, 10.0));
+        layer.push_live(bar(120, 110.0, 110.0, 110.0, 110.0, 1.0));
+
+        let params = FoldParams { scaled_units: 1.0, ..Default::default() }; // $1 range
+        let mut fold = FoldRuntime::new("range_bar", params, ExchangeId::Binance, "BTCUSDT")
+            .expect("range_bar is a fold type");
+        let outputs = fold.reseed(&layer);
+
+        let bars: Vec<mlc_core::Bar> = outputs.into_iter().filter_map(|o| match o {
+            FoldOutput::Bar(b) => Some(b),
+            _ => None,
+        }).collect();
+
+        // Distinct bars by open_time (the machine re-emits the in-progress
+        // bar's growing snapshot on every synthetic leg — collapse those
+        // the same way `distinct_bars` helpers above do) — this is the
+        // sequence of CLOSED chained bars plus whatever bar was still open
+        // at the very last synthetic leg fed.
+        let mut distinct: Vec<mlc_core::Bar> = Vec::new();
+        for b in bars {
+            let id = if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp };
+            match distinct.last_mut() {
+                Some(last) if (if last.derived_ts_ms != 0 { last.derived_ts_ms } else { last.timestamp }) == id => *last = b,
+                _ => distinct.push(b),
+            }
+        }
+
+        // A $10 jump at $1 range must produce roughly 10 chained bars (open
+        // == 100.0 -> close == 110.0 walked one dollar at a time). Exact
+        // count depends on the O->L no-op leg and where the L->H leg lands
+        // relative to the range grid, so assert a tight band rather than an
+        // exact number.
+        assert!(distinct.len() >= 9 && distinct.len() <= 11, "expected ~10 chained bars, got {}", distinct.len());
+
+        // Chained-open stitching: every bar's open equals the previous
+        // bar's close — must hold across every pending-queue element, not
+        // just the last (this is exactly what would silently break if the
+        // pending queue were dropped instead of drained).
+        for pair in distinct.windows(2) {
+            assert_eq!(pair[1].open, pair[0].close, "chained-open must stitch open==prev close");
+        }
+
+        // The chain starts at the first bar's open (100.0) and the walk
+        // reaches at least 109.0 by the second-to-last close (each bar
+        // consumes exactly $1 of the $10 jump).
+        assert_eq!(distinct.first().expect("at least one bar").open, 100.0);
+    }
+
     #[test]
     fn on_live_1m_folds_after_reseed_without_double_counting_the_seam_bar() {
         // 5 closed bars + a 6th "in-progress" bar whose baseline the reseed
@@ -918,7 +1088,7 @@ mod tests {
         // — must compute an incremental delta (not re-fold the whole bar).
         let updated = bar(6 * 60, 125.0, 132.0, 124.0, 132.0, 20.0);
         let live_output = fold.on_live_1m(&updated);
-        assert!(live_output.is_some(), "a large enough delta move must emit a fold output");
+        assert!(!live_output.is_empty(), "a large enough delta move must emit a fold output");
     }
 
     #[test]

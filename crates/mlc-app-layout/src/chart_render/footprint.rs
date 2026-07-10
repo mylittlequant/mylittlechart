@@ -557,7 +557,8 @@ fn fmt_vol(v: f64) -> String {
     }
 }
 
-/// Best-effort tick size from level spacing on the latest non-empty bar.
+/// Best-effort quantization step sized for ~32 visible rows per bar, derived
+/// from the high-low span of the most recent bars (not level spacing).
 fn infer_tick_size(bars: &[FootprintBar]) -> f64 {
     // Aim for ~25-40 visible rows per bar (industry-standard density for
     // legible cluster grids). The dig3 aggregator groups by raw f64 price,
@@ -666,13 +667,31 @@ mod tests {
     }
 
     #[test]
-    fn infer_tick_size_finds_min_step() {
+    fn infer_tick_size_snaps_span_to_ladder_step() {
+        // High-low span = 1.5, ROW_TARGET = 32.0 => raw = 1.5/32 ≈ 0.0469.
+        // First ladder step >= raw is 0.05.
         let bar = mk_bar(vec![
             (100.0, 1.0, 1.0),
             (100.5, 1.0, 1.0),
             (101.5, 1.0, 1.0),
         ]);
-        assert!((infer_tick_size(&[bar]) - 0.5).abs() < 1e-9);
+        assert!((infer_tick_size(&[bar]) - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn infer_tick_size_picks_largest_span_of_last_8_bars() {
+        // Only the trailing 8 bars are considered, and the widest span among
+        // them wins even if it isn't the most recent bar.
+        let narrow = mk_bar(vec![(100.0, 1.0, 1.0), (100.2, 1.0, 1.0)]); // span 0.2
+        let wide = mk_bar(vec![(100.0, 1.0, 1.0), (500.0, 1.0, 1.0)]); // span 400
+        // wide/32 = 12.5 => next ladder step is 50.0
+        assert!((infer_tick_size(&[wide, narrow]) - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn infer_tick_size_degenerate_span_defaults_to_one() {
+        let flat = mk_bar(vec![(100.0, 1.0, 1.0)]);
+        assert!((infer_tick_size(&[flat]) - 1.0).abs() < 1e-9);
     }
 
     #[test]

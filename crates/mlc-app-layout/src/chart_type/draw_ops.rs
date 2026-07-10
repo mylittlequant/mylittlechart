@@ -18,12 +18,6 @@ use crate::chart_render::ChartRenderState;
 /// Data-plane ops (subscribe/clear_slot/abort) live in `mlc-backend::chart_type::engine`.
 pub struct DrawOps {
     /// Draw the main series for this chart type into the given render context.
-    ///
-    /// Some chart types (dom_heatmap/liquidation_heatmap) render CONDITIONALLY —
-    /// they need bubble ring-buffer state that may not be present. Those types'
-    /// draw fns are no-op if the required state is absent
-    /// (`draw_dom_heatmap_conditional` / `draw_liquidation_heatmap_conditional`
-    /// check `state.dom_heatmap_ref` / `state.liq_heatmap_ref` internally).
     pub draw: fn(ctx: &mut dyn RenderContext, state: &ChartRenderState),
 }
 
@@ -57,10 +51,12 @@ static DRAWS: &[(&str, DrawOps)] = &[
     ("three_line_break", DrawOps { draw: crate::chart_render::draw_three_line_break }),
     ("footprint", DrawOps { draw: crate::chart_render::draw_footprint }),
     ("tpo", DrawOps { draw: crate::chart_render::draw_tpo }),
-    // DOM Heatmap (C12) / Liquidation Heatmap (C13): conditional on bubble
-    // ring-buffer state — see `DrawOps::draw` doc comment above.
-    ("dom_heatmap", DrawOps { draw: crate::chart_render::draw_dom_heatmap_conditional }),
-    ("liquidation_heatmap", DrawOps { draw: crate::chart_render::draw_liquidation_heatmap_conditional }),
+    // "dom_heatmap" / "liquidation_heatmap" REMOVED (chart-type → overlay
+    // migration) — `draw_dom_heatmap_conditional`/`draw_liquidation_heatmap_conditional`
+    // are now called unconditionally (they no-op when their ring-buffer ref
+    // is absent) from `render_chart::render_chart`'s overlay pass, BEFORE
+    // `draw_series`, so the heat layers paint UNDER the main series on ANY
+    // chart type — not routed through this per-chart-type table anymore.
 ];
 
 /// Look up the [`DrawOps`] for a chart_type id.
@@ -89,5 +85,25 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(ids.len(), sorted.len());
+    }
+
+    /// Cross-concern completeness (chart-type-engine-consolidation B4, T2.1):
+    /// every registry row resolves DrawOps (already pinned above), AND every
+    /// `TradeAggBar`/`PriceActionTransform` row (the two kinds whose series
+    /// is computed by a client-side fold machine) carries a concrete
+    /// `machine` and `identity` — never `MachineKind::None`/`IdentityKey::None`.
+    /// `OrderflowSlotted` and `RenderOnly` are exempt: `RenderOnly` has no
+    /// fold machine by design (see `registry.rs::render_only_types_have_no_identity`),
+    /// and `OrderflowSlotted` is pinned separately in that same test module.
+    #[test]
+    fn trade_agg_and_price_action_rows_have_machine_and_identity() {
+        use mlc_core::chart_type::{ChartTypeKind, IdentityKey, MachineKind};
+        for def in mlc_core::chart_type::all() {
+            assert!(draw_ops_by_id(def.id).is_some(), "no DrawOps for chart_type {}", def.id);
+            if matches!(def.kind, ChartTypeKind::TradeAggBar | ChartTypeKind::PriceActionTransform) {
+                assert_ne!(def.machine, MachineKind::None, "{} must have a concrete machine", def.id);
+                assert_ne!(def.identity, IdentityKey::None, "{} must have a concrete identity", def.id);
+            }
+        }
     }
 }

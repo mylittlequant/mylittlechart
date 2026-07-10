@@ -222,6 +222,68 @@ impl RampState {
         }
     }
 
+    /// Adopt `requested_target` as this key's REQUIRED DEPTH and report
+    /// whether the auto-ensure ramp must re-arm to satisfy it (chart-type-
+    /// engine-consolidation B1, fix 1).
+    ///
+    /// The bug this closes: a single `BackfillKey` (exchange, symbol,
+    /// account, layer) is shared by every chart_type/window folding over
+    /// that layer. Once the FIRST subscriber's target was reached (`loaded
+    /// >= target`), [`Self::needs_more`] latched `false` for good — a LATER
+    /// subscriber requesting a DEEPER target (e.g. a chart-type switch whose
+    /// `derived_kline_target` is bigger) silently no-op'd forever, because
+    /// `target` was never raised past the first caller's value and the old
+    /// call-site guard (`state.target.is_none() && target_bars.is_some()`)
+    /// only ever adopted a target once.
+    ///
+    /// Fix: `requested_target: None` means "this caller has no depth
+    /// requirement of its own" (e.g. the TPO Kline1m companion's kline sub,
+    /// which only needs whatever depth an earlier fold subscriber already
+    /// established) — `target` is left exactly as-is, matching the
+    /// pre-existing "don't touch an unset target" contract for `None`.
+    /// `requested_target: Some(req)` widens `target` to `max(current, req)`
+    /// when `target` is already `Some`, or adopts `req` outright when
+    /// `target` was `None` — the key tracks the DEEPEST depth ANY concrete
+    /// subscriber has ever asked for, never shrinks. If that raises
+    /// `loaded < target` back to `true`, the ramp re-arms:
+    /// `groups_completed`/`ramp_step` reset to the seed state (a re-arm is
+    /// architecturally a fresh ramp, not a continuation — the prior ramp's
+    /// progression doesn't apply to a caller that showed up after the ramp
+    /// had already gone quiet) so the resumed run starts gently (1 page)
+    /// rather than picking up wherever the previous ramp's step had climbed
+    /// to.
+    ///
+    /// What stays LATCHED across a re-arm: `exhausted` (and `archive_mode`)
+    /// — a venue-dry layer legitimately cannot grow backward regardless of
+    /// how deep a later subscriber's target is; re-arming a venue-dry key
+    /// would just spend a network round-trip to learn the same "no more
+    /// data" answer again. `oldest_anchor` (resume point) and `loaded`
+    /// (running total) are untouched — the ramp resumes from where the
+    /// layer actually is, it does not restart the fetch from scratch.
+    ///
+    /// Returns `true` iff the caller should [`Self::begin_flight`] a fresh
+    /// run (`needs_more(true)` reads `true` after the target update AND the
+    /// re-arm just performed, if any) — mirrors the return-shape callers
+    /// already build their `should_start` decision from.
+    pub fn require_target(&mut self, requested_target: Option<usize>) -> bool {
+        if let Some(req) = requested_target {
+            let widened = Some(self.target.map_or(req, |cur| cur.max(req)));
+            if widened != self.target {
+                self.target = widened;
+                if self.needs_more(true) {
+                    // A satisfied-then-widened key re-arms as a fresh ramp —
+                    // the OLD ramp had already gone quiet
+                    // (`groups_completed`/`ramp_step` reflect a run that
+                    // finished satisfying the smaller target); a brand-new
+                    // subscriber's pressure should not inherit that stale
+                    // progression.
+                    self.reset_ramp();
+                }
+            }
+        }
+        self.needs_more(true)
+    }
+
     /// Pages to request in the NEXT group, honoring the ramp progression
     /// (1 → 1 → 2 → 4 → … capped at [`MAX_RAMP_PAGES_PER_GROUP`]).
     ///
@@ -381,13 +443,12 @@ impl DataBridge {
         );
 
         let should_start = self.backfill_engine().with_state(&key, |state| {
-            if state.target.is_none() && target_bars.is_some() {
-                // A caller supplied a real target where the engine had none
-                // yet (e.g. cold path after a prior unbounded scroll ramp) —
-                // adopt it so `needs_more` can converge.
-                state.target = target_bars.map(|t| t as usize);
-            }
-            if !state.needs_more(true) {
+            // Fix 1 (chart-type-engine-consolidation B1): re-arm by REQUIRED
+            // DEPTH rather than a one-shot target adoption — see
+            // `RampState::require_target`'s doc comment for the full
+            // rationale (a later, deeper subscriber must not starve behind
+            // an earlier, shallower one's already-satisfied target).
+            if !state.require_target(target_bars.map(|t| t as usize)) {
                 return false;
             }
             state.begin_flight();
@@ -619,10 +680,13 @@ impl DataBridge {
         let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
 
         let should_start = self.backfill_engine().with_state(&key, |state| {
-            if state.target.is_none() && target.is_some() {
-                state.target = target;
-            }
-            if !state.needs_more(true) {
+            // Fix 1 (chart-type-engine-consolidation B1): same re-arm-by-
+            // required-depth rule as `ensure_kline_backfill` — see
+            // `RampState::require_target`'s doc comment. Trade-fold family
+            // switches (tick_bar/tick_imbalance_bar/volume_imbalance_bar/
+            // run_bar/footprint/tpo) share the identical `LayerId::Trades`
+            // starvation this closes.
+            if !state.require_target(target) {
                 return false;
             }
             state.begin_flight();
@@ -1419,6 +1483,92 @@ mod tests {
         assert!(!s.needs_more(false), "in_flight blocks pressure phase too");
         s.end_flight();
         assert!(!s.in_flight);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // `require_target` — fix 1 (chart-type-engine-consolidation B1):
+    // re-arm by required depth instead of a one-shot target adoption.
+    // Mirrors `ensure_kline_backfill`/`ensure_trade_backfill`'s
+    // `should_start` decision directly against `RampState` (no
+    // network/runtime needed).
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn require_target_rearms_when_a_deeper_consumer_arrives() {
+        // (a) First consumer ramps to target 1000, satisfied; second
+        // consumer arrives with target 5000 -> ramp re-arms and continues.
+        let mut s = RampState::default();
+        assert!(s.require_target(Some(1000)), "cold key with a target always needs more");
+        s.begin_flight();
+        s.record_page(1000, Some(0), false);
+        s.end_flight();
+        assert_eq!(s.loaded, 1000);
+        assert!(!s.require_target(Some(1000)), "same target, already satisfied -> no re-arm");
+        assert!(s.require_target(Some(5000)), "deeper target -> re-arms");
+        assert_eq!(s.target, Some(5000), "target widens to the deeper request, never shrinks");
+        assert!(!s.in_flight, "require_target itself does not engage the single-flight guard");
+        assert_eq!(s.groups_completed, 0, "re-arm resets ramp progression to the seed state");
+        assert_eq!(s.ramp_step, 1, "re-arm resets ramp progression to the seed state");
+        assert_eq!(s.loaded, 1000, "loaded is NOT reset — the ramp resumes, it does not restart");
+        assert_eq!(s.oldest_anchor, Some(0), "oldest_anchor (resume point) is untouched by a re-arm");
+
+        // A shallower request than the current target never shrinks it —
+        // still satisfied (loaded 1000 < 5000, so this DOES still need
+        // more; the point under test is that `target` itself doesn't drop
+        // back down to 2000).
+        let _ = s.require_target(Some(2000));
+        assert_eq!(s.target, Some(5000), "a shallower later request never shrinks the widened target");
+    }
+
+    #[test]
+    fn require_target_does_not_rearm_a_venue_dry_latch() {
+        // (b) venue-dry latched -> second consumer does NOT re-arm, even
+        // with a much deeper target than was ever reached.
+        let mut s = RampState::default();
+        s.target = Some(500);
+        s.loaded = 200;
+        s.record_page(0, None, true); // venue reports empty page -> latches exhausted
+        assert!(s.exhausted);
+        assert!(!s.require_target(Some(1_000_000)), "exhausted latch blocks re-arm regardless of target depth");
+        assert_eq!(s.target, Some(1_000_000), "target still widens (bookkeeping) even though the run won't start");
+        assert!(s.exhausted, "exhausted stays latched — never cleared by require_target");
+        assert!(!s.needs_more(true));
+        assert!(!s.needs_more(false), "pressure phase is blocked too — venue-dry is unconditional");
+    }
+
+    #[test]
+    fn require_target_does_not_double_start_while_in_flight() {
+        // (c) in_flight -> no double-start (single-flight preserved) even
+        // when a deeper target arrives mid-flight.
+        let mut s = RampState::default();
+        assert!(s.require_target(Some(1000)));
+        s.begin_flight();
+        assert!(s.in_flight);
+        assert!(!s.require_target(Some(5000)), "in_flight blocks the caller's should_start regardless of target");
+        assert_eq!(s.target, Some(5000), "target still widens — the run already in flight will pick it up via next_group_pages on its next group");
+        assert!(s.in_flight, "require_target never clears in_flight itself");
+        s.end_flight();
+        // Now that the group ended, the widened target re-arms the ramp.
+        assert!(s.needs_more(true), "post-flight, the widened target is unmet -> needs_more is true");
+    }
+
+    #[test]
+    fn require_target_none_leaves_an_existing_target_untouched() {
+        // A caller with no depth requirement of its own (target: None) must
+        // not clear or widen an existing target — same "don't touch an
+        // unset/set target" contract the old one-shot-adopt code had for
+        // `None`, preserved by `require_target`.
+        let mut s = RampState::new(Some(500));
+        s.loaded = 500; // satisfied
+        assert!(!s.require_target(None), "None request does not disturb a satisfied target");
+        assert_eq!(s.target, Some(500));
+    }
+
+    #[test]
+    fn require_target_none_on_a_fresh_key_stays_unbounded() {
+        let mut s = RampState::default();
+        assert!(s.require_target(None), "unbounded fresh key always needs more");
+        assert_eq!(s.target, None);
     }
 
     #[test]
