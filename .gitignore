@@ -58,3 +58,4 @@ perf_*.log
 
 # harness runtime logs
 /.harness-logs/
+crates/mlc-vault/Users/
