@@ -725,7 +725,7 @@ impl ChartApp {
             }
 
             // ── BarUpdatePassthrough ────────────────────────────────────────────
-            BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar } => {
+            BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar: _bar } => {
                 let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
                 let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool)> = {
@@ -752,103 +752,41 @@ impl ChartApp {
                 };
 
                 let mut bu_symbol_for_recalc: Option<String> = None;
+                // Per-window "did a new bar land" flag, fed to
+                // `advance_view_on_tick`/`mark_new_bar` below — read-only
+                // now (see the no-write doc comment below), derived per
+                // window from `series.len()` vs. that window's own
+                // previously-tracked `viewport().bar_count`, NOT from a
+                // single instrument-wide bool the old write path used to
+                // set (a bug in its own right: two windows on the same
+                // instrument with different bubbles — e.g. two range_bar
+                // panes at different R — could disagree on whether THIS
+                // tick was their own new bar).
                 let mut bu_is_new_bar = false;
 
-                // Bubble writes for derived windows.
-                let target_bubbles_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
-                    instrument_by_cid_bu.iter()
-                        .filter(|(_, (sym, at, is_derived))| *is_derived && sym == bar_symbol && *at == bar_event_at)
-                        .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
-                        .collect();
-
-                // Trade-agg-bar-owned bubbles (same set as `target_bubbles_bu`
-                // now that `is_derived` above is exactly
-                // `chart_type_is_trade_agg_bar` — computed separately rather
-                // than reused so the two intents stay independently readable)
-                // — used below to defensively stamp `bars_source` on the
-                // first derived bar that arrives for a bubble the
-                // subscribe-time `clear_slot_trade_agg_bars` stamp somehow
-                // missed (stale hydration path, future caller that bypasses
-                // the `SubscribeOps` table). Belt-and-suspenders: the OPS
-                // table stamp is the single source of truth in the normal
-                // path, this only guards against that invariant silently
-                // regressing.
-                let trade_agg_bids_bu: std::collections::HashSet<mlc_core::ids::BubbleId> =
-                    instrument_by_cid_bu.iter()
-                        .filter(|(cid, (sym, at, _))| {
-                            sym == bar_symbol && *at == bar_event_at
-                                && self.chart_type_for_chart(**cid)
-                                    .map(crate::active_series::chart_type_is_trade_agg_bar)
-                                    .unwrap_or(false)
-                        })
-                        .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
-                        .collect();
-
-                // Caterpillar-bug fix (2026-07-08): `bar.timestamp` is seconds-
-                // truncated from dig3's ms-native `open_time` — the trade-agg
-                // family (range/volume/tick/dollar/imbalance/run bars) can close
-                // more than once inside the same wall-clock second, so a
-                // seconds-only same-bar test collapses genuinely distinct
-                // bars into one (mutate instead of append) or vice versa.
-                // Every window hitting this arm is `is_derived` (see the
-                // filter above), so compare by `derived_ts_ms` whenever the
-                // incoming bar actually carries one; kline's own `BarUpdate`
-                // never reaches this arm (routed to the recalc path instead
-                // via the non-derived branch), so this does not touch the
-                // seconds-keyed kline path.
-                let bar_ts_identity: Option<i64> = if bar.derived_ts_ms != 0 {
-                    Some(bar.derived_ts_ms)
-                } else {
-                    Some(bar.timestamp)
-                };
-
-                for bid_bu in &target_bubbles_bu {
-                    let is_trade_agg_owner = trade_agg_bids_bu.contains(bid_bu);
-                    let is_new = self.core.bubbles_mut().with_bubble_mut(*bid_bu, |bubble| {
-                        // bars-ownership gate: `BarUpdate` carries live
-                        // trade-agg-bar-family ticks (range/volume/tick/
-                        // dollar/imbalance/run, `TradeAggBars`-owned —
-                        // produced by the client-side `TradeFoldRuntime`/
-                        // `FoldRuntime` for this bubble) through this event
-                        // type, so only `FootprintOhlc` is blocked —
-                        // footprint gets its bars from `FootprintUpdate`
-                        // instead and must never have a live derived
-                        // `BarUpdate` interleave.
-                        if bubble.bars_source == mlc_backend::bubble::BarsSource::FootprintOhlc {
-                            return false;
-                        }
-                        // Defensive stamp: the first derived bar for a
-                        // trade-agg-bar window should always find
-                        // `bars_source` already `TradeAggBars` (stamped by
-                        // `clear_slot_trade_agg_bars` at subscribe time) —
-                        // if it still reads `Kline` here, stamp it now and
-                        // drop any leftover kline bars before the append so
-                        // this bubble never mixes two timelines.
-                        if is_trade_agg_owner && bubble.bars_source == mlc_backend::bubble::BarsSource::Kline {
-                            bubble.clear_bars();
-                            bubble.bars_source = mlc_backend::bubble::BarsSource::TradeAggBars;
-                        }
-                        let last_ts_identity = bubble.bars.last().map(|b| {
-                            if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
-                        });
-                        if last_ts_identity == bar_ts_identity {
-                            if let Some(last) = bubble.last_bar_mut() {
-                                last.open   = bar.open;
-                                last.high   = bar.high;
-                                last.low    = bar.low;
-                                last.close  = bar.close;
-                                last.volume = bar.volume;
-                            }
-                            false
-                        } else {
-                            bubble.append_bar(bar.clone());
-                            true
-                        }
-                    });
-                    if let Some(is_new) = is_new {
-                        bu_is_new_bar = is_new;
-                    }
-                }
+                // Fold-owned bubbles (trade-agg-bar family: range/volume/
+                // dollar/tick/tick_imbalance/volume_imbalance/run bars) —
+                // NO write here. `BarUpdate`'s `bar` payload is the RAW
+                // wall-clock 1m kline (`tick_writers`'s unconditional
+                // passthrough at the bottom of the `LiveUpdate::BarUpdate`
+                // arm), never the fold-derived bar — its OHLC/timestamp
+                // identity has nothing to do with the fold's own chained
+                // output (a $0.30 range bar vs an $18-tall 1m kline). The
+                // backend is the single writer for these bubbles:
+                // `fold_on_live_1m`/`trade_fold_on_live_trade`
+                // (`mlc-backend/src/chart_type/lifecycle.rs`) already
+                // appended/upserted the CORRECT chained bar(s) into
+                // `bubble.bars` earlier in this SAME `tick_writers` call,
+                // before this pass-through event was even pushed. Writing
+                // the raw kline bar here too was landing it as a SECOND,
+                // spurious full-height column per incoming 1m tick — one
+                // extra bar right at the reseed/live seam, since the raw
+                // kline's timestamp identity essentially never matches the
+                // fold's own last bar identity (2026-07-10 "забор" bug:
+                // 3-4 full-height columns at the history/live boundary on
+                // 30R range_bar). This arm is now purely a repaint trigger +
+                // viewport-bookkeeping signal for that family — see the
+                // read-only `bu_is_new_bar` derivation below.
 
                 for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                     let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
@@ -864,9 +802,9 @@ impl ChartApp {
                     if window.pending_symbol_load {
                         window.pending_symbol_load = false;
                     }
-                    // Resolved PER WINDOW (not once from an arbitrary member
-                    // of `target_bubbles_bu`, which is an unordered HashSet):
-                    // distinct windows on the same (symbol, account_type) can
+                    // Resolved PER WINDOW (not once from an arbitrary shared
+                    // instrument-wide bubble set): distinct windows on the
+                    // same (symbol, account_type) can
                     // own distinct bubbles (different chart-type params, e.g.
                     // two range_bar windows with different range sizes, or
                     // range_bar + volume_bar both on the same instrument —
@@ -883,13 +821,23 @@ impl ChartApp {
                         self.core.bubbles().bars(bid_for_window).to_vec();
                     // These windows are gated `is_derived` == trade-agg-bar
                     // family (range/volume/tick/dollar/imbalance/run) — the
-                    // station writes that series directly INTO bubble.bars,
-                    // so it IS the kline array for this chart_type family
-                    // (audit D8 resolution table) — plain `Bars` wrap is
-                    // correct here. Footprint is NOT part of this arm (it
-                    // reaches viewport bookkeeping via `FootprintBarAppended`
-                    // instead, see the exclusion comment above).
+                    // fold engine writes that series directly INTO
+                    // bubble.bars (`fold_on_live_1m`/`trade_fold_on_live_trade`,
+                    // `mlc-backend/src/chart_type/lifecycle.rs`), so it IS
+                    // the kline array for this chart_type family (audit D8
+                    // resolution table) — plain `Bars` wrap is correct here.
+                    // Footprint is NOT part of this arm (it reaches viewport
+                    // bookkeeping via `FootprintBarAppended` instead, see the
+                    // exclusion comment above).
                     let series = crate::active_series::ActiveSeries::Bars(&bu_bubble_bars_owned);
+                    // Read-only "did a new bar land for THIS window" — no
+                    // write happened above (see the no-write doc comment),
+                    // so this compares the fold's already-current length
+                    // against the window's own previously-tracked count
+                    // instead of the write-path's former per-instrument
+                    // append-vs-upsert bool.
+                    let is_new_bar_for_window = series.len() > window.viewport().bar_count;
+                    bu_is_new_bar = is_new_bar_for_window;
                     if window.needs_snap_after_backfill && window.viewport().chart_width > 0.0 {
                         window.consume_cold_snap(series);
                     }
@@ -902,7 +850,7 @@ impl ChartApp {
                     // Live-tick follow: Follow mode snaps every tick; Auto mode
                     // advances view_start by one bar only when a new bar landed
                     // AND the prior last bar was already at the right edge.
-                    window.advance_view_on_tick(bu_is_new_bar);
+                    window.advance_view_on_tick(is_new_bar_for_window);
                     bu_symbol_for_recalc = Some(bar_symbol.clone());
                 }
 
@@ -1582,6 +1530,168 @@ impl ChartApp {
                 // Handled by the inline accumulator logic in tick() before/after
                 // calling this method. No additional window-level work needed here.
             }
+        }
+    }
+}
+
+// =============================================================================
+// Regression: live-seam "забор" (fence) — BarUpdatePassthrough must not
+// double-write fold-owned bubbles (2026-07-10)
+// =============================================================================
+//
+// LIVE BUG: on a kline-fold chart type (range_bar/volume_bar/dollar_bar/
+// tick_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar), history renders
+// as the correct chained staircase, but the live tail showed 3-4 FULL-HEIGHT
+// vertical columns at the history/live seam — one per incoming 1m WS update.
+//
+// Root cause: `LiveUpdate::BarUpdate`'s `tick_writers` arm (mlc-backend
+// lib.rs) unconditionally pushes a `BubbleEvent::BarUpdatePassthrough`
+// carrying the RAW wall-clock 1m kline, in addition to the fold's OWN
+// `fold_on_live_1m`-emitted event (which already appended/upserted the
+// correctly chained bar(s) into `bubble.bars`). This arm used to ALSO write
+// the raw kline bar into `bubble.bars` for every trade-agg-bar (fold-owned)
+// bubble — landing it as a second, spurious, full-height bar per tick, since
+// the raw kline's OHLC/timestamp identity has nothing to do with the fold's
+// own chained-bar identity. Fixed by making this arm a pure repaint trigger
+// + viewport-bookkeeping signal for that family — see the no-write doc
+// comment on the `BarUpdatePassthrough` arm above.
+#[cfg(test)]
+mod live_seam_regression_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use digdigdig3::core::types::{AccountType, ExchangeId};
+    use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
+    use mlc_core::state::Timeframe;
+
+    fn bar(ts_sec: i64, o: f64, h: f64, l: f64, c: f64, v: f64) -> mlc_core::Bar {
+        mlc_core::Bar {
+            timestamp: ts_sec,
+            open: o, high: h, low: l, close: c, volume: v,
+            derived_ts_ms: ts_sec * 1000,
+        }
+    }
+
+    fn tf_m1() -> Timeframe { Timeframe::m1() }
+
+    /// Build a `ChartApp` with one active range_bar window (bubble seeded,
+    /// `active_fold` installed via the REAL `subscribe_fold_chart_type`
+    /// entrypoint — same path `ChangeChartType` uses) reseeded over a
+    /// synthetic "1m" layer trending up to `seed_close` (flat-ish, no
+    /// crossings of its own so every assertion below is about the LIVE
+    /// tail, not the seed replay).
+    async fn build_range_bar_app(range: f64, seed_close: f64) -> (ChartApp, Arc<DataBridge>, mlc_core::ids::BubbleId) {
+        let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+        let bridge = Arc::new(bridge);
+
+        let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+        let mut app = ChartApp::new_empty(core);
+        app.seed_default_chart(ExchangeId::Binance, "BTCUSDT", tf_m1(), AccountType::Spot, 10);
+
+        let active_cid = app.panel_app.panel_grid.active_container_id().expect("active container");
+        let bid = app.bubble_for_chart(active_cid).expect("seeded bubble");
+
+        // Seed the "1m" layer directly (no network) — a few perfectly flat
+        // bars (no OHLC wobble — keeps the closed-bar height assertion
+        // below unambiguous), then an in-progress bar sitting exactly at
+        // `seed_close`.
+        for i in 0..3i64 {
+            let ts = (i + 1) * 60;
+            app.core.bubbles_mut().kline_layer_push_live(
+                bid, "1m", bar(ts, seed_close, seed_close, seed_close, seed_close, 1.0),
+            );
+        }
+        let in_progress_ts = 4 * 60;
+        app.core.bubbles_mut().kline_layer_push_live(
+            bid, "1m", bar(in_progress_ts, seed_close, seed_close, seed_close, seed_close, 1.0),
+        );
+
+        app.core.bubbles_mut().set_chart_type(bid, "range_bar");
+        let params = mlc_backend::bubble::FoldParams { scaled_units: range, ..Default::default() };
+        let event = app.core.subscribe_fold_chart_type(
+            bid, "range_bar", params, ExchangeId::Binance, "BTCUSDT", AccountType::Spot, Some(10),
+        );
+        if let Some(ev) = event {
+            app.react_to_bubble_event(&ev, 0);
+        }
+
+        (app, bridge, bid)
+    }
+
+    fn now_ms() -> u64 {
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    /// The exact scenario the task calls for: reseed ends with an
+    /// in-progress bar at price P; two live 1m updates land at P-10R (a
+    /// single-leg gap-crossing delta big enough to chain through ~10 exact-R
+    /// bars). Asserts `bubble.bars`' tail is the chain + one in-progress bar,
+    /// no bar taller than R (excluding the organic in-progress one), and no
+    /// duplicate identities — the exact шара the забор bug produced (extra
+    /// full-height bars with colliding/foreign identities from the raw
+    /// kline passthrough double-write).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_seam_chain_has_no_taller_than_range_bars_and_no_duplicate_identities() {
+        const RANGE: f64 = 1.0;
+        const SEED_CLOSE: f64 = 1000.0;
+        let (mut app, bridge, bid) = build_range_bar_app(RANGE, SEED_CLOSE).await;
+
+        let tx = bridge.debug_broadcast_tx();
+        let in_progress_ts = 4 * 60;
+
+        // Two live 1m updates for the SAME in-progress open_time, each
+        // walking further down — together a P -> P-10R move. Mirrors the
+        // task's "two live 1m updates at P-10R" scenario: split across two
+        // ticks (not one single jump) so the fix is proven under the SAME
+        // multi-event `tick_writers` drain shape the live bug hit (one
+        // `BarUpdatePassthrough` raw-kline event PER incoming WS update).
+        // `volume` is CUMULATIVE within the still-open bar (real WS kline
+        // semantics — `KlineDeltaState::to_delta_trade` deltas against the
+        // PREVIOUS call's volume, see digdigdig3-station derived.rs), so
+        // each successive update carries a strictly larger running volume,
+        // not a fresh per-tick amount.
+        let mid = SEED_CLOSE - 5.0 * RANGE;
+        let end = SEED_CLOSE - 10.0 * RANGE;
+        for &(close, cum_volume) in &[(mid, 5.0), (end, 10.0)] {
+            let _ = tx.send(LiveUpdate::BarUpdate {
+                exchange_id: ExchangeId::Binance,
+                account_type: AccountType::Spot,
+                symbol: "BTCUSDT".to_string(),
+                timeframe: "1m".to_string(),
+                bar: bar(in_progress_ts, SEED_CLOSE, SEED_CLOSE, close, close, cum_volume),
+            });
+            app.tick(now_ms());
+        }
+
+        let bars = app.core.bubbles().bars(bid).to_vec();
+        assert!(bars.len() >= 8, "expected a long chain of ~10 exact-R bars, got {} bars: {:?}", bars.len(), bars);
+
+        // No bar taller than R, excluding the last (possibly still
+        // in-progress, organically-widening) bar — this is exactly the
+        // invariant the забор bug broke: a raw 1m kline bar landing in the
+        // chain is $10+ tall at R=$1, i.e. 10x too tall.
+        let (closed, _last) = bars.split_at(bars.len().saturating_sub(1));
+        for (i, b) in closed.iter().enumerate() {
+            let height = b.high - b.low;
+            assert!(
+                height <= RANGE + 1e-6,
+                "closed bar #{i} has height {height} > R={RANGE} — забор regression \
+                 (raw kline bar landed in the fold-owned chain): {b:?}",
+            );
+        }
+
+        // No duplicate identities — every bar's (derived_ts_ms-or-timestamp)
+        // identity must be distinct. The забор bug appended a SECOND bar per
+        // tick with an identity that (almost always) never matched the
+        // fold's own last-bar identity, inflating the array with
+        // never-deduplicated extra columns.
+        let mut seen = std::collections::HashSet::new();
+        for b in &bars {
+            let id = if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp };
+            assert!(seen.insert(id), "duplicate bar identity {id} in tail — забор regression: {bars:?}");
         }
     }
 }

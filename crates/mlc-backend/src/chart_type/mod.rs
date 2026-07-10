@@ -5,6 +5,7 @@
 //! table. Zero call sites migrated yet — see `engine.rs` module doc.
 
 pub mod engine;
+pub mod lifecycle;
 
 pub use engine::{
     SubscribeOps, SubscribeParams, ops_by_id,

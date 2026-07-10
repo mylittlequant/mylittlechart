@@ -3507,4 +3507,66 @@ mod subscribe_params_regression_tests {
             );
         }
     }
+
+    /// End-to-end batched-bar param LEAK regression (owner live report,
+    /// 2026-07-10): dial volume_bar to 50V, switch to dollar_bar — the
+    /// toolbar/subscribe must NOT show "$50" (the leaked volume_bar param),
+    /// they must land on dollar_bar's OWN registry default (100000).
+    ///
+    /// Exercises the real seam `ChangeChartType` relies on —
+    /// `BubbleStore::set_chart_type` (the actual reset, not a hand-picked
+    /// literal) followed by a `chart_type_param(bid)` read and
+    /// `build_subscribe_params` — instead of calling
+    /// `build_subscribe_params` in isolation like the tests above. Also
+    /// covers the inverse (re-selecting the SAME type keeps the dialed
+    /// value) and the toolbar label path via `default_chart_type_param`,
+    /// which must agree with the subscribed value (label/subscribe
+    /// coherence, same invariant as `every_param_spec_row_label_default_matches_subscribe_default`).
+    #[test]
+    fn chart_type_switch_does_not_leak_batched_bar_param_across_types() {
+        let mut store = mlc_backend::bubble::BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), mlc_core::state::Timeframe::m1());
+
+        // Dial volume_bar to 50V — mirrors the user picking "50V" from the
+        // TF-button param ladder (`UpdateChartTypeParam`'s
+        // `set_chart_type_param` call).
+        store.set_chart_type(bid, "volume_bar");
+        store.set_chart_type_param(bid, 50.0);
+        assert_eq!(store.chart_type_param(bid), Some(50.0));
+
+        // Switch to dollar_bar — mirrors `ChangeChartType`'s
+        // `set_chart_type` call (chart_out_events.rs's `ChangeChartType`
+        // arm) followed by its post-reset `chart_type_param` read.
+        store.set_chart_type(bid, "dollar_bar");
+        let leaked_param = store.chart_type_param(bid).unwrap_or(0.0);
+        assert_eq!(
+            leaked_param, 0.0,
+            "set_chart_type must reset chart_type_param to the pre-first-pick sentinel on a type change",
+        );
+
+        // The subscribe built from the POST-SWITCH read must land on
+        // dollar_bar's OWN registry default, not volume_bar's leftover 50.
+        let params = build_subscribe_params("dollar_bar", leaked_param, "1m", BAR_COUNT, TICK_SIZE);
+        let fold = fold_params_from_subscribe_params("dollar_bar", params)
+            .expect("dollar_bar is a registered kline-fold chart_type");
+        assert_eq!(
+            fold.threshold, 100_000.0,
+            "dollar_bar must subscribe at its OWN default (100000) after switching away from volume_bar(50), not the leaked 50",
+        );
+
+        // Toolbar label must agree with what actually got subscribed —
+        // same coherence rule the registry-wide test above pins.
+        let label_default = default_chart_type_param("dollar_bar").expect("dollar_bar has a param_spec");
+        assert_eq!(label_default, fold.threshold, "toolbar label default must match the subscribed default");
+
+        // Re-selecting the SAME type (no-op switch) must keep the dialed
+        // value — only an actual family change resets the param.
+        store.set_chart_type(bid, "dollar_bar");
+        store.set_chart_type_param(bid, 250_000.0);
+        store.set_chart_type(bid, "dollar_bar");
+        assert_eq!(
+            store.chart_type_param(bid), Some(250_000.0),
+            "re-selecting the SAME chart_type must not reset the user's dialed-in param",
+        );
+    }
 }
