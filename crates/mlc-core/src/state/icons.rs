@@ -1040,17 +1040,14 @@ pub const ICON_BOOKMARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
   <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
 </svg>"##;
 
-/// Redrawn 2026-07-11 — the previous version used 3 strokes per corner
-/// (2 axis-aligned + 1 diagonal, all touching the viewBox edge at 0/24 with
-/// no margin), reading as a muddy X rather than clean expand brackets.
-/// Now: 2 strokes per corner (an L-shaped bracket), inset 3px from each
-/// edge, no diagonals — matches the outward-facing-corner-bracket convention
-/// used by fullscreen/expand icons elsewhere.
+/// Owner-approved final design (2026-07-11) — Lucide `maximize-2`: two
+/// diagonal outward-pointing arrows (top-right, bottom-left) with L-shaped
+/// arrowheads anchored at the corners.
 pub const ICON_EXPAND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 9V3h6"/>
-  <path d="M21 9V3h-6"/>
-  <path d="M3 15v6h6"/>
-  <path d="M21 15v6h-6"/>
+  <polyline points="15 3 21 3 21 9"/>
+  <polyline points="9 21 3 21 3 15"/>
+  <line x1="21" y1="3" x2="14" y2="10"/>
+  <line x1="3" y1="21" x2="10" y2="14"/>
 </svg>"##;
 
 pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1358,51 +1355,49 @@ pub const ICON_BOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24
 // set, visually unrelated to trading) with 5 type-specific glyphs matching
 // the house stroke-2 24x24 style used across the rest of the toolbar.
 
-/// Trading slot — order-ticket / briefcase glyph (hosts `TradingContainer`).
+/// Trading slot — briefcase glyph (hosts `TradingContainer`). Owner-approved
+/// final design 2026-07-11.
 pub const ICON_SLOT_TRADING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="7" width="18" height="13" rx="2"/>
   <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-  <path d="M3 12h18"/>
-  <path d="M10 12v2h4v-2"/>
+  <path d="M3 13h18"/>
 </svg>"##;
 
-/// DOM slot — orderbook ladder: two columns of short rows (bid | ask).
+/// DOM slot — rows around a solid price axis. Owner-approved final design
+/// 2026-07-11.
 pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="3" y1="6" x2="10" y2="6"/>
-  <line x1="3" y1="10" x2="9" y2="10"/>
-  <line x1="3" y1="14" x2="11" y2="14"/>
-  <line x1="3" y1="18" x2="8" y2="18"/>
-  <line x1="14" y1="6" x2="21" y2="6"/>
-  <line x1="15" y1="10" x2="21" y2="10"/>
-  <line x1="13" y1="14" x2="21" y2="14"/>
-  <line x1="16" y1="18" x2="21" y2="18"/>
   <line x1="12" y1="4" x2="12" y2="20"/>
+  <line x1="3" y1="6" x2="9" y2="6"/>
+  <line x1="5" y1="10" x2="9" y2="10"/>
+  <line x1="3" y1="14" x2="9" y2="14"/>
+  <line x1="6" y1="18" x2="9" y2="18"/>
+  <line x1="15" y1="6" x2="20" y2="6"/>
+  <line x1="15" y1="10" x2="21" y2="10"/>
+  <line x1="15" y1="14" x2="18" y2="14"/>
+  <line x1="15" y1="18" x2="21" y2="18"/>
 </svg>"##;
 
-/// Trade Tape slot — vertical tape with row ticks (scrolling trade stream).
+/// Trade Tape slot — receipt glyph. Owner-approved final design 2026-07-11.
 pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="4" y="3" width="16" height="18" rx="1"/>
-  <line x1="8" y1="7" x2="16" y2="7"/>
-  <line x1="8" y1="11" x2="16" y2="11"/>
-  <line x1="8" y1="15" x2="14" y2="15"/>
-  <line x1="8" y1="19" x2="16" y2="19"/>
+  <path d="M7 3h10v16l-2.5-1.7L12 19l-2.5-1.7L7 19z"/>
+  <line x1="10" y1="8" x2="14" y2="8"/>
+  <line x1="10" y1="12" x2="14" y2="12"/>
 </svg>"##;
 
-/// L2 Tape slot — ladder + tape hybrid: rows with depth bars trailing right.
+/// L2 Tape slot — depth ladder with decreasing bar widths. Owner-approved
+/// final design 2026-07-11.
 pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="3" y1="6" x2="8" y2="6"/>
-  <line x1="3" y1="6" x2="19" y2="6" stroke-opacity="0.35"/>
-  <line x1="3" y1="11" x2="14" y2="11"/>
-  <line x1="3" y1="11" x2="19" y2="11" stroke-opacity="0.35"/>
-  <line x1="3" y1="16" x2="10" y2="16"/>
-  <line x1="3" y1="16" x2="19" y2="16" stroke-opacity="0.35"/>
+  <line x1="3" y1="5" x2="19" y2="5"/>
+  <line x1="3" y1="10" x2="15" y2="10"/>
+  <line x1="3" y1="15" x2="11" y2="15"/>
+  <line x1="3" y1="20" x2="7" y2="20"/>
 </svg>"##;
 
-/// Big Trades slot — one oversized block among small rows (whale trade).
+/// Big Trades slot — whale glyph. Owner-approved final design 2026-07-11.
 pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="4" y1="5" x2="14" y2="5"/>
-  <rect x="4" y="9" width="16" height="7" rx="1" fill="currentColor" stroke="none"/>
-  <line x1="4" y1="19" x2="11" y2="19"/>
+  <path d="M3 15c1.5-4.5 6-7.5 10.5-6.8 3 .5 5.5 2.3 6.5 5-1 2-3.2 3.3-5.5 3.3H7.5C5.5 16.5 4 16 3 15z"/>
+  <path d="M18 9l3.5-3.5V11"/>
+  <circle cx="7.5" cy="13" r="0.5" fill="currentColor"/>
 </svg>"##;
 
 /// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
@@ -1543,19 +1538,16 @@ pub const ICON_LAYOUT_1BIG_3SMALL: &str = r##"<svg xmlns="http://www.w3.org/2000
   <rect x="17" y="16" width="4" height="5" rx="1"/>
 </svg>"##;
 
+/// Owner-approved final design (2026-07-11) — Lucide `minimize-2`: two
+/// diagonal inward-pointing arrows (mirrors `ICON_EXPAND`'s outward
+/// brackets), rendered by the bottom-toolbar expand button when the panel
+/// IS expanded (see `render_chart.rs`: `if is_maximized { Icon::Collapse }
+/// else { Icon::Expand }`).
 pub const ICON_COLLAPSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M8 8L0 0"/>
-  <path d="M8 8H0"/>
-  <path d="M8 8V0"/>
-  <path d="M16 8l8-8"/>
-  <path d="M16 8h8"/>
-  <path d="M16 8V0"/>
-  <path d="M8 16L0 24"/>
-  <path d="M8 16H0"/>
-  <path d="M8 16v8"/>
-  <path d="M16 16l8 8"/>
-  <path d="M16 16h8"/>
-  <path d="M16 16v8"/>
+  <polyline points="4 14 10 14 10 20"/>
+  <polyline points="20 10 14 10 14 4"/>
+  <line x1="14" y1="10" x2="21" y2="3"/>
+  <line x1="3" y1="21" x2="10" y2="14"/>
 </svg>"##;
 
 // =============================================================================
@@ -2365,8 +2357,8 @@ mod typed_slot_icon_tests {
     //! Coverage for the typed-slot sidebar redesign (2026-07-11): 5 new
     //! slot icons replacing the generic aviation glyphs, Performance getting
     //! its own Gauge glyph (previously collided with Signals' Zap bolt), and
-    //! the redrawn `ICON_EXPAND` (was 3-strokes-per-corner with diagonals,
-    //! now clean 2-strokes-per-corner outward brackets).
+    //! the owner-approved final `ICON_EXPAND`/`ICON_COLLAPSE` pair (Lucide
+    //! `maximize-2`/`minimize-2`).
     use super::*;
 
     /// The 5 typed-slot `Icon` enum variants, in canonical slot index order
@@ -2468,33 +2460,27 @@ mod typed_slot_icon_tests {
         assert_ne!(performance_svg, ICON_CPU, "\"performance\" must not resolve to the old CPU/Activity glyph");
     }
 
-    /// `ICON_EXPAND` redraw regression: exactly 2 `<path>` strokes per
-    /// corner (8 total), no diagonal strokes (no path data containing both
-    /// an `h`/`v`... actually simplest robust check: no diagonal `l`
-    /// commands with two non-zero deltas — every path here is a pure
-    /// horizontal+vertical L-shape, so each path string must contain
-    /// exactly one `M` move followed by exactly 2 more coordinate pairs,
-    /// i.e. 3 numbers total per path, none of which is a diagonal `l8 8`
-    /// pattern like the old version had).
+    /// `ICON_EXPAND` owner-approved final design (2026-07-11, Lucide
+    /// `maximize-2`): two `<polyline>` brackets (top-right, bottom-left)
+    /// plus two diagonal `<line>` arrows pointing outward — no `<path>`
+    /// elements (distinguishes it from the earlier stroke-bracket redraw).
     #[test]
-    fn icon_expand_has_no_diagonal_strokes() {
+    fn icon_expand_matches_lucide_maximize2_shape() {
         let svg = ICON_EXPAND;
-        // The old version had paths like "M0 0l8 8" (diagonal: dx=8,dy=8 in
-        // one lowercase `l` segment). The new version's paths only ever
-        // move in ONE axis per segment (pure L-shaped brackets). Pin this by
-        // asserting the historical diagonal signature is gone.
-        assert!(!svg.contains("l8 8"), "old diagonal stroke signature must be gone: {svg}");
-        assert!(!svg.contains("l-8 8"), "old diagonal stroke signature must be gone: {svg}");
-        assert!(!svg.contains("l8-8"), "old diagonal stroke signature must be gone: {svg}");
-        assert!(!svg.contains("l-8-8"), "old diagonal stroke signature must be gone: {svg}");
+        assert_eq!(svg.matches("<polyline").count(), 2, "ICON_EXPAND must have exactly 2 polylines: {svg}");
+        assert_eq!(svg.matches("<line").count(), 2, "ICON_EXPAND must have exactly 2 diagonal lines: {svg}");
+        assert_eq!(svg.matches("<path").count(), 0, "ICON_EXPAND (Lucide maximize-2) must not use <path>: {svg}");
     }
 
-    /// `ICON_EXPAND` has exactly 4 path elements (one L-bracket per corner,
-    /// 2 strokes each via a single 2-segment path) — not the old 12 (3 per
-    /// corner).
+    /// `ICON_COLLAPSE` owner-approved final design (2026-07-11, Lucide
+    /// `minimize-2`): mirrors `ICON_EXPAND`'s shape (2 polylines + 2
+    /// diagonal lines, inward instead of outward) and remains visually
+    /// distinct from it.
     #[test]
-    fn icon_expand_has_four_paths_two_strokes_per_corner() {
-        let path_count = ICON_EXPAND.matches("<path").count();
-        assert_eq!(path_count, 4, "ICON_EXPAND must have exactly 4 corner-bracket paths (was 12 pre-redraw): {}", ICON_EXPAND);
+    fn icon_collapse_matches_lucide_minimize2_shape() {
+        let svg = ICON_COLLAPSE;
+        assert_eq!(svg.matches("<polyline").count(), 2, "ICON_COLLAPSE must have exactly 2 polylines: {svg}");
+        assert_eq!(svg.matches("<line").count(), 2, "ICON_COLLAPSE must have exactly 2 diagonal lines: {svg}");
+        assert_ne!(ICON_COLLAPSE, ICON_EXPAND, "ICON_COLLAPSE must remain visually distinct from ICON_EXPAND");
     }
 }
