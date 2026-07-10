@@ -1242,7 +1242,12 @@ static REGISTRY: &[ChartTypeDef] = &[
         // whitelist (all TFs except tick) rather than hiding the picker.
         hides_tf_picker: false,
         tf_whitelist: Some(TPO_TF_WHITELIST),
-        min_bar_spacing: None,
+        // One session = one index slot. Chosen wider than footprint's 50px
+        // (a footprint cluster is a single bar's cell grid; a TPO block is
+        // an entire session's letter grid, needs more room to stay legible)
+        // — targets a ~100-140px session block at default zoom (see
+        // `chart_render/tpo.rs`'s `render_session` width-fit math).
+        min_bar_spacing: Some(120.0),
         default_indicators: &[],
         param_spec: Some(ChartTypeParamSpec {
             section_title: "MARKET PROFILE (TPO) SETTINGS",
@@ -1252,7 +1257,11 @@ static REGISTRY: &[ChartTypeDef] = &[
         }),
         inline_default: Some("30"),
         deepen_kind: DeepenKind::DerivedPrependFold,
-        needs_ts_shadow: false,
+        // TPO is now a proper index-axis series (canon Sierra TPO chart) —
+        // sessions position via `viewport.x_for_bar`/visible_range like
+        // renko/pnf/kagi/tlb, so the axis needs the session-ts shadow for
+        // time-scale labels + drawings ts→x (`chart_render/tpo.rs`).
+        needs_ts_shadow: true,
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Time,
         identity: IdentityKey::OpenTime,
@@ -1326,6 +1335,17 @@ mod tests {
                 "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m", "tf_1h",
             ][..])
         );
+    }
+
+    #[test]
+    fn tpo_is_a_shadow_backed_index_series() {
+        let d = by_id("tpo").unwrap();
+        assert!(d.needs_ts_shadow, "tpo sessions must feed the ts-shadow so axis labels use session dates");
+        assert_eq!(d.min_bar_spacing, Some(120.0));
+        // Wider than footprint — a session block carries an entire letter
+        // grid, footprint a single bar's cell grid.
+        let footprint_spacing = by_id("footprint").unwrap().min_bar_spacing.unwrap();
+        assert!(d.min_bar_spacing.unwrap() >= footprint_spacing);
     }
 
     #[test]

@@ -45,10 +45,11 @@ pub enum ActiveSeries<'a> {
     /// Kept (not deleted) per task scope — no wide refactor of the match
     /// arms below that still exhaustively handle it.
     Cvd(&'a [CvdSample]),
-    /// TPO bypasses Viewport bookkeeping entirely (manual block-accumulator
-    /// layout, own date headers) — resolved only so callers have a non-panic
-    /// default; `len()`/`ts_ms_at`/`y_range` are never consumed for TPO in
-    /// production code paths today.
+    /// TPO sessions — one index slot per session, positioned via
+    /// `viewport.x_for_bar`/`visible_range` like renko/pnf/kagi/tlb
+    /// (`chart_render/tpo.rs`'s `draw_tpo`). `len()`/`ts_ms_at`/`y_range`
+    /// feed the same viewport bookkeeping (bar_count, snap, Y autoscale) as
+    /// every other derived series.
     Tpo(&'a [TpoSession]),
 }
 
@@ -230,15 +231,16 @@ fn ms_to_bar_shadow(ts_ms: i64) -> Bar {
 /// ts→x (`RenderContext::set_bars`/`ts_to_x_ms`) — audit D8 items (c)/(e)
 /// from `chart-types-xaxis-audit-2026-07-03.md` §3.
 ///
-/// Narrower than [`resolve_active_series`]: only renko/pnf/kagi/
-/// three_line_break get a shadow — their emission-order timeline IS what a
+/// Narrower than [`resolve_active_series`]: renko/pnf/kagi/
+/// three_line_break/tpo get a shadow — their emission-order timeline IS what a
 /// drawing/label positioned on them should follow. CVD is deliberately
 /// EXCLUDED even though it has its own bookkeeping slot: `cvd.rs`'s
 /// `draw_cvd_line_into_rect` reads `state.bars` on purpose to establish its
 /// ts-domain as the visible KLINE range (own documented X strategy, not a
-/// bug) — overriding it here would break that by design. TPO bypasses
-/// Viewport/`ctx.set_bars`/`generate_ticks` entirely (manual layout) so it's
-/// excluded too (inert either way). Every other chart_type (candle-family,
+/// bug) — overriding it here would break that by design. TPO's
+/// emission-order timeline (session `open_time`) IS the shadow, mirroring
+/// renko/pnf/kagi/tlb — one session per index slot, axis labels read the
+/// session date. Every other chart_type (candle-family,
 /// range/volume/tick/dollar bars, footprint, dom/liquidation heatmap)
 /// already lives in or intentionally reads `bubble.bars` — returns `None`
 /// (caller keeps the real kline bars unchanged).

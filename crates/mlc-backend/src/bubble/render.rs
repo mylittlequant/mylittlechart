@@ -54,6 +54,25 @@ pub struct ChartWindowRenderInputs<'a> {
     pub wicks_effective: bool,
 }
 
+/// Whether `chart_type`'s registry row claims `bubble.bars` as its rendered
+/// series (`SeriesVariant::Bars`) — i.e. a stale-generation stamp on this
+/// bubble is a REAL bug, not a slot-series false positive.
+///
+/// Candle-family, and the trade-agg/counted-bar family (range_bar/
+/// volume_bar/tick_bar/dollar_bar/tick_imbalance_bar/volume_imbalance_bar/
+/// run_bar, which write their derived series directly into `bubble.bars`)
+/// are `Bars`-owned. Slot-series chart types (renko/pnf/kagi/
+/// three_line_break/tpo/footprint) legitimately KEEP klines in `bubble.bars`
+/// while rendering their own slot (`bubble.renko_bars`/`.tpo_sessions`/…)
+/// — that's normal, not stale, so they return `false` here. An
+/// unregistered/unknown chart_type id also returns `false` — nothing to
+/// compare against.
+fn is_bars_owned_chart_type(chart_type: &str) -> bool {
+    mlc_core::chart_type::by_id(chart_type)
+        .map(|d| d.series_variant == mlc_core::chart_type::SeriesVariant::Bars)
+        .unwrap_or(false)
+}
+
 /// Dev-only stale-array tripwire (K1 lifecycle groundwork, chart-type-
 /// engine-consolidation B2). Compares `bid`'s bubble's stamped
 /// [`mlc_core::chart_type::BarsGeneration`] against the chart_type the
@@ -63,7 +82,8 @@ pub struct ChartWindowRenderInputs<'a> {
 /// stale-array class this brick exists to surface. `BarsGeneration::NONE`
 /// (never stamped — bubble created but never folded/loaded) is not a
 /// mismatch on its own; a genuinely fresh bubble is expected to start
-/// there.
+/// there. Gated to `bubble.bars`-owned chart types — see
+/// [`is_bars_owned_chart_type`].
 ///
 /// Debug-only (native `debug_assertions` OR wasm dev builds, gated through
 /// the existing `dlog!`/`debug_log_enabled` mechanism so release/prod stays
@@ -73,6 +93,9 @@ pub struct ChartWindowRenderInputs<'a> {
 pub fn debug_assert_generation(bubble: &DataBubble) {
     let gen = bubble.bars_generation;
     if gen == mlc_core::chart_type::BarsGeneration::NONE {
+        return;
+    }
+    if !is_bars_owned_chart_type(bubble.chart_type) {
         return;
     }
     if gen.chart_type != bubble.chart_type {
@@ -158,5 +181,50 @@ pub fn build_chart_render_state<'a>(
         // unlike non_temporal_axis/hide_time_grid which depend on chart_type
         // knowledge this fn doesn't have.
         history_depth: bubble.history_depth.to_display(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_bars_owned_chart_type;
+
+    #[test]
+    fn candles_is_bars_owned() {
+        assert!(is_bars_owned_chart_type("candles"));
+    }
+
+    #[test]
+    fn tick_bar_is_bars_owned() {
+        // Trade-agg/counted-bar family writes its derived series directly
+        // into `bubble.bars` — a generation mismatch here IS a real bug.
+        assert!(is_bars_owned_chart_type("tick_bar"));
+    }
+
+    #[test]
+    fn renko_is_not_bars_owned() {
+        // Slot-series: keeps klines in `bubble.bars` while rendering
+        // `bubble.renko_bars` — a chart_type/generation mismatch is expected,
+        // not a bug.
+        assert!(!is_bars_owned_chart_type("renko"));
+    }
+
+    #[test]
+    fn tpo_is_not_bars_owned() {
+        assert!(!is_bars_owned_chart_type("tpo"));
+    }
+
+    #[test]
+    fn footprint_is_bars_owned() {
+        // Footprint's `series_variant` is deliberately `Bars` (registry
+        // doc comment: viewport bookkeeping piggybacks `bubble.bars`, and
+        // `FootprintUpdate` re-stamps kline bars underneath the cluster
+        // grid on every update) — it is NOT a slot-series false positive;
+        // the stale-generation warning must stay real for it.
+        assert!(is_bars_owned_chart_type("footprint"));
+    }
+
+    #[test]
+    fn unknown_chart_type_is_not_bars_owned() {
+        assert!(!is_bars_owned_chart_type("not_a_real_chart_type"));
     }
 }

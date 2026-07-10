@@ -1789,7 +1789,7 @@ impl ChartContainer {
     /// `margin` is a count of empty bars shown to the right of the last candle.
     /// Use [`DEFAULT_SNAP_MARGIN`] for the standard value.
     ///
-    /// Formula: `view_start = (bar_count + margin - visible_f).max(0.0)`
+    /// Formula: `view_start = count + effective_margin - visible_f`.
     ///
     /// Preconditions: `self.viewport.chart_width > 0.0` and
     /// `self.viewport.bar_spacing > 0.0` must both hold, or the result is
@@ -1797,6 +1797,17 @@ impl ChartContainer {
     /// Phase X0 / C5c: uses `viewport.bar_count` which is maintained by
     /// `reconcile_view_to_bars` whenever bubble.bars length changes — no
     /// direct reference to a bars slice needed here.
+    ///
+    /// No lower clamp on `view_start` (fixed 2026-07-11 — was `.max(0.0)`):
+    /// when the series has FEWER bars than fit on screen (e.g. a 1-session
+    /// TPO chart at its wide `min_bar_spacing`, or any series right after a
+    /// fresh chart-type switch), the right-anchored formula is legitimately
+    /// negative — that's what places the sparse content flush against the
+    /// right edge with empty space to its left, matching every other
+    /// series' "tail at right, margin beyond it" convention instead of
+    /// pinning it to the left edge. `Viewport::view_start_idx()` already
+    /// clamps negative `view_start` to index 0 for iteration purposes, so
+    /// nothing downstream misbehaves on a negative value.
     pub fn snap_to_end(&mut self, margin: f64) {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
         let visible_f = self.viewport.chart_width / self.viewport.bar_spacing;
@@ -1812,7 +1823,7 @@ impl ChartContainer {
         // floor of 0 so the last bar stays on-screen at any zoom.
         let progressive = (0.05 * visible_f).ceil().max(0.0);
         let effective_margin = margin.min(progressive);
-        self.viewport.view_start = (count as f64 + effective_margin - visible_f).max(0.0);
+        self.viewport.view_start = count as f64 + effective_margin - visible_f;
         self.log_view_jump("snap_to_end", vs0, bc0);
     }
 
@@ -2565,5 +2576,95 @@ mod focus_scale_mode_tests {
         let padding = range * 0.04;
         assert!((a.price_scale.price_min - (min - padding)).abs() < 1e-9);
         assert!((a.price_scale.price_max - (max + padding)).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod viewport_snap_tests {
+    //! Regression coverage for the 2026-07-11 owner report (TPO live
+    //! verification): (1) `ensure_min_bar_spacing` must apply on
+    //! `ChangeChartType` regardless of symbol/account-type/timeframe/
+    //! connector state — covered at the `chart_container` layer by pinning
+    //! `snap_to_end`'s behavior once `bar_spacing` is already the wide
+    //! value (the ChangeChartType wiring itself lives in
+    //! `input::chart_out_events`, exercised live); (2) a series with fewer
+    //! bars than the visible window must snap with the tail flush against
+    //! the RIGHT edge (negative `view_start`), not pinned to the left.
+    use super::*;
+
+    fn container_with(chart_width: f64, bar_spacing: f64, bar_count: usize) -> ChartContainer {
+        let mut c = ChartContainer::new("BTCUSDT", Timeframe::m1());
+        c.viewport.chart_width = chart_width;
+        c.viewport.chart_height = 300.0;
+        c.viewport.bar_spacing = bar_spacing;
+        c.viewport.bar_count = bar_count;
+        c
+    }
+
+    #[test]
+    fn snap_to_end_places_undersized_series_at_right_edge_not_left() {
+        // 1 session at TPO's 120px min_bar_spacing, 1200px chart_width ->
+        // visible_f = 10 bars. A 1-element series must NOT clamp to
+        // view_start=0 (left edge) — it must go negative so the single
+        // block sits near the right edge with margin, like every other
+        // series.
+        let mut c = container_with(1200.0, 120.0, 1);
+        c.snap_to_end(DEFAULT_SNAP_MARGIN);
+        assert!(
+            c.viewport.view_start < 0.0,
+            "expected negative view_start (tail-at-right) for a 1-bar series in a 10-bar-wide viewport, got {}",
+            c.viewport.view_start
+        );
+        // The single bar (index 0) must fall within the visible range.
+        let (start, end) = c.viewport.visible_range();
+        assert!(start <= 0 && end >= 1, "bar 0 must be visible: range=({start},{end})");
+    }
+
+    #[test]
+    fn snap_to_end_keeps_normal_clamp_for_oversized_series() {
+        // 500 bars, 10 visible -> the classic right-anchored case; must
+        // stay non-negative and unaffected by the removed .max(0.0) floor.
+        let mut c = container_with(1200.0, 120.0, 500);
+        c.snap_to_end(DEFAULT_SNAP_MARGIN);
+        assert!(c.viewport.view_start > 0.0, "view_start should be deep into the series: {}", c.viewport.view_start);
+        let (_, end) = c.viewport.visible_range();
+        assert_eq!(end, 500, "the last bar must be included in the visible range");
+    }
+
+    #[test]
+    fn snap_to_end_exact_fit_uses_progressive_margin_not_floored() {
+        // count == visible_f (10 bars, 10 visible): the progressive margin
+        // formula (`min(DEFAULT_SNAP_MARGIN, ceil(5% * visible_f))`) still
+        // adds a small headroom margin — view_start = count + margin -
+        // visible_f = 10 + 1 - 10 = 1, NOT artificially floored to 0.
+        let mut c = container_with(1200.0, 120.0, 10);
+        c.snap_to_end(DEFAULT_SNAP_MARGIN);
+        assert_eq!(c.viewport.view_start, 1.0, "exact fit should reflect the progressive margin, not a floor");
+    }
+
+    #[test]
+    fn ensure_min_bar_spacing_applies_from_default_kline_spacing() {
+        // Simulates the ChangeChartType path: window inherits the 8px
+        // kline default, then switches to a chart_type with a wide floor
+        // (tpo's registry min_bar_spacing = 120.0).
+        let mut c = container_with(1200.0, 8.0, 0);
+        c.ensure_min_bar_spacing(120.0);
+        assert_eq!(c.viewport.bar_spacing, 120.0);
+    }
+
+    #[test]
+    fn ensure_min_bar_spacing_is_noop_when_already_wide_enough() {
+        let mut c = container_with(1200.0, 150.0, 0);
+        c.ensure_min_bar_spacing(120.0);
+        assert_eq!(c.viewport.bar_spacing, 150.0, "must not shrink an already-wider spacing");
+    }
+
+    #[test]
+    fn ensure_min_bar_spacing_applies_even_with_zero_chart_width() {
+        // Dispatch-time edge case: layout hasn't run yet (chart_width == 0).
+        // The clamp must still land unconditionally (the `else` branch).
+        let mut c = container_with(0.0, 8.0, 0);
+        c.ensure_min_bar_spacing(120.0);
+        assert_eq!(c.viewport.bar_spacing, 120.0);
     }
 }

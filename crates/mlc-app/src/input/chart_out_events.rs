@@ -419,6 +419,26 @@ impl ChartApp {
                     // refcount logic knows what family the window is LEAVING.
                     let previous_ct: Option<&'static str> = bid
                         .and_then(|bid| self.core.bubbles().chart_type(bid));
+                    // Render-only switch (both previous and target are plain
+                    // render styles over the same kline bars) — computed here,
+                    // early, so the min-spacing enforcement right below does
+                    // NOT depend on the symbol/account-type/timeframe/connector
+                    // guard chain further down (that chain gates subscription/
+                    // abort bookkeeping, which spacing has nothing to do with —
+                    // see the 2026-07-11 owner report: a live switch left
+                    // bar_spacing at the inherited 8px because ONE of those
+                    // unrelated guards — e.g. `connector_enabled` false, or the
+                    // window's account_type/timeframe not yet resolved — failed
+                    // and silently skipped the nested `ensure_min_bar_spacing`
+                    // call along with it).
+                    let is_render_family = |t: Option<&'static str>| matches!(
+                        t,
+                        Some("candles") | Some("bars") | Some("hollow_candles")
+                        | Some("heikin_ashi") | Some("line") | Some("step_line")
+                        | Some("line_markers") | Some("area") | Some("hlc_area")
+                        | Some("baseline")
+                    );
+                    let render_only_switch = is_render_family(previous_ct) && is_render_family(Some(ct));
                     let (chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
                         let previous_type = previous_ct.unwrap_or("candles").to_string();
                         self.core.bubbles_mut().set_chart_type(bid, ct);
@@ -427,11 +447,19 @@ impl ChartApp {
                                 previous_type,
                                 new_type: ct.to_string(),
                             });
-                            // F6 (viewport doctrine audit 2026-07-07):
-                            // `ensure_min_bar_spacing` moved below, after
-                            // `render_only_switch` is known — see that site
-                            // for the full rationale (was unconditional here,
-                            // ahead of the render-only gate).
+                            // F6 (viewport doctrine audit 2026-07-07) intent
+                            // preserved — skip on a pure render-only switch so
+                            // `view_start` never moves for candles↔line. Fixed
+                            // 2026-07-11: applied HERE, unconditional on
+                            // symbol/account_type/timeframe/connector state
+                            // (previously nested three guards deep below,
+                            // where any one of those failing silently dropped
+                            // the clamp — see comment above).
+                            if !render_only_switch {
+                                if let Some(min_spacing) = min_usable_bar_spacing(ct) {
+                                    window.ensure_min_bar_spacing(min_spacing);
+                                }
+                            }
                         }
                         let bubbles = self.core.bubbles();
                         (bubbles.chart_type_param(bid).unwrap_or(0.0), bubbles.chart_type_interval(bid).unwrap_or("1m"))
@@ -543,15 +571,8 @@ impl ChartApp {
                                     // rendered differently — resetting `view_start=0` +
                                     // snap-to-end throws the user out of any scroll-back
                                     // position they were holding. Owner report 2026-07-06.
-                                    let is_render_family = |t: Option<&'static str>| matches!(
-                                        t,
-                                        Some("candles") | Some("bars") | Some("hollow_candles")
-                                        | Some("heikin_ashi") | Some("line") | Some("step_line")
-                                        | Some("line_markers") | Some("area") | Some("hlc_area")
-                                        | Some("baseline")
-                                    );
-                                    let render_only_switch = is_render_family(previous_ct)
-                                        && is_render_family(Some(ct));
+                                    // `render_only_switch` itself is computed earlier now
+                                    // (see the min-spacing fix above) — reused here as-is.
 
                                     // Step 1: always abort any derived
                                     // subscription. The bridge.abort_* call is
@@ -573,27 +594,14 @@ impl ChartApp {
                                             // the new stream lands at the right
                                             // edge of the viewport.
                                             window.needs_snap_after_backfill = true;
-                                            // F6 (viewport doctrine audit
-                                            // 2026-07-07): moved from before
-                                            // `render_only_switch` was known —
-                                            // some chart types need more
-                                            // horizontal room per bar than
-                                            // whatever spacing the previous
-                                            // type left behind (footprint's
-                                            // text-legibility floor). Clamp
-                                            // up, right-edge anchored, so the
-                                            // switch shows real content
-                                            // instead of a permanent zoom-in
-                                            // placeholder. Skipped for
-                                            // render-only switches — a "pure
-                                            // re-render" switch (candles↔line)
-                                            // must never move `view_start`; no
-                                            // render-family type has a floor
-                                            // today, but a future one would
-                                            // otherwise silently violate that.
-                                            if let Some(min_spacing) = min_usable_bar_spacing(ct) {
-                                                window.ensure_min_bar_spacing(min_spacing);
-                                            }
+                                            // `ensure_min_bar_spacing` now applied
+                                            // unconditionally right after
+                                            // `set_chart_type` above (2026-07-11
+                                            // fix) — not re-applied here, this
+                                            // block is gated behind
+                                            // symbol/account_type/timeframe/
+                                            // connector state that has nothing to
+                                            // do with spacing.
                                         }
                                     }
                                     // Audit D9 (extended 2026-07-06 — owner
