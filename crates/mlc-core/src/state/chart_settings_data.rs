@@ -55,6 +55,10 @@ pub struct InstrumentSettings {
     /// Footprint heat-fill intensity label ("Low" / "Normal" / "High").
     /// Unused when `chart_type != "footprint"`.
     pub footprint_heat_intensity_label: String,
+    /// Footprint row-grouping preset label ("Raw" / "2 ticks" / "5 ticks" /
+    /// "10 ticks"). Mirrors `ChartPanelState::footprint_display.group_ticks`
+    /// (canon-fix wave 2, item 5). Unused when `chart_type != "footprint"`.
+    pub footprint_row_grouping_label: String,
     /// Tick-bar checkbox: modulate body opacity by trade-count intensity
     /// (`(vol/max_vol).sqrt().clamp(0.25,1.0)`, wick stays full opacity).
     /// Default `false` — plain solid bodies exactly like `draw_candles`.

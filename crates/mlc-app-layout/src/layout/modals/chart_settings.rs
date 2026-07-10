@@ -621,6 +621,12 @@ pub fn render_settings_modal(
                             DropdownItem::item("Normal", "Normal"),
                             DropdownItem::item("High", "High"),
                         ]),
+                        "footprint_row_grouping" => Some(vec![
+                            DropdownItem::item("0", "Raw"),
+                            DropdownItem::item("2", "2 ticks"),
+                            DropdownItem::item("5", "5 ticks"),
+                            DropdownItem::item("10", "10 ticks"),
+                        ]),
                         _ => None,
                     }
                 }
@@ -947,10 +953,14 @@ fn render_instrument_settings(
         }
 
         // Row: "Wicks" checkbox — gated by `WickPolicy::Toggle` (today:
-        // range_bar/volume_bar/dollar_bar only). These three render WITHOUT
-        // wicks by default (their open/high/low pins are chained-continuity
+        // range_bar/volume_bar/dollar_bar, plus renko as of canon-fix wave 2
+        // item 3). range_bar/volume_bar/dollar_bar render WITHOUT wicks by
+        // default (their open/high/low pins are chained-continuity
         // artifacts, not genuine intrabar excursions the way candle wicks
-        // are) — this toggle re-enables them. Gates the effective flag
+        // are); renko's wick is a real intra-brick adverse excursion
+        // (`RenkoBrick::wick`) but defaults off too, matching the family's
+        // "off unless the user asks" convention — this toggle re-enables
+        // them. Gates the effective flag
         // `wick_enabled && bar_family_wicks` computed at `ChartRenderState`
         // build time (`render.rs`'s `wicks_effective`), NOT threaded as raw
         // `chart_type` into the renderer.
@@ -1227,6 +1237,31 @@ fn render_footprint_settings_block(
     );
     result.content_items.push(("dropdown_cycle:footprint_heat_intensity".to_string(), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
     result.content_items.push(("dropdown_menu:footprint_heat_intensity".to_string(), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
+    row_y += row_height + 8.0;
+
+    // Row: Row grouping dropdown (Raw / 2 / 5 / 10 ticks) — canon-fix wave
+    // 2, item 5. Value converts to a price step (ticks × instrument tick
+    // size) at `build_subscribe_params`'s UI seam (mirrors renko/pnf's
+    // ticks→price conversion) and feeds `FoldParams::group_step`, so a
+    // change here must re-seed the same way every other footprint setting
+    // that reaches the fold machine does.
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Row grouping", x, row_y + row_height / 2.0);
+    let grouping_dropdown_x = x + 140.0;
+    ctx.set_font("12px sans-serif");
+    let grouping_widest_w = ["Raw", "2 ticks", "5 ticks", "10 ticks"].iter()
+        .map(|s| ctx.measure_text(s))
+        .fold(0.0_f64, f64::max);
+    let grouping_dropdown_width = (grouping_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let grouping_dropdown_height = 28.0;
+    let grouping_dropdown_y = row_y + (row_height - grouping_dropdown_height) / 2.0;
+    let grouping_text_w = grouping_dropdown_width - chevron_w;
+    draw_split_dropdown(
+        ctx, grouping_dropdown_x, grouping_dropdown_y, grouping_dropdown_width, grouping_dropdown_height,
+        &settings.footprint_row_grouping_label, row_y + row_height / 2.0, theme,
+    );
+    result.content_items.push(("dropdown_cycle:footprint_row_grouping".to_string(), WidgetRect::new(grouping_dropdown_x, grouping_dropdown_y, grouping_text_w, grouping_dropdown_height)));
+    result.content_items.push(("dropdown_menu:footprint_row_grouping".to_string(), WidgetRect::new(grouping_dropdown_x + grouping_text_w, grouping_dropdown_y, chevron_w, grouping_dropdown_height)));
     row_y += row_height + 16.0;
 
     row_y
@@ -2316,13 +2351,15 @@ pub struct ChartTypeParamSpec {
     /// Optional muted note under the control for a fixed, non-editable
     /// companion value (e.g. pnf's hardcoded reversal=3).
     pub fixed_note: Option<String>,
-    /// Registry's `inline_default` value_id (when set) — mirrors
-    /// `mlc_core::chart_type::ChartTypeDef::inline_default`. Wins over
-    /// `options.first()` for the `0.0` sentinel label, same rule as
-    /// `default_chart_type_param` (mlc-app/src/input/chart_out_events.rs)
-    /// and the toolbar's `tf_button_label` (panel_app.rs) — label and
-    /// subscribe must always agree.
-    pub inline_default: Option<&'static str>,
+    /// Sentinel-state (`param <= 0.0`) preset label, sourced verbatim from
+    /// `mlc_core::chart_type::ChartTypeDef::default_param_label` (canon-fix
+    /// wave 2, item 1: single resolver shared with the toolbar's
+    /// `tf_button_label` (panel_app.rs) and `default_chart_type_param`
+    /// (mlc-app/src/input/chart_out_events.rs) — label and subscribe must
+    /// always agree). Precomputed at construction so [`Self::current_label`]
+    /// never re-derives the `inline_default`-or-`options.first()` rule
+    /// itself.
+    pub default_label: Option<String>,
 }
 
 impl ChartTypeParamSpec {
@@ -2334,15 +2371,8 @@ impl ChartTypeParamSpec {
     fn current_label(&self, numeric_value: f64) -> String {
         if numeric_value <= 0.0 {
             // Sentinel: nothing user-set yet — show the registry's
-            // `inline_default` preset (falling back to the ladder's first
-            // entry when unset) rather than "0".
-            let inline_label = self.inline_default.and_then(|d| {
-                self.options.iter().find(|o| o.value_id == d).map(|o| o.label.to_string())
-            });
-            return inline_label
-                .or_else(|| self.inline_default.map(str::to_string))
-                .or_else(|| self.options.first().map(|o| o.label.to_string()))
-                .unwrap_or_default();
+            // canonical default preset label rather than "0".
+            return self.default_label.clone().unwrap_or_default();
         }
         self.options.iter()
             .find(|o| o.value_id.parse::<f64>().ok() == Some(numeric_value))
@@ -2388,6 +2418,6 @@ pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
             .map(|o| ChartTypeParamOption { value_id: o.value_id, label: o.label })
             .collect(),
         fixed_note: core_spec.fixed_note.map(str::to_string),
-        inline_default: def.inline_default,
+        default_label: def.default_param_label().map(str::to_string),
     })
 }

@@ -386,6 +386,64 @@ pub struct ChartTypeDef {
     pub machine: MachineKind,
 }
 
+impl ChartTypeDef {
+    /// Single canonical resolver for "what preset option does this
+    /// chart_type's numeric parameter default to before the user has picked
+    /// anything" — `inline_default` matched against `param_spec.options` by
+    /// `value_id`, else the FIRST preset in `param_spec.options`. `None`
+    /// when this chart_type has no `param_spec` at all (not a
+    /// `Param`-resolution type, or a registry drift) OR when `inline_default`
+    /// is set but doesn't literally match any option's `value_id` (a
+    /// registry drift — see [`Self::default_param_value`]/
+    /// [`Self::default_param_label`] for the raw-`inline_default` fallback
+    /// that covers that case without silently substituting the wrong
+    /// preset).
+    ///
+    /// Canon-fix wave 2, item 1: this replaces four independently-maintained
+    /// copies of the exact same "`inline_default`-or-`options.first()`" rule
+    /// that had drifted apart (`mlc-app::input::chart_out_events::
+    /// default_chart_type_param`, `mlc-backend::chart_type::engine::
+    /// registry_default_param`, `mlc-app-layout::panel_app`'s inline
+    /// `tf_button_label` match arm, `mlc-app-layout::chart_settings::
+    /// ChartTypeParamSpec::current_label`'s inline match arm) — every reader
+    /// (legend, toolbar, settings modal, subscribe) now calls
+    /// [`Self::default_param_value`]/[`Self::default_param_label`] so the
+    /// sentinel (`param <= 0.0`) fallback can never diverge across surfaces
+    /// again.
+    pub fn default_param_option(&self) -> Option<&'static ChartTypeParamOption> {
+        let spec = self.param_spec?;
+        if let Some(d) = self.inline_default {
+            return spec.options.iter().find(|o| o.value_id == d);
+        }
+        spec.options.first()
+    }
+
+    /// Numeric default: `inline_default` matched to an option's `value_id`
+    /// when possible ([`Self::default_param_option`]), else `inline_default`
+    /// parsed directly (covers a registry row whose `inline_default` isn't
+    /// literally one of its own preset `value_id`s — e.g. `"10.0"` vs a
+    /// `"10"` option), else the ladder's first preset, else `None`.
+    pub fn default_param_value(&self) -> Option<f64> {
+        if let Some(opt) = self.default_param_option() {
+            return opt.value_id.parse::<f64>().ok();
+        }
+        self.inline_default
+            .and_then(|d| d.parse::<f64>().ok())
+            .or_else(|| self.param_spec?.options.first()?.value_id.parse::<f64>().ok())
+    }
+
+    /// Label default — same three-tier fallback as
+    /// [`Self::default_param_value`], used by the toolbar TF button and the
+    /// settings-modal dropdown to print the sentinel-state preset name (e.g.
+    /// "8x" instead of "0x").
+    pub fn default_param_label(&self) -> Option<&'static str> {
+        if let Some(opt) = self.default_param_option() {
+            return Some(opt.label);
+        }
+        self.inline_default.or_else(|| self.param_spec?.options.first().map(|o| o.label))
+    }
+}
+
 // ── TPO's TF whitelist ("minutes and up") ───────────────────────────────────
 //
 // TPO's letter-frequency bucketing expects a wall-clock minute-or-coarser
@@ -827,7 +885,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: VOLUME_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("10.0"),
+        inline_default: Some("10"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
@@ -1034,7 +1092,13 @@ static REGISTRY: &[ChartTypeDef] = &[
         has_bespoke_settings_block: false,
         resolution: ResolutionKind::Param { suffix: "B" },
         identity: IdentityKey::OpenTime,
-        render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
+        // `WickPolicy::Toggle` (canon-fix wave 2, item 3) — renko bricks
+        // gained a `RenkoBrick::wick` field (intra-brick adverse excursion
+        // beyond the body); "Show wicks" mirrors the `bar_family_wicks`
+        // panel-toggle plumbing every other `Toggle` chart type already
+        // uses (see `active_series::effective_wick_flag`,
+        // `chart_settings.rs`'s checkbox row).
+        render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: Some(2), alpha_x100: None },
         machine: MachineKind::Renko,
     },
@@ -1329,13 +1393,16 @@ mod tests {
     }
 
     /// `RenderPolicy` must match today's `effective_wick_flag` reality: only
-    /// range_bar/volume_bar/dollar_bar are `Toggle`; only tick_bar has
+    /// range_bar/volume_bar/dollar_bar/renko are `Toggle` (renko added
+    /// canon-fix wave 2, item 3 — `RenkoBrick::wick` is a real intra-brick
+    /// adverse excursion, gated by the same `bar_family_wicks` panel toggle
+    /// the other three already use); only tick_bar has
     /// `intensity_toggle: true`.
     #[test]
     fn render_policy_matches_effective_wick_flag_reality() {
         for d in all() {
             let is_toggle = matches!(d.render_policy.wicks, WickPolicy::Toggle { .. });
-            let expect_toggle = matches!(d.id, "range_bar" | "volume_bar" | "dollar_bar");
+            let expect_toggle = matches!(d.id, "range_bar" | "volume_bar" | "dollar_bar" | "renko");
             assert_eq!(is_toggle, expect_toggle, "wick Toggle policy mismatch for {}", d.id);
             let expect_intensity = d.id == "tick_bar";
             assert_eq!(d.render_policy.intensity_toggle, expect_intensity, "intensity_toggle mismatch for {}", d.id);
@@ -1416,8 +1483,9 @@ mod tests {
     }
 
     /// `RenderPolicy::bar_family_wicks_default` (B3, S5) must return the
-    /// `Toggle { default }` value for the 3 bar-family types, and `false`
-    /// for every other row (no toggle concept).
+    /// `Toggle { default }` value for the 4 bar-family types (renko added
+    /// canon-fix wave 2, item 3), and `false` for every other row (no
+    /// toggle concept).
     #[test]
     fn bar_family_wicks_default_matches_wick_policy() {
         for d in all() {
@@ -1430,8 +1498,8 @@ mod tests {
                 "{} bar_family_wicks_default mismatch", d.id,
             );
         }
-        // Today's 3 bar-family rows all default OFF.
-        for id in ["range_bar", "volume_bar", "dollar_bar"] {
+        // Today's 4 bar-family rows all default OFF.
+        for id in ["range_bar", "volume_bar", "dollar_bar", "renko"] {
             let d = by_id(id).unwrap();
             assert!(!d.render_policy.bar_family_wicks_default(), "{id} should default OFF");
         }

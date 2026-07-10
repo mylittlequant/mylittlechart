@@ -67,6 +67,33 @@ pub fn draw_renko(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         ctx.set_stroke_color("rgba(0, 0, 0, 0.35)");
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(body_x + 0.5, body_y + 0.5, bar_w.max(2.0) - 1.0, body_h - 1.0);
+
+        // Wick: intra-brick adverse excursion beyond the body
+        // (`RenkoBrick::wick`, canon-fix wave 2, item 3) — a thin
+        // directional line from the body edge the price pushed AGAINST
+        // (an up brick's wick extends below `bottom`; a down brick's above
+        // `top`), gated by `state.wick_enabled` (the SAME `WickPolicy::
+        // Toggle` + `bar_family_wicks` plumbing candle/range/volume/dollar
+        // bars already use — see `active_series::effective_wick_flag`).
+        // Live in-progress brick: the data plane doesn't currently surface
+        // one for renko (bricks arrive fully closed), so there is no
+        // separate "live brick" wick to draw here — see this crate's
+        // canon-fix wave 2 report, item 3.
+        if state.wick_enabled && brick.wick > 0.0 {
+            let wick_color = if brick.up { &theme.wick_up } else { &theme.wick_down };
+            let wick_price = if brick.up { brick.bottom - brick.wick } else { brick.top + brick.wick };
+            let wick_y = rect.y + viewport.price_to_y(
+                wick_price, price_scale.price_min, price_scale.price_max,
+            );
+            let (from_y, to_y) = if brick.up { (bot_y, wick_y) } else { (top_y, wick_y) };
+            ctx.set_stroke_color(wick_color);
+            ctx.set_stroke_width(1.0);
+            ctx.set_line_dash(&[]);
+            ctx.begin_path();
+            ctx.move_to(cx, from_y);
+            ctx.line_to(cx, to_y);
+            ctx.stroke();
+        }
     }
 }
 

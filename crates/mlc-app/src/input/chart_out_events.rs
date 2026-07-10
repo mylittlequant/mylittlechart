@@ -760,10 +760,27 @@ impl ChartApp {
                                                 // (or `ops.clear_slot` for every other trade-
                                                 // fold type) BEFORE this fires — the fold
                                                 // reseed reads it to decide the OHLC mirror.
-                                                if let (Some(bid), Some(fold_params)) = (
+                                                if let (Some(bid), Some(mut fold_params)) = (
                                                     self.bubble_for_chart(cid),
                                                     mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
                                                 ) {
+                                                    // Footprint row-grouping preset (canon-fix
+                                                    // wave 2, item 5) — persisted per-panel, not
+                                                    // carried by `SubscribeParams`; apply it here
+                                                    // so switching TO footprint on a panel with a
+                                                    // saved grouping preset seeds grouped from the
+                                                    // first fold, same as `ignite_derived_windows`'s
+                                                    // cold-restore path and the live-toggle path
+                                                    // (`apply_footprint_group_ticks`).
+                                                    if ct == "footprint" {
+                                                        let group_ticks = self.panel_app.panel_grid.containers().get(&cid)
+                                                            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+                                                            .map(|p| p.footprint_display.group_ticks)
+                                                            .unwrap_or(0);
+                                                        if group_ticks > 0 {
+                                                            fold_params.group_step = group_ticks as f64 * tick_size;
+                                                        }
+                                                    }
                                                     let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
                                                     if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                                                         bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
@@ -968,6 +985,11 @@ impl ChartApp {
                 };
                 self.apply_footprint_interval(static_iv, iv_ms);
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                state_mutated = true;
+            }
+            ChartOutEvent::UpdateFootprintGroupTicks { ticks } => {
+                eprintln!("[ChartApp] UpdateFootprintGroupTicks: {}", ticks);
+                self.apply_footprint_group_ticks(ticks);
                 state_mutated = true;
             }
             ChartOutEvent::Consumed => {}
@@ -2664,6 +2686,55 @@ impl ChartApp {
         }
     }
 
+    /// Apply a new footprint row-grouping preset (canon-fix wave 2, item 5)
+    /// to the active window — converts `ticks` to a price step via the
+    /// instrument's tick size (mirrors renko/pnf's ticks→price conversion at
+    /// `build_subscribe_params`), then re-folds the SAME trade layer through
+    /// a fresh `TradeToFootprintDerived(interval_ms, group_step)` machine,
+    /// zero network — narrower sibling of [`Self::apply_footprint_interval`]:
+    /// grouping is a row-binning change, not a time-bucket-boundary change,
+    /// so the bucket `interval_ms`/`bubble.timeframe` and the hybrid kline
+    /// backdrop are left untouched; only `footprint_bars` is cleared and
+    /// refolded.
+    fn apply_footprint_group_ticks(&mut self, ticks: u32) {
+        let Some(active_leaf) = self.panel_app.panel_grid.active_container() else { return };
+        let cid = active_leaf.id;
+        let symbol_opt = self.symbol_for_chart(cid);
+        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+        let (Some(symbol), Some(at)) = (symbol_opt, at_opt) else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let eid_str = self.active_exchange.as_str();
+        if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+            return;
+        }
+        let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+        let bid = self.bubble_for_chart(cid);
+        let interval_ms = self.timeframe_for_chart(cid).map(|tf| tf.interval_ms).unwrap_or(60_000);
+        let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+        let group_step = if ticks > 0 && tick_size > 0.0 { ticks as f64 * tick_size } else { 0.0 };
+        if let Some(bid) = bid {
+            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                bubble.clear_footprint();
+            });
+        }
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            window.begin_fresh_load();
+            window.needs_snap_after_backfill = true;
+        }
+        if let Some(bid) = bid {
+            let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+            let fold_params = mlc_backend::bubble::FoldParams { interval_ms, group_step, ..Default::default() };
+            if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                bid, "footprint", fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                self.active_exchange, &symbol, at, Some(derived_target),
+            ) {
+                self.react_to_bubble_event(&ev, now_ms());
+            }
+        }
+    }
+
     /// Ignite the derived-pipeline for every restored window whose chart_type
     /// is derived (footprint / renko / pnf / kagi / three_line_break / tpo /
     /// range_bar / volume_bar / tick_bar / dollar_bar / *_imbalance_bar /
@@ -2686,9 +2757,9 @@ impl ChartApp {
     /// the same as the runtime switch so a preset lands on the SAME live
     /// pipeline as if the user had just clicked the picker.
     pub(crate) fn ignite_derived_windows(&mut self) {
-        let targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, &'static str, &'static str, f64, mlc_core::state::Timeframe)> =
-            self.panel_app.panel_grid.containers().keys()
-                .filter_map(|cid| {
+        let targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, &'static str, &'static str, f64, mlc_core::state::Timeframe, u32)> =
+            self.panel_app.panel_grid.containers().iter()
+                .filter_map(|(cid, w)| {
                     let ct = self.chart_type_for_chart(*cid)?;
                     let is_derived = crate::active_series::chart_type_is_derived_seed(ct);
                     if !is_derived { return None; }
@@ -2699,10 +2770,18 @@ impl ChartApp {
                     let iv = self.chart_type_interval_for_chart(*cid).unwrap_or("1m");
                     let param = self.chart_type_param_for_chart(*cid).unwrap_or(0.0);
                     let tf = self.timeframe_for_chart(*cid).unwrap_or_default();
-                    Some((*cid, sym.to_string(), exch.to_string(), at, ct, iv, param, tf))
+                    // Footprint row-grouping preset (canon-fix wave 2, item
+                    // 5) — persisted on the panel, not the bubble, so it
+                    // survives a cold restore the same way `bar_family_wicks`
+                    // does; read here so the cold-boot fold matches whatever
+                    // the user last set in the settings modal.
+                    let group_ticks = self.panels_store.chart_panel.get(&w.chart_panel_id)
+                        .map(|p| p.footprint_display.group_ticks)
+                        .unwrap_or(0);
+                    Some((*cid, sym.to_string(), exch.to_string(), at, ct, iv, param, tf, group_ticks))
                 })
                 .collect();
-        for (cid, sym, exch, at, ct, iv, param, tf) in targets {
+        for (cid, sym, exch, at, ct, iv, param, tf, group_ticks) in targets {
             let eid = digdigdig3::ExchangeId::from_str(&exch)
                 .unwrap_or(digdigdig3::ExchangeId::Binance);
             if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
@@ -2744,10 +2823,19 @@ impl ChartApp {
                 // instead of an `ops.subscribe` station derived sub —
                 // mirrors the `ChangeChartType`/`UpdateChartTypeParam`
                 // cutover above.
-                if let (Some(bid), Some(fold_params)) = (
+                if let (Some(bid), Some(mut fold_params)) = (
                     bid,
                     mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
                 ) {
+                    // Footprint row-grouping preset (canon-fix wave 2, item
+                    // 5) — `SubscribeParams`/`build_subscribe_params` don't
+                    // carry a group-ticks axis (footprint's `param_spec` is
+                    // `None`), so the panel-persisted value is converted and
+                    // applied directly onto the resolved `FoldParams` here,
+                    // same as `apply_footprint_group_ticks`'s live-toggle path.
+                    if ct == "footprint" && group_ticks > 0 {
+                        fold_params.group_step = group_ticks as f64 * tick_size;
+                    }
                     let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
                     if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                         bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
@@ -3068,31 +3156,19 @@ fn now_ms() -> u64 {
 }
 
 /// Resolve the code-side default for a `ResolutionKind::Param` chart_type's
-/// numeric parameter: the registry's `inline_default` when present, else the
-/// FIRST preset in its `param_spec.options` ladder — parsed as `f64`.
-///
-/// This is the single source of truth for "what value does this chart_type
-/// subscribe at before the user has picked anything" — the toolbar button
-/// label (`panel_app.rs`'s `tf_button_label`) and the settings-modal dropdown
-/// (`chart_settings.rs::ChartTypeParamSpec::current_label`) BOTH already
-/// apply the SAME `inline_default`-first / `options.first()`-fallback rule
-/// for the `param <= 0.0` sentinel state, so [`build_subscribe_params`] must
-/// fall back to that exact same value — otherwise the toolbar can display
-/// one default (e.g. three_line_break's `inline_default` "3") while the
-/// backend silently subscribes at the ladder's first preset ("2") instead
-/// (bug found 2026-07-10: tick_bar showed "1T" pre-first-pick but subscribed
-/// count=100 — `TICK_BAR_OPTIONS.first() == "1"` vs the old hardcoded `100`
-/// fallback here; the `inline_default` field exists precisely because a
-/// type's canonical default is not always its ladder's first entry — e.g.
-/// three_line_break's `inline_default` "3" vs `options.first()` "2"). `None`
-/// when the type has no `param_spec` (not a Param chart_type, or a registry
-/// drift) — callers keep their own last-resort literal for that defensive
-/// case.
+/// numeric parameter — thin forward to the single canonical resolver
+/// [`mlc_core::chart_type::ChartTypeDef::default_param_value`] (canon-fix
+/// wave 2, item 1: this used to be an independent copy of the
+/// `inline_default`-or-`options.first()` rule; now every reader — legend,
+/// toolbar button label, settings-modal dropdown, and this subscribe-time
+/// fallback — calls the SAME registry method, so they can never diverge
+/// again (bug found 2026-07-10: tick_bar showed "1T" pre-first-pick but
+/// subscribed count=100 — `TICK_BAR_OPTIONS.first() == "1"` vs the old
+/// hardcoded `100` fallback here). `None` when the type has no `param_spec`
+/// (not a Param chart_type, or a registry drift) — callers keep their own
+/// last-resort literal for that defensive case.
 fn default_chart_type_param(ct: &str) -> Option<f64> {
-    let def = mlc_core::chart_type::by_id(ct)?;
-    let spec = def.param_spec?;
-    let raw = def.inline_default.or_else(|| spec.options.first().map(|o| o.value_id))?;
-    raw.parse::<f64>().ok()
+    mlc_core::chart_type::by_id(ct)?.default_param_value()
 }
 
 /// Map a `chart_type` id + its raw UI param/interval into the

@@ -86,6 +86,7 @@ impl ChartTemplate {
                 footprint_buy_color: "#26a69a".to_string(),
                 footprint_sell_color: "#ef5350".to_string(),
                 footprint_heat_intensity_label: "Normal".to_string(),
+                footprint_row_grouping_label: "Raw".to_string(),
                 tick_intensity: false,
                 bar_family_wicks: false,
                 precision_label: "Авто".to_string(),

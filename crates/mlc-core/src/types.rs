@@ -193,6 +193,20 @@ pub const STATUS_BAR_HEIGHT: f64 = 0.0;
 // Data Structures
 // =============================================================================
 
+/// Footprint stacked-imbalance-zone detection threshold (F1) — 3+
+/// CONSECUTIVE diagonal-imbalanced cells on the same side at this ratio
+/// mark a `stacked_ask_start`/`stacked_bid_start` run (see
+/// [`FootprintBar::compute_static_extras`]'s `imbalance_ratio` param). Canon
+/// value 3.0× (300%) — distinct from the renderer's PER-CELL diagonal
+/// threshold (canon 1.5×/150%, `CELL_IMBALANCE_RATIO` in
+/// `mlc-app-layout::chart_render::footprint`), which colors a single cell's
+/// digits without requiring a run. The two were previously conflated under
+/// one `IMBALANCE_RATIO = 3.0` renderer-side constant (canon-fix wave 2,
+/// item 2) — this is the canonical value the ONE call site that computes
+/// stacked zones (`mlc-backend::bubble::view_fold::footprint_point_to_bar`)
+/// must pass.
+pub const FOOTPRINT_STACKED_IMBALANCE_RATIO: f64 = 3.0;
+
 /// Per-price-level breakdown inside a footprint bar.
 ///
 /// `buy_vol` = aggressive buy volume (market buy, lifted offer).
@@ -501,6 +515,14 @@ pub struct RenkoBrick {
     pub up: bool,
     pub volume: f64,
     pub trades_count: u64,
+    /// Intra-brick adverse extreme beyond the body, `0.0` when none —
+    /// mirrors `digdigdig3_station::data::RenkoBrickPoint::wick` verbatim
+    /// (canon-fix wave 2, item 3). For an up brick, the wick is the
+    /// distance below `bottom` the price dipped before reversing to close
+    /// the brick; for a down brick, the distance above `top`. `#[serde(default)]`
+    /// so old snapshots without the field hydrate to `0.0` (no wick).
+    #[serde(default)]
+    pub wick: f64,
 }
 
 impl RenkoBrick {

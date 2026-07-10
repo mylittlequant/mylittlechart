@@ -915,6 +915,21 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] instrument:footprint_heat_intensity = {}", value);
                 }
+                "footprint_row_grouping" => {
+                    // Row-grouping preset (0/2/5/10 ticks, canon-fix wave 2
+                    // item 5) — reseeds the footprint fold on change, same
+                    // as any other setting that reaches `FoldParams` (mirrors
+                    // `UpdateChartTypeParam`'s resubscribe path).
+                    let ticks: u32 = value.parse().unwrap_or(0);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.group_ticks = ticks;
+                    }
+                    self.process_chart_out_event(
+                        mlc_core::events::ChartOutEvent::UpdateFootprintGroupTicks { ticks }
+                    );
+                    eprintln!("[ChartApp] instrument:footprint_row_grouping = {} ticks", ticks);
+                }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
@@ -1005,6 +1020,9 @@ impl ChartApp {
                 }
                 "footprint_heat_intensity" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("footprint_heat_intensity");
+                }
+                "footprint_row_grouping" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("footprint_row_grouping");
                 }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);

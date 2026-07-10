@@ -197,6 +197,15 @@ pub struct FootprintDisplayOptions {
     /// color, alpha by volume share). Default `Normal` (matches pre-toggle
     /// behavior — the multiplier is a no-op at 1.0).
     pub heat_intensity: FootprintHeatIntensity,
+    /// Row-grouping width in instrument ticks (canon-fix wave 2, item 5) —
+    /// `0` = raw ungrouped rows (one row per tick, matches pre-toggle
+    /// behavior), `>0` bins adjacent price levels into `ticks × tick_size`
+    /// -wide rows before rendering (see `FoldParams::group_step`,
+    /// `TradeToFootprintDerived`'s `group_step` param in dig3). Converted to
+    /// a price step at the subscribe seam the same way renko/pnf convert
+    /// their own tick-based params (`build_subscribe_params`). Default `0`.
+    #[serde(default)]
+    pub group_ticks: u32,
 }
 
 impl Default for FootprintDisplayOptions {
@@ -205,6 +214,7 @@ impl Default for FootprintDisplayOptions {
             show_abs_markers: true,
             show_volume_text: true,
             heat_intensity: FootprintHeatIntensity::Normal,
+            group_ticks: 0,
         }
     }
 }

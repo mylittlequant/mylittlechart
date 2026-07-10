@@ -462,26 +462,22 @@ pub fn chart_toolbar_render_toolbars(
                 Some(def) => match def.resolution {
                     mlc_core::chart_type::ResolutionKind::Param { suffix } => {
                         active_chart_type_param.map(|v| {
-                            // `v <= 0.0` is the pre-first-subscribe sentinel
-                            // (mirrors `ChartTypeParamSpec::current_label` in
-                            // chart_settings.rs) — show the registry's
-                            // `inline_default` preset (falling back to the
-                            // ladder's first entry when unset) instead of a
-                            // misleading "0<suffix>". Same
-                            // inline_default-first / options.first()-fallback
-                            // rule as `default_chart_type_param`
-                            // (mlc-app/src/input/chart_out_events.rs) — label
-                            // and subscribe must always agree.
+                            // `v <= 0.0` is the pre-first-subscribe sentinel —
+                            // show the registry's canonical default preset
+                            // label via `ChartTypeDef::default_param_label`
+                            // (canon-fix wave 2, item 1: single resolver
+                            // shared with `chart_settings.rs`'s
+                            // `ChartTypeParamSpec::current_label` and
+                            // `default_chart_type_param`
+                            // (mlc-app/src/input/chart_out_events.rs)) instead
+                            // of a misleading "0<suffix>" — label and
+                            // subscribe must always agree.
                             if v > 0.0 {
                                 format_resolution_param(v, suffix)
                             } else {
-                                def.param_spec.and_then(|spec| {
-                                    let label = def.inline_default
-                                        .and_then(|d| spec.options.iter().find(|o| o.value_id == d).map(|o| o.label))
-                                        .or(def.inline_default)
-                                        .or_else(|| spec.options.first().map(|o| o.label));
-                                    label.map(|l| format_resolution_param_label(l, suffix))
-                                }).unwrap_or_else(|| format_resolution_param(v, suffix))
+                                def.default_param_label()
+                                    .map(|l| format_resolution_param_label(l, suffix))
+                                    .unwrap_or_else(|| format_resolution_param(v, suffix))
                             }
                         })
                     }

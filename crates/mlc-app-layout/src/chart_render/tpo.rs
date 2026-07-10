@@ -22,6 +22,14 @@ const LETTER_CELL_PX: f64 = 8.0;
 const SESSION_GAP_PX: f64 = 8.0;
 /// Height reserved above the profile body for the date header.
 const DATE_HEADER_PX: f64 = 16.0;
+/// Below this row height (px), individual letter glyphs are no longer
+/// legible — collapse the profile to solid row blocks instead (mirrors
+/// footprint's `MIN_BAR_WIDTH_PX`/`MIN_FONT_SIZE_PX` legibility gate,
+/// `chart_render/footprint.rs`).
+const MIN_LEGIBLE_ROW_PX: f64 = 6.0;
+/// First 2 chronological TPO periods (letters 'A' and 'B') define the
+/// Initial Balance range — canon Market Profile convention.
+const INITIAL_BALANCE_LETTERS: [char; 2] = ['A', 'B'];
 
 pub fn draw_tpo(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let sessions = match state.tpo_sessions {
@@ -85,7 +93,19 @@ fn render_session(
     ctx.set_font(&format!("{:.0}px monospace", font_size));
 
     let max_letters = session.rows.iter().map(|(_, l)| l.len()).max().unwrap_or(0);
-    let block_w = (max_letters as f64 * LETTER_CELL_PX).max(LETTER_CELL_PX);
+    // Collapsed-block regime (below `MIN_LEGIBLE_ROW_PX`, canon-fix wave 2
+    // item 6a): individual letter glyphs would overlap into unreadable
+    // smears at this row height, so the block width degrades to a fixed
+    // narrow strip and letters are never drawn — only the same solid
+    // row-block fill the legible path already paints via `is_single_print`/
+    // POC/VA tints, just without any glyph layer on top (mirrors
+    // footprint's `draw_candles` fallback below its own legibility floor).
+    let collapsed = row_h < MIN_LEGIBLE_ROW_PX;
+    let block_w = if collapsed {
+        LETTER_CELL_PX * 3.0
+    } else {
+        (max_letters as f64 * LETTER_CELL_PX).max(LETTER_CELL_PX)
+    };
 
     // VA fill — light teal band from VAL to VAH.
     let va_top_y = rect.y + state.viewport.price_to_y(
@@ -99,6 +119,25 @@ fn render_session(
     ctx.set_fill_color("rgba(38, 166, 154, 0.12)");
     ctx.fill_rect(x_origin, va_y, block_w, va_h);
 
+    // Initial Balance overlay (canon-fix wave 2, item 6d) — the price range
+    // spanned by the first 2 chronological TPO periods (letters 'A'/'B').
+    // Drawn as a bordered band BEHIND the row content so letters/blocks
+    // still read on top of it. Data already present on `TpoSession.rows`
+    // (letters carry their chronological bucket identity verbatim from
+    // `digdigdig3_station::derived`'s `alphabet[bi % 52]` assignment) — no
+    // data-plane gap.
+    if let Some((ib_lo, ib_hi)) = initial_balance_range(session) {
+        let ib_top_y = rect.y + state.viewport.price_to_y(ib_hi, price_scale.price_min, price_scale.price_max);
+        let ib_bot_y = rect.y + state.viewport.price_to_y(ib_lo, price_scale.price_min, price_scale.price_max);
+        let ib_y = ib_top_y.min(ib_bot_y);
+        let ib_h = (ib_bot_y - ib_top_y).abs().max(row_h);
+        ctx.set_stroke_color("rgba(255, 255, 255, 0.35)");
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[2.0, 2.0]);
+        ctx.stroke_rect(x_origin + 0.5, ib_y + 0.5, block_w - 1.0, ib_h - 1.0);
+        ctx.set_line_dash(&[]);
+    }
+
     // POC row tint (yellow band).
     let poc_y = rect.y + state.viewport.price_to_y(
         session.poc_price, price_scale.price_min, price_scale.price_max,
@@ -106,21 +145,52 @@ fn render_session(
     ctx.set_fill_color("rgba(255, 235, 59, 0.18)");
     ctx.fill_rect(x_origin, poc_y, block_w, row_h);
 
-    // Letters per row.
-    ctx.set_text_align(uzor::render::TextAlign::Left);
-    ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+    // Single-print rows (canon-fix wave 2, item 6c) — exactly 1 letter
+    // touched this price level. Highlighted with a dashed border, same
+    // visual language as footprint's single-print marker
+    // (`chart_render/footprint.rs`'s `is_single_print` dashed-rect).
     for (price, letters) in &session.rows {
+        if letters.len() != 1 { continue; }
         if !price.is_finite() { continue; }
-        let y_top = rect.y + state.viewport.price_to_y(
-            *price, price_scale.price_min, price_scale.price_max,
-        );
-        let cy = y_top + row_h * 0.5;
-        // Inside-VA rows: slightly brighter than the muted outside rows.
-        let in_va = *price >= session.val_price && *price <= session.vah_price;
-        let color = if in_va { "#cfd8dc" } else { "rgba(120, 144, 156, 0.85)" };
-        ctx.set_fill_color(color);
-        let s: String = letters.iter().collect();
-        ctx.fill_text(&s, x_origin + 2.0, cy);
+        let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
+        ctx.set_stroke_color("rgba(255, 255, 255, 0.45)");
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[3.0, 2.0]);
+        ctx.stroke_rect(x_origin + 0.5, y_top + 0.5, block_w - 1.0, row_h - 1.0);
+        ctx.set_line_dash(&[]);
+    }
+
+    if collapsed {
+        // Solid row blocks, alpha scaled by relative letter count (denser
+        // rows = more opaque) — same "collapse to a filled shape" doctrine
+        // footprint/renko use below their own legibility floors.
+        let max_count = max_letters.max(1) as f64;
+        for (price, letters) in &session.rows {
+            if letters.is_empty() || !price.is_finite() { continue; }
+            let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
+            let ratio = (letters.len() as f64 / max_count).clamp(0.0, 1.0);
+            let in_va = *price >= session.val_price && *price <= session.vah_price;
+            let base = if in_va { "38, 166, 154" } else { "120, 144, 156" };
+            ctx.set_fill_color(&format!("rgba({base}, {:.2})", 0.25 + ratio * 0.55));
+            ctx.fill_rect(x_origin, y_top, block_w, row_h);
+        }
+    } else {
+        // Letters per row.
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        for (price, letters) in &session.rows {
+            if !price.is_finite() { continue; }
+            let y_top = rect.y + state.viewport.price_to_y(
+                *price, price_scale.price_min, price_scale.price_max,
+            );
+            let cy = y_top + row_h * 0.5;
+            // Inside-VA rows: slightly brighter than the muted outside rows.
+            let in_va = *price >= session.val_price && *price <= session.vah_price;
+            let color = if in_va { "#cfd8dc" } else { "rgba(120, 144, 156, 0.85)" };
+            ctx.set_fill_color(color);
+            let s: String = letters.iter().collect();
+            ctx.fill_text(&s, x_origin + 2.0, cy);
+        }
     }
 
     // POC horizontal line spanning the block.
@@ -130,6 +200,27 @@ fn render_session(
     ctx.move_to(x_origin, poc_y);
     ctx.line_to(x_origin + block_w, poc_y);
     ctx.stroke();
+
+    // Poor High / Poor Low markers (canon-fix wave 2, item 6b) — the
+    // session-extreme row (high or low) was touched by MORE than one TPO
+    // period, meaning price failed to reject cleanly at the extreme (an
+    // "unfinished" auction edge, canon Market Profile "poor high/low").
+    // Drawn as a small triangle at the extreme row's outer edge, distinct
+    // from single-print's dashed border (a poor extreme is never a single
+    // print by definition — >1 letter).
+    ctx.set_text_align(uzor::render::TextAlign::Center);
+    if let Some(price) = poor_high_price(session) {
+        let y_top = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max);
+        ctx.set_fill_color("#ff5252");
+        ctx.set_text_baseline(uzor::render::TextBaseline::Bottom);
+        ctx.fill_text("▲", x_origin + block_w * 0.5, y_top);
+    }
+    if let Some(price) = poor_low_price(session) {
+        let y_bot = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max) + row_h;
+        ctx.set_fill_color("#ff5252");
+        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+        ctx.fill_text("▼", x_origin + block_w * 0.5, y_bot);
+    }
 
     // Date header above the block (e.g. "Jun 17").
     let header_y = rect.y + DATE_HEADER_PX * 0.5;
@@ -143,4 +234,122 @@ fn render_session(
     }
 
     block_w
+}
+
+/// Initial Balance price range (canon-fix wave 2, item 6d) — `(low, high)`
+/// spanned by every row containing letter 'A' or 'B' (the first 2
+/// chronological TPO periods). `None` when the session has no A/B rows yet
+/// (a brand-new session before its second period closes).
+fn initial_balance_range(session: &TpoSession) -> Option<(f64, f64)> {
+    let mut lo: Option<f64> = None;
+    let mut hi: Option<f64> = None;
+    for (price, letters) in &session.rows {
+        if !price.is_finite() { continue; }
+        if !letters.iter().any(|c| INITIAL_BALANCE_LETTERS.contains(c)) { continue; }
+        lo = Some(lo.map_or(*price, |l: f64| l.min(*price)));
+        hi = Some(hi.map_or(*price, |h: f64| h.max(*price)));
+    }
+    match (lo, hi) {
+        (Some(lo), Some(hi)) => Some((lo, hi)),
+        _ => None,
+    }
+}
+
+/// Poor High marker price (canon-fix wave 2, item 6b) — the session's
+/// highest-price row, when it was touched by MORE than one TPO period
+/// (price failed to reject cleanly at the extreme). `None` for an empty
+/// session or a clean (single-letter) high.
+fn poor_high_price(session: &TpoSession) -> Option<f64> {
+    session.rows.iter()
+        .filter(|(p, _)| p.is_finite())
+        .max_by(|(p1, _), (p2, _)| p1.partial_cmp(p2).unwrap_or(std::cmp::Ordering::Equal))
+        .filter(|(_, l)| l.len() > 1)
+        .map(|(p, _)| *p)
+}
+
+/// Poor Low marker price — symmetric counterpart of
+/// [`poor_high_price`] for the session's lowest-price row.
+fn poor_low_price(session: &TpoSession) -> Option<f64> {
+    session.rows.iter()
+        .filter(|(p, _)| p.is_finite())
+        .min_by(|(p1, _), (p2, _)| p1.partial_cmp(p2).unwrap_or(std::cmp::Ordering::Equal))
+        .filter(|(_, l)| l.len() > 1)
+        .map(|(p, _)| *p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_session(rows: Vec<(f64, &str)>) -> TpoSession {
+        let rows: Vec<(f64, Vec<char>)> = rows.into_iter()
+            .map(|(p, letters)| (p, letters.chars().collect()))
+            .collect();
+        let high = rows.iter().map(|(p, _)| *p).fold(f64::NEG_INFINITY, f64::max);
+        let low = rows.iter().map(|(p, _)| *p).fold(f64::INFINITY, f64::min);
+        TpoSession {
+            open_time: 0,
+            tick_size: 1.0,
+            session_high: high,
+            session_low: low,
+            poc_price: rows.first().map(|(p, _)| *p).unwrap_or(0.0),
+            vah_price: high,
+            val_price: low,
+            rows,
+        }
+    }
+
+    #[test]
+    fn initial_balance_range_spans_a_and_b_rows() {
+        let session = mk_session(vec![
+            (100.0, "A"),
+            (101.0, "AB"),
+            (102.0, "B"),
+            (103.0, "C"),
+            (104.0, "CD"),
+        ]);
+        assert_eq!(initial_balance_range(&session), Some((100.0, 102.0)));
+    }
+
+    #[test]
+    fn initial_balance_range_none_when_no_ab_rows() {
+        let session = mk_session(vec![(100.0, "C"), (101.0, "D")]);
+        assert_eq!(initial_balance_range(&session), None);
+    }
+
+    #[test]
+    fn poor_high_detected_when_extreme_row_has_multiple_letters() {
+        let session = mk_session(vec![
+            (100.0, "A"),
+            (101.0, "AB"),
+            (102.0, "BC"), // session high, multi-letter -> poor high
+        ]);
+        assert_eq!(poor_high_price(&session), Some(102.0));
+        assert_eq!(poor_low_price(&session), None, "low row has a single letter -> clean low");
+    }
+
+    #[test]
+    fn poor_low_detected_when_extreme_row_has_multiple_letters() {
+        let session = mk_session(vec![
+            (100.0, "AB"), // session low, multi-letter -> poor low
+            (101.0, "B"),
+            (102.0, "C"), // session high, single letter -> clean high
+        ]);
+        assert_eq!(poor_low_price(&session), Some(100.0));
+        assert_eq!(poor_high_price(&session), None);
+    }
+
+    #[test]
+    fn single_print_rows_are_exactly_one_letter() {
+        let session = mk_session(vec![
+            (100.0, "A"),
+            (101.0, "AB"),
+            (102.0, "C"),
+        ]);
+        let single_prints: Vec<f64> = session.rows.iter()
+            .filter(|(_, l)| l.len() == 1)
+            .map(|(p, _)| *p)
+            .collect();
+        assert_eq!(single_prints, vec![100.0, 102.0]);
+    }
 }

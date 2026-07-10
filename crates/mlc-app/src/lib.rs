@@ -1363,9 +1363,15 @@ impl ChartApp {
                 if value > 0.0 {
                     mlc_app_layout::panel_app::format_resolution_param(value, suffix)
                 } else {
-                    def.param_spec
-                        .and_then(|spec| spec.options.first())
-                        .map(|opt| mlc_app_layout::panel_app::format_resolution_param_label(opt.label, suffix))
+                    // Sentinel (`value <= 0.0`, pre-first-subscribe) — same
+                    // canonical resolver the toolbar/modal/subscribe use
+                    // (canon-fix wave 2, item 1:
+                    // `ChartTypeDef::default_param_label`), NOT
+                    // `options.first()` alone — closes the "$1K" vs "$100K"
+                    // legend/toolbar divergence for types whose
+                    // `inline_default` differs from the ladder's first entry.
+                    def.default_param_label()
+                        .map(|label| mlc_app_layout::panel_app::format_resolution_param_label(label, suffix))
                         .unwrap_or_else(|| mlc_app_layout::panel_app::format_resolution_param(value, suffix))
                 }
             }
@@ -4976,10 +4982,14 @@ impl ChartApp {
                 let single_color_tag = self.panel_app.leaf_color_tags.get(&single_leaf_id).copied();
                 // Overlay tab legend uses the resolution-aware label (see
                 // `split_tab_label` above) — distinct from the raw TF name
-                // this tuple otherwise carries.
+                // this tuple otherwise carries. Falls back to empty (mirrors
+                // `split_tab_label`'s `unwrap_or_default()` above), never to
+                // the raw stale `_timeframe` — printing that on a Param-type
+                // chart (e.g. renko) showed a nonsense stale TF instead of
+                // the resolution label.
                 let single_tab_label: String = self.panel_app.panel_grid.active_container_id()
                     .map(|cid| self.resolution_label_for_chart(cid))
-                    .unwrap_or(_timeframe);
+                    .unwrap_or_default();
                 let hit_zones = mlc_app_layout::layout::panel_overlay::render_leaf_tab(
                     ctx,
                     content_rect.x + 2.0,
@@ -8959,6 +8969,13 @@ impl ChartApp {
                     mlc_core::chart::FootprintHeatIntensity::Low => "Low".to_string(),
                     mlc_core::chart::FootprintHeatIntensity::Normal => "Normal".to_string(),
                     mlc_core::chart::FootprintHeatIntensity::High => "High".to_string(),
+                },
+                footprint_row_grouping_label: match settings_panel
+                    .map(|p| p.footprint_display.group_ticks)
+                    .unwrap_or(0)
+                {
+                    0 => "Raw".to_string(),
+                    n => format!("{n} ticks"),
                 },
                 tick_intensity: css.tick_intensity,
                 bar_family_wicks: css.bar_family_wicks,

@@ -124,6 +124,13 @@ pub enum ChartOutEvent {
     /// re-issues the footprint subscription.
     UpdateChartTypeInterval { interval: String },
 
+    /// Commit a new row-grouping preset (0/2/5/10 ticks, canon-fix wave 2
+    /// item 5) for the `"footprint"` chart type. Emitted by the Instrument
+    /// tab's "Row grouping" dropdown; handler converts `ticks` to a price
+    /// step via the instrument tick size and re-folds `footprint_bars`
+    /// through a fresh grouped fold machine, zero network.
+    UpdateFootprintGroupTicks { ticks: u32 },
+
     // === Overlays (C10 Volume Profile family) ===
     /// Toggle the Volume Profile right-side overlay on the active chart.
     ToggleVolumeProfileOverlay,

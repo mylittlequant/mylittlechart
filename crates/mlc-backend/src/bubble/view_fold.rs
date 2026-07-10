@@ -237,6 +237,7 @@ fn renko_point_to_brick(p: &digdigdig3_station::data::RenkoBrickPoint) -> mlc_co
         up: p.up,
         volume: p.volume,
         trades_count: p.trades_count,
+        wick: p.wick,
     }
 }
 
@@ -304,6 +305,13 @@ pub struct FoldParams {
     /// `footprint`: time-bucket width in milliseconds
     /// (`TradeToFootprintDerived::new`'s `interval_ms`).
     pub interval_ms: i64,
+    /// `footprint`: row-grouping price step (`TradeToFootprintDerived::new`'s
+    /// `group_step`) — `0.0` = raw ungrouped rows (one row per tick), `> 0.0`
+    /// bins trades into `group_step`-wide rows. Resolved from
+    /// `footprint_group_ticks × tick_size` at the UI seam (see
+    /// `chart_out_events.rs::build_subscribe_params`, mirrors how renko/pnf
+    /// convert ticks → price for `scaled_units`).
+    pub group_step: f64,
     /// `tpo` (both flavours): letter-bucket width in minutes.
     pub freq_minutes: u16,
 }
@@ -534,7 +542,7 @@ impl TradeFoldMachine {
                 TradeToVolumeImbalanceDerived::new(params.alpha, params.min_ticks),
             )),
             MachineKind::RunBar => Some(TradeFoldMachine::RunBar(TradeToRunBarDerived::new(params.alpha, params.min_ticks))),
-            MachineKind::Footprint => Some(TradeFoldMachine::Footprint(TradeToFootprintDerived::new(params.interval_ms))),
+            MachineKind::Footprint => Some(TradeFoldMachine::Footprint(TradeToFootprintDerived::new(params.interval_ms, params.group_step))),
             MachineKind::Tpo => match tpo_source {
                 TpoSource::TradeBucket => Some(TradeFoldMachine::TpoTrade(TpoFromTradeDerived::new(params.freq_minutes))),
                 TpoSource::Kline1m => Some(TradeFoldMachine::TpoKline1m(TpoFromKline1mDerived::new(params.freq_minutes))),
@@ -685,7 +693,12 @@ fn footprint_point_to_bar(p: &digdigdig3_station::data::FootprintPoint) -> mlc_c
         }
         if step.is_finite() { step } else { 1.0 }
     };
-    bar.compute_static_extras(3.0, 3, 0.15, 0.05, tick_size);
+    // Stacked-zone ratio (3.0×) — NOT the renderer's per-cell diagonal
+    // threshold (1.5×, `CELL_IMBALANCE_RATIO` in
+    // `mlc-app-layout::chart_render::footprint`); see
+    // `mlc_core::types::FOOTPRINT_STACKED_IMBALANCE_RATIO`'s doc comment
+    // (canon-fix wave 2, item 2).
+    bar.compute_static_extras(mlc_core::types::FOOTPRINT_STACKED_IMBALANCE_RATIO, 3, 0.15, 0.05, tick_size);
     bar
 }
 

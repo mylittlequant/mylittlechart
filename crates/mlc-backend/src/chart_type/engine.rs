@@ -353,21 +353,19 @@ pub fn is_fold_chart_type(chart_type: &str) -> bool {
 }
 
 /// Registry-driven default fallback for a chart_type's numeric param
-/// (chart-type-engine-consolidation B3, S3) — the SAME "`inline_default` or
-/// ladder's first preset" rule `mlc-app::input::chart_out_events::
-/// default_chart_type_param` applies at the UI seam, duplicated here (not
-/// shared as a cross-crate call — `mlc-app` cannot be a dependency of
-/// `mlc-backend`) so [`fold_params_for`]'s defensive fallback branch reads
-/// from the SAME single source of truth (the registry row) instead of an
-/// independent literal. Only reachable when `params` doesn't carry the
-/// `SubscribeParams` shape `def.machine` expects — `chart_out_events.rs`'s
-/// `build_subscribe_params` always produces the matching variant in
-/// practice, so this is a last-resort default, not a live UI path.
+/// (chart-type-engine-consolidation B3, S3) — thin forward to the single
+/// canonical resolver [`mlc_core::chart_type::ChartTypeDef::default_param_value`]
+/// (canon-fix wave 2, item 1: `mlc-core` is the one crate every reader —
+/// `mlc-app`'s UI seam included — already depends on, so the rule now lives
+/// there instead of being duplicated per-crate) so [`fold_params_for`]'s
+/// defensive fallback branch reads from the SAME single source of truth
+/// (the registry row) instead of an independent literal. Only reachable when
+/// `params` doesn't carry the `SubscribeParams` shape `def.machine` expects —
+/// `chart_out_events.rs`'s `build_subscribe_params` always produces the
+/// matching variant in practice, so this is a last-resort default, not a
+/// live UI path.
 fn registry_default_param(def: &mlc_core::chart_type::ChartTypeDef) -> f64 {
-    def.inline_default
-        .or_else(|| def.param_spec.and_then(|spec| spec.options.first().map(|o| o.value_id)))
-        .and_then(|raw| raw.parse::<f64>().ok())
-        .unwrap_or(0.0)
+    def.default_param_value().unwrap_or(0.0)
 }
 
 /// Narrow a resolved `SubscribeParams` (ticks × tick_size already applied at

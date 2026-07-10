@@ -42,10 +42,18 @@ use super::ChartRenderState;
 const MIN_BAR_WIDTH_PX: f64 = 40.0;
 /// Minimum font size (px) considered legible. Below this, collapse.
 const MIN_FONT_SIZE_PX: f64 = 7.0;
-/// Imbalance threshold (ratio of one side to the other on the diagonal
-/// compare). Industry default across ATAS / Sierra / TradingView is
-/// 3.0× (i.e. 300%). Configurable later.
-const IMBALANCE_RATIO: f64 = 3.0;
+/// Per-cell diagonal imbalance threshold — colors a single cell's digits
+/// when `ask[i] / bid[i-1]` (or the symmetric bid case) clears this ratio.
+/// Canon per-cell default is 1.5× (150%), distinct from the stacked-zone
+/// run-detection threshold feeding `FootprintBar::stacked_ask_start`/
+/// `stacked_bid_start` (`mlc_core::types::FOOTPRINT_STACKED_IMBALANCE_RATIO`,
+/// computed station/fold-side at 3.0× — see
+/// `mlc-backend/src/bubble/view_fold.rs`'s `footprint_point_to_bar`). The
+/// two were previously conflated under one `IMBALANCE_RATIO = 3.0` constant
+/// here (canon-fix wave 2, item 2). This renderer only READS the resulting
+/// `stacked_ask_start`/`stacked_bid_start` markers — it never recomputes the
+/// stacked-zone ratio locally.
+const CELL_IMBALANCE_RATIO: f64 = 1.5;
 /// Value Area cumulative fraction (industry standard).
 const VALUE_AREA_FRACTION: f64 = 0.70;
 
@@ -434,11 +442,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             let ask_imb = li > 0
                 && lv.buy_vol > sig_buy_gate
                 && bar.levels[li - 1].sell_vol > 0.0
-                && lv.buy_vol / bar.levels[li - 1].sell_vol >= IMBALANCE_RATIO;
+                && lv.buy_vol / bar.levels[li - 1].sell_vol >= CELL_IMBALANCE_RATIO;
             let bid_imb = li + 1 < bar.levels.len()
                 && lv.sell_vol > sig_sell_gate
                 && bar.levels[li + 1].buy_vol > 0.0
-                && lv.sell_vol / bar.levels[li + 1].buy_vol >= IMBALANCE_RATIO;
+                && lv.sell_vol / bar.levels[li + 1].buy_vol >= CELL_IMBALANCE_RATIO;
 
             // Bid (sell vol) on the LEFT, right-aligned.
             if draw_text && lv.sell_vol > 0.0 {

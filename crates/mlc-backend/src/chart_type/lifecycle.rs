@@ -788,7 +788,7 @@ mod fold_reseed_last_wins_tests {
         let core = build_core();
         let bid = make_bubble(&core);
         let mk = |open_time: i64, top: f64| mlc_core::types::RenkoBrick {
-            open_time, bottom: 0.0, top, up: true, volume: 0.0, trades_count: 0,
+            open_time, bottom: 0.0, top, up: true, volume: 0.0, trades_count: 0, wick: 0.0,
         };
         let outputs = vec![
             crate::bubble::FoldOutput::Renko(mk(100, 1.0)),

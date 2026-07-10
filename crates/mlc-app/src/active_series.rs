@@ -267,11 +267,14 @@ pub fn chart_type_hides_time_grid(chart_type: &str) -> bool {
 /// override); `WickPolicy::Off` forces wicks off regardless of the global
 /// toggle (non-candle primitives whose draw fn never reads
 /// `state.wick_enabled` at all); `WickPolicy::Toggle { .. }` is
-/// range_bar/volume_bar/dollar_bar — their open/high/low pins are
-/// chained-continuity artifacts (canonical range-bar/visual-continuity open
-/// = prev bar's close), not genuine intrabar excursions the way candle
-/// wicks are, so `bar_family_wicks` (per-panel settings toggle) is required
-/// on top of the global toggle to show them. Unknown/unregistered
+/// range_bar/volume_bar/dollar_bar (their open/high/low pins are
+/// chained-continuity artifacts — canonical range-bar/visual-continuity open
+/// = prev bar's close, not genuine intrabar excursions the way candle
+/// wicks are) plus renko (canon-fix wave 2, item 3 — `RenkoBrick::wick` IS a
+/// genuine intra-brick adverse excursion, but still gated behind the
+/// per-panel toggle so it defaults off like its bar-family siblings), so
+/// `bar_family_wicks` (per-panel settings toggle) is required on top of the
+/// global toggle to show them. Unknown/unregistered
 /// chart_type ids (defensive fallback, mirrors `chart_type_is_derived_seed`)
 /// keep the plain global toggle.
 pub fn effective_wick_flag(chart_type: &str, instrument_wick_enabled: bool, bar_family_wicks: bool) -> bool {
