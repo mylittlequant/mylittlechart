@@ -21,6 +21,14 @@ pub const DEFAULT_KLINE_LAYER_CAPACITY: usize = 200_000;
 /// per-profile by `UserProfile.domain.data_load.trade_layer_capacity`.
 pub const DEFAULT_TRADE_LAYER_CAPACITY: usize = 1_000_000;
 
+/// Refold debounce window (P0 hang fix part 2) — see
+/// [`DataBubble::last_refold_at`]'s doc comment. A `LayerBackfilled` page
+/// arriving sooner than this after the bubble's last completed refold sets
+/// [`DataBubble::refold_dirty`] instead of refolding immediately; streaming
+/// backfill pages (~1/s) then collapse to at most 2 refolds/second per
+/// bubble instead of one per page.
+pub const REFOLD_MIN_INTERVAL_MS: u64 = 500;
+
 /// Ownership marker for `DataBubble.bars` (single-writer contract).
 ///
 /// `Kline` (default): the kline family owns `bars` — REST loads
@@ -411,6 +419,36 @@ pub struct DataBubble {
     /// across `Clone` — same stateful-accumulator rationale as
     /// `active_fold`.
     pub active_cvd_fold: Option<super::view_fold::TradeFoldRuntime>,
+
+    // =========================================================================
+    // === Refold debounce (P0 hang fix part 2, chart-series arc 2026-07-10) ==
+    // =========================================================================
+    // `LiveUpdate::LayerBackfilled` streams roughly one page/second while a
+    // ramp is in flight; a full fold-machine reseed is heavy for deep layers
+    // (renko/TPO). Without a debounce, every page saturates the main thread
+    // ("страница не отвечает"). See `BackendCore::maybe_refold_*` in
+    // `chart_type/lifecycle.rs`.
+    // =========================================================================
+
+    /// Wall-clock time of this bubble's last COMPLETED refold (any of
+    /// `active_fold`/`active_trade_fold`/`active_cvd_fold`), independent per
+    /// bubble. `None` before the first refold — the first `LayerBackfilled`
+    /// after install always refolds immediately regardless of interval (cold
+    /// responsiveness), which naturally follows from `None` never satisfying
+    /// the "already refolded recently" debounce check. Runtime-only state —
+    /// not persisted to disk, not carried across `Clone` (mirrors
+    /// `active_fold`'s non-`Clone` rationale: a cloned bubble starts fresh).
+    pub last_refold_at: Option<web_time::Instant>,
+
+    /// Set when a `LayerBackfilled` page arrived within the debounce window
+    /// of the last refold and was SKIPPED — the layer write already
+    /// happened (via the `ScrollBarsLoaded`/`BackfillComplete` writers), only
+    /// the fold-machine reseed was deferred. The next `LayerBackfilled` past
+    /// the interval (or the terminal `exhausted: true` page, which ALWAYS
+    /// refolds if this flag is set, guaranteeing the layer's final state is
+    /// never left stale) performs the deferred refold and clears this flag.
+    /// Runtime-only state — not persisted, not carried across `Clone`.
+    pub refold_dirty: bool,
 }
 
 
@@ -483,6 +521,8 @@ impl DataBubble {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            last_refold_at: None,
+            refold_dirty: false,
         }
     }
 
@@ -821,6 +861,52 @@ impl DataBubble {
         self.kline_layers.clear();
         self.trade_layer = RawLayer::new(self.trade_layer_capacity);
     }
+
+    // =========================================================================
+    // === Refold debounce (P0 hang fix part 2) ================================
+    // =========================================================================
+
+    /// Decide whether a `LayerBackfilled` page arriving right now should
+    /// perform a refold immediately, mark the bubble dirty and skip, or
+    /// (terminal page) always refold when dirty. See
+    /// [`Self::last_refold_at`]/[`Self::refold_dirty`]'s doc comments for the
+    /// full contract; [`REFOLD_MIN_INTERVAL_MS`] is the debounce window.
+    ///
+    /// `terminal` is `true` for the exhaustion page (`exhausted: true` on
+    /// `mlc_backend_data_bridge::LiveUpdate::LayerBackfilled` — the type
+    /// lives in a downstream crate this module doesn't depend on, so it's
+    /// referenced by name only, not linked) — the GUARANTEE clause: the last
+    /// page always ends with a refold if the bubble is dirty, even inside
+    /// the debounce window, so a fold's history is never left stale after
+    /// backfill stops.
+    ///
+    /// Returns `true` when the caller should run the (expensive) reseed now;
+    /// on `true` the caller is responsible for calling
+    /// [`Self::mark_refolded`] once the reseed actually completes (not done
+    /// here — this method only decides, it never assumes the reseed
+    /// succeeds).
+    pub fn should_refold_now(&mut self, terminal: bool, now: web_time::Instant) -> bool {
+        let within_debounce = self.last_refold_at
+            .is_some_and(|last| now.saturating_duration_since(last).as_millis() < REFOLD_MIN_INTERVAL_MS as u128);
+        if !within_debounce {
+            return true;
+        }
+        if terminal && self.refold_dirty {
+            return true;
+        }
+        // Debounced: record that a refold is owed without doing the work.
+        self.refold_dirty = true;
+        false
+    }
+
+    /// Record that a refold just completed at `now` — clears
+    /// [`Self::refold_dirty`] and stamps [`Self::last_refold_at`]. Call this
+    /// ONLY after [`Self::should_refold_now`] returned `true` and the reseed
+    /// actually ran.
+    pub fn mark_refolded(&mut self, now: web_time::Instant) {
+        self.last_refold_at = Some(now);
+        self.refold_dirty = false;
+    }
 }
 
 impl Clone for DataBubble {
@@ -873,6 +959,8 @@ impl Clone for DataBubble {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            last_refold_at: None,
+            refold_dirty: false,
         }
     }
 }
@@ -893,5 +981,93 @@ impl std::fmt::Debug for DataBubble {
             .field("kline_layers_tfs", &self.kline_layers.len())
             .field("trade_layer_len", &self.trade_layer.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod refold_debounce_tests {
+    //! State-machine coverage for [`DataBubble::should_refold_now`] /
+    //! [`DataBubble::mark_refolded`] (P0 hang fix part 2, chart-series arc
+    //! 2026-07-10) — a fake clock built from a fixed `web_time::Instant`
+    //! base plus `Duration` offsets, since `web_time::Instant` has no public
+    //! constructor from an arbitrary point (only `now()` + arithmetic).
+    use super::*;
+
+    fn bubble() -> DataBubble {
+        let mut store = crate::bubble::BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), Timeframe::m1());
+        store.bubble(bid).cloned().expect("just-created bubble")
+    }
+
+    #[test]
+    fn first_refold_after_install_is_immediate() {
+        let mut b = bubble();
+        assert!(b.last_refold_at.is_none());
+        // Cold: no prior refold recorded — must refold immediately
+        // regardless of the debounce interval (cold responsiveness).
+        assert!(b.should_refold_now(false, web_time::Instant::now()));
+    }
+
+    #[test]
+    fn page_within_debounce_window_defers_and_sets_dirty() {
+        let mut b = bubble();
+        let t0 = web_time::Instant::now();
+        assert!(b.should_refold_now(false, t0));
+        b.mark_refolded(t0);
+        assert!(!b.refold_dirty);
+
+        // A non-terminal page 100ms later (< 500ms interval) must defer.
+        let t1 = t0 + std::time::Duration::from_millis(100);
+        assert!(!b.should_refold_now(false, t1), "page inside the debounce window must defer");
+        assert!(b.refold_dirty, "deferred page must mark the bubble dirty");
+    }
+
+    #[test]
+    fn page_past_debounce_window_refolds_and_clears_dirty() {
+        let mut b = bubble();
+        let t0 = web_time::Instant::now();
+        b.mark_refolded(t0);
+
+        let t1 = t0 + std::time::Duration::from_millis(100);
+        assert!(!b.should_refold_now(false, t1));
+        assert!(b.refold_dirty);
+
+        // A later page past REFOLD_MIN_INTERVAL_MS must refold and clear dirty.
+        let t2 = t0 + std::time::Duration::from_millis(REFOLD_MIN_INTERVAL_MS + 1);
+        assert!(b.should_refold_now(false, t2), "page past the debounce window must refold");
+        b.mark_refolded(t2);
+        assert!(!b.refold_dirty);
+        assert_eq!(b.last_refold_at, Some(t2));
+    }
+
+    #[test]
+    fn terminal_page_always_refolds_when_dirty_even_inside_window() {
+        let mut b = bubble();
+        let t0 = web_time::Instant::now();
+        b.mark_refolded(t0);
+
+        // Defer a non-terminal page inside the window — sets dirty.
+        let t1 = t0 + std::time::Duration::from_millis(50);
+        assert!(!b.should_refold_now(false, t1));
+        assert!(b.refold_dirty);
+
+        // The terminal (exhausted) page arrives STILL inside the debounce
+        // window — the GUARANTEE clause must override the debounce and
+        // refold anyway, since the bubble is dirty.
+        let t2 = t0 + std::time::Duration::from_millis(80);
+        assert!(b.should_refold_now(true, t2), "terminal page must always refold when dirty, even inside the window");
+    }
+
+    #[test]
+    fn terminal_page_without_dirty_still_respects_debounce() {
+        let mut b = bubble();
+        let t0 = web_time::Instant::now();
+        b.mark_refolded(t0);
+
+        // No deferred page in between — bubble is clean. A terminal page
+        // arriving inside the window with nothing owed must NOT force an
+        // extra refold (there is nothing stale to catch up on).
+        let t1 = t0 + std::time::Duration::from_millis(50);
+        assert!(!b.should_refold_now(true, t1), "terminal page with a clean bubble still respects the debounce");
     }
 }

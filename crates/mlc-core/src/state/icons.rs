@@ -346,6 +346,148 @@ pub const ICON_BASELINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 </svg>"##;
 
 // =============================================================================
+// Derived / Price-Action / Orderflow Chart Type Icons
+// =============================================================================
+// Generated 2026-07-10 (`docs/mlc/research/chart-type-icons-2026-07-10/`) —
+// replaces the 13 stub arms in `icon_svg()` that previously fell back to
+// ICON_BAR_CHART / ICON_HISTOGRAM / ICON_LINE_CHART / ICON_CANDLESTICK,
+// leaving every derived chart type visually indistinguishable from its
+// siblings in the chart-type dropdown. Same style contract as the block
+// above: viewBox="0 0 24 24", stroke="currentColor", fill="none" root with
+// selective fill="currentColor" for solid glyph parts.
+
+pub const ICON_RANGE_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 3v4"/>
+  <path d="M6 17v4"/>
+  <rect x="4" y="7" width="4" height="10" rx="1"/>
+  <path d="M12 3v4"/>
+  <path d="M12 17v4"/>
+  <rect x="10" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M18 3v4"/>
+  <path d="M18 17v4"/>
+  <rect x="16" y="7" width="4" height="10" rx="1"/>
+</svg>"##;
+
+pub const ICON_VOLUME_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 3v4"/>
+  <path d="M6 17v4"/>
+  <rect x="4" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M12 3v4"/>
+  <path d="M12 17v4"/>
+  <rect x="10" y="7" width="4" height="10" rx="1"/>
+  <path d="M18 3v4"/>
+  <path d="M18 17v4"/>
+  <rect x="16" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M2 21h20" stroke-width="1.5" opacity="0.5"/>
+</svg>"##;
+
+pub const ICON_DOLLAR_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 3v4"/>
+  <path d="M5 17v4"/>
+  <rect x="3" y="7" width="4" height="10" rx="1"/>
+  <path d="M14 17v4"/>
+  <rect x="12" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M20.5 6.3c-.4-.5-1.1-.8-1.8-.8-1.2 0-2.2.8-2.2 1.8s1 1.6 2.2 1.9c1.2.3 2.2.9 2.2 1.9s-1 1.8-2.2 1.8c-.7 0-1.4-.3-1.8-.8"/>
+  <path d="M18.7 4.5v9"/>
+</svg>"##;
+
+pub const ICON_TICK_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 3v4"/>
+  <path d="M6 17v4"/>
+  <rect x="4" y="7" width="4" height="10" rx="1"/>
+  <path d="M12 3v4"/>
+  <path d="M12 17v4"/>
+  <rect x="10" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M18 3v4"/>
+  <path d="M18 17v4"/>
+  <rect x="16" y="7" width="4" height="10" rx="1"/>
+  <path d="M2 1.5v2" stroke-width="1.5"/>
+  <path d="M8 1.5v2" stroke-width="1.5"/>
+  <path d="M14 1.5v2" stroke-width="1.5"/>
+  <path d="M20 1.5v2" stroke-width="1.5"/>
+</svg>"##;
+
+pub const ICON_TICK_IMBALANCE_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 3v4"/>
+  <path d="M6 17v4"/>
+  <rect x="4" y="7" width="4" height="10" rx="1"/>
+  <path d="M12 3v4"/>
+  <path d="M12 17v4"/>
+  <rect x="10" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M18 3v4"/>
+  <path d="M18 17v4"/>
+  <rect x="16" y="7" width="4" height="10" rx="1"/>
+  <path d="M2 21h20" stroke-width="1.5" stroke-dasharray="1 2.4" opacity="0.7"/>
+</svg>"##;
+
+pub const ICON_VOLUME_IMBALANCE_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 3v4"/>
+  <path d="M6 17v4"/>
+  <rect x="4" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M12 3v4"/>
+  <path d="M12 17v4"/>
+  <rect x="10" y="7" width="4" height="10" rx="1"/>
+  <path d="M18 3v4"/>
+  <path d="M18 17v4"/>
+  <rect x="16" y="7" width="4" height="10" rx="1" fill="currentColor"/>
+  <path d="M2 21h20" stroke-width="1.5" stroke-dasharray="1 2.4" opacity="0.7"/>
+</svg>"##;
+
+pub const ICON_RUN_BAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 20V15"/>
+  <path d="M9 20V11"/>
+  <path d="M14 20V7"/>
+  <path d="M19 20V4"/>
+  <path d="M2 20h20" stroke-width="1.5" opacity="0.6"/>
+</svg>"##;
+
+pub const ICON_RENKO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="16" width="5" height="5" fill="currentColor"/>
+  <rect x="7" y="11" width="5" height="5" fill="currentColor"/>
+  <rect x="12" y="6" width="5" height="5"/>
+  <rect x="17" y="1" width="5" height="5"/>
+</svg>"##;
+
+pub const ICON_PNF: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 4l5 5M8 4l-5 5"/>
+  <path d="M3 11l5 5M8 11l-5 5"/>
+  <circle cx="17.5" cy="8.5" r="2.5"/>
+  <circle cx="17.5" cy="15.5" r="2.5"/>
+</svg>"##;
+
+pub const ICON_KAGI: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 6h6" stroke-width="1.5"/>
+  <path d="M10 6v9" stroke-width="1.5"/>
+  <path d="M10 15h6" stroke-width="3.5"/>
+  <path d="M16 15V4" stroke-width="3.5"/>
+  <path d="M16 4h4" stroke-width="1.5"/>
+  <path d="M20 4v16" stroke-width="1.5"/>
+</svg>"##;
+
+pub const ICON_THREE_LINE_BREAK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="15" width="5" height="6" fill="currentColor"/>
+  <rect x="8" y="10" width="5" height="6" fill="currentColor"/>
+  <rect x="14" y="4" width="5" height="7" fill="currentColor"/>
+</svg>"##;
+
+pub const ICON_FOOTPRINT_CELLS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="3" width="18" height="18" rx="1" stroke-width="2"/>
+  <path d="M3 9h18"/>
+  <path d="M3 15h18"/>
+  <path d="M9 3v18"/>
+  <path d="M15 3v18"/>
+  <rect x="9" y="9" width="6" height="6" fill="currentColor" fill-opacity="0.35" stroke="none"/>
+</svg>"##;
+
+pub const ICON_TPO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 5h4"/>
+  <path d="M3 9h9"/>
+  <path d="M3 13h14"/>
+  <path d="M3 17h9"/>
+  <path d="M3 21h4"/>
+</svg>"##;
+
+// =============================================================================
 // Drawing Tool Icons
 // =============================================================================
 
@@ -1805,25 +1947,27 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "step_line" | "stepline" => Some(ICON_STEP_LINE),
         "line_markers" | "linemarkers" | "line_with_markers" | "linewithmarkers" => Some(ICON_LINE_MARKERS),
         "hlc_area" | "hlcarea" => Some(ICON_HLC_AREA),
-        // Renko uses candlestick as fallback
-        "renko" => Some(ICON_CANDLESTICK),
-        // Derived bar chart types — fallback to BarChart / Candlestick / Histogram.
-        // Dedicated SVGs can be added later; these prevent the "blank icon" gap
-        // in chart_type_selector dropdown.
-        "range_bar" | "rangebar" => Some(ICON_BAR_CHART),
-        "volume_bar" | "volumebar" => Some(ICON_BAR_CHART),
-        "tick_bar" | "tickbar" | "tick" => Some(ICON_BAR_CHART),
-        "footprint" => Some(ICON_HISTOGRAM),
-        "pnf" | "point_and_figure" | "pointandfigure" => Some(ICON_BAR_CHART),
-        "kagi" => Some(ICON_LINE_CHART),
-        "three_line_break" | "threelinebreak" | "3lb" => Some(ICON_BAR_CHART),
+        // Derived / price-action / orderflow chart types — each resolves to
+        // its own dedicated glyph (2026-07-10,
+        // `docs/mlc/research/chart-type-icons-2026-07-10/`); previously all
+        // 13 fell back to shared ICON_BAR_CHART/ICON_HISTOGRAM/ICON_LINE_CHART
+        // /ICON_CANDLESTICK arms, making every derived type visually
+        // indistinguishable from its siblings in the dropdown.
+        "range_bar" | "rangebar" => Some(ICON_RANGE_BAR),
+        "volume_bar" | "volumebar" => Some(ICON_VOLUME_BAR),
+        "tick_bar" | "tickbar" | "tick" => Some(ICON_TICK_BAR),
+        "footprint" => Some(ICON_FOOTPRINT_CELLS),
+        "pnf" | "point_and_figure" | "pointandfigure" => Some(ICON_PNF),
+        "kagi" => Some(ICON_KAGI),
+        "renko" => Some(ICON_RENKO),
+        "three_line_break" | "threelinebreak" | "3lb" => Some(ICON_THREE_LINE_BREAK),
         // "cvd" removed (2026-07-04 taxonomy fix) — no longer a chart_type
         // dropdown entry (demoted to a subpane overlay toggle).
-        "tpo" | "market_profile" => Some(ICON_HISTOGRAM),
-        "dollar_bar" | "dollarbar" => Some(ICON_BAR_CHART),
-        "tick_imbalance_bar" | "tickimbalancebar" => Some(ICON_BAR_CHART),
-        "volume_imbalance_bar" | "volumeimbalancebar" => Some(ICON_BAR_CHART),
-        "run_bar" | "runbar" => Some(ICON_BAR_CHART),
+        "tpo" | "market_profile" => Some(ICON_TPO),
+        "dollar_bar" | "dollarbar" => Some(ICON_DOLLAR_BAR),
+        "tick_imbalance_bar" | "tickimbalancebar" => Some(ICON_TICK_IMBALANCE_BAR),
+        "volume_imbalance_bar" | "volumeimbalancebar" => Some(ICON_VOLUME_IMBALANCE_BAR),
+        "run_bar" | "runbar" => Some(ICON_RUN_BAR),
         // "dom_heatmap"/"liquidation_heatmap" REMOVED (chart-type → overlay
         // migration) — both are now indicator-picker overlay entries whose
         // icon resolves via the generic "histogram"/"activity" arms below.
@@ -2039,5 +2183,91 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         }
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod chart_type_icon_tests {
+    //! Coverage for the 2026-07-10 chart-type icon integration
+    //! (`docs/mlc/research/chart-type-icons-2026-07-10/`) — every registry
+    //! row must resolve a real icon, and the 13 previously-stubbed derived
+    //! types must no longer share identical SVG data with each other (the
+    //! whole point of replacing the shared BarChart/Histogram/LineChart
+    //! fallback arms).
+    use super::*;
+
+    /// The 13 chart_type ids the task named as newly-covered (previously
+    /// stubbed onto ICON_BAR_CHART / ICON_HISTOGRAM / ICON_LINE_CHART /
+    /// ICON_CANDLESTICK — see the research README §2 audit table).
+    const NEWLY_COVERED: &[&str] = &[
+        "range_bar", "volume_bar", "dollar_bar", "tick_bar",
+        "tick_imbalance_bar", "volume_imbalance_bar", "run_bar",
+        "renko", "pnf", "kagi", "three_line_break", "footprint", "tpo",
+    ];
+
+    #[test]
+    fn every_registry_row_resolves_a_real_icon() {
+        for def in crate::chart_type::all() {
+            let resolved = icon_svg(def.icon_id);
+            assert!(
+                resolved.is_some(),
+                "chart_type id={} icon_id={} must resolve a real icon",
+                def.id, def.icon_id,
+            );
+        }
+    }
+
+    #[test]
+    fn every_registry_row_resolves_via_its_own_chart_type_id() {
+        // Same check keyed on the chart_type `id` string directly (what
+        // `icon_svg` actually dispatches on in practice via
+        // `ToolbarIconId::new(def.icon_id)` → normalized lowercase, which
+        // for every one of these rows collapses to the same string as the
+        // chart_type id itself) — belt-and-suspenders against a future
+        // `icon_id` drifting out of sync with the `icon_svg` match arms.
+        for def in crate::chart_type::all() {
+            let resolved = icon_svg(def.id);
+            assert!(resolved.is_some(), "chart_type id={} must resolve via its own id string", def.id);
+        }
+    }
+
+    #[test]
+    fn newly_covered_chart_types_have_distinct_non_shared_icons() {
+        let mut seen: Vec<(&str, *const u8, usize)> = Vec::new();
+        for &ct in NEWLY_COVERED {
+            let svg = icon_svg(ct).unwrap_or_else(|| panic!("{ct} must resolve an icon"));
+            let ptr = svg.as_ptr();
+            let len = svg.len();
+            for &(other_ct, other_ptr, other_len) in &seen {
+                // Compare by CONTENT, not just pointer identity — two
+                // distinct `&'static str` constants with byte-identical
+                // SVG text would still be "shared" in the sense this test
+                // guards against (a copy-paste that forgot to change the
+                // glyph). Pointer/len fast-path first, full content compare
+                // as the actual assertion.
+                let other_svg = icon_svg(other_ct).unwrap_or_else(|| panic!("{other_ct} must resolve an icon"));
+                assert_ne!(
+                    svg, other_svg,
+                    "{ct} and {other_ct} must NOT share identical SVG data (both newly-covered types)",
+                );
+                let _ = (other_ptr, other_len);
+            }
+            seen.push((ct, ptr, len));
+        }
+    }
+
+    #[test]
+    fn newly_covered_chart_types_no_longer_fall_back_to_legacy_shared_glyphs() {
+        // Direct regression pin for the exact bug this task fixed: none of
+        // the 13 previously-stubbed types may resolve to the OLD shared
+        // fallback constants anymore.
+        let legacy_shared = [ICON_BAR_CHART, ICON_HISTOGRAM, ICON_LINE_CHART, ICON_CANDLESTICK];
+        for &ct in NEWLY_COVERED {
+            let svg = icon_svg(ct).unwrap_or_else(|| panic!("{ct} must resolve an icon"));
+            assert!(
+                !legacy_shared.contains(&svg),
+                "{ct} must not resolve to a legacy shared fallback glyph anymore",
+            );
+        }
     }
 }

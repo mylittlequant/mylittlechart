@@ -178,6 +178,35 @@ impl FoldMachine {
         }
     }
 
+    /// Toggle replay mode on the embedded dig3 machine — see
+    /// [`DerivedStream::set_replay`]'s doc comment for the ON/OFF semantics.
+    fn set_replay(&mut self, on: bool) {
+        match self {
+            FoldMachine::RangeBar(m) => m.set_replay(on),
+            FoldMachine::VolumeBar(m) => m.set_replay(on),
+            FoldMachine::DollarBar(m) => m.set_replay(on),
+            FoldMachine::Renko(m) => m.set_replay(on),
+            FoldMachine::Pnf(m) => m.set_replay(on),
+            FoldMachine::Kagi(m) => m.set_replay(on),
+            FoldMachine::ThreeLineBreak(m) => m.set_replay(on),
+        }
+    }
+
+    /// Clone out the final in-progress element after a replay pass — see
+    /// [`DerivedStream::flush_replay`]'s doc comment. `box_size` mirrors the
+    /// same PnF-only side-channel [`Self::on_event`] threads through.
+    fn flush_replay(&mut self, box_size: f64) -> Option<FoldOutput> {
+        match self {
+            FoldMachine::RangeBar(m) => m.flush_replay().map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
+            FoldMachine::VolumeBar(m) => m.flush_replay().map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
+            FoldMachine::DollarBar(m) => m.flush_replay().map(|p| FoldOutput::Bar(bar_point_to_bar(&p))),
+            FoldMachine::Renko(m) => m.flush_replay().map(|p| FoldOutput::Renko(renko_point_to_brick(&p))),
+            FoldMachine::Pnf(m) => m.flush_replay().map(|p| FoldOutput::Pnf(pnf_point_to_column(&p, box_size))),
+            FoldMachine::Kagi(m) => m.flush_replay().map(|p| FoldOutput::Kagi(kagi_point_to_segment(&p))),
+            FoldMachine::ThreeLineBreak(m) => m.flush_replay().map(|p| FoldOutput::ThreeLineBreak(tlb_point_to_line(&p))),
+        }
+    }
+
     /// Feed one upstream `Event` (synthetic trade leg during reseed, or a
     /// live `Event::Bar` Δ-tick), converting whatever the machine emits into
     /// the bubble-side [`FoldOutput`] shape.
@@ -379,6 +408,22 @@ impl FoldRuntime {
     /// last bar's `(open_time, volume, close)` seeds the live Δ-tick
     /// baseline instead of being folded twice.
     ///
+    /// Wraps the whole replay in [`DerivedStream::set_replay`] (P0 hang fix
+    /// part 1, `nemo/docs/mlc/plans` chart-series arc): with replay ON the
+    /// machine still folds every synthetic-trade leg into internal state
+    /// exactly as live, but suppresses the expensive per-event in-progress
+    /// snapshot — only genuinely CLOSED elements (the same ones
+    /// [`FoldMachine::on_event`]'s `take_pending`/`Option` chain already
+    /// surfaces) are collected during the loop. [`DerivedStream::flush_replay`]
+    /// is called once at the very end to clone out the final in-progress
+    /// element and append it LAST, then replay mode is turned back off. This
+    /// collapses the reseed cost from O(legs × rows) snapshot allocations to
+    /// O(rows) closed-element pushes for every fold machine kind — the
+    /// merged output array is byte-identical to the pre-replay per-leg
+    /// collection (dig3 pins this equivalence; see `derived.rs`'s
+    /// `seed_from_events` doc comment for the same contract on the
+    /// station-side sibling).
+    ///
     /// Returns every output the replay produced, oldest-first — the caller
     /// replaces the bubble's output slot wholesale with this (a re-fold is
     /// a full recompute, not an incremental patch).
@@ -402,12 +447,15 @@ impl FoldRuntime {
             return outputs;
         }
         let (closed, last) = bars.split_at(bars.len() - 1);
+        self.machine.set_replay(true);
         for bar in closed {
             let point = bar_to_bar_point(bar);
             for synth in kline_to_synthetic_trades(&point, ONE_MINUTE_MS, self.exchange, &self.symbol) {
                 outputs.extend(self.machine.on_event(&synth, self.params.box_size));
             }
         }
+        outputs.extend(self.machine.flush_replay(self.params.box_size));
+        self.machine.set_replay(false);
         if let Some(last_bar) = last.first() {
             let point = bar_to_bar_point(last_bar);
             self.machine.seed_kline_baseline(point.open_time, point.volume, point.close);
@@ -577,6 +625,36 @@ impl TradeFoldMachine {
     /// over the "1m" kline layer instead.
     pub fn feeds_on_trades(&self) -> bool {
         !matches!(self, TradeFoldMachine::TpoKline1m(_))
+    }
+
+    /// Toggle replay mode on the embedded dig3 machine — see
+    /// [`DerivedStream::set_replay`]'s doc comment for the ON/OFF semantics.
+    fn set_replay(&mut self, on: bool) {
+        match self {
+            TradeFoldMachine::TickBar(m) => m.set_replay(on),
+            TradeFoldMachine::TickImbalanceBar(m) => m.set_replay(on),
+            TradeFoldMachine::VolumeImbalanceBar(m) => m.set_replay(on),
+            TradeFoldMachine::RunBar(m) => m.set_replay(on),
+            TradeFoldMachine::Footprint(m) => m.set_replay(on),
+            TradeFoldMachine::TpoTrade(m) => m.set_replay(on),
+            TradeFoldMachine::TpoKline1m(m) => m.set_replay(on),
+            TradeFoldMachine::Cvd(m) => m.set_replay(on),
+        }
+    }
+
+    /// Clone out the final in-progress element after a replay pass — see
+    /// [`DerivedStream::flush_replay`]'s doc comment.
+    fn flush_replay(&mut self) -> Option<TradeFoldOutput> {
+        match self {
+            TradeFoldMachine::TickBar(m) => m.flush_replay().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::TickImbalanceBar(m) => m.flush_replay().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::VolumeImbalanceBar(m) => m.flush_replay().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::RunBar(m) => m.flush_replay().map(|p| TradeFoldOutput::Bar(bar_point_to_bar(&p))),
+            TradeFoldMachine::Footprint(m) => m.flush_replay().map(|p| TradeFoldOutput::Footprint(footprint_point_to_bar(&p))),
+            TradeFoldMachine::TpoTrade(m) => m.flush_replay().map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
+            TradeFoldMachine::TpoKline1m(m) => m.flush_replay().map(|p| TradeFoldOutput::Tpo(tpo_point_to_session(&p))),
+            TradeFoldMachine::Cvd(m) => m.flush_replay().map(|p| TradeFoldOutput::Cvd(mlc_core::types::CvdSample { ts_ms: p.ts_ms, value: p.value })),
+        }
     }
 
     /// Returns EVERY output produced by this single call, oldest-first (see
@@ -805,6 +883,14 @@ impl TradeFoldRuntime {
     /// instead — `trade_layer` is ignored for that one variant. Every other
     /// variant ignores `kline_layer`.
     ///
+    /// Wraps the whole replay in [`DerivedStream::set_replay`] (P0 hang fix
+    /// part 1 — see [`FoldRuntime::reseed`]'s doc comment for the full
+    /// contract this mirrors verbatim): the machine folds every trade/bar
+    /// into internal state exactly as live, but suppresses the per-event
+    /// in-progress snapshot; [`DerivedStream::flush_replay`] clones out the
+    /// final in-progress element once at the end, appended last, before
+    /// replay mode is turned back off.
+    ///
     /// Returns every output the replay produced, oldest-first — the caller
     /// replaces the bubble's output slot wholesale with this.
     pub fn reseed(
@@ -820,6 +906,7 @@ impl TradeFoldRuntime {
         self.footprint_cvd = 0.0;
 
         let mut outputs = Vec::new();
+        self.machine.set_replay(true);
         if self.machine.feeds_on_trades() {
             for trade in trade_layer.iter() {
                 let point = raw_trade_to_trade_point(trade);
@@ -844,6 +931,10 @@ impl TradeFoldRuntime {
                 outputs.extend(self.machine.on_bar_event(&ev));
             }
         }
+        if let Some(flushed) = self.machine.flush_replay() {
+            outputs.push(self.stamp_footprint_cvd(flushed));
+        }
+        self.machine.set_replay(false);
         outputs
     }
 

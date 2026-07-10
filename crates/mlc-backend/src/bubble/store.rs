@@ -98,6 +98,8 @@ impl BubbleStore {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            last_refold_at: None,
+            refold_dirty: false,
         };
         self.bubbles.insert(id, bubble);
         id
@@ -158,6 +160,8 @@ impl BubbleStore {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            last_refold_at: None,
+            refold_dirty: false,
         };
         self.bubbles.insert(id, bubble);
         id

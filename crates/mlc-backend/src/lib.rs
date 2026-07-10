@@ -1723,7 +1723,20 @@ impl BackendCore {
                 // `active_trade_fold` (6 trade-fed chart types) AND
                 // `active_cvd_fold` (CVD companion) — a bubble may have
                 // BOTH installed at once.
+                //
+                // Per-bubble refold DEBOUNCE (P0 hang fix part 2): pages
+                // stream ~1/s during a ramp; a full reseed is heavy for deep
+                // layers (renko/TPO), so back-to-back pages saturated the
+                // main thread ("страница не отвечает" on renko/TPO). Each
+                // bubble's `should_refold_now` decides once per
+                // `LayerBackfilled` event whether to run the reseed now or
+                // defer it (`refold_dirty = true`) — `exhausted` (the
+                // terminal exhaustion page) ALWAYS refolds if the bubble is
+                // dirty, so the layer's final state is never left stale. One
+                // shared clock read per event (not per bubble) keeps the
+                // debounce window consistent across the whole sweep.
                 LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, .. } => {
+                    let refold_now = web_time::Instant::now();
                     if layer == "kline:1m" {
                         let at_label = account_type.short_label();
                         // Guard-lifetime note: bind before looping (see BarUpdate arm).
@@ -1731,6 +1744,10 @@ impl BackendCore {
                         for bid in fold_bids {
                             let has_fold = self.bubbles().with_bubble(bid, |b| b.active_fold.is_some()).unwrap_or(false);
                             if !has_fold { continue; }
+                            let should_refold = self.bubbles_mut()
+                                .with_bubble_mut(bid, |b| b.should_refold_now(exhausted, refold_now))
+                                .unwrap_or(true);
+                            if !should_refold { continue; }
                             let layer_snapshot: crate::bubble::RawLayer<Bar> = match self.bubbles().kline_layer(bid, "1m") {
                                 Some(l) => l.clone(),
                                 None => continue,
@@ -1738,6 +1755,7 @@ impl BackendCore {
                             let outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
                                 b.active_fold.as_mut().map(|f| (f.reseed(&layer_snapshot), f.chart_type()))
                             }).flatten();
+                            self.bubbles_mut().with_bubble_mut(bid, |b| b.mark_refolded(refold_now));
                             let Some((outputs, chart_type)) = outputs_and_type else { continue; };
                             if let Some(ev) = self.apply_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, &symbol, at_label) {
                                 events.push(ev);
@@ -1762,13 +1780,24 @@ impl BackendCore {
                         // Guard-lifetime note: bind before looping (see BarUpdate arm).
                         let tfold_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                         for bid in tfold_bids {
+                            let has_trade_fold = self.bubbles().with_bubble(bid, |b| b.active_trade_fold.is_some()).unwrap_or(false);
+                            let has_cvd_fold = self.bubbles().with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
+                            if !has_trade_fold && !has_cvd_fold { continue; }
+                            // One debounce decision per bubble covers BOTH
+                            // fold slots — they read the SAME trade-layer
+                            // snapshot and are the same "this bubble just
+                            // got a heavier reseed" event from the main
+                            // thread's point of view.
+                            let should_refold = self.bubbles_mut()
+                                .with_bubble_mut(bid, |b| b.should_refold_now(exhausted, refold_now))
+                                .unwrap_or(true);
+                            if !should_refold { continue; }
                             let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = match self.bubbles().trade_layer(bid) {
                                 Some(l) => l.clone(),
                                 None => continue,
                             };
                             let empty_kline: crate::bubble::RawLayer<Bar> = crate::bubble::RawLayer::new(0);
 
-                            let has_trade_fold = self.bubbles().with_bubble(bid, |b| b.active_trade_fold.is_some()).unwrap_or(false);
                             if has_trade_fold {
                                 let outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
                                     b.active_trade_fold.as_mut().map(|f| (f.reseed(&trade_snapshot, &empty_kline), f.chart_type()))
@@ -1789,7 +1818,6 @@ impl BackendCore {
                                 }
                             }
 
-                            let has_cvd_fold = self.bubbles().with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
                             if has_cvd_fold {
                                 let outputs = self.bubbles_mut().with_bubble_mut(bid, |b| {
                                     b.active_cvd_fold.as_mut().map(|f| f.reseed(&trade_snapshot, &empty_kline))
@@ -1800,6 +1828,8 @@ impl BackendCore {
                                     }
                                 }
                             }
+
+                            self.bubbles_mut().with_bubble_mut(bid, |b| b.mark_refolded(refold_now));
                         }
                     }
                 }

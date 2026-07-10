@@ -898,7 +898,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "dollar_bar",
         label: "Dollar Bars",
-        icon_id: "BarChart",
+        icon_id: "DollarBar",
         group: ChartTypeGroup::BatchedBars,
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
@@ -934,7 +934,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "tick_bar",
         label: "Tick Bars",
-        icon_id: "Tick",
+        icon_id: "TickBar",
         group: ChartTypeGroup::TradeAggregation,
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
@@ -964,7 +964,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "tick_imbalance_bar",
         label: "Tick Imbalance",
-        icon_id: "BarChart",
+        icon_id: "TickImbalanceBar",
         group: ChartTypeGroup::TradeAggregation,
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
@@ -1003,7 +1003,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "volume_imbalance_bar",
         label: "Volume Imbalance",
-        icon_id: "BarChart",
+        icon_id: "VolumeImbalanceBar",
         group: ChartTypeGroup::TradeAggregation,
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
@@ -1035,7 +1035,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "run_bar",
         label: "Run Bars",
-        icon_id: "BarChart",
+        icon_id: "RunBar",
         group: ChartTypeGroup::TradeAggregation,
         kind: ChartTypeKind::TradeAggBar,
         series_variant: SeriesVariant::Bars,
@@ -1068,7 +1068,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "renko",
         label: "Renko",
-        icon_id: "BarChart",
+        icon_id: "Renko",
         group: ChartTypeGroup::PriceAction,
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Renko,
@@ -1105,7 +1105,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "pnf",
         label: "Point & Figure",
-        icon_id: "BarChart",
+        icon_id: "Pnf",
         group: ChartTypeGroup::PriceAction,
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Pnf,
@@ -1135,7 +1135,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "kagi",
         label: "Kagi",
-        icon_id: "LineChart",
+        icon_id: "Kagi",
         group: ChartTypeGroup::PriceAction,
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Kagi,
@@ -1165,7 +1165,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "three_line_break",
         label: "3 Line Break",
-        icon_id: "BarChart",
+        icon_id: "ThreeLineBreak",
         group: ChartTypeGroup::PriceAction,
         kind: ChartTypeKind::PriceActionTransform,
         series_variant: SeriesVariant::Tlb,
@@ -1229,7 +1229,7 @@ static REGISTRY: &[ChartTypeDef] = &[
     ChartTypeDef {
         id: "tpo",
         label: "Market Profile (TPO)",
-        icon_id: "Histogram",
+        icon_id: "Tpo",
         group: ChartTypeGroup::Orderflow,
         kind: ChartTypeKind::OrderflowSlotted,
         series_variant: SeriesVariant::Tpo,

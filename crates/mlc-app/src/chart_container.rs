@@ -712,17 +712,18 @@ impl ChartContainer {
     /// ...), not always `bubble.bars` — callers resolve via
     /// [`crate::active_series::resolve_active_series`] and pass the result
     /// straight through. Mirrors `PriceScale::calc_auto_scale`'s body
-    /// (empty-range no-op, 4% padding, Focus-mode last-element extension)
-    /// without needing a `&[Bar]`-shaped view of non-Bar series.
+    /// (empty-range no-op, 4% padding) without needing a `&[Bar]`-shaped
+    /// view of non-Bar series.
+    ///
+    /// Owner redefinition (2026-07-10, supersedes the 2026-07-06 "F is
+    /// grow-only fixation" doctrine): **F behaves exactly like A** — full
+    /// refit to the visible bars, shrinking and growing with them — PLUS a
+    /// focus guard applied on top: [`Self::apply_focus_guard`] extends
+    /// (never cuts) the just-computed A-fit range so the last tick price
+    /// keeps `FOCUS_Y_GUARD_RATIO` of pane-height margin from both edges.
+    /// The two modes now share the SAME fit computation; F differs only in
+    /// the guard-band extension applied afterward.
     pub fn calc_auto_scale(&mut self, series: crate::active_series::ActiveSeries<'_>) {
-        // Focus is grow-only: the user's Y position is preserved; only
-        // pressure from the last bar expands the bounds. Route Focus
-        // through `track_focus_y` instead of the fit-to-visible path,
-        // which would sync-shrink the scale on every quiet tick.
-        if self.price_scale.scale_mode == ScaleMode::Focus {
-            self.track_focus_y(series);
-            return;
-        }
         if !self.price_scale.scale_mode.is_auto_y() {
             return;
         }
@@ -735,32 +736,36 @@ impl ChartContainer {
         let padding = range * 0.04;
         self.price_scale.price_min = min - padding;
         self.price_scale.price_max = max + padding;
+
+        if self.price_scale.scale_mode == ScaleMode::Focus {
+            self.apply_focus_guard(series);
+        }
     }
 
-    /// Focus-mode Y intent: expand the price-scale bounds under pressure
-    /// from the last bar. Grow-only — never shrinks the range (that's what
-    /// separates F from A). A guard band of `FOCUS_Y_GUARD_RATIO * pane_height`
-    /// in pixels is enforced against the last bar's high/low; if the last
-    /// bar is inside the guard zone (or past the current bound), the bound
-    /// is pushed out just enough to restore the guard. The whole point:
-    /// the last bar's high has at least `FOCUS_Y_GUARD_RATIO` of pane
-    /// height above it, low has at least the same below.
+    /// Focus-mode guard band (2026-07-10 doctrine): extend — never cut —
+    /// the range [`Self::calc_auto_scale`] just fit to the visible bars, so
+    /// the last tick price keeps at least `FOCUS_Y_GUARD_RATIO * pane_height`
+    /// of margin from both the top and bottom edges. Called ONLY right
+    /// after the A-fit computation in [`Self::calc_auto_scale`] — this is
+    /// the "with focus" half of "F = A with focus", not an independent
+    /// entry point.
     ///
-    /// Owner doctrine 2026-07-06: F is a fixation mode. The user's Y
-    /// position is respected unless the live price physically pushes it.
-    pub fn track_focus_y(&mut self, series: crate::active_series::ActiveSeries<'_>) {
-        if self.price_scale.scale_mode != ScaleMode::Focus {
+    /// Superseded 2026-07-06 doctrine: F used to be grow-only fixation
+    /// (user's Y position preserved, only pressure from the last bar
+    /// expanded bounds). Owner override 2026-07-10: F now refits fully like
+    /// A on every call (shrink included) — this guard only ever WIDENS the
+    /// already-fresh A-fit range by extending one or both edges outward,
+    /// never narrows it and never runs independently of a fresh A-fit.
+    fn apply_focus_guard(&mut self, series: crate::active_series::ActiveSeries<'_>) {
+        if self.viewport.chart_height <= 0.0 {
             return;
         }
-        if self.viewport.chart_height <= 0.0 || series.is_empty() {
-            return;
-        }
-        // Owner doctrine 2026-07-06: F Y guard tracks the LIVE TICK PRICE
-        // (last close), not the last bar's high/low. Tick can move between
-        // bar h/l values or breach either as it moves — the guard must
-        // catch it on the tick itself, universally, regardless of chart
-        // type. Series-family agnostic: last-element close for bar-shaped
-        // series, last-element value for scalar series.
+        // F Y guard tracks the LIVE TICK PRICE (last close), not the last
+        // bar's high/low. Tick can move between bar h/l values or breach
+        // either as it moves — the guard must catch it on the tick itself,
+        // universally, regardless of chart type. Series-family agnostic:
+        // last-element close for bar-shaped series, last-element value for
+        // scalar series.
         let last_price = match series {
             crate::active_series::ActiveSeries::Bars(s) => s.last().map(|b| b.close),
             crate::active_series::ActiveSeries::Renko(s) => s.last().map(|b| if b.up { b.top } else { b.bottom }),
@@ -775,19 +780,15 @@ impl ChartContainer {
         let cur_max = self.price_scale.price_max;
         let cur_range = cur_max - cur_min;
         if cur_range <= 0.0 || !cur_range.is_finite() {
-            // Degenerate range — bootstrap via A-mode fit so the scale has
-            // real bounds; growth-only guard only makes sense afterwards.
-            let saved = self.price_scale.scale_mode;
-            self.price_scale.scale_mode = ScaleMode::Auto;
-            self.calc_auto_scale(series);
-            self.price_scale.scale_mode = saved;
             return;
         }
         // 2% of pane height, in price units. cur_range spans chart_height
         // pixels, so 2% * chart_height * price_per_px == 0.02 * cur_range.
         const FOCUS_Y_GUARD_RATIO: f64 = 0.02;
         let guard_price = FOCUS_Y_GUARD_RATIO * cur_range;
-        // Grow-only: tick wants `>= guard_price` room to both bounds.
+        // Extend-only: tick wants `>= guard_price` room to both bounds —
+        // never pulled back in even if the fresh A-fit already has MORE
+        // than the guard margin (that's not this method's job to shrink).
         let want_max = tick + guard_price;
         let want_min = tick - guard_price;
         if want_max > cur_max {
@@ -2445,5 +2446,124 @@ impl ChartContainer {
 impl Default for ChartContainer {
     fn default() -> Self {
         Self::new("BTCUSD", Timeframe::h1())
+    }
+}
+
+#[cfg(test)]
+mod focus_scale_mode_tests {
+    //! Coverage for the 2026-07-10 owner redefinition: F = A (full refit,
+    //! shrink+grow) + a focus guard-band extension on top. See
+    //! `ChartContainer::calc_auto_scale`'s doc comment for the contract.
+    use super::*;
+    use mlc_core::Bar;
+
+    fn bar(ts_sec: i64, high: f64, low: f64, close: f64) -> Bar {
+        Bar { timestamp: ts_sec, open: close, high, low, close, volume: 1.0, ..Bar::default() }
+    }
+
+    /// 20 bars, each [i*10 - 1, i*10 + 1] high/low around a close of i*10 —
+    /// a steadily widening range so "visible window narrows" and "visible
+    /// window widens" produce visibly different fits.
+    fn bars(n: usize) -> Vec<Bar> {
+        (0..n).map(|i| {
+            let base = i as f64 * 10.0;
+            bar((i as i64 + 1) * 60, base + 1.0, base - 1.0, base)
+        }).collect()
+    }
+
+    fn container_with_viewport(scale_mode: ScaleMode, chart_height: f64, view_start: f64, bar_count: usize) -> ChartContainer {
+        let mut c = ChartContainer::new("BTCUSDT", Timeframe::m1());
+        c.price_scale.scale_mode = scale_mode;
+        c.viewport.chart_width = 400.0;
+        c.viewport.chart_height = chart_height;
+        c.viewport.bar_spacing = 40.0; // 10 bars visible at a time
+        c.viewport.view_start = view_start;
+        c.viewport.bar_count = bar_count;
+        c
+    }
+
+    /// (a) F + visible bars move to a TIGHTER range → the range tightens,
+    /// exactly like A (F is no longer grow-only fixation).
+    #[test]
+    fn focus_mode_tightens_like_auto_when_visible_bars_narrow() {
+        let data = bars(20);
+
+        // Wide window first (fits bars 0..12ish → wide range), matching A's
+        // behavior for the same starting point.
+        let mut f = container_with_viewport(ScaleMode::Focus, 300.0, 0.0, data.len());
+        f.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+        let wide_range = f.price_scale.price_max - f.price_scale.price_min;
+
+        // Scroll the SAME container to a narrower-range window (later bars,
+        // same visible bar COUNT — range across those bars is identical
+        // shape but let's instead directly shrink bar_spacing's effective
+        // window by moving view_start near the end where fewer bars remain
+        // before bar_count, narrowing visible_range's clamped span).
+        f.viewport.view_start = 17.0;
+        f.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+        let tight_range = f.price_scale.price_max - f.price_scale.price_min;
+
+        assert!(
+            tight_range < wide_range,
+            "F must tighten when the visible window narrows, like A: wide={wide_range} tight={tight_range}"
+        );
+
+        // Pin against A computed independently over the SAME final window —
+        // the two must agree on the FIT portion (F may only be >= A's fit
+        // after the guard extension, never derive a different fit).
+        let mut a = container_with_viewport(ScaleMode::Auto, 300.0, 17.0, data.len());
+        a.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+        assert!(f.price_scale.price_min <= a.price_scale.price_min + 1e-9);
+        assert!(f.price_scale.price_max >= a.price_scale.price_max - 1e-9);
+    }
+
+    /// (b) F + last tick within 2% of the edge → the range extends BEYOND
+    /// A's fit (the guard-band pushes the bound out; A itself never does
+    /// this).
+    #[test]
+    fn focus_mode_extends_beyond_auto_fit_when_tick_is_near_the_edge() {
+        let mut data = bars(20);
+        // Force the last bar's close right at the top of its own high/low
+        // band (already at the fit's max) so the guard band from a 2%-close
+        // tick pushes price_max out past what A alone would compute.
+        let last_idx = data.len() - 1;
+        data[last_idx].close = data[last_idx].high;
+
+        let mut f = container_with_viewport(ScaleMode::Focus, 300.0, 0.0, data.len());
+        f.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+
+        let mut a = container_with_viewport(ScaleMode::Auto, 300.0, 0.0, data.len());
+        a.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+
+        assert!(
+            f.price_scale.price_max > a.price_scale.price_max,
+            "F must extend past A's fit when the tick sits at the very edge: f_max={} a_max={}",
+            f.price_scale.price_max, a.price_scale.price_max,
+        );
+        // The bottom edge is untouched by this scenario (tick is near the
+        // TOP edge only) — F's price_min must equal A's fit exactly.
+        assert!((f.price_scale.price_min - a.price_scale.price_min).abs() < 1e-9);
+    }
+
+    /// (c) A is unchanged by the refactor — pin one concrete A case against
+    /// the exact 4%-padding formula `calc_auto_scale`'s doc comment
+    /// describes.
+    #[test]
+    fn auto_mode_fit_is_unchanged_4_percent_padding() {
+        let data = bars(20);
+        let mut a = container_with_viewport(ScaleMode::Auto, 300.0, 0.0, data.len());
+        a.calc_auto_scale(crate::active_series::ActiveSeries::Bars(&data));
+
+        let (start, end) = a.viewport.visible_range();
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        for b in &data[start..end.min(data.len())] {
+            min = min.min(b.low);
+            max = max.max(b.high);
+        }
+        let range = max - min;
+        let padding = range * 0.04;
+        assert!((a.price_scale.price_min - (min - padding)).abs() < 1e-9);
+        assert!((a.price_scale.price_max - (max + padding)).abs() < 1e-9);
     }
 }
