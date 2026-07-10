@@ -1377,27 +1377,38 @@ pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
   <line x1="15" y1="18" x2="21" y2="18"/>
 </svg>"##;
 
-/// Trade Tape slot — receipt glyph. Owner-approved final design 2026-07-11.
+/// Trade Tape slot — print rows: dot + tick per print, dots alternating
+/// sides (buy/sell), varying tick lengths (sizes). Owner-picked from the
+/// researched candidates (round 4, T-b), 2026-07-11.
 pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M7 3h10v16l-2.5-1.7L12 19l-2.5-1.7L7 19z"/>
-  <line x1="10" y1="8" x2="14" y2="8"/>
-  <line x1="10" y1="12" x2="14" y2="12"/>
+  <circle cx="5" cy="6" r="1.3" fill="currentColor" stroke="none"/>
+  <line x1="9" y1="6" x2="19" y2="6"/>
+  <line x1="5" y1="12" x2="15" y2="12"/>
+  <circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none"/>
+  <circle cx="5" cy="18" r="1.3" fill="currentColor" stroke="none"/>
+  <line x1="9" y1="18" x2="17" y2="18"/>
 </svg>"##;
 
-/// L2 Tape slot — depth ladder with decreasing bar widths. Owner-approved
-/// final design 2026-07-11.
+/// L2 Tape slot — order-book EVENT stream: vertical book spine with an
+/// insert arrow (into the book) and a cancel arrow (out of it). This panel
+/// shows ALL L2 events (quote inserts/changes/cancels), not trades and not
+/// depth. Owner-picked from the researched candidates (round 4, L-b),
+/// 2026-07-11.
 pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="3" y1="5" x2="19" y2="5"/>
-  <line x1="3" y1="10" x2="15" y2="10"/>
-  <line x1="3" y1="15" x2="11" y2="15"/>
-  <line x1="3" y1="20" x2="7" y2="20"/>
+  <line x1="12" y1="3" x2="12" y2="21"/>
+  <path d="M4 6l4 2-4 2"/>
+  <path d="M20 13l-4 2 4 2"/>
 </svg>"##;
 
-/// Big Trades slot — whale glyph. Owner-approved final design 2026-07-11.
+/// Big Trades slot — sonar/ripple: a print whose impact radiates outward
+/// (big order hitting the tape). Owner-picked #12 of 24 candidates,
+/// 2026-07-11.
 pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 15c1.5-4.5 6-7.5 10.5-6.8 3 .5 5.5 2.3 6.5 5-1 2-3.2 3.3-5.5 3.3H7.5C5.5 16.5 4 16 3 15z"/>
-  <path d="M18 9l3.5-3.5V11"/>
-  <circle cx="7.5" cy="13" r="0.5" fill="currentColor"/>
+  <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+  <path d="M12 5a7 7 0 0 1 7 7"/>
+  <path d="M12 1.5A10.5 10.5 0 0 1 22.5 12"/>
+  <path d="M12 19a7 7 0 0 1-7-7"/>
+  <path d="M12 22.5A10.5 10.5 0 0 1 1.5 12"/>
 </svg>"##;
 
 /// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
