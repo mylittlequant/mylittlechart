@@ -330,10 +330,11 @@ impl ChartApp {
         {
             use mlc_app_sidebar_content::state::RightSidebarPanel;
             let slot_idx_opt = match self.sidebar_state.right_panel {
-                RightSidebarPanel::Slot1 => Some(0usize),
-                RightSidebarPanel::Slot2 => Some(1),
-                RightSidebarPanel::Slot3 => Some(2),
-                RightSidebarPanel::Slot4 => Some(3),
+                RightSidebarPanel::SlotTrading   => Some(0usize),
+                RightSidebarPanel::SlotDom       => Some(1),
+                RightSidebarPanel::SlotTape      => Some(2),
+                RightSidebarPanel::SlotL2        => Some(3),
+                RightSidebarPanel::SlotBigTrades => Some(4),
                 _ => None,
             };
             if let Some(idx) = slot_idx_opt {
@@ -5610,14 +5611,15 @@ impl ChartApp {
                         return;
                     }
 
-                    // Slot panels (Slot1..Slot4): route wheel to the hovered leaf body.
+                    // Slot panels (typed slots): route wheel to the hovered leaf body.
                     {
                         use mlc_app_sidebar_content::state::RightSidebarPanel;
                         let slot_idx_opt = match self.sidebar_state.right_panel {
-                            RightSidebarPanel::Slot1 => Some(0usize),
-                            RightSidebarPanel::Slot2 => Some(1),
-                            RightSidebarPanel::Slot3 => Some(2),
-                            RightSidebarPanel::Slot4 => Some(3),
+                            RightSidebarPanel::SlotTrading   => Some(0usize),
+                            RightSidebarPanel::SlotDom       => Some(1),
+                            RightSidebarPanel::SlotTape      => Some(2),
+                            RightSidebarPanel::SlotL2        => Some(3),
+                            RightSidebarPanel::SlotBigTrades => Some(4),
                             _ => None,
                         };
 
@@ -7302,7 +7304,7 @@ impl ChartApp {
         // Snapshot per-slot Panel docking layouts.
         // Each entry is a LayoutSnapshot JSON string, or None if the slot is empty.
         // `slot_leaves` carries the per-leaf kind + panel_id for state restoration.
-        for i in 0..4 {
+        for i in 0..mlc_app_sidebar_content::free_slot::SLOT_COUNT {
             let tree = self.sidebar_state.slot_dockings[i].inner().tree();
             preset.slot_layouts[i] = uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "slot")
                 .to_json()

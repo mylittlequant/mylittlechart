@@ -275,6 +275,24 @@ pub enum Icon {
     // === AI / Agents ===
     /// Bot / robot head icon — used for the Agents sidebar panel.
     Bot,
+
+    // === Performance ===
+    /// Gauge / speedometer — used for the Performance sidebar panel.
+    /// Distinct from `Signal` (Zap bolt) — the two used to collide (both
+    /// rendered the Zap icon before the typed-slot redesign 2026-07-11).
+    Gauge,
+
+    // === Typed sidebar slots (owner redesign 2026-07-11) ===
+    /// Order-ticket / briefcase glyph — Trading slot (hosts `TradingContainer`).
+    SlotTrading,
+    /// Orderbook ladder (two columns of short rows) — DOM slot.
+    SlotDom,
+    /// Vertical tape with row ticks — Trade Tape slot.
+    SlotTape,
+    /// Ladder + tape hybrid (rows with depth bars) — L2 Tape slot.
+    SlotL2,
+    /// One oversized block among small rows — Big Trades slot.
+    SlotBigTrades,
 }
 
 // =============================================================================
@@ -1022,19 +1040,17 @@ pub const ICON_BOOKMARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
   <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
 </svg>"##;
 
+/// Redrawn 2026-07-11 — the previous version used 3 strokes per corner
+/// (2 axis-aligned + 1 diagonal, all touching the viewBox edge at 0/24 with
+/// no margin), reading as a muddy X rather than clean expand brackets.
+/// Now: 2 strokes per corner (an L-shaped bracket), inset 3px from each
+/// edge, no diagonals — matches the outward-facing-corner-bracket convention
+/// used by fullscreen/expand icons elsewhere.
 pub const ICON_EXPAND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M0 0l8 8"/>
-  <path d="M0 0h8"/>
-  <path d="M0 0v8"/>
-  <path d="M24 0l-8 8"/>
-  <path d="M24 0h-8"/>
-  <path d="M24 0v8"/>
-  <path d="M0 24l8-8"/>
-  <path d="M0 24h8"/>
-  <path d="M0 24v-8"/>
-  <path d="M24 24l-8-8"/>
-  <path d="M24 24h-8"/>
-  <path d="M24 24v-8"/>
+  <path d="M3 9V3h6"/>
+  <path d="M21 9V3h-6"/>
+  <path d="M3 15v6h6"/>
+  <path d="M21 15v6h-6"/>
 </svg>"##;
 
 pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1334,11 +1350,69 @@ pub const ICON_KEY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="
 
 pub const ICON_BOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>"##;
 
-// Slot rail buttons — 4 aviation icons from uzor::render::icons::aviation
-pub const ICON_SLOT1: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path d="m 32,1 2,1 2,3 0,18 4,1 0,-4 3,0 0,5 17,6 0,3 -15,-2 -9,0 0,12 -2,6 7,3 0,2 -8,-1 -1,2 -1,-2 -8,1 0,-2 7,-3 -2,-6 0,-12 -9,0 -15,2 0,-3 17,-6 0,-5 3,0 0,4 4,-1 0,-18 2,-3 2,-1z"/></svg>"#;
-pub const ICON_SLOT2: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor"><path d="m 32,1 2,1 1,2 0,20 4,4 0,-4 3,0 0,4 -1,2 17,12 0,2 -16,-5 -7,0 0,13 -1,5 7,5 0,2 -8,-2 -1,2 -1,-2 -8,2 0,-2 7,-5 -1,-5 0,-13 -7,0 -16,5 0,-2 17,-12 -1,-2 0,-4 3,0 0,4 4,-4 0,-20 1,-2 2,-1z"/></svg>"#;
-pub const ICON_SLOT3: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>"#;
-pub const ICON_SLOT4: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l1 2h6"/><path d="M12 9a2 2 0 0 0 -2 2v3c0 1.1 .9 2 2 2h7a2 2 0 0 0 2 -2c0 -3.31 -3.13 -5 -7 -5h-2"/><path d="M13 9l0 -3"/><path d="M5 6l15 0"/><path d="M15 9.1v3.9h5.5"/><path d="M15 19l0 -3"/><path d="M19 19l-8 0"/></svg>"#;
+// =============================================================================
+// Typed sidebar slot icons (owner redesign 2026-07-11)
+// =============================================================================
+//
+// Replaces the 4 generic aviation-icon slot buttons (from uzor's aviation
+// set, visually unrelated to trading) with 5 type-specific glyphs matching
+// the house stroke-2 24x24 style used across the rest of the toolbar.
+
+/// Trading slot — order-ticket / briefcase glyph (hosts `TradingContainer`).
+pub const ICON_SLOT_TRADING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="7" width="18" height="13" rx="2"/>
+  <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+  <path d="M3 12h18"/>
+  <path d="M10 12v2h4v-2"/>
+</svg>"##;
+
+/// DOM slot — orderbook ladder: two columns of short rows (bid | ask).
+pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="3" y1="6" x2="10" y2="6"/>
+  <line x1="3" y1="10" x2="9" y2="10"/>
+  <line x1="3" y1="14" x2="11" y2="14"/>
+  <line x1="3" y1="18" x2="8" y2="18"/>
+  <line x1="14" y1="6" x2="21" y2="6"/>
+  <line x1="15" y1="10" x2="21" y2="10"/>
+  <line x1="13" y1="14" x2="21" y2="14"/>
+  <line x1="16" y1="18" x2="21" y2="18"/>
+  <line x1="12" y1="4" x2="12" y2="20"/>
+</svg>"##;
+
+/// Trade Tape slot — vertical tape with row ticks (scrolling trade stream).
+pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="3" width="16" height="18" rx="1"/>
+  <line x1="8" y1="7" x2="16" y2="7"/>
+  <line x1="8" y1="11" x2="16" y2="11"/>
+  <line x1="8" y1="15" x2="14" y2="15"/>
+  <line x1="8" y1="19" x2="16" y2="19"/>
+</svg>"##;
+
+/// L2 Tape slot — ladder + tape hybrid: rows with depth bars trailing right.
+pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="3" y1="6" x2="8" y2="6"/>
+  <line x1="3" y1="6" x2="19" y2="6" stroke-opacity="0.35"/>
+  <line x1="3" y1="11" x2="14" y2="11"/>
+  <line x1="3" y1="11" x2="19" y2="11" stroke-opacity="0.35"/>
+  <line x1="3" y1="16" x2="10" y2="16"/>
+  <line x1="3" y1="16" x2="19" y2="16" stroke-opacity="0.35"/>
+</svg>"##;
+
+/// Big Trades slot — one oversized block among small rows (whale trade).
+pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="4" y1="5" x2="14" y2="5"/>
+  <rect x="4" y="9" width="16" height="7" rx="1" fill="currentColor" stroke="none"/>
+  <line x1="4" y1="19" x2="11" y2="19"/>
+</svg>"##;
+
+/// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
+/// The two used to collide (Performance reused `ICON_SIGNAL` before the
+/// typed-slot redesign 2026-07-11).
+pub const ICON_GAUGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 17a8 8 0 1 1 15 0"/>
+  <line x1="12" y1="13" x2="15.5" y2="9"/>
+  <line x1="12" y1="17" x2="12" y2="17.01"/>
+</svg>"##;
 
 pub const ICON_MENU: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 6h16"/>
@@ -1678,6 +1752,12 @@ impl Icon {
             Icon::Globe => ICON_GLOBE,
             Icon::Key => ICON_KEY,
             Icon::Bot => ICON_BOT,
+            Icon::Gauge => ICON_GAUGE,
+            Icon::SlotTrading => ICON_SLOT_TRADING,
+            Icon::SlotDom => ICON_SLOT_DOM,
+            Icon::SlotTape => ICON_SLOT_TAPE,
+            Icon::SlotL2 => ICON_SLOT_L2,
+            Icon::SlotBigTrades => ICON_SLOT_BIG_TRADES,
         }
     }
 
@@ -1873,6 +1953,12 @@ impl Icon {
             "globe" => Some(Icon::Globe),
             "key" => Some(Icon::Key),
             "bot" => Some(Icon::Bot),
+            "gauge" => Some(Icon::Gauge),
+            "slot_trading" | "slottrading" => Some(Icon::SlotTrading),
+            "slot_dom" | "slotdom" => Some(Icon::SlotDom),
+            "slot_tape" | "slottape" => Some(Icon::SlotTape),
+            "slot_l2" | "slotl2" => Some(Icon::SlotL2),
+            "slot_big_trades" | "slotbigtrades" => Some(Icon::SlotBigTrades),
             _ => None,
         }
     }
@@ -2107,7 +2193,8 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "signal" | "signals" | "zap" => Some(ICON_SIGNAL),
         "object_tree" | "objecttree" | "tree_pine" | "treepine" | "layers" => Some(ICON_OBJECT_TREE),
         "circuit_board" | "circuitboard" | "connectors" => Some(ICON_CIRCUIT_BOARD),
-        "cpu" | "activity" | "performance" => Some(ICON_CPU),
+        "cpu" | "activity" => Some(ICON_CPU),
+        "gauge" | "performance" => Some(ICON_GAUGE),
         "new_window" | "newwindow" | "external_link" | "open_new" => Some(ICON_NEW_WINDOW),
         "cloud" => Some(ICON_CLOUD),
         "cloud_download" | "clouddownload" => Some(ICON_CLOUD_DOWNLOAD),
@@ -2121,10 +2208,11 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "globe" => Some(ICON_GLOBE),
         "key" => Some(ICON_KEY),
         "bot" => Some(ICON_BOT),
-        "slot1" => Some(ICON_SLOT1),
-        "slot2" => Some(ICON_SLOT2),
-        "slot3" => Some(ICON_SLOT3),
-        "slot4" => Some(ICON_SLOT4),
+        "slot_trading" | "slottrading" => Some(ICON_SLOT_TRADING),
+        "slot_dom" | "slotdom" => Some(ICON_SLOT_DOM),
+        "slot_tape" | "slottape" => Some(ICON_SLOT_TAPE),
+        "slot_l2" | "slotl2" => Some(ICON_SLOT_L2),
+        "slot_big_trades" | "slotbigtrades" => Some(ICON_SLOT_BIG_TRADES),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),
@@ -2269,5 +2357,144 @@ mod chart_type_icon_tests {
                 "{ct} must not resolve to a legacy shared fallback glyph anymore",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod typed_slot_icon_tests {
+    //! Coverage for the typed-slot sidebar redesign (2026-07-11): 5 new
+    //! slot icons replacing the generic aviation glyphs, Performance getting
+    //! its own Gauge glyph (previously collided with Signals' Zap bolt), and
+    //! the redrawn `ICON_EXPAND` (was 3-strokes-per-corner with diagonals,
+    //! now clean 2-strokes-per-corner outward brackets).
+    use super::*;
+
+    /// The 5 typed-slot `Icon` enum variants, in canonical slot index order
+    /// (matches `mlc_app_sidebar_content::free_slot::SlotKind::ALL`).
+    const SLOT_ICONS: &[Icon] = &[
+        Icon::SlotTrading,
+        Icon::SlotDom,
+        Icon::SlotTape,
+        Icon::SlotL2,
+        Icon::SlotBigTrades,
+    ];
+
+    /// Every typed-slot icon resolves to non-empty, well-formed SVG.
+    #[test]
+    fn slot_icons_resolve_nonempty_svg() {
+        for icon in SLOT_ICONS {
+            let svg = icon.svg();
+            assert!(!svg.is_empty(), "{:?} must resolve non-empty SVG", icon);
+            assert!(svg.starts_with("<svg"), "{:?} SVG must start with <svg tag", icon);
+            assert!(svg.trim_end().ends_with("</svg>"), "{:?} SVG must end with </svg>", icon);
+        }
+    }
+
+    /// All 5 typed-slot icons are visually distinct from each other (no two
+    /// slots silently share a glyph — each was hand-designed per owner spec:
+    /// Trading=order-ticket, DOM=ladder, Tape=vertical-tape, L2=ladder+tape
+    /// hybrid, BigTrades=oversized-block-among-rows).
+    #[test]
+    fn slot_icons_are_pairwise_distinct() {
+        for i in 0..SLOT_ICONS.len() {
+            for j in (i + 1)..SLOT_ICONS.len() {
+                assert_ne!(
+                    SLOT_ICONS[i].svg(), SLOT_ICONS[j].svg(),
+                    "{:?} and {:?} must not share identical SVG data",
+                    SLOT_ICONS[i], SLOT_ICONS[j],
+                );
+            }
+        }
+    }
+
+    /// None of the 5 new slot icons reuse the deleted aviation glyphs'
+    /// silhouette accidentally by resolving to an unrelated pre-existing
+    /// icon constant (defence against a copy-paste that forgot to swap in
+    /// the new path data).
+    #[test]
+    fn slot_icons_are_distinct_from_unrelated_existing_icons() {
+        let unrelated = [Icon::Bot, Icon::Watchlist, Icon::Alert, Icon::CircuitBoard, Icon::Gauge];
+        for slot_icon in SLOT_ICONS {
+            for other in &unrelated {
+                assert_ne!(
+                    slot_icon.svg(), other.svg(),
+                    "{:?} must not collide with unrelated icon {:?}",
+                    slot_icon, other,
+                );
+            }
+        }
+    }
+
+    /// Performance now has its own Gauge glyph, distinct from Signals' Zap
+    /// bolt — the two collided (`render.rs` used `Icon::Signal` for both
+    /// panel titles) before this redesign.
+    #[test]
+    fn performance_icon_distinct_from_signals_icon() {
+        assert_ne!(
+            Icon::Gauge.svg(), Icon::Signal.svg(),
+            "Performance (Gauge) must not collide with Signals (Signal/Zap)",
+        );
+    }
+
+    /// The right-toolbar rail's icon-id strings resolve to the SAME SVG data
+    /// as the corresponding `Icon` enum variant, across both lookup tables
+    /// (`Icon::svg()` used by sidebar panel headers, `icon_svg()` used by
+    /// `ToolbarIconId` rail buttons) — the two tables must never drift.
+    #[test]
+    fn slot_toolbar_icon_ids_match_icon_enum_svg() {
+        let pairs: &[(&str, Icon)] = &[
+            ("slot_trading", Icon::SlotTrading),
+            ("slot_dom", Icon::SlotDom),
+            ("slot_tape", Icon::SlotTape),
+            ("slot_l2", Icon::SlotL2),
+            ("slot_big_trades", Icon::SlotBigTrades),
+            ("gauge", Icon::Gauge),
+        ];
+        for (name, icon) in pairs {
+            let by_name = icon_svg(name).unwrap_or_else(|| panic!("icon_svg(\"{name}\") must resolve"));
+            assert_eq!(
+                by_name, icon.svg(),
+                "icon_svg(\"{}\") must match {:?}::svg()", name, icon,
+            );
+        }
+    }
+
+    /// `performance` toolbar icon-id resolves to Gauge, NOT the old
+    /// `Activity`/`ICON_CPU` alias it collided with pre-redesign.
+    #[test]
+    fn performance_toolbar_icon_id_resolves_to_gauge() {
+        let performance_svg = icon_svg("performance").expect("\"performance\" must resolve");
+        assert_eq!(performance_svg, Icon::Gauge.svg());
+        assert_ne!(performance_svg, ICON_CPU, "\"performance\" must not resolve to the old CPU/Activity glyph");
+    }
+
+    /// `ICON_EXPAND` redraw regression: exactly 2 `<path>` strokes per
+    /// corner (8 total), no diagonal strokes (no path data containing both
+    /// an `h`/`v`... actually simplest robust check: no diagonal `l`
+    /// commands with two non-zero deltas — every path here is a pure
+    /// horizontal+vertical L-shape, so each path string must contain
+    /// exactly one `M` move followed by exactly 2 more coordinate pairs,
+    /// i.e. 3 numbers total per path, none of which is a diagonal `l8 8`
+    /// pattern like the old version had).
+    #[test]
+    fn icon_expand_has_no_diagonal_strokes() {
+        let svg = ICON_EXPAND;
+        // The old version had paths like "M0 0l8 8" (diagonal: dx=8,dy=8 in
+        // one lowercase `l` segment). The new version's paths only ever
+        // move in ONE axis per segment (pure L-shaped brackets). Pin this by
+        // asserting the historical diagonal signature is gone.
+        assert!(!svg.contains("l8 8"), "old diagonal stroke signature must be gone: {svg}");
+        assert!(!svg.contains("l-8 8"), "old diagonal stroke signature must be gone: {svg}");
+        assert!(!svg.contains("l8-8"), "old diagonal stroke signature must be gone: {svg}");
+        assert!(!svg.contains("l-8-8"), "old diagonal stroke signature must be gone: {svg}");
+    }
+
+    /// `ICON_EXPAND` has exactly 4 path elements (one L-bracket per corner,
+    /// 2 strokes each via a single 2-segment path) — not the old 12 (3 per
+    /// corner).
+    #[test]
+    fn icon_expand_has_four_paths_two_strokes_per_corner() {
+        let path_count = ICON_EXPAND.matches("<path").count();
+        assert_eq!(path_count, 4, "ICON_EXPAND must have exactly 4 corner-bracket paths (was 12 pre-redraw): {}", ICON_EXPAND);
     }
 }

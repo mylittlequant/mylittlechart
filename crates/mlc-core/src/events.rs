@@ -36,9 +36,11 @@ pub enum ChartOutEvent {
     ToggleConnectors,
     TogglePerformance,
     ToggleAgents,
-    /// Toggle a free slot sidebar (0..=3). Slots host a chart-preset-scoped
-    /// `DockingManager<Panel>` for trading panels, detached mini-charts, etc.
-    /// The profile only tracks open/closed per slot; content lives in the preset.
+    /// Toggle a typed slot sidebar (0..=4: Trading, Dom, Tape, L2, BigTrades —
+    /// see `mlc_app_sidebar_content::free_slot::SlotKind`). Each slot hosts a
+    /// chart-preset-scoped `DockingManager<Panel>` locked to its own panel
+    /// kind. The profile only tracks open/closed per slot; content lives in
+    /// the preset. First open of an empty slot auto-seeds one default panel.
     ToggleSlot(u8),
     ToggleIndicators,
     ToggleTradingPanel,

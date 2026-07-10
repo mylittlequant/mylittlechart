@@ -107,14 +107,16 @@ pub enum RightSidebarPanel {
     Performance,
     /// AI agent control panel — terminal / chat modes.
     Agents,
-    /// Free-container slot 1 — chart-preset-scoped docking hyperspace.
-    Slot1,
-    /// Free-container slot 2 — chart-preset-scoped docking hyperspace.
-    Slot2,
-    /// Free-container slot 3 — chart-preset-scoped docking hyperspace.
-    Slot3,
-    /// Free-container slot 4 — chart-preset-scoped docking hyperspace.
-    Slot4,
+    /// Trading slot — hosts `TradingContainer` panels only, one per instrument.
+    SlotTrading,
+    /// DOM slot — hosts `Dom` / `MultiDom` panels, one per instrument.
+    SlotDom,
+    /// Trade Tape slot — hosts `TradeTape` panels, one per instrument.
+    SlotTape,
+    /// L2 Tape slot — hosts `L2Tape` panels, one per instrument.
+    SlotL2,
+    /// Big Trades slot — hosts `BigTrades` panels, one per instrument.
+    SlotBigTrades,
 }
 
 impl RightSidebarPanel {
@@ -126,39 +128,45 @@ impl RightSidebarPanel {
     /// Returns a stable string key used to index per-panel scroll offsets.
     pub fn scroll_key(self) -> &'static str {
         match self {
-            RightSidebarPanel::None       => "none",
-            RightSidebarPanel::Watchlist  => "watchlist",
-            RightSidebarPanel::Alerts     => "alerts",
-            RightSidebarPanel::ObjectTree => "object_tree",
-            RightSidebarPanel::Signals    => "signals",
-            RightSidebarPanel::Connectors => "connectors",
-            RightSidebarPanel::Performance => "performance",
-            RightSidebarPanel::Agents     => "agents",
-            RightSidebarPanel::Slot1      => "slot1",
-            RightSidebarPanel::Slot2      => "slot2",
-            RightSidebarPanel::Slot3      => "slot3",
-            RightSidebarPanel::Slot4      => "slot4",
+            RightSidebarPanel::None          => "none",
+            RightSidebarPanel::Watchlist     => "watchlist",
+            RightSidebarPanel::Alerts        => "alerts",
+            RightSidebarPanel::ObjectTree    => "object_tree",
+            RightSidebarPanel::Signals       => "signals",
+            RightSidebarPanel::Connectors    => "connectors",
+            RightSidebarPanel::Performance   => "performance",
+            RightSidebarPanel::Agents        => "agents",
+            RightSidebarPanel::SlotTrading   => "slot_trading",
+            RightSidebarPanel::SlotDom       => "slot_dom",
+            RightSidebarPanel::SlotTape      => "slot_tape",
+            RightSidebarPanel::SlotL2        => "slot_l2",
+            RightSidebarPanel::SlotBigTrades => "slot_big_trades",
         }
     }
 
-    /// If this panel is a free slot, returns its index (0..=3).
+    /// If this panel is a typed free slot, returns its index (0..=4).
+    ///
+    /// Index↔kind mapping is fixed: 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades
+    /// (matches [`crate::free_slot::SlotKind`] and `SidebarState::slot_dockings`).
     pub fn slot_index(self) -> Option<u8> {
         match self {
-            RightSidebarPanel::Slot1 => Some(0),
-            RightSidebarPanel::Slot2 => Some(1),
-            RightSidebarPanel::Slot3 => Some(2),
-            RightSidebarPanel::Slot4 => Some(3),
+            RightSidebarPanel::SlotTrading   => Some(0),
+            RightSidebarPanel::SlotDom       => Some(1),
+            RightSidebarPanel::SlotTape      => Some(2),
+            RightSidebarPanel::SlotL2        => Some(3),
+            RightSidebarPanel::SlotBigTrades => Some(4),
             _ => None,
         }
     }
 
-    /// Construct a slot panel from its index (0..=3). Panics on out of range.
+    /// Construct a slot panel from its index (0..=4). Panics on out of range.
     pub fn from_slot_index(idx: u8) -> Self {
         match idx {
-            0 => RightSidebarPanel::Slot1,
-            1 => RightSidebarPanel::Slot2,
-            2 => RightSidebarPanel::Slot3,
-            3 => RightSidebarPanel::Slot4,
+            0 => RightSidebarPanel::SlotTrading,
+            1 => RightSidebarPanel::SlotDom,
+            2 => RightSidebarPanel::SlotTape,
+            3 => RightSidebarPanel::SlotL2,
+            4 => RightSidebarPanel::SlotBigTrades,
             _ => panic!("slot index out of range: {}", idx),
         }
     }
@@ -405,13 +413,15 @@ pub struct SidebarState {
     /// Consulted when routing input, reading snapshots, or persisting layout.
     pub agent_leaves: HashMap<uzor::panels::LeafId, AgentLeafDescriptor>,
 
-    /// Per-slot docking managers (Slot1..Slot4). Each hosts its own
-    /// `DockingManager<Panel>` for trading panels and free mini-charts.
+    /// Per-slot docking managers, one per [`crate::free_slot::SlotKind`]
+    /// (Trading, Dom, Tape, L2, BigTrades — index 0..=4). Each hosts its own
+    /// `DockingManager<Panel>`, but the panel KIND spawnable inside is locked
+    /// to the slot's type (see `render_slot_spawn_dropdown` filter).
     /// Content is per-chart-preset; these are rebuilt from the active preset's
     /// `slot_layouts` on preset switch.
-    pub slot_dockings: [crate::free_slot::SlotDockingManager; 4],
+    pub slot_dockings: [crate::free_slot::SlotDockingManager; 5],
 
-    /// `(slot_idx 0..4, leaf_id)` — currently focused leaf in free slot sidebars.
+    /// `(slot_idx 0..5, leaf_id)` — currently focused leaf in free slot sidebars.
     pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
 
     /// Which slot's `[+]` dropdown is currently open, if any. `None` = all closed.
@@ -419,7 +429,7 @@ pub struct SidebarState {
 
     /// The screen-space rect of the [+] spawn button for each slot (set during render).
     /// Used to anchor the spawn dropdown directly below the button.
-    pub slot_spawn_button_rect: [Option<uzor::types::WidgetRect>; 4],
+    pub slot_spawn_button_rect: [Option<uzor::types::WidgetRect>; 5],
 
     /// Per-slot spawn layout preference (how a new panel is added). Shared
     /// across all 4 slots (one setting for all free-slot containers).
@@ -812,10 +822,11 @@ impl Default for SidebarState {
                 crate::free_slot::SlotDockingManager::new(),
                 crate::free_slot::SlotDockingManager::new(),
                 crate::free_slot::SlotDockingManager::new(),
+                crate::free_slot::SlotDockingManager::new(),
             ],
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
-            slot_spawn_button_rect: [None; 4],
+            slot_spawn_button_rect: [None; 5],
             slot_spawn_layout: AgentSpawnLayout::SplitH,
             slot_source_mode: SlotSourceMode::Tagged,
             hovered_free_leaf: None,
@@ -943,5 +954,72 @@ impl SidebarState {
     pub fn current_right_scroll_mut(&mut self) -> &mut ScrollState {
         let key = self.right_panel.scroll_key().to_owned();
         self.panel_scroll.entry(key).or_default()
+    }
+}
+
+#[cfg(test)]
+mod typed_slot_tests {
+    use super::RightSidebarPanel;
+
+    /// `slot_index()` / `from_slot_index()` round-trip for all 5 typed slots,
+    /// in the canonical index order 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades.
+    #[test]
+    fn slot_index_round_trip() {
+        let slots = [
+            RightSidebarPanel::SlotTrading,
+            RightSidebarPanel::SlotDom,
+            RightSidebarPanel::SlotTape,
+            RightSidebarPanel::SlotL2,
+            RightSidebarPanel::SlotBigTrades,
+        ];
+        for (expected_idx, panel) in slots.iter().enumerate() {
+            let idx = panel.slot_index().expect("typed slot must report an index");
+            assert_eq!(idx as usize, expected_idx, "slot_index() mismatch for {:?}", panel);
+            assert_eq!(
+                RightSidebarPanel::from_slot_index(idx),
+                *panel,
+                "from_slot_index({}) must round-trip back to {:?}", idx, panel
+            );
+        }
+    }
+
+    /// Non-slot panels report `None` from `slot_index()`.
+    #[test]
+    fn non_slot_panels_have_no_slot_index() {
+        let non_slots = [
+            RightSidebarPanel::None,
+            RightSidebarPanel::Watchlist,
+            RightSidebarPanel::Alerts,
+            RightSidebarPanel::ObjectTree,
+            RightSidebarPanel::Signals,
+            RightSidebarPanel::Connectors,
+            RightSidebarPanel::Performance,
+            RightSidebarPanel::Agents,
+        ];
+        for panel in non_slots {
+            assert_eq!(panel.slot_index(), None, "{:?} must not report a slot index", panel);
+        }
+    }
+
+    /// `scroll_key()` gives every typed slot a distinct, stable string key.
+    #[test]
+    fn slot_scroll_keys_are_distinct() {
+        let keys: Vec<&str> = [
+            RightSidebarPanel::SlotTrading,
+            RightSidebarPanel::SlotDom,
+            RightSidebarPanel::SlotTape,
+            RightSidebarPanel::SlotL2,
+            RightSidebarPanel::SlotBigTrades,
+        ].iter().map(|p| p.scroll_key()).collect();
+        let mut deduped = keys.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        assert_eq!(deduped.len(), keys.len(), "scroll_key() collision among typed slots: {:?}", keys);
+    }
+
+    #[test]
+    #[should_panic(expected = "slot index out of range")]
+    fn from_slot_index_panics_out_of_range() {
+        let _ = RightSidebarPanel::from_slot_index(5);
     }
 }

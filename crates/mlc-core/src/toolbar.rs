@@ -52,18 +52,20 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip(t_toolbar(TK::Signals)),
             ToolbarItemDef::icon_button("connectors", ToolbarIconId::new("CircuitBoard"))
                 .with_tooltip(t_toolbar(TK::Connectors)),
-            ToolbarItemDef::icon_button("performance", ToolbarIconId::new("Activity"))
+            ToolbarItemDef::icon_button("performance", ToolbarIconId::new("Gauge"))
                 .with_tooltip(t_toolbar(TK::Performance)),
             ToolbarItemDef::icon_button("agents", ToolbarIconId::new("Bot"))
                 .with_tooltip(t_toolbar(TK::Agents)),
-            ToolbarItemDef::icon_button("slot1", ToolbarIconId::new("slot1"))
-                .with_tooltip("Slot 1"),
-            ToolbarItemDef::icon_button("slot2", ToolbarIconId::new("slot2"))
-                .with_tooltip("Slot 2"),
-            ToolbarItemDef::icon_button("slot3", ToolbarIconId::new("slot3"))
-                .with_tooltip("Slot 3"),
-            ToolbarItemDef::icon_button("slot4", ToolbarIconId::new("slot4"))
-                .with_tooltip("Slot 4"),
+            ToolbarItemDef::icon_button("slot_trading", ToolbarIconId::new("slot_trading"))
+                .with_tooltip("Trading"),
+            ToolbarItemDef::icon_button("slot_dom", ToolbarIconId::new("slot_dom"))
+                .with_tooltip("DOM"),
+            ToolbarItemDef::icon_button("slot_tape", ToolbarIconId::new("slot_tape"))
+                .with_tooltip("Trade Tape"),
+            ToolbarItemDef::icon_button("slot_l2", ToolbarIconId::new("slot_l2"))
+                .with_tooltip("L2 Tape"),
+            ToolbarItemDef::icon_button("slot_big_trades", ToolbarIconId::new("slot_big_trades"))
+                .with_tooltip("Big Trades"),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }

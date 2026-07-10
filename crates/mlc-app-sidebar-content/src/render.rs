@@ -173,7 +173,7 @@ pub struct RightSidebarResult {
 
     /// Bounding rect of the currently-rendered free-slot body (inner padded area).
     ///
-    /// Set only when a `Slot1..Slot4` panel is rendered.  Used by `chart-app`
+    /// Set only when a typed slot panel is rendered.  Used by `chart-app`
     /// for cross-container drag hit testing — checking whether the cursor is
     /// inside this slot's DockingManager area.
     pub active_slot_body_rect: Option<WidgetRect>,
@@ -279,16 +279,17 @@ pub fn render_right_sidebar(
     let owns_full_width = matches!(
         panel,
         RightSidebarPanel::Agents
-            | RightSidebarPanel::Slot1
-            | RightSidebarPanel::Slot2
-            | RightSidebarPanel::Slot3
-            | RightSidebarPanel::Slot4
+            | RightSidebarPanel::SlotTrading
+            | RightSidebarPanel::SlotDom
+            | RightSidebarPanel::SlotTape
+            | RightSidebarPanel::SlotL2
+            | RightSidebarPanel::SlotBigTrades
     );
     let scrollbar_width: f64 = if owns_full_width { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
 
     // Dynamic header height: slot panels and Agents go 2-row (68 px) when too narrow.
-    let header_height = if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    let header_height = if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
         // Available width = full width - left pad (8) - close X reservation (20).
         // Mirrors `inner_w` inside render_slot_toolbar_in_header / render_agents_toolbar_in_header.
         // Threshold = sum of all single-row buttons at minimum 28 px each
@@ -331,12 +332,13 @@ pub fn render_right_sidebar(
         RightSidebarPanel::ObjectTree  => ("Object Tree",  Icon::Layers),
         RightSidebarPanel::Signals     => ("Signals",      Icon::Signal),
         RightSidebarPanel::Connectors  => ("Connectors",   Icon::CircuitBoard),
-        RightSidebarPanel::Performance => ("Performance",  Icon::Signal),
+        RightSidebarPanel::Performance => ("Performance",  Icon::Gauge),
         RightSidebarPanel::Agents      => ("Agents",       Icon::Bot),
-        RightSidebarPanel::Slot1       => ("Slot 1",       Icon::Bot),
-        RightSidebarPanel::Slot2       => ("Slot 2",       Icon::Bot),
-        RightSidebarPanel::Slot3       => ("Slot 3",       Icon::Bot),
-        RightSidebarPanel::Slot4       => ("Slot 4",       Icon::Bot),
+        RightSidebarPanel::SlotTrading   => ("Trading",     Icon::SlotTrading),
+        RightSidebarPanel::SlotDom       => ("DOM",          Icon::SlotDom),
+        RightSidebarPanel::SlotTape      => ("Trade Tape",   Icon::SlotTape),
+        RightSidebarPanel::SlotL2        => ("L2 Tape",      Icon::SlotL2),
+        RightSidebarPanel::SlotBigTrades => ("Big Trades",   Icon::SlotBigTrades),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -376,7 +378,7 @@ pub fn render_right_sidebar(
     ctx.fill_rect(rect.x, rect.y, rect.width, header_height);
 
     // Header icon (left side, 18 × 18, centred vertically) — NOT drawn for slot or Agents panels.
-    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
         let icon_size = 18.0;
         let icon_x = rect.x + 12.0;
         let icon_y = rect.y + (header_height - icon_size) / 2.0;
@@ -384,7 +386,7 @@ pub fn render_right_sidebar(
     }
 
     // Header title — suppressed for Slot panels and Agents (toolbar buttons fill that row).
-    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::Slot1 | RightSidebarPanel::Slot2 | RightSidebarPanel::Slot3 | RightSidebarPanel::Slot4) {
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text);
         ctx.set_text_align(TextAlign::Left);
@@ -676,10 +678,11 @@ pub fn render_right_sidebar(
             );
         }
 
-        RightSidebarPanel::Slot1
-        | RightSidebarPanel::Slot2
-        | RightSidebarPanel::Slot3
-        | RightSidebarPanel::Slot4 => {
+        RightSidebarPanel::SlotTrading
+        | RightSidebarPanel::SlotDom
+        | RightSidebarPanel::SlotTape
+        | RightSidebarPanel::SlotL2
+        | RightSidebarPanel::SlotBigTrades => {
             let slot_idx = panel.slot_index().unwrap_or(0) as usize;
             content_height = render_slot_panel(
                 ctx,
@@ -912,10 +915,45 @@ fn render_watchlist_config_dropdown(
 // Slot spawn dropdown
 // =============================================================================
 
+/// Full catalog of spawnable `Panel` kinds, keyed by the `kind_str` used in
+/// `slot:{idx}:spawn:{kind_str}` widget ids. [`slot_spawn_items`] filters
+/// this down to the subset a given [`crate::free_slot::SlotKind`] accepts.
+const ALL_SLOT_SPAWN_ITEMS: &[(&str, &str)] = &[
+    ("dom",                "DOM"),
+    ("multi_dom",          "Multi-Exchange DOM"),
+    ("footprint",          "Footprint"),
+    ("volume_profile",     "Volume Profile"),
+    ("liquidity_heatmap",  "Liquidity Heatmap"),
+    ("big_trades",         "Big Trades"),
+    ("l2_tape",            "L2 Tape"),
+    ("trade_tape",         "Trade Tape"),
+    ("indicator_panel",    "Indicator"),
+    ("order_entry",        "Order Entry"),
+    ("position_manager",   "Positions"),
+    ("trade_log",          "Trade Log"),
+    ("risk_calculator",    "Risk Calculator"),
+    ("trading_container",  "Trading"),
+];
+
+/// Spawn-dropdown item list for one typed slot — filtered to the kinds that
+/// slot's [`crate::free_slot::SlotKind`] accepts (owner spec: type-locked
+/// slots).  `SlotDom` offers 2 items (Dom + MultiDom); every other slot
+/// offers exactly 1.
+pub fn slot_spawn_items(kind: crate::free_slot::SlotKind) -> Vec<(&'static str, &'static str)> {
+    let allowed = kind.allowed_panel_kinds();
+    ALL_SLOT_SPAWN_ITEMS
+        .iter()
+        .copied()
+        .filter(|(kind_str, _)| allowed.contains(kind_str))
+        .collect()
+}
+
 /// Render the slot `[+]` spawn dropdown overlay.
 ///
-/// Appears directly below the sidebar header, right-aligned.  Lists all
-/// `Panel` variants.  Drawn last so it sits on top of all slot content.
+/// Appears directly below the sidebar header, right-aligned.  Lists only the
+/// `Panel` kinds this slot's [`crate::free_slot::SlotKind`] accepts (type-
+/// locked slots — owner redesign 2026-07-11).  Drawn last so it sits on top
+/// of all slot content.
 fn render_slot_spawn_dropdown(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
@@ -924,28 +962,14 @@ fn render_slot_spawn_dropdown(
     theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
 ) {
-    const ITEMS: &[(&str, &str)] = &[
-        ("dom",                "DOM"),
-        ("multi_dom",          "Multi-Exchange DOM"),
-        ("footprint",          "Footprint"),
-        ("volume_profile",     "Volume Profile"),
-        ("liquidity_heatmap",  "Liquidity Heatmap"),
-        ("big_trades",         "Big Trades"),
-        ("l2_tape",            "L2 Tape"),
-        ("trade_tape",         "Trade Tape"),
-        ("indicator_panel",    "Indicator"),
-        ("order_entry",        "Order Entry"),
-        ("position_manager",   "Positions"),
-        ("trade_log",          "Trade Log"),
-        ("risk_calculator",    "Risk Calculator"),
-        ("trading_container",  "Trading"),
-    ];
+    let Some(slot_kind) = crate::free_slot::SlotKind::from_index(slot_idx) else { return };
+    let items = slot_spawn_items(slot_kind);
 
     let row_h = 24.0;
     let pad_v = 4.0;
     let pad_h = 12.0;
     let dropdown_w = 180.0;
-    let dropdown_h = row_h * ITEMS.len() as f64 + pad_v * 2.0;
+    let dropdown_h = row_h * items.len() as f64 + pad_v * 2.0;
 
     // Anchor: just below the [+] button if rect is known, otherwise fallback.
     let (dropdown_x, dropdown_y) = if let Some(br) = button_rect {
@@ -969,7 +993,7 @@ fn render_slot_spawn_dropdown(
     ctx.line_to(dropdown_x, dropdown_y);
     ctx.stroke();
 
-    for (row_idx, (kind_str, label)) in ITEMS.iter().enumerate() {
+    for (row_idx, (kind_str, label)) in items.iter().enumerate() {
         let row_y = dropdown_y + pad_v + row_idx as f64 * row_h;
         let row_rect = WidgetRect::new(dropdown_x, row_y, dropdown_w, row_h);
 
@@ -3821,7 +3845,7 @@ fn render_slot_toolbar_in_header(
 /// Lays out the slot's `DockingManager<Panel>` inside the content rect and
 /// paints each leaf with a placeholder background + title. If the slot is
 /// empty, draws a "Drag panels here" hint instead. Cross-container drag
-/// between Main + Slot1..Slot4 and real leaf rendering land in Phase 4-new
+/// between Main + typed slots and real leaf rendering land in Phase 4-new
 /// together with the first real `Panel` variants.
 fn render_slot_panel(
     ctx: &mut dyn RenderContext,
@@ -4831,7 +4855,7 @@ fn render_agents_toolbar_in_header(
 /// Renders the AI agents panel with a split-grid docking layout.
 ///
 /// Layout:
-/// ```
+/// ```text
 /// ┌─────────────────────────────────────────────────────────────────┐
 /// │ [PTY][Chat]  [Claude] [Codex] [Gemini] [OpenCode]  ← row 1 (28px)
 /// ├─────────────────────────────────────────────────────────────────┤
@@ -6665,5 +6689,57 @@ fn format_tick_size(ts: f64) -> String {
         format!("{:.3}", ts)
     } else {
         format!("{:.4}", ts)
+    }
+}
+
+#[cfg(test)]
+mod slot_spawn_dropdown_tests {
+    use super::slot_spawn_items;
+    use crate::free_slot::SlotKind;
+
+    /// Spawn dropdown item list per slot kind (owner spec, T3): each slot
+    /// offers exactly the `Panel` kinds its `SlotKind` allows — SlotDom
+    /// offers 2 (Dom + MultiDom), every other slot offers exactly 1.
+    #[test]
+    fn spawn_items_per_slot_kind_table() {
+        assert_eq!(
+            slot_spawn_items(SlotKind::Trading).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec!["trading_container"],
+        );
+        assert_eq!(
+            slot_spawn_items(SlotKind::Dom).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec!["dom", "multi_dom"],
+        );
+        assert_eq!(
+            slot_spawn_items(SlotKind::Tape).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec!["trade_tape"],
+        );
+        assert_eq!(
+            slot_spawn_items(SlotKind::L2).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec!["l2_tape"],
+        );
+        assert_eq!(
+            slot_spawn_items(SlotKind::BigTrades).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+            vec!["big_trades"],
+        );
+    }
+
+    /// Every item in every slot's filtered list has a non-empty display label.
+    #[test]
+    fn spawn_items_have_labels() {
+        for kind in SlotKind::ALL {
+            for (kind_str, label) in slot_spawn_items(kind) {
+                assert!(!label.is_empty(), "empty label for kind_str '{}'", kind_str);
+            }
+        }
+    }
+
+    /// No slot's spawn list is empty — every typed slot has at least one
+    /// spawnable panel kind.
+    #[test]
+    fn no_slot_has_empty_spawn_list() {
+        for kind in SlotKind::ALL {
+            assert!(!slot_spawn_items(kind).is_empty(), "{:?} has no spawn items", kind);
+        }
     }
 }

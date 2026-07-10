@@ -326,10 +326,11 @@ pub fn process_event(
                         let is_agents = panel == RightSidebarPanel::Agents;
                         let is_slot = matches!(
                             panel,
-                            RightSidebarPanel::Slot1
-                                | RightSidebarPanel::Slot2
-                                | RightSidebarPanel::Slot3
-                                | RightSidebarPanel::Slot4
+                            RightSidebarPanel::SlotTrading
+                                | RightSidebarPanel::SlotDom
+                                | RightSidebarPanel::SlotTape
+                                | RightSidebarPanel::SlotL2
+                                | RightSidebarPanel::SlotBigTrades
                         );
                         if is_agents || is_slot {
                             if let Some(ref sr) = chart.last_sidebar_result {

@@ -1200,7 +1200,7 @@ impl ChartApp {
         // --- slot:{idx}:new — toggle spawn dropdown for the slot ---
         if let Some(idx_str) = widget_id.strip_prefix("slot:").and_then(|s| s.strip_suffix(":new")) {
             if let Ok(idx) = idx_str.parse::<usize>() {
-                if idx < 4 {
+                if idx < mlc_app_sidebar_content::free_slot::SLOT_COUNT {
                     if self.sidebar_state.slot_spawn_dropdown == Some(idx) {
                         self.sidebar_state.slot_spawn_dropdown = None;
                     } else {
@@ -1216,432 +1216,7 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("slot:") {
             if let Some((idx_str, kind_str)) = rest.split_once(":spawn:") {
                 if let Ok(idx) = idx_str.parse::<usize>() {
-                    if idx < 4 {
-                        use mlc_app_panels::trading::SymbolSource;
-                        use mlc_app_sidebar_content::state::SlotSourceMode;
-
-                        // Build SymbolSource from the toolbar's current source mode.
-                        // S2.7.1e: read instrument fields via branch_meta (B1).
-                        let spawn_active_cid = self.panel_app.panel_grid.active_container_id();
-                        let source = match self.sidebar_state.slot_source_mode {
-                            SlotSourceMode::Tagged => SymbolSource::HyperFocus,
-                            SlotSourceMode::Untagged => {
-                                // Frozen snapshot of active chart key at spawn time.
-                                let sym: String = spawn_active_cid
-                                    .and_then(|cid| self.symbol_for_chart(cid))
-                                    .map(String::from)
-                                    .unwrap_or_default();
-                                let exch: String = spawn_active_cid
-                                    .and_then(|cid| self.exchange_for_chart(cid))
-                                    .map(String::from)
-                                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                                let at: String = spawn_active_cid
-                                    .and_then(|cid| self.account_type_for_chart(cid))
-                                    .map(|at| at.to_string())
-                                    .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
-                                SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
-                            }
-                        };
-
-                        // Resolve immediately to get the concrete symbol for initial setup.
-                        // S2.7.1e: read instrument fields via branch_meta (B1).
-                        let active_resolved = spawn_active_cid.map(|cid| {
-                            mlc_app_panels::trading::ResolvedSymbol {
-                                symbol: self.symbol_for_chart(cid)
-                                    .map(String::from).unwrap_or_default(),
-                                exchange: self.exchange_for_chart(cid)
-                                    .map(String::from).unwrap_or_default(),
-                                account_type: self.account_type_for_chart(cid)
-                                    .map(|at| at.to_string()).unwrap_or_default(),
-                            }
-                        });
-                        let resolve_leaf = |lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> {
-                            let leaf = mlc_core::LeafId(lid);
-                            let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
-                            Some(mlc_app_panels::trading::ResolvedSymbol {
-                                symbol: self.symbol_for_chart(leaf_cid)
-                                    .map(String::from).unwrap_or_default(),
-                                exchange: self.exchange_for_chart(leaf_cid)
-                                    .map(String::from).unwrap_or_default(),
-                                account_type: self.account_type_for_chart(leaf_cid)
-                                    .map(|at| at.to_string()).unwrap_or_default(),
-                            })
-                        };
-                        let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
-                        // No resolution (no active window / unresolved BoundToChart) → empty
-                        // symbol. Panel will pick up its key via group propagation rather
-                        // than carrying a hardcoded BTCUSDT.
-                        let symbol = resolved.as_ref().map(|r| r.symbol.clone())
-                            .unwrap_or_default();
-                        let exchange_str = resolved.as_ref().map(|r| r.exchange.clone())
-                            .unwrap_or_else(|| self.active_exchange.as_str().to_string());
-                        let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
-                            .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
-
-                        let resolved_tick_size = self.core.exchange_symbols()
-                            .tick_size_for(&exchange_str, &symbol)
-                            .filter(|t| *t > 0.0)
-                            .unwrap_or(0.01);
-
-                        let item_opt = match kind_str {
-                            "dom" => {
-                                let pid = self.panels_store.create_dom(symbol.clone(), resolved_tick_size);
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    let trade_handle = self.core.subscribe_trades(eid, &symbol, at);
-                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
-                                        state.last_seen_update_id = None;
-                                        state.level_qty_bid.clear();
-                                        state.level_qty_ask.clear();
-                                        state.shared_trades = trade_handle;
-                                    }
-                                } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::Dom(pid))
-                            }
-                            "multi_dom" => {
-                                // Start with three exchanges so the owner sees a multi-column
-                                // view immediately on first open. More exchanges can be added
-                                // via the ⚙ gear button in the panel header.
-                                let default_exchanges = vec![
-                                    "binance".to_string(),
-                                    "bybit".to_string(),
-                                    "okx".to_string(),
-                                ];
-                                let pid = self.panels_store.create_multi_dom(
-                                    symbol.clone(),
-                                    default_exchanges.clone(),
-                                );
-                                if !symbol.is_empty() {
-                                    // AccountType is always Spot for multi-DOM (no
-                                    // single-exchange account context).
-                                    let at = digdigdig3::AccountType::Spot;
-                                    for ex_label in &default_exchanges {
-                                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                            let _ = self.core.subscribe_orderbook(eid, &symbol, at);
-                                        }
-                                    }
-                                }
-                                Some(mlc_core::state::Panel::MultiDom(pid))
-                            }
-                            "footprint" => {
-                                let pid = self.panels_store.create_footprint(symbol.clone(), resolved_tick_size);
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
-                                    if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_trades = handle;
-                                        state.last_seen_ts_ms = 0;
-                                    }
-                                } else if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::Footprint(pid))
-                            }
-                            "volume_profile" => {
-                                let pid = self.panels_store.create_volume_profile(symbol.clone(), resolved_tick_size);
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
-                                    if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_trades = handle;
-                                        state.last_seen_ts_ms = 0;
-                                    }
-                                } else if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::VolumeProfile(pid))
-                            }
-                            "liquidity_heatmap" => {
-                                let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), resolved_tick_size, 1000);
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
-                                        state.last_seen_update_id = None;
-                                    }
-                                } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::LiquidityHeatmap(pid))
-                            }
-                            "big_trades" => {
-                                let pid = self.panels_store.create_big_trades();
-                                // Subscribe to the shared trade ring and attach the handle
-                                // to the panel state so tick() can pull new trades.
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
-                                    if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                        state.symbol = symbol.clone();
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_trades = handle;
-                                        state.last_seen_ts_ms = 0;
-                                    }
-                                } else if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
-                                    state.symbol = symbol.clone();
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::BigTrades(pid))
-                            }
-                            "l2_tape" => {
-                                let pid = self.panels_store.create_l2_tape();
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                        state.symbol = symbol.clone();
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
-                                        state.last_seen_update_id = None;
-                                        state.previous_book.clear();
-                                    }
-                                } else if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
-                                    state.symbol = symbol.clone();
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::L2Tape(pid))
-                            }
-                            "trade_tape" => {
-                                let pid = self.panels_store.create_trade_tape();
-                                if !symbol.is_empty() {
-                                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
-                                        .unwrap_or(self.active_exchange);
-                                    let at = crate::account_type_from_label(&account_type_str);
-                                    let handle = self.core.subscribe_trades(eid, &symbol, at);
-                                    if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
-                                        state.symbol = symbol.clone();
-                                        state.exchange = exchange_str.clone();
-                                        state.account_type = account_type_str.clone();
-                                        state.shared_trades = handle;
-                                        state.last_seen_ts_ms = 0;
-                                    }
-                                } else if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
-                                    state.symbol = symbol.clone();
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::TradeTape(pid))
-                            }
-                            "order_entry" => {
-                                let pid = self.panels_store.create_order_entry(symbol.clone());
-                                if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
-                                    state.source = source.clone();
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::OrderEntry(pid))
-                            }
-                            "position_manager" => {
-                                let pid = self.panels_store.create_position_manager();
-                                Some(mlc_core::state::Panel::PositionManager(pid))
-                            }
-                            "trade_log" => {
-                                let pid = self.panels_store.create_trade_log();
-                                Some(mlc_core::state::Panel::TradeLog(pid))
-                            }
-                            "risk_calculator" => {
-                                let pid = self.panels_store.create_risk_calculator();
-                                Some(mlc_core::state::Panel::RiskCalculator(pid))
-                            }
-                            "trading_container" => {
-                                let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
-                                if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
-                                    state.source = source.clone();
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::TradingContainer(pid))
-                            }
-                            "indicator_panel" => {
-                                // Spawn unbound (instance_id=0).  User picks the
-                                // indicator from the panel's own control plane.
-                                let pid = self.panels_store.create_indicator_panel(symbol.clone(), 0);
-                                if let Some(state) = self.panels_store.indicator_panel.get_mut(&pid) {
-                                    state.exchange = exchange_str.clone();
-                                    state.account_type = account_type_str.clone();
-                                }
-                                Some(mlc_core::state::Panel::IndicatorPanel(pid))
-                            }
-                            _ => None,
-                        };
-
-                        // Subscribe depth for panels that need raw orderbook data.
-                        // DOM is excluded here because it subscribes via subscribe_orderbook()
-                        // above, which internally calls subscribe_depth().
-                        let needs_depth = matches!(kind_str, "l2_tape" | "liquidity_heatmap");
-                        if needs_depth {
-                            let eid = self.core.exchange_symbols()
-                                .find_by_label(&exchange_str)
-                                .unwrap_or(self.active_exchange);
-                            let at = crate::account_type_from_label(&account_type_str);
-                            self.core.subscribe_depth(eid, &symbol, at);
-                        }
-
-                        // Register market-data panels in TagManager as Synced members.
-                        // order_entry / trading_container are account-bound, not market-data.
-                        // indicator_panel is market-data (symbol-bound).
-                        let is_market_data = matches!(
-                            kind_str,
-                            "dom" | "multi_dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
-                                | "big_trades" | "l2_tape" | "trade_tape" | "indicator_panel"
-                        );
-                        if is_market_data {
-                            if let Some(ref item) = item_opt {
-                                let pid = mlc_app_sidebar_content::free_slot::PanelId(item.panel_id().0);
-                                let member = mlc_core::ids::SyncMemberId::Panel(pid.0);
-                                match self.sidebar_state.slot_source_mode {
-                                    mlc_app_sidebar_content::state::SlotSourceMode::Tagged => {
-                                        // Attach to active chart's sync group. If that group is
-                                        // still auto-created (untagged), promote it to a real
-                                        // visible color tag so the panel-chart pair shows a
-                                        // shared color marker — this is the moment a 1-member
-                                        // untagged group becomes a 2+-member tagged one.
-                                        let group_id = self.core.tags().active_chart_tag()
-                                            .or_else(|| {
-                                                self.panel_app.panel_grid
-                                                    .active_container_id()
-                                                    .and_then(|cid| self.bubble_for_chart(cid))
-                                            });
-                                        if let Some(gid) = group_id {
-                                            // Promote if currently auto-created.
-                                            let was_auto = self.core.tags().get(gid)
-                                                .map(|t| t.auto_created)
-                                                .unwrap_or(false);
-                                            if was_auto {
-                                                if let Some(new_color) = self.promote_to_tagged(gid) {
-                                                    // Mirror color into leaf_color_tags for every
-                                                    // chart member of this group so chart leaf
-                                                    // headers also show the new color marker.
-                                                    let chart_member_ids: Vec<mlc_core::ChartId> =
-                                                        self.core.tags().chart_member_ids(gid)
-                                                            .into_iter()
-                                                            .collect();
-                                                    for cid in chart_member_ids {
-                                                        if let Some(leaf) = self.panel_app.panel_grid.leaf_for_container_id(cid) {
-                                                            self.panel_app.leaf_color_tags.insert(leaf, new_color);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            self.set_panel_synced(member, gid);
-                                        }
-                                    }
-                                    mlc_app_sidebar_content::state::SlotSourceMode::Untagged => {
-                                        // Spawn panel into its own 1-member auto-created group.
-                                        // S2.7.1e: read timeframe via branch_meta (B1).
-                                        let tf = spawn_active_cid
-                                            .and_then(|cid| self.timeframe_for_chart(cid))
-                                            .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                                        let solo_gid = self.create_auto_bubble(
-                                            [0.0, 0.0, 0.0, 0.0],
-                                            symbol.clone(),
-                                            tf,
-                                        );
-                                        self.set_panel_auto(member, solo_gid);
-                                        // Seed exchange/account_type on the new group so apply_key
-                                        // picks them up next frame.
-                                        self.core.bubbles_mut().set_bubble_instrument(solo_gid, exchange_str.clone(), account_type_str.clone());
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some(item) = item_opt {
-                            use mlc_app_sidebar_content::state::AgentSpawnLayout;
-                            use uzor::panels::SplitKind;
-
-                            let layout = self.sidebar_state.slot_spawn_layout;
-                            let focused_in_slot = self.sidebar_state.focused_free_leaf
-                                .filter(|(si, _)| *si == idx)
-                                .map(|(_, lid)| lid);
-                            let tree_empty = self.sidebar_state.slot_dockings[idx]
-                                .inner()
-                                .tree()
-                                .leaves()
-                                .is_empty();
-
-                            let new_leaf = match (layout, focused_in_slot, tree_empty) {
-                                // Empty slot — first panel goes in directly regardless of layout choice.
-                                (_, _, true) => {
-                                    self.sidebar_state.slot_dockings[idx].inner_mut()
-                                        .tree_mut().add_leaf(item)
-                                }
-                                // Replace mode: kill the focused leaf, put new in its place.
-                                (AgentSpawnLayout::Replace, Some(focus), false) => {
-                                    let tree = self.sidebar_state.slot_dockings[idx]
-                                        .inner_mut().tree_mut();
-                                    tree.remove_leaf(focus);
-                                    tree.add_leaf(item)
-                                }
-                                // SplitH (side-by-side) / SplitV (stacked) with a focused leaf —
-                                // bisect that leaf using the chosen direction.  Use the binary
-                                // `split_leaf` (NOT `split_leaf_with_children`): the binary form
-                                // keeps the original leaf verbatim and creates ONE fresh sibling
-                                // carrying ONLY `new_panel`.  The compound form would clone all
-                                // original panels into every sibling, aliasing panel ids.
-                                (AgentSpawnLayout::SplitH, Some(focus), false)
-                                | (AgentSpawnLayout::SplitV, Some(focus), false) => {
-                                    let split_kind = if layout == AgentSpawnLayout::SplitH {
-                                        SplitKind::SplitRight
-                                    } else {
-                                        SplitKind::SplitBottom
-                                    };
-                                    let tree = self.sidebar_state.slot_dockings[idx]
-                                        .inner_mut().tree_mut();
-                                    match tree.split_leaf(focus, split_kind, item.clone()) {
-                                        Some(new_id) => new_id,
-                                        None => {
-                                            // Split fell back — append as a peer leaf at root.
-                                            self.sidebar_state.slot_dockings[idx].inner_mut()
-                                                .tree_mut().add_leaf(item)
-                                        }
-                                    }
-                                }
-                                // No focused leaf — just append (will sit next to existing peers).
-                                (_, None, false) => {
-                                    self.sidebar_state.slot_dockings[idx].inner_mut()
-                                        .tree_mut().add_leaf(item)
-                                }
-                            };
-
-                            // Move focus to the freshly spawned leaf.
-                            self.sidebar_state.focused_free_leaf = Some((idx, new_leaf));
-                            eprintln!("[ChartApp] slot:{}:spawn:{} — leaf {:?} layout={:?}", idx, kind_str, new_leaf, layout);
-                            self.sidebar_state.slot_spawn_dropdown = None;
-                            self.sidebar_data_dirty = true;
-                            self.autosave_snapshot();
-                        }
-                    }
+                    self.spawn_panel_in_slot(idx, kind_str);
                 }
                 return;
             }
@@ -1651,7 +1226,7 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("slot:") {
             if let Some((idx_str, action)) = rest.split_once(':') {
                 if let Ok(idx) = idx_str.parse::<usize>() {
-                    if idx < 4 {
+                    if idx < mlc_app_sidebar_content::free_slot::SLOT_COUNT {
                         match action {
                             "split:h" => {
                                 self.sidebar_state.slot_spawn_layout =
@@ -4904,6 +4479,453 @@ impl ChartApp {
         }
 
         eprintln!("[ChartApp] unhandled widget click: {}", widget_id);
+    }
+
+    /// Spawn a `Panel` of `kind_str` inside the typed slot at `idx`.
+    ///
+    /// Called from the `[+]` dropdown click handler AND from the auto-seed
+    /// path (`ChartOutEvent::ToggleSlot` — first open of an empty typed
+    /// slot). `kind_str` is validated against the slot's
+    /// [`mlc_app_sidebar_content::free_slot::SlotKind::allowed_panel_kinds`]
+    /// — a kind that does not belong to this slot's type is a silent no-op
+    /// (defense in depth; the dropdown itself is already filtered so this
+    /// should never trigger from real UI clicks).
+    pub(super) fn spawn_panel_in_slot(&mut self, idx: usize, kind_str: &str) {
+        use mlc_app_sidebar_content::free_slot::SlotKind;
+
+        let Some(slot_kind) = SlotKind::from_index(idx) else { return };
+        if !slot_kind.allowed_panel_kinds().contains(&kind_str) {
+            eprintln!(
+                "[ChartApp] spawn_panel_in_slot: kind '{}' not allowed in slot {} ({:?}) — ignored",
+                kind_str, idx, slot_kind
+            );
+            return;
+        }
+
+        use mlc_app_panels::trading::SymbolSource;
+        use mlc_app_sidebar_content::state::SlotSourceMode;
+
+        // Build SymbolSource from the toolbar's current source mode.
+        // S2.7.1e: read instrument fields via branch_meta (B1).
+        let spawn_active_cid = self.panel_app.panel_grid.active_container_id();
+        let source = match self.sidebar_state.slot_source_mode {
+            SlotSourceMode::Tagged => SymbolSource::HyperFocus,
+            SlotSourceMode::Untagged => {
+                // Frozen snapshot of active chart key at spawn time.
+                let sym: String = spawn_active_cid
+                    .and_then(|cid| self.symbol_for_chart(cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let exch: String = spawn_active_cid
+                    .and_then(|cid| self.exchange_for_chart(cid))
+                    .map(String::from)
+                    .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                let at: String = spawn_active_cid
+                    .and_then(|cid| self.account_type_for_chart(cid))
+                    .map(|at| at.to_string())
+                    .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
+                SymbolSource::Fixed { symbol: sym, exchange: exch, account_type: at }
+            }
+        };
+
+        // Resolve immediately to get the concrete symbol for initial setup.
+        // S2.7.1e: read instrument fields via branch_meta (B1).
+        let active_resolved = spawn_active_cid.map(|cid| {
+            mlc_app_panels::trading::ResolvedSymbol {
+                symbol: self.symbol_for_chart(cid)
+                    .map(String::from).unwrap_or_default(),
+                exchange: self.exchange_for_chart(cid)
+                    .map(String::from).unwrap_or_default(),
+                account_type: self.account_type_for_chart(cid)
+                    .map(|at| at.to_string()).unwrap_or_default(),
+            }
+        });
+        let resolve_leaf = |lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> {
+            let leaf = mlc_core::LeafId(lid);
+            let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(leaf)?;
+            Some(mlc_app_panels::trading::ResolvedSymbol {
+                symbol: self.symbol_for_chart(leaf_cid)
+                    .map(String::from).unwrap_or_default(),
+                exchange: self.exchange_for_chart(leaf_cid)
+                    .map(String::from).unwrap_or_default(),
+                account_type: self.account_type_for_chart(leaf_cid)
+                    .map(|at| at.to_string()).unwrap_or_default(),
+            })
+        };
+        let resolved = source.resolve(active_resolved.as_ref(), &resolve_leaf);
+        // No resolution (no active window / unresolved BoundToChart) → empty
+        // symbol. Panel will pick up its key via group propagation rather
+        // than carrying a hardcoded BTCUSDT.
+        let symbol = resolved.as_ref().map(|r| r.symbol.clone())
+            .unwrap_or_default();
+        let exchange_str = resolved.as_ref().map(|r| r.exchange.clone())
+            .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+        let account_type_str = resolved.as_ref().map(|r| r.account_type.clone())
+            .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
+
+        let resolved_tick_size = self.core.exchange_symbols()
+            .tick_size_for(&exchange_str, &symbol)
+            .filter(|t| *t > 0.0)
+            .unwrap_or(0.01);
+
+        let item_opt = match kind_str {
+            "dom" => {
+                let pid = self.panels_store.create_dom(symbol.clone(), resolved_tick_size);
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let trade_handle = self.core.subscribe_trades(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
+                        state.last_seen_update_id = None;
+                        state.level_qty_bid.clear();
+                        state.level_qty_ask.clear();
+                        state.shared_trades = trade_handle;
+                    }
+                } else if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::Dom(pid))
+            }
+            "multi_dom" => {
+                // Start with three exchanges so the owner sees a multi-column
+                // view immediately on first open. More exchanges can be added
+                // via the ⚙ gear button in the panel header.
+                let default_exchanges = vec![
+                    "binance".to_string(),
+                    "bybit".to_string(),
+                    "okx".to_string(),
+                ];
+                let pid = self.panels_store.create_multi_dom(
+                    symbol.clone(),
+                    default_exchanges.clone(),
+                );
+                if !symbol.is_empty() {
+                    // AccountType is always Spot for multi-DOM (no
+                    // single-exchange account context).
+                    let at = digdigdig3::AccountType::Spot;
+                    for ex_label in &default_exchanges {
+                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                            let _ = self.core.subscribe_orderbook(eid, &symbol, at);
+                        }
+                    }
+                }
+                Some(mlc_core::state::Panel::MultiDom(pid))
+            }
+            "footprint" => {
+                let pid = self.panels_store.create_footprint(symbol.clone(), resolved_tick_size);
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let handle = self.core.subscribe_trades(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_trades = handle;
+                        state.last_seen_ts_ms = 0;
+                    }
+                } else if let Some(state) = self.panels_store.footprint.get_mut(&pid) {
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::Footprint(pid))
+            }
+            "volume_profile" => {
+                let pid = self.panels_store.create_volume_profile(symbol.clone(), resolved_tick_size);
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let handle = self.core.subscribe_trades(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_trades = handle;
+                        state.last_seen_ts_ms = 0;
+                    }
+                } else if let Some(state) = self.panels_store.volume_profile.get_mut(&pid) {
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::VolumeProfile(pid))
+            }
+            "liquidity_heatmap" => {
+                let pid = self.panels_store.create_liquidity_heatmap(symbol.clone(), resolved_tick_size, 1000);
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
+                        state.last_seen_update_id = None;
+                    }
+                } else if let Some(state) = self.panels_store.liquidity_heatmap.get_mut(&pid) {
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::LiquidityHeatmap(pid))
+            }
+            "big_trades" => {
+                let pid = self.panels_store.create_big_trades();
+                // Subscribe to the shared trade ring and attach the handle
+                // to the panel state so tick() can pull new trades.
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let handle = self.core.subscribe_trades(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                        state.symbol = symbol.clone();
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_trades = handle;
+                        state.last_seen_ts_ms = 0;
+                    }
+                } else if let Some(state) = self.panels_store.big_trades.get_mut(&pid) {
+                    state.symbol = symbol.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::BigTrades(pid))
+            }
+            "l2_tape" => {
+                let pid = self.panels_store.create_l2_tape();
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                        state.symbol = symbol.clone();
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_orderbook = self.core.subscribe_orderbook(eid, &symbol, at);
+                        state.last_seen_update_id = None;
+                        state.previous_book.clear();
+                    }
+                } else if let Some(state) = self.panels_store.l2_tape.get_mut(&pid) {
+                    state.symbol = symbol.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::L2Tape(pid))
+            }
+            "trade_tape" => {
+                let pid = self.panels_store.create_trade_tape();
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let handle = self.core.subscribe_trades(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                        state.symbol = symbol.clone();
+                        state.exchange = exchange_str.clone();
+                        state.account_type = account_type_str.clone();
+                        state.shared_trades = handle;
+                        state.last_seen_ts_ms = 0;
+                    }
+                } else if let Some(state) = self.panels_store.trade_tape.get_mut(&pid) {
+                    state.symbol = symbol.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::TradeTape(pid))
+            }
+            "order_entry" => {
+                let pid = self.panels_store.create_order_entry(symbol.clone());
+                if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
+                    state.source = source.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::OrderEntry(pid))
+            }
+            "position_manager" => {
+                let pid = self.panels_store.create_position_manager();
+                Some(mlc_core::state::Panel::PositionManager(pid))
+            }
+            "trade_log" => {
+                let pid = self.panels_store.create_trade_log();
+                Some(mlc_core::state::Panel::TradeLog(pid))
+            }
+            "risk_calculator" => {
+                let pid = self.panels_store.create_risk_calculator();
+                Some(mlc_core::state::Panel::RiskCalculator(pid))
+            }
+            "trading_container" => {
+                let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
+                if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                    state.source = source.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::TradingContainer(pid))
+            }
+            "indicator_panel" => {
+                // Spawn unbound (instance_id=0).  User picks the
+                // indicator from the panel's own control plane.
+                let pid = self.panels_store.create_indicator_panel(symbol.clone(), 0);
+                if let Some(state) = self.panels_store.indicator_panel.get_mut(&pid) {
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                }
+                Some(mlc_core::state::Panel::IndicatorPanel(pid))
+            }
+            _ => None,
+        };
+
+        // Subscribe depth for panels that need raw orderbook data.
+        // DOM is excluded here because it subscribes via subscribe_orderbook()
+        // above, which internally calls subscribe_depth().
+        let needs_depth = matches!(kind_str, "l2_tape" | "liquidity_heatmap");
+        if needs_depth {
+            let eid = self.core.exchange_symbols()
+                .find_by_label(&exchange_str)
+                .unwrap_or(self.active_exchange);
+            let at = crate::account_type_from_label(&account_type_str);
+            self.core.subscribe_depth(eid, &symbol, at);
+        }
+
+        // Register market-data panels in TagManager as Synced members.
+        // order_entry / trading_container are account-bound, not market-data.
+        // indicator_panel is market-data (symbol-bound).
+        let is_market_data = matches!(
+            kind_str,
+            "dom" | "multi_dom" | "footprint" | "volume_profile" | "liquidity_heatmap"
+                | "big_trades" | "l2_tape" | "trade_tape" | "indicator_panel"
+        );
+        if is_market_data {
+            if let Some(ref item) = item_opt {
+                let pid = mlc_app_sidebar_content::free_slot::PanelId(item.panel_id().0);
+                let member = mlc_core::ids::SyncMemberId::Panel(pid.0);
+                match self.sidebar_state.slot_source_mode {
+                    mlc_app_sidebar_content::state::SlotSourceMode::Tagged => {
+                        // Attach to active chart's sync group. If that group is
+                        // still auto-created (untagged), promote it to a real
+                        // visible color tag so the panel-chart pair shows a
+                        // shared color marker — this is the moment a 1-member
+                        // untagged group becomes a 2+-member tagged one.
+                        let group_id = self.core.tags().active_chart_tag()
+                            .or_else(|| {
+                                self.panel_app.panel_grid
+                                    .active_container_id()
+                                    .and_then(|cid| self.bubble_for_chart(cid))
+                            });
+                        if let Some(gid) = group_id {
+                            // Promote if currently auto-created.
+                            let was_auto = self.core.tags().get(gid)
+                                .map(|t| t.auto_created)
+                                .unwrap_or(false);
+                            if was_auto {
+                                if let Some(new_color) = self.promote_to_tagged(gid) {
+                                    // Mirror color into leaf_color_tags for every
+                                    // chart member of this group so chart leaf
+                                    // headers also show the new color marker.
+                                    let chart_member_ids: Vec<mlc_core::ChartId> =
+                                        self.core.tags().chart_member_ids(gid)
+                                            .into_iter()
+                                            .collect();
+                                    for cid in chart_member_ids {
+                                        if let Some(leaf) = self.panel_app.panel_grid.leaf_for_container_id(cid) {
+                                            self.panel_app.leaf_color_tags.insert(leaf, new_color);
+                                        }
+                                    }
+                                }
+                            }
+                            self.set_panel_synced(member, gid);
+                        }
+                    }
+                    mlc_app_sidebar_content::state::SlotSourceMode::Untagged => {
+                        // Spawn panel into its own 1-member auto-created group.
+                        // S2.7.1e: read timeframe via branch_meta (B1).
+                        let tf = spawn_active_cid
+                            .and_then(|cid| self.timeframe_for_chart(cid))
+                            .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                        let solo_gid = self.create_auto_bubble(
+                            [0.0, 0.0, 0.0, 0.0],
+                            symbol.clone(),
+                            tf,
+                        );
+                        self.set_panel_auto(member, solo_gid);
+                        // Seed exchange/account_type on the new group so apply_key
+                        // picks them up next frame.
+                        self.core.bubbles_mut().set_bubble_instrument(solo_gid, exchange_str.clone(), account_type_str.clone());
+                    }
+                }
+            }
+        }
+
+        if let Some(item) = item_opt {
+            use mlc_app_sidebar_content::state::AgentSpawnLayout;
+            use uzor::panels::SplitKind;
+
+            let layout = self.sidebar_state.slot_spawn_layout;
+            let focused_in_slot = self.sidebar_state.focused_free_leaf
+                .filter(|(si, _)| *si == idx)
+                .map(|(_, lid)| lid);
+            let tree_empty = self.sidebar_state.slot_dockings[idx]
+                .inner()
+                .tree()
+                .leaves()
+                .is_empty();
+
+            let new_leaf = match (layout, focused_in_slot, tree_empty) {
+                // Empty slot — first panel goes in directly regardless of layout choice.
+                (_, _, true) => {
+                    self.sidebar_state.slot_dockings[idx].inner_mut()
+                        .tree_mut().add_leaf(item)
+                }
+                // Replace mode: kill the focused leaf, put new in its place.
+                (AgentSpawnLayout::Replace, Some(focus), false) => {
+                    let tree = self.sidebar_state.slot_dockings[idx]
+                        .inner_mut().tree_mut();
+                    tree.remove_leaf(focus);
+                    tree.add_leaf(item)
+                }
+                // SplitH (side-by-side) / SplitV (stacked) with a focused leaf —
+                // bisect that leaf using the chosen direction.  Use the binary
+                // `split_leaf` (NOT `split_leaf_with_children`): the binary form
+                // keeps the original leaf verbatim and creates ONE fresh sibling
+                // carrying ONLY `new_panel`.  The compound form would clone all
+                // original panels into every sibling, aliasing panel ids.
+                (AgentSpawnLayout::SplitH, Some(focus), false)
+                | (AgentSpawnLayout::SplitV, Some(focus), false) => {
+                    let split_kind = if layout == AgentSpawnLayout::SplitH {
+                        SplitKind::SplitRight
+                    } else {
+                        SplitKind::SplitBottom
+                    };
+                    let tree = self.sidebar_state.slot_dockings[idx]
+                        .inner_mut().tree_mut();
+                    match tree.split_leaf(focus, split_kind, item.clone()) {
+                        Some(new_id) => new_id,
+                        None => {
+                            // Split fell back — append as a peer leaf at root.
+                            self.sidebar_state.slot_dockings[idx].inner_mut()
+                                .tree_mut().add_leaf(item)
+                        }
+                    }
+                }
+                // No focused leaf — just append (will sit next to existing peers).
+                (_, None, false) => {
+                    self.sidebar_state.slot_dockings[idx].inner_mut()
+                        .tree_mut().add_leaf(item)
+                }
+            };
+
+            // Move focus to the freshly spawned leaf.
+            self.sidebar_state.focused_free_leaf = Some((idx, new_leaf));
+            eprintln!("[ChartApp] slot:{}:spawn:{} — leaf {:?} layout={:?}", idx, kind_str, new_leaf, layout);
+            self.sidebar_state.slot_spawn_dropdown = None;
+            self.sidebar_data_dirty = true;
+            self.autosave_snapshot();
+        }
     }
 
 }

@@ -1493,7 +1493,23 @@ impl ChartApp {
             }
             ChartOutEvent::ToggleSlot(idx) => {
                 let panel = mlc_app_sidebar_content::state::RightSidebarPanel::from_slot_index(idx);
+                let was_open = self.sidebar_state.right_panel == panel;
                 let _ = self.sidebar_state.toggle_right_panel(panel);
+                // Auto-seed: first open of an EMPTY typed slot spawns one
+                // default panel of that slot's kind via the same spawn path
+                // the [+] dropdown uses (owner redesign 2026-07-11).
+                if !was_open {
+                    let idx_usize = idx as usize;
+                    let is_empty = self.sidebar_state.slot_dockings
+                        .get(idx_usize)
+                        .map(|mgr| mgr.inner().tree().leaves().is_empty())
+                        .unwrap_or(false);
+                    if is_empty {
+                        if let Some(slot_kind) = mlc_app_sidebar_content::free_slot::SlotKind::from_index(idx_usize) {
+                            self.spawn_panel_in_slot(idx_usize, slot_kind.default_panel_kind());
+                        }
+                    }
+                }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
@@ -1515,6 +1531,16 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::InternalToggleExpand => {
+                self.panel_app.panel_grid.toggle_expand();
+                state_mutated = true;
+            }
+            ChartOutEvent::ExpandPanel => {
+                // Bottom-toolbar "expand" button ("expand" / "expand_chart" item
+                // ids in toolbar_state.rs) — previously dead-wired (fell through
+                // to the `ref other =>` logger, no-op). Same fullscreen-the-
+                // active-chart-panel semantics as `InternalToggleExpand`: hide
+                // every sibling leaf in the split, keeping only the active one
+                // visible; toggling again restores the split.
                 self.panel_app.panel_grid.toggle_expand();
                 state_mutated = true;
             }

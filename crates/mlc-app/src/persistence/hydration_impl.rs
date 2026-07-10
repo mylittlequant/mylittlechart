@@ -1008,7 +1008,7 @@ impl ChartApp {
                         }
                     };
 
-                    for i in 0..4 {
+                    for i in 0..mlc_app_sidebar_content::free_slot::SLOT_COUNT {
                         // Pre-insert state into the store keyed by the saved panel_id.
                         for pl in &preset.slot_leaves[i] {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
@@ -1267,6 +1267,19 @@ impl ChartApp {
                         let leaves_by_id: std::collections::HashMap<u64, &mlc_core::preset::preset::PersistedFreeLeaf> =
                             preset.slot_leaves[i].iter().map(|l| (l.leaf_id, l)).collect();
 
+                        // Type-lock: this slot only accepts panel kinds matching its
+                        // `SlotKind` (owner redesign 2026-07-11, hard cutover — no
+                        // shims). Legacy saves from before typed slots (or any
+                        // hand-edited profile) may carry a mismatched panel kind in
+                        // one slot's leaves; `restore_tree_with_id` treats a `None`
+                        // from the create_panel closure as a leaf-restore failure,
+                        // which propagates to an `Err` for the WHOLE slot tree (not
+                        // a partial reconstruction) — so a mismatch here empty-
+                        // falls-back the entire slot via the existing `Err(e) =>`
+                        // arm below, logged with a dlog note identifying the
+                        // offending leaf/kind before that happens.
+                        let slot_kind = mlc_app_sidebar_content::free_slot::SlotKind::from_index(i);
+
                         let mgr = match preset.slot_layouts[i].as_deref() {
                             Some(json) => {
                                 match uzor::panels::serialize::LayoutSnapshot::from_json(json) {
@@ -1294,6 +1307,15 @@ impl ChartApp {
                                                 mlc_core::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => Panel::IndicatorPanel(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::MultiDom { .. }         => Panel::MultiDom(pid),
                                             };
+                                            if let Some(sk) = slot_kind {
+                                                if !sk.allowed_panel_kinds().contains(&item.kind_str()) {
+                                                    eprintln!(
+                                                        "[ChartApp] slot{} hydration: dropping leaf {} — kind '{}' does not match slot type {:?}",
+                                                        i + 1, leaf_id, item.kind_str(), sk
+                                                    );
+                                                    return None;
+                                                }
+                                            }
                                             Some(item)
                                         }) {
                                             Ok(tree) => {

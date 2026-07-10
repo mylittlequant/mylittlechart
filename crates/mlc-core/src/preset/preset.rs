@@ -58,17 +58,28 @@ pub struct ChartPreset {
     /// Persisted so tags survive preset switching.
     #[serde(default)]
     pub leaf_color_tags: std::collections::HashMap<u64, [f32; 4]>,
-    /// Per-slot `DockingManager<Panel>` layout snapshots (4 slots).
+    /// Per-slot `DockingManager<Panel>` layout snapshots (5 typed slots:
+    /// index 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades — matches
+    /// `mlc_app_sidebar_content::free_slot::SlotKind::index()`).
     ///
     /// Each entry is a serialized `uzor::panels::serialize::LayoutSnapshot`
     /// JSON string, or `None` if the slot is empty. Slots host trading panels
     /// and detached mini-charts.
+    ///
+    /// Grew from 4 to 5 entries in the typed-slot redesign (2026-07-11).
+    /// Old 4-entry saves fail `serde`'s fixed-size array deserialization
+    /// (array length mismatch) — `preset::storage`'s load path falls back to
+    /// an empty preset rather than a partial one; see
+    /// `hydration_impl.rs::hydrate_slots` for the legacy-index note (the
+    /// array position itself was ALREADY the canonical slot index pre- and
+    /// post-redesign, so no positional remap is needed for saves that DO
+    /// load — only the widened array length is new).
     #[serde(default)]
-    pub slot_layouts: [Option<String>; 4],
+    pub slot_layouts: [Option<String>; 5],
     /// Per-slot leaf descriptors (parallel to `slot_layouts`). Each vec lists
     /// the `Panel` payloads for leaves in the corresponding slot.
     #[serde(default)]
-    pub slot_leaves: [Vec<PersistedFreeLeaf>; 4],
+    pub slot_leaves: [Vec<PersistedFreeLeaf>; 5],
 }
 
 /// Serializable descriptor for a single `Panel` leaf inside a slot.
@@ -240,8 +251,8 @@ impl ChartPreset {
             indicators: Vec::new(),
             alerts: Vec::new(),
             leaf_color_tags: std::collections::HashMap::new(),
-            slot_layouts: [None, None, None, None],
-            slot_leaves: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            slot_layouts: [None, None, None, None, None],
+            slot_leaves: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         }
     }
 

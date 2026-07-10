@@ -8807,14 +8807,22 @@ impl ChartApp {
             RightSidebarPanel::Connectors => Some("connectors".to_string()),
             RightSidebarPanel::Performance => Some("performance".to_string()),
             RightSidebarPanel::Agents => Some("agents".to_string()),
-            RightSidebarPanel::Slot1 => Some("slot1".to_string()),
-            RightSidebarPanel::Slot2 => Some("slot2".to_string()),
-            RightSidebarPanel::Slot3 => Some("slot3".to_string()),
-            RightSidebarPanel::Slot4 => Some("slot4".to_string()),
+            RightSidebarPanel::SlotTrading => Some("slot_trading".to_string()),
+            RightSidebarPanel::SlotDom => Some("slot_dom".to_string()),
+            RightSidebarPanel::SlotTape => Some("slot_tape".to_string()),
+            RightSidebarPanel::SlotL2 => Some("slot_l2".to_string()),
+            RightSidebarPanel::SlotBigTrades => Some("slot_big_trades".to_string()),
         }
     }
 
     /// Parse a string name into a [`mlc_app_sidebar_content::state::RightSidebarPanel`].
+    ///
+    /// Accepts both the current typed-slot keys AND the legacy generic
+    /// `slot1`..`slot4` keys written by pre-typed-slot profiles (owner
+    /// redesign 2026-07-11, hard cutover — no new writes of legacy keys,
+    /// but old saved profiles must still hydrate). Legacy mapping:
+    /// `slot1`→Trading, `slot2`→Dom, `slot3`→Tape, `slot4`→L2. There is no
+    /// legacy equivalent for the new `SlotBigTrades` slot.
     pub fn str_to_panel(s: &str) -> mlc_app_sidebar_content::state::RightSidebarPanel {
         use mlc_app_sidebar_content::state::RightSidebarPanel;
         match s {
@@ -8825,10 +8833,11 @@ impl ChartApp {
             "connectors" => RightSidebarPanel::Connectors,
             "performance" => RightSidebarPanel::Performance,
             "agents" => RightSidebarPanel::Agents,
-            "slot1" => RightSidebarPanel::Slot1,
-            "slot2" => RightSidebarPanel::Slot2,
-            "slot3" => RightSidebarPanel::Slot3,
-            "slot4" => RightSidebarPanel::Slot4,
+            "slot_trading" | "slot1" => RightSidebarPanel::SlotTrading,
+            "slot_dom" | "slot2" => RightSidebarPanel::SlotDom,
+            "slot_tape" | "slot3" => RightSidebarPanel::SlotTape,
+            "slot_l2" | "slot4" => RightSidebarPanel::SlotL2,
+            "slot_big_trades" => RightSidebarPanel::SlotBigTrades,
             _ => RightSidebarPanel::None,
         }
     }
@@ -9109,5 +9118,85 @@ impl ChartApp {
 impl Default for ChartApp {
     fn default() -> Self {
         Self::new("Chart")
+    }
+}
+
+#[cfg(test)]
+mod typed_slot_hydration_tests {
+    //! Coverage for `ChartApp::panel_to_str` / `str_to_panel` (T1a hydration
+    //! mapping, owner redesign 2026-07-11): legacy `slot1..slot4` profile
+    //! keys must still hydrate to the correct typed slot, and the current
+    //! writer must only ever emit the new `slot_*` keys (hard cutover — no
+    //! new writes of legacy keys, but old saved profiles must load).
+    use mlc_app_sidebar_content::state::RightSidebarPanel;
+
+    #[test]
+    fn legacy_slot_keys_map_to_typed_slots() {
+        assert_eq!(crate::ChartApp::str_to_panel("slot1"), RightSidebarPanel::SlotTrading);
+        assert_eq!(crate::ChartApp::str_to_panel("slot2"), RightSidebarPanel::SlotDom);
+        assert_eq!(crate::ChartApp::str_to_panel("slot3"), RightSidebarPanel::SlotTape);
+        assert_eq!(crate::ChartApp::str_to_panel("slot4"), RightSidebarPanel::SlotL2);
+    }
+
+    #[test]
+    fn current_slot_keys_map_to_typed_slots() {
+        assert_eq!(crate::ChartApp::str_to_panel("slot_trading"), RightSidebarPanel::SlotTrading);
+        assert_eq!(crate::ChartApp::str_to_panel("slot_dom"), RightSidebarPanel::SlotDom);
+        assert_eq!(crate::ChartApp::str_to_panel("slot_tape"), RightSidebarPanel::SlotTape);
+        assert_eq!(crate::ChartApp::str_to_panel("slot_l2"), RightSidebarPanel::SlotL2);
+        assert_eq!(crate::ChartApp::str_to_panel("slot_big_trades"), RightSidebarPanel::SlotBigTrades);
+    }
+
+    /// `SlotBigTrades` has no legacy equivalent (it's a genuinely new 5th
+    /// slot) — there is no `slot5` alias, only the current key.
+    #[test]
+    fn big_trades_slot_has_no_legacy_alias() {
+        assert_eq!(crate::ChartApp::str_to_panel("slot5"), RightSidebarPanel::None);
+    }
+
+    /// Hard cutover: the writer (`panel_to_str`) never emits a legacy
+    /// `slot1..slot4` key — only the current `slot_*` names.
+    #[test]
+    fn panel_to_str_never_writes_legacy_keys() {
+        let typed_slots = [
+            RightSidebarPanel::SlotTrading,
+            RightSidebarPanel::SlotDom,
+            RightSidebarPanel::SlotTape,
+            RightSidebarPanel::SlotL2,
+            RightSidebarPanel::SlotBigTrades,
+        ];
+        for panel in typed_slots {
+            let written = crate::ChartApp::panel_to_str(panel).expect("typed slot must serialize to Some");
+            assert!(
+                !matches!(written.as_str(), "slot1" | "slot2" | "slot3" | "slot4"),
+                "panel_to_str({:?}) must not write a legacy key, got '{}'", panel, written,
+            );
+            assert!(written.starts_with("slot_"), "expected 'slot_*' key, got '{}'", written);
+        }
+    }
+
+    /// Full round-trip: every typed slot survives `panel_to_str` →
+    /// `str_to_panel` unchanged (current-key path, not the legacy alias).
+    #[test]
+    fn typed_slot_round_trip_through_current_keys() {
+        let typed_slots = [
+            RightSidebarPanel::SlotTrading,
+            RightSidebarPanel::SlotDom,
+            RightSidebarPanel::SlotTape,
+            RightSidebarPanel::SlotL2,
+            RightSidebarPanel::SlotBigTrades,
+        ];
+        for panel in typed_slots {
+            let written = crate::ChartApp::panel_to_str(panel).expect("typed slot must serialize to Some");
+            let read_back = crate::ChartApp::str_to_panel(&written);
+            assert_eq!(read_back, panel, "round-trip mismatch for {:?} via '{}'", panel, written);
+        }
+    }
+
+    /// Unknown/garbage keys fall back to `None`, same as before the redesign.
+    #[test]
+    fn unknown_key_falls_back_to_none() {
+        assert_eq!(crate::ChartApp::str_to_panel("bogus_panel_id"), RightSidebarPanel::None);
+        assert_eq!(crate::ChartApp::str_to_panel(""), RightSidebarPanel::None);
     }
 }
