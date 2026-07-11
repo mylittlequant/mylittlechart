@@ -53,7 +53,7 @@ pub use bridge::{
     SharedTradeSeries, SharedOrderBookTracker, HistoryDepthWire,
     RawTradeWire,
 };
-pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState};
+pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState, TradeDemand, TradeLadderStage};
 pub use provider::LiveDataProvider;
 pub use convert::{
     account_type_from_dig3, account_type_to_dig3, kline_to_bar, resolve_exchange, timeframe_to_interval,

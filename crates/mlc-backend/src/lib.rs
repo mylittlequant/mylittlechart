@@ -2270,11 +2270,12 @@ impl BackendCore {
         account_type: AccountType,
     ) -> Option<SharedTradeSeries> {
         let handle = self.bridge.subscribe_trades(exchange_id, symbol, account_type);
-        // Unified-data-plane Э2: warm the raw trade layer with one shallow
-        // page immediately on activation so the layer has depth from the
-        // first frame, instead of only accumulating from this point forward
-        // via live ticks. Unbounded target (`None`) — trades default to
-        // "no fixed target, ramp until scroll stops" per owner doctrine;
+        // Unified-data-plane Э2, time-ladder cutover (owner doctrine
+        // 2026-07-12): warm the raw trade layer with one shallow page
+        // immediately on activation so the layer has depth from the first
+        // frame, instead of only accumulating from this point forward via
+        // live ticks. `None` demand = engine's own ladder default
+        // (auto-advance Hour → HalfDay → Day, no explicit deeper floor);
         // this call only seeds the FIRST page (single-flight guard makes it
         // a no-op if a backfill for this key is already running).
         self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);

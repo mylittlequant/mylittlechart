@@ -344,7 +344,7 @@ impl BackendCore {
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-        derived_trade_target: Option<u32>,
+        _derived_trade_target: Option<u32>,
     ) -> Option<BubbleEvent> {
         mlc_backend_data_bridge::dlog!(
             "[tradefold] subscribe ct={chart_type} count={} alpha={} min_ticks={} interval_ms={}",
@@ -358,12 +358,10 @@ impl BackendCore {
         // TPO Kline1m, the "1m" kline layer) holds RIGHT NOW, install it
         // into the bubble, and only THEN fire the async network calls
         // below (`subscribe_trades` itself starts an unbounded
-        // `ensure_trade_backfill` page — see its doc comment — so it is
-        // just as much a part of this race as the explicit
-        // `derived_trade_target` call). By the time this method returns,
-        // `active_trade_fold` is already installed, so the
-        // `LiveUpdate::LayerBackfilled` refold sweep in `tick_writers` can
-        // never find this bubble mid-install and skip it.
+        // `ensure_trade_backfill` page — see its doc comment). By the time
+        // this method returns, `active_trade_fold` is already installed, so
+        // the `LiveUpdate::LayerBackfilled` refold sweep in `tick_writers`
+        // can never find this bubble mid-install and skip it.
         let fold = crate::bubble::TradeFoldRuntime::new(chart_type, params, tpo_source, exchange_id, symbol)?;
         let event = self.reseed_trade_fold(bid, fold, exchange_id, symbol, account_type);
 
@@ -372,8 +370,14 @@ impl BackendCore {
         // (see its doc comment) — calling it again here is a cheap no-op
         // when another window/indicator already opened the same trade sub.
         self.subscribe_trades(exchange_id, symbol, account_type);
-        // History: ramped backfill toward `derived_trade_target`.
-        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, derived_trade_target.map(|t| t as usize));
+        // History: time-ladder cutover (owner doctrine 2026-07-12) — the
+        // trade layer's ramp goal is ALWAYS the engine's own ladder
+        // (hour → 12h → day, then day-by-day on scroll demand), never a
+        // caller-supplied point count. `_derived_trade_target` (still
+        // threaded through from the profile for signature/persistence
+        // compatibility — see its field doc comment) is intentionally NOT
+        // read here anymore.
+        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
 
         if matches!(chart_type, "tpo") && matches!(tpo_source, mlc_backend_data_bridge::TpoSource::Kline1m) {
             let one_minute = Timeframe::new("1m", 60_000);
@@ -708,10 +712,14 @@ impl BackendCore {
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-        derived_trade_target: Option<u32>,
+        _derived_trade_target: Option<u32>,
     ) -> Option<BubbleEvent> {
         self.subscribe_trades(exchange_id, symbol, account_type);
-        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, derived_trade_target.map(|t| t as usize));
+        // Time-ladder cutover (owner doctrine 2026-07-12) — see
+        // `subscribe_trade_fold_chart_type`'s matching comment:
+        // `_derived_trade_target` is no longer the ramp goal, `None`
+        // (ladder default) is always passed instead.
+        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
 
         let mut fold = crate::bubble::TradeFoldRuntime::new(
             "cvd", crate::bubble::FoldParams::default(), mlc_backend_data_bridge::TpoSource::TradeBucket,

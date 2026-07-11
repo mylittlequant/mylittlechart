@@ -185,10 +185,15 @@ pub struct DataLoadSettings {
     #[serde(default = "default_derived_kline_target")]
     pub derived_kline_target: u32,
 
-    /// Target depth (raw trades) the `BackfillEngine` ramps the shared
-    /// trade layer toward for the trade-fed client-side fold chart types
-    /// (tick_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/footprint/
-    /// tpo, plus the CVD companion line — unified-data-plane Stage Э4).
+    /// LEGACY / UNUSED BY THE RAMP (owner doctrine 2026-07-12): the trade
+    /// layer's `BackfillEngine` ramp goal is now a TIME LADDER (last hour →
+    /// last 12 hours → last day → day-by-day on scroll demand, see
+    /// `mlc_backend_data_bridge::backfill_engine::TradeLadderStage`), not a
+    /// point-count target — this field is no longer read by
+    /// `subscribe_trade_fold_chart_type`/`subscribe_cvd_fold`'s
+    /// `ensure_trade_backfill` call. Kept in place (not removed) purely so
+    /// already-persisted profiles round-trip through (de)serialization
+    /// without a schema break; do not wire it into any new ramp-goal logic.
     /// Default 10_000 trades. `#[serde(default)]` — older profiles missing
     /// this field pick up the same default as a fresh profile.
     #[serde(default = "default_derived_trade_target")]
