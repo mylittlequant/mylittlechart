@@ -3737,6 +3737,7 @@ impl ChartApp {
                     footprint_display: overlay_panel.footprint_display,
                     tick_intensity: overlay_panel.tick_intensity,
                     tpo_display: overlay_panel.tpo_display,
+                    line_family_display: overlay_panel.line_family_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         overlay_chart_type,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -3848,6 +3849,7 @@ impl ChartApp {
                 footprint_display: single_panel.footprint_display,
                 tick_intensity: single_panel.tick_intensity,
                 tpo_display: single_panel.tpo_display,
+                line_family_display: single_panel.line_family_display,
                 wicks_effective: crate::active_series::effective_wick_flag(
                     single_chart_type,
                     self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -4143,6 +4145,7 @@ impl ChartApp {
                     footprint_display: split_panel.footprint_display,
                     tick_intensity: split_panel.tick_intensity,
                     tpo_display: split_panel.tpo_display,
+                    line_family_display: split_panel.line_family_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         split_chart_type,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -4764,6 +4767,7 @@ impl ChartApp {
                     footprint_display: single_window_panel.footprint_display,
                     tick_intensity: single_window_panel.tick_intensity,
                     tpo_display: single_window_panel.tpo_display,
+                    line_family_display: single_window_panel.line_family_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         single_window_chart_type_for_wicks,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -8995,6 +8999,47 @@ impl ChartApp {
                 kagi_yin_color: series.kagi_yin.clone(),
                 hollow_up_color: series.hollow_up.clone(),
                 hollow_down_color: series.hollow_down.clone(),
+                line_color: series.line_color.clone(),
+                line_width_label: settings_panel
+                    .map(|p| p.line_family_display.line_width)
+                    .unwrap_or(2.0)
+                    .to_string(),
+                step_line_color: series.step_line_color.clone(),
+                step_line_width_label: settings_panel
+                    .map(|p| p.line_family_display.step_line_width)
+                    .unwrap_or(2.0)
+                    .to_string(),
+                area_line_color: series.area_line.clone(),
+                area_top_color: series.area_top.clone(),
+                area_bottom_color: series.area_bottom.clone(),
+                area_line_width_label: settings_panel
+                    .map(|p| p.line_family_display.area_line_width)
+                    .unwrap_or(2.0)
+                    .to_string(),
+                baseline_top_line_color: series.baseline_top_line.clone(),
+                baseline_top_fill_color: series.baseline_top_fill.clone(),
+                baseline_bottom_line_color: series.baseline_bottom_line.clone(),
+                baseline_bottom_fill_color: series.baseline_bottom_fill.clone(),
+                baseline_line_width_label: settings_panel
+                    .map(|p| p.line_family_display.baseline_line_width)
+                    .unwrap_or(2.0)
+                    .to_string(),
+                bars_up_color: series.bar_up.clone(),
+                bars_down_color: series.bar_down.clone(),
+                line_markers_color: series.line_markers_color.clone(),
+                line_markers_style_label: match settings_panel
+                    .map(|p| p.line_family_display.marker_style)
+                    .unwrap_or_default()
+                {
+                    mlc_core::chart::LineMarkerStyle::Circle => "Circle".to_string(),
+                    mlc_core::chart::LineMarkerStyle::Square => "Square".to_string(),
+                    mlc_core::chart::LineMarkerStyle::Triangle => "Triangle".to_string(),
+                    mlc_core::chart::LineMarkerStyle::Diamond => "Diamond".to_string(),
+                },
+                line_markers_size_label: settings_panel
+                    .map(|p| p.line_family_display.marker_size)
+                    .unwrap_or(3.0)
+                    .to_string(),
                 footprint_heat_intensity_label: match settings_panel
                     .map(|p| p.footprint_display.heat_intensity)
                     .unwrap_or_default()

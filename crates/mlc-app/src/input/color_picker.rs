@@ -759,6 +759,54 @@ impl ChartApp {
                 self.panel_app.theme_manager.current_mut().series.hollow_down = color.to_string();
                 eprintln!("[ChartApp] applied hollow_down_color: {}", color);
             }
+            "line_color" => {
+                self.panel_app.theme_manager.current_mut().series.line_color = color.to_string();
+                eprintln!("[ChartApp] applied line_color: {}", color);
+            }
+            "step_line_color" => {
+                self.panel_app.theme_manager.current_mut().series.step_line_color = color.to_string();
+                eprintln!("[ChartApp] applied step_line_color: {}", color);
+            }
+            "area_line_color" => {
+                self.panel_app.theme_manager.current_mut().series.area_line = color.to_string();
+                eprintln!("[ChartApp] applied area_line_color: {}", color);
+            }
+            "area_top_color" => {
+                self.panel_app.theme_manager.current_mut().series.area_top = color.to_string();
+                eprintln!("[ChartApp] applied area_top_color: {}", color);
+            }
+            "area_bottom_color" => {
+                self.panel_app.theme_manager.current_mut().series.area_bottom = color.to_string();
+                eprintln!("[ChartApp] applied area_bottom_color: {}", color);
+            }
+            "baseline_top_line_color" => {
+                self.panel_app.theme_manager.current_mut().series.baseline_top_line = color.to_string();
+                eprintln!("[ChartApp] applied baseline_top_line_color: {}", color);
+            }
+            "baseline_top_fill_color" => {
+                self.panel_app.theme_manager.current_mut().series.baseline_top_fill = color.to_string();
+                eprintln!("[ChartApp] applied baseline_top_fill_color: {}", color);
+            }
+            "baseline_bottom_line_color" => {
+                self.panel_app.theme_manager.current_mut().series.baseline_bottom_line = color.to_string();
+                eprintln!("[ChartApp] applied baseline_bottom_line_color: {}", color);
+            }
+            "baseline_bottom_fill_color" => {
+                self.panel_app.theme_manager.current_mut().series.baseline_bottom_fill = color.to_string();
+                eprintln!("[ChartApp] applied baseline_bottom_fill_color: {}", color);
+            }
+            "bars_up_color" => {
+                self.panel_app.theme_manager.current_mut().series.bar_up = color.to_string();
+                eprintln!("[ChartApp] applied bars_up_color: {}", color);
+            }
+            "bars_down_color" => {
+                self.panel_app.theme_manager.current_mut().series.bar_down = color.to_string();
+                eprintln!("[ChartApp] applied bars_down_color: {}", color);
+            }
+            "line_markers_color" => {
+                self.panel_app.theme_manager.current_mut().series.line_markers_color = color.to_string();
+                eprintln!("[ChartApp] applied line_markers_color: {}", color);
+            }
             "watermark_color" => {
                 let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = pid {

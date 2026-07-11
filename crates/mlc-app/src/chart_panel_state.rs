@@ -14,7 +14,7 @@
 //! consumers access it through a single authoritative location keyed by
 //! the data bubble rather than the chart panel.
 
-use mlc_core::chart::{CrosshairOptions, FootprintDisplayOptions, GridOptions, Legend, Tooltip, TpoDisplayOptions, Watermark};
+use mlc_core::chart::{CrosshairOptions, FootprintDisplayOptions, GridOptions, Legend, LineFamilyDisplayOptions, Tooltip, TpoDisplayOptions, Watermark};
 use mlc_core::ids::ChartPanelId;
 
 /// State of one chart canvas leaf.
@@ -87,6 +87,10 @@ pub struct ChartPanelState {
     /// poor-HL / initial-balance / IB period count. Unused for every other
     /// chart type.
     pub tpo_display: TpoDisplayOptions,
+    /// Simple line-family per-type display options (line/step-line/area/
+    /// baseline widths + line_markers' marker style/size, owner-approved
+    /// settings matrix wave 3). Unused for every other chart type.
+    pub line_family_display: LineFamilyDisplayOptions,
 }
 
 impl ChartPanelState {
@@ -127,6 +131,7 @@ impl ChartPanelState {
                 .map(|d| d.render_policy.bar_family_wicks_default())
                 .unwrap_or(false),
             tpo_display: TpoDisplayOptions::default(),
+            line_family_display: LineFamilyDisplayOptions::default(),
         }
     }
 }

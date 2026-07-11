@@ -219,6 +219,18 @@ impl ChartApp {
             rt.series.kagi_yin         = inst.kagi_yin_color.clone();
             rt.series.hollow_up        = inst.hollow_up_color.clone();
             rt.series.hollow_down      = inst.hollow_down_color.clone();
+            rt.series.line_color       = inst.line_color.clone();
+            rt.series.step_line_color  = inst.step_line_color.clone();
+            rt.series.area_line        = inst.area_line_color.clone();
+            rt.series.area_top         = inst.area_top_color.clone();
+            rt.series.area_bottom      = inst.area_bottom_color.clone();
+            rt.series.baseline_top_line    = inst.baseline_top_line_color.clone();
+            rt.series.baseline_top_fill    = inst.baseline_top_fill_color.clone();
+            rt.series.baseline_bottom_line = inst.baseline_bottom_line_color.clone();
+            rt.series.baseline_bottom_fill = inst.baseline_bottom_fill_color.clone();
+            rt.series.bar_up            = inst.bars_up_color.clone();
+            rt.series.bar_down          = inst.bars_down_color.clone();
+            rt.series.line_markers_color = inst.line_markers_color.clone();
 
             css.footprint_show_abs_markers = inst.footprint_show_abs_markers;
             css.footprint_show_volume_text = inst.footprint_show_volume_text;
@@ -254,6 +266,14 @@ impl ChartApp {
                 panel.tpo_display.show_poor_hl = inst.tpo_show_poor_hl;
                 panel.tpo_display.show_initial_balance = inst.tpo_show_initial_balance;
                 panel.tpo_display.ib_periods = inst.tpo_ib_periods_label.parse::<u8>().unwrap_or(2);
+                panel.line_family_display.line_width = inst.line_width_label.parse::<f64>().unwrap_or(2.0);
+                panel.line_family_display.step_line_width = inst.step_line_width_label.parse::<f64>().unwrap_or(2.0);
+                panel.line_family_display.area_line_width = inst.area_line_width_label.parse::<f64>().unwrap_or(2.0);
+                panel.line_family_display.baseline_line_width = inst.baseline_line_width_label.parse::<f64>().unwrap_or(2.0);
+                panel.line_family_display.marker_style = mlc_core::chart::LineMarkerStyle::from_id(
+                    &inst.line_markers_style_label.to_lowercase(),
+                );
+                panel.line_family_display.marker_size = inst.line_markers_size_label.parse::<f64>().unwrap_or(3.0);
             }
         }
 
@@ -448,7 +468,13 @@ impl ChartApp {
                 | "pnf_x_color" | "pnf_o_color"
                 | "tlb_up_color" | "tlb_down_color"
                 | "kagi_yang_color" | "kagi_yin_color"
-                | "hollow_up_color" | "hollow_down_color" => {
+                | "hollow_up_color" | "hollow_down_color"
+                | "line_color" | "step_line_color"
+                | "area_line_color" | "area_top_color" | "area_bottom_color"
+                | "baseline_top_line_color" | "baseline_top_fill_color"
+                | "baseline_bottom_line_color" | "baseline_bottom_fill_color"
+                | "bars_up_color" | "bars_down_color"
+                | "line_markers_color" => {
                     let current_color: Option<String> = {
                         let s = &self.panel_app.theme_manager.current().series;
                         match field {
@@ -470,6 +496,18 @@ impl ChartApp {
                             "kagi_yin_color"    => Some(s.kagi_yin.clone()),
                             "hollow_up_color"   => Some(s.hollow_up.clone()),
                             "hollow_down_color" => Some(s.hollow_down.clone()),
+                            "line_color"        => Some(s.line_color.clone()),
+                            "step_line_color"   => Some(s.step_line_color.clone()),
+                            "area_line_color"   => Some(s.area_line.clone()),
+                            "area_top_color"    => Some(s.area_top.clone()),
+                            "area_bottom_color" => Some(s.area_bottom.clone()),
+                            "baseline_top_line_color"    => Some(s.baseline_top_line.clone()),
+                            "baseline_top_fill_color"    => Some(s.baseline_top_fill.clone()),
+                            "baseline_bottom_line_color" => Some(s.baseline_bottom_line.clone()),
+                            "baseline_bottom_fill_color" => Some(s.baseline_bottom_fill.clone()),
+                            "bars_up_color"     => Some(s.bar_up.clone()),
+                            "bars_down_color"   => Some(s.bar_down.clone()),
+                            "line_markers_color" => Some(s.line_markers_color.clone()),
                             _ => None,
                         }
                     };
@@ -1029,6 +1067,39 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] instrument:tpo_ib_periods = {}", periods);
                 }
+                "line_width" | "step_line_width" | "area_line_width" | "baseline_line_width" => {
+                    // Simple line-family per-type width presets (owner-
+                    // approved settings matrix wave 3, 2026-07-11) — pure
+                    // render-gate value, no resubscribe needed.
+                    let px: f64 = value.parse().unwrap_or(2.0);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        match field.as_str() {
+                            "line_width" => panel.line_family_display.line_width = px,
+                            "step_line_width" => panel.line_family_display.step_line_width = px,
+                            "area_line_width" => panel.line_family_display.area_line_width = px,
+                            "baseline_line_width" => panel.line_family_display.baseline_line_width = px,
+                            _ => {}
+                        }
+                    }
+                    eprintln!("[ChartApp] instrument:{} = {}px", field, px);
+                }
+                "line_markers_style" => {
+                    let style = mlc_core::chart::LineMarkerStyle::from_id(&value.to_lowercase());
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.line_family_display.marker_style = style;
+                    }
+                    eprintln!("[ChartApp] instrument:line_markers_style = {}", value);
+                }
+                "line_markers_size" => {
+                    let px: f64 = value.parse().unwrap_or(3.0);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.line_family_display.marker_size = px;
+                    }
+                    eprintln!("[ChartApp] instrument:line_markers_size = {}px", px);
+                }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
@@ -1128,6 +1199,24 @@ impl ChartApp {
                 }
                 "tpo_ib_periods" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("tpo_ib_periods");
+                }
+                "line_width" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("line_width");
+                }
+                "step_line_width" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("step_line_width");
+                }
+                "area_line_width" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("area_line_width");
+                }
+                "baseline_line_width" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("baseline_line_width");
+                }
+                "line_markers_style" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("line_markers_style");
+                }
+                "line_markers_size" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("line_markers_size");
                 }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);

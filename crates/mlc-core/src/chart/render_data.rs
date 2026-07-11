@@ -166,6 +166,31 @@ pub struct ChartTheme {
     pub hollow_up: String,
     /// Hollow candles bearish (fill) color.
     pub hollow_down: String,
+    /// "Line" chart type's own line color (owner-approved settings matrix
+    /// wave 3, 2026-07-11).
+    pub line: String,
+    /// Step line (staircase) line color.
+    pub step_line: String,
+    /// Line-with-markers marker color.
+    pub line_markers: String,
+    /// Area chart line color.
+    pub area_line: String,
+    /// Area chart top fill color.
+    pub area_top: String,
+    /// Area chart bottom fill color.
+    pub area_bottom: String,
+    /// Baseline chart top (above-baseline) line color.
+    pub baseline_top_line: String,
+    /// Baseline chart top (above-baseline) fill color.
+    pub baseline_top_fill: String,
+    /// Baseline chart bottom (below-baseline) line color.
+    pub baseline_bottom_line: String,
+    /// Baseline chart bottom (below-baseline) fill color.
+    pub baseline_bottom_fill: String,
+    /// HLC/OHLC bars up color.
+    pub bar_up: String,
+    /// HLC/OHLC bars down color.
+    pub bar_down: String,
 }
 
 impl Default for ChartTheme {
@@ -198,6 +223,18 @@ impl Default for ChartTheme {
             kagi_yin: "#ef5350".to_string(),
             hollow_up: "#26a69a".to_string(),
             hollow_down: "#ef5350".to_string(),
+            line: "#26a69a".to_string(),
+            step_line: "#26a69a".to_string(),
+            line_markers: "#26a69a".to_string(),
+            area_line: "#26a69a".to_string(),
+            area_top: "rgba(38, 166, 154, 0.28)".to_string(),
+            area_bottom: "rgba(38, 166, 154, 0.05)".to_string(),
+            baseline_top_line: "#26a69a".to_string(),
+            baseline_top_fill: "rgba(38, 166, 154, 0.28)".to_string(),
+            baseline_bottom_line: "#ef5350".to_string(),
+            baseline_bottom_fill: "rgba(239, 83, 80, 0.28)".to_string(),
+            bar_up: "#26a69a".to_string(),
+            bar_down: "#ef5350".to_string(),
         }
     }
 }
@@ -381,6 +418,104 @@ impl Default for TpoDisplayOptions {
     }
 }
 
+/// Marker glyph shape for the `"line_markers"` chart type (owner-approved
+/// settings matrix wave 3, 2026-07-11). Distinct from
+/// `RenderMarkerShape` (drawing-primitive markers, unrelated feature).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum LineMarkerStyle {
+    #[default]
+    Circle,
+    Square,
+    Triangle,
+    Diamond,
+}
+
+impl LineMarkerStyle {
+    /// Stable id used for persistence + dropdown option value.
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::Circle => "circle",
+            Self::Square => "square",
+            Self::Triangle => "triangle",
+            Self::Diamond => "diamond",
+        }
+    }
+
+    /// Parse back from the persisted/dropdown id. Unknown values fall back
+    /// to `Circle` (additive-field back-compat sentinel, matches the
+    /// `FootprintHeatIntensity::from_id` precedent).
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "square" => Self::Square,
+            "triangle" => Self::Triangle,
+            "diamond" => Self::Diamond,
+            _ => Self::Circle,
+        }
+    }
+}
+
+/// Simple line-family per-type display options: line/step-line/area/
+/// baseline widths + `line_markers`' marker style/size (owner-approved
+/// settings matrix wave 3, 2026-07-11). Colors live in [`ChartTheme`]
+/// (mirrors how wave 2 put renko/pnf/tlb/kagi/hollow colors in the theme);
+/// these are the non-color per-type options, stored the same way
+/// [`FootprintDisplayOptions`]/[`TpoDisplayOptions`] store their non-color
+/// per-type toggles. Per-panel (`ChartPanelState::line_family_display`),
+/// threaded into [`ChartRenderState`] the same way `footprint_display`/
+/// `tpo_display` are. `Copy` (all scalar fields) so it can be passed by
+/// value without adding a lifetime. `Serialize`/`Deserialize` for
+/// `ChartWindowSnapshot` persistence, mirroring `TpoDisplayOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LineFamilyDisplayOptions {
+    /// Line width (px) for the `"line"` chart type. Default `2.0` (matches
+    /// the pre-toggle hardcoded `ctx.set_stroke_width(2.0)`).
+    #[serde(default = "default_line_family_width")]
+    pub line_width: f64,
+    /// Line width (px) for the `"step_line"` chart type. Default `2.0`.
+    #[serde(default = "default_line_family_width")]
+    pub step_line_width: f64,
+    /// Line width (px) for the `"area"` chart type's top line. Default
+    /// `2.0`.
+    #[serde(default = "default_line_family_width")]
+    pub area_line_width: f64,
+    /// Line width (px) for the `"baseline"` chart type's top/bottom lines.
+    /// Default `2.0`.
+    #[serde(default = "default_line_family_width")]
+    pub baseline_line_width: f64,
+    /// Marker glyph shape for the `"line_markers"` chart type. Default
+    /// `Circle` (matches the pre-toggle hardcoded `ctx.arc(...)` circle).
+    #[serde(default)]
+    pub marker_style: LineMarkerStyle,
+    /// Marker radius (px) for the `"line_markers"` chart type. Default
+    /// `3.0` (matches the pre-toggle hardcoded `marker_radius`).
+    #[serde(default = "default_marker_size")]
+    pub marker_size: f64,
+}
+
+/// `#[serde(default = ...)]` sentinel shared by every `LineFamilyDisplayOptions`
+/// line-width field.
+fn default_line_family_width() -> f64 {
+    2.0
+}
+
+/// `#[serde(default = ...)]` sentinel for `LineFamilyDisplayOptions::marker_size`.
+fn default_marker_size() -> f64 {
+    3.0
+}
+
+impl Default for LineFamilyDisplayOptions {
+    fn default() -> Self {
+        Self {
+            line_width: default_line_family_width(),
+            step_line_width: default_line_family_width(),
+            area_line_width: default_line_family_width(),
+            baseline_line_width: default_line_family_width(),
+            marker_style: LineMarkerStyle::default(),
+            marker_size: default_marker_size(),
+        }
+    }
+}
+
 /// Render-facing mirror of `mlc_backend::bubble::HistoryDepth` — mlc-core
 /// cannot depend on mlc-backend (which owns the bubble-side source of
 /// truth), so `mlc-backend::bubble::render::build_chart_render_state`
@@ -489,6 +624,11 @@ pub struct ChartRenderState<'a> {
     /// mirrors `ChartPanelState::tpo_display`. Unused for every other
     /// chart type.
     pub tpo_display: TpoDisplayOptions,
+    /// Simple line-family per-type display options (line/step-line/area/
+    /// baseline widths + line_markers' marker style/size) — per-panel
+    /// config, mirrors `ChartPanelState::line_family_display`. Unused for
+    /// every other chart type.
+    pub line_family_display: LineFamilyDisplayOptions,
     /// Pre-computed Heikin Ashi cache. When `Some(_)` and chart_type
     /// == "heikin_ashi" the HA renderer reads directly from this slice
     /// instead of running the recursive HA formula from index 0 each

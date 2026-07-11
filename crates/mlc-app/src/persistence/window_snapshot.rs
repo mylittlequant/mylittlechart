@@ -86,6 +86,7 @@ pub fn build_chart_window_snapshot(
         tick_intensity: panel.tick_intensity,
         bar_family_wicks: panel.bar_family_wicks,
         tpo_display: panel.tpo_display,
+        line_family_display: panel.line_family_display,
         show_candles: panel.show_candles,
         show_bars: panel.show_bars,
         show_hollow_candles: panel.show_hollow_candles,

@@ -140,6 +140,20 @@ pub struct RuntimeSeriesColors {
     pub line_color: String,
     pub line_width: f64,
 
+    // Step line (staircase) / Line-with-markers per-type colors (owner-
+    // approved settings matrix wave 3, 2026-07-11). Additive — old theme
+    // JSON without these keys falls back to `line_color`'s own default
+    // (same green the line-family renderers always hardcoded via
+    // `candle_up` before this field existed), so existing saved themes
+    // render pixel-identically to before this field existed. Widths/
+    // marker-style/marker-size are non-color per-type options, stored in
+    // `LineFamilyDisplayOptions` (per-panel), not here — mirrors how wave 2
+    // kept numeric params out of theme.
+    #[serde(default = "default_footprint_buy")]
+    pub step_line_color: String,
+    #[serde(default = "default_footprint_buy")]
+    pub line_markers_color: String,
+
     // Area series
     pub area_line: String,
     pub area_top: String,
@@ -507,6 +521,8 @@ impl From<&UITheme> for RuntimeTheme {
                 candle_down_border: theme.series.candle_down_border.map(|s| s.to_string()),
                 line_color: theme.series.line_color.to_string(),
                 line_width: theme.series.line_width,
+                step_line_color: theme.series.step_line_color.to_string(),
+                line_markers_color: theme.series.line_markers_color.to_string(),
                 area_line: theme.series.area_line.to_string(),
                 area_top: theme.series.area_top.to_string(),
                 area_bottom: theme.series.area_bottom.to_string(),
@@ -820,5 +836,21 @@ mod tests {
         assert_eq!(restored.series.kagi_yin, "#ef5350");
         assert_eq!(restored.series.hollow_up, "#26a69a");
         assert_eq!(restored.series.hollow_down, "#ef5350");
+    }
+
+    /// Old theme JSON saved before the line-family per-type color fields
+    /// existed (owner-approved matrix wave 3, 2026-07-11) must still
+    /// deserialize — missing keys fall back to the same green every
+    /// line-family renderer hardcoded before this field existed.
+    #[test]
+    fn test_line_family_colors_default_on_missing_json_keys() {
+        let mut value = serde_json::to_value(RuntimeTheme::dark()).unwrap();
+        let series = value.get_mut("series").unwrap().as_object_mut().unwrap();
+        for key in ["step_line_color", "line_markers_color"] {
+            series.remove(key);
+        }
+        let restored: RuntimeTheme = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.series.step_line_color, "#26a69a");
+        assert_eq!(restored.series.line_markers_color, "#26a69a");
     }
 }

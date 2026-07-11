@@ -97,6 +97,18 @@ pub struct SeriesColors {
     pub line_color: &'static str,
     pub line_width: f64,
 
+    // Step line (staircase) — own color identity, wave 3 (2026-07-11):
+    // previously rendered via the shared `line_color`; now independently
+    // colorable in the settings modal per-type block. Width lives in
+    // `LineFamilyDisplayOptions` (non-color per-type option, mirrors how
+    // wave 2 kept numeric params out of `ChartTheme`).
+    pub step_line_color: &'static str,
+
+    // Line with markers — line color reuses `line_color` (shared "Line"
+    // family identity); marker color is its own field (wave 3, 2026-07-11).
+    // Marker style/size live in `LineFamilyDisplayOptions`.
+    pub line_markers_color: &'static str,
+
     // Area series
     pub area_line: &'static str,
     pub area_top: &'static str,
@@ -237,9 +249,19 @@ impl ChartTheme {
                 line_color: "#2962ff",
                 line_width: 2.0,
 
-                area_line: "#2962ff",
-                area_top: "rgba(41, 98, 255, 0.28)",
-                area_bottom: "rgba(41, 98, 255, 0.05)",
+                // Per-type color identity (owner-approved settings matrix
+                // wave 3, 2026-07-11): defaults mirror this preset's own
+                // candle up/down colors (matches wave 2's renko/pnf/tlb/
+                // kagi/hollow convention) — the renderer read `candle_up`/
+                // `candle_down` before these fields existed, so this keeps
+                // every existing chart pixel-identical until a user edits
+                // a swatch.
+                step_line_color: "#26a69a",
+                line_markers_color: "#26a69a",
+
+                area_line: "#26a69a",
+                area_top: "rgba(38, 166, 154, 0.28)",
+                area_bottom: "rgba(38, 166, 154, 0.05)",
 
                 histogram_positive: "#26a69a",
                 histogram_negative: "#ef5350",
@@ -351,9 +373,12 @@ impl ChartTheme {
                 line_color: "#2962ff",
                 line_width: 2.0,
 
-                area_line: "#2962ff",
-                area_top: "rgba(41, 98, 255, 0.28)",
-                area_bottom: "rgba(41, 98, 255, 0.05)",
+                step_line_color: "#26a69a",
+                line_markers_color: "#26a69a",
+
+                area_line: "#26a69a",
+                area_top: "rgba(38, 166, 154, 0.28)",
+                area_bottom: "rgba(38, 166, 154, 0.05)",
 
                 histogram_positive: "#26a69a",
                 histogram_negative: "#ef5350",
@@ -465,9 +490,12 @@ impl ChartTheme {
                 line_color: "#0066ff",
                 line_width: 2.0,
 
-                area_line: "#0066ff",
-                area_top: "rgba(0, 102, 255, 0.4)",
-                area_bottom: "rgba(0, 102, 255, 0.1)",
+                step_line_color: "#00ff00",
+                line_markers_color: "#00ff00",
+
+                area_line: "#00ff00",
+                area_top: "rgba(0, 255, 0, 0.4)",
+                area_bottom: "rgba(0, 255, 0, 0.1)",
 
                 histogram_positive: "#00ff00",
                 histogram_negative: "#ff0000",
@@ -580,6 +608,9 @@ impl ChartTheme {
 
                 line_color: "#ffffff",
                 line_width: 2.0,
+
+                step_line_color: "#ffffff",
+                line_markers_color: "#ffffff",
 
                 area_line: "#ffffff",
                 area_top: "rgba(255, 255, 255, 0.2)",
@@ -695,9 +726,12 @@ impl ChartTheme {
                 line_color: "#2962ff",
                 line_width: 2.0,
 
-                area_line: "#2962ff",
-                area_top: "rgba(41,98,255,0.28)",
-                area_bottom: "rgba(41,98,255,0.05)",
+                step_line_color: "#26a69a",
+                line_markers_color: "#26a69a",
+
+                area_line: "#26a69a",
+                area_top: "rgba(38,166,154,0.28)",
+                area_bottom: "rgba(38,166,154,0.05)",
 
                 histogram_positive: "#26a69a",
                 histogram_negative: "#ef5350",
@@ -1488,6 +1522,87 @@ mod per_type_color_tests {
             assert_eq!(s.kagi_yin, down, "{}: kagi_yin should default to candle_down_body", theme.name);
             assert_eq!(s.hollow_up, up, "{}: hollow_up should default to candle_up_body", theme.name);
             assert_eq!(s.hollow_down, down, "{}: hollow_down should default to candle_down_body", theme.name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod line_family_color_tests {
+    //! Completeness check for the simple line-family per-type color fields
+    //! (owner-approved settings matrix wave 3, 2026-07-11): `step_line`/
+    //! `line_markers` get their own color field, `area`/`baseline`/`bars`
+    //! reuse the pre-existing `SeriesColors` fields (`area_line`/`area_top`/
+    //! `area_bottom`/`baseline_top_line`/`baseline_top_fill`/
+    //! `baseline_bottom_line`/`baseline_bottom_fill`/`bar_up`/`bar_down`)
+    //! that were declared but never read by any renderer before this wave —
+    //! every preset's default for all of these now equals that SAME
+    //! preset's own candle up/down color so switching the renderers from
+    //! `candle_up`/`candle_down` to these fields is pixel-identical until a
+    //! user edits a swatch.
+    use super::ChartTheme;
+
+    fn all_presets() -> Vec<ChartTheme> {
+        vec![
+            ChartTheme::dark(),
+            ChartTheme::light(),
+            ChartTheme::high_contrast(),
+            ChartTheme::high_contrast_mono(),
+            ChartTheme::mascot(),
+        ]
+    }
+
+    #[test]
+    fn every_preset_defines_non_empty_line_family_colors() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            for (label, color) in [
+                ("step_line", s.step_line_color),
+                ("line_markers", s.line_markers_color),
+                ("area_line", s.area_line),
+                ("area_top", s.area_top),
+                ("area_bottom", s.area_bottom),
+                ("baseline_top_line", s.baseline_top_line),
+                ("baseline_top_fill", s.baseline_top_fill),
+                ("baseline_bottom_line", s.baseline_bottom_line),
+                ("baseline_bottom_fill", s.baseline_bottom_fill),
+                ("bar_up", s.bar_up),
+                ("bar_down", s.bar_down),
+            ] {
+                assert!(!color.is_empty(), "{}: '{}' color is empty", theme.name, label);
+            }
+        }
+    }
+
+    #[test]
+    fn up_side_defaults_derive_from_this_presets_own_candle_up_color() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            let up = s.candle_up_body;
+            assert_eq!(s.step_line_color, up, "{}: step_line_color should default to candle_up_body", theme.name);
+            assert_eq!(s.line_markers_color, up, "{}: line_markers_color should default to candle_up_body", theme.name);
+            assert_eq!(s.area_line, up, "{}: area_line should default to candle_up_body", theme.name);
+            assert_eq!(s.baseline_top_line, up, "{}: baseline_top_line should default to candle_up_body", theme.name);
+            assert_eq!(s.bar_up, up, "{}: bar_up should default to candle_up_body", theme.name);
+        }
+    }
+
+    #[test]
+    fn baseline_bottom_and_bar_down_default_to_candle_down_except_mono_hollow_convention() {
+        // `high_contrast_mono`'s `candle_down_body` is literally the
+        // background color (`#000000`) — a hollow-candle-family visual
+        // trick, not a usable line/fill color. `bar_down`/
+        // `baseline_bottom_line` for that ONE preset predate this wave and
+        // already use `#888888` (the same convention `histogram_negative`/
+        // `ma_slow` use), so this check excludes it rather than asserting a
+        // literal-black line/bar would be invisible.
+        for theme in all_presets() {
+            if theme.name == "High Contrast Mono" {
+                continue;
+            }
+            let s = &theme.series;
+            let down = s.candle_down_body;
+            assert_eq!(s.baseline_bottom_line, down, "{}: baseline_bottom_line should default to candle_down_body", theme.name);
+            assert_eq!(s.bar_down, down, "{}: bar_down should default to candle_down_body", theme.name);
         }
     }
 }

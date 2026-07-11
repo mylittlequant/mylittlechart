@@ -638,6 +638,24 @@ pub fn render_settings_modal(
                             DropdownItem::item("3", "3"),
                             DropdownItem::item("4", "4"),
                         ]),
+                        "line_width" | "step_line_width" | "area_line_width" | "baseline_line_width" => Some(vec![
+                            DropdownItem::item("1", "1"),
+                            DropdownItem::item("2", "2"),
+                            DropdownItem::item("3", "3"),
+                            DropdownItem::item("4", "4"),
+                        ]),
+                        "line_markers_style" => Some(vec![
+                            DropdownItem::item("Circle", "Circle"),
+                            DropdownItem::item("Square", "Square"),
+                            DropdownItem::item("Triangle", "Triangle"),
+                            DropdownItem::item("Diamond", "Diamond"),
+                        ]),
+                        "line_markers_size" => Some(vec![
+                            DropdownItem::item("3", "3"),
+                            DropdownItem::item("5", "5"),
+                            DropdownItem::item("7", "7"),
+                            DropdownItem::item("9", "9"),
+                        ]),
                         _ => None,
                     }
                 }
@@ -936,6 +954,19 @@ fn render_instrument_settings(
         result.content_items.push(("instrument:hollow_up_color".to_string(), up_rect));
         result.content_items.push(("instrument:hollow_down_color".to_string(), down_rect));
         row_y += row_height + 16.0;
+    } else if matches!(
+        settings.chart_type.as_str(),
+        "line" | "step_line" | "area" | "baseline" | "bars" | "line_markers"
+    ) {
+        // Section: simple line-family per-type colors/width/marker style-size
+        // (owner-approved settings matrix wave 3, 2026-07-11) — was: these
+        // types drew nothing in the top slot (parameterless per
+        // `chart_type_param_spec`'s doc comment) and inherited global candle
+        // colors at render time.
+        row_y = render_line_family_settings_block(
+            ctx, x, row_y, row_height, swatch_size, swatch_gap,
+            label_x, swatches_x, text_color, muted_color, theme, settings, result,
+        );
     } else if mlc_core::chart_type::by_id(&settings.chart_type)
         .is_some_and(|d| d.has_bespoke_settings_block)
     {
@@ -1500,6 +1531,212 @@ fn render_footprint_settings_block(
     result.content_items.push(("dropdown_cycle:footprint_imbalance_threshold".to_string(), WidgetRect::new(imbalance_dropdown_x, imbalance_dropdown_y, imbalance_text_w, imbalance_dropdown_height)));
     result.content_items.push(("dropdown_menu:footprint_imbalance_threshold".to_string(), WidgetRect::new(imbalance_dropdown_x + imbalance_text_w, imbalance_dropdown_y, chevron_w, imbalance_dropdown_height)));
     row_y += row_height + 16.0;
+
+    row_y
+}
+
+/// Simple line-family per-type colors/width/marker-style-size block (owner-
+/// approved settings matrix wave 3, 2026-07-11) — one section per chart_type
+/// (line / step_line / area / baseline / bars / line_markers), each with its
+/// own color swatch row(s) and a width (or marker style + size) preset
+/// dropdown, same widgets as CLUSTERS SETTINGS / the renko-family swatch
+/// rows above.
+#[allow(clippy::too_many_arguments)]
+fn render_line_family_settings_block(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    mut row_y: f64,
+    row_height: f64,
+    swatch_size: f64,
+    swatch_gap: f64,
+    label_x: f64,
+    swatches_x: f64,
+    text_color: &str,
+    muted_color: &str,
+    theme: &ToolbarTheme,
+    settings: &InstrumentSettings,
+    result: &mut ChartSettingsModalResult,
+) -> f64 {
+    let draw_swatch = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
+        let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
+        ctx.set_fill_color(color);
+        ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+        swatch_rect
+    };
+
+    // Shared width/size preset dropdown row — same split-dropdown widget as
+    // Precision/Timezone/renko box-size, driven by a small fixed ladder
+    // (px-count labels double as `value_id`s, parsed back in `settings.rs`).
+    let draw_ladder_dropdown = |
+        ctx: &mut dyn RenderContext,
+        row_y: f64,
+        row_label: &str,
+        field_id: &str,
+        current_label: &str,
+        options_widest: &[&str],
+        result: &mut ChartSettingsModalResult,
+        theme: &ToolbarTheme,
+    | {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text(row_label, x, row_y + row_height / 2.0);
+        let dropdown_x = x + 140.0;
+        let chevron_w = 20.0;
+        let widest_w = options_widest.iter()
+            .map(|s| ctx.measure_text(s))
+            .fold(0.0_f64, f64::max);
+        let dropdown_width = (widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+        let dropdown_height = 28.0;
+        let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
+        let text_w = dropdown_width - chevron_w;
+        draw_split_dropdown(ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height, current_label, row_y + row_height / 2.0, theme);
+        result.content_items.push((format!("dropdown_cycle:{field_id}"), WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height)));
+        result.content_items.push((format!("dropdown_menu:{field_id}"), WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height)));
+    };
+
+    match settings.chart_type.as_str() {
+        "line" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("LINE SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Line color", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.line_color, theme);
+            result.content_items.push(("instrument:line_color".to_string(), rect));
+            row_y += row_height;
+
+            draw_ladder_dropdown(ctx, row_y, "Line width", "line_width", &settings.line_width_label, &["1", "2", "3", "4"], result, theme);
+            row_y += row_height + 16.0;
+        }
+        "step_line" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("STEP LINE SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Line color", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.step_line_color, theme);
+            result.content_items.push(("instrument:step_line_color".to_string(), rect));
+            row_y += row_height;
+
+            draw_ladder_dropdown(ctx, row_y, "Line width", "step_line_width", &settings.step_line_width_label, &["1", "2", "3", "4"], result, theme);
+            row_y += row_height + 16.0;
+        }
+        "area" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("AREA SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Line color", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.area_line_color, theme);
+            result.content_items.push(("instrument:area_line_color".to_string(), rect));
+            row_y += row_height;
+
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Top / Bottom fill", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let top_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.area_top_color, theme);
+            let bottom_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.area_bottom_color, theme);
+            result.content_items.push(("instrument:area_top_color".to_string(), top_rect));
+            result.content_items.push(("instrument:area_bottom_color".to_string(), bottom_rect));
+            row_y += row_height;
+
+            draw_ladder_dropdown(ctx, row_y, "Line width", "area_line_width", &settings.area_line_width_label, &["1", "2", "3", "4"], result, theme);
+            row_y += row_height + 16.0;
+        }
+        "baseline" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("BASELINE SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Top line / fill", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let top_line_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.baseline_top_line_color, theme);
+            let top_fill_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.baseline_top_fill_color, theme);
+            result.content_items.push(("instrument:baseline_top_line_color".to_string(), top_line_rect));
+            result.content_items.push(("instrument:baseline_top_fill_color".to_string(), top_fill_rect));
+            row_y += row_height;
+
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Bottom line / fill", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let bottom_line_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.baseline_bottom_line_color, theme);
+            let bottom_fill_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.baseline_bottom_fill_color, theme);
+            result.content_items.push(("instrument:baseline_bottom_line_color".to_string(), bottom_line_rect));
+            result.content_items.push(("instrument:baseline_bottom_fill_color".to_string(), bottom_fill_rect));
+            row_y += row_height;
+
+            draw_ladder_dropdown(ctx, row_y, "Line width", "baseline_line_width", &settings.baseline_line_width_label, &["1", "2", "3", "4"], result, theme);
+            row_y += row_height + 16.0;
+        }
+        "bars" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("BARS SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Up / Down", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.bars_up_color, theme);
+            let down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.bars_down_color, theme);
+            result.content_items.push(("instrument:bars_up_color".to_string(), up_rect));
+            result.content_items.push(("instrument:bars_down_color".to_string(), down_rect));
+            row_y += row_height + 16.0;
+        }
+        "line_markers" => {
+            ctx.set_fill_color(muted_color);
+            ctx.set_font("11px sans-serif");
+            ctx.fill_text("MARKERS SETTINGS", x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Marker color", label_x, row_y + row_height / 2.0);
+            let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+            let rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.line_markers_color, theme);
+            result.content_items.push(("instrument:line_markers_color".to_string(), rect));
+            row_y += row_height;
+
+            draw_ladder_dropdown(
+                ctx, row_y, "Marker style", "line_markers_style", &settings.line_markers_style_label,
+                &["Circle", "Square", "Triangle", "Diamond"], result, theme,
+            );
+            row_y += row_height;
+
+            draw_ladder_dropdown(
+                ctx, row_y, "Marker size", "line_markers_size", &settings.line_markers_size_label,
+                &["3", "5", "7", "9"], result, theme,
+            );
+            row_y += row_height + 16.0;
+        }
+        _ => {}
+    }
 
     row_y
 }

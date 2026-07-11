@@ -1,4 +1,4 @@
-use mlc_core::chart::render_data::{ChartRect, ChartRenderState, ChartTheme, FootprintDisplayOptions, TpoDisplayOptions};
+use mlc_core::chart::render_data::{ChartRect, ChartRenderState, ChartTheme, FootprintDisplayOptions, LineFamilyDisplayOptions, TpoDisplayOptions};
 use mlc_core::chart::types::price_scale::PriceScale;
 use mlc_core::chart::types::{Crosshair, GridOptions, Legend, TimeScale, Viewport};
 use mlc_core::scale_settings::ScaleSettings;
@@ -49,6 +49,10 @@ pub struct ChartWindowRenderInputs<'a> {
     /// / poor-HL / initial-balance / IB period count) — per-panel view
     /// state, mirrors `footprint_display`.
     pub tpo_display: TpoDisplayOptions,
+    /// Simple line-family per-type display options (line/step-line/area/
+    /// baseline widths + line_markers' marker style/size) — per-panel view
+    /// state, mirrors `footprint_display`.
+    pub line_family_display: LineFamilyDisplayOptions,
     /// Precomputed effective wick flag — `draw_candles`' `state.wick_enabled`
     /// gate. The caller resolves this ONCE, here, from the global "Wick"
     /// checkbox combined with the bar-family override: for range_bar /
@@ -166,6 +170,7 @@ pub fn build_chart_render_state<'a>(
         kagi_segments: bubble.kagi_segments.as_deref(),
         tpo_sessions: bubble.tpo_sessions.as_deref(),
         tpo_display: window.tpo_display,
+        line_family_display: window.line_family_display,
         // ha_cache + vp_overlay + tpo_profile_overlay are window-local
         // derived caches (viewport-coupled).
         ha_cache: window.ha_cache,

@@ -178,7 +178,9 @@ pub fn draw_bars(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let cx = crisp(viewport.x_for_bar(i, bar.ts_ms()), dpr);
         let is_up = bar.is_bullish();
 
-        let color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        // Own per-type color (owner-approved settings matrix wave 3,
+        // 2026-07-11) — was `theme.candle_up`/`theme.candle_down`.
+        let color = if is_up { &theme.bar_up } else { &theme.bar_down };
         let screen_x = rect.x + cx;
 
         // Skip if the bar is entirely outside chart bounds

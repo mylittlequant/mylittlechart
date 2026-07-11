@@ -286,6 +286,18 @@ impl ChartPanelApp {
             kagi_yin: rt.series.kagi_yin.clone(),
             hollow_up: rt.series.hollow_up.clone(),
             hollow_down: rt.series.hollow_down.clone(),
+            line: rt.series.line_color.clone(),
+            step_line: rt.series.step_line_color.clone(),
+            line_markers: rt.series.line_markers_color.clone(),
+            area_line: rt.series.area_line.clone(),
+            area_top: rt.series.area_top.clone(),
+            area_bottom: rt.series.area_bottom.clone(),
+            baseline_top_line: rt.series.baseline_top_line.clone(),
+            baseline_top_fill: rt.series.baseline_top_fill.clone(),
+            baseline_bottom_line: rt.series.baseline_bottom_line.clone(),
+            baseline_bottom_fill: rt.series.baseline_bottom_fill.clone(),
+            bar_up: rt.series.bar_up.clone(),
+            bar_down: rt.series.bar_down.clone(),
         }
     }
 

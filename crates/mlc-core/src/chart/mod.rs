@@ -61,6 +61,7 @@ pub use render_data::{
     GridRenderOptions, LineRenderStyle,
     FootprintDisplayOptions, FootprintHeatIntensity,
     TpoDisplayOptions,
+    LineFamilyDisplayOptions, LineMarkerStyle,
     HistoryDepthDisplay,
 };
 

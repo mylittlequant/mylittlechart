@@ -82,6 +82,64 @@ pub struct InstrumentSettings {
     /// Hollow candles bearish (fill) color — mirrors
     /// `ChartTheme::hollow_down`. Unused when `chart_type != "hollow_candles"`.
     pub hollow_down_color: String,
+    // ── Simple line-family per-type colors + widths (owner-approved
+    // settings matrix wave 3, 2026-07-11) ──────────────────────────────────
+    /// "Line" chart type's own line color — mirrors `ChartTheme::line`.
+    /// Unused when `chart_type != "line"`.
+    pub line_color: String,
+    /// "Line" chart type's line width label ("1" / "2" / "3" / "4" px).
+    /// Unused when `chart_type != "line"`.
+    pub line_width_label: String,
+    /// Step line (staircase) line color — mirrors `ChartTheme::step_line`.
+    /// Unused when `chart_type != "step_line"`.
+    pub step_line_color: String,
+    /// Step line width label ("1" / "2" / "3" / "4" px). Unused when
+    /// `chart_type != "step_line"`.
+    pub step_line_width_label: String,
+    /// Area chart line color — mirrors `ChartTheme::area_line`. Unused when
+    /// `chart_type != "area"`.
+    pub area_line_color: String,
+    /// Area chart top fill color — mirrors `ChartTheme::area_top`. Unused
+    /// when `chart_type != "area"`.
+    pub area_top_color: String,
+    /// Area chart bottom fill color — mirrors `ChartTheme::area_bottom`.
+    /// Unused when `chart_type != "area"`.
+    pub area_bottom_color: String,
+    /// Area chart line width label ("1" / "2" / "3" / "4" px). Unused when
+    /// `chart_type != "area"`.
+    pub area_line_width_label: String,
+    /// Baseline chart top (above-baseline) line color — mirrors
+    /// `ChartTheme::baseline_top_line`. Unused when `chart_type != "baseline"`.
+    pub baseline_top_line_color: String,
+    /// Baseline chart top (above-baseline) fill color — mirrors
+    /// `ChartTheme::baseline_top_fill`. Unused when `chart_type != "baseline"`.
+    pub baseline_top_fill_color: String,
+    /// Baseline chart bottom (below-baseline) line color — mirrors
+    /// `ChartTheme::baseline_bottom_line`. Unused when
+    /// `chart_type != "baseline"`.
+    pub baseline_bottom_line_color: String,
+    /// Baseline chart bottom (below-baseline) fill color — mirrors
+    /// `ChartTheme::baseline_bottom_fill`. Unused when
+    /// `chart_type != "baseline"`.
+    pub baseline_bottom_fill_color: String,
+    /// Baseline chart line width label ("1" / "2" / "3" / "4" px). Unused
+    /// when `chart_type != "baseline"`.
+    pub baseline_line_width_label: String,
+    /// HLC/OHLC bars up color — mirrors `ChartTheme::bar_up`. Unused when
+    /// `chart_type != "bars"`.
+    pub bars_up_color: String,
+    /// HLC/OHLC bars down color — mirrors `ChartTheme::bar_down`. Unused
+    /// when `chart_type != "bars"`.
+    pub bars_down_color: String,
+    /// Line-with-markers marker color — mirrors `ChartTheme::line_markers`.
+    /// Unused when `chart_type != "line_markers"`.
+    pub line_markers_color: String,
+    /// Line-with-markers marker shape label ("Circle" / "Square" /
+    /// "Triangle" / "Diamond"). Unused when `chart_type != "line_markers"`.
+    pub line_markers_style_label: String,
+    /// Line-with-markers marker size label ("3" / "5" / "7" / "9" px).
+    /// Unused when `chart_type != "line_markers"`.
+    pub line_markers_size_label: String,
     /// Footprint heat-fill intensity label ("Low" / "Normal" / "High").
     /// Unused when `chart_type != "footprint"`.
     pub footprint_heat_intensity_label: String,

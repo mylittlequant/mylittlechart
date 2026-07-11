@@ -204,6 +204,16 @@ pub struct ChartWindowSnapshot {
     /// (pixel-identical to the pre-toggle render).
     #[serde(default)]
     pub tpo_display: crate::chart::render_data::TpoDisplayOptions,
+    /// Simple line-family per-type display options (line/step-line/area/
+    /// baseline widths + line_markers' marker style/size). Mirrors
+    /// `ChartPanelState::line_family_display`. Unused for every other
+    /// chart type. Additive field (owner-approved settings matrix wave 3,
+    /// 2026-07-11); old presets deserialize via `#[serde(default)]` and
+    /// land on `LineFamilyDisplayOptions::default()` (pixel-identical to
+    /// the pre-toggle render — same widths/marker style/size every
+    /// renderer hardcoded).
+    #[serde(default)]
+    pub line_family_display: crate::chart::render_data::LineFamilyDisplayOptions,
     // --- Series visibility ---
     /// Show filled candlesticks.
     pub show_candles: bool,

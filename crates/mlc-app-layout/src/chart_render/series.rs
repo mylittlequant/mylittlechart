@@ -29,8 +29,10 @@ pub fn draw_line_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         return;
     }
 
-    // Use candle_up color for line (or could add line_color to theme)
-    let line_color = &theme.candle_up;
+    // Own per-type color + width (owner-approved settings matrix wave 3,
+    // 2026-07-11) — was `theme.candle_up` + hardcoded 2.0.
+    let line_color = &theme.line;
+    let line_width = state.line_family_display.line_width;
 
     // Collect points
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
@@ -46,7 +48,7 @@ pub fn draw_line_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
     // Draw line
     ctx.set_stroke_color(line_color);
-    ctx.set_stroke_width(2.0);
+    ctx.set_stroke_width(line_width);
     ctx.set_line_dash(&[]);
     ctx.begin_path();
     ctx.move_to(points[0].0, points[0].1);
@@ -71,7 +73,15 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         return;
     }
 
-    let line_color = &theme.candle_up;
+    // Own per-type colors + width (owner-approved settings matrix wave 3,
+    // 2026-07-11) — was `theme.candle_up` with a single hardcoded-alpha
+    // fill and hardcoded 2.0 width. Fill = vertical linear gradient
+    // `area_top` → `area_bottom` anchored to the pane (TV canon: gradient
+    // spans pane height, not the fill polygon).
+    let line_color = &theme.area_line;
+    let fill_top = theme.area_top.as_str();
+    let fill_bottom = theme.area_bottom.as_str();
+    let line_width = state.line_family_display.area_line_width;
     let bottom_y = rect.bottom();
 
     // Collect top points
@@ -92,8 +102,10 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     // per-bar strip pattern with alpha=0.3 doubled the effective alpha at
     // every bar boundary — regular dark vertical bands, most visible on
     // narrow zooms. HLC Area's version was already fixed there; this Area
-    // path has the same bug, just masked by a taller fill.
-    ctx.set_fill_color_alpha(line_color, 0.3);
+    // path has the same bug, just masked by a taller fill. `area_top` /
+    // `area_bottom` are pre-blended rgba strings (existing convention), so
+    // no separate alpha call is needed here (unlike the old `candle_up` +
+    // `set_fill_color_alpha(_, 0.3)` pairing).
     ctx.begin_path();
     ctx.move_to(top_points[0].0, top_points[0].1);
     for &(x, y) in &top_points[1..] {
@@ -104,12 +116,17 @@ pub fn draw_area_series(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         ctx.line_to(top_points[0].0, bottom_y);
     }
     ctx.close_path();
-    ctx.fill();
-    ctx.reset_alpha();
+    ctx.fill_linear_gradient(
+        &[(0.0, fill_top), (1.0, fill_bottom)],
+        rect.x,
+        rect.y,
+        rect.x,
+        bottom_y,
+    );
 
     // Draw line on top
     ctx.set_stroke_color(line_color);
-    ctx.set_stroke_width(2.0);
+    ctx.set_stroke_width(line_width);
     ctx.set_line_dash(&[]);
     ctx.begin_path();
     ctx.move_to(top_points[0].0, top_points[0].1);
@@ -148,8 +165,16 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
     let baseline_value = bars[0].open;
     let baseline_y = rect.y + viewport.price_to_y(baseline_value, price_scale.price_min, price_scale.price_max);
 
-    let top_color = &theme.candle_up;
-    let bottom_color = &theme.candle_down;
+    // Own per-type colors + width (owner-approved settings matrix wave 3,
+    // 2026-07-11) — was `theme.candle_up`/`theme.candle_down` for both line
+    // and fill (fill alpha-blended from the line color); now 4 independent
+    // fields (top line / top fill / bottom line / bottom fill) plus its own
+    // line width, was hardcoded 2.0.
+    let top_line_color = &theme.baseline_top_line;
+    let top_fill_color = &theme.baseline_top_fill;
+    let bottom_line_color = &theme.baseline_bottom_line;
+    let bottom_fill_color = &theme.baseline_bottom_fill;
+    let line_width = state.line_family_display.baseline_line_width;
 
     // Collect points with their values
     let mut points: Vec<(f64, f64, f64)> = Vec::with_capacity(end - start); // (x, y, close)
@@ -222,7 +247,11 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
     push_run(&mut above_islands, &mut below_islands, &mut above_polylines, &mut below_polylines, &top, above, baseline_y);
 
     // Fill pass — exactly 2 fill() calls total regardless of crossing count.
-    ctx.set_fill_color_alpha(top_color, 0.3);
+    // `baseline_top_fill`/`baseline_bottom_fill` are already pre-blended
+    // rgba strings (existing convention, same alpha the old
+    // `set_fill_color_alpha(_, 0.3)` call used), so no separate alpha call
+    // is needed here.
+    ctx.set_fill_color(top_fill_color);
     ctx.begin_path();
     for island in &above_islands {
         ctx.move_to(island[0].0, island[0].1);
@@ -232,9 +261,8 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
         ctx.close_path();
     }
     ctx.fill();
-    ctx.reset_alpha();
 
-    ctx.set_fill_color_alpha(bottom_color, 0.3);
+    ctx.set_fill_color(bottom_fill_color);
     ctx.begin_path();
     for island in &below_islands {
         ctx.move_to(island[0].0, island[0].1);
@@ -244,13 +272,12 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
         ctx.close_path();
     }
     ctx.fill();
-    ctx.reset_alpha();
 
     // Stroke pass — exactly 2 stroke() calls total regardless of crossing count.
-    ctx.set_stroke_width(2.0);
+    ctx.set_stroke_width(line_width);
     ctx.set_line_dash(&[]);
 
-    ctx.set_stroke_color(top_color);
+    ctx.set_stroke_color(top_line_color);
     ctx.begin_path();
     for polyline in &above_polylines {
         ctx.move_to(polyline[0].0, polyline[0].1);
@@ -260,7 +287,7 @@ pub fn draw_baseline_series(ctx: &mut dyn RenderContext, state: &ChartRenderStat
     }
     ctx.stroke();
 
-    ctx.set_stroke_color(bottom_color);
+    ctx.set_stroke_color(bottom_line_color);
     ctx.begin_path();
     for polyline in &below_polylines {
         ctx.move_to(polyline[0].0, polyline[0].1);
@@ -328,7 +355,10 @@ pub fn draw_step_line(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         return;
     }
 
-    let line_color = &theme.candle_up;
+    // Own per-type color + width (owner-approved settings matrix wave 3,
+    // 2026-07-11) — was `theme.candle_up` + hardcoded 2.0.
+    let line_color = &theme.step_line;
+    let line_width = state.line_family_display.step_line_width;
 
     // Collect points with step pattern
     let mut points: Vec<(f64, f64)> = Vec::new();
@@ -351,7 +381,7 @@ pub fn draw_step_line(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     }
 
     ctx.set_stroke_color(line_color);
-    ctx.set_stroke_width(2.0);
+    ctx.set_stroke_width(line_width);
     ctx.set_line_dash(&[]);
     ctx.begin_path();
     ctx.move_to(points[0].0, points[0].1);
@@ -376,8 +406,14 @@ pub fn draw_line_with_markers(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         return;
     }
 
-    let line_color = &theme.candle_up;
-    let marker_radius = 3.0;
+    // Line reuses the shared "Line" family color/width (owner-approved
+    // settings matrix wave 3, 2026-07-11); marker color/shape/size are
+    // their own fields — was `theme.candle_up` + hardcoded 2.0/circle/3.0
+    // for both.
+    let line_color = &theme.line;
+    let marker_color = &theme.line_markers;
+    let marker_style = state.line_family_display.marker_style;
+    let marker_radius = state.line_family_display.marker_size;
 
     // Collect points
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(end - start);
@@ -393,7 +429,7 @@ pub fn draw_line_with_markers(ctx: &mut dyn RenderContext, state: &ChartRenderSt
 
     // Draw line first
     ctx.set_stroke_color(line_color);
-    ctx.set_stroke_width(2.0);
+    ctx.set_stroke_width(state.line_family_display.line_width);
     ctx.set_line_dash(&[]);
     ctx.begin_path();
     ctx.move_to(points[0].0, points[0].1);
@@ -403,12 +439,47 @@ pub fn draw_line_with_markers(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     ctx.stroke();
 
     // Draw markers on top
-    ctx.set_fill_color(line_color);
+    ctx.set_fill_color(marker_color);
     for &(x, y) in &points {
-        ctx.begin_path();
-        ctx.arc(x, y, marker_radius, 0.0, std::f64::consts::TAU);
-        ctx.fill();
+        draw_line_marker(ctx, x, y, marker_radius, marker_style);
     }
+}
+
+/// Draw one marker glyph for `draw_line_with_markers`, dispatching on
+/// [`mlc_core::chart::LineMarkerStyle`] (owner-approved settings matrix
+/// wave 3, 2026-07-11). Fill color/`begin_path`/`fill` bracket every arm —
+/// this only builds path geometry.
+fn draw_line_marker(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    radius: f64,
+    style: mlc_core::chart::LineMarkerStyle,
+) {
+    use mlc_core::chart::LineMarkerStyle;
+    ctx.begin_path();
+    match style {
+        LineMarkerStyle::Circle => {
+            ctx.arc(x, y, radius, 0.0, std::f64::consts::TAU);
+        }
+        LineMarkerStyle::Square => {
+            ctx.rect(x - radius, y - radius, radius * 2.0, radius * 2.0);
+        }
+        LineMarkerStyle::Triangle => {
+            ctx.move_to(x, y - radius);
+            ctx.line_to(x + radius, y + radius);
+            ctx.line_to(x - radius, y + radius);
+            ctx.close_path();
+        }
+        LineMarkerStyle::Diamond => {
+            ctx.move_to(x, y - radius);
+            ctx.line_to(x + radius, y);
+            ctx.line_to(x, y + radius);
+            ctx.line_to(x - radius, y);
+            ctx.close_path();
+        }
+    }
+    ctx.fill();
 }
 
 /// Draw a simple line from data array (used for MAs and indicators)
