@@ -3219,6 +3219,11 @@ impl ChartApp {
                         let bars = self.active_chart_bars();
                         self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                     }
+                    // CVD Display flip toggles the sub-pane (Line) vs
+                    // main-chart body-painter (Candles) — re-derive panes.
+                    if param_name == "display" {
+                        self.sync_sub_panes_from_manager();
+                    }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                     eprintln!("[ChartApp] ind_settings dropdown_cycle: {} = {}", param_name, next_val);
@@ -3242,6 +3247,11 @@ impl ChartApp {
                 if let Some(active_bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
                     let bars = self.active_chart_bars();
                     self.core.indicators_mut().recalc_bubble(active_bid, &bars);
+                }
+                // CVD Display flip toggles the sub-pane (Line) vs
+                // main-chart body-painter (Candles) — re-derive panes.
+                if param_name == "display" {
+                    self.sync_sub_panes_from_manager();
                 }
                 self.autosave_snapshot();
                 self.snapshot_indicator_settings_to_user_manager();

@@ -1277,14 +1277,23 @@ impl ChartApp {
             // so the sub-pane must recalc or it never advances past the
             // last footprint-derived value.
             BubbleEvent::CvdSampleAppended { bid, .. } => {
-                match self.core.indicators().recalc_mode() {
+                // Guard rule (mirrors the kline BarUpdate arms above): bind
+                // facade reads BEFORE the match/if — a guard living in a
+                // scrutinee spans the whole statement and aborts wasm when
+                // the arm takes the same lock mutably (`indicators_mut`
+                // co-acquires bubble.write). This arm was the one scrutinee
+                // holdout; it only fires with a live cvd fold, which is why
+                // it never tripped on the kline paths' cadence.
+                let recalc_mode = self.core.indicators().recalc_mode();
+                match recalc_mode {
                     RecalcMode::PerTick => {
                         let bars = self.core.bubbles().bars(*bid).to_vec();
                         self.core.indicators_mut().recalc_bubble(*bid, &bars);
                     }
                     RecalcMode::PerFrame | RecalcMode::PerBar => {
-                        if let Some(sym) = self.core.bubbles().symbol(*bid) {
-                            self.core.indicators_mut().mark_dirty(sym);
+                        let sym = self.core.bubbles().symbol(*bid).map(|s| s.to_string());
+                        if let Some(sym) = sym {
+                            self.core.indicators_mut().mark_dirty(&sym);
                         }
                     }
                 }

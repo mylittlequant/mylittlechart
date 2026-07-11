@@ -3763,6 +3763,7 @@ impl ChartApp {
                         render_state.non_temporal_axis = true;
                     }
                     render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_chart_type);
+                    render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, overlay_chart_type);
                     let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                     let render_config = ChartRenderConfig {
                         scale_theme: self.panel_app.scale_theme_for_render(),
@@ -3872,6 +3873,7 @@ impl ChartApp {
                     render_state.non_temporal_axis = true;
                 }
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_chart_type);
+                render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, single_chart_type);
                 let crosshair_config = mlc_core::chart::CrosshairConfig::default();
                 let render_config = ChartRenderConfig {
                     scale_theme: self.panel_app.scale_theme_for_render(),
@@ -4171,6 +4173,7 @@ impl ChartApp {
                     render_state.non_temporal_axis = true;
                 }
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(split_chart_type);
+                render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, split_chart_type);
                 let crosshair_config = if self.pending_alert_screenshot {
                     mlc_core::chart::CrosshairConfig { vert_visible: false, horz_visible: false, ..Default::default() }
                 } else {
@@ -4793,6 +4796,7 @@ impl ChartApp {
                 }
                 let single_window_chart_type = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_window_chart_type);
+                render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, single_window_chart_type);
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
@@ -7514,6 +7518,44 @@ impl ChartApp {
         self.core.request_kline(eid, sym, tf, at, None, Some(bar_count), false);
     }
 
+    /// CVD Display=Candles overlay body-painter input (owner spec
+    /// 2026-07-11): per-bar delta diffed from the CVD instance's cumulative
+    /// per-bar output, index-aligned to `bubble.bars`. `None` unless the
+    /// chart type is `ChartTypeDef::delta_paintable` AND a visible CVD
+    /// instance on `bid` has Display=Candles — so the default render pays
+    /// nothing. Read-only facade access, statement-scoped guard.
+    fn cvd_paint_deltas_for(&self, bid: mlc_core::ids::BubbleId, chart_type: &str) -> Option<Vec<f64>> {
+        if !mlc_core::chart_type::by_id(chart_type).is_some_and(|d| d.delta_paintable) {
+            return None;
+        }
+        let ind = self.core.indicators();
+        let cumulative: Vec<f64> = ind
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| {
+                inst.visible
+                    && inst.type_id.eq_ignore_ascii_case("cvd")
+                    && inst.params.get("display").and_then(|v| v.as_string()) == Some("Candles")
+            })
+            .and_then(|inst| {
+                // Primary output = the definition's first output name.
+                let def = ind.definition(&inst.type_id)?;
+                let name = def.outputs.first().map(|o| o.name.as_str())?;
+                inst.values.get(name).cloned()
+            })?;
+        if cumulative.len() < 2 {
+            return None;
+        }
+        let mut deltas = vec![f64::NAN; cumulative.len()];
+        for i in 1..cumulative.len() {
+            let (a, b) = (cumulative[i - 1], cumulative[i]);
+            if a.is_finite() && b.is_finite() {
+                deltas[i] = b - a;
+            }
+        }
+        Some(deltas)
+    }
+
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.
     ///
     /// Reads desired sub-pane instance ids from `indicator_manager`, walks the
@@ -7547,6 +7589,14 @@ impl ChartApp {
                 .instances_for_bubble(mlc_core::ids::BubbleId(*bubble_id_val))
                 .into_iter()
                 .filter(|i| i.pane > 0)
+                // CVD Display=Candles (owner spec 2026-07-11): the instance
+                // becomes a main-chart overlay body-painter — its sub-pane
+                // is hidden while the mode is active (flipping back to Line
+                // re-adds the pane through this same sync).
+                .filter(|i| {
+                    !(i.type_id.eq_ignore_ascii_case("cvd")
+                        && i.params.get("display").and_then(|v| v.as_string()) == Some("Candles"))
+                })
                 .map(|i| i.id)
                 .collect();
             let sub_pane_data: Vec<(u64, Option<(f64, f64)>)> = pane_ids
@@ -7742,6 +7792,39 @@ impl ChartApp {
         self.pending_sub_pane_above_main.clear();
         self.pending_sub_pane_order.clear();
         self.pending_sub_pane_hidden.clear();
+
+        // CVD fold resubscribe on hydration (owner arc 2026-07-11): a
+        // hydrated CVD instance has no live fold — the subscribe only ever
+        // fired on the add click — leaving the Line pane flat and the
+        // Candles body-painter silent after every reload. Re-install per
+        // window when missing; `cvd_line` presence gates repeats
+        // (subscribe_cvd_fold seeds it, so steady state is a cheap
+        // None-check). The subscribe helper self-gates footprint / missing
+        // instrument / disabled connector.
+        let resub: Vec<(mlc_core::state::ChartId, mlc_core::ids::BubbleId)> = self
+            .panel_app
+            .panel_grid
+            .iter_containers()
+            .filter_map(|(leaf_id, w)| {
+                let cid = self.panel_app.panel_grid.container_id_for_leaf(leaf_id)?;
+                Some((cid, w.current_tag_id))
+            })
+            .collect();
+        for (cid, bid) in resub {
+            let has_cvd = self
+                .core
+                .indicators()
+                .instances_for_bubble(bid)
+                .into_iter()
+                .any(|i| i.type_id.eq_ignore_ascii_case("cvd"));
+            if !has_cvd {
+                continue;
+            }
+            let fold_missing = self.with_bubble(bid, |b| b.cvd_line.is_none()).unwrap_or(false);
+            if fold_missing {
+                self.subscribe_cvd_line_for_indicator_add(Some(cid));
+            }
+        }
     }
 
     /// Sync sub-pane pixel geometry (height, y_offset, chart_width) from the

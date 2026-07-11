@@ -14,7 +14,7 @@ impl ChartApp {
     ///
     /// No-op if `chart_id` is `None`, the chart has no resolvable
     /// instrument, or the connector for its exchange is disabled.
-    pub(super) fn subscribe_cvd_line_for_indicator_add(
+    pub(crate) fn subscribe_cvd_line_for_indicator_add(
         &mut self,
         chart_id: Option<mlc_core::state::ChartId>,
     ) {

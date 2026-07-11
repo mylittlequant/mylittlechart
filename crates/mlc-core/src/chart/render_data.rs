@@ -784,6 +784,16 @@ pub struct ChartRenderState<'a> {
     /// HistoryDepth`, populated 1:1 by `build_chart_render_state`. Drives
     /// the degraded-history badge; `Full`/`Unknown` render nothing.
     pub history_depth: HistoryDepthDisplay,
+    /// CVD Display=Candles overlay body-painter (owner spec 2026-07-11):
+    /// per-bar delta (diff of the CVD indicator's cumulative per-bar
+    /// output), index-aligned to `bars`. When `Some`, the candle-family
+    /// draw fns recolor BODY + BORDER by the delta's sign (wick stays
+    /// direction-colored); `NaN` entries fall back to direction colors.
+    /// Populated by mlc-app only when the active chart type is
+    /// `ChartTypeDef::delta_paintable` and a visible CVD instance has
+    /// Display=Candles; `None` everywhere else — zero change to the
+    /// default render.
+    pub cvd_paint_deltas: Option<Vec<f64>>,
 }
 
 impl<'a> ChartRenderState<'a> {

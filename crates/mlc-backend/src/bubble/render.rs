@@ -197,6 +197,9 @@ pub fn build_chart_render_state<'a>(
         // unlike non_temporal_axis/hide_time_grid which depend on chart_type
         // knowledge this fn doesn't have.
         history_depth: bubble.history_depth.to_display(),
+        // Filled by mlc-app AFTER build (needs the indicators facade,
+        // which this bubble-scoped builder deliberately has no access to).
+        cvd_paint_deltas: None,
     }
 }
 

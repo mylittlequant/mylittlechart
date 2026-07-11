@@ -55,10 +55,19 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             bar.is_bullish()
         };
 
-        // Select colors based on direction
-        let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        // Select colors based on direction. CVD Display=Candles overlay
+        // painter (owner spec 2026-07-11): a finite per-bar delta overrides
+        // BODY + BORDER color by delta sign; wick stays direction-colored.
+        let paint_up = state
+            .cvd_paint_deltas
+            .as_ref()
+            .and_then(|d| d.get(i).copied())
+            .filter(|v| v.is_finite() && *v != 0.0)
+            .map(|v| v >= 0.0);
+        let body_up = paint_up.unwrap_or(is_up);
+        let body_color = if body_up { &theme.candle_up } else { &theme.candle_down };
         let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
-        let border_color = if is_up { &theme.candle_up_border } else { &theme.candle_down_border };
+        let border_color = if body_up { &theme.candle_up_border } else { &theme.candle_down_border };
 
         // Calculate screen coordinates
         let wick_x = crisp(cx, dpr);
@@ -250,7 +259,17 @@ pub fn draw_hollow_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState
         let cx = viewport.x_for_bar(i, bar.ts_ms());
         let is_up = bar.is_bullish();
 
-        let body_color = if is_up { &theme.hollow_up } else { &theme.hollow_down };
+        // CVD Display=Candles overlay painter (owner spec 2026-07-11):
+        // delta sign overrides the BODY color pick; hollow-vs-filled
+        // structure and the wick stay direction-driven.
+        let paint_up = state
+            .cvd_paint_deltas
+            .as_ref()
+            .and_then(|d| d.get(i).copied())
+            .filter(|v| v.is_finite() && *v != 0.0)
+            .map(|v| v >= 0.0);
+        let body_up = paint_up.unwrap_or(is_up);
+        let body_color = if body_up { &theme.hollow_up } else { &theme.hollow_down };
         let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
 
         // Calculate screen coordinates
@@ -380,7 +399,16 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
 
         let is_up = ha_close >= ha_open;
 
-        let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        // CVD Display=Candles overlay painter (owner spec 2026-07-11):
+        // delta sign overrides the BODY color; wick stays HA-direction.
+        let paint_up = state
+            .cvd_paint_deltas
+            .as_ref()
+            .and_then(|d| d.get(i).copied())
+            .filter(|v| v.is_finite() && *v != 0.0)
+            .map(|v| v >= 0.0);
+        let body_up = paint_up.unwrap_or(is_up);
+        let body_color = if body_up { &theme.candle_up } else { &theme.candle_down };
         let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
 
         // Screen coordinates

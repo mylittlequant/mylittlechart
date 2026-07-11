@@ -3207,6 +3207,7 @@ pub fn render_full_chart_panel(
         non_temporal_axis: data.state.non_temporal_axis,
         hide_time_grid: data.state.hide_time_grid,
         history_depth: data.state.history_depth,
+        cvd_paint_deltas: data.state.cvd_paint_deltas.clone(),
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3653,6 +3654,7 @@ pub fn render_chart_overlay(
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
         history_depth: state.history_depth,
+        cvd_paint_deltas: state.cvd_paint_deltas.clone(),
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

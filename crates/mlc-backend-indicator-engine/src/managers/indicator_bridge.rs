@@ -177,6 +177,21 @@ impl IndicatorBridge {
             }
         }
 
+        // CVD display mode (owner spec 2026-07-11): "Line" = the sub-pane
+        // line (default, unchanged); "Candles" = the sub-pane is hidden and
+        // the indicator acts as an overlay body-painter on the main chart —
+        // per-bar delta sign recolors candle bodies, gated to
+        // `ChartTypeDef::delta_paintable` chart types by the render path.
+        // Render-side toggle only: catalog compute is untouched.
+        if info.id() == "CVD" {
+            params.push(IndicatorParam::select(
+                "display",
+                "Display",
+                vec!["Line".to_string(), "Candles".to_string()],
+                0,
+            ));
+        }
+
         params
     }
 

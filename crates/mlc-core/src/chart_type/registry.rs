@@ -384,6 +384,12 @@ pub struct ChartTypeDef {
     /// Which client-side fold machine (if any) computes this chart_type's
     /// series (K0 contract, B3, S1). See [`MachineKind`].
     pub machine: MachineKind,
+    /// Whether the CVD indicator's "Candles" display mode may repaint this
+    /// chart_type's BODIES by per-bar delta sign (owner spec 2026-07-11:
+    /// CVD Display=Candles = overlay body painter on candle-family types
+    /// ONLY; on every other type the mode paints nothing). True only for
+    /// the three candle-body renderers.
+    pub delta_paintable: bool,
 }
 
 impl ChartTypeDef {
@@ -594,6 +600,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: true,
     },
     ChartTypeDef {
         id: "bars",
@@ -619,6 +626,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "hollow_candles",
@@ -644,6 +652,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: true,
     },
     ChartTypeDef {
         id: "heikin_ashi",
@@ -669,6 +678,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: true,
     },
     // ── Lines ────────────────────────────────────────────────────────────
     ChartTypeDef {
@@ -695,6 +705,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "step_line",
@@ -720,6 +731,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "line_markers",
@@ -745,6 +757,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     // ── Areas & Columns ──────────────────────────────────────────────────
     ChartTypeDef {
@@ -771,6 +784,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "hlc_area",
@@ -796,6 +810,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "baseline",
@@ -821,6 +836,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
+        delta_paintable: false,
     },
     // ── Batched Bars (kline re-cuts) ────────────────────────────────────
     ChartTypeDef {
@@ -859,6 +875,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::RangeBar,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "volume_bar",
@@ -894,6 +911,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::VolumeBar,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "dollar_bar",
@@ -929,6 +947,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::DollarBar,
+        delta_paintable: false,
     },
     // ── Trade Bars (genuinely trade-fed) ────────────────────────────────
     ChartTypeDef {
@@ -960,6 +979,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: true },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::TickBar,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "tick_imbalance_bar",
@@ -999,6 +1019,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::TickImbalance,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "volume_imbalance_bar",
@@ -1031,6 +1052,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::VolumeImbalance,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "run_bar",
@@ -1063,6 +1085,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Always, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::RunBar,
+        delta_paintable: false,
     },
     // ── Price Action ─────────────────────────────────────────────────────
     ChartTypeDef {
@@ -1101,6 +1124,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Toggle { default: false }, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: Some(2), alpha_x100: None },
         machine: MachineKind::Renko,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "pnf",
@@ -1131,6 +1155,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts { reversal: Some(3), alpha_x100: None },
         machine: MachineKind::Pnf,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "kagi",
@@ -1161,6 +1186,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Kagi,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "three_line_break",
@@ -1191,6 +1217,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::ThreeLineBreak,
+        delta_paintable: false,
     },
     // ── Orderflow (heterogeneous) ────────────────────────────────────────
     ChartTypeDef {
@@ -1225,6 +1252,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Footprint,
+        delta_paintable: false,
     },
     ChartTypeDef {
         id: "tpo",
@@ -1268,6 +1296,7 @@ static REGISTRY: &[ChartTypeDef] = &[
         render_policy: RenderPolicy { wicks: WickPolicy::Off, intensity_toggle: false },
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Tpo,
+        delta_paintable: false,
     },
     // "dom_heatmap" / "liquidation_heatmap" REMOVED (chart-type → overlay
     // migration, mirrors Bookmap/ATAS/Coinglass): both are now builtin
