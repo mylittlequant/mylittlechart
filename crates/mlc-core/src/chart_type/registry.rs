@@ -450,11 +450,11 @@ impl ChartTypeDef {
 // period — excludes the sub-minute second TFs (tf_1s/tf_5s/tf_15s/tf_30s)
 // added by the resolution-axes rework (2026-07-08), same as it excluded the
 // removed tick TFs (tf_1t/tf_10t/tf_100t/tf_1000t) before them.
-static TPO_TF_WHITELIST: &[&str] = &[
-    "tf_1m", "tf_3m", "tf_5m", "tf_15m", "tf_30m",
-    "tf_1h", "tf_2h", "tf_4h", "tf_6h", "tf_12h",
-    "tf_1d", "tf_1w", "tf_1M",
-];
+// TPO sessions are UTC-daily by construction (one column = one day) — the
+// TF picker is an INVARIANT: exactly 1D, nothing else to choose (owner
+// doctrine 2026-07-11). The letter-bucket width (5/15/30/60 min) is the
+// chart-type PARAM in the settings modal, not a timeframe.
+static TPO_TF_WHITELIST: &[&str] = &["tf_1d"];
 
 static FOOTPRINT_TF_WHITELIST: &[&str] = &[
     "tf_5s", "tf_15s", "tf_30s",

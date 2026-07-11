@@ -722,6 +722,20 @@ impl ChartApp {
                                             );
                                         }
                                     }
+                                    if ct == "tpo" {
+                                        // TPO sessions are UTC-daily by
+                                        // construction — the display TF is the
+                                        // 1D INVARIANT (registry tf_whitelist
+                                        // is ["tf_1d"]); flip the bubble label
+                                        // so the toolbar clock reads 1D, not
+                                        // the previous chart's leftover TF.
+                                        let daily = mlc_core::state::Timeframe::new("1D", 86_400_000);
+                                        if let Some(active_bid) = self.panel_app.panel_grid.active_container()
+                                            .map(|w| w.current_tag_id)
+                                        {
+                                            self.core.bubbles_mut().set_timeframe(active_bid, daily);
+                                        }
+                                    }
                                     if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
                                         // Render-family (candles/bars/line/...) shares
                                         // `subscribe_kline_bars` with the legacy `_`
