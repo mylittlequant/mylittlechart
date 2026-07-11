@@ -21,6 +21,14 @@
 //! - At extreme zoom-out (bar width < 40px or font < 7) → collapse to
 //!   candle (fall through to `draw_candles`), matching ATAS / Bookmap.
 //!
+//! Cell layout mode (`FootprintDisplayOptions::cell_mode`,
+//! `chart-type-render-doctrine-2026-07-09.md` §8) selects what the per-row
+//! foreground text/graphic and background heat show — `BidAsk` (default,
+//! described above) / `Delta` / `Volume` / `VolumeDeltaColor` / `Profile`
+//! (mini-histogram, no text). POC/VA fills, absorption markers, and
+//! imbalance/stacked-imbalance highlighting are orthogonal to this mode and
+//! stay active in all five.
+//!
 //! Pixel math (verbatim from MQL5 reference):
 //! - bar_w = `viewport.bar_width()`
 //! - row_h = `chart_height * tick_size / price_range`, min 1px
@@ -32,7 +40,7 @@
 //! levels of the latest bar with >= 2 levels; falls back to
 //! `price_range / 50` if no inference is possible.
 
-use mlc_core::chart::ChartTheme;
+use mlc_core::chart::{ChartTheme, FootprintCellMode};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::types::FootprintBar;
 use super::ChartRenderState;
@@ -229,6 +237,14 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
     // STACKED ratio (`FOOTPRINT_STACKED_IMBALANCE_RATIO` = 3.0), which
     // stays a separate fold-side constant untouched by this control.
     let cell_imbalance_ratio = state.footprint_display.imbalance_threshold;
+    // Cell layout mode (chart-type-render-doctrine 2026-07-09 §8) — decides
+    // what the per-row foreground text/graphic and background heat show.
+    // Orthogonal to everything else in this function: imbalance
+    // highlighting, stacked-imbalance zones, POC/VA fills, and absorption
+    // markers are computed and drawn identically in every mode; only the
+    // per-level dispatch below (and, for `Profile`, the text-suppression
+    // check) reads this value.
+    let cell_mode = state.footprint_display.cell_mode;
 
     let colors = theme_colors(state.theme);
     let price_range = price_scale.price_max - price_scale.price_min;
@@ -392,36 +408,62 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 continue;
             }
 
-            // POC row tinted highlight.
+            // POC row tinted highlight (unchanged in every mode — POC/VA
+            // fills are orthogonal to cell_mode per doctrine §8).
             if Some(li) == poc_idx {
                 ctx.set_fill_color(colors.poc_fill);
                 ctx.fill_rect(cell_left, y, bar_w, row_h);
             } else if max_vol > 0.0 {
-                let ratio = (lv.total_vol() / max_vol).clamp(0.0, 1.0);
-                // Heat fill: dominant-side color from the Buy/Sell theme
-                // swatches (`heat_fill_colors`), alpha by volume share,
-                // scaled by the Heat intensity dropdown. Applied in BOTH
-                // zoom regimes — bug fix 2026-07-06: previously this
-                // themed/scaled fill only fired when `!draw_text` (fully
-                // zoomed out), so toggling Low/Normal/High was invisible
-                // at normal zoom (numbers-visible mode painted a flat,
-                // theme-independent gray instead). The base-alpha cap is
-                // lower here (0.5) than in compressed mode (0.7) since the
-                // fill sits BEHIND legible numbers and must not wash them
-                // out; compressed mode has no numbers on top, so it can
-                // run hotter and needs the fill alone to carry structure.
+                // Background heat-fill: dominant-side (BidAsk/Volume) or
+                // delta-sign (Delta/VolumeDeltaColor) tint. `Profile` draws
+                // no cell background — the mini-histogram bars themselves
+                // carry the volume/delta signal instead. Bug fix
+                // 2026-07-06 (preserved): applied in BOTH zoom regimes, not
+                // just `!draw_text`, so Heat-intensity stays visible at
+                // normal zoom. Alpha cap stays lower when text is drawn on
+                // top (must not wash out legible numbers) and higher when
+                // fully zoomed out (fill alone carries structure).
                 let min_ratio = if draw_text { 0.05 } else { 0.02 };
-                if ratio > min_ratio {
-                    let base_cap = if draw_text { 0.08 + ratio * 0.35 } else { 0.12 + ratio * 0.55 };
-                    let alpha = (base_cap * heat_alpha_mult).min(1.0);
-                    let (buy_hex, sell_hex) = heat_fill_colors(state.theme);
-                    let color = if lv.buy_vol >= lv.sell_vol {
-                        hex_to_rgba(buy_hex, alpha)
-                    } else {
-                        hex_to_rgba(sell_hex, alpha)
-                    };
-                    ctx.set_fill_color(&color);
-                    ctx.fill_rect(cell_left, y, bar_w, row_h);
+                match cell_mode {
+                    FootprintCellMode::BidAsk | FootprintCellMode::Volume => {
+                        let ratio = (lv.total_vol() / max_vol).clamp(0.0, 1.0);
+                        if ratio > min_ratio {
+                            let base_cap = if draw_text { 0.08 + ratio * 0.35 } else { 0.12 + ratio * 0.55 };
+                            let alpha = (base_cap * heat_alpha_mult).min(1.0);
+                            let (buy_hex, sell_hex) = heat_fill_colors(state.theme);
+                            let color = if lv.buy_vol >= lv.sell_vol {
+                                hex_to_rgba(buy_hex, alpha)
+                            } else {
+                                hex_to_rgba(sell_hex, alpha)
+                            };
+                            ctx.set_fill_color(&color);
+                            ctx.fill_rect(cell_left, y, bar_w, row_h);
+                        }
+                    }
+                    FootprintCellMode::Delta | FootprintCellMode::VolumeDeltaColor => {
+                        // Delta-sign tint, magnitude-scaled by |delta| share
+                        // of the bar's max same-side volume (reuses the same
+                        // significance gates as the diagonal-imbalance
+                        // detector below, so background heat and imbalance
+                        // highlighting agree on what counts as "significant").
+                        let max_abs_delta = bar.levels.iter().map(|l| l.delta().abs()).fold(0.0_f64, f64::max);
+                        if max_abs_delta > 0.0 {
+                            let ratio = (lv.delta().abs() / max_abs_delta).clamp(0.0, 1.0);
+                            if ratio > min_ratio {
+                                let base_cap = if draw_text { 0.08 + ratio * 0.35 } else { 0.12 + ratio * 0.55 };
+                                let alpha = (base_cap * heat_alpha_mult).min(1.0);
+                                let (buy_hex, sell_hex) = heat_fill_colors(state.theme);
+                                let color = if lv.delta() >= 0.0 {
+                                    hex_to_rgba(buy_hex, alpha)
+                                } else {
+                                    hex_to_rgba(sell_hex, alpha)
+                                };
+                                ctx.set_fill_color(&color);
+                                ctx.fill_rect(cell_left, y, bar_w, row_h);
+                            }
+                        }
+                    }
+                    FootprintCellMode::Profile => {}
                 }
             }
 
@@ -458,23 +500,97 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
                 && bar.levels[li + 1].buy_vol > 0.0
                 && lv.sell_vol / bar.levels[li + 1].buy_vol >= cell_imbalance_ratio;
 
-            // Bid (sell vol) on the LEFT, right-aligned.
-            if draw_text && lv.sell_vol > 0.0 {
-                let color = if bid_imb { colors.bid_imb } else { colors.bid };
-                ctx.set_fill_color(color);
-                ctx.set_text_align(TextAlign::Right);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                let label = fmt_vol(lv.sell_vol);
-                ctx.fill_text(&label, bid_x, y + row_h * 0.5);
-            }
-            // Ask (buy vol) on the RIGHT, left-aligned.
-            if draw_text && lv.buy_vol > 0.0 {
-                let color = if ask_imb { colors.ask_imb } else { colors.ask };
-                ctx.set_fill_color(color);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                let label = fmt_vol(lv.buy_vol);
-                ctx.fill_text(&label, ask_x, y + row_h * 0.5);
+            // Per-cell content dispatch (doctrine §8 "Cell layout modes").
+            // Imbalance highlighting (`ask_imb`/`bid_imb`, computed above)
+            // stays active in every mode — it only changes the digit color
+            // in the text modes, same as it always did for `BidAsk`.
+            match cell_mode {
+                FootprintCellMode::BidAsk => {
+                    // Bid (sell vol) on the LEFT, right-aligned.
+                    if draw_text && lv.sell_vol > 0.0 {
+                        let color = if bid_imb { colors.bid_imb } else { colors.bid };
+                        ctx.set_fill_color(color);
+                        ctx.set_text_align(TextAlign::Right);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        let label = fmt_vol(lv.sell_vol);
+                        ctx.fill_text(&label, bid_x, y + row_h * 0.5);
+                    }
+                    // Ask (buy vol) on the RIGHT, left-aligned.
+                    if draw_text && lv.buy_vol > 0.0 {
+                        let color = if ask_imb { colors.ask_imb } else { colors.ask };
+                        ctx.set_fill_color(color);
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        let label = fmt_vol(lv.buy_vol);
+                        ctx.fill_text(&label, ask_x, y + row_h * 0.5);
+                    }
+                }
+                FootprintCellMode::Delta => {
+                    // Single signed number (ask - bid), centered; text
+                    // colored green/positive red/negative using the same
+                    // digit-color pair the split layout uses for its sides
+                    // (`colors.ask`/`colors.bid`), imbalance-highlighted the
+                    // same way.
+                    if draw_text {
+                        let delta = lv.delta();
+                        if delta != 0.0 {
+                            let positive = delta > 0.0;
+                            let color = match (positive, if positive { ask_imb } else { bid_imb }) {
+                                (true, true) => colors.ask_imb,
+                                (true, false) => colors.ask,
+                                (false, true) => colors.bid_imb,
+                                (false, false) => colors.bid,
+                            };
+                            ctx.set_fill_color(color);
+                            ctx.set_text_align(TextAlign::Center);
+                            ctx.set_text_baseline(TextBaseline::Middle);
+                            let label = format!("{}{}", if positive { "+" } else { "-" }, fmt_vol(delta.abs()));
+                            ctx.fill_text(&label, cx, y + row_h * 0.5);
+                        }
+                    }
+                }
+                FootprintCellMode::Volume | FootprintCellMode::VolumeDeltaColor => {
+                    // Single unsigned total (bid + ask), centered, neutral
+                    // text color regardless of imbalance/delta sign — the
+                    // background (heat-fill dispatch above) is what encodes
+                    // sign/magnitude for `VolumeDeltaColor`.
+                    if draw_text {
+                        let total = lv.total_vol();
+                        if total > 0.0 {
+                            ctx.set_fill_color(&state.theme.text);
+                            ctx.set_text_align(TextAlign::Center);
+                            ctx.set_text_baseline(TextBaseline::Middle);
+                            let label = fmt_vol(total);
+                            ctx.fill_text(&label, cx, y + row_h * 0.5);
+                        }
+                    }
+                }
+                FootprintCellMode::Profile => {
+                    // No text — horizontal mini-histogram, left-anchored at
+                    // the cell's left edge (ExoCharts/ATAS in-bar profile):
+                    // bar LENGTH = this row's total volume share of the
+                    // bar's max row volume × full cell width; the bar is
+                    // SPLIT into bid|ask segments by their share of the
+                    // row's own total (length encodes volume, split point
+                    // encodes delta composition). Ignores the `draw_text`
+                    // legibility gate (bars draw at any width).
+                    let total = lv.total_vol();
+                    if max_vol > 0.0 && total > 0.0 {
+                        let len = ((total / max_vol).clamp(0.0, 1.0) * (bar_w - 2.0)).max(1.0);
+                        let bar_h = (row_h - 2.0).max(1.0);
+                        let bar_y = y + (row_h - bar_h) * 0.5;
+                        let bid_w = len * (lv.sell_vol / total);
+                        let ask_w = len - bid_w;
+                        if bid_w > 0.0 {
+                            ctx.set_fill_color(&state.theme.candle_down);
+                            ctx.fill_rect(cell_left + 1.0, bar_y, bid_w, bar_h);
+                        }
+                        if ask_w > 0.0 {
+                            ctx.set_fill_color(&state.theme.candle_up);
+                            ctx.fill_rect(cell_left + 1.0 + bid_w, bar_y, ask_w, bar_h);
+                        }
+                    }
+                }
             }
         }
 

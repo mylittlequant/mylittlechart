@@ -9065,6 +9065,11 @@ impl ChartApp {
                         format!("{ratio}x")
                     }
                 },
+                footprint_cell_mode_label: settings_panel
+                    .map(|p| p.footprint_display.cell_mode)
+                    .unwrap_or_default()
+                    .label()
+                    .to_string(),
                 tick_intensity: css.tick_intensity,
                 bar_family_wicks: css.bar_family_wicks,
                 tpo_show_session_dates: settings_panel

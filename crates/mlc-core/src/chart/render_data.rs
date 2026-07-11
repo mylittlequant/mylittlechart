@@ -284,6 +284,15 @@ pub struct FootprintDisplayOptions {
     /// toggle only ever touches the per-cell ratio.
     #[serde(default = "default_imbalance_threshold")]
     pub imbalance_threshold: f64,
+    /// Per-cell content/coloring mode (chart-type-render-doctrine
+    /// 2026-07-09 §8 "Cell layout modes"). Default `BidAsk` — the original
+    /// two-number split layout, pixel-identical to pre-mode behavior.
+    /// Orthogonal to every other field on this struct: imbalance
+    /// highlighting, stacked-imbalance zones, POC/VA fills, and absorption
+    /// markers stay active in every mode — this field only changes what
+    /// the per-row foreground text/graphic and background heat show.
+    #[serde(default)]
+    pub cell_mode: FootprintCellMode,
 }
 
 /// `#[serde(default = ...)]` sentinel for
@@ -302,6 +311,92 @@ impl Default for FootprintDisplayOptions {
             heat_intensity: FootprintHeatIntensity::Normal,
             group_ticks: 0,
             imbalance_threshold: default_imbalance_threshold(),
+            cell_mode: FootprintCellMode::default(),
+        }
+    }
+}
+
+/// Footprint per-cell content/coloring mode (chart-type-render-doctrine
+/// 2026-07-09 §8 — canonical cross-platform cell layout taxonomy).
+///
+/// UI labels (exact strings from the doctrine, used verbatim in the
+/// CLUSTERS SETTINGS "Cell mode" dropdown):
+/// - `BidAsk` → "Bid×Ask"
+/// - `Delta` → "Delta"
+/// - `Volume` → "Volume"
+/// - `VolumeDeltaColor` → "Volume (Delta Color)"
+/// - `Profile` → "Profile"
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum FootprintCellMode {
+    /// Two numbers per row, bid left / ask right of the bar's vertical
+    /// center — the original layout, pixel-identical default.
+    #[default]
+    BidAsk,
+    /// Single signed number per row (`ask − bid`), text colored by sign
+    /// using the footprint block's existing up/down digit colors; cell
+    /// background tinted by delta sign with magnitude-scaled alpha.
+    Delta,
+    /// Single unsigned total per row (`bid + ask`), neutral text color;
+    /// background heat by volume magnitude (reuses the existing dominant-
+    /// side heat-fill machinery).
+    Volume,
+    /// Text shows the volume total (like `Volume`), but the cell
+    /// background is colored by delta sign/magnitude instead of volume
+    /// magnitude — decouples displayed number from displayed color
+    /// (ATAS/Bookmap convention).
+    VolumeDeltaColor,
+    /// No text — a horizontal mini-histogram per row: two segments (bid
+    /// part left in down-color, ask part right in up-color), bar length
+    /// proportional to the row's volume share of the bar's max row
+    /// volume, left-anchored in the cell.
+    Profile,
+}
+
+impl FootprintCellMode {
+    /// Exact UI label from the doctrine (§8 "Cell layout modes").
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::BidAsk => "Bid×Ask",
+            Self::Delta => "Delta",
+            Self::Volume => "Volume",
+            Self::VolumeDeltaColor => "Volume (Delta Color)",
+            Self::Profile => "Profile",
+        }
+    }
+
+    /// Stable id used for persistence + dropdown option value.
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::BidAsk => "bid_ask",
+            Self::Delta => "delta",
+            Self::Volume => "volume",
+            Self::VolumeDeltaColor => "volume_delta_color",
+            Self::Profile => "profile",
+        }
+    }
+
+    /// Parse back from the persisted/dropdown id. Unknown values fall back
+    /// to `BidAsk` (additive-field back-compat sentinel).
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "delta" => Self::Delta,
+            "volume" => Self::Volume,
+            "volume_delta_color" => Self::VolumeDeltaColor,
+            "profile" => Self::Profile,
+            _ => Self::BidAsk,
+        }
+    }
+
+    /// Parse from the exact UI label (the modal's dropdown option value IS
+    /// the label for this control, unlike `heat_intensity`'s
+    /// single-word-lowercase ids). Unknown values fall back to `BidAsk`.
+    pub fn from_label(label: &str) -> Self {
+        match label {
+            "Delta" => Self::Delta,
+            "Volume" => Self::Volume,
+            "Volume (Delta Color)" => Self::VolumeDeltaColor,
+            "Profile" => Self::Profile,
+            _ => Self::BidAsk,
         }
     }
 }

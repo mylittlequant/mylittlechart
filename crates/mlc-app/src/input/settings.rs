@@ -243,6 +243,9 @@ impl ChartApp {
                 .trim_end_matches('x')
                 .parse::<f64>()
                 .unwrap_or(1.5);
+            let cell_mode = mlc_core::chart::FootprintCellMode::from_label(
+                &inst.footprint_cell_mode_label,
+            );
 
             // Footprint display gates actually drive the renderer (unlike
             // the JC checkboxes above, which are UI-cache only — see recon
@@ -257,6 +260,7 @@ impl ChartApp {
                 panel.footprint_display.show_volume_text = inst.footprint_show_volume_text;
                 panel.footprint_display.heat_intensity = heat_intensity;
                 panel.footprint_display.imbalance_threshold = imbalance_threshold;
+                panel.footprint_display.cell_mode = cell_mode;
                 panel.tick_intensity = inst.tick_intensity;
                 panel.bar_family_wicks = inst.bar_family_wicks;
                 panel.tpo_display.show_session_dates = inst.tpo_show_session_dates;
@@ -1059,6 +1063,19 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] instrument:footprint_imbalance_threshold = {}x", ratio);
                 }
+                "footprint_cell_mode" => {
+                    // Cell layout mode (doctrine §8) — pure render-gate
+                    // value, no resubscribe needed. Dropdown option value
+                    // IS the exact UI label (`from_label`), same shape as
+                    // `footprint_heat_intensity`'s id-based lookup but
+                    // keyed on the full label since ids are multi-word.
+                    let mode = mlc_core::chart::FootprintCellMode::from_label(&value);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.cell_mode = mode;
+                    }
+                    eprintln!("[ChartApp] instrument:footprint_cell_mode = {}", value);
+                }
                 "tpo_ib_periods" => {
                     let periods: u8 = value.parse().unwrap_or(2);
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
@@ -1196,6 +1213,9 @@ impl ChartApp {
                 }
                 "footprint_imbalance_threshold" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("footprint_imbalance_threshold");
+                }
+                "footprint_cell_mode" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("footprint_cell_mode");
                 }
                 "tpo_ib_periods" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("tpo_ib_periods");

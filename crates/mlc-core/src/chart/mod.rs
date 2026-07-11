@@ -59,7 +59,7 @@ pub use render_data::{
     RenderPriceLine, RenderMarker, RenderMarkerShape,
     PaneGeom, PaneTheme, HistogramStyle,
     GridRenderOptions, LineRenderStyle,
-    FootprintDisplayOptions, FootprintHeatIntensity,
+    FootprintDisplayOptions, FootprintHeatIntensity, FootprintCellMode,
     TpoDisplayOptions,
     LineFamilyDisplayOptions, LineMarkerStyle,
     HistoryDepthDisplay,

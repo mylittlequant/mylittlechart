@@ -633,6 +633,13 @@ pub fn render_settings_modal(
                             DropdownItem::item("3x", "3x"),
                             DropdownItem::item("4x", "4x"),
                         ]),
+                        "footprint_cell_mode" => Some(vec![
+                            DropdownItem::item("Bid×Ask", "Bid×Ask"),
+                            DropdownItem::item("Delta", "Delta"),
+                            DropdownItem::item("Volume", "Volume"),
+                            DropdownItem::item("Volume (Delta Color)", "Volume (Delta Color)"),
+                            DropdownItem::item("Profile", "Profile"),
+                        ]),
                         "tpo_ib_periods" => Some(vec![
                             DropdownItem::item("2", "2"),
                             DropdownItem::item("3", "3"),
@@ -1391,6 +1398,9 @@ fn render_instrument_settings(
 ///     `apply_chart_settings_color` channel as Japanese Candles
 ///     Body/Border/Wick (`ChartTheme::footprint_buy`/`.footprint_sell`,
 ///     global theme, NOT per-panel — matches how candle colors work).
+///   - "Cell mode" dropdown (Bid×Ask/Delta/Volume/Volume (Delta Color)/
+///     Profile) — selects per-row foreground text/graphic + background heat
+///     encoding (`FootprintDisplayOptions::cell_mode`, doctrine §8).
 ///   - "Heat intensity" dropdown (Low/Normal/High) — multiplies the
 ///     zoomed-out heat-fill alpha (`FootprintDisplayOptions::heat_intensity`).
 /// Returns the updated `row_y` (mirrors the candle-family branch's manual
@@ -1456,6 +1466,32 @@ fn render_footprint_settings_block(
     let sell_rect = swatch_row(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.footprint_sell_color, theme);
     result.content_items.push(("instrument:footprint_buy_color".to_string(), buy_rect));
     result.content_items.push(("instrument:footprint_sell_color".to_string(), sell_rect));
+    row_y += row_height + 8.0;
+
+    // Row: Cell mode dropdown (Bid×Ask / Delta / Volume /
+    // Volume (Delta Color) / Profile) — chart-type-render-doctrine
+    // 2026-07-09 §8 canonical cell layout modes. Selects what the per-row
+    // foreground text/graphic and background heat show
+    // (`FootprintDisplayOptions::cell_mode`); imbalance/stacked/POC/VA/
+    // absorption stay active regardless of this choice.
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Cell mode", x, row_y + row_height / 2.0);
+    let cell_mode_dropdown_x = x + 140.0;
+    ctx.set_font("12px sans-serif");
+    let cell_mode_widest_w = ["Bid×Ask", "Delta", "Volume", "Volume (Delta Color)", "Profile"].iter()
+        .map(|s| ctx.measure_text(s))
+        .fold(0.0_f64, f64::max);
+    let cell_mode_dropdown_width = (cell_mode_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let cell_mode_dropdown_height = 28.0;
+    let cell_mode_dropdown_y = row_y + (row_height - cell_mode_dropdown_height) / 2.0;
+    let cell_mode_chevron_w = 20.0;
+    let cell_mode_text_w = cell_mode_dropdown_width - cell_mode_chevron_w;
+    draw_split_dropdown(
+        ctx, cell_mode_dropdown_x, cell_mode_dropdown_y, cell_mode_dropdown_width, cell_mode_dropdown_height,
+        &settings.footprint_cell_mode_label, row_y + row_height / 2.0, theme,
+    );
+    result.content_items.push(("dropdown_cycle:footprint_cell_mode".to_string(), WidgetRect::new(cell_mode_dropdown_x, cell_mode_dropdown_y, cell_mode_text_w, cell_mode_dropdown_height)));
+    result.content_items.push(("dropdown_menu:footprint_cell_mode".to_string(), WidgetRect::new(cell_mode_dropdown_x + cell_mode_text_w, cell_mode_dropdown_y, cell_mode_chevron_w, cell_mode_dropdown_height)));
     row_y += row_height + 8.0;
 
     // Row: Heat intensity dropdown (Low / Normal / High)

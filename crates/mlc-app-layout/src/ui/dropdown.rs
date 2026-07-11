@@ -336,16 +336,22 @@ where
                     item_width += config.icon_size + 8.0; // icon + spacing
                 }
 
-                // Add toggle space if present (36px track + 8px gap)
+                // Add right-side reserve, mirroring the label clip in the
+                // draw pass (`right_reserve`): toggle 48, shortcut/subtitle
+                // at least 40, plain items 4. Measuring less than the draw
+                // pass reserves clipped the WIDEST item's tail (the
+                // "Volume (Delta Colo|" / "Norm|" bug class).
                 if toggle.is_some() {
-                    item_width += 44.0;
+                    item_width += 48.0;
                 } else if let Some(sc) = shortcut {
                     let shortcut_width = ctx.measure_text(sc);
-                    item_width += shortcut_width + 16.0; // spacing between label and shortcut
+                    item_width += (shortcut_width + 16.0).max(40.0);
                 } else if let Some(sub) = subtitle {
                     // Subtitle is shown only when there's no shortcut
                     let sub_width = ctx.measure_text(sub);
-                    item_width += sub_width + 16.0;
+                    item_width += (sub_width + 16.0).max(40.0);
+                } else {
+                    item_width += 4.0;
                 }
 
                 // Add horizontal padding (both sides)
@@ -396,9 +402,11 @@ where
         };
         cell_w * cols as f64 + config.padding * 2.0
     } else if config.max_width > 0.0 {
-        content_width.min(config.max_width)
+        // Single-col also carries the outer menu padding (item rects are
+        // inset by `padding` on both sides) — multi-col already added it.
+        (content_width + config.padding * 2.0).min(config.max_width)
     } else {
-        content_width
+        content_width + config.padding * 2.0
     };
 
     // Layout pass — one rect per item, aligned by index with config.items.

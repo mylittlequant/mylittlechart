@@ -152,6 +152,13 @@ pub struct InstrumentSettings {
     /// (owner-approved settings matrix, wave 1, item 8). Unused when
     /// `chart_type != "footprint"`.
     pub footprint_imbalance_threshold_label: String,
+    /// Footprint cell layout mode label ("Bid×Ask" / "Delta" / "Volume" /
+    /// "Volume (Delta Color)" / "Profile" — exact doctrine labels, see
+    /// `FootprintCellMode::label`). Mirrors
+    /// `ChartPanelState::footprint_display.cell_mode`
+    /// (chart-type-render-doctrine-2026-07-09.md §8). Unused when
+    /// `chart_type != "footprint"`.
+    pub footprint_cell_mode_label: String,
     /// Tick-bar checkbox: modulate body opacity by trade-count intensity
     /// (`(vol/max_vol).sqrt().clamp(0.25,1.0)`, wick stays full opacity).
     /// Default `false` — plain solid bodies exactly like `draw_candles`.

@@ -116,6 +116,7 @@ impl ChartTemplate {
                 footprint_heat_intensity_label: "Normal".to_string(),
                 footprint_row_grouping_label: "Raw".to_string(),
                 footprint_imbalance_threshold_label: "1.5x".to_string(),
+                footprint_cell_mode_label: "Bid×Ask".to_string(),
                 tick_intensity: false,
                 bar_family_wicks: false,
                 tpo_show_session_dates: false,
