@@ -209,6 +209,16 @@ impl ChartApp {
             rt.series.candle_down_wick = inst.wick_down_color.clone();
             rt.series.footprint_buy    = inst.footprint_buy_color.clone();
             rt.series.footprint_sell   = inst.footprint_sell_color.clone();
+            rt.series.renko_up         = inst.renko_up_color.clone();
+            rt.series.renko_down       = inst.renko_down_color.clone();
+            rt.series.pnf_x            = inst.pnf_x_color.clone();
+            rt.series.pnf_o            = inst.pnf_o_color.clone();
+            rt.series.tlb_up           = inst.tlb_up_color.clone();
+            rt.series.tlb_down         = inst.tlb_down_color.clone();
+            rt.series.kagi_yang        = inst.kagi_yang_color.clone();
+            rt.series.kagi_yin         = inst.kagi_yin_color.clone();
+            rt.series.hollow_up        = inst.hollow_up_color.clone();
+            rt.series.hollow_down      = inst.hollow_down_color.clone();
 
             css.footprint_show_abs_markers = inst.footprint_show_abs_markers;
             css.footprint_show_volume_text = inst.footprint_show_volume_text;
@@ -217,21 +227,33 @@ impl ChartApp {
             let heat_intensity = mlc_core::chart::FootprintHeatIntensity::from_id(
                 &inst.footprint_heat_intensity_label.to_lowercase(),
             );
+            let imbalance_threshold = inst.footprint_imbalance_threshold_label
+                .trim_end_matches('x')
+                .parse::<f64>()
+                .unwrap_or(1.5);
 
             // Footprint display gates actually drive the renderer (unlike
             // the JC checkboxes above, which are UI-cache only — see recon
             // 2026-07-05 §4b) — write through to the live per-panel state
             // too, not just the modal's UI cache. `tick_intensity` /
-            // `bar_family_wicks` follow the same rule (mirrors
-            // `footprint_display`).
+            // `bar_family_wicks` / `tpo_display` follow the same rule
+            // (mirrors `footprint_display`).
             let active_pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
             if let Some(pid) = active_pid {
                 let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                 panel.footprint_display.show_abs_markers = inst.footprint_show_abs_markers;
                 panel.footprint_display.show_volume_text = inst.footprint_show_volume_text;
                 panel.footprint_display.heat_intensity = heat_intensity;
+                panel.footprint_display.imbalance_threshold = imbalance_threshold;
                 panel.tick_intensity = inst.tick_intensity;
                 panel.bar_family_wicks = inst.bar_family_wicks;
+                panel.tpo_display.show_session_dates = inst.tpo_show_session_dates;
+                panel.tpo_display.show_poc = inst.tpo_show_poc;
+                panel.tpo_display.show_value_area = inst.tpo_show_value_area;
+                panel.tpo_display.show_single_prints = inst.tpo_show_single_prints;
+                panel.tpo_display.show_poor_hl = inst.tpo_show_poor_hl;
+                panel.tpo_display.show_initial_balance = inst.tpo_show_initial_balance;
+                panel.tpo_display.ib_periods = inst.tpo_ib_periods_label.parse::<u8>().unwrap_or(2);
             }
         }
 
@@ -326,6 +348,48 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] instrument:bar_family_wicks = {}", new_value);
                 }
+                "tpo_show_session_dates" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_session_dates = !panel.tpo_display.show_session_dates;
+                        eprintln!("[ChartApp] instrument:tpo_show_session_dates = {}", panel.tpo_display.show_session_dates);
+                    }
+                }
+                "tpo_show_poc" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_poc = !panel.tpo_display.show_poc;
+                        eprintln!("[ChartApp] instrument:tpo_show_poc = {}", panel.tpo_display.show_poc);
+                    }
+                }
+                "tpo_show_value_area" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_value_area = !panel.tpo_display.show_value_area;
+                        eprintln!("[ChartApp] instrument:tpo_show_value_area = {}", panel.tpo_display.show_value_area);
+                    }
+                }
+                "tpo_show_single_prints" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_single_prints = !panel.tpo_display.show_single_prints;
+                        eprintln!("[ChartApp] instrument:tpo_show_single_prints = {}", panel.tpo_display.show_single_prints);
+                    }
+                }
+                "tpo_show_poor_hl" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_poor_hl = !panel.tpo_display.show_poor_hl;
+                        eprintln!("[ChartApp] instrument:tpo_show_poor_hl = {}", panel.tpo_display.show_poor_hl);
+                    }
+                }
+                "tpo_show_initial_balance" => {
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.show_initial_balance = !panel.tpo_display.show_initial_balance;
+                        eprintln!("[ChartApp] instrument:tpo_show_initial_balance = {}", panel.tpo_display.show_initial_balance);
+                    }
+                }
                 "use_24h" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.use_24h = !w.scale_settings.time_format.use_24h;
@@ -379,7 +443,12 @@ impl ChartApp {
                 "body_up_color" | "body_down_color"
                 | "border_up_color" | "border_down_color"
                 | "wick_up_color" | "wick_down_color"
-                | "footprint_buy_color" | "footprint_sell_color" => {
+                | "footprint_buy_color" | "footprint_sell_color"
+                | "renko_up_color" | "renko_down_color"
+                | "pnf_x_color" | "pnf_o_color"
+                | "tlb_up_color" | "tlb_down_color"
+                | "kagi_yang_color" | "kagi_yin_color"
+                | "hollow_up_color" | "hollow_down_color" => {
                     let current_color: Option<String> = {
                         let s = &self.panel_app.theme_manager.current().series;
                         match field {
@@ -391,6 +460,16 @@ impl ChartApp {
                             "wick_down_color"   => Some(s.candle_down_wick.clone()),
                             "footprint_buy_color"  => Some(s.footprint_buy.clone()),
                             "footprint_sell_color" => Some(s.footprint_sell.clone()),
+                            "renko_up_color"    => Some(s.renko_up.clone()),
+                            "renko_down_color"  => Some(s.renko_down.clone()),
+                            "pnf_x_color"       => Some(s.pnf_x.clone()),
+                            "pnf_o_color"       => Some(s.pnf_o.clone()),
+                            "tlb_up_color"      => Some(s.tlb_up.clone()),
+                            "tlb_down_color"    => Some(s.tlb_down.clone()),
+                            "kagi_yang_color"   => Some(s.kagi_yang.clone()),
+                            "kagi_yin_color"    => Some(s.kagi_yin.clone()),
+                            "hollow_up_color"   => Some(s.hollow_up.clone()),
+                            "hollow_down_color" => Some(s.hollow_down.clone()),
                             _ => None,
                         }
                     };
@@ -930,6 +1009,26 @@ impl ChartApp {
                     );
                     eprintln!("[ChartApp] instrument:footprint_row_grouping = {} ticks", ticks);
                 }
+                "footprint_imbalance_threshold" => {
+                    // Stacked-imbalance cell ratio preset (1.5x/2x/3x/4x,
+                    // owner-approved settings matrix wave 1 item 8) — pure
+                    // render-gate value, no resubscribe needed (unlike
+                    // `footprint_row_grouping`, which reshapes the fold).
+                    let ratio: f64 = value.trim_end_matches('x').parse().unwrap_or(1.5);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.footprint_display.imbalance_threshold = ratio;
+                    }
+                    eprintln!("[ChartApp] instrument:footprint_imbalance_threshold = {}x", ratio);
+                }
+                "tpo_ib_periods" => {
+                    let periods: u8 = value.parse().unwrap_or(2);
+                    if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
+                        let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+                        panel.tpo_display.ib_periods = periods;
+                    }
+                    eprintln!("[ChartApp] instrument:tpo_ib_periods = {}", periods);
+                }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
@@ -1023,6 +1122,12 @@ impl ChartApp {
                 }
                 "footprint_row_grouping" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("footprint_row_grouping");
+                }
+                "footprint_imbalance_threshold" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("footprint_imbalance_threshold");
+                }
+                "tpo_ib_periods" => {
+                    self.panel_app.chart_settings_state.toggle_dropdown("tpo_ib_periods");
                 }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);

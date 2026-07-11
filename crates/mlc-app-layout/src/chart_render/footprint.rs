@@ -42,18 +42,21 @@ use super::ChartRenderState;
 const MIN_BAR_WIDTH_PX: f64 = 40.0;
 /// Minimum font size (px) considered legible. Below this, collapse.
 const MIN_FONT_SIZE_PX: f64 = 7.0;
-/// Per-cell diagonal imbalance threshold — colors a single cell's digits
-/// when `ask[i] / bid[i-1]` (or the symmetric bid case) clears this ratio.
-/// Canon per-cell default is 1.5× (150%), distinct from the stacked-zone
-/// run-detection threshold feeding `FootprintBar::stacked_ask_start`/
-/// `stacked_bid_start` (`mlc_core::types::FOOTPRINT_STACKED_IMBALANCE_RATIO`,
-/// computed station/fold-side at 3.0× — see
-/// `mlc-backend/src/bubble/view_fold.rs`'s `footprint_point_to_bar`). The
-/// two were previously conflated under one `IMBALANCE_RATIO = 3.0` constant
-/// here (canon-fix wave 2, item 2). This renderer only READS the resulting
-/// `stacked_ask_start`/`stacked_bid_start` markers — it never recomputes the
-/// stacked-zone ratio locally.
-const CELL_IMBALANCE_RATIO: f64 = 1.5;
+// Per-cell diagonal imbalance threshold — colors a single cell's digits
+// when `ask[i] / bid[i-1]` (or the symmetric bid case) clears this ratio.
+// User-configurable (owner-approved settings matrix, wave 1, item 8) via
+// `FootprintDisplayOptions::imbalance_threshold` (canon default 1.5×
+// / 150%, read at render time as `cell_imbalance_ratio` below — no local
+// const), distinct from the stacked-zone run-detection threshold feeding
+// `FootprintBar::stacked_ask_start`/`stacked_bid_start`
+// (`mlc_core::types::FOOTPRINT_STACKED_IMBALANCE_RATIO`, computed
+// station/fold-side at a fixed 3.0× — see
+// `mlc-backend/src/bubble/view_fold.rs`'s `footprint_point_to_bar`). The
+// two were previously conflated under one `IMBALANCE_RATIO = 3.0` constant
+// here (canon-fix wave 2, item 2). This renderer only READS the resulting
+// `stacked_ask_start`/`stacked_bid_start` markers — it never recomputes the
+// stacked-zone ratio locally.
+
 /// Value Area cumulative fraction (industry standard).
 const VALUE_AREA_FRACTION: f64 = 0.70;
 
@@ -219,6 +222,13 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         && state.footprint_display.show_volume_text;
     let show_abs_markers = state.footprint_display.show_abs_markers;
     let heat_alpha_mult = state.footprint_display.heat_intensity.alpha_multiplier();
+    // Per-cell diagonal imbalance ratio (owner-approved settings matrix,
+    // wave 1, item 8) — user-configurable via the modal's "Imbalance
+    // ratio" dropdown (1.5x/2x/3x/4x). Replaces the previously-hardcoded
+    // `CELL_IMBALANCE_RATIO` constant read below. Distinct from the
+    // STACKED ratio (`FOOTPRINT_STACKED_IMBALANCE_RATIO` = 3.0), which
+    // stays a separate fold-side constant untouched by this control.
+    let cell_imbalance_ratio = state.footprint_display.imbalance_threshold;
 
     let colors = theme_colors(state.theme);
     let price_range = price_scale.price_max - price_scale.price_min;
@@ -442,11 +452,11 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
             let ask_imb = li > 0
                 && lv.buy_vol > sig_buy_gate
                 && bar.levels[li - 1].sell_vol > 0.0
-                && lv.buy_vol / bar.levels[li - 1].sell_vol >= CELL_IMBALANCE_RATIO;
+                && lv.buy_vol / bar.levels[li - 1].sell_vol >= cell_imbalance_ratio;
             let bid_imb = li + 1 < bar.levels.len()
                 && lv.sell_vol > sig_sell_gate
                 && bar.levels[li + 1].buy_vol > 0.0
-                && lv.sell_vol / bar.levels[li + 1].buy_vol >= CELL_IMBALANCE_RATIO;
+                && lv.sell_vol / bar.levels[li + 1].buy_vol >= cell_imbalance_ratio;
 
             // Bid (sell vol) on the LEFT, right-aligned.
             if draw_text && lv.sell_vol > 0.0 {

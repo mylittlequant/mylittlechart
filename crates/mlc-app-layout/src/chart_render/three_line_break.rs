@@ -62,9 +62,9 @@ pub fn draw_three_line_break(ctx: &mut dyn RenderContext, state: &ChartRenderSta
 
         // Fill: green for up (direction == 0), red for down (direction == 1).
         if line.direction == 0 {
-            ctx.set_fill_color(&theme.candle_up);
+            ctx.set_fill_color(&theme.tlb_up);
         } else {
-            ctx.set_fill_color(&theme.candle_down);
+            ctx.set_fill_color(&theme.tlb_down);
         }
         ctx.fill_rect(body_x, body_y, bar_w.max(2.0), body_h);
 

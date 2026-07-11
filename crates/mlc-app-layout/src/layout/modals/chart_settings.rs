@@ -627,6 +627,17 @@ pub fn render_settings_modal(
                             DropdownItem::item("5", "5 ticks"),
                             DropdownItem::item("10", "10 ticks"),
                         ]),
+                        "footprint_imbalance_threshold" => Some(vec![
+                            DropdownItem::item("1.5x", "1.5x"),
+                            DropdownItem::item("2x", "2x"),
+                            DropdownItem::item("3x", "3x"),
+                            DropdownItem::item("4x", "4x"),
+                        ]),
+                        "tpo_ib_periods" => Some(vec![
+                            DropdownItem::item("2", "2"),
+                            DropdownItem::item("3", "3"),
+                            DropdownItem::item("4", "4"),
+                        ]),
                         _ => None,
                     }
                 }
@@ -800,20 +811,26 @@ fn render_instrument_settings(
     //
     // Owner verdict 2026-07-05: this slot shows exactly one of three things,
     // driven by the FOCUSED chart's `chart_type` (never both):
-    //   - candle-family (candles / hollow_candles / bars / heikin_ashi) →
-    //     the existing "JAPANESE CANDLES" section, unchanged.
+    //   - candle-family (candles / bars / heikin_ashi) → the existing
+    //     "JAPANESE CANDLES" section, unchanged. `hollow_candles` moved out
+    //     (owner-approved per-type color matrix wave 2, 2026-07-11) — it
+    //     now owns its own up/down color pair instead of sharing the JC
+    //     body/border/wick rows (hollow rendering only ever draws one
+    //     outline-or-fill color per side, so JC's 3-row split doesn't map).
     //   - a derived type with an editable parameter (footprint's bucket
     //     interval, renko/pnf/kagi box-or-reversal, tick/volume/dollar/
     //     imbalance/run bar thresholds, three_line_break lines-back, tpo
     //     bucket minutes) → a section titled after the type, with one
     //     control row. Edits apply immediately via the existing
     //     `ChartOutEvent::UpdateChartTypeParam` / `UpdateChartTypeInterval`.
+    //     Renko/PnF/Three Line Break/Kagi additionally get their own
+    //     per-type color swatch row here (wave 2).
     //   - a parameterless type (line/area/baseline/heatmaps/...) →
     //     nothing is drawn in this slot at all.
     let mut row_y = content_start_y;
     let is_candle_family = matches!(
         settings.chart_type.as_str(),
-        "candles" | "hollow_candles" | "bars" | "heikin_ashi"
+        "candles" | "bars" | "heikin_ashi"
     );
 
     if is_candle_family {
@@ -888,6 +905,37 @@ fn render_instrument_settings(
         result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
         result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
         row_y += row_height + 16.0;
+    } else if settings.chart_type == "hollow_candles" {
+        // Section: HOLLOW CANDLES — own up/down color pair (owner-approved
+        // per-type color matrix wave 2, 2026-07-11). `draw_hollow_candles`
+        // uses one color per side (outline for bullish, fill for bearish)
+        // so this is a single swatch row, not the 3-row JC split.
+        ctx.set_fill_color(muted_color);
+        ctx.set_font("11px sans-serif");
+        ctx.fill_text("HOLLOW CANDLES", x, row_y + row_height / 2.0);
+        row_y += row_height;
+
+        let draw_swatch = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
+            let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
+            ctx.set_fill_color(color);
+            ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            swatch_rect
+        };
+
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text("Up / Down", label_x, row_y + row_height / 2.0);
+
+        let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+        let up_rect = draw_swatch(ctx, swatches_x, swatch_y, &settings.hollow_up_color, theme);
+        let down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.hollow_down_color, theme);
+        result.content_items.push(("instrument:hollow_up_color".to_string(), up_rect));
+        result.content_items.push(("instrument:hollow_down_color".to_string(), down_rect));
+        row_y += row_height + 16.0;
     } else if mlc_core::chart_type::by_id(&settings.chart_type)
         .is_some_and(|d| d.has_bespoke_settings_block)
     {
@@ -927,6 +975,83 @@ fn render_instrument_settings(
             ctx.set_fill_color(muted_color);
             ctx.fill_text(note, x, row_y + row_height / 2.0);
             row_y += row_height;
+        }
+
+        // Per-type color swatch row (owner-approved per-type color matrix
+        // wave 2, 2026-07-11) — same swatch widget as JAPANESE CANDLES /
+        // CLUSTERS SETTINGS, gated on the active chart type. Colors default
+        // to that theme preset's own candle up/down colors (set in
+        // `ChartTheme::{dark,light,...}`), so nothing changes visually
+        // until the user edits a swatch.
+        let draw_type_swatch = |ctx: &mut dyn RenderContext, sx: f64, sy: f64, color: &str, theme: &ToolbarTheme| -> WidgetRect {
+            let swatch_rect = WidgetRect::new(sx, sy, swatch_size, swatch_size);
+            ctx.set_fill_color(color);
+            ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            ctx.set_stroke_color(&theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, 4.0);
+            swatch_rect
+        };
+        match settings.chart_type.as_str() {
+            "renko" => {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("Brick up/down", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let up_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.renko_up_color, theme);
+                let down_rect = draw_type_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.renko_down_color, theme);
+                result.content_items.push(("instrument:renko_up_color".to_string(), up_rect));
+                result.content_items.push(("instrument:renko_down_color".to_string(), down_rect));
+                row_y += row_height;
+            }
+            "pnf" => {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("X color", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let x_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.pnf_x_color, theme);
+                result.content_items.push(("instrument:pnf_x_color".to_string(), x_rect));
+                row_y += row_height;
+
+                ctx.set_fill_color(text_color);
+                ctx.fill_text("O color", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let o_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.pnf_o_color, theme);
+                result.content_items.push(("instrument:pnf_o_color".to_string(), o_rect));
+                row_y += row_height;
+            }
+            "three_line_break" => {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("Up / Down", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let up_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.tlb_up_color, theme);
+                let down_rect = draw_type_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.tlb_down_color, theme);
+                result.content_items.push(("instrument:tlb_up_color".to_string(), up_rect));
+                result.content_items.push(("instrument:tlb_down_color".to_string(), down_rect));
+                row_y += row_height;
+            }
+            "kagi" => {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(text_color);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.fill_text("Yang (thick)", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let yang_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.kagi_yang_color, theme);
+                result.content_items.push(("instrument:kagi_yang_color".to_string(), yang_rect));
+                row_y += row_height;
+
+                ctx.set_fill_color(text_color);
+                ctx.fill_text("Yin (thin)", label_x, row_y + row_height / 2.0);
+                let swatch_y = row_y + (row_height - swatch_size) / 2.0;
+                let yin_rect = draw_type_swatch(ctx, swatches_x, swatch_y, &settings.kagi_yin_color, theme);
+                result.content_items.push(("instrument:kagi_yin_color".to_string(), yin_rect));
+                row_y += row_height;
+            }
+            _ => {}
         }
 
         // Render-policy-gated toggle rows (chart-type-engine-consolidation
@@ -973,6 +1098,93 @@ fn render_instrument_settings(
             ctx.set_fill_color(text_color);
             ctx.set_text_align(TextAlign::Left);
             ctx.fill_text("Wicks", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+        }
+
+        // TPO (Market Profile) display toggle rows — owner-approved
+        // settings matrix wave 1, items 1-7. Placed with the existing
+        // "Bucket minutes" param row above (this whole branch is the
+        // `chart_type_param_spec` block TPO shares with renko/tick_bar/...).
+        if settings.chart_type == "tpo" {
+            // Row: "Session dates" checkbox — default OFF (owner order: the
+            // top session-date header duplicates the time axis). Gates
+            // `chart_render/tpo.rs`'s date-header draw call AND the
+            // `DATE_HEADER_PX` reserved vertical space.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_session_dates, theme);
+            result.content_items.push(("instrument:tpo_show_session_dates".to_string(), check_rect));
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(text_color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("Session dates", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "POC" checkbox — gates the POC tint band + POC line.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_poc, theme);
+            result.content_items.push(("instrument:tpo_show_poc".to_string(), check_rect));
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("POC", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "Value Area" checkbox — gates the VAL-to-VAH fill band.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_value_area, theme);
+            result.content_items.push(("instrument:tpo_show_value_area".to_string(), check_rect));
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Value Area", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "Single prints" checkbox — gates the dashed single-print
+            // row markers.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_single_prints, theme);
+            result.content_items.push(("instrument:tpo_show_single_prints".to_string(), check_rect));
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Single prints", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "Poor High/Low" checkbox — gates the ▲/▼ poor-extreme
+            // markers.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_poor_hl, theme);
+            result.content_items.push(("instrument:tpo_show_poor_hl".to_string(), check_rect));
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Poor High/Low", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "Initial Balance" checkbox — gates the dashed IB
+            // bracket.
+            let check_y = row_y + (row_height - checkbox_size) / 2.0;
+            let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+            draw_checkbox(ctx, check_rect, settings.tpo_show_initial_balance, theme);
+            result.content_items.push(("instrument:tpo_show_initial_balance".to_string(), check_rect));
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("Initial Balance", label_x, row_y + row_height / 2.0);
+            row_y += row_height;
+
+            // Row: "IB periods" dropdown (2 / 3 / 4) — number of
+            // chronological TPO periods (letters starting from 'A') that
+            // define the Initial Balance range.
+            ctx.set_fill_color(text_color);
+            ctx.fill_text("IB periods", x, row_y + row_height / 2.0);
+            let ib_dropdown_x = x + 140.0;
+            let ib_dropdown_width = 140.0;
+            let ib_dropdown_height = 28.0;
+            let ib_dropdown_y = row_y + (row_height - ib_dropdown_height) / 2.0;
+            let ib_chevron_w = 20.0;
+            let ib_text_w = ib_dropdown_width - ib_chevron_w;
+            draw_split_dropdown(
+                ctx, ib_dropdown_x, ib_dropdown_y, ib_dropdown_width, ib_dropdown_height,
+                &settings.tpo_ib_periods_label, row_y + row_height / 2.0, theme,
+            );
+            result.content_items.push(("dropdown_cycle:tpo_ib_periods".to_string(), WidgetRect::new(ib_dropdown_x, ib_dropdown_y, ib_text_w, ib_dropdown_height)));
+            result.content_items.push(("dropdown_menu:tpo_ib_periods".to_string(), WidgetRect::new(ib_dropdown_x + ib_text_w, ib_dropdown_y, ib_chevron_w, ib_dropdown_height)));
             row_y += row_height;
         }
         row_y += 16.0;
@@ -1262,6 +1474,31 @@ fn render_footprint_settings_block(
     );
     result.content_items.push(("dropdown_cycle:footprint_row_grouping".to_string(), WidgetRect::new(grouping_dropdown_x, grouping_dropdown_y, grouping_text_w, grouping_dropdown_height)));
     result.content_items.push(("dropdown_menu:footprint_row_grouping".to_string(), WidgetRect::new(grouping_dropdown_x + grouping_text_w, grouping_dropdown_y, chevron_w, grouping_dropdown_height)));
+    row_y += row_height + 8.0;
+
+    // Row: Imbalance ratio dropdown (1.5x / 2x / 3x / 4x) — owner-approved
+    // settings matrix wave 1, item 8. Replaces the hardcoded
+    // `CELL_IMBALANCE_RATIO` constant read in `chart_render/footprint.rs`'s
+    // per-cell ABS/stacked-triangle imbalance detectors. Distinct from the
+    // STACKED ratio (3.0), which stays a separate named const untouched by
+    // this control.
+    ctx.set_fill_color(text_color);
+    ctx.fill_text("Imbalance ratio", x, row_y + row_height / 2.0);
+    let imbalance_dropdown_x = x + 140.0;
+    ctx.set_font("12px sans-serif");
+    let imbalance_widest_w = ["1.5x", "2x", "3x", "4x"].iter()
+        .map(|s| ctx.measure_text(s))
+        .fold(0.0_f64, f64::max);
+    let imbalance_dropdown_width = (imbalance_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let imbalance_dropdown_height = 28.0;
+    let imbalance_dropdown_y = row_y + (row_height - imbalance_dropdown_height) / 2.0;
+    let imbalance_text_w = imbalance_dropdown_width - chevron_w;
+    draw_split_dropdown(
+        ctx, imbalance_dropdown_x, imbalance_dropdown_y, imbalance_dropdown_width, imbalance_dropdown_height,
+        &settings.footprint_imbalance_threshold_label, row_y + row_height / 2.0, theme,
+    );
+    result.content_items.push(("dropdown_cycle:footprint_imbalance_threshold".to_string(), WidgetRect::new(imbalance_dropdown_x, imbalance_dropdown_y, imbalance_text_w, imbalance_dropdown_height)));
+    result.content_items.push(("dropdown_menu:footprint_imbalance_threshold".to_string(), WidgetRect::new(imbalance_dropdown_x + imbalance_text_w, imbalance_dropdown_y, chevron_w, imbalance_dropdown_height)));
     row_y += row_height + 16.0;
 
     row_y

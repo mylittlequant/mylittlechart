@@ -85,6 +85,7 @@ pub fn build_chart_window_snapshot(
         footprint_display: panel.footprint_display,
         tick_intensity: panel.tick_intensity,
         bar_family_wicks: panel.bar_family_wicks,
+        tpo_display: panel.tpo_display,
         show_candles: panel.show_candles,
         show_bars: panel.show_bars,
         show_hollow_candles: panel.show_hollow_candles,
@@ -153,7 +154,11 @@ mod json_compat_tests {
         panel.footprint_display.show_abs_markers = false;
         panel.footprint_display.show_volume_text = false;
         panel.footprint_display.heat_intensity = mlc_core::chart::FootprintHeatIntensity::High;
+        panel.footprint_display.imbalance_threshold = 3.0;
         panel.tick_intensity = true;
+        panel.tpo_display.show_session_dates = true;
+        panel.tpo_display.show_poc = false;
+        panel.tpo_display.ib_periods = 4;
 
         let snap = build_chart_window_snapshot(
             &window,
@@ -188,6 +193,7 @@ mod json_compat_tests {
         assert!(json.contains("\"chart_type_interval\":\"5m\""));
         assert!(json.contains("\"footprint_display\""));
         assert!(json.contains("\"tick_intensity\":true"));
+        assert!(json.contains("\"tpo_display\""));
         assert!(json.contains("\"show_candles\":true"));
         assert!(json.contains("\"pre_tag_indicator_ids\":[1,2,3]"));
 
@@ -203,7 +209,11 @@ mod json_compat_tests {
         assert!(!restored.footprint_display.show_abs_markers);
         assert!(!restored.footprint_display.show_volume_text);
         assert_eq!(restored.footprint_display.heat_intensity, mlc_core::chart::FootprintHeatIntensity::High);
+        assert_eq!(restored.footprint_display.imbalance_threshold, 3.0);
         assert!(restored.tick_intensity);
+        assert!(restored.tpo_display.show_session_dates);
+        assert!(!restored.tpo_display.show_poc);
+        assert_eq!(restored.tpo_display.ib_periods, 4);
     }
 
     /// Old preset JSON (pre-2026-07-05, no `chart_type_param`/
@@ -239,6 +249,7 @@ mod json_compat_tests {
         obj.remove("chart_type_interval");
         obj.remove("footprint_display");
         obj.remove("tick_intensity");
+        obj.remove("tpo_display");
         let old_json = serde_json::to_string(&json_value).expect("stripped snapshot must serialize");
 
         let restored: mlc_core::preset::snapshots::ChartWindowSnapshot =
@@ -247,5 +258,15 @@ mod json_compat_tests {
         assert_eq!(restored.chart_type_interval, "1m");
         assert_eq!(restored.footprint_display, mlc_core::chart::render_data::FootprintDisplayOptions::default());
         assert!(!restored.tick_intensity);
+        assert_eq!(restored.tpo_display, mlc_core::chart::render_data::TpoDisplayOptions::default());
+        // Pixel-identical-to-pre-toggle sentinels: session-date header off,
+        // everything else on, IB periods = 2 (canon A/B convention).
+        assert!(!restored.tpo_display.show_session_dates);
+        assert!(restored.tpo_display.show_poc);
+        assert!(restored.tpo_display.show_value_area);
+        assert!(restored.tpo_display.show_single_prints);
+        assert!(restored.tpo_display.show_poor_hl);
+        assert!(restored.tpo_display.show_initial_balance);
+        assert_eq!(restored.tpo_display.ib_periods, 2);
     }
 }

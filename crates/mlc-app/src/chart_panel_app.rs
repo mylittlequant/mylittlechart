@@ -276,6 +276,16 @@ impl ChartPanelApp {
             sub_pane_bg: rt.chart.background.clone(),
             footprint_buy: rt.series.footprint_buy.clone(),
             footprint_sell: rt.series.footprint_sell.clone(),
+            renko_up: rt.series.renko_up.clone(),
+            renko_down: rt.series.renko_down.clone(),
+            pnf_x: rt.series.pnf_x.clone(),
+            pnf_o: rt.series.pnf_o.clone(),
+            tlb_up: rt.series.tlb_up.clone(),
+            tlb_down: rt.series.tlb_down.clone(),
+            kagi_yang: rt.series.kagi_yang.clone(),
+            kagi_yin: rt.series.kagi_yin.clone(),
+            hollow_up: rt.series.hollow_up.clone(),
+            hollow_down: rt.series.hollow_down.clone(),
         }
     }
 

@@ -146,6 +146,26 @@ pub struct ChartTheme {
     pub footprint_buy: String,
     /// Footprint cluster sell-side color (volume text + heat fill).
     pub footprint_sell: String,
+    /// Renko brick fill (up).
+    pub renko_up: String,
+    /// Renko brick fill (down).
+    pub renko_down: String,
+    /// Point & Figure X-column glyph color.
+    pub pnf_x: String,
+    /// Point & Figure O-column glyph color.
+    pub pnf_o: String,
+    /// Three Line Break up-line fill.
+    pub tlb_up: String,
+    /// Three Line Break down-line fill.
+    pub tlb_down: String,
+    /// Kagi yang (thick) line color.
+    pub kagi_yang: String,
+    /// Kagi yin (thin) line color.
+    pub kagi_yin: String,
+    /// Hollow candles bullish (outline) color.
+    pub hollow_up: String,
+    /// Hollow candles bearish (fill) color.
+    pub hollow_down: String,
 }
 
 impl Default for ChartTheme {
@@ -168,6 +188,16 @@ impl Default for ChartTheme {
             sub_pane_bg: "#1e222d".to_string(),
             footprint_buy: "#26a69a".to_string(),
             footprint_sell: "#ef5350".to_string(),
+            renko_up: "#26a69a".to_string(),
+            renko_down: "#ef5350".to_string(),
+            pnf_x: "#26a69a".to_string(),
+            pnf_o: "#ef5350".to_string(),
+            tlb_up: "#26a69a".to_string(),
+            tlb_down: "#ef5350".to_string(),
+            kagi_yang: "#26a69a".to_string(),
+            kagi_yin: "#ef5350".to_string(),
+            hollow_up: "#26a69a".to_string(),
+            hollow_down: "#ef5350".to_string(),
         }
     }
 }
@@ -206,6 +236,25 @@ pub struct FootprintDisplayOptions {
     /// their own tick-based params (`build_subscribe_params`). Default `0`.
     #[serde(default)]
     pub group_ticks: u32,
+    /// Stacked-imbalance cell ratio threshold (owner-approved settings
+    /// matrix, wave 1, item 8) — a cell's dominant-side volume must be at
+    /// least this multiple of the opposite side's volume to qualify as an
+    /// imbalance for the ABS-marker / stacked-triangle detectors. Replaces
+    /// the previously-hardcoded `CELL_IMBALANCE_RATIO` constant in
+    /// `chart_render/footprint.rs`. Default `1.5` (the constant's old
+    /// value — pixel-identical to the pre-toggle render). Distinct from the
+    /// STACKED ratio (3.0), which stays a separate named const — this
+    /// toggle only ever touches the per-cell ratio.
+    #[serde(default = "default_imbalance_threshold")]
+    pub imbalance_threshold: f64,
+}
+
+/// `#[serde(default = ...)]` sentinel for
+/// `FootprintDisplayOptions::imbalance_threshold` — old presets (pre this
+/// field) deserialize onto the pre-toggle hardcoded `CELL_IMBALANCE_RATIO`
+/// value.
+fn default_imbalance_threshold() -> f64 {
+    1.5
 }
 
 impl Default for FootprintDisplayOptions {
@@ -215,6 +264,7 @@ impl Default for FootprintDisplayOptions {
             show_volume_text: true,
             heat_intensity: FootprintHeatIntensity::Normal,
             group_ticks: 0,
+            imbalance_threshold: default_imbalance_threshold(),
         }
     }
 }
@@ -256,6 +306,77 @@ impl FootprintHeatIntensity {
             "low" => Self::Low,
             "high" => Self::High,
             _ => Self::Normal,
+        }
+    }
+}
+
+/// TPO (Market Profile) display toggles (owner-approved settings matrix,
+/// wave 1). Per-panel (`ChartPanelState::tpo_display`), threaded into
+/// [`ChartRenderState`] the same way `footprint_display`/`tick_intensity`
+/// are — see `mlc-backend::bubble::render::build_chart_render_state` and
+/// its 4 call sites in `mlc-app::lib.rs`. `Copy` (all scalar fields) so it
+/// can be passed by value into `ChartRenderState` without adding a
+/// lifetime. `Serialize`/`Deserialize` for `ChartWindowSnapshot`
+/// persistence, mirroring `FootprintDisplayOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TpoDisplayOptions {
+    /// Draw the session date-header strip above each block (e.g. "Jun
+    /// 17"). Default `false` (owner order: the header duplicates the time
+    /// axis). Gates both the date-header draw call AND the
+    /// `DATE_HEADER_PX` reserved vertical space in `chart_render/tpo.rs` —
+    /// when off, the header is not drawn and the space is reclaimed by the
+    /// profile body.
+    #[serde(default)]
+    pub show_session_dates: bool,
+    /// Draw the POC (Point of Control) row tint + horizontal line. Default
+    /// `true` (matches pre-toggle behavior).
+    #[serde(default = "default_true")]
+    pub show_poc: bool,
+    /// Draw the Value Area fill band (VAL to VAH). Default `true` (matches
+    /// pre-toggle behavior).
+    #[serde(default = "default_true")]
+    pub show_value_area: bool,
+    /// Draw single-print rows (dashed border, exactly 1 letter touched the
+    /// price level). Default `true` (matches pre-toggle behavior).
+    #[serde(default = "default_true")]
+    pub show_single_prints: bool,
+    /// Draw Poor High / Poor Low triangle markers. Default `true` (matches
+    /// pre-toggle behavior).
+    #[serde(default = "default_true")]
+    pub show_poor_hl: bool,
+    /// Draw the Initial Balance dashed bracket. Default `true` (matches
+    /// pre-toggle behavior).
+    #[serde(default = "default_true")]
+    pub show_initial_balance: bool,
+    /// Number of chronological TPO periods (letters, starting from 'A')
+    /// that define the Initial Balance range. Default `2` (canon Market
+    /// Profile convention — periods 'A' and 'B'). Dropdown options are
+    /// 2/3/4.
+    #[serde(default = "default_ib_periods")]
+    pub ib_periods: u8,
+}
+
+/// `#[serde(default = ...)]` sentinel shared by every `TpoDisplayOptions`
+/// bool field that defaults "on" (matches the pre-toggle render).
+fn default_true() -> bool {
+    true
+}
+
+/// `#[serde(default = ...)]` sentinel for `TpoDisplayOptions::ib_periods`.
+fn default_ib_periods() -> u8 {
+    2
+}
+
+impl Default for TpoDisplayOptions {
+    fn default() -> Self {
+        Self {
+            show_session_dates: false,
+            show_poc: true,
+            show_value_area: true,
+            show_single_prints: true,
+            show_poor_hl: true,
+            show_initial_balance: true,
+            ib_periods: default_ib_periods(),
         }
     }
 }
@@ -363,6 +484,11 @@ pub struct ChartRenderState<'a> {
     /// TPO Market Profile session snapshots — typically a small ring
     /// (current session + N closed sessions).
     pub tpo_sessions: Option<&'a [crate::types::TpoSession]>,
+    /// TPO display toggles (session-date header / POC / VA / single-prints
+    /// / poor-HL / initial-balance / IB period count) — per-panel config,
+    /// mirrors `ChartPanelState::tpo_display`. Unused for every other
+    /// chart type.
+    pub tpo_display: TpoDisplayOptions,
     /// Pre-computed Heikin Ashi cache. When `Some(_)` and chart_type
     /// == "heikin_ashi" the HA renderer reads directly from this slice
     /// instead of running the recursive HA formula from index 0 each

@@ -57,7 +57,7 @@ pub fn draw_kagi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
             ctx.line_to(cx, y_end);
             ctx.stroke();
         } else {
-            let color = if seg.up { &theme.candle_up } else { &theme.candle_down };
+            let color = if seg.yang { &theme.kagi_yang } else { &theme.kagi_yin };
             ctx.set_stroke_color(color);
             ctx.set_stroke_width(if seg.yang { 3.0 } else { 1.0 });
             ctx.begin_path();

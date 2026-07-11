@@ -14,7 +14,7 @@
 //! consumers access it through a single authoritative location keyed by
 //! the data bubble rather than the chart panel.
 
-use mlc_core::chart::{CrosshairOptions, FootprintDisplayOptions, GridOptions, Legend, Tooltip, Watermark};
+use mlc_core::chart::{CrosshairOptions, FootprintDisplayOptions, GridOptions, Legend, Tooltip, TpoDisplayOptions, Watermark};
 use mlc_core::ids::ChartPanelId;
 
 /// State of one chart canvas leaf.
@@ -82,6 +82,11 @@ pub struct ChartPanelState {
     /// Unused (has no visual effect) for every other chart type — tick_bar /
     /// imbalance_bar / run_bar keep wicks unconditionally (canon).
     pub bar_family_wicks: bool,
+    /// TPO (Market Profile) display toggles (owner-approved settings
+    /// matrix, wave 1) — session-date header / POC / VA / single-prints /
+    /// poor-HL / initial-balance / IB period count. Unused for every other
+    /// chart type.
+    pub tpo_display: TpoDisplayOptions,
 }
 
 impl ChartPanelState {
@@ -121,6 +126,7 @@ impl ChartPanelState {
             bar_family_wicks: mlc_core::chart_type::by_id("candles")
                 .map(|d| d.render_policy.bar_family_wicks_default())
                 .unwrap_or(false),
+            tpo_display: TpoDisplayOptions::default(),
         }
     }
 }

@@ -177,6 +177,32 @@ pub struct RuntimeSeriesColors {
     pub footprint_buy: String,
     #[serde(default = "default_footprint_sell")]
     pub footprint_sell: String,
+
+    // Per-type color identity (owner-approved wave 2, 2026-07-11). Additive —
+    // old theme JSON without these keys falls back to the same green/red
+    // every one of these renderers hardcoded via `candle_up`/`candle_down`
+    // before this field existed, so existing saved themes render
+    // pixel-identically to before this field existed.
+    #[serde(default = "default_footprint_buy")]
+    pub renko_up: String,
+    #[serde(default = "default_footprint_sell")]
+    pub renko_down: String,
+    #[serde(default = "default_footprint_buy")]
+    pub pnf_x: String,
+    #[serde(default = "default_footprint_sell")]
+    pub pnf_o: String,
+    #[serde(default = "default_footprint_buy")]
+    pub tlb_up: String,
+    #[serde(default = "default_footprint_sell")]
+    pub tlb_down: String,
+    #[serde(default = "default_footprint_buy")]
+    pub kagi_yang: String,
+    #[serde(default = "default_footprint_sell")]
+    pub kagi_yin: String,
+    #[serde(default = "default_footprint_buy")]
+    pub hollow_up: String,
+    #[serde(default = "default_footprint_sell")]
+    pub hollow_down: String,
 }
 
 fn default_footprint_buy() -> String {
@@ -500,6 +526,16 @@ impl From<&UITheme> for RuntimeTheme {
                 volume_down: theme.series.volume_down.to_string(),
                 footprint_buy: theme.series.footprint_buy.to_string(),
                 footprint_sell: theme.series.footprint_sell.to_string(),
+                renko_up: theme.series.renko_up.to_string(),
+                renko_down: theme.series.renko_down.to_string(),
+                pnf_x: theme.series.pnf_x.to_string(),
+                pnf_o: theme.series.pnf_o.to_string(),
+                tlb_up: theme.series.tlb_up.to_string(),
+                tlb_down: theme.series.tlb_down.to_string(),
+                kagi_yang: theme.series.kagi_yang.to_string(),
+                kagi_yin: theme.series.kagi_yin.to_string(),
+                hollow_up: theme.series.hollow_up.to_string(),
+                hollow_down: theme.series.hollow_down.to_string(),
             },
             fonts: RuntimeFonts {
                 family: theme.fonts.family.to_string(),
@@ -755,5 +791,34 @@ mod tests {
         let mut theme = RuntimeTheme::dark();
         theme.colors.toolbar_bg = "#ff0000".to_string();
         assert_eq!(theme.colors.toolbar_bg, "#ff0000");
+    }
+
+    /// Old theme JSON saved before the per-type color fields existed
+    /// (owner-approved matrix wave 2, 2026-07-11) must still deserialize —
+    /// missing keys fall back to the same green/red every renderer
+    /// hardcoded before this field existed, matching the `footprint_buy`/
+    /// `footprint_sell` precedent (2026-07-05).
+    #[test]
+    fn test_per_type_colors_default_on_missing_json_keys() {
+        let mut value = serde_json::to_value(RuntimeTheme::dark()).unwrap();
+        let series = value.get_mut("series").unwrap().as_object_mut().unwrap();
+        for key in [
+            "renko_up", "renko_down", "pnf_x", "pnf_o",
+            "tlb_up", "tlb_down", "kagi_yang", "kagi_yin",
+            "hollow_up", "hollow_down",
+        ] {
+            series.remove(key);
+        }
+        let restored: RuntimeTheme = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.series.renko_up, "#26a69a");
+        assert_eq!(restored.series.renko_down, "#ef5350");
+        assert_eq!(restored.series.pnf_x, "#26a69a");
+        assert_eq!(restored.series.pnf_o, "#ef5350");
+        assert_eq!(restored.series.tlb_up, "#26a69a");
+        assert_eq!(restored.series.tlb_down, "#ef5350");
+        assert_eq!(restored.series.kagi_yang, "#26a69a");
+        assert_eq!(restored.series.kagi_yin, "#ef5350");
+        assert_eq!(restored.series.hollow_up, "#26a69a");
+        assert_eq!(restored.series.hollow_down, "#ef5350");
     }
 }

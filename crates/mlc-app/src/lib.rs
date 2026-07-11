@@ -3736,6 +3736,7 @@ impl ChartApp {
                     liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: overlay_panel.footprint_display,
                     tick_intensity: overlay_panel.tick_intensity,
+                    tpo_display: overlay_panel.tpo_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         overlay_chart_type,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -3846,6 +3847,7 @@ impl ChartApp {
                 liq_heatmap_show: window.liq_heatmap_show,
                 footprint_display: single_panel.footprint_display,
                 tick_intensity: single_panel.tick_intensity,
+                tpo_display: single_panel.tpo_display,
                 wicks_effective: crate::active_series::effective_wick_flag(
                     single_chart_type,
                     self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -4140,6 +4142,7 @@ impl ChartApp {
                     liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: split_panel.footprint_display,
                     tick_intensity: split_panel.tick_intensity,
+                    tpo_display: split_panel.tpo_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         split_chart_type,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -4760,6 +4763,7 @@ impl ChartApp {
                     liq_heatmap_show: window.liq_heatmap_show,
                     footprint_display: single_window_panel.footprint_display,
                     tick_intensity: single_window_panel.tick_intensity,
+                    tpo_display: single_window_panel.tpo_display,
                     wicks_effective: crate::active_series::effective_wick_flag(
                         single_window_chart_type_for_wicks,
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
@@ -8981,6 +8985,16 @@ impl ChartApp {
                 footprint_show_volume_text: css.footprint_show_volume_text,
                 footprint_buy_color: series.footprint_buy.clone(),
                 footprint_sell_color: series.footprint_sell.clone(),
+                renko_up_color: series.renko_up.clone(),
+                renko_down_color: series.renko_down.clone(),
+                pnf_x_color: series.pnf_x.clone(),
+                pnf_o_color: series.pnf_o.clone(),
+                tlb_up_color: series.tlb_up.clone(),
+                tlb_down_color: series.tlb_down.clone(),
+                kagi_yang_color: series.kagi_yang.clone(),
+                kagi_yin_color: series.kagi_yin.clone(),
+                hollow_up_color: series.hollow_up.clone(),
+                hollow_down_color: series.hollow_down.clone(),
                 footprint_heat_intensity_label: match settings_panel
                     .map(|p| p.footprint_display.heat_intensity)
                     .unwrap_or_default()
@@ -8996,8 +9010,40 @@ impl ChartApp {
                     0 => "Raw".to_string(),
                     n => format!("{n} ticks"),
                 },
+                footprint_imbalance_threshold_label: {
+                    let ratio = settings_panel
+                        .map(|p| p.footprint_display.imbalance_threshold)
+                        .unwrap_or(1.5);
+                    if ratio.fract() == 0.0 {
+                        format!("{}x", ratio as i64)
+                    } else {
+                        format!("{ratio}x")
+                    }
+                },
                 tick_intensity: css.tick_intensity,
                 bar_family_wicks: css.bar_family_wicks,
+                tpo_show_session_dates: settings_panel
+                    .map(|p| p.tpo_display.show_session_dates)
+                    .unwrap_or(false),
+                tpo_show_poc: settings_panel
+                    .map(|p| p.tpo_display.show_poc)
+                    .unwrap_or(true),
+                tpo_show_value_area: settings_panel
+                    .map(|p| p.tpo_display.show_value_area)
+                    .unwrap_or(true),
+                tpo_show_single_prints: settings_panel
+                    .map(|p| p.tpo_display.show_single_prints)
+                    .unwrap_or(true),
+                tpo_show_poor_hl: settings_panel
+                    .map(|p| p.tpo_display.show_poor_hl)
+                    .unwrap_or(true),
+                tpo_show_initial_balance: settings_panel
+                    .map(|p| p.tpo_display.show_initial_balance)
+                    .unwrap_or(true),
+                tpo_ib_periods_label: settings_panel
+                    .map(|p| p.tpo_display.ib_periods)
+                    .unwrap_or(2)
+                    .to_string(),
                 precision_label: precision_lbl.clone(),
                 timezone_label: tz_label.clone(),
                 use_24h: time_fmt_use_24h,

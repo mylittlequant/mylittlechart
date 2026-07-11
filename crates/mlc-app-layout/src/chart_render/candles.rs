@@ -248,7 +248,7 @@ pub fn draw_hollow_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState
         let cx = viewport.x_for_bar(i, bar.ts_ms());
         let is_up = bar.is_bullish();
 
-        let body_color = if is_up { &theme.candle_up } else { &theme.candle_down };
+        let body_color = if is_up { &theme.hollow_up } else { &theme.hollow_down };
         let wick_color = if is_up { &theme.wick_up } else { &theme.wick_down };
 
         // Calculate screen coordinates

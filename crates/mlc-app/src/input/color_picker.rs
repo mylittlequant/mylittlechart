@@ -719,6 +719,46 @@ impl ChartApp {
                 self.panel_app.theme_manager.current_mut().series.footprint_sell = color.to_string();
                 eprintln!("[ChartApp] applied footprint_sell_color: {}", color);
             }
+            "renko_up_color" => {
+                self.panel_app.theme_manager.current_mut().series.renko_up = color.to_string();
+                eprintln!("[ChartApp] applied renko_up_color: {}", color);
+            }
+            "renko_down_color" => {
+                self.panel_app.theme_manager.current_mut().series.renko_down = color.to_string();
+                eprintln!("[ChartApp] applied renko_down_color: {}", color);
+            }
+            "pnf_x_color" => {
+                self.panel_app.theme_manager.current_mut().series.pnf_x = color.to_string();
+                eprintln!("[ChartApp] applied pnf_x_color: {}", color);
+            }
+            "pnf_o_color" => {
+                self.panel_app.theme_manager.current_mut().series.pnf_o = color.to_string();
+                eprintln!("[ChartApp] applied pnf_o_color: {}", color);
+            }
+            "tlb_up_color" => {
+                self.panel_app.theme_manager.current_mut().series.tlb_up = color.to_string();
+                eprintln!("[ChartApp] applied tlb_up_color: {}", color);
+            }
+            "tlb_down_color" => {
+                self.panel_app.theme_manager.current_mut().series.tlb_down = color.to_string();
+                eprintln!("[ChartApp] applied tlb_down_color: {}", color);
+            }
+            "kagi_yang_color" => {
+                self.panel_app.theme_manager.current_mut().series.kagi_yang = color.to_string();
+                eprintln!("[ChartApp] applied kagi_yang_color: {}", color);
+            }
+            "kagi_yin_color" => {
+                self.panel_app.theme_manager.current_mut().series.kagi_yin = color.to_string();
+                eprintln!("[ChartApp] applied kagi_yin_color: {}", color);
+            }
+            "hollow_up_color" => {
+                self.panel_app.theme_manager.current_mut().series.hollow_up = color.to_string();
+                eprintln!("[ChartApp] applied hollow_up_color: {}", color);
+            }
+            "hollow_down_color" => {
+                self.panel_app.theme_manager.current_mut().series.hollow_down = color.to_string();
+                eprintln!("[ChartApp] applied hollow_down_color: {}", color);
+            }
             "watermark_color" => {
                 let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
                 if let Some(pid) = pid {

@@ -52,6 +52,36 @@ pub struct InstrumentSettings {
     /// Footprint sell-side (bid) color — mirrors `ChartTheme::footprint_sell`.
     /// Unused when `chart_type != "footprint"`.
     pub footprint_sell_color: String,
+    /// Renko brick up color — mirrors `ChartTheme::renko_up`. Unused when
+    /// `chart_type != "renko"`.
+    pub renko_up_color: String,
+    /// Renko brick down color — mirrors `ChartTheme::renko_down`. Unused
+    /// when `chart_type != "renko"`.
+    pub renko_down_color: String,
+    /// Point & Figure X-column color — mirrors `ChartTheme::pnf_x`. Unused
+    /// when `chart_type != "pnf"`.
+    pub pnf_x_color: String,
+    /// Point & Figure O-column color — mirrors `ChartTheme::pnf_o`. Unused
+    /// when `chart_type != "pnf"`.
+    pub pnf_o_color: String,
+    /// Three Line Break up-line color — mirrors `ChartTheme::tlb_up`.
+    /// Unused when `chart_type != "three_line_break"`.
+    pub tlb_up_color: String,
+    /// Three Line Break down-line color — mirrors `ChartTheme::tlb_down`.
+    /// Unused when `chart_type != "three_line_break"`.
+    pub tlb_down_color: String,
+    /// Kagi yang (thick line) color — mirrors `ChartTheme::kagi_yang`.
+    /// Unused when `chart_type != "kagi"`.
+    pub kagi_yang_color: String,
+    /// Kagi yin (thin line) color — mirrors `ChartTheme::kagi_yin`. Unused
+    /// when `chart_type != "kagi"`.
+    pub kagi_yin_color: String,
+    /// Hollow candles bullish (outline) color — mirrors
+    /// `ChartTheme::hollow_up`. Unused when `chart_type != "hollow_candles"`.
+    pub hollow_up_color: String,
+    /// Hollow candles bearish (fill) color — mirrors
+    /// `ChartTheme::hollow_down`. Unused when `chart_type != "hollow_candles"`.
+    pub hollow_down_color: String,
     /// Footprint heat-fill intensity label ("Low" / "Normal" / "High").
     /// Unused when `chart_type != "footprint"`.
     pub footprint_heat_intensity_label: String,
@@ -59,6 +89,11 @@ pub struct InstrumentSettings {
     /// "10 ticks"). Mirrors `ChartPanelState::footprint_display.group_ticks`
     /// (canon-fix wave 2, item 5). Unused when `chart_type != "footprint"`.
     pub footprint_row_grouping_label: String,
+    /// Footprint stacked-imbalance ratio label ("1.5x" / "2x" / "3x" /
+    /// "4x"). Mirrors `ChartPanelState::footprint_display.imbalance_threshold`
+    /// (owner-approved settings matrix, wave 1, item 8). Unused when
+    /// `chart_type != "footprint"`.
+    pub footprint_imbalance_threshold_label: String,
     /// Tick-bar checkbox: modulate body opacity by trade-count intensity
     /// (`(vol/max_vol).sqrt().clamp(0.25,1.0)`, wick stays full opacity).
     /// Default `false` — plain solid bodies exactly like `draw_candles`.
@@ -68,6 +103,35 @@ pub struct InstrumentSettings {
     /// volume_bar / dollar_bar, which render WITHOUT wicks by default.
     /// Default `false`. Unused for every other chart type.
     pub bar_family_wicks: bool,
+    /// TPO checkbox: draw the session date-header strip. Default `false`
+    /// (owner order: duplicates the time axis). Mirrors
+    /// `ChartPanelState::tpo_display.show_session_dates`. Unused when
+    /// `chart_type != "tpo"`.
+    pub tpo_show_session_dates: bool,
+    /// TPO checkbox: draw the POC tint + line. Default `true`. Mirrors
+    /// `ChartPanelState::tpo_display.show_poc`. Unused when
+    /// `chart_type != "tpo"`.
+    pub tpo_show_poc: bool,
+    /// TPO checkbox: draw the Value Area fill band. Default `true`.
+    /// Mirrors `ChartPanelState::tpo_display.show_value_area`. Unused when
+    /// `chart_type != "tpo"`.
+    pub tpo_show_value_area: bool,
+    /// TPO checkbox: draw single-print dashed rows. Default `true`.
+    /// Mirrors `ChartPanelState::tpo_display.show_single_prints`. Unused
+    /// when `chart_type != "tpo"`.
+    pub tpo_show_single_prints: bool,
+    /// TPO checkbox: draw Poor High / Poor Low markers. Default `true`.
+    /// Mirrors `ChartPanelState::tpo_display.show_poor_hl`. Unused when
+    /// `chart_type != "tpo"`.
+    pub tpo_show_poor_hl: bool,
+    /// TPO checkbox: draw the Initial Balance bracket. Default `true`.
+    /// Mirrors `ChartPanelState::tpo_display.show_initial_balance`. Unused
+    /// when `chart_type != "tpo"`.
+    pub tpo_show_initial_balance: bool,
+    /// TPO Initial Balance period-count label ("2" / "3" / "4"). Mirrors
+    /// `ChartPanelState::tpo_display.ib_periods`. Unused when
+    /// `chart_type != "tpo"`.
+    pub tpo_ib_periods_label: String,
     /// Precision display label (e.g. "Авто", "2 (0.00)")
     pub precision_label: String,
     /// Timezone display label (e.g., "(UTC+3) Москва")

@@ -191,6 +191,7 @@ impl ChartApp {
                                         panel_state.show_baseline = snap.show_baseline;
                                         panel_state.footprint_display = snap.footprint_display;
                                         panel_state.tick_intensity = snap.tick_intensity;
+                                        panel_state.tpo_display = snap.tpo_display;
                                         self.panels_store.chart_panel.insert(window.chart_panel_id, panel_state);
                                         // Restored drawings are written into the window's
                                         // bubble further below, once `auto_bid` is known
@@ -502,6 +503,7 @@ impl ChartApp {
                                     ps.show_baseline = snap.show_baseline;
                                     ps.footprint_display = snap.footprint_display;
                                     ps.tick_intensity = snap.tick_intensity;
+                                    ps.tpo_display = snap.tpo_display;
                                     panel_patches.push((window.chart_panel_id, ps));
                                     // Restore drawings into the window's current bubble
                                     // directly — no separate per-window DrawingManager

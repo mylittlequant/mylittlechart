@@ -20,8 +20,20 @@ use super::ChartRenderState;
 const LETTER_CELL_PX: f64 = 8.0;
 /// Pixel gap between adjacent session blocks.
 const SESSION_GAP_PX: f64 = 8.0;
-/// Height reserved above the profile body for the date header.
+/// Height of the date-header strip above the profile body when it is drawn.
 const DATE_HEADER_PX: f64 = 16.0;
+
+/// Vertical space (px) the date-header strip actually occupies — `0.0` when
+/// `TpoDisplayOptions::show_session_dates` is off (owner order: the header
+/// duplicates the time axis). The header is an overlay near `rect.y`
+/// independent of the row grid (rows map price → y across the FULL
+/// `chart_rect.height` via the shared viewport, same axis every other pane
+/// on the chart uses) — so "reclaiming" the space means simply not drawing
+/// the strip; no row ever loses vertical room to it. Extracted as a pure
+/// fn so the reclaim behavior is unit-testable without a `RenderContext`.
+fn header_space_px(show_session_dates: bool) -> f64 {
+    if show_session_dates { DATE_HEADER_PX } else { 0.0 }
+}
 /// Below this row height (px), individual letter glyphs are no longer
 /// legible — collapse the profile to solid row blocks instead (mirrors
 /// footprint's `MIN_BAR_WIDTH_PX`/`MIN_FONT_SIZE_PX` legibility gate,
@@ -32,9 +44,6 @@ const MIN_LEGIBLE_ROW_PX: f64 = 6.0;
 const MIN_LEGIBLE_CELL_PX: f64 = 3.0;
 /// Fixed strip width for the collapsed (no-letters) rendering regime.
 const COLLAPSED_BLOCK_PX: f64 = LETTER_CELL_PX * 3.0;
-/// First 2 chronological TPO periods (letters 'A' and 'B') define the
-/// Initial Balance range — canon Market Profile convention.
-const INITIAL_BALANCE_LETTERS: [char; 2] = ['A', 'B'];
 
 /// One session's resolved width regime — either a legible letter grid
 /// (possibly scaled down to fit the allotted slot) or a collapsed solid
@@ -223,6 +232,7 @@ fn render_session(
 ) {
     let price_scale = state.price_scale;
     let rect = &state.chart_rect;
+    let display = state.tpo_display;
 
     if session.rows.is_empty() { return; }
     // Cull sessions whose slot falls entirely outside the visible chart
@@ -256,16 +266,18 @@ fn render_session(
     ctx.set_font(&format!("{:.0}px monospace", (font_size * (cell_px / LETTER_CELL_PX)).clamp(6.0, 14.0)));
 
     // VA fill — light teal band from VAL to VAH.
-    let va_top_y = rect.y + state.viewport.price_to_y(
-        session.vah_price, price_scale.price_min, price_scale.price_max,
-    );
-    let va_bot_y = rect.y + state.viewport.price_to_y(
-        session.val_price, price_scale.price_min, price_scale.price_max,
-    );
-    let va_y = va_top_y.min(va_bot_y);
-    let va_h = (va_bot_y - va_top_y).abs().max(row_h);
-    ctx.set_fill_color("rgba(38, 166, 154, 0.12)");
-    ctx.fill_rect(x_origin, va_y, block_w, va_h);
+    if display.show_value_area {
+        let va_top_y = rect.y + state.viewport.price_to_y(
+            session.vah_price, price_scale.price_min, price_scale.price_max,
+        );
+        let va_bot_y = rect.y + state.viewport.price_to_y(
+            session.val_price, price_scale.price_min, price_scale.price_max,
+        );
+        let va_y = va_top_y.min(va_bot_y);
+        let va_h = (va_bot_y - va_top_y).abs().max(row_h);
+        ctx.set_fill_color("rgba(38, 166, 154, 0.12)");
+        ctx.fill_rect(x_origin, va_y, block_w, va_h);
+    }
 
     // Initial Balance overlay (canon-fix wave 2, item 6d) — the price range
     // spanned by the first 2 chronological TPO periods (letters 'A'/'B').
@@ -274,38 +286,44 @@ fn render_session(
     // rebucketed) `rows` (letters carry their chronological bucket identity
     // verbatim from `digdigdig3_station::derived`'s `alphabet[bi % 52]`
     // assignment, preserved through `rebucket_rows`) — no data-plane gap.
-    if let Some((ib_lo, ib_hi)) = initial_balance_range(rows) {
-        let ib_top_y = rect.y + state.viewport.price_to_y(ib_hi, price_scale.price_min, price_scale.price_max);
-        let ib_bot_y = rect.y + state.viewport.price_to_y(ib_lo, price_scale.price_min, price_scale.price_max);
-        let ib_y = ib_top_y.min(ib_bot_y);
-        let ib_h = (ib_bot_y - ib_top_y).abs().max(row_h);
-        ctx.set_stroke_color("rgba(255, 255, 255, 0.35)");
-        ctx.set_stroke_width(1.0);
-        ctx.set_line_dash(&[2.0, 2.0]);
-        ctx.stroke_rect(x_origin + 0.5, ib_y + 0.5, block_w - 1.0, ib_h - 1.0);
-        ctx.set_line_dash(&[]);
+    if display.show_initial_balance {
+        if let Some((ib_lo, ib_hi)) = initial_balance_range(rows, display.ib_periods) {
+            let ib_top_y = rect.y + state.viewport.price_to_y(ib_hi, price_scale.price_min, price_scale.price_max);
+            let ib_bot_y = rect.y + state.viewport.price_to_y(ib_lo, price_scale.price_min, price_scale.price_max);
+            let ib_y = ib_top_y.min(ib_bot_y);
+            let ib_h = (ib_bot_y - ib_top_y).abs().max(row_h);
+            ctx.set_stroke_color("rgba(255, 255, 255, 0.35)");
+            ctx.set_stroke_width(1.0);
+            ctx.set_line_dash(&[2.0, 2.0]);
+            ctx.stroke_rect(x_origin + 0.5, ib_y + 0.5, block_w - 1.0, ib_h - 1.0);
+            ctx.set_line_dash(&[]);
+        }
     }
 
     // POC row tint (yellow band).
     let poc_y = rect.y + state.viewport.price_to_y(
         session.poc_price, price_scale.price_min, price_scale.price_max,
     );
-    ctx.set_fill_color("rgba(255, 235, 59, 0.18)");
-    ctx.fill_rect(x_origin, poc_y, block_w, row_h);
+    if display.show_poc {
+        ctx.set_fill_color("rgba(255, 235, 59, 0.18)");
+        ctx.fill_rect(x_origin, poc_y, block_w, row_h);
+    }
 
     // Single-print rows (canon-fix wave 2, item 6c) — exactly 1 letter
     // touched this price level. Highlighted with a dashed border, same
     // visual language as footprint's single-print marker
     // (`chart_render/footprint.rs`'s `is_single_print` dashed-rect).
-    for (price, letters) in rows {
-        if letters.len() != 1 { continue; }
-        if !price.is_finite() { continue; }
-        let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
-        ctx.set_stroke_color("rgba(255, 255, 255, 0.45)");
-        ctx.set_stroke_width(1.0);
-        ctx.set_line_dash(&[3.0, 2.0]);
-        ctx.stroke_rect(x_origin + 0.5, y_top + 0.5, block_w - 1.0, row_h - 1.0);
-        ctx.set_line_dash(&[]);
+    if display.show_single_prints {
+        for (price, letters) in rows {
+            if letters.len() != 1 { continue; }
+            if !price.is_finite() { continue; }
+            let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
+            ctx.set_stroke_color("rgba(255, 255, 255, 0.45)");
+            ctx.set_stroke_width(1.0);
+            ctx.set_line_dash(&[3.0, 2.0]);
+            ctx.stroke_rect(x_origin + 0.5, y_top + 0.5, block_w - 1.0, row_h - 1.0);
+            ctx.set_line_dash(&[]);
+        }
     }
 
     if collapsed {
@@ -342,12 +360,14 @@ fn render_session(
     }
 
     // POC horizontal line spanning the block.
-    ctx.set_stroke_color("#ffd54f");
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x_origin, poc_y);
-    ctx.line_to(x_origin + block_w, poc_y);
-    ctx.stroke();
+    if display.show_poc {
+        ctx.set_stroke_color("#ffd54f");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x_origin, poc_y);
+        ctx.line_to(x_origin + block_w, poc_y);
+        ctx.stroke();
+    }
 
     // Poor High / Poor Low markers (canon-fix wave 2, item 6b) — the
     // session-extreme row (high or low) was touched by MORE than one TPO
@@ -356,48 +376,69 @@ fn render_session(
     // Drawn as a small triangle at the extreme row's outer edge, distinct
     // from single-print's dashed border (a poor extreme is never a single
     // print by definition — >1 letter).
-    ctx.set_text_align(uzor::render::TextAlign::Center);
-    if let Some(price) = poor_high_price(rows) {
-        let y_top = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max);
-        ctx.set_fill_color("#ff5252");
-        ctx.set_text_baseline(uzor::render::TextBaseline::Bottom);
-        ctx.fill_text("▲", x_origin + block_w * 0.5, y_top);
-    }
-    if let Some(price) = poor_low_price(rows) {
-        let y_bot = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max) + row_h;
-        ctx.set_fill_color("#ff5252");
-        ctx.set_text_baseline(uzor::render::TextBaseline::Top);
-        ctx.fill_text("▼", x_origin + block_w * 0.5, y_bot);
+    if display.show_poor_hl {
+        ctx.set_text_align(uzor::render::TextAlign::Center);
+        if let Some(price) = poor_high_price(rows) {
+            let y_top = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max);
+            ctx.set_fill_color("#ff5252");
+            ctx.set_text_baseline(uzor::render::TextBaseline::Bottom);
+            ctx.fill_text("▲", x_origin + block_w * 0.5, y_top);
+        }
+        if let Some(price) = poor_low_price(rows) {
+            let y_bot = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max) + row_h;
+            ctx.set_fill_color("#ff5252");
+            ctx.set_text_baseline(uzor::render::TextBaseline::Top);
+            ctx.fill_text("▼", x_origin + block_w * 0.5, y_bot);
+        }
     }
 
-    // Date header above the block (e.g. "Jun 17").
-    let header_y = rect.y + DATE_HEADER_PX * 0.5;
-    if header_y < rect.y + rect.height {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("rgba(176, 190, 197, 0.90)");
-        ctx.set_text_align(uzor::render::TextAlign::Center);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-        let label = format_session_date(session.open_time);
-        ctx.fill_text(&label, x_origin + block_w * 0.5, header_y);
+    // Date header above the block (e.g. "Jun 17") — owner order: off by
+    // default, the header duplicates the time axis. `header_space_px`
+    // reclaims the strip's vertical room when off (see its doc comment).
+    let header_space = header_space_px(display.show_session_dates);
+    if display.show_session_dates {
+        let header_y = rect.y + header_space * 0.5;
+        if header_y < rect.y + rect.height {
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color("rgba(176, 190, 197, 0.90)");
+            ctx.set_text_align(uzor::render::TextAlign::Center);
+            ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+            let label = format_session_date(session.open_time);
+            ctx.fill_text(&label, x_origin + block_w * 0.5, header_y);
+        }
     }
 }
 
-/// Initial Balance price range (canon-fix wave 2, item 6d) — `(low, high)`
-/// spanned by every row containing letter 'A' or 'B' (the first 2
-/// chronological TPO periods). `None` when there are no A/B rows yet (a
-/// brand-new session before its second period closes).
+/// The first `n` chronological TPO period letters ('A', 'B', 'C', ...) —
+/// the alphabet convention `digdigdig3_station::derived` assigns via
+/// `alphabet[bucket_index % 52]` (A-Z then a-z), so periods 1..=26 map
+/// 1:1 onto uppercase letters. `n` is clamped to 26 (the modal's IB-periods
+/// dropdown only ever offers 2/3/4, well inside that range — the clamp is
+/// a defensive floor, not a real limit in practice).
+fn first_n_period_letters(n: u8) -> Vec<char> {
+    let n = n.min(26);
+    (0..n).map(|i| (b'A' + i) as char).collect()
+}
+
+/// Initial Balance price range (canon-fix wave 2, item 6d; period count
+/// made configurable — owner-approved settings matrix, wave 1, item 7) —
+/// `(low, high)` spanned by every row containing one of the first `ib_periods`
+/// chronological TPO period letters (canon default 2 — periods 'A'/'B').
+/// `None` when no row carries any of those letters yet (a brand-new session
+/// before its `ib_periods`-th period closes).
 ///
 /// Takes a bare row slice (not `&TpoSession`) so callers can pass either the
 /// session's own rows or the display-step-rebucketed rows uniform-row-step
 /// (item A) renders from — letters carry their chronological identity
-/// verbatim through [`rebucket_rows`], so this still finds the same A/B rows
+/// verbatim through [`rebucket_rows`], so this still finds the same rows
 /// regardless of which grid the rows are bucketed at.
-fn initial_balance_range(rows: &[(f64, Vec<char>)]) -> Option<(f64, f64)> {
+fn initial_balance_range(rows: &[(f64, Vec<char>)], ib_periods: u8) -> Option<(f64, f64)> {
+    let ib_letters = first_n_period_letters(ib_periods);
     let mut lo: Option<f64> = None;
     let mut hi: Option<f64> = None;
     for (price, letters) in rows {
         if !price.is_finite() { continue; }
-        if !letters.iter().any(|c| INITIAL_BALANCE_LETTERS.contains(c)) { continue; }
+        if !letters.iter().any(|c| ib_letters.contains(c)) { continue; }
         lo = Some(lo.map_or(*price, |l: f64| l.min(*price)));
         hi = Some(hi.map_or(*price, |h: f64| h.max(*price)));
     }
@@ -461,13 +502,61 @@ mod tests {
             (103.0, "C"),
             (104.0, "CD"),
         ]);
-        assert_eq!(initial_balance_range(&session.rows), Some((100.0, 102.0)));
+        assert_eq!(initial_balance_range(&session.rows, 2), Some((100.0, 102.0)));
     }
 
     #[test]
     fn initial_balance_range_none_when_no_ab_rows() {
         let session = mk_session(vec![(100.0, "C"), (101.0, "D")]);
-        assert_eq!(initial_balance_range(&session.rows), None);
+        assert_eq!(initial_balance_range(&session.rows, 2), None);
+    }
+
+    #[test]
+    fn initial_balance_range_extends_with_3_periods() {
+        // ib_periods=3 pulls in 'C' rows too, widening the range past the
+        // 2-period result above.
+        let session = mk_session(vec![
+            (100.0, "A"),
+            (101.0, "AB"),
+            (102.0, "B"),
+            (103.0, "C"),
+            (104.0, "D"),
+        ]);
+        assert_eq!(initial_balance_range(&session.rows, 2), Some((100.0, 102.0)));
+        assert_eq!(initial_balance_range(&session.rows, 3), Some((100.0, 103.0)));
+    }
+
+    #[test]
+    fn initial_balance_range_extends_with_4_periods() {
+        let session = mk_session(vec![
+            (100.0, "A"),
+            (101.0, "B"),
+            (102.0, "C"),
+            (103.0, "D"),
+            (104.0, "E"),
+        ]);
+        assert_eq!(initial_balance_range(&session.rows, 4), Some((100.0, 103.0)));
+    }
+
+    #[test]
+    fn first_n_period_letters_builds_ascending_alphabet_prefix() {
+        assert_eq!(first_n_period_letters(2), vec!['A', 'B']);
+        assert_eq!(first_n_period_letters(3), vec!['A', 'B', 'C']);
+        assert_eq!(first_n_period_letters(4), vec!['A', 'B', 'C', 'D']);
+    }
+
+    // ── header_space_px (owner order: session-date header off by default,
+    // duplicates the time axis — space must be reclaimed when off) ───────
+
+    #[test]
+    fn header_space_reclaimed_when_session_dates_off() {
+        assert_eq!(header_space_px(false), 0.0);
+    }
+
+    #[test]
+    fn header_space_reserved_when_session_dates_on() {
+        assert_eq!(header_space_px(true), DATE_HEADER_PX);
+        assert!(header_space_px(true) > 0.0);
     }
 
     #[test]

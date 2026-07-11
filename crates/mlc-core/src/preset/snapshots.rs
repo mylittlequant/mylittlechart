@@ -196,6 +196,14 @@ pub struct ChartWindowSnapshot {
     /// pre-toggle render — no wicks for the bar family).
     #[serde(default)]
     pub bar_family_wicks: bool,
+    /// TPO (Market Profile) display toggles (session-date header / POC /
+    /// VA / single-prints / poor-HL / initial-balance / IB period count).
+    /// Mirrors `ChartPanelState::tpo_display`. Unused for every other
+    /// chart type. Additive field (2026-07-11); old presets deserialize
+    /// via `#[serde(default)]` and land on `TpoDisplayOptions::default()`
+    /// (pixel-identical to the pre-toggle render).
+    #[serde(default)]
+    pub tpo_display: crate::chart::render_data::TpoDisplayOptions,
     // --- Series visibility ---
     /// Show filled candlesticks.
     pub show_candles: bool,

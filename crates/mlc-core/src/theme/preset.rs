@@ -129,6 +129,26 @@ pub struct SeriesColors {
     // Footprint clusters (buy/sell volume text + heat fill)
     pub footprint_buy: &'static str,
     pub footprint_sell: &'static str,
+
+    // Renko bricks (fill wick lines keep global wick colors)
+    pub renko_up: &'static str,
+    pub renko_down: &'static str,
+
+    // Point & Figure columns (X / O glyphs)
+    pub pnf_x: &'static str,
+    pub pnf_o: &'static str,
+
+    // Three Line Break (san-sen-ashi) line fill
+    pub tlb_up: &'static str,
+    pub tlb_down: &'static str,
+
+    // Kagi (yang = thick line, yin = thin line)
+    pub kagi_yang: &'static str,
+    pub kagi_yin: &'static str,
+
+    // Hollow candles (bullish outline / bearish fill)
+    pub hollow_up: &'static str,
+    pub hollow_down: &'static str,
 }
 
 /// Chart-specific font settings
@@ -242,6 +262,21 @@ impl ChartTheme {
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
+
+                renko_up: "#26a69a",
+                renko_down: "#ef5350",
+
+                pnf_x: "#26a69a",
+                pnf_o: "#ef5350",
+
+                tlb_up: "#26a69a",
+                tlb_down: "#ef5350",
+
+                kagi_yang: "#26a69a",
+                kagi_yin: "#ef5350",
+
+                hollow_up: "#26a69a",
+                hollow_down: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
@@ -341,6 +376,21 @@ impl ChartTheme {
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
+
+                renko_up: "#26a69a",
+                renko_down: "#ef5350",
+
+                pnf_x: "#26a69a",
+                pnf_o: "#ef5350",
+
+                tlb_up: "#26a69a",
+                tlb_down: "#ef5350",
+
+                kagi_yang: "#26a69a",
+                kagi_yin: "#ef5350",
+
+                hollow_up: "#26a69a",
+                hollow_down: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
@@ -440,6 +490,21 @@ impl ChartTheme {
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
+
+                renko_up: "#00ff00",
+                renko_down: "#ff0000",
+
+                pnf_x: "#00ff00",
+                pnf_o: "#ff0000",
+
+                tlb_up: "#00ff00",
+                tlb_down: "#ff0000",
+
+                kagi_yang: "#00ff00",
+                kagi_yin: "#ff0000",
+
+                hollow_up: "#00ff00",
+                hollow_down: "#ff0000",
             },
             fonts: ChartFonts {
                 family: "Arial, sans-serif",
@@ -541,6 +606,21 @@ impl ChartTheme {
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
+
+                renko_up: "#ffffff",
+                renko_down: "#000000",
+
+                pnf_x: "#ffffff",
+                pnf_o: "#000000",
+
+                tlb_up: "#ffffff",
+                tlb_down: "#000000",
+
+                kagi_yang: "#ffffff",
+                kagi_yin: "#000000",
+
+                hollow_up: "#ffffff",
+                hollow_down: "#000000",
             },
             fonts: ChartFonts {
                 family: "Arial, sans-serif",
@@ -640,6 +720,21 @@ impl ChartTheme {
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
+
+                renko_up: "#26a69a",
+                renko_down: "#ef5350",
+
+                pnf_x: "#26a69a",
+                pnf_o: "#ef5350",
+
+                tlb_up: "#26a69a",
+                tlb_down: "#ef5350",
+
+                kagi_yang: "#26a69a",
+                kagi_yin: "#ef5350",
+
+                hollow_up: "#26a69a",
+                hollow_down: "#ef5350",
             },
             fonts: ChartFonts {
                 family: "'Trebuchet MS', Arial, sans-serif",
@@ -1337,6 +1432,62 @@ impl UITheme {
             self.chart.grid_line_horz.unwrap_or(self.chart.grid_line)
         } else {
             self.chart.grid_line_vert.unwrap_or(self.chart.grid_line)
+        }
+    }
+}
+
+#[cfg(test)]
+mod per_type_color_tests {
+    //! Completeness check for the per-type color identity fields (owner-
+    //! approved matrix wave 2, 2026-07-11): every `ChartTheme` preset must
+    //! define non-empty renko/pnf/tlb/kagi/hollow colors, and each pair
+    //! must default to that SAME preset's own candle up/down colors so the
+    //! new fields don't change any existing chart's appearance until a
+    //! user edits a swatch.
+    use super::ChartTheme;
+
+    fn all_presets() -> Vec<ChartTheme> {
+        vec![
+            ChartTheme::dark(),
+            ChartTheme::light(),
+            ChartTheme::high_contrast(),
+            ChartTheme::high_contrast_mono(),
+            ChartTheme::mascot(),
+        ]
+    }
+
+    #[test]
+    fn every_preset_defines_non_empty_per_type_colors() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            for (label, up, down) in [
+                ("renko", s.renko_up, s.renko_down),
+                ("pnf", s.pnf_x, s.pnf_o),
+                ("tlb", s.tlb_up, s.tlb_down),
+                ("kagi", s.kagi_yang, s.kagi_yin),
+                ("hollow", s.hollow_up, s.hollow_down),
+            ] {
+                assert!(!up.is_empty(), "{}: '{}' up/x/yang color is empty", theme.name, label);
+                assert!(!down.is_empty(), "{}: '{}' down/o/yin color is empty", theme.name, label);
+            }
+        }
+    }
+
+    #[test]
+    fn defaults_derive_from_this_presets_own_candle_colors() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            let (up, down) = (s.candle_up_body, s.candle_down_body);
+            assert_eq!(s.renko_up, up, "{}: renko_up should default to candle_up_body", theme.name);
+            assert_eq!(s.renko_down, down, "{}: renko_down should default to candle_down_body", theme.name);
+            assert_eq!(s.pnf_x, up, "{}: pnf_x should default to candle_up_body", theme.name);
+            assert_eq!(s.pnf_o, down, "{}: pnf_o should default to candle_down_body", theme.name);
+            assert_eq!(s.tlb_up, up, "{}: tlb_up should default to candle_up_body", theme.name);
+            assert_eq!(s.tlb_down, down, "{}: tlb_down should default to candle_down_body", theme.name);
+            assert_eq!(s.kagi_yang, up, "{}: kagi_yang should default to candle_up_body", theme.name);
+            assert_eq!(s.kagi_yin, down, "{}: kagi_yin should default to candle_down_body", theme.name);
+            assert_eq!(s.hollow_up, up, "{}: hollow_up should default to candle_up_body", theme.name);
+            assert_eq!(s.hollow_down, down, "{}: hollow_down should default to candle_down_body", theme.name);
         }
     }
 }

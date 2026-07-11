@@ -58,9 +58,9 @@ pub fn draw_renko(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let body_x = cx - bar_w * 0.5;
 
         if brick.up {
-            ctx.set_fill_color(&theme.candle_up);
+            ctx.set_fill_color(&theme.renko_up);
         } else {
-            ctx.set_fill_color(&theme.candle_down);
+            ctx.set_fill_color(&theme.renko_down);
         }
         ctx.fill_rect(body_x, body_y, bar_w.max(2.0), body_h);
 

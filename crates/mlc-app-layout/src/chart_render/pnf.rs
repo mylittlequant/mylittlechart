@@ -56,7 +56,7 @@ pub fn draw_pnf(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     for i in start..end {
         let col = &columns[i];
         let cx = viewport.bar_to_x(i) + rect.x;
-        let color = if col.is_x { &theme.candle_up } else { &theme.candle_down };
+        let color = if col.is_x { &theme.pnf_x } else { &theme.pnf_o };
 
         if tiny {
             let y_top = rect.y + viewport.price_to_y(
