@@ -79,6 +79,22 @@ impl Viewport {
         ((self.chart_width / self.bar_spacing) as usize).max(1)
     }
 
+    /// Maximum bars this viewport can EVER show at once — the fit at full
+    /// zoom-out (`chart_width / MIN_BAR_SPACING`). This is the canonical
+    /// COLD-FILL demand target (unified demand doctrine 2026-07-12): every
+    /// data source (kline REST, trade REST, trade archive) warms until the
+    /// ACTIVE series holds this many bars or the source runs dry — the
+    /// visualization need is identical regardless of how bars are fed.
+    /// `0` before layout (`chart_width == 0`), which callers treat as
+    /// "no demand yet".
+    #[inline]
+    pub fn max_fit_bars(&self) -> usize {
+        if self.chart_width <= 0.0 {
+            return 0;
+        }
+        (self.chart_width / Self::MIN_BAR_SPACING).ceil() as usize
+    }
+
     /// Convert f64 view_start to safe usize index (clamped to valid range)
     #[inline]
     pub fn view_start_idx(&self) -> usize {

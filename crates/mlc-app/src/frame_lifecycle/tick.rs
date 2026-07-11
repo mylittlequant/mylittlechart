@@ -578,7 +578,7 @@ impl ChartApp {
             // list above (trades instead of "1m" klines) — mirrors it
             // exactly, including the `LayerBackfilled{layer:"trades"}`
             // re-fold-in-place consumer (`tick_writers`).
-            let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> = Vec::new();
+            let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, mlc_core::ids::BubbleId)> = Vec::new();
             let max_loaded = self.core.user().profile().domain.data_load.max_loaded_bars;
 
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
@@ -687,7 +687,22 @@ impl ChartApp {
                 // instead of a one-shot fixed-size page fetch.
                 let visible = window.viewport().visible_bars() as f64;
                 let threshold = (visible * 0.20).max(5.0);
-                if window.viewport().view_start > threshold { continue; }
+                let edge_pressure = window.viewport().view_start <= threshold;
+                // Unified demand doctrine (2026-07-12): cold-fill to the
+                // full-zoom-out fit. The 20% edge trigger only fires while
+                // the user hugs the left edge; a fresh chart sits at the
+                // right edge with only the seed loaded (Phase A = 300
+                // bars, trade ladder = the Hour rung) and would never
+                // deepen on its own. Demand is expressed in bars of the
+                // ACTIVE series — the same unit for every source — and the
+                // engines' single-flight/exhausted/RAM-cap latches make
+                // this per-tick re-trigger a cheap no-op while a flight is
+                // running or the source is dry.
+                let cold_fill = {
+                    let need = window.viewport().max_fit_bars();
+                    need > 0 && bar_count_scroll < need
+                };
+                if !edge_pressure && !cold_fill { continue; }
 
                 if max_loaded > 0 && bar_count_scroll >= max_loaded as usize { continue; }
 
@@ -709,6 +724,7 @@ impl ChartApp {
                         win_sym_sc.clone(),
                         win_exch_sc.clone(),
                         *win_at_sc,
+                        bid_scroll,
                     ));
                 } else {
                     self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
@@ -766,17 +782,42 @@ impl ChartApp {
                 self.core.bridge_handle().on_kline_scroll_pressure(eid, &symbol, &one_minute, at);
             }
 
-            // Unified-data-plane Э4: trade-fold-type scroll-left pressure
-            // feeds the `BackfillEngine` ramp over the shared trade layer.
-            // No clear, no teardown, no in-flight bookkeeping — deeper pages
-            // arrive progressively via `LayerBackfilled{layer:"trades"}`,
-            // which re-folds in place (`tick_writers`' `LayerBackfilled` arm)
-            // — mirrors the fold-type loop above.
-            for (_cid_req, symbol, exchange, account_type) in trade_fold_scroll_pressure_requests {
+            // Unified-data-plane Э4 + unified demand doctrine (2026-07-12):
+            // trade-fold-type demand (scroll-left edge OR cold-fill to the
+            // full-zoom-out fit) deepens the shared trade layer in GATED
+            // LADDER CHUNKS via `ensure_trade_backfill`, NOT the one-group
+            // `on_trade_scroll_pressure` entry — a pressure flight per tick
+            // would fire its per-flight terminal refold ~1/s over a deep
+            // layer, the same main-thread starvation class as the
+            // 2026-07-12 tick-freeze incident. Shape: inside the first day
+            // the auto ladder walks its own rungs (Hour→12h→24h, one
+            // boundary refold each — progressive render); past a day, one
+            // day-sized chunk per armed demand (one terminal refold per
+            // chunk). Engine latches (in-flight / venue-dry / RAM cap) make
+            // the per-tick re-arm a no-op while a chunk runs or the source
+            // is done.
+            for (_cid_req, symbol, exchange, account_type, bid_req) in trade_fold_scroll_pressure_requests {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                self.core.bridge_handle().on_trade_scroll_pressure(eid, &symbol, at);
+                let Some(oldest_ts) = self.core.bubbles().trade_layer(bid_req).and_then(|l| l.oldest_ts()) else {
+                    // Layer not seeded yet — the subscribe-time Hour rung is
+                    // still in flight; nothing to deepen from.
+                    continue;
+                };
+                let now_wall_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let have_window_ms = (now_wall_ms - oldest_ts).max(0);
+                let demand = if have_window_ms < 86_400_000 {
+                    // First day: re-open the auto ladder up to the Day rung.
+                    mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(86_400_000) }
+                } else {
+                    // Beyond a day: explicit chunk one day past what we hold.
+                    mlc_backend_data_bridge::TradeDemand { window_ms: Some(have_window_ms + 86_400_000), auto_ceiling_ms: None }
+                };
+                self.core.bridge_handle().ensure_trade_backfill(eid, &symbol, at, Some(demand));
             }
         }
 

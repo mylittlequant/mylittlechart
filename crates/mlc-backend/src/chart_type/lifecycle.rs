@@ -370,14 +370,21 @@ impl BackendCore {
         // (see its doc comment) — calling it again here is a cheap no-op
         // when another window/indicator already opened the same trade sub.
         self.subscribe_trades(exchange_id, symbol, account_type);
-        // History: time-ladder cutover (owner doctrine 2026-07-12) — the
-        // trade layer's ramp goal is ALWAYS the engine's own ladder
-        // (hour → 12h → day, then day-by-day on scroll demand), never a
-        // caller-supplied point count. `_derived_trade_target` (still
-        // threaded through from the profile for signature/persistence
-        // compatibility — see its field doc comment) is intentionally NOT
-        // read here anymore.
-        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
+        // History: unified demand doctrine (2026-07-12). Subscribe-time
+        // warm is ONLY the fast-first-paint Hour rung; real depth is driven
+        // by the viewport cold-fill loop (`tick.rs` Layer 3: while the
+        // ACTIVE series holds fewer bars than the full-zoom-out fit, it
+        // re-opens the ladder to Day and then arms day-by-day chunks —
+        // "loaded the seed, not enough → backfill", identical for every
+        // source). TPO is the one exception: its session ring needs the
+        // whole day regardless of what fits on screen.
+        // `_derived_trade_target` (legacy point count, kept for signature
+        // compatibility) is intentionally NOT read.
+        let auto_ceiling_ms: i64 = if matches!(chart_type, "tpo") { 86_400_000 } else { 3_600_000 };
+        self.bridge.ensure_trade_backfill(
+            exchange_id, symbol, account_type,
+            Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(auto_ceiling_ms) }),
+        );
 
         if matches!(chart_type, "tpo") && matches!(tpo_source, mlc_backend_data_bridge::TpoSource::Kline1m) {
             let one_minute = Timeframe::new("1m", 60_000);
@@ -712,14 +719,22 @@ impl BackendCore {
         exchange_id: ExchangeId,
         symbol: &str,
         account_type: AccountType,
-        _derived_trade_target: Option<u32>,
+        chart_tf_ms: Option<i64>,
     ) -> Option<BubbleEvent> {
         self.subscribe_trades(exchange_id, symbol, account_type);
-        // Time-ladder cutover (owner doctrine 2026-07-12) — see
-        // `subscribe_trade_fold_chart_type`'s matching comment:
-        // `_derived_trade_target` is no longer the ramp goal, `None`
-        // (ladder default) is always passed instead.
-        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
+        // Time-ladder, TF-scaled (owner correction 2026-07-12) — see
+        // `subscribe_trade_fold_chart_type`'s matching comment. The CVD
+        // companion's natural bar width is the HOST CHART's timeframe
+        // (`chart_tf_ms`, passed by the mlc-app caller); unknown TF falls
+        // back to 1m (the shallowest, 1h-clamped ceiling — scroll demand
+        // deepens from there).
+        let auto_ceiling_ms = mlc_backend_data_bridge::backfill_engine::trade_auto_ceiling_ms(
+            chart_tf_ms.unwrap_or(60_000),
+        );
+        self.bridge.ensure_trade_backfill(
+            exchange_id, symbol, account_type,
+            Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(auto_ceiling_ms) }),
+        );
 
         let mut fold = crate::bubble::TradeFoldRuntime::new(
             "cvd", crate::bubble::FoldParams::default(), mlc_backend_data_bridge::TpoSource::TradeBucket,

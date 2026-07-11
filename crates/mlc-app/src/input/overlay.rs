@@ -48,8 +48,14 @@ impl ChartApp {
         // off right here, and the reseed output (if any) is applied via the
         // returned event.
         if let Some(bid) = self.bubble_for_chart(cid) {
-            let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
-            if let Some(ev) = self.core.subscribe_cvd_fold(bid, exchange_id, &symbol, at_dig3, Some(derived_target)) {
+            // TF-scaled trade-history ceiling (owner correction 2026-07-12):
+            // the CVD companion warms `~180 × TF` of tape, clamped 1h..24h —
+            // scroll demand deepens past it. Replaces the legacy
+            // `derived_trade_target` point count.
+            let chart_tf_ms = self.timeframe_for_chart(cid)
+                .filter(|tf| !tf.is_tick())
+                .map(|tf| tf.interval_ms);
+            if let Some(ev) = self.core.subscribe_cvd_fold(bid, exchange_id, &symbol, at_dig3, chart_tf_ms) {
                 let now_ms = web_time::SystemTime::now()
                     .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default()

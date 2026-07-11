@@ -1239,7 +1239,17 @@ impl BackendCore {
         loop {
             let update = match rx.try_recv() {
                 Ok(u) => u,
-                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                    // Lag = updates were DROPPED (main thread starved —
+                    // incident 2026-07-12). The receiver keeps working
+                    // (tokio repositions it), but make the drop visible
+                    // instead of silent: dlog + mark every trade-fed fold
+                    // bubble refold-owed so the next `stage_boundary`
+                    // sweep resynthesizes from the raw layers.
+                    mlc_backend_data_bridge::dlog!("[tick_writers] broadcast Lagged: {} updates dropped", n);
+                    self.bubbles_mut().mark_all_refold_dirty();
+                    continue;
+                }
                 Err(_) => break,
             };
 
@@ -1735,7 +1745,7 @@ impl BackendCore {
                 // dirty, so the layer's final state is never left stale. One
                 // shared clock read per event (not per bubble) keeps the
                 // debounce window consistent across the whole sweep.
-                LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, .. } => {
+                LiveUpdate::LayerBackfilled { exchange_id, symbol, account_type, layer, exhausted, stage_boundary, .. } => {
                     let refold_now = web_time::Instant::now();
                     if layer == "kline:1m" {
                         let at_label = account_type.short_label();
@@ -1818,8 +1828,29 @@ impl BackendCore {
                             // snapshot and are the same "this bubble just
                             // got a heavier reseed" event from the main
                             // thread's point of view.
+                            //
+                            // STAGE-BOUNDARY GATE (incident 2026-07-12): a
+                            // full trade-fold reseed over a deep layer per
+                            // page GROUP (up to 2/s under the 500ms
+                            // debounce) starved the wasm main thread — the
+                            // drain lagged, tokio broadcast dropped to
+                            // Lagged, live kline/trade application died.
+                            // Mid-rung pages now only mark the bubble
+                            // dirty; the reseed runs at ladder-rung
+                            // boundaries / flight end (`stage_boundary`,
+                            // guaranteed terminal flush per flight), while
+                            // live ticks keep folding incrementally via
+                            // `on_live_trade`. The first-ever refold after
+                            // install still runs immediately (cold paint).
                             let should_refold = self.bubbles_mut()
-                                .with_bubble_mut(bid, |b| b.should_refold_now(exhausted, refold_now))
+                                .with_bubble_mut(bid, |b| {
+                                    if stage_boundary || exhausted || b.last_refold_at.is_none() {
+                                        b.should_refold_now(true, refold_now)
+                                    } else {
+                                        b.refold_dirty = true;
+                                        false
+                                    }
+                                })
                                 .unwrap_or(true);
                             if !should_refold { continue; }
                             let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = match self.bubbles().trade_layer(bid) {
@@ -2270,15 +2301,19 @@ impl BackendCore {
         account_type: AccountType,
     ) -> Option<SharedTradeSeries> {
         let handle = self.bridge.subscribe_trades(exchange_id, symbol, account_type);
-        // Unified-data-plane Э2, time-ladder cutover (owner doctrine
-        // 2026-07-12): warm the raw trade layer with one shallow page
-        // immediately on activation so the layer has depth from the first
-        // frame, instead of only accumulating from this point forward via
-        // live ticks. `None` demand = engine's own ladder default
-        // (auto-advance Hour → HalfDay → Day, no explicit deeper floor);
-        // this call only seeds the FIRST page (single-flight guard makes it
-        // a no-op if a backfill for this key is already running).
-        self.bridge.ensure_trade_backfill(exchange_id, symbol, account_type, None);
+        // Unified-data-plane Э2, TF-scaled ladder (owner correction
+        // 2026-07-12): warm the raw trade layer immediately on activation
+        // so the layer has depth from the first frame, but ONLY up to the
+        // 1h floor — a bare trade subscription has no fold consumer and
+        // therefore no business auto-pulling deeper tape. Fold subscribers
+        // (`subscribe_trade_fold_chart_type` / `subscribe_cvd_fold`) widen
+        // the same key's ceiling to their own TF-scaled value; scroll
+        // demand goes deeper still. Single-flight guard makes this a no-op
+        // if a backfill for this key is already running.
+        self.bridge.ensure_trade_backfill(
+            exchange_id, symbol, account_type,
+            Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(3_600_000) }),
+        );
         handle
     }
 

@@ -482,6 +482,18 @@ pub enum LiveUpdate {
         /// perfectly-satisfied targets where deeper history in fact exists
         /// on the venue.
         exhausted: bool,
+        /// `true` when this page is a REFOLD POINT for heavy consumers: a
+        /// trade-ladder rung floor was just reached (hour / 12h / day /
+        /// explicit scroll demand satisfied), the key latched
+        /// (`exhausted`/RAM cap), or the flight ended (terminal flush).
+        /// Mid-rung streaming pages carry `false` — the `tick_writers`
+        /// trade refold sweep SKIPS those (marks the bubble `refold_dirty`
+        /// and waits), because a full trade-fold reseed over a deep layer
+        /// on every page group is what starved the wasm main thread and
+        /// `Lagged`-killed live updates (incident 2026-07-12). Kline pages
+        /// always carry `true` (kline refolds are cheap; their own 500ms
+        /// debounce is sufficient).
+        stage_boundary: bool,
     },
 }
 

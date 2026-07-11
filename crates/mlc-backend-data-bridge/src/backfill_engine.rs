@@ -213,8 +213,29 @@ impl TradeLadderStage {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TradeDemand {
     /// Depth requested, in milliseconds back from "now". `None` = ladder
-    /// default (auto-advance to `Day`, no explicit deeper floor).
+    /// default (auto-advance bounded by `auto_ceiling_ms`, no explicit
+    /// deeper floor).
     pub window_ms: Option<i64>,
+    /// Ceiling for the AUTO ladder, in milliseconds back from "now" — the
+    /// ladder never auto-advances its floor past `now − ceiling`. Derived
+    /// from the consumer's timeframe/fold interval via
+    /// [`trade_auto_ceiling_ms`] (a 1m footprint has no business
+    /// auto-pulling 24h of tape — owner correction 2026-07-12). Deepest
+    /// ceiling wins across consumers sharing one key; `None` = no opinion
+    /// (keeps whatever ceiling the key already has — a fresh key with no
+    /// ceiling at all auto-advances to `Day`, the legacy behavior).
+    /// Explicit demand (`window_ms` / scroll pressure) IGNORES the
+    /// ceiling — scroll can always go deeper.
+    pub auto_ceiling_ms: Option<i64>,
+}
+
+/// TF-scaled ceiling for the auto trade ladder: roughly a screenful of
+/// bars (~180) at `unit_ms` per bar, clamped to `[1h, 24h]`. `unit_ms` is
+/// the consumer's natural bar width — fold `interval_ms` for footprint,
+/// chart TF for the CVD companion; consumers with no time-shaped unit
+/// (tick/imbalance bars, `unit_ms == 0`) clamp up to the 1h minimum.
+pub fn trade_auto_ceiling_ms(unit_ms: i64) -> i64 {
+    unit_ms.saturating_mul(180).clamp(3_600_000, 86_400_000)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -292,6 +313,11 @@ pub struct RampState {
     /// later caller widens `target_ts` further; re-arming would just spend
     /// a round-trip re-hitting the same cap).
     pub ram_capped: bool,
+    /// Trade layer only: auto-ladder ceiling in ms back from "now" —
+    /// see [`TradeDemand::auto_ceiling_ms`]. Deepest wins
+    /// ([`Self::widen_auto_ceiling`]); `None` = uncapped auto ladder
+    /// (legacy: auto-advance all the way to `Day`).
+    pub auto_ceiling_ms: Option<i64>,
 }
 
 impl Default for RampState {
@@ -311,6 +337,7 @@ impl Default for RampState {
             ladder_stage: None,
             flight_now_ms: None,
             ram_capped: false,
+            auto_ceiling_ms: None,
         }
     }
 }
@@ -589,16 +616,33 @@ impl RampState {
         self.flight_now_ms = Some(now_ms);
         if self.ladder_stage.is_none() {
             self.ladder_stage = Some(TradeLadderStage::Hour);
-            self.target_ts = Some(TradeLadderStage::Hour.floor_ms(now_ms));
+            let mut floor = TradeLadderStage::Hour.floor_ms(now_ms);
+            if let Some(ceiling) = self.auto_ceiling_ms {
+                floor = floor.max(now_ms - ceiling);
+            }
+            self.target_ts = Some(floor);
         }
+    }
+
+    /// Trade layer only: adopt a (possibly wider) auto-ladder ceiling —
+    /// deepest wins across consumers sharing this key (a 1h footprint and
+    /// a 1m CVD on the same instrument → the 1h consumer's 24h ceiling
+    /// governs). See [`TradeDemand::auto_ceiling_ms`].
+    pub fn widen_auto_ceiling(&mut self, ceiling_ms: i64) {
+        self.auto_ceiling_ms = Some(self.auto_ceiling_ms.map_or(ceiling_ms, |cur| cur.max(ceiling_ms)));
     }
 
     /// Trade layer only: advance the ladder to the next auto rung if the
     /// current rung's floor has been reached and an auto rung exists past
     /// it (`Hour` → `HalfDay` → `Day`; `Day`/`Deep` never auto-advance).
+    /// Each rung's floor is clamped by [`Self::auto_ceiling_ms`] — once the
+    /// clamped next floor would not deepen the current `target_ts`, the
+    /// ladder is at its ceiling and reports no advance (a 1m consumer's
+    /// ~3h ceiling stops the ladder mid-`HalfDay`; a later wider ceiling
+    /// via [`Self::widen_auto_ceiling`] re-opens it).
     /// Returns `true` iff it advanced (caller keeps looping); `false` means
     /// either the floor isn't reached yet, or the ladder is already at its
-    /// auto-advance ceiling (`Day`) with no explicit deeper demand.
+    /// auto-advance ceiling with no explicit deeper demand.
     pub fn advance_ladder_if_reached(&mut self) -> bool {
         if self.exhausted || self.ram_capped || !self.ladder_floor_reached() {
             return false;
@@ -606,8 +650,15 @@ impl RampState {
         let Some(stage) = self.ladder_stage else { return false; };
         let Some(now_ms) = self.flight_now_ms else { return false; };
         let Some(next) = stage.next_auto() else { return false; };
+        let mut next_floor = next.floor_ms(now_ms);
+        if let Some(ceiling) = self.auto_ceiling_ms {
+            next_floor = next_floor.max(now_ms - ceiling);
+        }
+        if self.target_ts.is_some_and(|cur| cur <= next_floor) {
+            return false;
+        }
         self.ladder_stage = Some(next);
-        self.target_ts = Some(next.floor_ms(now_ms));
+        self.target_ts = Some(next_floor);
         true
     }
 
@@ -876,7 +927,7 @@ async fn run_kline_ramp(
             let _ = tx.send(LiveUpdate::LayerBackfilled {
                 exchange_id, symbol: symbol_str.clone(), account_type,
                 layer: LayerId::Kline(tf_name.clone()).wire_label(),
-                prepended: 0, exhausted: true,
+                prepended: 0, exhausted: true, stage_boundary: true,
             });
             break 'run;
         }
@@ -920,7 +971,7 @@ async fn run_kline_ramp(
         let _ = tx.send(LiveUpdate::LayerBackfilled {
             exchange_id, symbol: symbol_str.clone(), account_type,
             layer: LayerId::Kline(tf_name.clone()).wire_label(),
-            prepended, exhausted: venue_wall,
+            prepended, exhausted: venue_wall, stage_boundary: true,
         });
 
         if venue_wall {
@@ -978,6 +1029,7 @@ impl DataBridge {
         let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
         let now_ms = crate::backfill_engine::now_ms();
         let window_ms = demand.and_then(|d| d.window_ms);
+        let auto_ceiling_ms = demand.and_then(|d| d.auto_ceiling_ms);
 
         let should_start = self.backfill_engine().with_state(&key, |state| {
             // Fix 1 (chart-type-engine-consolidation B1), ts-ladder shape:
@@ -985,7 +1037,15 @@ impl DataBridge {
             // fresh key, otherwise just refreshes `flight_now_ms`), then
             // widen the floor if the caller asked for a deeper window than
             // the ladder's current rung already covers.
+            if let Some(ceiling) = auto_ceiling_ms {
+                state.widen_auto_ceiling(ceiling);
+            }
             state.begin_trade_flight(now_ms);
+            // A wider ceiling from a later consumer must be able to re-open
+            // a ladder that already stopped at a smaller consumer's ceiling
+            // (1m footprint stopped at ~3h, then a 1h chart opens the same
+            // instrument → its 24h ceiling deepens the same key).
+            state.advance_ladder_if_reached();
             if let Some(window_ms) = window_ms {
                 state.require_target_ts(now_ms - window_ms);
             }
@@ -1012,13 +1072,14 @@ impl DataBridge {
 
     /// Scroll-pressure entry for the trade layer (unified-data-plane Э2/Э4)
     /// — same doctrine as [`Self::on_kline_scroll_pressure`], mirrored for
-    /// trades: fires a pressure signal that escalates the ramp GROUP size
-    /// (rate, not depth) and ignores `target_ts` entirely (unbounded until
-    /// the venue itself goes dry). A caller that wants to DEEPEN the
-    /// floor (rather than just re-fire the current one) calls
-    /// [`crate::backfill_engine::RampState::require_target_ts`] via
-    /// [`Self::ensure_trade_backfill`] with an explicit `TradeDemand`
-    /// first — this entrypoint alone never changes `target_ts`.
+    /// trades: fires a pressure signal that escalates the ramp GROUP size,
+    /// AND (owner doctrine 2026-07-12, "day by day, reacting to backfill
+    /// needs") arms DEPTH: once the current floor is met, each pressure
+    /// event widens `target_ts` one day past the oldest loaded point via
+    /// [`crate::backfill_engine::RampState::require_target_ts`] — this is
+    /// the ONLY path past the auto ladder's TF-scaled ceiling. While the
+    /// current floor is still being walked, pressure only re-fires groups
+    /// (rate), never stacks further demand.
     pub fn on_trade_scroll_pressure(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
         let now_ms = crate::backfill_engine::now_ms();
@@ -1026,6 +1087,14 @@ impl DataBridge {
         let should_start = self.backfill_engine().with_state(&key, |state| {
             state.begin_trade_flight(now_ms);
             state.record_pressure(web_time::Instant::now());
+            // Scroll DEPTH: floor met → arm one more day back from the
+            // oldest loaded trade. `require_target_ts` itself refuses on a
+            // latched (exhausted/RAM-capped) key.
+            if !state.wants_more_ts(true) {
+                if let Some(oldest) = state.oldest_seen_ts {
+                    state.require_target_ts(oldest - 86_400_000);
+                }
+            }
             if state.in_flight || state.exhausted || state.ram_capped {
                 return false;
             }
@@ -1236,7 +1305,7 @@ async fn run_archive_group(
             engine.with_state(key, |s| s.exhausted = true);
             let _ = tx.send(LiveUpdate::LayerBackfilled {
                 exchange_id, symbol: symbol_str.to_string(), account_type,
-                layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true, stage_boundary: true,
             });
             break;
         };
@@ -1264,7 +1333,7 @@ async fn run_archive_group(
                 engine.with_state(key, |s| s.exhausted = true);
                 let _ = tx.send(LiveUpdate::LayerBackfilled {
                     exchange_id, symbol: symbol_str.to_string(), account_type,
-                    layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                    layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true, stage_boundary: true,
                 });
                 break;
             }
@@ -1277,7 +1346,7 @@ async fn run_archive_group(
                     engine.with_state(key, |s| s.exhausted = true);
                     let _ = tx.send(LiveUpdate::LayerBackfilled {
                         exchange_id, symbol: symbol_str.to_string(), account_type,
-                        layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                        layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true, stage_boundary: true,
                     });
                     break;
                 }
@@ -1332,9 +1401,10 @@ fn emit_archive_day_page(
             exchange_id, account_type, symbol: symbol.to_string(), trades: wire,
         });
     }
+    let stage_boundary = exhausted || trade_stage_boundary(engine, key);
     let _ = tx.send(LiveUpdate::LayerBackfilled {
         exchange_id, symbol: symbol.to_string(), account_type,
-        layer: LayerId::Trades.wire_label(), prepended, exhausted,
+        layer: LayerId::Trades.wire_label(), prepended, exhausted, stage_boundary,
     });
 }
 
@@ -1520,7 +1590,7 @@ async fn run_trade_ramp(
                 engine.with_state(&key, |s| s.exhausted = true);
                 let _ = tx.send(LiveUpdate::LayerBackfilled {
                     exchange_id, symbol: symbol_str.clone(), account_type,
-                    layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true,
+                    layer: LayerId::Trades.wire_label(), prepended: 0, exhausted: true, stage_boundary: true,
                 });
                 break;
             }
@@ -1645,7 +1715,28 @@ async fn run_trade_ramp(
     break 'run;
     }
 
+    // Terminal flush: guarantee exactly one `stage_boundary` sweep per
+    // flight no matter how it ended (transient page Err break, pressure
+    // one-group flight, RAM cap, ceiling stop) — flushes any bubbles the
+    // mid-rung pages left `refold_dirty`, so the layer's final state is
+    // never left unrendered. `exhausted` mirrors the latch (idempotent for
+    // the depth-badge consumer — `set_history_depth` dedups).
+    let final_exhausted = engine.with_state(&key, |s| s.exhausted);
+    let _ = tx.send(LiveUpdate::LayerBackfilled {
+        exchange_id, symbol: symbol_str.clone(), account_type,
+        layer: LayerId::Trades.wire_label(), prepended: 0,
+        exhausted: final_exhausted, stage_boundary: true,
+    });
+
     engine.with_state(&key, RampState::end_flight);
+}
+
+/// `stage_boundary` for a trade-layer `LayerBackfilled` send — read AFTER
+/// the page was recorded: the rung/demand floor is reached, or the key
+/// latched. Mid-rung streaming pages read `false`; the page that completes
+/// a rung naturally reads `true` (see the field's doc on the event).
+fn trade_stage_boundary(engine: &BackfillEngine, key: &BackfillKey) -> bool {
+    engine.with_state(key, |s| s.exhausted || s.ram_capped || !s.wants_more_ts(true))
 }
 
 fn emit_trade_page(
@@ -1672,9 +1763,10 @@ fn emit_trade_page(
             exchange_id, account_type, symbol: symbol.to_string(), trades: wire,
         });
     }
+    let stage_boundary = exhausted || trade_stage_boundary(engine, key);
     let _ = tx.send(LiveUpdate::LayerBackfilled {
         exchange_id, symbol: symbol.to_string(), account_type,
-        layer: LayerId::Trades.wire_label(), prepended, exhausted,
+        layer: LayerId::Trades.wire_label(), prepended, exhausted, stage_boundary,
     });
 }
 
@@ -1705,9 +1797,10 @@ fn emit_trade_agg_page(
             exchange_id, account_type, symbol: symbol.to_string(), trades: wire,
         });
     }
+    let stage_boundary = exhausted || trade_stage_boundary(engine, key);
     let _ = tx.send(LiveUpdate::LayerBackfilled {
         exchange_id, symbol: symbol.to_string(), account_type,
-        layer: LayerId::Trades.wire_label(), prepended, exhausted,
+        layer: LayerId::Trades.wire_label(), prepended, exhausted, stage_boundary,
     });
 }
 

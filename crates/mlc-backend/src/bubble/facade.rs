@@ -536,6 +536,20 @@ impl<'a> BubblesMut<'a> {
         self.store.bubble_mut(bid).map(f)
     }
 
+    /// Mark every bubble refold-owed (`refold_dirty = true`) — the
+    /// broadcast-`Lagged` recovery path in `BackendCore::tick_writers`:
+    /// dropped updates may include `LayerBackfilled` pages, so the next
+    /// `stage_boundary` sweep must resynthesize every fold from the raw
+    /// layers rather than trust the last reseed.
+    pub fn mark_all_refold_dirty(&mut self) {
+        let ids: Vec<BubbleId> = self.store.bubble_ids().collect();
+        for bid in ids {
+            if let Some(b) = self.store.bubble_mut(bid) {
+                b.refold_dirty = true;
+            }
+        }
+    }
+
     /// Remove and return only the bubbles named in `ids` as a fresh, small
     /// `BubbleStore`. Used exclusively by preset tab park (shared-BackendCore
     /// arc §5.3) — replaces whole-store `swap()`, which under a shared core
