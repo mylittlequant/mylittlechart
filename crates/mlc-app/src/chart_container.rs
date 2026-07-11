@@ -126,6 +126,22 @@ pub struct ChartContainer {
     /// Opt-in: defaults to `false` so existing presets are unaffected.
     pub vp_show: bool,
 
+    /// TPO Profile overlay data (item D — block-histogram time-at-price
+    /// profile). Computed by `ensure_tpo_profile_from_bars()` before each
+    /// frame when `tpo_profile_show == true`. Not serialized — recomputed
+    /// on load. Mirrors `vp_overlay`'s role for Volume Profile.
+    pub tpo_profile_overlay: Option<mlc_core::chart::tpo_profile::TpoProfileData>,
+    /// Stamp paired with `tpo_profile_overlay` —
+    /// `(visible_count, view_start_idx, last_close_bits, last_high_bits, last_low_bits)`.
+    /// TPO Profile always aggregates the VISIBLE range (no mode selector),
+    /// so the stamp is narrower than VP's — it only needs to catch a pan/
+    /// zoom (visible window changed) or an in-place last-bar mutation.
+    pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64)>,
+    /// When `true` the TPO Profile block-histogram overlay is rendered on
+    /// top of the chart. Opt-in: defaults to `false` so existing presets
+    /// are unaffected. Mirrors `vp_show`.
+    pub tpo_profile_show: bool,
+
     /// When `true` the OI Delta sub-pane is rendered below the main chart.
     /// (Per-window display gate; storage lives on the bubble — Phase X0.)
     pub oi_show: bool,
@@ -431,6 +447,9 @@ impl ChartContainer {
             vp_overlay_stamp: None,
             vp_mode: mlc_core::chart::volume_profile::VpMode::default(),
             vp_show: false,
+            tpo_profile_overlay: None,
+            tpo_profile_overlay_stamp: None,
+            tpo_profile_show: false,
             oi_show: false,
             funding_show: false,
             dom_heatmap_show: false,
@@ -1076,6 +1095,36 @@ impl ChartContainer {
         self.vp_overlay_stamp = Some(stamp);
     }
 
+    /// Recompute the TPO Profile overlay (item D) if the visible bar window
+    /// changed since the last build. Mirrors [`Self::ensure_vp_from_bars`],
+    /// one layer simpler — TPO Profile has no mode selector, it always
+    /// aggregates the VISIBLE range (owner spec: "computes a time-at-price
+    /// profile over the VISIBLE bar range from render_state.bars").
+    ///
+    /// `visible_bars` is the pre-filtered slice already clipped to the
+    /// viewport's visible range (caller computes it via
+    /// `viewport.visible_range()`, same as `ensure_vp_from_bars`'s caller).
+    /// `min_tick` floors the row step (see [`TpoProfileData::compute`]'s
+    /// doc comment) — pass the instrument's price precision.
+    pub fn ensure_tpo_profile_from_bars(&mut self, visible_bars: &[Bar], min_tick: f64) {
+        use mlc_core::chart::tpo_profile::TpoProfileData;
+
+        let last = visible_bars.last();
+        let stamp = (
+            visible_bars.len(),
+            self.viewport.view_start_idx(),
+            last.map(|b| b.close.to_bits()).unwrap_or(0),
+            last.map(|b| b.high.to_bits()).unwrap_or(0),
+            last.map(|b| b.low.to_bits()).unwrap_or(0),
+        );
+        if self.tpo_profile_overlay_stamp == Some(stamp) && self.tpo_profile_overlay.is_some() {
+            return;
+        }
+
+        self.tpo_profile_overlay = Some(TpoProfileData::compute(visible_bars, 0.70, min_tick));
+        self.tpo_profile_overlay_stamp = Some(stamp);
+    }
+
     /// Create a minimal clone of this chart window for use in `panel_grid::split_active`.
     ///
     /// Unlike `clone_for_split`, this variant does **not** take a source
@@ -1114,6 +1163,9 @@ impl ChartContainer {
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
             vp_show: self.vp_show,
+            tpo_profile_overlay: None,
+            tpo_profile_overlay_stamp: None,
+            tpo_profile_show: self.tpo_profile_show,
             oi_show: self.oi_show,
             funding_show: self.funding_show,
             dom_heatmap_show: self.dom_heatmap_show,

@@ -1,6 +1,6 @@
 //! TPO (Time-Price Opportunity) Market Profile renderer.
 //!
-//! Reads `state.tpo_sessions` — a ring of up to 11 sessions (10 closed +
+//! Reads `state.tpo_sessions` — a ring of up to 30 sessions (29 closed +
 //! 1 current, oldest left → newest right). Each session renders as a
 //! side-by-side block of letter glyphs stacked at each price level, with
 //! a VA fill band, POC tint + line, and a date header above the block.
@@ -114,11 +114,71 @@ pub fn draw_tpo(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
     let end = end.min(sessions.len());
     if start >= end { return; }
 
+    // Uniform row step across sessions (canon-fix wave, item A): a wide-
+    // range day and a narrow-range day pick different `nice_step` values
+    // upstream (dig3's `TpoSessionState::build_point`), so rendering each
+    // session at its OWN `tick_size` makes side-by-side sessions show
+    // wildly different row heights / font sizes — a wide day's letters
+    // read huge, a narrow day's read microscopic. Fix: pick ONE display
+    // step for the whole frame — the coarsest (max) `tick_size` among the
+    // VISIBLE sessions — and re-bucket every finer session's rows up to
+    // that step at draw time. Sessions already at (or coarser than) the
+    // display step pass through `rebucket_rows` as a no-op (same step in
+    // and out returns the input unchanged... actually still worth a fast
+    // path since `rebucket_rows` is a real allocation).
+    let display_step = sessions[start..end]
+        .iter()
+        .map(|s| s.tick_size)
+        .fold(0.0_f64, |acc, t| if t.is_finite() && t > 0.0 { acc.max(t) } else { acc });
+
     for (i, session) in sessions.iter().enumerate().take(end).skip(start) {
         let cx = rect.x + viewport.x_for_bar(i, session.ts_ms());
         let block_x = cx - allotted_w * 0.5;
-        render_session(ctx, state, session, block_x, allotted_w);
+        render_session(ctx, state, session, block_x, allotted_w, display_step);
     }
+}
+
+/// Merge `rows` (sorted ascending by price, bucketed at `from_step`) onto a
+/// coarser `to_step` grid. Each output row's price is grid-aligned to
+/// `to_step` (floor-division bucketing, same convention dig3's
+/// `TpoSessionState::build_point` uses for its own row grid); letters
+/// falling into the same output row are UNIONED (deduplicated, insertion
+/// order preserved — mirrors how a single upstream session already unions
+/// letters that touch the same price). Rows are returned sorted ascending
+/// by price.
+///
+/// No-op passthrough (rows returned as-is, un-rebucketed) when `to_step` is
+/// not finite/positive, `from_step` is not finite/positive, or
+/// `to_step <= from_step` (coarsening only — never used to artificially
+/// FINE-GRAIN a session, which would fabricate row detail dig3 never
+/// captured).
+fn rebucket_rows(rows: &[(f64, Vec<char>)], from_step: f64, to_step: f64) -> Vec<(f64, Vec<char>)> {
+    if !to_step.is_finite() || to_step <= 0.0 || !from_step.is_finite() || from_step <= 0.0 || to_step <= from_step {
+        return rows.to_vec();
+    }
+
+    // (bucket_index, merged_row) preserving first-seen bucket order, then
+    // sorted ascending by price at the end (bucket index IS price-ordered
+    // since input rows are already ascending, but a defensive final sort
+    // keeps the contract explicit and independent of input ordering).
+    let mut merged: Vec<(i64, f64, Vec<char>)> = Vec::new();
+    for (price, letters) in rows {
+        if !price.is_finite() { continue; }
+        let bucket_idx = (price / to_step).floor() as i64;
+        let bucket_price = bucket_idx as f64 * to_step;
+        match merged.iter_mut().find(|(idx, _, _)| *idx == bucket_idx) {
+            Some((_, _, merged_letters)) => {
+                for &c in letters {
+                    if !merged_letters.contains(&c) {
+                        merged_letters.push(c);
+                    }
+                }
+            }
+            None => merged.push((bucket_idx, bucket_price, letters.clone())),
+        }
+    }
+    merged.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+    merged.into_iter().map(|(_, price, letters)| (price, letters)).collect()
 }
 
 /// Format `open_time` (UTC midnight ms) as `"MMM DD"` for the date header.
@@ -145,12 +205,21 @@ fn format_session_date(open_time_ms: i64) -> String {
 /// letter grid (or its collapsed fallback) is centered inside the
 /// allotted slot so under-filled sessions don't visually crowd their
 /// neighbors.
+///
+/// `display_step` is the frame-uniform row step (item A, uniform row step
+/// across sessions) — the max `tick_size` among all VISIBLE sessions this
+/// frame. When `session.tick_size` is finer than `display_step`, this
+/// session's rows are re-bucketed up to the shared grid via
+/// [`rebucket_rows`] so every session in the frame renders at the same row
+/// height / font size, matching CBOT Market Profile convention (side-by-side
+/// sessions are directly comparable).
 fn render_session(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
     session: &TpoSession,
     slot_x_origin: f64,
     allotted_w: f64,
+    display_step: f64,
 ) {
     let price_scale = state.price_scale;
     let rect = &state.chart_rect;
@@ -162,10 +231,18 @@ fn render_session(
         return;
     }
     let tick = session.tick_size.max(1e-9);
-    let row_h = (rect.height * tick / (price_scale.price_max - price_scale.price_min)).max(7.0);
+    let effective_step = if display_step.is_finite() && display_step > tick { display_step } else { tick };
+    let rebucketed;
+    let rows: &[(f64, Vec<char>)] = if effective_step > tick {
+        rebucketed = rebucket_rows(&session.rows, tick, effective_step);
+        &rebucketed
+    } else {
+        &session.rows
+    };
+    let row_h = (rect.height * effective_step / (price_scale.price_max - price_scale.price_min)).max(7.0);
     let font_size = (row_h * 0.9).clamp(7.0, 14.0);
 
-    let max_letters = session.rows.iter().map(|(_, l)| l.len()).max().unwrap_or(0);
+    let max_letters = rows.iter().map(|(_, l)| l.len()).max().unwrap_or(0);
     let fit = fit_session_width(max_letters, row_h, allotted_w);
     let collapsed = matches!(fit, SessionWidthFit::Collapsed { .. });
     let cell_px = match fit {
@@ -193,11 +270,11 @@ fn render_session(
     // Initial Balance overlay (canon-fix wave 2, item 6d) — the price range
     // spanned by the first 2 chronological TPO periods (letters 'A'/'B').
     // Drawn as a bordered band BEHIND the row content so letters/blocks
-    // still read on top of it. Data already present on `TpoSession.rows`
-    // (letters carry their chronological bucket identity verbatim from
-    // `digdigdig3_station::derived`'s `alphabet[bi % 52]` assignment) — no
-    // data-plane gap.
-    if let Some((ib_lo, ib_hi)) = initial_balance_range(session) {
+    // still read on top of it. Data already present on the (possibly
+    // rebucketed) `rows` (letters carry their chronological bucket identity
+    // verbatim from `digdigdig3_station::derived`'s `alphabet[bi % 52]`
+    // assignment, preserved through `rebucket_rows`) — no data-plane gap.
+    if let Some((ib_lo, ib_hi)) = initial_balance_range(rows) {
         let ib_top_y = rect.y + state.viewport.price_to_y(ib_hi, price_scale.price_min, price_scale.price_max);
         let ib_bot_y = rect.y + state.viewport.price_to_y(ib_lo, price_scale.price_min, price_scale.price_max);
         let ib_y = ib_top_y.min(ib_bot_y);
@@ -220,7 +297,7 @@ fn render_session(
     // touched this price level. Highlighted with a dashed border, same
     // visual language as footprint's single-print marker
     // (`chart_render/footprint.rs`'s `is_single_print` dashed-rect).
-    for (price, letters) in &session.rows {
+    for (price, letters) in rows {
         if letters.len() != 1 { continue; }
         if !price.is_finite() { continue; }
         let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
@@ -236,7 +313,7 @@ fn render_session(
         // rows = more opaque) — same "collapse to a filled shape" doctrine
         // footprint/renko use below their own legibility floors.
         let max_count = max_letters.max(1) as f64;
-        for (price, letters) in &session.rows {
+        for (price, letters) in rows {
             if letters.is_empty() || !price.is_finite() { continue; }
             let y_top = rect.y + state.viewport.price_to_y(*price, price_scale.price_min, price_scale.price_max);
             let ratio = (letters.len() as f64 / max_count).clamp(0.0, 1.0);
@@ -249,7 +326,7 @@ fn render_session(
         // Letters per row.
         ctx.set_text_align(uzor::render::TextAlign::Left);
         ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-        for (price, letters) in &session.rows {
+        for (price, letters) in rows {
             if !price.is_finite() { continue; }
             let y_top = rect.y + state.viewport.price_to_y(
                 *price, price_scale.price_min, price_scale.price_max,
@@ -280,13 +357,13 @@ fn render_session(
     // from single-print's dashed border (a poor extreme is never a single
     // print by definition — >1 letter).
     ctx.set_text_align(uzor::render::TextAlign::Center);
-    if let Some(price) = poor_high_price(session) {
+    if let Some(price) = poor_high_price(rows) {
         let y_top = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max);
         ctx.set_fill_color("#ff5252");
         ctx.set_text_baseline(uzor::render::TextBaseline::Bottom);
         ctx.fill_text("▲", x_origin + block_w * 0.5, y_top);
     }
-    if let Some(price) = poor_low_price(session) {
+    if let Some(price) = poor_low_price(rows) {
         let y_bot = rect.y + state.viewport.price_to_y(price, price_scale.price_min, price_scale.price_max) + row_h;
         ctx.set_fill_color("#ff5252");
         ctx.set_text_baseline(uzor::render::TextBaseline::Top);
@@ -307,12 +384,18 @@ fn render_session(
 
 /// Initial Balance price range (canon-fix wave 2, item 6d) — `(low, high)`
 /// spanned by every row containing letter 'A' or 'B' (the first 2
-/// chronological TPO periods). `None` when the session has no A/B rows yet
-/// (a brand-new session before its second period closes).
-fn initial_balance_range(session: &TpoSession) -> Option<(f64, f64)> {
+/// chronological TPO periods). `None` when there are no A/B rows yet (a
+/// brand-new session before its second period closes).
+///
+/// Takes a bare row slice (not `&TpoSession`) so callers can pass either the
+/// session's own rows or the display-step-rebucketed rows uniform-row-step
+/// (item A) renders from — letters carry their chronological identity
+/// verbatim through [`rebucket_rows`], so this still finds the same A/B rows
+/// regardless of which grid the rows are bucketed at.
+fn initial_balance_range(rows: &[(f64, Vec<char>)]) -> Option<(f64, f64)> {
     let mut lo: Option<f64> = None;
     let mut hi: Option<f64> = None;
-    for (price, letters) in &session.rows {
+    for (price, letters) in rows {
         if !price.is_finite() { continue; }
         if !letters.iter().any(|c| INITIAL_BALANCE_LETTERS.contains(c)) { continue; }
         lo = Some(lo.map_or(*price, |l: f64| l.min(*price)));
@@ -324,12 +407,13 @@ fn initial_balance_range(session: &TpoSession) -> Option<(f64, f64)> {
     }
 }
 
-/// Poor High marker price (canon-fix wave 2, item 6b) — the session's
-/// highest-price row, when it was touched by MORE than one TPO period
-/// (price failed to reject cleanly at the extreme). `None` for an empty
-/// session or a clean (single-letter) high.
-fn poor_high_price(session: &TpoSession) -> Option<f64> {
-    session.rows.iter()
+/// Poor High marker price (canon-fix wave 2, item 6b) — the highest-price
+/// row, when it was touched by MORE than one TPO period (price failed to
+/// reject cleanly at the extreme). `None` for an empty row set or a clean
+/// (single-letter) high. Takes a bare row slice — see
+/// [`initial_balance_range`]'s doc comment for why.
+fn poor_high_price(rows: &[(f64, Vec<char>)]) -> Option<f64> {
+    rows.iter()
         .filter(|(p, _)| p.is_finite())
         .max_by(|(p1, _), (p2, _)| p1.partial_cmp(p2).unwrap_or(std::cmp::Ordering::Equal))
         .filter(|(_, l)| l.len() > 1)
@@ -337,9 +421,9 @@ fn poor_high_price(session: &TpoSession) -> Option<f64> {
 }
 
 /// Poor Low marker price — symmetric counterpart of
-/// [`poor_high_price`] for the session's lowest-price row.
-fn poor_low_price(session: &TpoSession) -> Option<f64> {
-    session.rows.iter()
+/// [`poor_high_price`] for the lowest-price row.
+fn poor_low_price(rows: &[(f64, Vec<char>)]) -> Option<f64> {
+    rows.iter()
         .filter(|(p, _)| p.is_finite())
         .min_by(|(p1, _), (p2, _)| p1.partial_cmp(p2).unwrap_or(std::cmp::Ordering::Equal))
         .filter(|(_, l)| l.len() > 1)
@@ -377,13 +461,13 @@ mod tests {
             (103.0, "C"),
             (104.0, "CD"),
         ]);
-        assert_eq!(initial_balance_range(&session), Some((100.0, 102.0)));
+        assert_eq!(initial_balance_range(&session.rows), Some((100.0, 102.0)));
     }
 
     #[test]
     fn initial_balance_range_none_when_no_ab_rows() {
         let session = mk_session(vec![(100.0, "C"), (101.0, "D")]);
-        assert_eq!(initial_balance_range(&session), None);
+        assert_eq!(initial_balance_range(&session.rows), None);
     }
 
     #[test]
@@ -393,8 +477,8 @@ mod tests {
             (101.0, "AB"),
             (102.0, "BC"), // session high, multi-letter -> poor high
         ]);
-        assert_eq!(poor_high_price(&session), Some(102.0));
-        assert_eq!(poor_low_price(&session), None, "low row has a single letter -> clean low");
+        assert_eq!(poor_high_price(&session.rows), Some(102.0));
+        assert_eq!(poor_low_price(&session.rows), None, "low row has a single letter -> clean low");
     }
 
     #[test]
@@ -404,8 +488,8 @@ mod tests {
             (101.0, "B"),
             (102.0, "C"), // session high, single letter -> clean high
         ]);
-        assert_eq!(poor_low_price(&session), Some(100.0));
-        assert_eq!(poor_high_price(&session), None);
+        assert_eq!(poor_low_price(&session.rows), Some(100.0));
+        assert_eq!(poor_high_price(&session.rows), None);
     }
 
     #[test]
@@ -420,6 +504,96 @@ mod tests {
             .map(|(p, _)| *p)
             .collect();
         assert_eq!(single_prints, vec![100.0, 102.0]);
+    }
+
+    // ── rebucket_rows (uniform row step across sessions, item A) ─────────
+
+    #[test]
+    fn rebucket_merges_letters_into_coarser_grid_no_dups() {
+        // from_step=1.0 rows at 100..103, to_step=2.0 -> buckets [100,102),
+        // [102,104): row 100 keeps 'A', row 101 merges into the 100 bucket
+        // ('A'+'B' unioned), row 102/103 merge into the 102 bucket.
+        let rows: Vec<(f64, Vec<char>)> = vec![
+            (100.0, vec!['A']),
+            (101.0, vec!['B']),
+            (102.0, vec!['C']),
+            (103.0, vec!['C', 'D']),
+        ];
+        let out = rebucket_rows(&rows, 1.0, 2.0);
+        assert_eq!(out, vec![
+            (100.0, vec!['A', 'B']),
+            (102.0, vec!['C', 'D']),
+        ]);
+    }
+
+    #[test]
+    fn rebucket_dedups_when_same_letter_appears_in_both_source_rows() {
+        let rows: Vec<(f64, Vec<char>)> = vec![
+            (100.0, vec!['A', 'B']),
+            (101.0, vec!['B', 'C']),
+        ];
+        let out = rebucket_rows(&rows, 1.0, 2.0);
+        assert_eq!(out, vec![(100.0, vec!['A', 'B', 'C'])], "B must not appear twice in the merged row");
+    }
+
+    #[test]
+    fn rebucket_row_prices_are_grid_aligned_to_to_step() {
+        let rows: Vec<(f64, Vec<char>)> = vec![
+            (100.5, vec!['A']),
+            (101.5, vec!['B']),
+            (109.9, vec!['C']),
+        ];
+        let out = rebucket_rows(&rows, 0.5, 5.0);
+        // floor(100.5/5)=20 -> 100.0; floor(101.5/5)=20 -> 100.0 (merges with
+        // the first); floor(109.9/5)=21 -> 105.0.
+        assert_eq!(out, vec![
+            (100.0, vec!['A', 'B']),
+            (105.0, vec!['C']),
+        ]);
+    }
+
+    #[test]
+    fn rebucket_output_sorted_ascending_by_price() {
+        let rows: Vec<(f64, Vec<char>)> = vec![
+            (100.0, vec!['A']),
+            (110.0, vec!['B']),
+            (120.0, vec!['C']),
+        ];
+        let out = rebucket_rows(&rows, 1.0, 10.0);
+        let prices: Vec<f64> = out.iter().map(|(p, _)| *p).collect();
+        let mut sorted = prices.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(prices, sorted, "rebucketed rows must stay ascending by price");
+    }
+
+    #[test]
+    fn rebucket_is_noop_passthrough_when_to_step_not_coarser() {
+        let rows: Vec<(f64, Vec<char>)> = vec![(100.0, vec!['A']), (101.0, vec!['B'])];
+        // to_step == from_step -> passthrough unchanged.
+        let same = rebucket_rows(&rows, 1.0, 1.0);
+        assert_eq!(same, rows);
+        // to_step < from_step (would FINE-GRAIN, not coarsen) -> passthrough.
+        let finer = rebucket_rows(&rows, 2.0, 1.0);
+        assert_eq!(finer, rows);
+    }
+
+    #[test]
+    fn rebucket_is_noop_when_steps_non_finite_or_non_positive() {
+        let rows: Vec<(f64, Vec<char>)> = vec![(100.0, vec!['A'])];
+        assert_eq!(rebucket_rows(&rows, 0.0, 2.0), rows);
+        assert_eq!(rebucket_rows(&rows, 1.0, 0.0), rows);
+        assert_eq!(rebucket_rows(&rows, 1.0, f64::NAN), rows);
+        assert_eq!(rebucket_rows(&rows, f64::INFINITY, 2.0), rows);
+    }
+
+    #[test]
+    fn rebucket_skips_non_finite_prices() {
+        let rows: Vec<(f64, Vec<char>)> = vec![
+            (100.0, vec!['A']),
+            (f64::NAN, vec!['B']),
+        ];
+        let out = rebucket_rows(&rows, 1.0, 5.0);
+        assert_eq!(out, vec![(100.0, vec!['A'])]);
     }
 
     // ── fit_session_width ───────────────────────────────────────────────

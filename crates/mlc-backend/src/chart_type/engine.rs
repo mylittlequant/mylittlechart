@@ -530,15 +530,24 @@ pub fn trade_fold_params_from_subscribe_params(chart_type: &str, params: Subscri
     fold_params_for(def, params)
 }
 
-/// Default [`TpoSource`] the trade-fold cutover installs for `"tpo"` — the
-/// UI has no source selector today (the pre-cutover `subscribe_tpo` always
-/// hardcoded `TpoSource::TradeBucket`), so this constant preserves that
-/// exact behavior. `mlc-app` passes this through
+/// Default [`TpoSource`] the trade-fold cutover installs for `"tpo"`.
+///
+/// `Kline1m` — TPO letter buckets are canonically built from intraday bars
+/// on every real platform (Sierra Chart, TradingView, Bookmap); 1-minute
+/// klines are lossless for the 30-minute letter-period buckets TPO uses by
+/// default (`FoldParams::freq_minutes`), and the kline-fed path
+/// (`TradeFoldMachine::TpoKline1m` / `TpoFromKline1mDerived`) gets deep
+/// history for free via [`crate::chart_type::lifecycle::TPO_KLINE_DEPTH_BARS`]
+/// instead of being bounded by however many raw trades the venue/backfill
+/// window can supply. The pre-cutover `subscribe_tpo` hardcoded
+/// `TpoSource::TradeBucket` (no UI selector existed) — that is now the
+/// non-default fallback flavour, still fully wired for symbols/venues where
+/// a deep kline history isn't available. `mlc-app` passes this through
 /// `BackendCore::subscribe_trade_fold_chart_type`'s `tpo_source` parameter —
 /// change this single constant (or thread a real per-bubble selector
 /// through the call sites) to switch the default without touching the fold
 /// machinery itself.
-pub const DEFAULT_TPO_SOURCE: TpoSource = TpoSource::TradeBucket;
+pub const DEFAULT_TPO_SOURCE: TpoSource = TpoSource::Kline1m;
 
 #[cfg(test)]
 mod tests {

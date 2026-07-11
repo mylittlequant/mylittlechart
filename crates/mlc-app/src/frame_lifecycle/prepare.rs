@@ -326,6 +326,26 @@ impl ChartApp {
                 };
                 window.ensure_vp_from_bars(bubble_bars, &visible_owned, 24);
             }
+
+            // TPO Profile prepass (item D) — mirrors the Volume Profile
+            // prepass above, one layer simpler (always VisibleRange, no
+            // mode). `min_tick` is a defensive floor only (see
+            // `TpoProfileData::compute`'s doc comment) — `nice_step`
+            // already targets ~60 rows from the visible price range
+            // regardless, so a small fixed epsilon (rather than a real
+            // per-instrument tick lookup, which nothing at this layer
+            // exposes today — same simplification VP's own fixed
+            // `bucket_count = 24` already makes) is sufficient.
+            if window.tpo_profile_show {
+                let (vis_start, vis_end) = window.viewport().visible_range();
+                let vis_end_clamped = vis_end.min(bubble_bars.len());
+                let visible_owned: Vec<mlc_core::Bar> = if vis_start <= vis_end_clamped {
+                    bubble_bars[vis_start..vis_end_clamped].to_vec()
+                } else {
+                    Vec::new()
+                };
+                window.ensure_tpo_profile_from_bars(&visible_owned, 1e-8);
+            }
         }
 
         // Keep the alert-settings modal's alerts list always in sync.

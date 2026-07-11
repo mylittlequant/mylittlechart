@@ -4,6 +4,7 @@ use mlc_core::chart::types::{Crosshair, GridOptions, Legend, TimeScale, Viewport
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::types::HaBar;
 use mlc_core::chart::volume_profile::VolumeProfileData;
+use mlc_core::chart::tpo_profile::TpoProfileData;
 use mlc_core::TimeFormatSettings;
 
 use super::data_bubble::DataBubble;
@@ -25,6 +26,9 @@ pub struct ChartWindowRenderInputs<'a> {
     pub ha_cache: Option<&'a [HaBar]>,
     /// Volume Profile overlay, already gated by the window's `vp_show` flag.
     pub vp_overlay: Option<&'a VolumeProfileData>,
+    /// TPO Profile overlay (item D), already gated by the window's
+    /// `tpo_profile_show` flag — mirrors `vp_overlay`.
+    pub tpo_profile_overlay: Option<&'a TpoProfileData>,
     /// OI Delta display gate (window-local view state).
     pub oi_show: bool,
     /// Funding Rate display gate (window-local view state).
@@ -157,9 +161,11 @@ pub fn build_chart_render_state<'a>(
         pnf_columns: bubble.pnf_columns.as_deref(),
         kagi_segments: bubble.kagi_segments.as_deref(),
         tpo_sessions: bubble.tpo_sessions.as_deref(),
-        // ha_cache + vp_overlay are window-local derived caches (viewport-coupled).
+        // ha_cache + vp_overlay + tpo_profile_overlay are window-local
+        // derived caches (viewport-coupled).
         ha_cache: window.ha_cache,
         vp_overlay: window.vp_overlay,
+        tpo_profile_overlay: window.tpo_profile_overlay,
         // Display gates (oi_show / funding_show) are per-window view state;
         // storage is unconditional on bubble.
         oi_delta_ref: if window.oi_show { bubble.oi_delta.as_deref() } else { None },

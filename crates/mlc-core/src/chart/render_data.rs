@@ -372,6 +372,14 @@ pub struct ChartRenderState<'a> {
     /// `vp_show == true` the VP renderer draws the right-side histogram.
     /// Maintained by `ChartContainer::ensure_vp` in the prepare prepass.
     pub vp_overlay: Option<&'a crate::chart::volume_profile::VolumeProfileData>,
+    /// Pre-computed TPO Profile overlay (item D — block-histogram
+    /// time-at-price profile, distinct from the letter-based
+    /// `tpo_sessions` TPO Market Profile chart type). When `Some(_)` and
+    /// `tpo_profile_show == true` the renderer draws a right-anchored
+    /// block histogram, styled like Volume Profile but with no letters.
+    /// Maintained by `ChartContainer::ensure_tpo_profile_from_bars` in the
+    /// prepare prepass.
+    pub tpo_profile_overlay: Option<&'a crate::chart::tpo_profile::TpoProfileData>,
     /// Open Interest Δ bars for the OI Delta sub-pane renderer (C15).
     /// `None` when the toggle is off or no data has arrived yet.
     pub oi_delta_ref: Option<&'a [crate::types::OiDeltaBar]>,

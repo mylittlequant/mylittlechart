@@ -1211,6 +1211,18 @@ impl ChartApp {
                 }
                 state_mutated = true;
             }
+            ChartOutEvent::ToggleTpoProfileOverlay => {
+                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                    w.tpo_profile_show = !w.tpo_profile_show;
+                    if !w.tpo_profile_show {
+                        w.tpo_profile_overlay = None;
+                        w.tpo_profile_overlay_stamp = None;
+                    }
+                    Some(w.tpo_profile_show)
+                } else { None };
+                eprintln!("[ChartApp] tpo_profile_show toggled -> {:?}", new_val);
+                state_mutated = true;
+            }
             // === C15: OI Delta sub-pane ===
             ChartOutEvent::ToggleOpenInterestOverlay => {
                 let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);

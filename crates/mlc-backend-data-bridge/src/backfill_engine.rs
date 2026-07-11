@@ -581,8 +581,22 @@ async fn run_kline_ramp(
     }
 
     let page_size = KLINE_PAGE_SIZE;
-    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
     let mut is_first_page_of_run = engine.with_state(&key, |s| s.groups_completed == 0 && s.oldest_anchor.is_none());
+
+    // Auto-phase self-drive: one `ensure_kline_backfill` call walks GROUPS
+    // (ramp progression 1→1→2→4… via `next_group_pages` per group) until
+    // the declared target depth is reached or the venue goes dry. Before
+    // this, one call fetched exactly ONE group and stopped — a deep target
+    // (TPO Kline1m: 43 200 bars) silently stalled at the first 1000-bar
+    // page with nobody re-driving the ramp (found live 2026-07-11).
+    'run: loop {
+    let group_pages = engine.with_state(&key, |s| s.next_group_pages(page_size, gate_on_target));
+    crate::dlog!(
+        "[kline_ramp] group key={:?}/{} tf={} group_pages={} loaded={} target={:?}",
+        key.0, key.1, tf_name, group_pages,
+        engine.with_state(&key, |s| s.loaded),
+        engine.with_state(&key, |s| s.target)
+    );
 
     for _ in 0..group_pages {
         let older_than_ms = engine.with_state(&key, |s| s.oldest_anchor);
@@ -599,7 +613,7 @@ async fn run_kline_ramp(
                 layer: LayerId::Kline(tf_name.clone()).wire_label(),
                 prepended: 0, exhausted: true,
             });
-            break;
+            break 'run;
         }
 
         let new_oldest = points.iter().map(|p| p.open_time).min();
@@ -645,12 +659,24 @@ async fn run_kline_ramp(
         });
 
         if venue_wall {
-            break;
+            break 'run;
         }
-        let done = engine.with_state(&key, |s| !s.needs_more(gate_on_target));
+        // Mid-flight check MUST bypass the `in_flight` gate (`needs_more`
+        // reads `false` for every page while we ourselves hold the flight)
+        // — same fix `run_archive_group` documents on `target_satisfied`.
+        let done = engine.with_state(&key, |s| !s.target_satisfied(gate_on_target));
         if done {
-            break;
+            break 'run;
         }
+    }
+
+    // Group exhausted without hitting target/wall — continue with the next
+    // (ramp-escalated) group. Brief inter-group pause keeps the REST cadence
+    // polite (mirrors the trade ramp's pacing).
+    if engine.with_state(&key, |s| !s.target_satisfied(gate_on_target)) {
+        break 'run;
+    }
+    sleep_ms(150).await;
     }
 
     engine.with_state(&key, RampState::end_flight);

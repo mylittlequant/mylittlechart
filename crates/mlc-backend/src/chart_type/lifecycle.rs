@@ -18,6 +18,30 @@ use mlc_core::Bar;
 
 use crate::{BackendCore, BubbleEvent};
 
+/// TPO session ring cap — the max number of sessions (closed + 1 current)
+/// kept on `bubble.tpo_sessions`. Mirrors dig3's own `TpoSessionState::
+/// max_history_sessions` (`digdigdig3-station/src/derived.rs`) — the two
+/// must move together since dig3 already discards anything past its own
+/// cap before this client-side reseed/live path ever sees it (bumping only
+/// the client-side constant without bumping dig3's would just add dead
+/// headroom that dig3's ring never fills).
+const MAX_TPO_SESSIONS: usize = 30;
+
+/// Kline depth target (in 1m bars) the TPO `Kline1m` flavour backfills
+/// toward — `~30 days x 1440 bars/day = 43_200`. TPO needs deep history to
+/// populate its session ring (up to [`MAX_TPO_SESSIONS`] = 30 daily
+/// sessions); the generic kline consumers on the same "1m" layer (e.g. a
+/// plain candlestick chart sharing the layer) typically need far less, so
+/// without a TPO-specific target the shared `ensure_kline_backfill` ramp
+/// would happily stop at whatever smaller depth an earlier consumer already
+/// satisfied (`RampState::require_target` only widens, it does not shrink —
+/// see that method's doc comment in `backfill_engine.rs` — but it also
+/// never widens on its own without a caller asking). Passing this constant
+/// through `ensure_kline_backfill`'s `target_bars` makes the ramp
+/// unconditionally deepen to cover every session TPO wants to render, even
+/// when TPO is a late joiner on an already-satisfied "1m" layer.
+pub(crate) const TPO_KLINE_DEPTH_BARS: u32 = 43_200;
+
 impl BackendCore {
     // =========================================================================
     // === Client-side view fold (unified-data-plane Stage Э3, 2026-07-09) ====
@@ -354,7 +378,11 @@ impl BackendCore {
         if matches!(chart_type, "tpo") && matches!(tpo_source, mlc_backend_data_bridge::TpoSource::Kline1m) {
             let one_minute = Timeframe::new("1m", 60_000);
             self.bridge.request_bars(exchange_id, symbol, &one_minute, account_type, None, None, false);
-            self.bridge.ensure_kline_backfill(exchange_id, symbol, &one_minute, account_type, None);
+            // TPO-specific depth target (not `None`) — the shared "1m"
+            // layer's ramp must deepen far enough to populate every session
+            // in the ring even when a shallower consumer already opened
+            // this layer first; see `TPO_KLINE_DEPTH_BARS`'s doc comment.
+            self.bridge.ensure_kline_backfill(exchange_id, symbol, &one_minute, account_type, Some(TPO_KLINE_DEPTH_BARS));
         }
 
         event
@@ -476,17 +504,17 @@ impl BackendCore {
                 // same session until it rolls) down to the LAST snapshot per
                 // session via `merge_last_wins`, then cap to the same
                 // recency window the live station-derived path uses
-                // (`MAX_TPO_SESSIONS = 11`) — the cap is TPO-specific
-                // bookkeeping the shared helper doesn't know about, so it
-                // stays a second pass here.
+                // (`MAX_TPO_SESSIONS`) — the cap is TPO-specific bookkeeping
+                // the shared helper doesn't know about, so it stays a
+                // second pass here.
                 let key_fn = mlc_core::chart_type::tpo_identity_key_fn(identity).unwrap_or(mlc_core::chart_type::tpo_identity);
                 let mut deduped: Vec<mlc_core::types::TpoSession> = Vec::new();
                 for o in outputs {
                     let crate::bubble::TradeFoldOutput::Tpo(s) = o else { continue };
                     mlc_core::chart_type::merge_last_wins(&mut deduped, s, key_fn);
                 }
+                mlc_backend_data_bridge::dlog!("[tradefold] tpo apply sessions={}", deduped.len());
                 self.bubbles_mut().with_bubble_mut(bid, |b| {
-                    const MAX_TPO_SESSIONS: usize = 11;
                     if deduped.len() > MAX_TPO_SESSIONS {
                         let drop_n = deduped.len() - MAX_TPO_SESSIONS;
                         deduped.drain(0..drop_n);
@@ -603,7 +631,6 @@ impl BackendCore {
                             Some(last) if last.open_time == session.open_time => *last = session,
                             _ => {
                                 store.push(session);
-                                const MAX_TPO_SESSIONS: usize = 11;
                                 while store.len() > MAX_TPO_SESSIONS {
                                     store.remove(0);
                                 }
@@ -655,7 +682,6 @@ impl BackendCore {
                     Some(last) if last.open_time == session.open_time => *last = session,
                     _ => {
                         store.push(session);
-                        const MAX_TPO_SESSIONS: usize = 11;
                         while store.len() > MAX_TPO_SESSIONS {
                             store.remove(0);
                         }

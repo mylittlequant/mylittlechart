@@ -43,6 +43,7 @@ pub mod dom_heatmap;
 pub mod liquidation_heatmap;
 pub mod render_data;
 pub mod series;
+pub mod tpo_profile;
 pub mod types;
 pub mod volume_profile;
 

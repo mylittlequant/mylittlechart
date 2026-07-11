@@ -28,6 +28,7 @@ use mlc_core::render::RenderContext;
 use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_candles, draw_volume_profile_overlay,
+    draw_tpo_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
     draw_dom_heatmap_conditional, draw_liquidation_heatmap_conditional,
     draw_price_scale, draw_time_scale,
@@ -2569,6 +2570,7 @@ pub fn render_main_chart_primitives(
 /// 3. Background heat overlays (DOM / Liquidation heatmap, when enabled)
 /// 4. Series (candles, bars, line, area, etc.)
 /// 5. Volume Profile overlay (when enabled)
+/// 6. TPO Profile overlay (when enabled)
 ///
 /// Used internally by render_chart_window.
 /// Crosshair is cursor-dependent and is drawn by render_chart_overlay.
@@ -2603,6 +2605,14 @@ pub fn render_chart(
     // 5. Volume Profile overlay (when enabled).
     if let Some(vp) = state.vp_overlay {
         draw_volume_profile_overlay(ctx, state, vp);
+    }
+
+    // 6. TPO Profile overlay (item D — when enabled). Same right-edge strip
+    // slot as Volume Profile; both draw independently so an owner who
+    // enables both sees them layered (mirrors the pre-existing OI/Funding
+    // pair, which has the same non-exclusive-toggle tradeoff).
+    if let Some(tpo_profile) = state.tpo_profile_overlay {
+        draw_tpo_profile_overlay(ctx, state, tpo_profile);
     }
 }
 
@@ -3185,6 +3195,7 @@ pub fn render_full_chart_panel(
         tpo_sessions: data.state.tpo_sessions,
         ha_cache: data.state.ha_cache,
         vp_overlay: data.state.vp_overlay,
+        tpo_profile_overlay: data.state.tpo_profile_overlay,
         oi_delta_ref: data.state.oi_delta_ref,
         funding_rate_ref: data.state.funding_rate_ref,
         dom_heatmap_ref: data.state.dom_heatmap_ref,
@@ -3628,6 +3639,7 @@ pub fn render_chart_overlay(
         tpo_sessions: state.tpo_sessions,
         ha_cache: state.ha_cache,
         vp_overlay: state.vp_overlay,
+        tpo_profile_overlay: state.tpo_profile_overlay,
         oi_delta_ref: state.oi_delta_ref,
         funding_rate_ref: state.funding_rate_ref,
         dom_heatmap_ref: state.dom_heatmap_ref,

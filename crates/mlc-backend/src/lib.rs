@@ -1743,7 +1743,15 @@ impl BackendCore {
                         let fold_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                         for bid in fold_bids {
                             let has_fold = self.bubbles().with_bubble(bid, |b| b.active_fold.is_some()).unwrap_or(false);
-                            if !has_fold { continue; }
+                            // TPO Kline1m lives in `active_trade_fold` but folds
+                            // the "1m" KLINE layer (`feeds_on_trades() == false`)
+                            // — kline pages must refold it too, or its history
+                            // never deepens past the live tick (found live:
+                            // one-letter session, bc=0, 2026-07-11).
+                            let has_kline_fed_tfold = self.bubbles().with_bubble(bid, |b| {
+                                b.active_trade_fold.as_ref().map(|f| !f.feeds_on_trades()).unwrap_or(false)
+                            }).unwrap_or(false);
+                            if !has_fold && !has_kline_fed_tfold { continue; }
                             let should_refold = self.bubbles_mut()
                                 .with_bubble_mut(bid, |b| b.should_refold_now(exhausted, refold_now))
                                 .unwrap_or(true);
@@ -1756,6 +1764,21 @@ impl BackendCore {
                                 b.active_fold.as_mut().map(|f| (f.reseed(&layer_snapshot), f.chart_type()))
                             }).flatten();
                             self.bubbles_mut().with_bubble_mut(bid, |b| b.mark_refolded(refold_now));
+                            if has_kline_fed_tfold {
+                                mlc_backend_data_bridge::dlog!("[kline1m-refold] bid={:?} layer_len={}", bid, layer_snapshot.len());
+                                let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
+                                    .trade_layer(bid)
+                                    .cloned()
+                                    .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+                                let t_outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                    b.active_trade_fold.as_mut().map(|f| (f.reseed(&trade_snapshot, &layer_snapshot), f.chart_type()))
+                                }).flatten();
+                                if let Some((t_outputs, t_chart_type)) = t_outputs_and_type {
+                                    if let Some(ev) = self.apply_trade_fold_reseed_outputs(bid, t_chart_type, t_outputs, exchange_id, &symbol, at_label) {
+                                        events.push(ev);
+                                    }
+                                }
+                            }
                             let Some((outputs, chart_type)) = outputs_and_type else { continue; };
                             if let Some(ev) = self.apply_fold_reseed_outputs(bid, chart_type, outputs, exchange_id, &symbol, at_label) {
                                 events.push(ev);
@@ -1780,7 +1803,14 @@ impl BackendCore {
                         // Guard-lifetime note: bind before looping (see BarUpdate arm).
                         let tfold_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                         for bid in tfold_bids {
-                            let has_trade_fold = self.bubbles().with_bubble(bid, |b| b.active_trade_fold.is_some()).unwrap_or(false);
+                            // Kline-fed trade folds (TPO Kline1m) are refolded
+                            // by the `kline:1m` arm above — refolding them here
+                            // would replay an EMPTY kline layer and wipe their
+                            // sessions on every trade page (found live
+                            // 2026-07-11: sessions=0 every ~2s).
+                            let has_trade_fold = self.bubbles().with_bubble(bid, |b| {
+                                b.active_trade_fold.as_ref().map(|f| f.feeds_on_trades()).unwrap_or(false)
+                            }).unwrap_or(false);
                             let has_cvd_fold = self.bubbles().with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
                             if !has_trade_fold && !has_cvd_fold { continue; }
                             // One debounce decision per bubble covers BOTH
