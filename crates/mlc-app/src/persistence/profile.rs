@@ -462,16 +462,20 @@ impl ChartApp {
             }
         }
 
-        // Restore watchlist manager.
+        // Restore watchlist manager. `load_json` itself returns `Err` (and is
+        // handled below as a silent miss) when the key has never been
+        // written — no separate existence probe needed. A prior
+        // `watchlists_path.exists()` guard here relied on `std::path::Path::exists()`,
+        // which always reports `false` on wasm32 (no real filesystem behind
+        // the `LocalStorageBackend` paths), silently skipping the read on
+        // every wasm boot even after a watchlist had been saved.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-        if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
-                Ok(manager) => {
-                    self.core.watchlists_mut().replace_all(manager);
-                }
-                Err(e) => {
-                    eprintln!("[UserProfile] Failed to load watchlists: {}", e);
-                }
+        match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
+            Ok(manager) => {
+                self.core.watchlists_mut().replace_all(manager);
+            }
+            Err(e) => {
+                eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
         }
     }
@@ -482,15 +486,15 @@ impl ChartApp {
     /// watchlist state.  Profile loading (`profile.json`) is NOT performed here
     /// — that is done once at startup in `main()` and passed in via `apply_profile_state`.
     pub fn load_watchlists(&mut self) {
+        // See the comment in `load_user_state` above — no `.exists()` guard;
+        // `load_json` already treats a missing key as `Err` and is handled below.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-        if watchlists_path.exists() {
-            match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
-                Ok(manager) => {
-                    self.core.watchlists_mut().replace_all(manager);
-                }
-                Err(e) => {
-                    eprintln!("[UserProfile] Failed to load watchlists: {}", e);
-                }
+        match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
+            Ok(manager) => {
+                self.core.watchlists_mut().replace_all(manager);
+            }
+            Err(e) => {
+                eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
         }
     }

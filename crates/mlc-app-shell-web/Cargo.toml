@@ -54,6 +54,7 @@ web-sys              = { version = "0.3", features = [
     "Clipboard",
     "ClipboardItem",
     "Navigator",
+    "StorageManager",
 ] }
 console_error_panic_hook = "0.1"
 # Wasm tracing subscriber — pipes every `tracing::info!/warn!/debug!/trace!`

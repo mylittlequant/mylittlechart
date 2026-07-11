@@ -18,20 +18,32 @@
 //!
 //! ```text
 //! DataBridge::new().await               → Arc<DataBridge>
+//! persistence::bootstrap_first_run()    ← default profile if localStorage is empty
+//! ProfileManager::load(None)            ← profile + templates + presets + snapshots
 //! BackendCore::new(bridge, None)        → Arc<BackendCore>   (no trading mgr on wasm)
-//! ChartApp::new_empty(core)             → ChartApp
+//! ChartApp::new_window(core, ..)        → ChartApp  (seeds core from profile_manager,
+//!                                          loads watchlists, restores/creates active preset)
 //!
 //! WebWindowProvider::from_id("chart")   ← DOM event source
 //! Canvas2dChartRenderContext            ← render surface (mlc_core::RenderContext impl)
 //!
 //! requestAnimationFrame loop:
 //!   provider.poll_events() → dispatch to ChartApp via mlc_app_input_shell::process_event
+//!   chart_app.tick(now_ms) → flush_pending_autosave (active preset)
+//!   persistence::save_persistent_state() when profile/watchlists/presets are dirty
 //!   canvas_ctx = get_canvas_context()
 //!   chart_app.render(&mut ctx, now_ms, false)
+//!
+//! visibilitychange (hidden) / beforeunload:
+//!   persistence::save_persistent_state() + station.flush_persistence() (OPFS)
 //! ```
+//!
+//! See `persistence.rs` for the full shell-persistence-duties writeup.
 
 #[cfg(target_arch = "wasm32")]
 mod context;
+#[cfg(target_arch = "wasm32")]
+mod persistence;
 
 #[cfg(target_arch = "wasm32")]
 use context::Canvas2dChartRenderContext;
@@ -57,8 +69,6 @@ use uzor_window_web::WebWindowProvider;
 use mlc_app::ChartApp;
 #[cfg(target_arch = "wasm32")]
 use mlc_backend_data_bridge::DataBridge;
-#[cfg(target_arch = "wasm32")]
-use mlc_core::state::Timeframe;
 #[cfg(target_arch = "wasm32")]
 use mlc_app_input_shell::{ChromeFlavor, CHROME_HEIGHT};
 
@@ -126,38 +136,88 @@ async fn run() -> Result<(), JsValue> {
     let bridge = Arc::new(bridge);
     web_sys::console::log_1(&"[mlc-app-shell-web] bridge ready".into());
 
+    // ── Shell persistence duties (parity with mlc-app-shell-vello/src/main.rs
+    // ProfileManager::load / record_launch / save_profile boot sequence,
+    // ~4928-4990) ────────────────────────────────────────────────────────────
+    // First-run: no profile in localStorage yet — create a single "default"
+    // profile (non-UI equivalent of the welcome wizard). Returning visits are
+    // a no-op here; `ProfileManager::load` below resolves the existing one.
+    persistence::bootstrap_first_run();
+
+    let mut profile_manager = mlc_app::user_manager::ProfileManager::load(None);
+    profile_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
+    if let Err(e) = profile_manager.save_profile() {
+        web_sys::console::error_1(
+            &format!("[mlc-app-shell-web] failed to save profile at startup: {:?}", e).into(),
+        );
+    }
+
+    // Best-effort: ask the browser not to evict localStorage under storage
+    // pressure. Fire-and-forget — result is only logged.
+    persistence::request_storage_persistence();
+
+    // `ChartApp::new_window` seeds core.templates/core.presets/core.user from
+    // `profile_manager` and calls `self.load_watchlists()` itself (reads
+    // watchlists.json straight from `global_storage()`) — no manual
+    // pre-seeding needed here, same division of labour as the native shell's
+    // `App::new` → `mlc_app::ChartApp::new_window` call.
     let core = mlc_backend::BackendCore::new(bridge.clone(), None);
-    let mut app = ChartApp::new_empty(core);
-    app.seed_default_chart(
-        digdigdig3::ExchangeId::Binance,
-        "BTCUSDT",
-        Timeframe::h1(),
-        digdigdig3::AccountType::Spot,
-        500,
+    let profile = profile_manager.profile.clone();
+    // Restore = this shell's saved WindowState — the native shell passes
+    // profile.windows[i] per OS window; the per-window state (active
+    // preset id, open tabs, sidebar) lives THERE, not in the legacy
+    // top-level profile fields. Passing None here made `new_window`
+    // resolve an empty active_preset_id → `has_saved_preset == false` →
+    // fresh default chart on EVERY boot (restore never ran).
+    let restore = profile
+        .ui
+        .windows
+        .iter()
+        .find(|w| w.window_id == "win_web")
+        .or_else(|| profile.ui.windows.first());
+    let app = ChartApp::new_window(
+        core,
+        bridge.clone(),
+        "win_web".to_string(),
+        restore,
+        &profile,
+        &profile_manager,
+        false,
     );
     web_sys::console::log_1(&"[mlc-app-shell-web] app ready".into());
 
     let provider = WebWindowProvider::from_id("chart")
         .map_err(|e| JsValue::from_str(&e))?;
 
-    // Flush OPFS-backed persistence on tab close/hide. Drop can't await an
-    // async flush on wasm, so the browser tears down the wasm instance while
-    // dat/idx/blob buffers still hold uncommitted records. Two listeners
-    // cover both real teardown paths (visibilitychange="hidden" is the
-    // more-reliable signal on modern browsers; beforeunload for legacy).
-    install_persistence_flush_hooks(bridge.clone());
-
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
-    run_render_loop(app, provider)
+    run_render_loop(app, provider, bridge)
 }
 
+/// Flush both persistence layers on tab close/hide.
+///
+/// - OPFS-backed market-data cache (`station.flush_persistence()`, pre-
+///   existing) — async, buffered dat/idx/blob writes.
+/// - Profile/preset/watchlist/template/snapshot state
+///   ([`persistence::save_persistent_state`], new) — sync, localStorage.
+///
+/// Drop can't await an async flush on wasm, so the browser tears down the
+/// wasm instance while OPFS buffers still hold uncommitted records; the
+/// localStorage-backed profile writes are synchronous and complete before
+/// the handler returns, so they don't need the same care, but are run from
+/// the same two listeners for one obvious flush point. Two listeners cover
+/// both real teardown paths (visibilitychange="hidden" is the more-reliable
+/// signal on modern browsers; beforeunload for legacy).
 #[cfg(target_arch = "wasm32")]
-fn install_persistence_flush_hooks(bridge: Arc<mlc_backend_data_bridge::DataBridge>) {
+fn install_persistence_flush_hooks(
+    bridge: Arc<mlc_backend_data_bridge::DataBridge>,
+    state: Rc<RefCell<WebAppState>>,
+) {
     let Some(win) = web_sys::window() else { return; };
 
     // visibilitychange — fires when the tab is hidden (background/close).
     {
         let bridge = bridge.clone();
+        let state = state.clone();
         let cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
             let doc = match web_sys::window().and_then(|w| w.document()) {
                 Some(d) => d,
@@ -165,6 +225,18 @@ fn install_persistence_flush_hooks(bridge: Arc<mlc_backend_data_bridge::DataBrid
             };
             if !doc.hidden() {
                 return;
+            }
+            // Best-effort flush: the event can fire while the RAF tick (or
+            // another handler) already holds the borrow — a hard borrow_mut
+            // here is a guaranteed same-thread RefCell panic. Skip; the
+            // per-frame dirty drain persists on the next tick anyway.
+            // Also gated on `is_persist_safe` — same rationale as the
+            // per-frame drain in `run_render_loop`: a tab hidden mid-cold-
+            // load must not persist the pre-restore placeholder window.
+            if let Ok(mut st) = state.try_borrow_mut() {
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state) {
+                    persistence::save_persistent_state(&mut st.chart);
+                }
             }
             let station = bridge.station();
             spawn_local(async move {
@@ -193,7 +265,15 @@ fn install_persistence_flush_hooks(bridge: Arc<mlc_backend_data_bridge::DataBrid
     // real navigation-away. Same handler, no visibility gate.
     {
         let bridge = bridge.clone();
+        let state = state.clone();
         let cb = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            // Best-effort — same try_borrow + is_persist_safe rationale as
+            // the visibilitychange hook above.
+            if let Ok(mut st) = state.try_borrow_mut() {
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state) {
+                    persistence::save_persistent_state(&mut st.chart);
+                }
+            }
             let station = bridge.station();
             spawn_local(async move {
                 let _ = station.flush_persistence().await;
@@ -264,6 +344,7 @@ impl WebAppState {
 fn run_render_loop(
     app: ChartApp,
     provider: WebWindowProvider,
+    bridge: Arc<mlc_backend_data_bridge::DataBridge>,
 ) -> Result<(), JsValue> {
     let state = Rc::new(RefCell::new(WebAppState::new(app, "chart")));
 
@@ -278,6 +359,12 @@ fn run_render_loop(
             coord.text_fields().copy_selection()
         });
     }
+
+    // Flush profile/preset/watchlist state (localStorage) + OPFS-backed
+    // market-data cache on tab close/hide. Parity duty (see doc comment on
+    // `install_persistence_flush_hooks`) — was already present for OPFS,
+    // now covers user state too.
+    install_persistence_flush_hooks(bridge, state.clone());
 
     let provider = Rc::new(RefCell::new(provider));
 
@@ -343,9 +430,61 @@ fn run_render_loop(
         // (chrome tab click, preset load) would stash the body once and then
         // sit forever on the loading skeleton because nothing ever consumed
         // the stash. Parity-sweep finding, not cosmetic.
+        //
+        // MUST run before the persistence drain below: on the FIRST frame
+        // after boot (and on every warm-miss chrome-tab switch),
+        // `ChartApp::new_window` already called `process_chart_out_event
+        // (LoadPreset)` synchronously during construction — that call sets
+        // `active_preset_id`, calls `persist_profile()` (→ `profile_dirty =
+        // true`), and then STASHES the actual restore body (chart_type,
+        // bubbles, viewport snap-arming) into `pending_cold_apply` instead of
+        // applying it inline (`chart_out_events.rs:1974-1991`). If the
+        // persistence drain ran first on that frame, it would
+        // `build_window_state()` + overwrite `profile.json` from a window
+        // whose bubbles/chart_type have not been restored yet (still
+        // whatever `new_window`'s placeholder container carried — "candles",
+        // no attached bubble) while `load_state == Loading`. Draining the
+        // cold apply first means `chart_type`/viewport-snap-arming land
+        // before the persistence gate below even runs its `is_persist_safe`
+        // check.
         {
             let mut st = state_clone.borrow_mut();
             st.chart.drain_pending_cold_apply();
+        }
+
+        // ── Persist dirty user state ──────────────────────────────────────────
+        // Native equivalent: mlc-app-shell-vello/main.rs:2743-2864 (per-frame
+        // dirty-flag drain inside `about_to_wait`). `profile_dirty` /
+        // `profile_geometry_dirty` / `watchlists_dirty` are shared `ChartApp`
+        // fields already set by shared input-handling code (chrome tab
+        // clicks, preset rename/delete, watchlist edits, ...) — this was the
+        // one piece with nobody on the wasm side ever reading them. Also
+        // covers `PresetAction` → disk (native step 9 of `save_all`):
+        // `flush_pending_autosave` (tick(), above) only stages preset
+        // upserts into `preset_actions` / the in-memory core registry —
+        // nothing wrote them to `global_storage()` before this.
+        //
+        // `is_persist_safe` gate (mirrors `flush_pending_autosave` /
+        // `collect_state_into_preset`, both of which early-return under the
+        // same `LoadState::Loading` check): while a cold apply is stashed
+        // (`LoadPreset` set `profile_dirty = true` synchronously at
+        // construction time, BEFORE the drain above could possibly have run
+        // yet on the very first call inside `new_window`'s own constructor),
+        // saving here would persist the pre-restore placeholder window state
+        // — the disaster path `flush_pending_autosave`'s own doc comment
+        // calls out by name (`7a9d1d2`). `drain_pending_cold_apply` above
+        // already flips `load_state` back to `Live` once the real restore
+        // finishes, so by the time this check runs post-drain the gate opens
+        // on the SAME frame the cold apply completed.
+        {
+            let mut st = state_clone.borrow_mut();
+            let persist_safe = mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state);
+            if persist_safe
+                && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
+                    || !st.chart.preset_actions.is_empty())
+            {
+                persistence::save_persistent_state(&mut st.chart);
+            }
         }
 
         // ── Diag: expose active bubble's last bar timestamp + bars count + close
