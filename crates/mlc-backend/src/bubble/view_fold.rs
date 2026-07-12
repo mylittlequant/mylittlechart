@@ -35,9 +35,11 @@
 //!
 //! `tick_bar` / `tick_imbalance_bar` / `volume_imbalance_bar` / `run_bar` /
 //! `footprint` / `tpo` (both [`TpoSource`] flavours), plus the CVD companion
-//! line, fold the bubble's own `trade_layer` (`DataBubble::trade_layer`) —
-//! real trades, never synthetic legs. [`TradeFoldRuntime::reseed`] replays
-//! the ENTIRE trade layer chronologically through a fresh machine instance
+//! line, fold the shared per-instrument trade store
+//! (`crate::trade_store::TradeStore`, trade-data-plane-2026-07-13.md §1.1)
+//! for the bubble's own instrument — real trades, never synthetic legs.
+//! [`TradeFoldRuntime::reseed`] replays the ENTIRE trade snapshot chronologically
+//! through a fresh machine instance
 //! (see `DerivedStream`'s "no rollback, replay from scratch" contract,
 //! mirrored from the kline-fold family above); [`TradeFoldRuntime::on_live_trade`]
 //! folds one live trade tick.
@@ -803,10 +805,10 @@ fn tpo_point_to_session(p: &digdigdig3_station::data::TpoSessionPoint) -> mlc_co
 /// family (`tick_bar`/`tick_imbalance_bar`/`volume_imbalance_bar`/`run_bar`/
 /// `footprint`/`tpo`), or when the CVD companion indicator is active for
 /// this bubble's instrument (synthetic `"cvd"` chart_type, see
-/// [`TradeFoldMachine::new`]'s doc comment). Reseeded from the bubble's own
-/// `trade_layer` (or, for the `tpo` Kline1m flavour, the "1m" kline layer)
-/// on install/param-change/chart-type-switch, then fed one trade (or 1m bar,
-/// for Kline1m TPO) at a time as the layer receives live appends.
+/// [`TradeFoldMachine::new`]'s doc comment). Reseeded from the instrument's
+/// shared `TradeStore` entry (or, for the `tpo` Kline1m flavour, the "1m"
+/// kline layer) on install/param-change/chart-type-switch, then fed one
+/// trade (or 1m bar, for Kline1m TPO) at a time as new data arrives.
 ///
 /// Distinct type from [`FoldRuntime`] (not a third enum variant on it) —
 /// the two families fold different upstream layers (trade vs kline) and

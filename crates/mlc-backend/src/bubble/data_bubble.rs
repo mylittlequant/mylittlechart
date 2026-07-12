@@ -9,7 +9,7 @@ use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::CommandHistory;
 use mlc_core::state::Timeframe;
 
-use super::raw_layer::{RawLayer, RawTrade};
+use super::raw_layer::RawLayer;
 
 /// Default ring capacity for one [`DataBubble::kline_layers`] entry (points
 /// per touched timeframe). Overridden per-profile by
@@ -17,8 +17,9 @@ use super::raw_layer::{RawLayer, RawTrade};
 /// `docs/mlc/plans/unified-data-plane-2026-07-09.md` Stage Э1.
 pub const DEFAULT_KLINE_LAYER_CAPACITY: usize = 200_000;
 
-/// Default ring capacity for [`DataBubble::trade_layer`]. Overridden
-/// per-profile by `UserProfile.domain.data_load.trade_layer_capacity`.
+/// Default ring capacity for a [`crate::trade_store::TradeStore`] entry.
+/// Overridden per-profile by
+/// `UserProfile.domain.data_load.trade_layer_capacity`.
 pub const DEFAULT_TRADE_LAYER_CAPACITY: usize = 1_000_000;
 
 /// Refold debounce window (P0 hang fix part 2) — see
@@ -355,12 +356,16 @@ pub struct DataBubble {
     // === Raw data layers (unified-data-plane Stage Э1, 2026-07-09) ==========
     // =========================================================================
     // Bubble-scoped raw storage, independent of the active render series:
-    // one kline ring per touched timeframe + one trade ring. Filled
-    // continuously by live WS ticks and REST backfill; nothing clears them
-    // on chart-type/param/TF switches — only ring capacity evicts
-    // (drop-oldest). ONLY a genuine instrument reassignment (symbol switch)
-    // resets them — see `BubbleStore::set_instrument`/`set_bid_instrument_full`.
+    // one kline ring per touched timeframe. Filled continuously by live WS
+    // ticks and REST backfill; nothing clears them on chart-type/param/TF
+    // switches — only ring capacity evicts (drop-oldest). ONLY a genuine
+    // instrument reassignment (symbol switch) resets them — see
+    // `BubbleStore::set_instrument`/`set_bid_instrument_full`.
     // See `docs/mlc/plans/unified-data-plane-2026-07-09.md`.
+    //
+    // The raw TRADE ring moved out of here (trade-data-plane-2026-07-13.md
+    // §1.1, step 1) into `crate::trade_store::TradeStore` — one shared ring
+    // per INSTRUMENT instead of one per bubble tracking that instrument.
     // =========================================================================
 
     /// Raw kline rings keyed by timeframe name (e.g. `"1m"`, `"1h"`) — one
@@ -370,23 +375,12 @@ pub struct DataBubble {
     /// raw storage, not the active display series.
     pub kline_layers: HashMap<String, RawLayer<mlc_core::Bar>>,
 
-    /// Raw trade ring for this bubble's instrument. Fed continuously by the
-    /// live trade subscription for as long as the bubble is alive — not
-    /// gated by chart_type or TF (see `subscribe_trades` continuous-feed
-    /// wiring in `mlc-app/src/frame_lifecycle/react.rs`).
-    pub trade_layer: RawLayer<RawTrade>,
-
     /// Ring capacity applied to every entry of `kline_layers` (new TF layers
     /// created lazily use this value). Defaults to
     /// [`DEFAULT_KLINE_LAYER_CAPACITY`]; overridden via
     /// [`Self::set_layer_capacities`] from
     /// `UserProfile.domain.data_load.kline_layer_capacity`.
     pub kline_layer_capacity: usize,
-
-    /// Ring capacity applied to `trade_layer`. Defaults to
-    /// [`DEFAULT_TRADE_LAYER_CAPACITY`]; overridden via
-    /// [`Self::set_layer_capacities`].
-    pub trade_layer_capacity: usize,
 
     // =========================================================================
     // === Client-side view fold (unified-data-plane Stage Э3, 2026-07-09) ====
@@ -515,9 +509,7 @@ impl DataBubble {
             scroll_prefetch_done: false,
             history_depth: HistoryDepth::default(),
             kline_layers: HashMap::new(),
-            trade_layer: RawLayer::new(DEFAULT_TRADE_LAYER_CAPACITY),
             kline_layer_capacity: DEFAULT_KLINE_LAYER_CAPACITY,
-            trade_layer_capacity: DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
@@ -815,19 +807,22 @@ impl DataBubble {
     // === Raw data layers (unified-data-plane Stage Э1) =======================
     // =========================================================================
 
-    /// Configure the ring capacities used by this bubble's raw layers.
-    /// Applies immediately to `trade_layer` and to every already-existing
-    /// `kline_layers` entry; new TF layers created afterward via
-    /// [`Self::kline_layer_mut`] pick up `kline_layer_capacity` at creation
-    /// time. Called once from the app layer right after bubble creation,
-    /// sourced from `UserProfile.domain.data_load.{kline,trade}_layer_capacity`.
-    pub fn set_layer_capacities(&mut self, kline_capacity: usize, trade_capacity: usize) {
+    /// Configure the ring capacity used by this bubble's raw kline layers.
+    /// Applies immediately to every already-existing `kline_layers` entry;
+    /// new TF layers created afterward via [`Self::kline_layer_mut`] pick up
+    /// `kline_layer_capacity` at creation time. Called once from the app
+    /// layer right after bubble creation, sourced from
+    /// `UserProfile.domain.data_load.kline_layer_capacity`.
+    ///
+    /// Trade-layer capacity is no longer a per-bubble setting — see
+    /// [`crate::trade_store::TradeStore::set_default_capacity`] (the shared
+    /// per-instrument store's store-wide equivalent, trade-data-plane-2026-07-13.md
+    /// §1.1 step 1).
+    pub fn set_layer_capacities(&mut self, kline_capacity: usize) {
         self.kline_layer_capacity = kline_capacity;
-        self.trade_layer_capacity = trade_capacity;
         for layer in self.kline_layers.values_mut() {
             layer.set_capacity(kline_capacity);
         }
-        self.trade_layer.set_capacity(trade_capacity);
     }
 
     /// Get-or-create the raw kline layer for timeframe `tf`, using
@@ -854,23 +849,17 @@ impl DataBubble {
         self.kline_layer_mut(tf).seed_block(block)
     }
 
-    /// Read-only access to the raw trade layer.
-    pub fn trade_layer(&self) -> &RawLayer<RawTrade> {
-        &self.trade_layer
-    }
-
-    /// Mutable access to the raw trade layer.
-    pub fn trade_layer_mut(&mut self) -> &mut RawLayer<RawTrade> {
-        &mut self.trade_layer
-    }
-
-    /// Drop every raw layer (all kline TF rings + the trade ring). Called
+    /// Drop every raw kline layer (all touched-timeframe rings). Called
     /// ONLY when this bubble is reassigned to a different instrument
     /// (symbol switch) — see `BubbleStore::set_instrument` family. Chart-
     /// type/param/TF switches on the SAME instrument must never call this.
+    ///
+    /// Does NOT touch the shared [`crate::trade_store::TradeStore`] — that
+    /// store is per-INSTRUMENT, not per-bubble, so a bubble's own identity
+    /// reassignment has no bearing on it (see `TradeStore`'s module doc,
+    /// "Instrument-switch semantics").
     pub fn reset_raw_layers(&mut self) {
         self.kline_layers.clear();
-        self.trade_layer = RawLayer::new(self.trade_layer_capacity);
     }
 
     // =========================================================================
@@ -963,9 +952,7 @@ impl Clone for DataBubble {
             scroll_prefetch_done: self.scroll_prefetch_done,
             history_depth: self.history_depth,
             kline_layers: self.kline_layers.clone(),
-            trade_layer: self.trade_layer.clone(),
             kline_layer_capacity: self.kline_layer_capacity,
-            trade_layer_capacity: self.trade_layer_capacity,
             // Not carried across Clone — see field doc comment.
             active_fold: None,
             active_trade_fold: None,
@@ -990,7 +977,6 @@ impl std::fmt::Debug for DataBubble {
             .field("sync_flags", &self.sync_flags)
             .field("command_history_size", &self.command_history.size())
             .field("kline_layers_tfs", &self.kline_layers.len())
-            .field("trade_layer_len", &self.trade_layer.len())
             .finish()
     }
 }

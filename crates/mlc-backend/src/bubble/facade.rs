@@ -206,11 +206,6 @@ impl<'a> Bubbles<'a> {
         self.store.kline_layer_snapshot(bid, tf)
     }
 
-    /// Raw trade layer (unified-data-plane Stage Э1).
-    pub fn trade_layer(&self, bid: BubbleId) -> Option<&super::raw_layer::RawLayer<super::raw_layer::RawTrade>> {
-        self.store.trade_layer(bid)
-    }
-
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
         self.store.symbol(bid)
     }
@@ -435,22 +430,13 @@ impl<'a> BubblesMut<'a> {
         self.store.kline_layer_snapshot(bid, tf)
     }
 
-    /// Live-tick write into a bubble's raw trade layer (unified-data-plane
-    /// Stage Э1).
-    pub fn trade_layer_push_live(&mut self, bid: BubbleId, trade: super::raw_layer::RawTrade) {
-        self.store.trade_layer_push_live(bid, trade)
-    }
-
-    /// Backfill-batch write into a bubble's raw trade layer (unified-data-
-    /// plane Stage Э2 `BackfillEngine`).
-    pub fn trade_layer_prepend_batch(&mut self, bid: BubbleId, trades: Vec<super::raw_layer::RawTrade>) {
-        self.store.trade_layer_prepend_batch(bid, trades)
-    }
-
-    /// Configure raw-layer ring capacities for a bubble known by id
-    /// directly (unified-data-plane Stage Э1).
-    pub fn set_layer_capacities(&mut self, bid: BubbleId, kline_capacity: usize, trade_capacity: usize) {
-        self.with_bubble_mut(bid, |b| b.set_layer_capacities(kline_capacity, trade_capacity));
+    /// Configure the raw kline-layer ring capacity for a bubble known by id
+    /// directly (unified-data-plane Stage Э1). Trade-layer capacity is no
+    /// longer configured per-bubble — see
+    /// [`crate::trade_store::TradeStore::set_default_capacity`]
+    /// (`BackendCore::set_layer_capacities` calls both).
+    pub fn set_layer_capacities(&mut self, bid: BubbleId, kline_capacity: usize) {
+        self.with_bubble_mut(bid, |b| b.set_layer_capacities(kline_capacity));
     }
 
     pub fn set_timeframe(&mut self, bid: BubbleId, tf: Timeframe) -> bool {

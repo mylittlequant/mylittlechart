@@ -92,9 +92,7 @@ impl BubbleStore {
             scroll_prefetch_done: false,
             history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
             kline_layers: HashMap::new(),
-            trade_layer: crate::bubble::RawLayer::new(crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY),
             kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
-            trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
@@ -154,9 +152,7 @@ impl BubbleStore {
             scroll_prefetch_done: false,
             history_depth: crate::bubble::data_bubble::HistoryDepth::default(),
             kline_layers: HashMap::new(),
-            trade_layer: crate::bubble::RawLayer::new(crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY),
             kline_layer_capacity: crate::bubble::data_bubble::DEFAULT_KLINE_LAYER_CAPACITY,
-            trade_layer_capacity: crate::bubble::data_bubble::DEFAULT_TRADE_LAYER_CAPACITY,
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
@@ -328,12 +324,14 @@ impl BubbleStore {
     /// Update symbol, exchange, and account_type for a bubble known by id
     /// directly. Caller resolves `member → bid` via `core.tags()` first.
     ///
-    /// Resets the bubble's raw data layers (`kline_layers`/`trade_layer`,
+    /// Resets the bubble's raw kline data layers (`kline_layers`,
     /// unified-data-plane Stage Э1) when the resulting instrument identity
     /// actually differs from the old one — a genuine symbol/exchange/
-    /// account_type reassignment means the previously-buffered raw data
-    /// belongs to a DIFFERENT instrument and must not linger. A no-op call
-    /// (identity unchanged) leaves the layers untouched.
+    /// account_type reassignment means the previously-buffered raw kline
+    /// data belongs to a DIFFERENT instrument and must not linger. A no-op
+    /// call (identity unchanged) leaves the layers untouched. Does NOT touch
+    /// the shared per-instrument `TradeStore` — see its module doc
+    /// ("Instrument-switch semantics").
     pub fn set_instrument(
         &mut self,
         bid: BubbleId,
@@ -652,12 +650,6 @@ impl BubbleStore {
             .unwrap_or_default()
     }
 
-    /// Raw trade layer for a bubble known by id directly. `None` if the
-    /// bubble is missing.
-    pub fn trade_layer(&self, bid: BubbleId) -> Option<&super::raw_layer::RawLayer<super::raw_layer::RawTrade>> {
-        Some(self.bubbles.get(&bid)?.trade_layer())
-    }
-
     /// Symbol of a bubble known by id directly. `None` if missing or empty.
     pub fn symbol(&self, bid: BubbleId) -> Option<&str> {
         self.bubbles.get(&bid).map(|b| b.address.symbol.as_str()).filter(|s| !s.is_empty())
@@ -813,23 +805,6 @@ impl BubbleStore {
     pub fn kline_layer_seed_block(&mut self, bid: BubbleId, tf: &str, block: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.kline_layer_seed_block(tf, block);
-        }
-    }
-
-    /// Live-tick write into a bubble's raw trade layer. No-op for an
-    /// unknown bubble.
-    pub fn trade_layer_push_live(&mut self, bid: BubbleId, trade: super::raw_layer::RawTrade) {
-        if let Some(b) = self.bubbles.get_mut(&bid) {
-            b.trade_layer_mut().push_live(trade);
-        }
-    }
-
-    /// Backfill-batch write into a bubble's raw trade layer — prepended in
-    /// front of the existing series with seam dedup (unified-data-plane
-    /// Stage Э2 `BackfillEngine`). No-op for an unknown bubble.
-    pub fn trade_layer_prepend_batch(&mut self, bid: BubbleId, trades: Vec<super::raw_layer::RawTrade>) {
-        if let Some(b) = self.bubbles.get_mut(&bid) {
-            b.trade_layer_mut().prepend_batch(trades);
         }
     }
 

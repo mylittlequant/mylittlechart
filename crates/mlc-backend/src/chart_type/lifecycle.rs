@@ -400,9 +400,9 @@ impl BackendCore {
     }
 
     /// Re-seed `bid`'s existing (or freshly-installed) trade-fold runtime
-    /// from the bubble's current trade-layer (and, for TPO Kline1m, "1m"
-    /// kline-layer) snapshot, replace the output slot wholesale, and return
-    /// the reconcile-triggering [`BubbleEvent`].
+    /// from the shared per-instrument trade store (and, for TPO Kline1m,
+    /// "1m" kline-layer) snapshot, replace the output slot wholesale, and
+    /// return the reconcile-triggering [`BubbleEvent`].
     fn reseed_trade_fold(
         &self,
         bid: BubbleId,
@@ -411,10 +411,10 @@ impl BackendCore {
         symbol: &str,
         account_type: AccountType,
     ) -> Option<BubbleEvent> {
-        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
-            .trade_layer(bid)
-            .cloned()
-            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let trade_key = mlc_core::instrument::InstrumentAddress::new(
+            exchange_id.as_str(), symbol.to_string(), account_type.short_label().parse().unwrap_or_default(),
+        );
+        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.trade_store.snapshot_layer(&trade_key);
         let kline_snapshot: crate::bubble::RawLayer<Bar> = self.bubbles()
             .kline_layer(bid, "1m")
             .cloned()
@@ -625,14 +625,15 @@ impl BackendCore {
             }).flatten();
 
             // Seam bucket: shared open_time on both sides → re-fold that one
-            // bucket from the layer (which now holds BOTH halves).
+            // bucket from the store (which now holds BOTH halves).
             let mut drop_existing_first = false;
             if let Some(first_open) = existing_first_open {
                 if interval_ms > 0 && prefix_bars.last().map(|p| p.open_time) == Some(first_open) {
                     let (s, e) = (first_open, first_open + interval_ms);
-                    let seam_trades: Vec<crate::bubble::RawTrade> = self.bubbles().with_bubble(bid, |b| {
-                        b.trade_layer.iter().filter(|t| t.ts_ms >= s && t.ts_ms < e).copied().collect()
-                    }).unwrap_or_default();
+                    let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                        exchange_id.as_str(), symbol.to_string(), account_type_label.parse().unwrap_or_default(),
+                    );
+                    let seam_trades: Vec<crate::bubble::RawTrade> = self.trade_store.slice_window(&trade_key, s, e);
                     let seam_bar = self.bubbles().with_bubble(bid, |b| {
                         b.active_trade_fold.as_ref().map(|f| f.fold_prefix(&seam_trades))
                     }).flatten().and_then(|outs| outs.into_iter().rev().find_map(|o| {
@@ -981,10 +982,10 @@ impl BackendCore {
             "cvd", cvd_params, mlc_backend_data_bridge::TpoSource::TradeBucket,
             exchange_id, symbol,
         )?;
-        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
-            .trade_layer(bid)
-            .cloned()
-            .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+        let trade_key = mlc_core::instrument::InstrumentAddress::new(
+            exchange_id.as_str(), symbol.to_string(), account_type.short_label().parse().unwrap_or_default(),
+        );
+        let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.trade_store.snapshot_layer(&trade_key);
         let outputs = fold.reseed(&trade_snapshot, &crate::bubble::RawLayer::new(0));
         self.bubbles_mut().with_bubble_mut(bid, |b| b.active_cvd_fold = Some(fold));
         let account_type_label = account_type.short_label().to_string();

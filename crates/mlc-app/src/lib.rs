@@ -1125,7 +1125,7 @@ impl ChartApp {
             .core
             .bubbles_mut()
             .create_bubble(symbol, timeframe);
-        self.core.bubbles_mut().set_layer_capacities(bid, kline_cap, trade_cap);
+        self.core.set_layer_capacities(bid, kline_cap, trade_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
@@ -1142,7 +1142,7 @@ impl ChartApp {
             .core
             .bubbles_mut()
             .create_bubble_auto(symbol, timeframe);
-        self.core.bubbles_mut().set_layer_capacities(bid, kline_cap, trade_cap);
+        self.core.set_layer_capacities(bid, kline_cap, trade_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
     }

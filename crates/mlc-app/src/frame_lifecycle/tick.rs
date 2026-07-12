@@ -812,13 +812,13 @@ impl ChartApp {
             // chunk). Engine latches (in-flight / venue-dry / RAM cap) make
             // the per-tick re-arm a no-op while a chunk runs or the source
             // is done.
-            for (_cid_req, symbol, exchange, account_type, bid_req) in trade_fold_scroll_pressure_requests {
+            for (_cid_req, symbol, exchange, account_type, _bid_req) in trade_fold_scroll_pressure_requests {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                let Some(oldest_ts) = self.core.bubbles().trade_layer(bid_req).and_then(|l| l.oldest_ts()) else {
-                    // Layer not seeded yet — the subscribe-time Hour rung is
-                    // still in flight; nothing to deepen from.
+                let Some(oldest_ts) = self.core.trade_oldest_ts(eid, &symbol, account_type) else {
+                    // Store entry not seeded yet — the subscribe-time Hour
+                    // rung is still in flight; nothing to deepen from.
                     continue;
                 };
                 let now_wall_ms = web_time::SystemTime::now()

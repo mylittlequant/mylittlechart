@@ -33,6 +33,7 @@ pub mod watchlist;
 pub mod tag;
 pub mod preset;
 pub mod template;
+pub mod trade_store;
 pub mod user;
 pub mod trading;
 pub mod exchange_symbols;
@@ -74,6 +75,7 @@ use crate::preset::PresetManager;
 use crate::template::TemplateManager;
 use crate::user::UserProfileManager;
 use crate::exchange_symbols::ExchangeSymbolsManager;
+use crate::trade_store::TradeStore;
 
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
@@ -708,6 +710,15 @@ pub struct BackendCore {
     /// access is lock-free at the per-key level.
     pub mini_ticker: DashMap<String, MiniTickerData>,
 
+    /// Per-instrument shared raw trade store (`docs/mlc/plans/trade-data-plane-2026-07-13.md`
+    /// §1.1). Replaces the old per-bubble `DataBubble.trade_layer` — one
+    /// ring per instrument instead of one per bubble tracking it. Rung-4
+    /// keyed exception (doctrine §6), same shape as `mini_ticker`. Writers:
+    /// the `TradeUpdate`/`TradeHistoryPrepended` arms in `tick_writers`
+    /// below. Readers: `chart_type::lifecycle`'s fold/reseed paths, plus
+    /// `mlc-app`'s demand dispatch via [`Self::trade_oldest_ts`].
+    pub trade_store: TradeStore,
+
     /// Symbol catalogue per exchange — populated asynchronously from
     /// `LiveUpdate::SymbolsLoaded`. Same for every consumer of this backend.
     /// `RwLock` because writes are rare (once per exchange) and reads are
@@ -865,6 +876,7 @@ impl BackendCore {
             broadcast_rx: std::sync::Mutex::new(broadcast_rx),
             bridge,
             mini_ticker: DashMap::new(),
+            trade_store: TradeStore::new(),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
@@ -1060,6 +1072,38 @@ impl BackendCore {
     #[inline]
     pub fn bubbles_mut(&self) -> BubblesMut<'_> {
         BubblesMut::new(self.bubble.write().expect("BackendCore.bubble poisoned (write)"))
+    }
+
+    /// Oldest stored trade's timestamp for `(exchange_id, symbol,
+    /// account_type)`'s instrument in the shared [`TradeStore`], if any.
+    /// Narrow read accessor — callers outside `mlc-backend` (e.g. `mlc-app`'s
+    /// trade-fold scroll-pressure demand dispatch) reach the store through
+    /// this method rather than the store type itself (`trade_store` field is
+    /// `pub` for intra-workspace-crate reads that legitimately need more,
+    /// same rung-4 shape as `mini_ticker`, but new external call sites
+    /// should prefer a narrow method like this one).
+    #[inline]
+    pub fn trade_oldest_ts(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> Option<i64> {
+        let key = mlc_core::instrument::InstrumentAddress::new(exchange_id.as_str(), symbol, account_type);
+        self.trade_store.oldest_ts(&key)
+    }
+
+    /// Configure raw-layer ring capacities: kline (per-bubble, applied to
+    /// `bid`'s own `kline_layers`) and trade (store-wide, applied to every
+    /// instrument in the shared [`TradeStore`]). Replaces the old
+    /// single-call `Bubbles::set_layer_capacities(bid, kline, trade)` now
+    /// that the trade ring lives in a per-instrument store instead of on
+    /// each bubble — see `docs/mlc/plans/trade-data-plane-2026-07-13.md`
+    /// §1.1 step 1.
+    #[inline]
+    pub fn set_layer_capacities(&self, bid: BubbleId, kline_capacity: usize, trade_capacity: usize) {
+        self.bubbles_mut().set_layer_capacities(bid, kline_capacity);
+        self.trade_store.set_default_capacity(trade_capacity);
     }
 
     /// Read-only facade over the alert manager + bubble store. The ONLY
@@ -1555,13 +1599,15 @@ impl BackendCore {
                 // Aggregation period and derived-window exclusion depend on per-window
                 // TF metadata and `is_derived` flags; reactor owns the full arm.
                 LiveUpdate::TradeUpdate { exchange_id, account_type, symbol, price, quantity, timestamp, is_buyer_maker } => {
-                    // Raw trade layer (unified-data-plane Stage Э1): ADDITIVE
-                    // live-tick write into EVERY bubble on this instrument —
-                    // single-writer-core, backend-side (not mlc-app), and
-                    // unconditional (not gated by chart_type/TF, unlike the
-                    // kline-candle-builder path in react.rs's
-                    // `TradeUpdatePassthrough` arm, which keeps ALL its
-                    // existing gates).
+                    // Raw trade store (trade-data-plane-2026-07-13.md §1.1):
+                    // ONE additive live-tick write into the shared
+                    // per-instrument `TradeStore` — single-writer-core,
+                    // backend-side (not mlc-app), and unconditional (not
+                    // gated by chart_type/TF, unlike the kline-candle-builder
+                    // path in react.rs's `TradeUpdatePassthrough` arm, which
+                    // keeps ALL its existing gates). Every bubble on this
+                    // instrument then folds the SAME trade from the shared
+                    // store — no per-bubble copy of the tape.
                     let at_label = account_type.short_label();
                     let raw_trade = crate::bubble::RawTrade {
                         ts_ms: timestamp,
@@ -1569,10 +1615,13 @@ impl BackendCore {
                         qty: quantity,
                         is_buyer_maker,
                     };
+                    let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                        exchange_id.as_str(), symbol.clone(), at_label.parse().unwrap_or_default(),
+                    );
+                    self.trade_store.push_live(&trade_key, raw_trade);
                     // Guard-lifetime note: bind before looping (see BarUpdate arm).
                     let trade_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                     for bid in trade_bids {
-                        self.bubbles_mut().trade_layer_push_live(bid, raw_trade);
                         // Client-side trade fold (unified-data-plane Э4):
                         // every bubble that has installed a `TradeFoldRuntime`
                         // for one of the 6 trade-fed chart types folds this
@@ -1609,10 +1658,12 @@ impl BackendCore {
 
                 // ── TradeHistoryPrepended (unified-data-plane Э2) ────────────────
                 // `BackfillEngine`'s trade-layer backfill page — ADDITIVE prepend
-                // into every bubble on this instrument's raw trade layer. No
-                // active-series write (trades do not drive `bubble.bars`
-                // directly today); Э4's client-side folds are the intended
-                // future active-series consumer of this data.
+                // into the shared per-instrument `TradeStore` (trade-data-
+                // plane-2026-07-13.md §1.1: ONE store ingest, not a
+                // per-bubble fan-out/clone). No active-series write (trades
+                // do not drive `bubble.bars` directly today); Э4's
+                // client-side folds are the intended active-series consumer,
+                // one stitch per bubble from the shared batch.
                 LiveUpdate::TradeHistoryPrepended { exchange_id, account_type, symbol, trades } => {
                     if trades.is_empty() { continue; }
                     let at_label = account_type.short_label();
@@ -1622,16 +1673,19 @@ impl BackendCore {
                         qty: t.qty,
                         is_buyer_maker: t.is_buyer_maker,
                     }).collect();
+                    let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                        exchange_id.as_str(), symbol.clone(), at_label.parse().unwrap_or_default(),
+                    );
+                    self.trade_store.prepend_batch(&trade_key, &raw_trades);
                     // Guard-lifetime note: bind before looping (see BarUpdate arm).
                     let prepend_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                     for bid in prepend_bids {
-                        self.bubbles_mut().trade_layer_prepend_batch(bid, raw_trades.clone());
                         // Incremental prepend-fold (owner doctrine
                         // 2026-07-13, "догружать только чего нет"): fold
                         // JUST this batch and stitch it in front of the
                         // existing fold outputs — per page, no whole-layer
-                        // reseed, no full-layer clone. Runs AFTER the layer
-                        // write (the seam-bucket refold reads the layer).
+                        // reseed, no full-layer clone. Runs AFTER the store
+                        // write (the seam-bucket refold reads the store).
                         events.extend(self.incremental_prepend_trade_folds(
                             bid, &raw_trades, exchange_id, &symbol, at_label,
                         ));
@@ -1730,7 +1784,7 @@ impl BackendCore {
                 }
 
                 // ── LayerBackfilled (unified-data-plane Э2, consumed Э3+Э4) ──────
-                // The actual `kline_layers`/`trade_layer` write already
+                // The actual `kline_layers`/`TradeStore` write already
                 // happened via the `ScrollBarsLoaded`/`BackfillComplete`/
                 // `TradeHistoryPrepended` arms above — this is the
                 // layer-scoped SIGNAL. For `layer == "kline:1m"`, every
@@ -1785,10 +1839,11 @@ impl BackendCore {
                             self.bubbles_mut().with_bubble_mut(bid, |b| b.mark_refolded(refold_now));
                             if has_kline_fed_tfold {
                                 mlc_backend_data_bridge::dlog!("[kline1m-refold] bid={:?} layer_len={}", bid, layer_snapshot.len());
-                                let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
-                                    .trade_layer(bid)
-                                    .cloned()
-                                    .unwrap_or_else(|| crate::bubble::RawLayer::new(0));
+                                let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                                    exchange_id.as_str(), symbol.clone(), at_label.parse().unwrap_or_default(),
+                                );
+                                let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> =
+                                    self.trade_store.snapshot_layer(&trade_key);
                                 let t_outputs_and_type = self.bubbles_mut().with_bubble_mut(bid, |b| {
                                     b.active_trade_fold.as_mut().map(|f| (f.reseed(&trade_snapshot, &layer_snapshot), f.chart_type()))
                                 }).flatten();
@@ -1876,10 +1931,11 @@ impl BackendCore {
                                 })
                                 .unwrap_or(true);
                             if !should_refold { continue; }
-                            let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = match self.bubbles().trade_layer(bid) {
-                                Some(l) => l.clone(),
-                                None => continue,
-                            };
+                            let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                                exchange_id.as_str(), symbol.clone(), at_label.parse().unwrap_or_default(),
+                            );
+                            let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> =
+                                self.trade_store.snapshot_layer(&trade_key);
                             let empty_kline: crate::bubble::RawLayer<Bar> = crate::bubble::RawLayer::new(0);
 
                             if has_trade_fold {

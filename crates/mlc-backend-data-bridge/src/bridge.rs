@@ -437,12 +437,13 @@ pub enum LiveUpdate {
         depth: HistoryDepthWire,
     },
 
-    /// Batch of OLDER trades prepended to a bubble's raw trade layer by
+    /// Batch of OLDER trades prepended to the shared per-instrument
+    /// `TradeStore` by
     /// [`BackfillEngine`](crate::backfill_engine::BackfillEngine) — the
-    /// trade-layer analogue of `ScrollBarsLoaded` (unified-data-plane Э2).
+    /// trade-store analogue of `ScrollBarsLoaded` (unified-data-plane Э2).
     /// No active-series write happens for this variant today (trades do not
     /// drive `bubble.bars` directly) — `tick_writers` writes it straight
-    /// into `trade_layer_prepend_batch`; Э4's client-side folds are the
+    /// into `TradeStore::prepend_batch`; Э4's client-side folds are the
     /// intended future active-series consumer.
     TradeHistoryPrepended {
         exchange_id: ExchangeId,
@@ -453,8 +454,9 @@ pub enum LiveUpdate {
 
     /// A raw-layer backfill page landed (unified-data-plane Э2,
     /// `BackfillEngine`). Layer-level notification for consumers that watch
-    /// a bubble's raw `kline_layers`/`trade_layer` directly rather than the
-    /// active-series-shaped events (`ScrollBarsLoaded`/`BackfillComplete`) —
+    /// a bubble's raw `kline_layers` (or the shared per-instrument
+    /// `TradeStore`) directly rather than the active-series-shaped events
+    /// (`ScrollBarsLoaded`/`BackfillComplete`) —
     /// Э3/Э4 client-side folds are the intended consumer, so this variant is
     /// informational-only today (no writer keys off it yet). The kline
     /// layer write itself still happens through the existing

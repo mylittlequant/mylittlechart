@@ -156,7 +156,7 @@ async fn create_bubble(
         (dl.kline_layer_capacity as usize, dl.trade_layer_capacity as usize)
     };
     let bid = s.core.bubbles_mut().create_bubble_auto(body.symbol, tf);
-    s.core.bubbles_mut().set_layer_capacities(bid, kline_cap, trade_cap);
+    s.core.set_layer_capacities(bid, kline_cap, trade_cap);
     // Set exchange + account_type on the newly created bubble. This is a bare
     // bubble creation with no chart member attached yet, hence the bid-keyed
     // `set_bubble_instrument` rather than the member-keyed `set_instrument`.
