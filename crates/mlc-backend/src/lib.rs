@@ -1093,6 +1093,24 @@ impl BackendCore {
         self.trade_store.oldest_ts(&key)
     }
 
+    /// Widen `(exchange_id, symbol, account_type)`'s instrument's retention
+    /// horizon in the shared [`TradeStore`] to at least `horizon_ms` —
+    /// monotonic max (see [`TradeStore::widen_horizon`]). Thin passthrough,
+    /// same narrow-facade shape as [`Self::trade_oldest_ts`] (key built the
+    /// same way): callers outside `mlc-backend` feed demand-side time
+    /// windows in through this method, never the store type itself.
+    #[inline]
+    pub fn widen_trade_horizon(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: mlc_core::instrument::AccountType,
+        horizon_ms: i64,
+    ) {
+        let key = mlc_core::instrument::InstrumentAddress::new(exchange_id.as_str(), symbol, account_type);
+        self.trade_store.widen_horizon(&key, horizon_ms);
+    }
+
     /// Configure raw-layer ring capacities: kline (per-bubble, applied to
     /// `bid`'s own `kline_layers`) and trade (store-wide, applied to every
     /// instrument in the shared [`TradeStore`]). Replaces the old

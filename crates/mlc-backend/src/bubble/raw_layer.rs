@@ -329,6 +329,18 @@ impl<T: ChronoKey> RawLayer<T> {
         }
     }
 
+    /// Drop every point whose chrono key is older than `cutoff_ms` from the
+    /// front (oldest end) of the ring — a time-horizon eviction, distinct
+    /// from [`Self::evict_overflow`]'s count-capacity eviction. The ring is
+    /// kept chronologically sorted by every mutator, so the expired run is
+    /// always a contiguous prefix: pop from the front while the oldest key
+    /// is still stale.
+    pub fn evict_older_than(&mut self, cutoff_ms: i64) {
+        while self.points.front().map(|p| p.chrono_key() < cutoff_ms).unwrap_or(false) {
+            self.points.pop_front();
+        }
+    }
+
     /// Drop every stored point. Used ONLY on genuine instrument reassignment
     /// (symbol switch) — never on chart-type/param/TF switches. See module
     /// doc.
@@ -723,6 +735,40 @@ mod tests {
         for w in snapshot.windows(2) {
             assert!(w[0].chrono_key() < w[1].chrono_key(), "order break detected between adjacent bars");
         }
+    }
+
+    #[test]
+    fn evict_older_than_drops_only_the_stale_prefix() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        for ts in [100, 200, 300, 400, 500] {
+            layer.push_live(trade(ts, ts as f64));
+        }
+        layer.evict_older_than(300);
+        assert_eq!(
+            layer.snapshot(),
+            vec![trade(300, 300.0), trade(400, 400.0), trade(500, 500.0)],
+            "everything strictly older than the cutoff must be dropped, cutoff itself kept"
+        );
+    }
+
+    #[test]
+    fn evict_older_than_on_fully_stale_layer_empties_it() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        for ts in [100, 200, 300] {
+            layer.push_live(trade(ts, ts as f64));
+        }
+        layer.evict_older_than(1_000);
+        assert!(layer.is_empty());
+    }
+
+    #[test]
+    fn evict_older_than_on_fresh_layer_is_a_noop() {
+        let mut layer: RawLayer<RawTrade> = RawLayer::new(0);
+        for ts in [500, 600, 700] {
+            layer.push_live(trade(ts, ts as f64));
+        }
+        layer.evict_older_than(100);
+        assert_eq!(layer.len(), 3);
     }
 
     #[test]

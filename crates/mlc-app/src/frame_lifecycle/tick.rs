@@ -835,10 +835,17 @@ impl ChartApp {
                 // logarithmic. `ensure_trade_backfill` ignores demands
                 // while a flight is running, so the ×2 base is always the
                 // settled post-refold window, not a moving target.
+                let demand_window_ms = (have_window_ms * 2).max(3_600_000);
                 let demand = mlc_backend_data_bridge::TradeDemand {
-                    window_ms: Some((have_window_ms * 2).max(3_600_000)),
+                    window_ms: Some(demand_window_ms),
                     auto_ceiling_ms: None,
                 };
+                // Widen retention BEFORE the ensure call so the store never
+                // evicts a page while it is still in flight for this exact
+                // demand — 1.3x margin keeps the just-fetched window
+                // comfortably inside retention (trade-data-plane-2026-07-13
+                // §2, step 2a).
+                self.core.widen_trade_horizon(eid, &symbol, account_type, demand_window_ms * 13 / 10);
                 self.core.bridge_handle().ensure_trade_backfill(eid, &symbol, at, Some(demand));
             }
         }
