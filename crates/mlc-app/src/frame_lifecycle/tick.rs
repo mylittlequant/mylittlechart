@@ -699,16 +699,24 @@ impl ChartApp {
                 // this per-tick re-trigger a cheap no-op while a flight is
                 // running or the source is dry.
                 let cold_fill = {
-                    // Per-chart-type fit cap (registry contract, owner spec
-                    // 2026-07-13): heavy per-bar renderers (footprint
-                    // family) never fit — and therefore never demand —
-                    // more than `viewport_fit_cap` bars, regardless of the
-                    // global pixel clamp.
-                    let mut need = window.viewport().max_fit_bars();
+                    // Demand = the CURRENT viewport's need (owner doctrine
+                    // 2026-07-13: load for what the viewport actually
+                    // shows — trades are a heavyweight source, nothing
+                    // like the sub-second kline REST). Target = 1.5
+                    // screens at the ACTIVE zoom; zooming out grows
+                    // `visible_bars`, so the loop tops up progressively —
+                    // same reactive shape as the scroll-edge threshold.
+                    // `viewport_fit_cap` (450 for the footprint family)
+                    // and the global pixel clamp bound ZOOM, and therefore
+                    // bound this need transitively — they are NOT download
+                    // targets of their own.
+                    let fit = window.viewport().max_fit_bars();
+                    let mut need = window.viewport().visible_bars().saturating_mul(3) / 2;
                     if let Some(cap) = mlc_core::chart_type::by_id(chart_type).and_then(|d| d.viewport_fit_cap) {
                         need = need.min(cap as usize);
                     }
-                    need > 0 && bar_count_scroll < need
+                    need = need.min(fit);
+                    fit > 0 && bar_count_scroll < need
                 };
                 if !edge_pressure && !cold_fill { continue; }
 
