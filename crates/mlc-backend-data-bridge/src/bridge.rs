@@ -1279,6 +1279,13 @@ impl DataBridge {
         _total_bars: Option<usize>,
         force: bool,
     ) {
+        // Empty symbol = caller bug (bubble-less container). Subscribing it
+        // creates a station series that never receives data and gets
+        // silence-timeout-healed forever. Refuse at the door.
+        if symbol.is_empty() {
+            crate::dlog!("[request_bars] empty symbol refused exchange={} tf={}", exchange_id.as_str(), timeframe.name);
+            return;
+        }
         let _rb_total = web_time::Instant::now();
         // Phase 2B: historical fetch (Phase A + Phase B) runs through the
         // STATION's shared hub so it reuses the same connector pool as live

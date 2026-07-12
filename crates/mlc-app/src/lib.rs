@@ -1807,6 +1807,12 @@ impl ChartApp {
                 containers.keys()
                     .filter_map(|cid| {
                         let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                        // Container without a bubble yields sym="" — subscribing
+                        // it mints a zombie kline series the station resubs on
+                        // every silence_timeout forever.
+                        if sym.is_empty() {
+                            return None;
+                        }
                         let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                         let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                         let at = app.account_type_for_chart(*cid).unwrap_or_default();
@@ -2791,6 +2797,11 @@ impl ChartApp {
                     containers.keys()
                         .filter_map(|cid| {
                             let sym = app.symbol_for_chart(*cid).unwrap_or_default();
+                            // Bubble-less container → sym="" → zombie series;
+                            // see the startup-path twin of this loop.
+                            if sym.is_empty() {
+                                return None;
+                            }
                             let exch = app.exchange_for_chart(*cid).unwrap_or_default();
                             let tf = app.timeframe_for_chart(*cid).unwrap_or_else(mlc_core::state::Timeframe::h1);
                             let at = app.account_type_for_chart(*cid).unwrap_or_default();
