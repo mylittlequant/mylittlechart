@@ -916,7 +916,8 @@ impl TradeFoldRuntime {
                     point,
                 };
                 for out in self.machine.on_trade_event(&ev) {
-                    outputs.push(self.stamp_footprint_cvd(out));
+                    let out = self.stamp_footprint_cvd(out);
+                    outputs.push(self.bucket_cvd(out));
                 }
             }
         } else {
@@ -932,7 +933,8 @@ impl TradeFoldRuntime {
             }
         }
         if let Some(flushed) = self.machine.flush_replay() {
-            outputs.push(self.stamp_footprint_cvd(flushed));
+            let flushed = self.stamp_footprint_cvd(flushed);
+            outputs.push(self.bucket_cvd(flushed));
         }
         self.machine.set_replay(false);
         outputs
@@ -984,11 +986,13 @@ impl TradeFoldRuntime {
                 point,
             };
             for out in machine.on_trade_event(&ev) {
-                outputs.push(stamp_local(out, &mut running_cvd));
+                let out = stamp_local(out, &mut running_cvd);
+                outputs.push(self.bucket_cvd(out));
             }
         }
         if let Some(flushed) = machine.flush_replay() {
-            outputs.push(stamp_local(flushed, &mut running_cvd));
+            let flushed = stamp_local(flushed, &mut running_cvd);
+            outputs.push(self.bucket_cvd(flushed));
         }
         machine.set_replay(false);
         outputs
@@ -1012,8 +1016,12 @@ impl TradeFoldRuntime {
             symbol: self.symbol.clone(),
             point,
         };
-        self.machine.on_trade_event(&ev).into_iter()
-            .map(|out| self.stamp_footprint_cvd(out))
+        let outs = self.machine.on_trade_event(&ev);
+        outs.into_iter()
+            .map(|out| {
+                let out = self.stamp_footprint_cvd(out);
+                self.bucket_cvd(out)
+            })
             .collect()
     }
 
@@ -1044,6 +1052,26 @@ impl TradeFoldRuntime {
                 bar.set_cumulative_delta(self.footprint_cvd);
                 self.footprint_cvd = bar.cumulative_delta;
                 TradeFoldOutput::Footprint(bar)
+            }
+            other => other,
+        }
+    }
+
+    /// Floor a CVD sample's ts to this runtime's TIME-BUCKET grid
+    /// (`params.interval_ms` = the host chart's TF; owner doctrine
+    /// 2026-07-13: as many CVD samples as bars). The dig3 machine
+    /// (`TradeToCvdLineDerived`) emits one point PER TRADE — unbucketed,
+    /// a backfilled line grew by hundreds of thousands of samples and
+    /// every per-frame indicator recalc walked all of them. Same-bucket
+    /// samples collapse downstream: `merge_last_wins` on the reseed /
+    /// prefix paths, `DataBubble::append_cvd`'s same-ts upsert on the
+    /// live path (the bucket's running total updates live, like a
+    /// forming bar). Non-CVD outputs and a zero interval pass through.
+    fn bucket_cvd(&self, out: TradeFoldOutput) -> TradeFoldOutput {
+        match out {
+            TradeFoldOutput::Cvd(mut s) if self.params.interval_ms > 0 => {
+                s.ts_ms -= s.ts_ms.rem_euclid(self.params.interval_ms);
+                TradeFoldOutput::Cvd(s)
             }
             other => other,
         }

@@ -669,8 +669,19 @@ impl DataBubble {
     }
     pub fn clear_kagi(&mut self) { self.kagi_segments = None; }
 
+    /// Append/upsert one CVD sample. Samples are TIME-BUCKETED (owner
+    /// doctrine 2026-07-13: as many CVD samples as bars — the per-trade
+    /// unbucketed line grew by hundreds of thousands of points during a
+    /// backfill and made every per-frame indicator recalc walk all of
+    /// them). A sample landing on the SAME bucket ts as the current last
+    /// replaces it (the bucket's running total updating live, exactly like
+    /// a forming bar); a newer ts appends.
     pub fn append_cvd(&mut self, sample: mlc_core::types::CvdSample) {
-        self.cvd_line.get_or_insert_with(Vec::new).push(sample);
+        let store = self.cvd_line.get_or_insert_with(Vec::new);
+        match store.last_mut() {
+            Some(last) if last.ts_ms == sample.ts_ms => *last = sample,
+            _ => store.push(sample),
+        }
     }
     pub fn clear_cvd(&mut self) { self.cvd_line = None; }
 

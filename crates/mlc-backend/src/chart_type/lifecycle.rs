@@ -969,8 +969,16 @@ impl BackendCore {
             Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(auto_ceiling_ms) }),
         );
 
+        // Time-bucketed CVD (owner doctrine 2026-07-13: as many CVD samples
+        // as bars) — the bucket grid is the HOST CHART's TF; the dig3
+        // machine emits per-trade points, the runtime's `bucket_cvd` floors
+        // them onto this grid. Unknown TF falls back to 1m.
+        let cvd_params = crate::bubble::FoldParams {
+            interval_ms: chart_tf_ms.filter(|ms| *ms > 0).unwrap_or(60_000),
+            ..Default::default()
+        };
         let mut fold = crate::bubble::TradeFoldRuntime::new(
-            "cvd", crate::bubble::FoldParams::default(), mlc_backend_data_bridge::TpoSource::TradeBucket,
+            "cvd", cvd_params, mlc_backend_data_bridge::TpoSource::TradeBucket,
             exchange_id, symbol,
         )?;
         let trade_snapshot: crate::bubble::RawLayer<crate::bubble::RawTrade> = self.bubbles()
