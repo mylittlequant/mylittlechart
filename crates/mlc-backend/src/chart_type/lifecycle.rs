@@ -552,6 +552,239 @@ impl BackendCore {
         Some(event)
     }
 
+    /// Incremental history prepend (owner doctrine 2026-07-13: "догружать
+    /// только чего нет" — never reseed the whole layer for a backfill
+    /// page). For TIME-BUCKETED folds, older trades produce only OLDER
+    /// buckets plus at most ONE seam bucket shared with the existing
+    /// output, so a backfill page is folded ALONE through a fresh machine
+    /// ([`crate::bubble::TradeFoldRuntime::fold_prefix`]) and stitched in
+    /// front of the existing slot:
+    ///
+    /// - footprint: prefix bars prepended; the seam bucket (same
+    ///   `open_time` on both sides) is re-folded from the LAYER's trades
+    ///   for that one bucket window (the machine computes levels/extras
+    ///   natively — no hand-merged volumes), then the whole vec gets one
+    ///   O(n) cumulative-delta restitch pass; the `FootprintOhlc` bars
+    ///   mirror is rebuilt from the merged vec.
+    /// - CVD companion: prefix samples prepended, existing samples shifted
+    ///   by the prefix's total (mathematically = the full recompute from
+    ///   the new dataset start, without replaying the pool), seam-duplicate
+    ///   ts dropped.
+    /// - count-based trade bars (tick/imbalance/run): bar boundaries are
+    ///   MARKED IN TIME even though bars are count-defined (owner
+    ///   correction 2026-07-13) — the backward pagination is contiguous,
+    ///   so the prefix's bars glue at the seam ts exactly; the one
+    ///   possibly-short bar at a batch seam is an accepted edge artifact.
+    ///   Prefix `Bar` outputs prepend into `bubble.bars`.
+    ///
+    /// TPO keeps the reseed path (session ring semantics); this method
+    /// ignores it.
+    ///
+    /// Returns the reconcile-triggering events (same shapes the reseed
+    /// path emits — `FootprintBarAppended` drives the derived-series
+    /// prepend shift, `CvdSampleAppended` marks indicators dirty).
+    pub(crate) fn incremental_prepend_trade_folds(
+        &self,
+        bid: BubbleId,
+        prepended: &[crate::bubble::RawTrade],
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Vec<BubbleEvent> {
+        let mut events: Vec<BubbleEvent> = Vec::new();
+        if prepended.is_empty() {
+            return events;
+        }
+
+        // ── footprint ────────────────────────────────────────────────────
+        // All reads are bound BEFORE the single write closure (guard rule).
+        let fp_prefix: Option<(Vec<mlc_core::types::FootprintBar>, i64)> =
+            self.bubbles().with_bubble(bid, |b| {
+                b.active_trade_fold.as_ref().and_then(|f| {
+                    // Policy from the registry contract: incremental +
+                    // OrderflowSlotted = the footprint machine family
+                    // (TPO is OrderflowSlotted but NOT incremental).
+                    let incremental_fp = mlc_core::chart_type::by_id(f.chart_type())
+                        .map(|d| d.incremental_prepend && matches!(d.kind, mlc_core::chart_type::ChartTypeKind::OrderflowSlotted))
+                        .unwrap_or(false);
+                    if !incremental_fp || !f.feeds_on_trades() {
+                        return None;
+                    }
+                    let mut bars: Vec<mlc_core::types::FootprintBar> = Vec::new();
+                    for o in f.fold_prefix(prepended) {
+                        let crate::bubble::TradeFoldOutput::Footprint(fb) = o else { continue };
+                        mlc_core::chart_type::merge_last_wins(&mut bars, fb, mlc_core::chart_type::footprint_identity);
+                    }
+                    if bars.is_empty() { None } else { Some((bars, f.params().interval_ms)) }
+                })
+            }).flatten();
+
+        if let Some((mut prefix_bars, interval_ms)) = fp_prefix {
+            let existing_first_open = self.bubbles().with_bubble(bid, |b| {
+                b.footprint_bars.as_ref().and_then(|ex| ex.first().map(|fb| fb.open_time))
+            }).flatten();
+
+            // Seam bucket: shared open_time on both sides → re-fold that one
+            // bucket from the layer (which now holds BOTH halves).
+            let mut drop_existing_first = false;
+            if let Some(first_open) = existing_first_open {
+                if interval_ms > 0 && prefix_bars.last().map(|p| p.open_time) == Some(first_open) {
+                    let (s, e) = (first_open, first_open + interval_ms);
+                    let seam_trades: Vec<crate::bubble::RawTrade> = self.bubbles().with_bubble(bid, |b| {
+                        b.trade_layer.iter().filter(|t| t.ts_ms >= s && t.ts_ms < e).copied().collect()
+                    }).unwrap_or_default();
+                    let seam_bar = self.bubbles().with_bubble(bid, |b| {
+                        b.active_trade_fold.as_ref().map(|f| f.fold_prefix(&seam_trades))
+                    }).flatten().and_then(|outs| outs.into_iter().rev().find_map(|o| {
+                        let crate::bubble::TradeFoldOutput::Footprint(fb) = o else { return None };
+                        Some(fb)
+                    }));
+                    if let Some(seam) = seam_bar {
+                        prefix_bars.pop();
+                        prefix_bars.push(seam);
+                        drop_existing_first = true;
+                    }
+                }
+            }
+
+            self.bubbles_mut().with_bubble_mut(bid, |b| {
+                let existing = b.footprint_bars.take().unwrap_or_default();
+                let mut merged = prefix_bars;
+                let mut ex_iter = existing.into_iter();
+                if drop_existing_first {
+                    let _ = ex_iter.next();
+                }
+                merged.extend(ex_iter);
+                // One O(n) cumulative-delta restitch over the merged vec —
+                // per-bar delta is bar-local (levels), only the running
+                // total depends on what is now in front.
+                let mut running = 0.0_f64;
+                for fb in merged.iter_mut() {
+                    fb.set_cumulative_delta(running);
+                    running = fb.cumulative_delta;
+                }
+                if b.bars_source == crate::bubble::BarsSource::FootprintOhlc {
+                    let ohlc: Vec<Bar> = merged.iter().map(|fb| Bar::with_volume(
+                        fb.open_time / 1000, fb.open, fb.high, fb.low, fb.close, fb.volume,
+                    )).collect();
+                    b.replace_bars(ohlc);
+                }
+                b.footprint_bars = Some(merged);
+            });
+            events.push(BubbleEvent::FootprintBarAppended {
+                bid, exchange_id,
+                symbol: symbol.to_string(),
+                account_type: account_type_label.to_string(),
+            });
+        }
+
+        // ── count-based trade bars (tick/imbalance/run) ──────────────────
+        // Prefix bars glue at the seam ts (boundaries are time-marked);
+        // identity dedup drops a same-ts duplicate at the seam.
+        let count_bar_prefix: Option<(Vec<Bar>, mlc_core::chart_type::IdentityKey)> =
+            self.bubbles().with_bubble(bid, |b| {
+                b.active_trade_fold.as_ref().and_then(|f| {
+                    if !f.feeds_on_trades() { return None; }
+                    // Policy from the registry contract: incremental +
+                    // TradeAggBar = the count-based bar machines.
+                    let incremental_count = mlc_core::chart_type::by_id(f.chart_type())
+                        .map(|d| d.incremental_prepend && matches!(d.kind, mlc_core::chart_type::ChartTypeKind::TradeAggBar))
+                        .unwrap_or(false);
+                    if !incremental_count {
+                        return None;
+                    }
+                    let identity = mlc_core::chart_type::by_id(f.chart_type())
+                        .map(|d| d.identity)
+                        .unwrap_or(mlc_core::chart_type::IdentityKey::None);
+                    let key_fn = mlc_core::chart_type::bar_identity_key_fn(identity)
+                        .unwrap_or(mlc_core::chart_type::bar_identity);
+                    let mut bars: Vec<Bar> = Vec::new();
+                    for o in f.fold_prefix(prepended) {
+                        let crate::bubble::TradeFoldOutput::Bar(nb) = o else { continue };
+                        mlc_core::chart_type::merge_last_wins(&mut bars, nb, key_fn);
+                    }
+                    if bars.is_empty() { None } else { Some((bars, identity)) }
+                })
+            }).flatten();
+
+        if let Some((prefix_bars, identity)) = count_bar_prefix {
+            let key_fn = mlc_core::chart_type::bar_identity_key_fn(identity)
+                .unwrap_or(mlc_core::chart_type::bar_identity);
+            let (merged, prev_bars, prepend_count, tf_name) = {
+                let mut mgr = self.bubbles_mut();
+                let prev_bars = mgr.bars(bid).to_vec();
+                let tf_name = mgr.timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default();
+                let mut merged = prefix_bars;
+                let seam_key = merged.last().map(|b| key_fn(b));
+                let mut skipped = 0usize;
+                for b in prev_bars.iter() {
+                    if skipped == 0 && Some(key_fn(b)) == seam_key {
+                        // Same-identity seam bar: the prefix's version was
+                        // folded from the batch alone — the EXISTING one
+                        // saw the live/later trades; existing wins.
+                        merged.pop();
+                    }
+                    skipped += 1;
+                    merged.push(b.clone());
+                }
+                let prepend_count = merged.len().saturating_sub(prev_bars.len());
+                mgr.replace_bars(bid, merged.clone());
+                (merged, prev_bars, prepend_count, tf_name)
+            };
+            if prepend_count > 0 {
+                events.push(BubbleEvent::ScrollBarsAppended {
+                    bid, exchange_id,
+                    symbol: symbol.to_string(),
+                    account_type: account_type_label.to_string(),
+                    timeframe: tf_name,
+                    bars: merged,
+                    prev_bars,
+                    prepend_count,
+                });
+            }
+        }
+
+        // ── CVD companion ────────────────────────────────────────────────
+        let cvd_prefix: Option<Vec<mlc_core::types::CvdSample>> =
+            self.bubbles().with_bubble(bid, |b| {
+                b.active_cvd_fold.as_ref().map(|f| {
+                    let mut samples: Vec<mlc_core::types::CvdSample> = Vec::new();
+                    for o in f.fold_prefix(prepended) {
+                        let crate::bubble::TradeFoldOutput::Cvd(s) = o else { continue };
+                        mlc_core::chart_type::merge_last_wins(&mut samples, s, mlc_core::chart_type::cvd_identity);
+                    }
+                    samples
+                })
+            }).flatten();
+
+        if let Some(prefix_samples) = cvd_prefix {
+            if !prefix_samples.is_empty() {
+                let prefix_total = prefix_samples.last().map(|s| s.value).unwrap_or(0.0);
+                self.bubbles_mut().with_bubble_mut(bid, |b| {
+                    let existing = b.cvd_line.take().unwrap_or_default();
+                    let mut merged = prefix_samples;
+                    if let (Some(last), Some(first)) = (merged.last(), existing.first()) {
+                        // Seam ts on both sides: the shifted existing sample
+                        // already includes the prefix total — drop the
+                        // prefix's partial duplicate.
+                        if last.ts_ms == first.ts_ms {
+                            merged.pop();
+                        }
+                    }
+                    merged.extend(existing.into_iter().map(|mut s| { s.value += prefix_total; s }));
+                    b.cvd_line = Some(merged);
+                });
+                events.push(BubbleEvent::CvdSampleAppended {
+                    bid, exchange_id,
+                    symbol: symbol.to_string(),
+                    account_type: account_type_label.to_string(),
+                });
+            }
+        }
+
+        events
+    }
+
     /// Fold one live trade tick into `bid`'s active trade-fold runtime, if
     /// installed, and append/upsert EVERY output into the bubble's slot, in
     /// order. Mirrors [`Self::fold_on_live_1m`]'s role (and multi-output

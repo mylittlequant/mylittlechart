@@ -1901,6 +1901,25 @@ impl ChartContainer {
         }
     }
 
+    /// [`Self::zoom_horizontal`] with a chart-type fit cap (registry
+    /// `viewport_fit_cap`, owner spec 2026-07-13): `fit_cap_bars` bounds
+    /// how many bars may EVER be visible, so the zoom-out floor is
+    /// `chart_width / cap` (never below the global pixel clamp). `None`
+    /// behaves exactly like [`Self::zoom_horizontal`].
+    pub fn zoom_horizontal_capped(&mut self, center_x: f64, factor: f64, fit_cap_bars: Option<u32>, series: crate::active_series::ActiveSeries<'_>) {
+        let mut min = self.viewport.min_bar_spacing();
+        if let Some(cap) = fit_cap_bars {
+            if cap > 0 && self.viewport.chart_width > 0.0 {
+                min = min.max(self.viewport.chart_width / cap as f64);
+            }
+        }
+        let max = self.viewport.max_bar_spacing();
+        self.viewport.zoom_at_x(center_x, factor, min, max);
+        if self.price_scale.scale_mode.is_auto_y() {
+            self.calc_auto_scale(series);
+        }
+    }
+
     // =========================================================================
     // Viewport Intents — single-writer entry points for every remaining
     // W-site from `docs/mlc/audits/viewport-audit-2026-07-03.md`. Callers

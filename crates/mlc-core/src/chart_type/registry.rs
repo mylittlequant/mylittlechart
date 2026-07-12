@@ -390,6 +390,24 @@ pub struct ChartTypeDef {
     /// ONLY; on every other type the mode paints nothing). True only for
     /// the three candle-body renderers.
     pub delta_paintable: bool,
+    /// Incremental history-prepend capability (owner doctrine 2026-07-13:
+    /// "догружать только чего нет" — a backfill page is folded ALONE and
+    /// stitched in FRONT of the existing fold output, never a whole-layer
+    /// reseed). True for the trade-fed types whose bars glue at a time-
+    /// marked seam: footprint (time buckets + one seam-bucket refold) and
+    /// the count-based bars (boundaries are count-defined but time-marked).
+    /// TPO stays `false` (session-ring semantics → reseed path). The
+    /// registry-external `"cvd"` companion is incremental by construction
+    /// (prefix + tail shift) — handled directly in lifecycle, no row here.
+    pub incremental_prepend: bool,
+    /// Max bars this chart type allows in the viewport at FULL ZOOM-OUT
+    /// (owner spec 2026-07-13: heavy per-bar renderers cap lower than the
+    /// global `chart_width / MIN_BAR_SPACING` pixel clamp — the footprint
+    /// family fits ~half of what plain klines fit). `None` = global pixel
+    /// clamp only. Read by BOTH consumers of "how many bars can ever be
+    /// seen": the cold-fill demand target (tick.rs Layer 3) and the
+    /// horizontal zoom-out clamp.
+    pub viewport_fit_cap: Option<u32>,
 }
 
 impl ChartTypeDef {
@@ -601,6 +619,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: true,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "bars",
@@ -627,6 +647,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "hollow_candles",
@@ -653,6 +675,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: true,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "heikin_ashi",
@@ -679,6 +703,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: true,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // ── Lines ────────────────────────────────────────────────────────────
     ChartTypeDef {
@@ -706,6 +732,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "step_line",
@@ -732,6 +760,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "line_markers",
@@ -758,6 +788,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // ── Areas & Columns ──────────────────────────────────────────────────
     ChartTypeDef {
@@ -785,6 +817,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "hlc_area",
@@ -811,6 +845,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "baseline",
@@ -837,6 +873,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::None,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // ── Batched Bars (kline re-cuts) ────────────────────────────────────
     ChartTypeDef {
@@ -876,6 +914,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::RangeBar,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "volume_bar",
@@ -912,6 +952,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::VolumeBar,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "dollar_bar",
@@ -948,6 +990,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::DollarBar,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // ── Trade Bars (genuinely trade-fed) ────────────────────────────────
     ChartTypeDef {
@@ -980,6 +1024,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::TickBar,
         delta_paintable: false,
+        incremental_prepend: true,
+        viewport_fit_cap: Some(450),
     },
     ChartTypeDef {
         id: "tick_imbalance_bar",
@@ -1020,6 +1066,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::TickImbalance,
         delta_paintable: false,
+        incremental_prepend: true,
+        viewport_fit_cap: Some(450),
     },
     ChartTypeDef {
         id: "volume_imbalance_bar",
@@ -1053,6 +1101,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::VolumeImbalance,
         delta_paintable: false,
+        incremental_prepend: true,
+        viewport_fit_cap: Some(450),
     },
     ChartTypeDef {
         id: "run_bar",
@@ -1086,6 +1136,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts { reversal: None, alpha_x100: Some(20) },
         machine: MachineKind::RunBar,
         delta_paintable: false,
+        incremental_prepend: true,
+        viewport_fit_cap: Some(450),
     },
     // ── Price Action ─────────────────────────────────────────────────────
     ChartTypeDef {
@@ -1125,6 +1177,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts { reversal: Some(2), alpha_x100: None },
         machine: MachineKind::Renko,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "pnf",
@@ -1156,6 +1210,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts { reversal: Some(3), alpha_x100: None },
         machine: MachineKind::Pnf,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "kagi",
@@ -1187,6 +1243,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Kagi,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     ChartTypeDef {
         id: "three_line_break",
@@ -1218,6 +1276,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::ThreeLineBreak,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // ── Orderflow (heterogeneous) ────────────────────────────────────────
     ChartTypeDef {
@@ -1253,6 +1313,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Footprint,
         delta_paintable: false,
+        incremental_prepend: true,
+        viewport_fit_cap: Some(450),
     },
     ChartTypeDef {
         id: "tpo",
@@ -1297,6 +1359,8 @@ static REGISTRY: &[ChartTypeDef] = &[
         fixed_consts: FixedConsts::NONE,
         machine: MachineKind::Tpo,
         delta_paintable: false,
+        incremental_prepend: false,
+        viewport_fit_cap: None,
     },
     // "dom_heatmap" / "liquidation_heatmap" REMOVED (chart-type → overlay
     // migration, mirrors Bookmap/ATAS/Coinglass): both are now builtin

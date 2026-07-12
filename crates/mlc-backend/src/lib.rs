@@ -1626,6 +1626,15 @@ impl BackendCore {
                     let prepend_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
                     for bid in prepend_bids {
                         self.bubbles_mut().trade_layer_prepend_batch(bid, raw_trades.clone());
+                        // Incremental prepend-fold (owner doctrine
+                        // 2026-07-13, "догружать только чего нет"): fold
+                        // JUST this batch and stitch it in front of the
+                        // existing fold outputs — per page, no whole-layer
+                        // reseed, no full-layer clone. Runs AFTER the layer
+                        // write (the seam-bucket refold reads the layer).
+                        events.extend(self.incremental_prepend_trade_folds(
+                            bid, &raw_trades, exchange_id, &symbol, at_label,
+                        ));
                     }
                 }
 
@@ -1818,10 +1827,24 @@ impl BackendCore {
                             // would replay an EMPTY kline layer and wipe their
                             // sessions on every trade page (found live
                             // 2026-07-11: sessions=0 every ~2s).
+                            // Incremental-prepend coverage (owner doctrine
+                            // 2026-07-13): footprint, the count-based trade
+                            // bars and the CVD companion are stitched
+                            // per-page by the `TradeHistoryPrepended` arm —
+                            // for them this reseed sweep is ONLY the
+                            // terminal consistency pass (`exhausted`: depth
+                            // badge + final state). TPO TradeBucket is the
+                            // one trade-fed fold left on the reseed path.
                             let has_trade_fold = self.bubbles().with_bubble(bid, |b| {
-                                b.active_trade_fold.as_ref().map(|f| f.feeds_on_trades()).unwrap_or(false)
+                                b.active_trade_fold.as_ref().map(|f| {
+                                    let incremental = mlc_core::chart_type::by_id(f.chart_type())
+                                        .map(|d| d.incremental_prepend)
+                                        .unwrap_or(false);
+                                    f.feeds_on_trades() && (!incremental || exhausted)
+                                }).unwrap_or(false)
                             }).unwrap_or(false);
-                            let has_cvd_fold = self.bubbles().with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
+                            let has_cvd_fold = exhausted && self.bubbles()
+                                .with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
                             if !has_trade_fold && !has_cvd_fold { continue; }
                             // One debounce decision per bubble covers BOTH
                             // fold slots — they read the SAME trade-layer

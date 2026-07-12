@@ -938,6 +938,62 @@ impl TradeFoldRuntime {
         outputs
     }
 
+    /// Fold ONLY a batch of OLDER trades through a FRESH machine (prefix
+    /// fold) — incremental-prepend doctrine (owner 2026-07-13): time-
+    /// bucketed folds (footprint, the CVD companion) never need a whole-
+    /// layer reseed for a history prepend, because older trades produce
+    /// only OLDER buckets plus at most one seam bucket shared with the
+    /// existing output. The runtime's LIVE machine state is untouched —
+    /// the live fold keeps running from where it was; the caller stitches
+    /// the returned prefix outputs in FRONT of the existing slot (seam
+    /// merge + cumulative restitch are the caller's job — see
+    /// `BackendCore::incremental_prepend_trade_folds`).
+    ///
+    /// Footprint cumulative-delta stamping uses a LOCAL running total
+    /// starting at 0 (the prefix's own cumulative); `self.footprint_cvd`
+    /// is not read or written.
+    ///
+    /// Returns the prefix outputs oldest-first; empty for kline-fed
+    /// flavours (TPO Kline1m) and for chart types outside the trade-fed
+    /// family.
+    pub fn fold_prefix(&self, prefix: &[RawTrade]) -> Vec<TradeFoldOutput> {
+        let Some(mut machine) = TradeFoldMachine::new(self.chart_type, &self.params, self.tpo_source) else {
+            return Vec::new();
+        };
+        if !machine.feeds_on_trades() {
+            return Vec::new();
+        }
+        let mut running_cvd = 0.0_f64;
+        let stamp_local = |out: TradeFoldOutput, running: &mut f64| -> TradeFoldOutput {
+            match out {
+                TradeFoldOutput::Footprint(mut bar) => {
+                    bar.set_cumulative_delta(*running);
+                    *running = bar.cumulative_delta;
+                    TradeFoldOutput::Footprint(bar)
+                }
+                other => other,
+            }
+        };
+        let mut outputs = Vec::new();
+        machine.set_replay(true);
+        for trade in prefix {
+            let point = raw_trade_to_trade_point(trade);
+            let ev = Event::Trade {
+                exchange: self.exchange,
+                symbol: self.symbol.clone(),
+                point,
+            };
+            for out in machine.on_trade_event(&ev) {
+                outputs.push(stamp_local(out, &mut running_cvd));
+            }
+        }
+        if let Some(flushed) = machine.flush_replay() {
+            outputs.push(stamp_local(flushed, &mut running_cvd));
+        }
+        machine.set_replay(false);
+        outputs
+    }
+
     /// Fold one live trade tick. Empty for the TPO Kline1m flavour — use
     /// [`Self::on_live_1m`] for that one instead.
     ///

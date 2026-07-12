@@ -8128,6 +8128,15 @@ impl ChartApp {
 
         let drag_mode = self.input_handler.state.drag_mode;
 
+        // Per-chart-type zoom-out fit cap (registry `viewport_fit_cap`,
+        // owner spec 2026-07-13) for the ACTIVE chart — resolved once
+        // before the loop (immutable read; the Zoom arm below holds the
+        // container mutably).
+        let active_fit_cap: Option<u32> = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.chart_type_for_chart(cid))
+            .and_then(|ct| mlc_core::chart_type::by_id(ct))
+            .and_then(|d| d.viewport_fit_cap);
+
         for action in actions {
             match action {
                 ChartOutputAction::Pan { bar_delta, price_delta } => {
@@ -8185,7 +8194,7 @@ impl ChartApp {
                     if factor_x != 1.0 {
                         // zoom_horizontal dispatches the zoom then auto-scales
                         // when the mode is auto-Y (mirrors calc_visible_price_range).
-                        window.zoom_horizontal(local_center_x, factor_x, active_series_owned.as_active_series());
+                        window.zoom_horizontal_capped(local_center_x, factor_x, active_fit_cap, active_series_owned.as_active_series());
                     }
                     if factor_y != 1.0 {
                         let center = (window.price_scale().price_min + window.price_scale().price_max) / 2.0;
