@@ -273,7 +273,7 @@ impl ChartApp {
                                     // config only (mode, base_price, width, user_precision) is restored;
                                     // price_min/price_max are NOT restored - calc_auto_scale recomputes
                                     // them from bars after the cold snap.
-                                    window.restore_persisted_display(&snap.viewport, &snap.price_scale);
+                                    window.restore_persisted_display(&snap.price_scale);
                                     // Cold-load rule (2026-06-24): every cold preset apply must
                                     // land on Auto scale mode — viewport snaps to the right edge
                                     // (`needs_snap_after_backfill = true` below) and the Y axis
@@ -471,7 +471,7 @@ impl ChartApp {
                                     // display config only (see twin branch above for
                                     // rationale). price_min/price_max are left as-is —
                                     // calc_auto_scale recomputes them from bars after the cold snap.
-                                    window.restore_persisted_display(&snap.viewport, &snap.price_scale);
+                                    window.restore_persisted_display(&snap.price_scale);
                                     // Cold-load rule (2026-06-24): force Auto scale mode on
                                     // cold preset apply — see twin branch above for rationale.
                                     window.restore_scale_mode = Some(ScaleMode::Auto);

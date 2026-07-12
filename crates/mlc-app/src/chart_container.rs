@@ -834,6 +834,12 @@ impl ChartContainer {
     /// kline array.
     pub fn consume_cold_snap(&mut self, series: crate::active_series::ActiveSeries<'_>) {
         let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
+        // Cold-load zoom seed (owner doctrine 2026-07-12): the viewport
+        // never survives a load — every cold snap starts from the default
+        // 100-bar view (`fit_default_view`), then snaps to the newest
+        // data. Wide chart types re-widen right after via their per-frame
+        // `ensure_min_bar_spacing` (TPO 120px / footprint 50px).
+        self.viewport.reset_to_default();
         self.snap_to_end(DEFAULT_SNAP_MARGIN);
         let saved_mode = self.price_scale.scale_mode;
         self.price_scale.scale_mode = mlc_core::chart::types::price_scale::ScaleMode::Auto;
@@ -2278,20 +2284,17 @@ impl ChartContainer {
         }
     }
 
-    /// Restore persisted zoom (`bar_spacing`) and price-scale display
-    /// config from a preset snapshot. `view_start`, `chart_width`/
-    /// `chart_height`, `bar_count`, and `scale_mode`/`price_min`/
-    /// `price_max` are never restored raw (RAM-only per the viewport SWC
-    /// arc) — those are left for the cold-load snap + auto-scale to
-    /// (re)compute once fresh bars arrive.
+    /// Restore persisted price-scale DISPLAY config from a preset
+    /// snapshot. The viewport is fully RAM-only (owner doctrine
+    /// 2026-07-12): nothing of it — `bar_spacing` included — survives a
+    /// reload; the cold snap ([`Self::consume_cold_snap`]) seeds
+    /// `fit_default_view` (100 bars, right-snapped) instead.
+    /// `scale_mode`/`price_min`/`price_max` were already never restored
+    /// raw (viewport SWC arc) — auto-scale recomputes them.
     pub fn restore_persisted_display(
         &mut self,
-        viewport_persist: &mlc_core::preset::snapshots::ViewportPersist,
         price_persist: &mlc_core::preset::snapshots::PriceScalePersist,
     ) {
-        if viewport_persist.bar_spacing > 0.0 {
-            self.viewport.bar_spacing = viewport_persist.bar_spacing;
-        }
         self.price_scale.mode = price_persist.mode;
         self.price_scale.base_price = price_persist.base_price;
         self.price_scale.width = price_persist.width;

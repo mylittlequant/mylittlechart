@@ -44,25 +44,14 @@ pub use crate::drawing::PrimitiveSnapshot;
 // are handled by `#[serde(default)]`); the extra legacy fields on old JSON
 // objects are simply ignored by serde.
 
-/// Persisted viewport state: zoom level only. `view_start`, `bar_count`,
-/// and `chart_width`/`chart_height` are runtime-only and are never written
-/// to disk.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct ViewportPersist {
-    /// User's zoom level (pixels per bar). Restored verbatim on cold load.
-    #[serde(default = "default_bar_spacing")]
-    pub bar_spacing: f64,
-}
-
-fn default_bar_spacing() -> f64 {
-    8.0
-}
-
-impl Default for ViewportPersist {
-    fn default() -> Self {
-        Self { bar_spacing: default_bar_spacing() }
-    }
-}
+// NO ViewportPersist exists anymore (owner doctrine 2026-07-12): NOTHING
+// of the viewport survives a reload — not even `bar_spacing`. A cold load
+// always seeds `Viewport::fit_default_view` (100 bars, right-snapped,
+// Auto scale). The old persisted per-WINDOW `bar_spacing` had no
+// chart-type identity: a save landing while a wide type was up (TPO
+// `min_bar_spacing` 120px, footprint 50px) replayed that zoom onto
+// candles at the next boot — a 3-bars-per-frame viewport. Old snapshot
+// JSON still carries a `"viewport"` key; serde ignores unknown fields.
 
 /// Persisted price-scale display configuration. `price_min`/`price_max`
 /// (recomputed from bars) and `scale_mode` (the A/M/F corner button —
@@ -138,9 +127,6 @@ pub struct ChartWindowSnapshot {
     pub account_type: String,
     /// Timeframe (e.g. 1H, 4H).
     pub timeframe: Timeframe,
-    /// Persisted viewport state (zoom level only — see `ViewportPersist`).
-    #[serde(default)]
-    pub viewport: ViewportPersist,
     /// Persisted price-scale display config (see `PriceScalePersist`).
     #[serde(default)]
     pub price_scale: PriceScalePersist,

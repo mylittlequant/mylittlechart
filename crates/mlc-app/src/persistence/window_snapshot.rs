@@ -13,7 +13,7 @@
 
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::preset::snapshots::{
-    ChartWindowSnapshot, DrawingSnapshot, PriceScalePersist, PrimitiveSnapshot, ViewportPersist,
+    ChartWindowSnapshot, DrawingSnapshot, PriceScalePersist, PrimitiveSnapshot,
 };
 use mlc_core::state::{CommandHistory, Timeframe};
 use crate::chart_container::ChartContainer;
@@ -49,14 +49,9 @@ pub fn build_chart_window_snapshot(
 ) -> ChartWindowSnapshot {
     let drawings = DrawingSnapshot::from_primitives(window.id.0, primitives);
 
-    // Persist only the zoom level (bar_spacing) and price-scale display
-    // config. `view_start`, `chart_width`/`chart_height`, `bar_count`,
-    // `price_min`/`price_max`, and `scale_mode` are runtime-only —
-    // never serialized (viewport SWC arc, 2026-07-03).
-    let saved_viewport = ViewportPersist {
-        bar_spacing: window.viewport().bar_spacing,
-    };
-
+    // The ENTIRE viewport is runtime-only (owner doctrine 2026-07-12) —
+    // `bar_spacing` included; a cold load seeds `fit_default_view`. Only
+    // the price-scale DISPLAY config below is persisted.
     let saved_price_scale = PriceScalePersist {
         mode: window.price_scale().mode,
         base_price: window.price_scale().base_price,
@@ -71,7 +66,6 @@ pub fn build_chart_window_snapshot(
         exchange,
         account_type,
         timeframe,
-        viewport: saved_viewport,
         price_scale: saved_price_scale,
         bubble_id,
         grid_options: panel.grid_options.clone(),
