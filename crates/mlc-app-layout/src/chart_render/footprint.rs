@@ -365,25 +365,36 @@ pub fn draw_footprint_cluster(ctx: &mut dyn RenderContext, state: &ChartRenderSt
         // dominates the visual when both regions overlap. Uses the real
         // streak length recorded by compute_extras instead of the
         // hardcoded +2 the predecessor assumed.
-        if let Some(start_idx) = bar.stacked_ask_start {
-            let len = bar.stacked_ask_len.unwrap_or(3).max(1);
-            let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
-            let lo_lv = &bar.levels[start_idx];
-            let hi_lv = &bar.levels[hi_idx];
-            let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
-            let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
-            ctx.set_fill_color(EXTRA_COLORS.stacked_ask_fill);
-            ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
-        }
-        if let Some(start_idx) = bar.stacked_bid_start {
-            let len = bar.stacked_bid_len.unwrap_or(3).max(1);
-            let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
-            let lo_lv = &bar.levels[start_idx];
-            let hi_lv = &bar.levels[hi_idx];
-            let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
-            let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
-            ctx.set_fill_color(EXTRA_COLORS.stacked_bid_fill);
-            ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
+        // Both stacked-band indices are CLAMPED to the bar's actual level
+        // count — a bar whose extras were computed against a different
+        // (longer) level array must degrade to a collapsed band, never
+        // panic: a wasm index-out-of-bounds aborts the WHOLE module (live
+        // incident 2026-07-13: `len is 11 but the index is 382` at deep
+        // zoom-out froze the tab — dead crosshair, no reactions; looked
+        // like OOM, was this line). The predecessor clamped only `hi_idx`.
+        if !bar.levels.is_empty() {
+            if let Some(start_idx) = bar.stacked_ask_start {
+                let len = bar.stacked_ask_len.unwrap_or(3).max(1);
+                let start_idx = start_idx.min(bar.levels.len() - 1);
+                let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
+                let lo_lv = &bar.levels[start_idx];
+                let hi_lv = &bar.levels[hi_idx];
+                let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
+                let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
+                ctx.set_fill_color(EXTRA_COLORS.stacked_ask_fill);
+                ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
+            }
+            if let Some(start_idx) = bar.stacked_bid_start {
+                let len = bar.stacked_bid_len.unwrap_or(3).max(1);
+                let start_idx = start_idx.min(bar.levels.len() - 1);
+                let hi_idx = (start_idx + len - 1).min(bar.levels.len() - 1);
+                let lo_lv = &bar.levels[start_idx];
+                let hi_lv = &bar.levels[hi_idx];
+                let top_y = rect.y + price_to_y_local(hi_lv.price, price_scale, rect.height);
+                let bot_y = rect.y + price_to_y_local(lo_lv.price, price_scale, rect.height) + row_h;
+                ctx.set_fill_color(EXTRA_COLORS.stacked_bid_fill);
+                ctx.fill_rect(cell_left, top_y, bar_w, (bot_y - top_y).max(row_h));
+            }
         }
 
         // Max volume on this bar (for dim cell-background gradient).
