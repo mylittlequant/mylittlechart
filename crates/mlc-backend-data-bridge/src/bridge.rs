@@ -990,7 +990,19 @@ impl DataBridge {
     /// is the source catalogue itself the value is stable.
     pub fn prewarm_wire_symbol_cache(&self, exchange_id: ExchangeId) {
         let _t0 = web_time::Instant::now();
-        let symbols = self.station.symbols(exchange_id);
+        // Lean copy via `for_each_symbol` — `station.symbols()` deep-clones
+        // every SymbolInfo's `extra` raw-JSON record (4000+ nested BTreeMap
+        // clones on Binance), which was a measured multi-second wasm boot
+        // stall (2026-07-13 profile). We only need 4 cheap fields here.
+        let mut symbols: Vec<(String, String, String, AccountType)> = Vec::new();
+        self.station.for_each_symbol(exchange_id, |s| {
+            symbols.push((
+                s.symbol.clone(),
+                s.base_asset.clone(),
+                s.quote_asset.clone(),
+                s.account_type,
+            ));
+        });
         if symbols.is_empty() {
             return;
         }
@@ -1020,21 +1032,21 @@ impl DataBridge {
         // bucket that would ever resolve to this s.symbol via cases (2)+(3)
         // of wire_symbol, so caching by it costs nothing and saves the same
         // miss-path scan on the actual lookup.
-        for s in &symbols {
+        for (symbol, base_asset, quote_asset, account_type) in &symbols {
             cache.insert(
-                (exchange_id, s.account_type, s.symbol.clone()),
-                s.symbol.clone(),
+                (exchange_id, *account_type, symbol.clone()),
+                symbol.clone(),
             );
             // Also seed the canonical lookup (base+quote concatenated,
             // uppercased) — this is what mlc passes when the preset's
             // bubble carries the canonical form. wire_symbol case (2) /
             // (3) would otherwise pay the linear scan on first use.
-            if !s.base_asset.is_empty() && !s.quote_asset.is_empty() {
-                let canonical = format!("{}{}", s.base_asset, s.quote_asset).to_uppercase();
-                if canonical != s.symbol {
+            if !base_asset.is_empty() && !quote_asset.is_empty() {
+                let canonical = format!("{base_asset}{quote_asset}").to_uppercase();
+                if canonical != *symbol {
                     cache.insert(
-                        (exchange_id, s.account_type, canonical),
-                        s.symbol.clone(),
+                        (exchange_id, *account_type, canonical),
+                        symbol.clone(),
                     );
                 }
             }
@@ -3020,11 +3032,39 @@ impl DataBridge {
             }
         }
 
-        let symbols = self.station.symbols(exchange_id);
+        // Single lean pass via `for_each_symbol` — the old miss-path called
+        // `station.symbols()` (deep-clones every `extra` raw-JSON record)
+        // and scanned it 2-3 times; 130-170ms per miss on Binance.
+        let req_upper = requested.to_uppercase();
+        let mut exact = false;
+        let mut with_at_count = 0usize;
+        let mut with_at_first: Option<String> = None;
+        let mut any_at_count = 0usize;
+        let mut any_at_first: Option<String> = None;
+        self.station.for_each_symbol(exchange_id, |s| {
+            if s.symbol == requested {
+                exact = true;
+            }
+            if !s.base_asset.is_empty()
+                && !s.quote_asset.is_empty()
+                && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+            {
+                if s.account_type == account_type {
+                    with_at_count += 1;
+                    if with_at_first.is_none() {
+                        with_at_first = Some(s.symbol.clone());
+                    }
+                }
+                any_at_count += 1;
+                if any_at_first.is_none() {
+                    any_at_first = Some(s.symbol.clone());
+                }
+            }
+        });
 
         // (1) Exact native match — covers old watchlist/preset entries and venues
         // where the canonical form is identical to the native form (e.g. Binance).
-        if symbols.iter().any(|s| s.symbol == requested) {
+        if exact {
             let resolved = requested.to_string();
             if let Ok(mut cache) = self.wire_symbol_cache.lock() {
                 cache.insert(cache_key, resolved.clone());
@@ -3033,19 +3073,8 @@ impl DataBridge {
         }
 
         // (2) Canonical → native with account_type filter.
-        let req_upper = requested.to_uppercase();
-        let with_at: Vec<&SymbolInfo> = symbols
-            .iter()
-            .filter(|s| {
-                s.account_type == account_type
-                    && !s.base_asset.is_empty()
-                    && !s.quote_asset.is_empty()
-                    && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
-            })
-            .collect();
-
-        if with_at.len() == 1 {
-            let resolved = with_at[0].symbol.clone();
+        if with_at_count == 1 {
+            let resolved = with_at_first.expect("count 1 implies first set");
             if let Ok(mut cache) = self.wire_symbol_cache.lock() {
                 cache.insert(cache_key, resolved.clone());
             }
@@ -3053,23 +3082,12 @@ impl DataBridge {
         }
 
         // (3) Relaxed: ignore account_type when exactly one match.
-        if with_at.is_empty() {
-            let any_at: Vec<&SymbolInfo> = symbols
-                .iter()
-                .filter(|s| {
-                    !s.base_asset.is_empty()
-                        && !s.quote_asset.is_empty()
-                        && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
-                })
-                .collect();
-
-            if any_at.len() == 1 {
-                let resolved = any_at[0].symbol.clone();
-                if let Ok(mut cache) = self.wire_symbol_cache.lock() {
-                    cache.insert(cache_key, resolved.clone());
-                }
-                return resolved;
+        if with_at_count == 0 && any_at_count == 1 {
+            let resolved = any_at_first.expect("count 1 implies first set");
+            if let Ok(mut cache) = self.wire_symbol_cache.lock() {
+                cache.insert(cache_key, resolved.clone());
             }
+            return resolved;
         }
 
         // (4) Fallback — return the requested string unchanged.
@@ -3097,46 +3115,53 @@ fn try_resolve_wire_symbol(
     account_type: AccountType,
     requested: &str,
 ) -> Option<String> {
-    let symbols = station.symbols(exchange_id);
-    if symbols.is_empty() {
+    // Single lean pass — see `wire_symbol`'s miss-path comment (avoids the
+    // deep `extra` clone of the whole catalogue per call).
+    let req_upper = requested.to_uppercase();
+    let mut catalogue_empty = true;
+    let mut exact = false;
+    let mut with_at_count = 0usize;
+    let mut with_at_first: Option<String> = None;
+    let mut any_at_count = 0usize;
+    let mut any_at_first: Option<String> = None;
+    station.for_each_symbol(exchange_id, |s| {
+        catalogue_empty = false;
+        if s.symbol == requested {
+            exact = true;
+        }
+        if !s.base_asset.is_empty()
+            && !s.quote_asset.is_empty()
+            && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
+        {
+            if s.account_type == account_type {
+                with_at_count += 1;
+                if with_at_first.is_none() {
+                    with_at_first = Some(s.symbol.clone());
+                }
+            }
+            any_at_count += 1;
+            if any_at_first.is_none() {
+                any_at_first = Some(s.symbol.clone());
+            }
+        }
+    });
+    if catalogue_empty {
         return None;
     }
 
     // Exact native match — confident.
-    if symbols.iter().any(|s| s.symbol == requested) {
+    if exact {
         return Some(requested.to_string());
     }
 
     // Canonical → native with account_type filter.
-    let req_upper = requested.to_uppercase();
-    let with_at: Vec<&SymbolInfo> = symbols
-        .iter()
-        .filter(|s| {
-            s.account_type == account_type
-                && !s.base_asset.is_empty()
-                && !s.quote_asset.is_empty()
-                && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
-        })
-        .collect();
-
-    if with_at.len() == 1 {
-        return Some(with_at[0].symbol.clone());
+    if with_at_count == 1 {
+        return with_at_first;
     }
 
     // Relaxed: ignore account_type when exactly one match.
-    if with_at.is_empty() {
-        let any_at: Vec<&SymbolInfo> = symbols
-            .iter()
-            .filter(|s| {
-                !s.base_asset.is_empty()
-                    && !s.quote_asset.is_empty()
-                    && format!("{}{}", s.base_asset, s.quote_asset).to_uppercase() == req_upper
-            })
-            .collect();
-
-        if any_at.len() == 1 {
-            return Some(any_at[0].symbol.clone());
-        }
+    if with_at_count == 0 && any_at_count == 1 {
+        return any_at_first;
     }
 
     // Symbol list non-empty but no confident match.
