@@ -1041,15 +1041,24 @@ impl DataBridge {
                 state.widen_auto_ceiling(ceiling);
             }
             state.begin_trade_flight(now_ms);
+            // Demands are accepted only BETWEEN flights: the tick-side
+            // ×2-doubling demand re-fires every frame, and letting it
+            // widen `target_ts` while a flight walks would turn the floor
+            // into a moving target the flight chases to the RAM cap in
+            // one giant run (exactly the rung-dump the ×2 shape exists to
+            // avoid). A latched key (venue-dry / RAM cap) never re-arms.
+            if state.in_flight || state.exhausted || state.ram_capped {
+                return false;
+            }
             // A wider ceiling from a later consumer must be able to re-open
             // a ladder that already stopped at a smaller consumer's ceiling
-            // (1m footprint stopped at ~3h, then a 1h chart opens the same
-            // instrument → its 24h ceiling deepens the same key).
+            // (1m footprint stopped at its Hour warm, then a 1h chart opens
+            // the same instrument → its ceiling deepens the same key).
             state.advance_ladder_if_reached();
             if let Some(window_ms) = window_ms {
                 state.require_target_ts(now_ms - window_ms);
             }
-            if state.in_flight || state.exhausted || state.ram_capped || !state.wants_more_ts(true) {
+            if !state.wants_more_ts(true) {
                 return false;
             }
             state.begin_flight();

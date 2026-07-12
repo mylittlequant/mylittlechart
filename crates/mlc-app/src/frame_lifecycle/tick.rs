@@ -810,12 +810,18 @@ impl ChartApp {
                     .unwrap_or_default()
                     .as_millis() as i64;
                 let have_window_ms = (now_wall_ms - oldest_ts).max(0);
-                let demand = if have_window_ms < 86_400_000 {
-                    // First day: re-open the auto ladder up to the Day rung.
-                    mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(86_400_000) }
-                } else {
-                    // Beyond a day: explicit chunk one day past what we hold.
-                    mlc_backend_data_bridge::TradeDemand { window_ms: Some(have_window_ms + 86_400_000), auto_ceiling_ms: None }
+                // ×2-doubling demand (owner algorithm 2026-07-12): each
+                // trigger asks for TWICE the window already held
+                // (1.6h → 3.2h → 6.4h → …, floored at the 1h warm). Early
+                // increments are small so they land fast on ANY source —
+                // kline REST (~s), aggTrades (slow), archive zips (slower)
+                // — instead of one giant rung dump; refold count stays
+                // logarithmic. `ensure_trade_backfill` ignores demands
+                // while a flight is running, so the ×2 base is always the
+                // settled post-refold window, not a moving target.
+                let demand = mlc_backend_data_bridge::TradeDemand {
+                    window_ms: Some((have_window_ms * 2).max(3_600_000)),
+                    auto_ceiling_ms: None,
                 };
                 self.core.bridge_handle().ensure_trade_backfill(eid, &symbol, at, Some(demand));
             }
