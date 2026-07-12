@@ -77,9 +77,6 @@ use crate::user::UserProfileManager;
 use crate::exchange_symbols::ExchangeSymbolsManager;
 use crate::trade_store::TradeStore;
 
-/// Cadence of [`BackendCore::heal_trade_subscriptions`]'s re-assert sweep.
-const TRADE_SUB_HEAL_INTERVAL_MS: u64 = 5_000;
-
 /// Cached 24-hour ticker statistics from the WebSocket mini-ticker stream.
 ///
 /// One entry per `(symbol, exchange, account_type)`, updated every second from
@@ -722,18 +719,6 @@ pub struct BackendCore {
     /// `mlc-app`'s demand dispatch via [`Self::trade_oldest_ts`].
     pub trade_store: TradeStore,
 
-    /// Last trade-subscription heal-sweep stamp (ms since epoch). The dig3
-    /// station heals only KLINE series after a ws disconnect ("no resub for
-    /// non-kline kinds", station.rs) — one bounced connection kills every
-    /// Trade forwarder permanently (live incident 2026-07-13: a binance
-    /// reconnect froze footprint + CVD mid-session). [`Self::tick_writers`]
-    /// re-asserts the trade subscription for every bubble holding a live
-    /// trade/CVD fold every [`TRADE_SUB_HEAL_INTERVAL_MS`]; the bridge's
-    /// subscribe gate makes the call a no-op while the forwarder is alive,
-    /// so the sweep only ever revives dead streams (and never fights the
-    /// station's grace-window teardown — no fold, no re-assert).
-    trade_sub_heal_last_ms: std::sync::atomic::AtomicU64,
-
     /// Symbol catalogue per exchange — populated asynchronously from
     /// `LiveUpdate::SymbolsLoaded`. Same for every consumer of this backend.
     /// `RwLock` because writes are rare (once per exchange) and reads are
@@ -892,7 +877,6 @@ impl BackendCore {
             bridge,
             mini_ticker: DashMap::new(),
             trade_store: TradeStore::new(),
-            trade_sub_heal_last_ms: std::sync::atomic::AtomicU64::new(0),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
@@ -1294,62 +1278,6 @@ impl BackendCore {
         DrawingsMut::new(mgr, bubbles)
     }
 
-    /// Re-assert the station trade subscription for every bubble holding a
-    /// live trade/CVD fold — see `trade_sub_heal_last_ms`'s doc comment for
-    /// the incident this closes. Throttled to one sweep per
-    /// [`TRADE_SUB_HEAL_INTERVAL_MS`] across ALL apps sharing this core
-    /// (compare_exchange claims the slot). Reads are bound and the bubble
-    /// guard dropped BEFORE any bridge call (wasm lock discipline).
-    fn heal_trade_subscriptions(&self, now_ms: u64) {
-        use std::sync::atomic::Ordering;
-        let last = self.trade_sub_heal_last_ms.load(Ordering::Relaxed);
-        if now_ms < last.saturating_add(TRADE_SUB_HEAL_INTERVAL_MS) {
-            return;
-        }
-        if self
-            .trade_sub_heal_last_ms
-            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-        {
-            return;
-        }
-        let mut wanted: Vec<(String, String, mlc_core::instrument::AccountType)> = Vec::new();
-        {
-            let mgr = self.bubbles();
-            let bids: Vec<BubbleId> = mgr.bubble_ids().collect();
-            for bid in bids {
-                let key = mgr.with_bubble(bid, |b| {
-                    if b.active_trade_fold.is_some() || b.active_cvd_fold.is_some() {
-                        Some((
-                            b.address.exchange.clone(),
-                            b.address.symbol.clone(),
-                            b.address.account_type,
-                        ))
-                    } else {
-                        None
-                    }
-                });
-                if let Some(Some(k)) = key {
-                    if !wanted.contains(&k) {
-                        wanted.push(k);
-                    }
-                }
-            }
-        }
-        for (exchange, symbol, at) in wanted {
-            let Some(eid) = ExchangeId::from_str(&exchange) else {
-                continue;
-            };
-            // Gate-guarded: alive forwarder → no-op; dead forwarder (ws
-            // bounce removed the gate) → fresh station subscribe.
-            let _ = self.bridge.subscribe_trades(
-                eid,
-                &symbol,
-                mlc_backend_data_bridge::account_type_to_dig3(at),
-            );
-        }
-    }
-
     /// Drain the live-data broadcast channel, write incoming updates into
     /// shared state (bubble store, `mini_ticker`, `exchange_symbols`), and
     /// emit one [`BubbleEvent`] per logical write for per-app reactors.
@@ -1366,8 +1294,7 @@ impl BackendCore {
     /// When the broadcast channel signals `Lagged`, this method silently
     /// skips the gap (no backfill trigger — that is per-app logic). The caller
     /// can detect a lag by comparing event counts across ticks if needed.
-    pub fn tick_writers(&self, now_ms: u64) -> Vec<BubbleEvent> {
-        self.heal_trade_subscriptions(now_ms);
+    pub fn tick_writers(&self, _now_ms: u64) -> Vec<BubbleEvent> {
         let mut events: Vec<BubbleEvent> = Vec::new();
         let mut rx = self.broadcast_rx.lock().expect("BackendCore.broadcast_rx poisoned");
 
