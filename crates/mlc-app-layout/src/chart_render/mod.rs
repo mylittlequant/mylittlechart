@@ -44,7 +44,7 @@ mod dom_heatmap;
 mod liquidation_heatmap;
 
 // Re-export rendering functions
-pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line};
+pub use grid::{draw_grid, draw_grid_extended, draw_styled_line, draw_dashed_line, draw_data_gaps};
 pub use candles::{draw_candles, draw_bars, draw_hollow_candles, draw_heikin_ashi, draw_volume_bars, draw_tick_bars, draw_footprint};
 pub use footprint::draw_footprint_cluster;
 pub use renko::draw_renko;
@@ -113,6 +113,7 @@ pub fn render_chart_frame(
 
     // 2. Grid
     draw_grid(ctx, state);
+    draw_data_gaps(ctx, state);
 
     // Note: For full chart rendering use layout::render_chart_window()
     // which renders candles, scales, crosshair, etc.

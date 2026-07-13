@@ -27,7 +27,7 @@
 use mlc_core::render::RenderContext;
 use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
-    draw_grid, draw_grid_extended, draw_candles, draw_volume_profile_overlay,
+    draw_grid, draw_grid_extended, draw_data_gaps, draw_candles, draw_volume_profile_overlay,
     draw_tpo_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
     draw_dom_heatmap_conditional, draw_liquidation_heatmap_conditional,
@@ -2586,6 +2586,7 @@ pub fn render_chart(
 
     // 2. Grid
     draw_grid(ctx, state);
+    draw_data_gaps(ctx, state);
 
     // 3. DOM Heatmap / Liquidation Heatmap background overlays (chart-type →
     // overlay migration) — draw BEFORE the main series so the heat layers
@@ -3275,6 +3276,10 @@ pub fn render_full_chart_panel(
     if main_chart_visible {
         // 2. Grid — extended variant covers the content area (under scales, excluding toolbars).
         draw_grid_extended(ctx, &corrected_state, content_rect);
+        // 2b. Data-gap bands (archive-day holes) — this panel pipeline is
+        // the LIVE web render path; the single-pane render_chart path has
+        // its own call.
+        draw_data_gaps(ctx, &corrected_state);
 
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
