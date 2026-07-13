@@ -650,6 +650,7 @@ mod tests {
     fn deep_from_caps_rest_deep_is_always_deep() {
         let tier = digdigdig3::core::types::TradeHistoryTier::RestDeep {
             cursor: digdigdig3::core::types::HistoryCursor::FromId,
+            page_cap: 1000,
         };
         assert!(deep_from_caps(tier, None));
         assert!(deep_from_caps(tier, Some(dummy_archive_spec())));

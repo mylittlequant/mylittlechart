@@ -40,7 +40,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use digdigdig3::core::types::{ArchiveSpec, TradeHistoryTier};
+use digdigdig3::core::types::{ArchiveSpec, HistoryCursor, TradeHistoryTier};
 use digdigdig3::{AccountType, ExchangeId};
 use digdigdig3_station::archive::RawTrade;
 
@@ -1069,13 +1069,14 @@ impl DataBridge {
         }
 
         let fetch_hub = self.station().hub();
+        let station = self.station();
         let tx = self.updates_tx();
         let symbol_str = symbol.to_string();
         let wire_sym = self.wire_symbol_pub(exchange_id, account_type, symbol);
         let engine = self.backfill_engine();
 
         self.spawn_bg_pub(async move {
-            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, true).await;
+            run_trade_ramp(fetch_hub, station, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, true).await;
         });
     }
 
@@ -1115,13 +1116,14 @@ impl DataBridge {
         }
 
         let fetch_hub = self.station().hub();
+        let station = self.station();
         let tx = self.updates_tx();
         let symbol_str = symbol.to_string();
         let wire_sym = self.wire_symbol_pub(exchange_id, account_type, symbol);
         let engine = self.backfill_engine();
 
         self.spawn_bg_pub(async move {
-            run_trade_ramp(fetch_hub, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, false).await;
+            run_trade_ramp(fetch_hub, station, tx, engine, key, exchange_id, account_type, symbol_str, wire_sym, false).await;
         });
     }
 }
@@ -1421,12 +1423,17 @@ fn emit_archive_day_page(
 /// key (no `oldest_anchor` yet) uses the capability-aware seed
 /// (`agg_trades_paginated`, which itself falls back to `trades_recent` for
 /// `RecentOnly`/unsupported venues); subsequent pages walk the resumable
-/// backward cursor page-by-page directly against the hub's
-/// `get_agg_trades(from_id = min_id - limit)` — mirroring what
-/// `agg_trades_paginated` does internally for its own multi-page walk,
-/// without needing any dig3-side addition (the walk is simple enough to own
-/// bridge-side, since `agg_trades_paginated` does not expose a resumable
-/// cursor across separate calls). `gate_on_target` selects the phase — see
+/// backward cursor page-by-page directly against the hub's `get_agg_trades`
+/// — mirroring what `agg_trades_paginated` does internally for its own
+/// multi-page walk, without needing any dig3-side addition (the walk is
+/// simple enough to own bridge-side, since `agg_trades_paginated` does not
+/// expose a resumable cursor across separate calls). The next-page cursor
+/// step is NOT a single formula — it branches by the venue's declared
+/// `HistoryCursor` (`FromId` subtracts `page_size`, `TsCursor`/OKX passes
+/// `from_id` verbatim, `TsWindow` steps `-1`ms) — see the `cursor_kind`
+/// local and its doc comment right before the walk loop, and
+/// `get_agg_trades`'s trait-level doc comment for the full normalized
+/// contract (2026-07-13). `gate_on_target` selects the phase — see
 /// [`run_kline_ramp`]'s doc for the same split.
 ///
 /// Time-ladder self-drive (owner doctrine 2026-07-12): one call walks
@@ -1451,6 +1458,7 @@ fn emit_archive_day_page(
 /// scope) and the pre-existing latch-on-wall behavior is unchanged.
 async fn run_trade_ramp(
     fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
+    station: Arc<digdigdig3_station::Station>,
     tx: tokio::sync::broadcast::Sender<LiveUpdate>,
     engine: BackfillEngine,
     key: BackfillKey,
@@ -1460,22 +1468,70 @@ async fn run_trade_ramp(
     wire_sym: String,
     gate_on_target: bool,
 ) {
+    // Fix (boot-race latch, footprint-trade-backfill-fix-2026-07-13):
+    // `wire_sym` as received is the CALLER's precomputed passthrough
+    // fallback (`DataBridge::wire_symbol`), which returns the canonical
+    // string unresolved when the station symbol catalogue is still cold
+    // at boot. For a venue whose native form differs from canonical (e.g.
+    // OKX "BTC-USDT" vs canonical "BTCUSDT"), that passthrough is a wire
+    // symbol the venue rejects — the seed page comes back empty, which
+    // the ramp below reads as `venue_dry` and latches `exhausted`
+    // permanently (no later demand ever re-fetches). Confidently resolve
+    // the wire symbol here, mirroring the kline path's retry loop
+    // (`request_bars`'s spawned task in bridge.rs, "Fix 2 — MUUSDC
+    // race") — poll `try_resolve_wire_symbol` every ~250ms for up to
+    // ~10s total, sharing the budget with the connector-readiness wait
+    // below. On confident resolution, override the passthrough. On
+    // timeout, end the flight WITHOUT latching exhausted so a later
+    // demand (catalogue now warm) retries instead of being permanently
+    // stuck.
+    let mut wire_sym = wire_sym;
     {
-        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 40; // 40 * 250ms = 10s total budget
+        let mut attempts = 0u32;
+        let mut connector_ready = false;
+        let mut symbol_resolved = false;
         loop {
-            if fetch_hub.rest(exchange_id).is_some() {
+            if !connector_ready && fetch_hub.rest(exchange_id).is_some() {
+                connector_ready = true;
+            }
+            if connector_ready && !symbol_resolved {
+                if let Some(resolved) = crate::bridge::try_resolve_wire_symbol(
+                    &station, exchange_id, account_type, &symbol_str,
+                ) {
+                    wire_sym = resolved;
+                    symbol_resolved = true;
+                }
+            }
+            if connector_ready && symbol_resolved {
                 break;
             }
-            attempts += 1;
-            if attempts > 50 {
+            if connector_ready && attempts >= MAX_ATTEMPTS {
+                // Do NOT fall back to the passthrough here — "connector
+                // ready but catalogue not yet resolved" is exactly the OKX
+                // boot case this fix exists for (exchange_info REST still
+                // in flight while the connector object already exists);
+                // proceeding would send the canonical form to the venue,
+                // read the empty reply as venue-dry, and latch `exhausted`
+                // permanently. End the flight unlatched — the per-frame
+                // viewport demand retries once the catalogue warms.
                 crate::dlog!(
-                    "[BackfillEngine] trades: connector {:?} not initialized after 5s",
-                    exchange_id
+                    "[BackfillEngine] trades: wire_symbol unresolved after {}ms exchange={:?} sym={} — ending flight, no latch",
+                    attempts * 250, exchange_id, symbol_str
                 );
                 engine.with_state(&key, RampState::end_flight);
                 return;
             }
-            sleep_ms(100).await;
+            if !connector_ready && attempts >= MAX_ATTEMPTS {
+                crate::dlog!(
+                    "[BackfillEngine] trades: connector {:?} not initialized after {}ms",
+                    exchange_id, attempts * 250
+                );
+                engine.with_state(&key, RampState::end_flight);
+                return;
+            }
+            attempts += 1;
+            sleep_ms(250).await;
         }
     }
 
@@ -1484,6 +1540,38 @@ async fn run_trade_ramp(
         return;
     };
     let tier = rest.trade_history_capabilities().tier_for(account_type);
+    // Cursor kind (dig3 `get_agg_trades` normalized contract, 2026-07-13 —
+    // see `digdigdig3_station::backfill::agg_trades_paginated`'s doc comment
+    // for the full per-venue breakdown, mirrored here for the resumable
+    // page-by-page walk below): `from_id: Some(id)` always means "trades
+    // strictly older than `id`" at the trait level, but the CALLER still
+    // must compute each next-page cursor per the connector's internal
+    // translation strategy —
+    // - `FromId` (Binance): connector emulates "older than" via
+    //   `id.saturating_sub(limit)` — this walk steps by a full `page_size`.
+    // - `TsCursor` (OKX): connector's own `after` cursor is already
+    //   descending/exclusive — this walk passes `min_id` verbatim, no
+    //   arithmetic (subtracting `page_size` here would skip a page-sized
+    //   hole every page — the OKX cursor-pagination bug this contract
+    //   closes).
+    // - `TsWindow` (Bitfinex/Gate.io/MEXC/Coinbase/BingX): no id cursor —
+    //   `agg_id` on returned points IS a millisecond timestamp, next window
+    //   step is `min_ts - 1`.
+    let cursor_kind = match tier {
+        TradeHistoryTier::RestDeep { cursor, .. } => cursor,
+        TradeHistoryTier::RestWindow { cursor, .. } => cursor,
+        TradeHistoryTier::RecentOnly { .. } => HistoryCursor::FromId,
+    };
+    // Venue-side per-page clamp (dig3 `RestDeep::page_cap`): "partial page
+    // = venue dry" must be judged against what the venue can actually
+    // return — OKX clamps every request to 100 rows, so a 100-row page on
+    // a bigger request is FULL, not dry. Judging against the raw request
+    // latched `exhausted` after one walk page (footprint incident
+    // 2026-07-13).
+    let full_page_rows: usize = match tier {
+        TradeHistoryTier::RestDeep { page_cap, .. } => (page_cap as usize).min(TRADE_PAGE_SIZE),
+        _ => TRADE_PAGE_SIZE,
+    };
     let archive_spec = rest.trade_archive_capabilities().for_account(account_type);
     // Wasm needs the CORS proxy base to reach the archive hosts (browsers
     // cannot cross-origin GET `public.bybit.com` / `data.binance.vision`
@@ -1603,7 +1691,20 @@ async fn run_trade_ramp(
                 });
                 break;
             }
-            let next_from_id = (from_id as u64).saturating_sub(page_size as u64);
+            // Next-page cursor step, branched by `HistoryCursor` exactly like
+            // `agg_trades_paginated`'s own multi-page walk (see the
+            // `cursor_kind` doc comment above this loop): `FromId` (Binance)
+            // subtracts a full `page_size` to land one page earlier;
+            // `TsCursor` (OKX) passes `from_id` verbatim — its own `after`
+            // cursor already walks strictly-older on its own, and
+            // subtracting `page_size` here would skip a page-sized hole
+            // every page; `TsWindow` venues carry a millisecond timestamp in
+            // `agg_id` and step back 1ms, not a trade-count-sized chunk.
+            let next_from_id = match cursor_kind {
+                HistoryCursor::TsWindow => (from_id as u64).saturating_sub(1),
+                HistoryCursor::TsCursor => from_id as u64,
+                HistoryCursor::FromId => (from_id as u64).saturating_sub(page_size as u64),
+            };
             let res = rest.get_agg_trades(
                 digdigdig3::core::types::SymbolInput::Raw(&wire_sym),
                 Some(page_size as u32),
@@ -1630,7 +1731,7 @@ async fn run_trade_ramp(
                     break;
                 }
             };
-            let was_partial = points.len() < page_size;
+            let was_partial = points.len() < full_page_rows;
             let min_id = points.iter().map(|p| p.agg_id).min();
             // A short (partial) page on a `RestWindow` venue's resumable
             // walk means the cursor just crossed `max_back_ms` — the same

@@ -3198,7 +3198,7 @@ impl DataBridge {
 ///
 /// Unlike `wire_symbol` this never returns the passthrough fallback — `None`
 /// explicitly means "not ready or not found", letting the caller retry.
-fn try_resolve_wire_symbol(
+pub(crate) fn try_resolve_wire_symbol(
     station: &digdigdig3_station::Station,
     exchange_id: ExchangeId,
     account_type: AccountType,
