@@ -2586,7 +2586,7 @@ pub fn render_chart(
 
     // 2. Grid
     draw_grid(ctx, state);
-    draw_data_gaps(ctx, state);
+    draw_data_gaps(ctx, state, config.chart_type);
 
     // 3. DOM Heatmap / Liquidation Heatmap background overlays (chart-type →
     // overlay migration) — draw BEFORE the main series so the heat layers
@@ -3209,6 +3209,7 @@ pub fn render_full_chart_panel(
         hide_time_grid: data.state.hide_time_grid,
         history_depth: data.state.history_depth,
         cvd_paint_deltas: data.state.cvd_paint_deltas.clone(),
+        trade_archive_available: data.state.trade_archive_available,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3279,7 +3280,7 @@ pub fn render_full_chart_panel(
         // 2b. Data-gap bands (archive-day holes) — this panel pipeline is
         // the LIVE web render path; the single-pane render_chart path has
         // its own call.
-        draw_data_gaps(ctx, &corrected_state);
+        draw_data_gaps(ctx, &corrected_state, data.config.chart_type);
 
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
@@ -3660,6 +3661,7 @@ pub fn render_chart_overlay(
         hide_time_grid: state.hide_time_grid,
         history_depth: state.history_depth,
         cvd_paint_deltas: state.cvd_paint_deltas.clone(),
+        trade_archive_available: state.trade_archive_available,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

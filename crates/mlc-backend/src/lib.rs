@@ -2312,6 +2312,34 @@ impl BackendCore {
         crate::chart_type::deep_trade_history_available(&self.bridge, exchange_id, dig3_at)
     }
 
+    /// Whether the venue publishes a bulk daily trade-archive for
+    /// `(exchange_id, account_type)` — `TradeArchiveCapabilities::
+    /// for_account` presence, NOT the joined "deep history available" check
+    /// [`Self::deep_trade_history_available`] does (that one also counts a
+    /// `RestDeep`/`RestWindow` live REST tier with no archive at all).
+    ///
+    /// Consumed by the data-gap band's second label line
+    /// (`ChartRenderState::trade_archive_available`,
+    /// `chart_render::grid::draw_data_gaps`): "zip MM-DD..MM-DD pending"
+    /// must only be promised when an archive genuinely exists for this
+    /// instrument's account type. `false` (not `Option`) — an
+    /// exchange-not-connected-yet venue has no archive to promise either,
+    /// same as a genuinely archive-less one; the caller shouldn't have to
+    /// unwrap an `Option` just to decide whether to show a label.
+    ///
+    /// `nemo/docs/dig3/plans/filedump-trade-archives-2026-07-09.md` §Ф3.
+    pub fn trade_archive_available(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> bool {
+        let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+        self.bridge
+            .trade_archive_capabilities(exchange_id)
+            .and_then(|caps| caps.for_account(dig3_at))
+            .is_some()
+    }
+
     /// Whether `chart_type` would run in hybrid/live-only mode on
     /// `(exchange_id, account_type)` — resolved from `ChartTypeDef::
     /// data_requirement` + [`Self::deep_trade_history_available`]. `None`

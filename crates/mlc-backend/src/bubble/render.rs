@@ -64,6 +64,15 @@ pub struct ChartWindowRenderInputs<'a> {
     /// value. Resolved at the render-state build boundary (this struct) —
     /// `chart_type` itself is NOT threaded into the renderer.
     pub wicks_effective: bool,
+    /// Whether the venue publishes a bulk daily trade-archive for this
+    /// bubble's `(exchange, account_type)` — resolved by the caller (`mlc-app`,
+    /// which holds `Arc<BackendCore>`) via
+    /// `BackendCore::trade_archive_available`. Forwarded 1:1 onto
+    /// `ChartRenderState::trade_archive_available`; see that field's doc
+    /// comment for what it gates. Default `false` when the caller hasn't
+    /// resolved it yet (exchange not connected) — no promise, matching
+    /// `ChartRenderState`'s own default.
+    pub trade_archive_available: bool,
 }
 
 /// Whether `chart_type`'s registry row claims `bubble.bars` as its rendered
@@ -200,6 +209,9 @@ pub fn build_chart_render_state<'a>(
         // Filled by mlc-app AFTER build (needs the indicators facade,
         // which this bubble-scoped builder deliberately has no access to).
         cvd_paint_deltas: None,
+        // 1:1 forward — the caller already resolved this against the
+        // connector hub (this bubble-scoped builder has no bridge access).
+        trade_archive_available: window.trade_archive_available,
     }
 }
 

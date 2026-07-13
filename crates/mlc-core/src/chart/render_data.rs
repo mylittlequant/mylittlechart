@@ -794,6 +794,16 @@ pub struct ChartRenderState<'a> {
     /// Display=Candles; `None` everywhere else — zero change to the
     /// default render.
     pub cvd_paint_deltas: Option<Vec<f64>>,
+    /// Whether the venue actually publishes a bulk daily trade-archive for
+    /// this instrument's account type (`TradeArchiveCapabilities::
+    /// for_account(..).is_some()`) — resolved by `build_chart_render_state`
+    /// via the data-bridge's connector hub. Gates the data-gap band's
+    /// second "zip MM-DD..MM-DD pending" label line
+    /// (`chart_render::grid::draw_data_gaps`): that line promises an
+    /// archive day-file is on its way, which is only honest when the venue
+    /// actually has one. Default `false` (no promise) — matches the
+    /// "exchange not connected yet" / no-archive case.
+    pub trade_archive_available: bool,
 }
 
 impl<'a> ChartRenderState<'a> {

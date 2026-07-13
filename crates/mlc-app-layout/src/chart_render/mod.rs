@@ -19,7 +19,7 @@
 //! use mlc_core::render::{RenderContext, InputState};
 //!
 //! fn render(ctx: &mut dyn RenderContext, input: &InputState, state: &ChartRenderState) {
-//!     render_chart_frame(ctx, input, state);
+//!     render_chart_frame(ctx, input, state, "candles");
 //! }
 //! ```
 
@@ -103,6 +103,7 @@ pub fn render_chart_frame(
     ctx: &mut dyn RenderContext,
     _input: &InputState,
     state: &ChartRenderState,
+    chart_type: &str,
 ) -> FrameResult {
     let rect = &state.chart_rect;
     let theme = state.theme;
@@ -113,7 +114,7 @@ pub fn render_chart_frame(
 
     // 2. Grid
     draw_grid(ctx, state);
-    draw_data_gaps(ctx, state);
+    draw_data_gaps(ctx, state, chart_type);
 
     // Note: For full chart rendering use layout::render_chart_window()
     // which renders candles, scales, crosshair, etc.

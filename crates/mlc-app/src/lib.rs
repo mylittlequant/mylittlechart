@@ -3732,6 +3732,7 @@ impl ChartApp {
                 let overlay_ts_shadow = chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let overlay_bubble_mgr = self.core.bubbles();
                 let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                let overlay_trade_archive_available = self.trade_archive_available_for(&overlay_bubble_mgr, window.current_tag_id);
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -3754,6 +3755,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         overlay_panel.bar_family_wicks,
                     ),
+                    trade_archive_available: overlay_trade_archive_available,
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -3845,6 +3847,7 @@ impl ChartApp {
             let single_overlay_ts_shadow = single_overlay_cid.and_then(|cid| self.ts_shadow_for_chart(cid));
             let single_overlay_bubble_mgr = self.core.bubbles();
             let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+            let single_overlay_trade_archive_available = self.trade_archive_available_for(&single_overlay_bubble_mgr, window.current_tag_id);
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                 viewport: window.viewport(),
                 price_scale: window.price_scale(),
@@ -3867,6 +3870,7 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.instrument_wick_enabled,
                     single_panel.bar_family_wicks,
                 ),
+                trade_archive_available: single_overlay_trade_archive_available,
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
                 window.current_tag_id,
@@ -4142,6 +4146,7 @@ impl ChartApp {
                 let split_ts_shadow = leaf_chart_id.and_then(|cid| self.ts_shadow_for_chart(cid));
                 let split_bubble_mgr = self.core.bubbles();
                 let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                let split_trade_archive_available = self.trade_archive_available_for(&split_bubble_mgr, window.current_tag_id);
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -4164,6 +4169,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         split_panel.bar_family_wicks,
                     ),
+                    trade_archive_available: split_trade_archive_available,
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -4765,6 +4771,7 @@ impl ChartApp {
                     content_rect.height,
                 );
                 let single_window_chart_type_for_wicks = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
+                let single_window_trade_archive_available = self.trade_archive_available_for(&single_window_bubble_mgr, window.current_tag_id);
                 let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
                     price_scale: window.price_scale(),
@@ -4787,6 +4794,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         single_window_panel.bar_family_wicks,
                     ),
+                    trade_archive_available: single_window_trade_archive_available,
                 };
                 single_window_bubble_mgr.render_state_for(
                     window.current_tag_id,
@@ -7565,6 +7573,26 @@ impl ChartApp {
             }
         }
         Some(deltas)
+    }
+
+    /// Whether the venue publishes a bulk daily trade-archive for `bid`'s
+    /// `(exchange, account_type)` — thin resolve-at-render-time wrapper over
+    /// `BackendCore::trade_archive_available`. Takes the caller's already-
+    /// held `Bubbles` guard (`bubbles`) instead of re-acquiring
+    /// `self.core.bubbles()` — every call site calls this while already
+    /// holding one, and `BackendCore`'s bubble lock is a plain
+    /// `std::sync::RwLock` (nested read-acquisition on the same thread is
+    /// not guaranteed non-deadlocking). Feeds
+    /// `ChartWindowRenderInputs::trade_archive_available`, which
+    /// `build_chart_render_state` forwards 1:1 onto `ChartRenderState`; see
+    /// that field's doc comment for what it gates. `false` when `bid`'s
+    /// exchange string doesn't parse (unknown venue) or isn't connected
+    /// yet — no promise, never a guess.
+    fn trade_archive_available_for(&self, bubbles: &mlc_backend::bubble::Bubbles<'_>, bid: mlc_core::ids::BubbleId) -> bool {
+        let Some(exchange) = bubbles.exchange(bid) else { return false };
+        let Some(eid) = digdigdig3::ExchangeId::from_str(exchange) else { return false };
+        let account_type = bubbles.account_type_typed(bid).unwrap_or_default();
+        self.core.trade_archive_available(eid, account_type)
     }
 
     /// Synchronise `window.inner_docking` with the external `IndicatorManager`.

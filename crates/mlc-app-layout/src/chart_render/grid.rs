@@ -220,8 +220,21 @@ pub fn draw_grid_extended(
 /// Threshold is derived purely from the data (median consecutive-delta
 /// across the visible range, widened for irregular/counted-bar families by
 /// falling back to the whole series when the visible range is too short to
-/// give a stable median) — no chart-type string matching, per doctrine.
-pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
+/// give a stable median).
+///
+/// SCOPE (owner doctrine 2026-07-13): trade-fed history only — footprint +
+/// the count-bar family, whose bars glue at a time-marked seam and whose
+/// history is deepened by an in-place prepend fold
+/// (`ChartTypeDef::incremental_prepend == true`). Kline-fed chart types
+/// (candles/etc.) glue gaps the way every other charting product does — no
+/// band there. Gated via the chart-type REGISTRY lookup (`chart_type`
+/// param, mirrors `draw_series`'s own `chart_type: &str` parameter), NEVER
+/// a chart_type string match.
+pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_type: &str) {
+    if !mlc_core::chart_type::by_id(chart_type).is_some_and(|d| d.incremental_prepend) {
+        return;
+    }
+
     let rect = &state.chart_rect;
     let viewport = state.viewport;
     let theme = state.theme;
@@ -273,7 +286,15 @@ pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         // Floor-to-ceiling band ~5 bar slots wide, clamped so it stays a
         // readable block at extreme zooms and never narrower than its label.
         let label = format!("no data \u{b7} {}", humanize_gap_duration(delta_ms));
-        let days_label = missing_utc_days_label(ts_a, ts_b);
+        // Only promise the pending-archive day(s) when the venue actually
+        // HAS a trade archive for this instrument's account type — an
+        // honest "no data" label alone otherwise (owner doctrine
+        // 2026-07-13).
+        let days_label = if state.trade_archive_available {
+            missing_utc_days_label(ts_a, ts_b)
+        } else {
+            None
+        };
         let text_w = ctx
             .measure_text(&label)
             .max(days_label.as_deref().map(|d| ctx.measure_text(d)).unwrap_or(0.0));
