@@ -79,6 +79,15 @@ use crate::bubble::{RawLayer, RawTrade, DEFAULT_TRADE_LAYER_CAPACITY};
 /// this default is a floor, not a cap.
 pub const DEFAULT_TRADE_HORIZON_MS: i64 = 6 * 3_600_000;
 
+/// Minimum spacing between `log_capacity_clip` dlog emissions for the SAME
+/// instrument — aggregation window (throttle fix, 2026-07-13). Below this,
+/// a burst that clips on every single `push_live` call (ring already at
+/// capacity) used to emit one dlog per trade; now it accumulates a count
+/// and emits at most once per window, carrying the total clipped since the
+/// previous emission. Still a logged backstop, never silent — see
+/// [`StoreEntry::log_capacity_clip`].
+const CLIP_LOG_THROTTLE_MS: u64 = 60_000;
+
 /// One per-instrument entry: the raw trade ring plus its own retention
 /// horizon. Wrapped (rather than a parallel `HashMap<InstrumentAddress,
 /// i64>`) so a single `inner` write-lock scope always sees both the layer
@@ -87,11 +96,24 @@ pub const DEFAULT_TRADE_HORIZON_MS: i64 = 6 * 3_600_000;
 struct StoreEntry {
     layer: RawLayer<RawTrade>,
     horizon_ms: i64,
+    /// Count-capacity clips accumulated since the last `log_capacity_clip`
+    /// emission for this instrument — throttle fix, 2026-07-13.
+    clipped_since_log: u64,
+    /// Wall-clock time of the last `log_capacity_clip` emission. `None`
+    /// before the first clip ever recorded — the first clip in this
+    /// entry's lifetime always logs immediately (a backstop must never
+    /// silently swallow the FIRST occurrence).
+    last_logged_at: Option<web_time::Instant>,
 }
 
 impl StoreEntry {
     fn new(capacity: usize) -> Self {
-        Self { layer: RawLayer::new(capacity), horizon_ms: DEFAULT_TRADE_HORIZON_MS }
+        Self {
+            layer: RawLayer::new(capacity),
+            horizon_ms: DEFAULT_TRADE_HORIZON_MS,
+            clipped_since_log: 0,
+            last_logged_at: None,
+        }
     }
 
     /// Evict trades older than the horizon, measured from this entry's OWN
@@ -101,6 +123,41 @@ impl StoreEntry {
         if let Some(newest) = self.layer.newest_ts() {
             self.layer.evict_older_than(newest - self.horizon_ms);
         }
+    }
+
+    /// Detect a count-capacity clip for this write and record it. Emits a
+    /// dlog immediately for the FIRST clip ever seen on this instrument, or
+    /// once every [`CLIP_LOG_THROTTLE_MS`] afterwards — carrying the
+    /// aggregated count since the previous emission rather than one line
+    /// per trade (throttle fix, 2026-07-13: `push_live` clips at most once
+    /// per incoming trade once the ring is saturated, which used to log on
+    /// every single tick).
+    fn log_capacity_clip(&mut self, key: &InstrumentAddress, writer: &str, len_before: usize, incoming: usize, len_after_write: usize) {
+        let grew_by = len_after_write.saturating_sub(len_before);
+        if grew_by >= incoming {
+            return;
+        }
+        let clipped = incoming - grew_by;
+        self.clipped_since_log += clipped as u64;
+        let now = web_time::Instant::now();
+        let due = match self.last_logged_at {
+            None => true,
+            Some(last) => now.duration_since(last).as_millis() as u64 >= CLIP_LOG_THROTTLE_MS,
+        };
+        if !due {
+            return;
+        }
+        mlc_backend_data_bridge::dlog!(
+            "[trade_store] ring cap clipped {} trades for {key:?} via {writer} (aggregated over {}) — memory backstop, horizon={}h",
+            self.clipped_since_log,
+            match self.last_logged_at {
+                Some(_) => "last 60s",
+                None => "first clip",
+            },
+            self.horizon_ms / 3_600_000
+        );
+        self.clipped_since_log = 0;
+        self.last_logged_at = Some(now);
     }
 }
 
@@ -181,7 +238,7 @@ impl TradeStore {
         entry.layer.prepend_batch(trades.to_vec());
         let len_after_write = entry.layer.len();
         entry.evict_expired();
-        Self::log_capacity_clip(key, "prepend_batch", len_before, incoming, len_after_write, entry.horizon_ms);
+        entry.log_capacity_clip(key, "prepend_batch", len_before, incoming, len_after_write);
     }
 
     /// Live-tick write: append `trade`, or in-place replace the current last
@@ -200,32 +257,7 @@ impl TradeStore {
         entry.layer.push_live(trade);
         let len_after_write = entry.layer.len();
         entry.evict_expired();
-        Self::log_capacity_clip(key, "push_live", len_before, 1, len_after_write, entry.horizon_ms);
-    }
-
-    /// Detect and log a count-capacity clip: the ring grew by fewer points
-    /// than were offered (`incoming`), which can only happen because
-    /// `default_capacity` truncated the overflow — the time horizon alone
-    /// never explains fewer NEW points landing (it only removes stale ones,
-    /// tracked separately). The backstop must never clip silently (owner
-    /// doctrine); this is the single choke point both writers funnel
-    /// through so the log fires exactly where the clip happens.
-    fn log_capacity_clip(
-        key: &InstrumentAddress,
-        writer: &str,
-        len_before: usize,
-        incoming: usize,
-        len_after_write: usize,
-        horizon_ms: i64,
-    ) {
-        let grew_by = len_after_write.saturating_sub(len_before);
-        if grew_by < incoming {
-            let clipped = incoming - grew_by;
-            mlc_backend_data_bridge::dlog!(
-                "[trade_store] ring cap clipped {clipped} trades for {key:?} via {writer} — memory backstop, horizon={}h",
-                horizon_ms / 3_600_000
-            );
-        }
+        entry.log_capacity_clip(key, "push_live", len_before, 1, len_after_write);
     }
 
     /// Oldest stored trade's timestamp for `key`, if the instrument has ever

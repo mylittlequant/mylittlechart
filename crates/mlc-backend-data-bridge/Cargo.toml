@@ -38,7 +38,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native: full tokio for the runtime that wraps station's async API.
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+# "macros" adds `tokio::select!` — used by the trade-forwarder cancel loop
+# (subscribe_trades) to race `report.handle.recv()` against a per-key
+# `watch` cancel signal so `unsubscribe_trades` can actually stop the old
+# instrument's forwarder instead of it running forever.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Wasm: tokio sync+macros only; no runtime, no rt-multi-thread, no time

@@ -345,86 +345,13 @@ impl ChartApp {
                 let resolved_exchange = self.core.exchange_symbols()
                     .find_by_label(exchange_part)
                     .unwrap_or(self.active_exchange);
-                // Switch the active chart to this symbol+exchange.
-                // Capture old trade-stream identity BEFORE mutating window state.
-                // S2.7.1e: read old instrument fields via branch_meta (B1).
-                let old_trade_exchange = self.active_exchange;
-                let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                let old_trade_symbol: String = active_chart_id
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
-                let old_trade_at = active_chart_id
-                    .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(mlc_backend_data_bridge::account_type_to_dig3)
-                    .unwrap_or(digdigdig3::AccountType::Spot);
-                let timeframe = active_chart_id
-                    .and_then(|cid| self.timeframe_for_chart(cid))
-                    .unwrap_or_default();
-                let old_sym = active_chart_id
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
-                let old_exchange = active_chart_id
-                    .and_then(|cid| self.exchange_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
-                let old_account_type = active_chart_id
-                    .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(|at| at.to_string())
-                    .unwrap_or_else(|| "S".to_string());
-                let active_bid_wl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    if let Some(bid) = active_bid_wl {
-                        let restore_snaps = window.take_drawings_snapshot_for_symbol(sym_part, exchange_part, &wl_at_label);
-                        let new_address = mlc_core::instrument::InstrumentAddress::new(
-                            exchange_part,
-                            sym_part,
-                            wl_at_label.parse().unwrap_or_default(),
-                        );
-                        let result = self.core.drawings_mut().swap_symbol(
-                            bid, &new_address, restore_snaps.as_deref(),
-                        );
-                        let old_key = format!("{}:{}:{}", old_sym, old_exchange, old_account_type);
-                        if result.old_primitives.is_empty() {
-                            window.symbol_drawings.remove(&old_key);
-                        } else {
-                            window.symbol_drawings.insert(old_key, result.old_primitives);
-                        }
-                    }
-                    window.begin_fresh_load();
+                // Hard cutover (2026-07-13 symbol-switch fix): this arm was a
+                // second hand-rolled copy of the `ApplySymbol` handler — same
+                // disease as the SymbolSearch arm (see its comment), same
+                // dead-footprint symptom. One dispatch, one code path.
+                if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                    self.apply_symbol(chart_id, sym_part, resolved_exchange.as_str(), &wl_at_label);
                 }
-                if let Some(chart_id) = active_chart_id {
-                    if let Some(bid) = self.bubble_for_chart(chart_id) {
-                        self.core.bubbles_mut().set_bid_instrument_full(
-                            bid,
-                            sym_part.to_string(),
-                            exchange_part.to_string(),
-                            wl_at_label.clone(),
-                            timeframe.clone(),
-                        );
-                    }
-                }
-                // Propagate symbol change to all peers in the same sync group.
-                let wl_active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                if let Some(leaf) = wl_active_leaf {
-                    self.propagate_symbol_to_sync_group(leaf, sym_part, exchange_part, &wl_at_label);
-                }
-                self.active_exchange = resolved_exchange;
-                // Unsubscribe only the old symbol's trade stream, leaving other
-                // windows' streams intact.
-                if !old_trade_symbol.is_empty() {
-                    self.core.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
-                }
-                let eid_str = resolved_exchange.as_str();
-                if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                    eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist modal item click)", eid_str);
-                } else {
-                    let wl_at = crate::account_type_from_label(&wl_at_label);
-                    self.core.ensure_connector(resolved_exchange);
-                    self.core.request_kline(resolved_exchange, sym_part, &timeframe, wl_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
-                }
-                self.autosave_snapshot();
                 eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
                 self.standalone_panels.watchlist_modal.close();
             }
@@ -812,109 +739,18 @@ impl ChartApp {
 
                 match self.modal_state.current {
                     OpenModal::SymbolSearch => {
-                        // Capture previous symbol, exchange, and account_type BEFORE changing.
-                        // S2.7.1e: read via branch_meta (B1).
-                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                        let previous_symbol: String = active_chart_id
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_trade_exchange = self.active_exchange;
-                        let old_trade_at = active_chart_id
-                            .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(mlc_backend_data_bridge::account_type_to_dig3)
-                            .unwrap_or(digdigdig3::AccountType::Spot);
-                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                        let new_symbol_str = symbol_part.to_string();
-                        // Set symbol, clear bars, and request data asynchronously.
-                        let timeframe = active_chart_id
-                            .and_then(|cid| self.timeframe_for_chart(cid))
-                            .unwrap_or_default();
-                        // account_type is embedded in the item key — use it directly.
-                        let search_at_label = item_at_label.clone();
-                        let old_sym_search = active_chart_id
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_exch_search = active_chart_id
-                            .and_then(|cid| self.exchange_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_at_search = active_chart_id
-                            .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(|at| at.to_string())
-                            .unwrap_or_else(|| "S".to_string());
-                        let active_bid_srch = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            if let Some(bid) = active_bid_srch {
-                                let restore_snaps = window.take_drawings_snapshot_for_symbol(symbol_part, resolved_exchange.as_str(), &search_at_label);
-                                let new_address = mlc_core::instrument::InstrumentAddress::new(
-                                    resolved_exchange.as_str(),
-                                    symbol_part,
-                                    search_at_label.parse().unwrap_or_default(),
-                                );
-                                let result = self.core.drawings_mut().swap_symbol(
-                                    bid, &new_address, restore_snaps.as_deref(),
-                                );
-                                let old_key = format!("{}:{}:{}", old_sym_search, old_exch_search, old_at_search);
-                                if result.old_primitives.is_empty() {
-                                    window.symbol_drawings.remove(&old_key);
-                                } else {
-                                    window.symbol_drawings.insert(old_key, result.old_primitives);
-                                }
-                            }
-                            window.begin_fresh_load();
+                        // Hard cutover (2026-07-13 symbol-switch fix): this
+                        // arm used to hand-roll a byte-for-byte copy of the
+                        // `ApplySymbol` handler (drawings swap, instrument
+                        // rebind, unsubscribe, kline request, undo, sync
+                        // group, recalc, autosave) — which silently missed
+                        // every later addition to the canonical path, most
+                        // recently the trade-plane re-ignite (footprint/CVD
+                        // stayed dead after a modal symbol pick until a full
+                        // reload). One dispatch, one code path.
+                        if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                            self.apply_symbol(chart_id, symbol_part, resolved_exchange.as_str(), &item_at_label);
                         }
-                        // Phase 1.2: dual-write instrument into branch_meta + bubble.
-                        if let Some(chart_id) = active_chart_id {
-                            if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                self.core.bubbles_mut().set_bid_instrument_full(
-                                    bid,
-                                    symbol_part.to_string(),
-                                    resolved_exchange.as_str().to_string(),
-                                    search_at_label.clone(),
-                                    timeframe.clone(),
-                                );
-                            }
-                        }
-                        // Switch to the exchange that owns this symbol and request bars.
-                        self.active_exchange = resolved_exchange;
-                        // Unsubscribe only the old symbol's trade stream, leaving other
-                        // windows' streams intact.
-                        if !previous_symbol.is_empty() {
-                            self.core.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
-                        }
-                        let eid_str = resolved_exchange.as_str();
-                        if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                            eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (search symbol select)", eid_str);
-                        } else {
-                            let search_at = crate::account_type_from_label(&search_at_label);
-                            self.core.ensure_connector(resolved_exchange);
-                            self.core.request_kline(resolved_exchange, symbol_part, &timeframe, search_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
-                        }
-                        // Record ChangeSymbol if it actually changed.
-                        if previous_symbol != new_symbol_str {
-                            self.push_undo_command(mlc_core::Command::ChangeSymbol {
-                                previous_symbol: previous_symbol.clone(),
-                                new_symbol: new_symbol_str.clone(),
-                            });
-                            eprintln!("[ChartApp] Recorded ChangeSymbol {} -> {}", previous_symbol, new_symbol_str);
-                            // Propagate new symbol+exchange+account_type to all leaves in the same sync group.
-                            if let Some(leaf) = active_leaf {
-                                self.propagate_symbol_to_sync_group(leaf, &new_symbol_str, resolved_exchange.as_str(), &search_at_label);
-                            }
-                        }
-                        // Recalculate all indicators for the new bars in this window.
-                        let recalc_bid_and_bars = self.panel_app.panel_grid.docking().active_leaf()
-                            .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-                            .and_then(|cid| self.bubble_for_chart(cid))
-                            .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
-                        if let Some((bid, bars)) = recalc_bid_and_bars {
-                            self.core.indicators_mut().recalc_bubble(bid, &bars);
-                        }
-                        self.sync_sub_panes_from_manager();
-                        self.sidebar_data_dirty = true;
-                        self.autosave_snapshot();
                         self.modal_state.close();
                     }
                     OpenModal::CompareSearch => {

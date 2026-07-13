@@ -1107,8 +1107,38 @@ impl ChartApp {
                 }
 
                 self.active_exchange = resolved_exchange;
-                if !previous_symbol.is_empty() {
-                    self.core.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                // Teardown, deliverable 2 (2026-07-13 live-bug fix): only
+                // drop the OLD instrument's trade stream once NO remaining
+                // bubble still needs it — `unsubscribe_trades` decrements a
+                // real per-key forwarder now (see `DataBridge::unsubscribe_
+                // trades`'s doc comment), so calling it while a sibling
+                // window/leaf still displays the old instrument as a
+                // trade-fold chart type or carries a CVD companion would
+                // kill their live feed too. `bubbles_for_instrument` no
+                // longer contains `bid` itself at this point (its instrument
+                // was already reassigned above by `set_bid_instrument_full`),
+                // so any survivor found here is a genuine sibling. Gated on
+                // the FULL instrument key (not just symbol) — an
+                // exchange-only or account-type-only switch also leaves the
+                // old (exchange, symbol, account_type) triplet behind.
+                let old_instrument_key = (old_exch_search.as_str(), old_at_search.as_str(), previous_symbol.as_str());
+                let new_instrument_key = (resolved_exchange.as_str(), account_type.as_str(), symbol.as_str());
+                if !previous_symbol.is_empty() && old_instrument_key != new_instrument_key {
+                    let old_instrument_still_needs_trades = self.core.bubbles()
+                        .bubbles_for_instrument(old_exch_search.as_str(), &old_at_search, &previous_symbol)
+                        .into_iter()
+                        .any(|other_bid| {
+                            let other_ct = self.core.bubbles().chart_type(other_bid).unwrap_or("candles");
+                            if mlc_backend::chart_type::is_trade_fold_chart_type(other_ct) {
+                                return true;
+                            }
+                            self.core.indicators().instances_for_bubble(other_bid)
+                                .into_iter()
+                                .any(|inst| inst.type_id == "cvd")
+                        });
+                    if !old_instrument_still_needs_trades {
+                        self.core.unsubscribe_trades(old_trade_exchange, &previous_symbol, old_trade_at);
+                    }
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
@@ -1121,6 +1151,57 @@ impl ChartApp {
                         resolved_exchange, &symbol, &timeframe, at, None,
                         Some(self.core.user().profile().domain.bar_count as usize), false,
                     );
+                    // Re-ignite, deliverable 1 (2026-07-13 live-bug fix):
+                    // `set_bid_instrument_full` above rebinds the bubble's
+                    // (symbol, exchange, account_type) key, but nothing
+                    // re-fires the trade-fed data plane for the NEW
+                    // instrument — the bubble's `active_trade_fold`/
+                    // `active_cvd_fold` runtimes stay installed for the OLD
+                    // one, and no fresh `subscribe_trades`/backfill was ever
+                    // requested for the new key. Boot (`ignite_derived_
+                    // windows`) and `ChangeChartType`'s Step 6 both already
+                    // run this ignition; `ApplySymbol` never did, which is
+                    // why a full reload (which always goes through
+                    // hydration's `ignite_derived_windows`) "fixed" the
+                    // empty panel but a live symbol switch did not. Gated on
+                    // the registry's `is_trade_fold_chart_type` (chart-type
+                    // MachineKind contract) — never a chart_type string
+                    // match. `clear_derived_slots`/`ops.clear_slot` inside
+                    // `ignite_derived_window_target` already drop the OLD
+                    // fold before installing the new one, so no stale
+                    // runtime survives the switch.
+                    if let Some(ct) = self.chart_type_for_chart(target_cid) {
+                        if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
+                            let iv = self.chart_type_interval_for_chart(target_cid).unwrap_or("1m");
+                            let param = self.chart_type_param_for_chart(target_cid).unwrap_or(0.0);
+                            let group_ticks = self.panel_app.panel_grid.containers().get(&target_cid)
+                                .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+                                .map(|p| p.footprint_display.group_ticks)
+                                .unwrap_or(0);
+                            self.ignite_derived_window_target(
+                                target_cid, symbol.clone(), resolved_exchange.as_str().to_string(),
+                                at_typed, ct, iv, param, timeframe.clone(), group_ticks,
+                            );
+                        }
+                    }
+                    // CVD companion re-ignite — mirrors `subscribe_cvd_line_
+                    // for_indicator_add`'s own exemption (footprint already
+                    // carries real per-bar buy/sell, a CVD fold there would
+                    // be redundant) and its `chart_tf_ms` resolution.
+                    let has_cvd_instance = self.bubble_for_chart(target_cid)
+                        .map(|bid| self.core.indicators().instances_for_bubble(bid)
+                            .into_iter().any(|inst| inst.type_id == "cvd"))
+                        .unwrap_or(false);
+                    if has_cvd_instance && self.chart_type_for_chart(target_cid) != Some("footprint") {
+                        if let Some(bid) = self.bubble_for_chart(target_cid) {
+                            let chart_tf_ms = Some(timeframe.clone())
+                                .filter(|tf| !tf.is_tick())
+                                .map(|tf| tf.interval_ms);
+                            if let Some(ev) = self.core.subscribe_cvd_fold(bid, resolved_exchange, &symbol, at, chart_tf_ms) {
+                                self.react_to_bubble_event(&ev, now_ms());
+                            }
+                        }
+                    }
                 }
 
                 if previous_symbol != symbol {
@@ -2842,73 +2923,96 @@ impl ChartApp {
                 })
                 .collect();
         for (cid, sym, exch, at, ct, iv, param, tf, group_ticks) in targets {
-            let eid = digdigdig3::ExchangeId::from_str(&exch)
-                .unwrap_or(digdigdig3::ExchangeId::Binance);
-            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
-                continue;
-            }
-            let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-            let bid = self.bubble_for_chart(cid);
-            if let Some(bid) = bid {
-                self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                    bubble.clear_derived_slots(None);
-                    if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
-                        (ops.clear_slot)(bubble);
-                    }
-                });
-            }
-            self.core.ensure_connector(eid);
-            let bar_count = self.core.user().profile().domain.bar_count as usize;
-            let tick_size = self.resolve_tick_size(eid.as_str(), &sym, bid);
-            let params = build_subscribe_params(ct, param, iv, bar_count, tick_size);
-            // Unified-data-plane Э3: restored windows on one of the 7 fold
-            // types install/reseed a `FoldRuntime` instead of an
-            // `ops.subscribe` station derived sub — mirrors the
-            // `ChangeChartType`/`UpdateChartTypeParam` cutover above.
-            if mlc_backend::chart_type::is_fold_chart_type(ct) {
-                if let (Some(bid), Some(fold_params)) = (
-                    bid,
-                    mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
-                ) {
-                    let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
-                    if let Some(ev) = self.core.subscribe_fold_chart_type(
-                        bid, ct, fold_params, eid, &sym, at, Some(derived_target),
-                    ) {
-                        self.react_to_bubble_event(&ev, now_ms());
-                    }
-                }
-            } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
-                // Unified-data-plane Э4: restored windows on one of the 6
-                // trade-fold types install/reseed a `TradeFoldRuntime`
-                // instead of an `ops.subscribe` station derived sub —
-                // mirrors the `ChangeChartType`/`UpdateChartTypeParam`
-                // cutover above.
-                if let (Some(bid), Some(mut fold_params)) = (
-                    bid,
-                    mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
-                ) {
-                    // Footprint row-grouping preset (canon-fix wave 2, item
-                    // 5) — `SubscribeParams`/`build_subscribe_params` don't
-                    // carry a group-ticks axis (footprint's `param_spec` is
-                    // `None`), so the panel-persisted value is converted and
-                    // applied directly onto the resolved `FoldParams` here,
-                    // same as `apply_footprint_group_ticks`'s live-toggle path.
-                    if ct == "footprint" && group_ticks > 0 {
-                        fold_params.group_step = group_ticks as f64 * tick_size;
-                    }
-                    let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
-                    if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
-                        bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                        eid, &sym, at, Some(derived_target),
-                    ) {
-                        self.react_to_bubble_event(&ev, now_ms());
-                    }
-                }
-            } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(ct).and_then(|ops| ops.subscribe) {
-                subscribe(self.core.bridge_handle(), eid, &sym, at, &tf, params);
-            }
-            eprintln!("[ChartApp] ignited derived sub for restored window {:?} ct={} iv={} param={}", cid, ct, iv, param);
+            self.ignite_derived_window_target(cid, sym, exch, at, ct, iv, param, tf, group_ticks);
         }
+    }
+
+    /// Ignite (or re-ignite) the derived/trade-fold/fold pipeline for ONE
+    /// window — the per-target body factored out of [`Self::ignite_derived_windows`]'s
+    /// loop (§1 of the ChangeSymbol re-ignite fix, 2026-07-13) so the SAME
+    /// logic drives both the cold-restore sweep (all windows) and a single
+    /// window's instrument switch (`ApplySymbol`). See that fn's doc comment
+    /// for the "why" of every step — this is a pure extraction, behavior
+    /// unchanged for the cold-restore caller.
+    #[allow(clippy::too_many_arguments)]
+    fn ignite_derived_window_target(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        sym: String,
+        exch: String,
+        at: mlc_core::instrument::AccountType,
+        ct: &'static str,
+        iv: &'static str,
+        param: f64,
+        tf: mlc_core::state::Timeframe,
+        group_ticks: u32,
+    ) {
+        let eid = digdigdig3::ExchangeId::from_str(&exch)
+            .unwrap_or(digdigdig3::ExchangeId::Binance);
+        if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+            return;
+        }
+        let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+        let bid = self.bubble_for_chart(cid);
+        if let Some(bid) = bid {
+            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                bubble.clear_derived_slots(None);
+                if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                    (ops.clear_slot)(bubble);
+                }
+            });
+        }
+        self.core.ensure_connector(eid);
+        let bar_count = self.core.user().profile().domain.bar_count as usize;
+        let tick_size = self.resolve_tick_size(eid.as_str(), &sym, bid);
+        let params = build_subscribe_params(ct, param, iv, bar_count, tick_size);
+        // Unified-data-plane Э3: restored windows on one of the 7 fold
+        // types install/reseed a `FoldRuntime` instead of an
+        // `ops.subscribe` station derived sub — mirrors the
+        // `ChangeChartType`/`UpdateChartTypeParam` cutover above.
+        if mlc_backend::chart_type::is_fold_chart_type(ct) {
+            if let (Some(bid), Some(fold_params)) = (
+                bid,
+                mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
+            ) {
+                let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
+                if let Some(ev) = self.core.subscribe_fold_chart_type(
+                    bid, ct, fold_params, eid, &sym, at, Some(derived_target),
+                ) {
+                    self.react_to_bubble_event(&ev, now_ms());
+                }
+            }
+        } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
+            // Unified-data-plane Э4: restored windows on one of the 6
+            // trade-fold types install/reseed a `TradeFoldRuntime`
+            // instead of an `ops.subscribe` station derived sub —
+            // mirrors the `ChangeChartType`/`UpdateChartTypeParam`
+            // cutover above.
+            if let (Some(bid), Some(mut fold_params)) = (
+                bid,
+                mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
+            ) {
+                // Footprint row-grouping preset (canon-fix wave 2, item
+                // 5) — `SubscribeParams`/`build_subscribe_params` don't
+                // carry a group-ticks axis (footprint's `param_spec` is
+                // `None`), so the panel-persisted value is converted and
+                // applied directly onto the resolved `FoldParams` here,
+                // same as `apply_footprint_group_ticks`'s live-toggle path.
+                if ct == "footprint" && group_ticks > 0 {
+                    fold_params.group_step = group_ticks as f64 * tick_size;
+                }
+                let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+                if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                    bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                    eid, &sym, at, Some(derived_target),
+                ) {
+                    self.react_to_bubble_event(&ev, now_ms());
+                }
+            }
+        } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(ct).and_then(|ops| ops.subscribe) {
+            subscribe(self.core.bridge_handle(), eid, &sym, at, &tf, params);
+        }
+        eprintln!("[ChartApp] ignited derived sub for window {:?} ct={} iv={} param={}", cid, ct, iv, param);
     }
 
     /// Ignite the live overlay subscription for every restored window whose

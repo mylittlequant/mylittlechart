@@ -582,6 +582,20 @@ pub struct DataBridge {
     /// is called multiple times for the same key (one panel + chart header + etc.).
     /// Guarded by `std::sync::Mutex` — only held briefly (never across `.await`).
     station_trade_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType, String)>>>,
+    /// Per-key cancel signal for the trade forwarder loop spawned in
+    /// `subscribe_trades` (real-unsubscribe fix, 2026-07-13). One
+    /// `watch::Sender<bool>` per `station_trade_subscribed` gate key —
+    /// created alongside the gate on first subscribe, removed by the
+    /// forwarder task itself on exit (same lifecycle as the gate). The
+    /// forwarder's `tokio::select!` races `report.handle.recv()` against
+    /// this channel's `changed()`; `unsubscribe_trades` flips it to `true`
+    /// to break the loop instead of letting it run forever. `watch` (not
+    /// `Notify`) so a cancel that lands before the task's `select!` even
+    /// starts polling is not lost (`Notify::notify_one` with no waiter
+    /// yet is a no-op that the initial `recv()` iteration could race past;
+    /// `watch`'s `changed()` always observes the latest value regardless of
+    /// when it started listening).
+    trade_forwarder_cancel: Arc<Mutex<HashMap<(ExchangeId, AccountType, String), tokio::sync::watch::Sender<bool>>>>,
     /// C4: tracks which `(ExchangeId, AccountType, symbol)` tuples already have a live
     /// station orderbook-subscriber task spawned.
     ///
@@ -811,6 +825,7 @@ impl DataBridge {
             station,
             backfill_engine: crate::backfill_engine::BackfillEngine::new(),
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            trade_forwarder_cancel: Arc::new(Mutex::new(HashMap::new())),
             station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -2352,6 +2367,20 @@ impl DataBridge {
                 let station = self.station.clone();
                 let tx = self.tx.clone();
                 let station_trade_subscribed = self.station_trade_subscribed.clone();
+                // Real-unsubscribe fix (2026-07-13): install the cancel
+                // channel for this key BEFORE spawning the task so a
+                // concurrent `unsubscribe_trades` call can never race ahead
+                // of it (the sender is registered synchronously, under the
+                // same `station_trade_subscribed` lock scope that gates the
+                // spawn).
+                let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+                {
+                    let mut cancels = self.trade_forwarder_cancel
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    cancels.insert(gate_key.clone(), cancel_tx);
+                }
+                let trade_forwarder_cancel = self.trade_forwarder_cancel.clone();
                 // Canonical form — emitted back in TradeUpdate.symbol so app-side lookups match.
                 let symbol_canonical = symbol.to_string();
                 // Wire form — passed to dig3 station add_raw.
@@ -2371,11 +2400,16 @@ impl DataBridge {
                                 "[Bridge] station trade subscribe failed {:?} sym={}: {:?}",
                                 exchange_id, symbol_wire, e
                             );
-                            // Remove gate key so a future subscribe_trades can retry.
+                            // Remove gate key + cancel slot so a future
+                            // subscribe_trades can retry.
                             let mut subs = station_trade_subscribed
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner());
                             subs.remove(&gate_key_task);
+                            let mut cancels = trade_forwarder_cancel
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            cancels.remove(&gate_key_task);
                             return;
                         }
                     };
@@ -2390,28 +2424,56 @@ impl DataBridge {
                     // point into its own ring + DiskStore; we only translate the
                     // event into the legacy LiveUpdate::TradeUpdate broadcast so
                     // tick.rs can drive time-TF bar aggregation from raw trades.
-                    while let Some(ev) = report.handle.recv().await {
-                        if let digdigdig3_station::Event::Trade { point, .. } = ev {
-                            let _ = tx.send(LiveUpdate::TradeUpdate {
-                                exchange_id,
-                                account_type,
-                                // Emit canonical form so app-side panel lookups match.
-                                symbol: symbol_canonical.clone(),
-                                price: point.price,
-                                quantity: point.quantity,
-                                timestamp: point.ts_ms,
-                                // TradePoint.side 0 = buyer maker, 1 = seller maker.
-                                // is_buyer_maker=true when side==0 (buyer made the trade).
-                                is_buyer_maker: point.side == 0,
-                            });
+                    //
+                    // Real-unsubscribe fix (2026-07-13): races the station
+                    // recv against `cancel_rx.changed()` so `unsubscribe_trades`
+                    // can actually stop this loop — previously it ran forever
+                    // once spawned (documented no-op `unsubscribe_trades`),
+                    // which left the OLD instrument's stream pumping
+                    // `LiveUpdate::TradeUpdate` (and clipping the trade-store
+                    // ring) long after the chart switched to a new symbol.
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_rx.changed() => {
+                                if *cancel_rx.borrow() {
+                                    crate::dlog!(
+                                        "[Bridge] station trade forwarder cancelled {:?} sym={}",
+                                        exchange_id, symbol_wire
+                                    );
+                                    break;
+                                }
+                            }
+                            ev = report.handle.recv() => {
+                                let Some(ev) = ev else { break };
+                                if let digdigdig3_station::Event::Trade { point, .. } = ev {
+                                    let _ = tx.send(LiveUpdate::TradeUpdate {
+                                        exchange_id,
+                                        account_type,
+                                        // Emit canonical form so app-side panel lookups match.
+                                        symbol: symbol_canonical.clone(),
+                                        price: point.price,
+                                        quantity: point.quantity,
+                                        timestamp: point.ts_ms,
+                                        // TradePoint.side 0 = buyer maker, 1 = seller maker.
+                                        // is_buyer_maker=true when side==0 (buyer made the trade).
+                                        is_buyer_maker: point.side == 0,
+                                    });
+                                }
+                            }
                         }
                     }
-                    // Forwarder handle dropped (unsubscribe/grace expired).
-                    // Remove from gate so a future subscribe_trades can re-spawn.
+                    // Forwarder loop exited (cancelled, handle dropped, or
+                    // grace expired). Remove gate + cancel slot so a future
+                    // subscribe_trades can re-spawn.
                     let mut subs = station_trade_subscribed
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
                     subs.remove(&gate_key_task);
+                    let mut cancels = trade_forwarder_cancel
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    cancels.remove(&gate_key_task);
                     crate::dlog!(
                         "[Bridge] station trade forwarder exited {:?} sym={}, gate removed",
                         exchange_id, symbol_wire
@@ -2884,16 +2946,43 @@ impl DataBridge {
     /// in the builder. The gate key is removed when the forwarder task exits.
     pub fn unsubscribe_depth(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {}
 
-    /// No-op after Phase 2B step 2.
+    /// Cancel one consumer's interest in the trade stream for `(exchange_id,
+    /// symbol, account_type)`.
     ///
-    /// The station owns trade-stream lifetime: each `subscribe_trades` returns
-    /// a `SharedTradeSeries` handle bound to the station's forwarder; when the
-    /// caller drops it (panel unmount / symbol switch), the station's 30 s
-    /// `unsubscribe_grace` window kicks in and the WS forwarder shuts down
-    /// once no live receivers remain. There is no mlc-side refcount to
-    /// decrement anymore.
-    pub fn unsubscribe_trades(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
-        // Intentionally empty — see doc comment above.
+    /// Real-unsubscribe fix (2026-07-13): before this, the method was an
+    /// intentional no-op — the doc comment argued the station's own 30s
+    /// `unsubscribe_grace` window handled cleanup once the caller dropped
+    /// its `SharedTradeSeries` handle. In practice `subscribe_trades`'s own
+    /// forwarder task (`report.handle.recv()` loop, spawned once per gate
+    /// key) never terminates on its own — it holds the station handle
+    /// itself and keeps draining it regardless of whether any mlc-side
+    /// caller still cares, so the grace window never had anything to expire.
+    /// Observed: switching charts off an instrument left its trade stream
+    /// pumping `LiveUpdate::TradeUpdate` (and clipping the trade-store ring,
+    /// once full, once per trade) for 4+ minutes after the switch.
+    ///
+    /// This flips the per-key `trade_forwarder_cancel` watch channel to
+    /// `true`; the forwarder's `tokio::select!` observes it on the next
+    /// poll and breaks its loop, which then removes both the gate
+    /// (`station_trade_subscribed`) and its own cancel-channel entry. Cheap
+    /// no-op when no forwarder is running for this key (e.g. called twice,
+    /// or the key was never subscribed).
+    ///
+    /// No mlc-side refcount: `subscribe_trades` is idempotent per key (a
+    /// second window on the same instrument does not spawn a second
+    /// forwarder), so ANY caller believing it is "the last consumer" for a
+    /// key is responsible for confirming that before calling this — see
+    /// `ChartApp`'s `ApplySymbol` handler, which checks
+    /// `bubbles_for_instrument` for the OLD instrument before calling
+    /// through.
+    pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let gate_key = (exchange_id, account_type, symbol.to_string());
+        let mut cancels = self.trade_forwarder_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(cancel_tx) = cancels.remove(&gate_key) {
+            let _ = cancel_tx.send(true);
+        }
     }
 
     /// Abort trade WebSocket subscriptions (not mini ticker).
