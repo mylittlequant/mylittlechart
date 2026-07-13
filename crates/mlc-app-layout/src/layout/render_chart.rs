@@ -35,7 +35,7 @@ use crate::chart_render::{
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
     draw_legend, draw_tooltip, LegendData, TooltipLines,
-    draw_watermark, draw_history_depth_badge, draw_last_price_line, draw_compare_overlay,
+    draw_watermark, draw_last_price_line, draw_compare_overlay,
     ScaleConfig, ScaleTheme, CrosshairConfig,
 };
 use mlc_core::chart::Tooltip;
@@ -3315,14 +3315,11 @@ pub fn render_full_chart_panel(
             draw_watermark(ctx, &corrected_state.chart_rect, watermark);
         }
 
-        // 5b. Degraded-history badge (hybrid-data-modes-plan-2026-07-08,
-        // Step 6) — Capped/LiveOnly only, no-op for Full/Unknown.
-        draw_history_depth_badge(
-            ctx,
-            &corrected_state.chart_rect,
-            &corrected_state.theme.text,
-            corrected_state.history_depth,
-        );
+        // History-depth badge REMOVED by owner order 2026-07-13 («никакой
+        // оверлейной хуйни за пределами места разрыва») — degraded depth is
+        // communicated by the gap bands / dropdown marking only.
+        // `draw_history_depth_badge` stays exported for the dropdown-side
+        // callers; this render call was its only on-chart use.
 
         // 6. Compare overlay (symbol comparisons).
         if let Some(compare_overlay) = data.compare_overlay {
