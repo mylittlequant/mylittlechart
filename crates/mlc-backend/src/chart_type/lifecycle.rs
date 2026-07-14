@@ -381,16 +381,9 @@ impl BackendCore {
         // `_derived_trade_target` (legacy point count, kept for signature
         // compatibility) is intentionally NOT read.
         let auto_ceiling_ms: i64 = if matches!(chart_type, "tpo") { 86_400_000 } else { 3_600_000 };
-        // Widen retention to the subscribe-time warm ceiling (×1.3 margin,
-        // trade-data-plane-2026-07-13 §2 step 2a) so the store never evicts
-        // the very window this warm is about to fetch. `widen_trade_horizon`
-        // takes the mlc_core `AccountType` (same key shape `trade_store`
-        // itself uses) — `account_type` here is dig3's, so convert first.
-        self.widen_trade_horizon(
-            exchange_id, symbol,
-            mlc_backend_data_bridge::account_type_from_dig3(account_type),
-            auto_ceiling_ms * 13 / 10,
-        );
+        // No retention widening needed (owner rule 2026-07-15): the store's
+        // raw-trade day window (default 4d) always covers the subscribe-time
+        // warm ceilings (1h/24h) — the demand-widened horizon is gone.
         self.bridge.ensure_trade_backfill(
             exchange_id, symbol, account_type,
             Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(auto_ceiling_ms) }),
@@ -975,13 +968,8 @@ impl BackendCore {
         let auto_ceiling_ms = mlc_backend_data_bridge::backfill_engine::trade_auto_ceiling_ms(
             chart_tf_ms.unwrap_or(60_000),
         );
-        // Widen retention to this TF ceiling (×1.3 margin, same rationale as
-        // `subscribe_trade_fold_chart_type`) before the warm fetch below.
-        self.widen_trade_horizon(
-            exchange_id, symbol,
-            mlc_backend_data_bridge::account_type_from_dig3(account_type),
-            auto_ceiling_ms * 13 / 10,
-        );
+        // No retention widening needed — see the matching comment in
+        // `subscribe_trade_fold_chart_type` (day window covers all warms).
         self.bridge.ensure_trade_backfill(
             exchange_id, symbol, account_type,
             Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(auto_ceiling_ms) }),

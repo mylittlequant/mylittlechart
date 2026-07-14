@@ -129,6 +129,37 @@ pub fn archive_proxy_base() -> Option<String> {
         .clone()
 }
 
+// ── Raw-trade retention window (owner rule 2026-07-15) ───────────────────────
+// THE single raw-trade depth bound, in UTC days: the shared `TradeStore`
+// evicts raw rows older than this window, and the backfill planner refuses
+// to fetch DELTA (REST) depth below it — depth beyond the window is either
+// zip-covered (fetched, folded, raw dropped — re-pullable from the immutable
+// archive) or not obtainable at all (no-zip venue → latch dry + gap band).
+// Replaced the three uncoordinated limits (engine 1.5M cumulative point cap,
+// store 1M count ring, demand-widened time horizon) after the 2026-07-15
+// live incident wedged all three against each other. `AtomicU32` — a live
+// profile setting, same re-apply semantics as `ARCHIVE_PROXY_BASE`.
+static TRADE_RAW_WINDOW_DAYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(4);
+
+/// Set the raw-trade retention window (days). Called from the profile-apply
+/// path with `profile.domain.data_load.trade_raw_window_days`. Values are
+/// clamped to at least 1 — a zero window would evict the live head itself.
+pub fn set_trade_raw_window_days(days: u32) {
+    TRADE_RAW_WINDOW_DAYS.store(days.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Current raw-trade retention window in days (default 4 before the profile
+/// has been applied once).
+pub fn trade_raw_window_days() -> u32 {
+    TRADE_RAW_WINDOW_DAYS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Current raw-trade retention window in milliseconds — the form the
+/// planner's fetch-floor arithmetic and the store's eviction both consume.
+pub fn trade_raw_window_ms() -> i64 {
+    trade_raw_window_days() as i64 * 86_400_000
+}
+
 // ── Process-relative clock (startup-freeze diagnostics) ──────────────────────
 // A single monotonic origin captured the first time it is queried. Bridge
 // startup logs stamp every connect/symbol milestone with `elapsed_ms()` so the

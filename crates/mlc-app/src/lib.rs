@@ -1120,12 +1120,12 @@ impl ChartApp {
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
     ) -> mlc_core::ids::BubbleId {
-        let (kline_cap, trade_cap) = self.layer_capacities();
+        let kline_cap = self.kline_layer_capacity();
         let bid = self
             .core
             .bubbles_mut()
             .create_bubble(symbol, timeframe);
-        self.core.set_layer_capacities(bid, kline_cap, trade_cap);
+        self.core.set_layer_capacities(bid, kline_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new(bid, color));
         bid
     }
@@ -1137,25 +1137,26 @@ impl ChartApp {
         symbol: String,
         timeframe: mlc_core::state::Timeframe,
     ) -> mlc_core::ids::BubbleId {
-        let (kline_cap, trade_cap) = self.layer_capacities();
+        let kline_cap = self.kline_layer_capacity();
         let bid = self
             .core
             .bubbles_mut()
             .create_bubble_auto(symbol, timeframe);
-        self.core.set_layer_capacities(bid, kline_cap, trade_cap);
+        self.core.set_layer_capacities(bid, kline_cap);
         self.core.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, color));
         bid
     }
 
-    /// Raw-data-layer ring capacities from the active profile
-    /// (`UserProfile.domain.data_load.{kline,trade}_layer_capacity`),
-    /// applied to every freshly-created bubble (unified-data-plane
-    /// Stage Э1). `user()` is a leaf lock — read independently, never
-    /// nested under a held `bubbles_mut()` guard.
-    fn layer_capacities(&self) -> (usize, usize) {
+    /// Kline raw-layer ring capacity from the active profile
+    /// (`UserProfile.domain.data_load.kline_layer_capacity`), applied to
+    /// every freshly-created bubble (unified-data-plane Stage Э1). The
+    /// trade half is GONE (owner rule 2026-07-15) — raw trades are bounded
+    /// by the day window (`data_load.trade_raw_window_days`), not a count
+    /// ring. `user()` is a leaf lock — read independently, never nested
+    /// under a held `bubbles_mut()` guard.
+    fn kline_layer_capacity(&self) -> usize {
         let user = self.core.user();
-        let dl = &user.profile().domain.data_load;
-        (dl.kline_layer_capacity as usize, dl.trade_layer_capacity as usize)
+        user.profile().domain.data_load.kline_layer_capacity as usize
     }
 
     /// Remove a bubble + its paired tag.
@@ -3131,6 +3132,11 @@ impl ChartApp {
         // wasm (native archive fetches ignore it), but cheap enough to set
         // unconditionally rather than special-case native here.
         mlc_backend_data_bridge::set_archive_proxy_base(profile.domain.data_load.archive_proxy_base.clone());
+
+        // Raw-trade retention window (owner rule 2026-07-15) — process-level
+        // like the proxy base: the shared TradeStore's eviction bound AND
+        // the backfill planner's no-zip fetch floor both read this global.
+        mlc_backend_data_bridge::set_trade_raw_window_days(profile.domain.data_load.trade_raw_window_days);
 
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state

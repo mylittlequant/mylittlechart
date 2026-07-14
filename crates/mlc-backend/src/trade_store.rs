@@ -18,22 +18,23 @@
 //! (rung-4 keyed exception, doctrine §6 in the crate root doc comment —
 //! keyed state with independent per-key invariants, edge/data-plane only).
 //!
-//! **Time-horizon retention** (`docs/mlc/plans/trade-data-plane-2026-07-13.md`
-//! §1.1, implementation order step 2a — owner doctrine: retention is
-//! expressed in TIME, never in trade counts). Every entry carries its own
-//! `horizon_ms`, defaulted to [`DEFAULT_TRADE_HORIZON_MS`] on first touch and
-//! widened (monotonic max — never shrunk mid-session) by
-//! [`TradeStore::widen_horizon`] whenever demand needs a deeper window.
-//! After every write, trades older than `newest_ts_in_entry - horizon_ms`
-//! are evicted from the front. `newest_ts_in_entry` — not wall clock — is
-//! the "now" eviction is measured from: deterministic, replay-safe, and
-//! keeps the store honest during backfill (a batch of old trades prepended
-//! while the ring's live edge is fresh must not evict against a stale
-//! wall-clock read taken before the write). The ring's count CAPACITY
-//! (`default_capacity`, ring semantics from step 1) still exists as a
-//! silent-no-more memory backstop — it may still clip in pathological
-//! bursts, but a clip is now DETECTED (length before/after the write) and
-//! logged (`mlc_backend_data_bridge::dlog!`), never silent.
+//! **Day-window retention** (owner rule 2026-07-15): raw trades are kept no
+//! deeper than `mlc_backend_data_bridge::trade_raw_window_ms()` (profile
+//! `data_load.trade_raw_window_days`, default 4) behind the entry's OWN
+//! newest stored timestamp — not wall clock: deterministic, replay-safe,
+//! and honest during backfill (a batch of old trades prepended while the
+//! live edge is fresh must not evict against a stale wall-clock read).
+//! This window is THE single raw-trade memory bound. It replaced three
+//! uncoordinated limits that wedged against each other in the 2026-07-15
+//! live incident (engine's 1.5M cumulative point cap latching before the
+//! store's 1M count ring, both blind to the demand-widened per-entry time
+//! horizon): the demand-widened `horizon_ms`/`widen_horizon` machinery and
+//! the count capacity are GONE. Depth beyond the window is fold-then-drop:
+//! the fold consumers process `TradeHistoryPrepended` payloads from the
+//! broadcast independently of store retention, so a zip day deeper than
+//! the window still folds into clusters — its raw rows are simply evicted
+//! by this same rule right after the write, and a later refold re-pulls
+//! the immutable archive day instead of holding 21MB/day of raw forever.
 //!
 //! **Single-writer discipline**: writers are the `tick_writers` arms in
 //! `crate::lib` (`TradeUpdate`'s live push, `TradeHistoryPrepended`'s
@@ -58,206 +59,75 @@
 //! [`TradeStore`] entries are NEVER cleared on a bubble's instrument switch.
 //! The store is per-INSTRUMENT, not per-bubble — the departing bubble simply
 //! stops reading that entry, and the data stays valid for any OTHER bubble
-//! still tracking the same instrument. Ring capacity bounds memory the same
-//! way it always did. A future step (§1.1's time-horizon + cold-spill work)
-//! may add real eviction/expiry; this extraction does not.
+//! still tracking the same instrument. The day window bounds memory.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
 
 use mlc_core::instrument::InstrumentAddress;
 
-use crate::bubble::{RawLayer, RawTrade, DEFAULT_TRADE_LAYER_CAPACITY};
+use crate::bubble::{RawLayer, RawTrade};
 
-/// Default retention horizon applied to a [`TradeStore`] entry the first
-/// time it is touched (push_live or prepend_batch). 6 hours covers the
-/// deepest cold-fill any 1m-family viewport can ask for at boot (the
-/// subscribe-time warms in `chart_type::lifecycle` top out at a 1h/24h
-/// ceiling ×1.3 margin — see [`TradeStore::widen_horizon`]'s callers); every
-/// real demand beyond that widens the horizon monotonically from there, so
-/// this default is a floor, not a cap.
-pub const DEFAULT_TRADE_HORIZON_MS: i64 = 6 * 3_600_000;
-
-/// Minimum spacing between `log_capacity_clip` dlog emissions for the SAME
-/// instrument — aggregation window (throttle fix, 2026-07-13). Below this,
-/// a burst that clips on every single `push_live` call (ring already at
-/// capacity) used to emit one dlog per trade; now it accumulates a count
-/// and emits at most once per window, carrying the total clipped since the
-/// previous emission. Still a logged backstop, never silent — see
-/// [`StoreEntry::log_capacity_clip`].
-const CLIP_LOG_THROTTLE_MS: u64 = 60_000;
-
-/// One per-instrument entry: the raw trade ring plus its own retention
-/// horizon. Wrapped (rather than a parallel `HashMap<InstrumentAddress,
-/// i64>`) so a single `inner` write-lock scope always sees both the layer
-/// and the horizon it must evict against — no risk of the two maps
-/// disagreeing on which keys exist.
+/// One per-instrument entry: the raw trade ring, unbounded in count
+/// (capacity `0`) — the day-window eviction in [`StoreEntry::evict_expired`]
+/// is the memory bound (see module doc).
 struct StoreEntry {
     layer: RawLayer<RawTrade>,
-    horizon_ms: i64,
-    /// Count-capacity clips accumulated since the last `log_capacity_clip`
-    /// emission for this instrument — throttle fix, 2026-07-13.
-    clipped_since_log: u64,
-    /// Wall-clock time of the last `log_capacity_clip` emission. `None`
-    /// before the first clip ever recorded — the first clip in this
-    /// entry's lifetime always logs immediately (a backstop must never
-    /// silently swallow the FIRST occurrence).
-    last_logged_at: Option<web_time::Instant>,
 }
 
 impl StoreEntry {
-    fn new(capacity: usize) -> Self {
-        Self {
-            layer: RawLayer::new(capacity),
-            horizon_ms: DEFAULT_TRADE_HORIZON_MS,
-            clipped_since_log: 0,
-            last_logged_at: None,
-        }
+    fn new() -> Self {
+        Self { layer: RawLayer::new(0) }
     }
 
-    /// Evict trades older than the horizon, measured from this entry's OWN
-    /// newest stored timestamp (not wall clock — see module doc). A no-op
-    /// on an empty layer (nothing to measure "now" from yet).
+    /// Evict trades older than the raw-trade day window (module doc),
+    /// measured from this entry's OWN newest stored timestamp (not wall
+    /// clock — see module doc). A no-op on an empty layer (nothing to
+    /// measure "now" from yet).
     fn evict_expired(&mut self) {
         if let Some(newest) = self.layer.newest_ts() {
-            self.layer.evict_older_than(newest - self.horizon_ms);
+            self.layer.evict_older_than(newest - mlc_backend_data_bridge::trade_raw_window_ms());
         }
-    }
-
-    /// Detect a count-capacity clip for this write and record it. Emits a
-    /// dlog immediately for the FIRST clip ever seen on this instrument, or
-    /// once every [`CLIP_LOG_THROTTLE_MS`] afterwards — carrying the
-    /// aggregated count since the previous emission rather than one line
-    /// per trade (throttle fix, 2026-07-13: `push_live` clips at most once
-    /// per incoming trade once the ring is saturated, which used to log on
-    /// every single tick).
-    fn log_capacity_clip(&mut self, key: &InstrumentAddress, writer: &str, len_before: usize, incoming: usize, len_after_write: usize) {
-        let grew_by = len_after_write.saturating_sub(len_before);
-        if grew_by >= incoming {
-            return;
-        }
-        let clipped = incoming - grew_by;
-        self.clipped_since_log += clipped as u64;
-        let now = web_time::Instant::now();
-        let due = match self.last_logged_at {
-            None => true,
-            Some(last) => now.duration_since(last).as_millis() as u64 >= CLIP_LOG_THROTTLE_MS,
-        };
-        if !due {
-            return;
-        }
-        mlc_backend_data_bridge::dlog!(
-            "[trade_store] ring cap clipped {} trades for {key:?} via {writer} (aggregated over {}) — memory backstop, horizon={}h",
-            self.clipped_since_log,
-            match self.last_logged_at {
-                Some(_) => "last 60s",
-                None => "first clip",
-            },
-            self.horizon_ms / 3_600_000
-        );
-        self.clipped_since_log = 0;
-        self.last_logged_at = Some(now);
     }
 }
 
-/// Per-instrument shared raw trade ring. See module doc.
+/// Per-instrument shared raw trade store. See module doc.
 pub struct TradeStore {
     inner: RwLock<HashMap<InstrumentAddress, StoreEntry>>,
-    /// Ring capacity applied to every entry — same role
-    /// `DataBubble.trade_layer_capacity` played before this extraction, now
-    /// a single store-wide default instead of one value per bubble (every
-    /// call site already sourced the same
-    /// `UserProfile.domain.data_load.trade_layer_capacity` value for every
-    /// bubble it touched, so this is not a behavior change). `AtomicUsize`
-    /// so [`Self::set_default_capacity`] can update it without taking the
-    /// `inner` write lock for a value-only read elsewhere. This is a
-    /// silent-no-more memory BACKSTOP behind the time horizon above — under
-    /// normal operation the horizon evicts first; this only clips if a
-    /// pathological burst outruns it, and such a clip is logged (see
-    /// [`Self::log_capacity_clip`]).
-    default_capacity: AtomicUsize,
 }
 
 impl TradeStore {
-    /// Empty store — no instruments touched yet. Default capacity starts at
-    /// [`DEFAULT_TRADE_LAYER_CAPACITY`], same as the old per-bubble default.
+    /// Empty store — no instruments touched yet.
     pub fn new() -> Self {
-        Self {
-            inner: RwLock::new(HashMap::new()),
-            default_capacity: AtomicUsize::new(DEFAULT_TRADE_LAYER_CAPACITY),
-        }
-    }
-
-    /// Configure the ring capacity applied to every instrument entry —
-    /// mirrors [`crate::bubble::DataBubble::set_layer_capacities`]'s old
-    /// `trade_capacity` argument, now store-wide instead of per-bubble
-    /// (every caller already passed the same profile-sourced value for
-    /// every bubble). Applies immediately to every already-existing entry
-    /// (same "set_capacity evicts overflow immediately" behavior
-    /// [`RawLayer::set_capacity`] already had) and becomes the capacity new
-    /// entries are created with from then on.
-    pub fn set_default_capacity(&self, capacity: usize) {
-        self.default_capacity.store(capacity, Ordering::Relaxed);
-        let mut guard = self.inner.write().expect("TradeStore poisoned (write)");
-        for entry in guard.values_mut() {
-            entry.layer.set_capacity(capacity);
-        }
-    }
-
-    /// Widen `key`'s retention horizon to at least `horizon_ms` — monotonic
-    /// max, never shrunk (a session's horizon only grows; shrinking it
-    /// mid-session would re-lose data a caller already relies on being
-    /// retained). Creates the entry on first touch at the current default
-    /// capacity and [`DEFAULT_TRADE_HORIZON_MS`], then widens from there if
-    /// `horizon_ms` is deeper. A no-op write-lock round-trip if `horizon_ms`
-    /// does not exceed what the entry already has.
-    pub fn widen_horizon(&self, key: &InstrumentAddress, horizon_ms: i64) {
-        let capacity = self.default_capacity.load(Ordering::Relaxed);
-        let mut guard = self.inner.write().expect("TradeStore poisoned (write)");
-        let entry = guard.entry(key.clone()).or_insert_with(|| StoreEntry::new(capacity));
-        entry.horizon_ms = entry.horizon_ms.max(horizon_ms);
+        Self { inner: RwLock::new(HashMap::new()) }
     }
 
     /// Backfill-batch write: prepend `trades` in front of the existing ring
     /// for `key`, seam-deduped exactly like [`RawLayer::prepend_batch`].
-    /// Creates the entry on first touch at the current default capacity
-    /// (see [`Self::set_default_capacity`]) and [`DEFAULT_TRADE_HORIZON_MS`].
-    /// After the write, evicts anything older than the entry's horizon
-    /// (measured from the entry's own newest ts, see module doc), then logs
-    /// if the count-capacity backstop also clipped this write.
+    /// After the write, evicts anything older than the raw-trade day window
+    /// (measured from the entry's own newest ts, see module doc) — a batch
+    /// entirely below the window is therefore fold-then-drop by
+    /// construction: the fold consumers already received it from the
+    /// broadcast; the store simply declines to retain the raw rows.
     pub fn prepend_batch(&self, key: &InstrumentAddress, trades: &[RawTrade]) {
         if trades.is_empty() {
             return;
         }
-        let capacity = self.default_capacity.load(Ordering::Relaxed);
         let mut guard = self.inner.write().expect("TradeStore poisoned (write)");
-        let entry = guard.entry(key.clone()).or_insert_with(|| StoreEntry::new(capacity));
-        let len_before = entry.layer.len();
-        let incoming = trades.len();
+        let entry = guard.entry(key.clone()).or_insert_with(StoreEntry::new);
         entry.layer.prepend_batch(trades.to_vec());
-        let len_after_write = entry.layer.len();
         entry.evict_expired();
-        entry.log_capacity_clip(key, "prepend_batch", len_before, incoming, len_after_write);
     }
 
     /// Live-tick write: append `trade`, or in-place replace the current last
-    /// entry if its chronological key matches (see
-    /// [`RawLayer::push_live`]). Creates the entry on first touch at the
-    /// current default capacity (see [`Self::set_default_capacity`]) and
-    /// [`DEFAULT_TRADE_HORIZON_MS`]. After the write, evicts anything older
-    /// than the entry's horizon (measured from the entry's own newest ts,
-    /// see module doc), then logs if the count-capacity backstop also
-    /// clipped this write.
+    /// entry if its chronological key matches (see [`RawLayer::push_live`]).
+    /// After the write, evicts anything older than the raw-trade day window
+    /// (measured from the entry's own newest ts, see module doc).
     pub fn push_live(&self, key: &InstrumentAddress, trade: RawTrade) {
-        let capacity = self.default_capacity.load(Ordering::Relaxed);
         let mut guard = self.inner.write().expect("TradeStore poisoned (write)");
-        let entry = guard.entry(key.clone()).or_insert_with(|| StoreEntry::new(capacity));
-        let len_before = entry.layer.len();
+        let entry = guard.entry(key.clone()).or_insert_with(StoreEntry::new);
         entry.layer.push_live(trade);
-        let len_after_write = entry.layer.len();
         entry.evict_expired();
-        entry.log_capacity_clip(key, "push_live", len_before, 1, len_after_write);
     }
 
     /// Oldest stored trade's timestamp for `key`, if the instrument has ever
@@ -265,14 +135,6 @@ impl TradeStore {
     pub fn oldest_ts(&self, key: &InstrumentAddress) -> Option<i64> {
         let guard = self.inner.read().expect("TradeStore poisoned (read)");
         guard.get(key).and_then(|e| e.layer.oldest_ts())
-    }
-
-    /// Current retention horizon for `key`, if the instrument has ever been
-    /// touched. `None` for an untouched instrument (no entry exists yet to
-    /// report a horizon for).
-    pub fn horizon_ms(&self, key: &InstrumentAddress) -> Option<i64> {
-        let guard = self.inner.read().expect("TradeStore poisoned (read)");
-        guard.get(key).map(|e| e.horizon_ms)
     }
 
     /// Number of trades currently stored for `key`. `0` if the instrument
@@ -406,151 +268,71 @@ mod tests {
         assert_eq!(layer.oldest_ts(), Some(100));
     }
 
-    #[test]
-    fn capacity_eviction_still_applies_via_the_store() {
-        let store = TradeStore::new();
-        store.set_default_capacity(3);
-        let key = addr();
-        for ts in [100, 200, 300, 400] {
-            store.push_live(&key, trade(ts, ts as f64));
-        }
-        assert_eq!(store.len(&key), 3);
-        assert_eq!(store.oldest_ts(&key), Some(200), "oldest must be evicted, not newest");
-    }
+    /// The raw-trade day window as the tests see it — the bridge global's
+    /// untouched default (4 days; see module doc). Tests use relative
+    /// timestamps against this value and never mutate the global (it is
+    /// process-wide — mutating it would race parallel tests).
+    const WINDOW_MS: i64 = 4 * 86_400_000;
 
     #[test]
-    fn set_default_capacity_evicts_existing_entries_immediately() {
+    fn push_live_evicts_trades_older_than_the_day_window() {
         let store = TradeStore::new();
         let key = addr();
-        for ts in [100, 200, 300, 400] {
-            store.push_live(&key, trade(ts, ts as f64));
-        }
-        assert_eq!(store.len(&key), 4);
-        store.set_default_capacity(2);
-        assert_eq!(store.len(&key), 2, "shrinking the default capacity must evict overflow immediately");
-        assert_eq!(store.oldest_ts(&key), Some(300));
-    }
-
-    #[test]
-    fn first_touch_applies_the_default_horizon() {
-        let store = TradeStore::new();
-        let key = addr();
-        store.push_live(&key, trade(0, 1.0));
-        assert_eq!(store.horizon_ms(&key), Some(DEFAULT_TRADE_HORIZON_MS));
-    }
-
-    #[test]
-    fn horizon_is_never_touched_before_first_touch() {
-        let store = TradeStore::new();
-        let key = addr();
-        assert_eq!(store.horizon_ms(&key), None, "an untouched instrument has no entry, so no horizon yet");
-    }
-
-    #[test]
-    fn widen_horizon_is_monotonic_max() {
-        let store = TradeStore::new();
-        let key = addr();
-        store.push_live(&key, trade(0, 1.0));
-        assert_eq!(store.horizon_ms(&key), Some(DEFAULT_TRADE_HORIZON_MS));
-
-        store.widen_horizon(&key, DEFAULT_TRADE_HORIZON_MS * 2);
-        assert_eq!(store.horizon_ms(&key), Some(DEFAULT_TRADE_HORIZON_MS * 2), "a deeper ask must widen");
-
-        store.widen_horizon(&key, DEFAULT_TRADE_HORIZON_MS);
-        assert_eq!(
-            store.horizon_ms(&key),
-            Some(DEFAULT_TRADE_HORIZON_MS * 2),
-            "a shallower ask must never shrink an already-widened horizon"
-        );
-    }
-
-    #[test]
-    fn widen_horizon_creates_the_entry_on_first_touch() {
-        let store = TradeStore::new();
-        let key = addr();
-        store.widen_horizon(&key, 12 * 3_600_000);
-        assert_eq!(store.horizon_ms(&key), Some(12 * 3_600_000));
-        assert_eq!(store.len(&key), 0, "widening alone must not fabricate any trades");
-    }
-
-    #[test]
-    fn push_live_evicts_trades_older_than_the_default_horizon() {
-        // No explicit widen -> entry gets DEFAULT_TRADE_HORIZON_MS (6h) on
-        // first touch (widen_horizon is monotonic-max, so a shallower ask
-        // than the default floor is a no-op — see
-        // `widen_horizon_is_monotonic_max`). Use gaps bigger than 6h so
-        // eviction actually fires against the real default.
-        let store = TradeStore::new();
-        let key = addr();
-        let six_hours = DEFAULT_TRADE_HORIZON_MS;
 
         store.push_live(&key, trade(0, 1.0));
-        store.push_live(&key, trade(six_hours / 2, 2.0));
-        // Newest so far is half the horizon -> cutoff is negative, nothing
+        store.push_live(&key, trade(WINDOW_MS / 2, 2.0));
+        // Newest so far is half the window -> cutoff is negative, nothing
         // expired yet.
         assert_eq!(store.len(&key), 2);
 
-        // Newest becomes 2x the horizon -> cutoff = 2h6 - h6 = h6; both
-        // earlier points (0 and h6/2) are older than the cutoff and must be
-        // evicted.
-        store.push_live(&key, trade(six_hours * 2, 3.0));
+        // Newest becomes 2x the window -> cutoff = 2w - w = w; both earlier
+        // points (0 and w/2) are older than the cutoff and must be evicted.
+        store.push_live(&key, trade(WINDOW_MS * 2, 3.0));
         assert_eq!(store.len(&key), 1);
-        assert_eq!(store.oldest_ts(&key), Some(six_hours * 2));
+        assert_eq!(store.oldest_ts(&key), Some(WINDOW_MS * 2));
     }
 
     #[test]
-    fn prepend_batch_evicts_trades_older_than_the_horizon() {
+    fn prepend_batch_below_the_window_is_fold_then_drop() {
+        // A backfill batch entirely below the day window lands (the fold
+        // consumers get it from the broadcast) but the store declines to
+        // RETAIN the raw rows — fold-then-drop by construction (module doc).
         let store = TradeStore::new();
         let key = addr();
-        // Widen deep enough that the assertion is unambiguously about the
-        // WIDENED value, not accidentally the untouched default floor.
-        store.widen_horizon(&key, 1_000);
-        assert_eq!(store.horizon_ms(&key), Some(DEFAULT_TRADE_HORIZON_MS.max(1_000)));
-        let horizon = store.horizon_ms(&key).unwrap_or(DEFAULT_TRADE_HORIZON_MS);
-
-        // Live edge is far ahead of the horizon window already.
-        let live_ts = horizon * 10;
+        let live_ts = WINDOW_MS * 10;
         store.push_live(&key, trade(live_ts, 5.0));
 
-        // Backfill page lands entirely before the horizon cutoff
-        // (live_ts - horizon) -> every prepended point must be evicted
-        // again right after landing, leaving only the live edge.
         store.prepend_batch(&key, &[trade(100, 1.0), trade(200, 2.0), trade(300, 3.0)]);
         assert_eq!(store.len(&key), 1);
         assert_eq!(store.oldest_ts(&key), Some(live_ts));
     }
 
     #[test]
-    fn prepend_batch_keeps_points_inside_the_widened_horizon() {
+    fn prepend_batch_keeps_points_inside_the_window() {
         let store = TradeStore::new();
         let key = addr();
-        store.widen_horizon(&key, 1_000);
-        let horizon = store.horizon_ms(&key).unwrap_or(DEFAULT_TRADE_HORIZON_MS);
-        let live_ts = horizon * 10;
+        let live_ts = WINDOW_MS * 10;
         store.push_live(&key, trade(live_ts, 5.0));
 
-        // This page's key sits just inside the horizon window (cutoff =
-        // live_ts - horizon), so it survives eviction.
-        let inside_ts = live_ts - horizon + 1;
+        // This page sits just inside the window (cutoff = live_ts - window),
+        // so it survives eviction — a whole archive day within the window is
+        // retained for refolds.
+        let inside_ts = live_ts - WINDOW_MS + 1;
         store.prepend_batch(&key, &[trade(inside_ts, 1.0)]);
         assert_eq!(store.len(&key), 2);
         assert_eq!(store.oldest_ts(&key), Some(inside_ts));
     }
 
     #[test]
-    fn capacity_clip_is_still_detectable_via_len_after_widen() {
-        // The count-capacity backstop must keep working even once the
-        // horizon is deep enough that eviction never fires — the ring cap
-        // is what actually clips in this scenario.
+    fn no_count_capacity_clip_within_the_window() {
+        // The count ring is GONE (owner rule 2026-07-15) — everything
+        // inside the day window is retained regardless of count.
         let store = TradeStore::new();
-        store.set_default_capacity(3);
         let key = addr();
-        store.widen_horizon(&key, 1_000_000_000); // horizon far too deep to evict anything
-
-        for ts in [100, 200, 300, 400] {
+        for ts in 0..2_000i64 {
             store.push_live(&key, trade(ts, ts as f64));
         }
-        assert_eq!(store.len(&key), 3, "ring capacity must still clip when the horizon does not evict");
-        assert_eq!(store.oldest_ts(&key), Some(200), "oldest must be the one dropped, not newest");
+        assert_eq!(store.len(&key), 2_000, "no count clip inside the window");
+        assert_eq!(store.oldest_ts(&key), Some(0));
     }
 }

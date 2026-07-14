@@ -1093,35 +1093,15 @@ impl BackendCore {
         self.trade_store.oldest_ts(&key)
     }
 
-    /// Widen `(exchange_id, symbol, account_type)`'s instrument's retention
-    /// horizon in the shared [`TradeStore`] to at least `horizon_ms` —
-    /// monotonic max (see [`TradeStore::widen_horizon`]). Thin passthrough,
-    /// same narrow-facade shape as [`Self::trade_oldest_ts`] (key built the
-    /// same way): callers outside `mlc-backend` feed demand-side time
-    /// windows in through this method, never the store type itself.
+    /// Configure the kline raw-layer ring capacity for `bid`'s own
+    /// `kline_layers`. The former `trade_capacity` argument is GONE (owner
+    /// rule 2026-07-15): the shared [`TradeStore`] has no count ring — its
+    /// single memory bound is the raw-trade day window
+    /// (`mlc_backend_data_bridge::trade_raw_window_ms()`; see the
+    /// `trade_store` module doc).
     #[inline]
-    pub fn widen_trade_horizon(
-        &self,
-        exchange_id: ExchangeId,
-        symbol: &str,
-        account_type: mlc_core::instrument::AccountType,
-        horizon_ms: i64,
-    ) {
-        let key = mlc_core::instrument::InstrumentAddress::new(exchange_id.as_str(), symbol, account_type);
-        self.trade_store.widen_horizon(&key, horizon_ms);
-    }
-
-    /// Configure raw-layer ring capacities: kline (per-bubble, applied to
-    /// `bid`'s own `kline_layers`) and trade (store-wide, applied to every
-    /// instrument in the shared [`TradeStore`]). Replaces the old
-    /// single-call `Bubbles::set_layer_capacities(bid, kline, trade)` now
-    /// that the trade ring lives in a per-instrument store instead of on
-    /// each bubble — see `docs/mlc/plans/trade-data-plane-2026-07-13.md`
-    /// §1.1 step 1.
-    #[inline]
-    pub fn set_layer_capacities(&self, bid: BubbleId, kline_capacity: usize, trade_capacity: usize) {
+    pub fn set_layer_capacities(&self, bid: BubbleId, kline_capacity: usize) {
         self.bubbles_mut().set_layer_capacities(bid, kline_capacity);
-        self.trade_store.set_default_capacity(trade_capacity);
     }
 
     /// Read-only facade over the alert manager + bubble store. The ONLY

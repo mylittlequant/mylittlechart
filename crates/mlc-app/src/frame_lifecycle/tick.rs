@@ -855,9 +855,20 @@ impl ChartApp {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
-                let Some(oldest_ts) = self.core.trade_oldest_ts(eid, &symbol, account_type) else {
-                    // Store entry not seeded yet — the subscribe-time Hour
-                    // rung is still in flight; nothing to deepen from.
+                // Demand base = the ENGINE's loaded low-water mark
+                // (`RampState::oldest_seen_ts`), falling back to the store
+                // only for a cold key (no flight has landed a page yet).
+                // The store's own oldest is retention-bound — it tracks the
+                // eviction horizon, not loaded depth — and basing the ×2
+                // window on it froze the demand at the 1h floor while the
+                // engine had already landed a full archive day (wave-2
+                // stall, live incident 2026-07-15).
+                let Some(oldest_ts) = self.core.bridge_handle()
+                    .trade_loaded_oldest_ts(eid, &symbol, at)
+                    .or_else(|| self.core.trade_oldest_ts(eid, &symbol, account_type)) else {
+                    // Neither engine nor store seeded yet — the
+                    // subscribe-time Hour rung is still in flight; nothing
+                    // to deepen from.
                     {
                         static TS_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                         if TS_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
@@ -888,12 +899,10 @@ impl ChartApp {
                     window_ms: Some(demand_window_ms),
                     auto_ceiling_ms: None,
                 };
-                // Widen retention BEFORE the ensure call so the store never
-                // evicts a page while it is still in flight for this exact
-                // demand — 1.3x margin keeps the just-fetched window
-                // comfortably inside retention (trade-data-plane-2026-07-13
-                // §2, step 2a).
-                self.core.widen_trade_horizon(eid, &symbol, account_type, demand_window_ms * 13 / 10);
+                // No retention widening (owner rule 2026-07-15): the store's
+                // raw window is a fixed day count; depth beyond it is
+                // fold-then-drop and the demand does not need to (and must
+                // not) stretch raw retention to match its own depth.
                 self.core.bridge_handle().ensure_trade_backfill(eid, &symbol, at, Some(demand));
             }
         }

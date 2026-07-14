@@ -81,24 +81,13 @@ pub const SCROLL_PRESSURE_THRESHOLD: f64 = 0.80;
 /// in-flight timeout used elsewhere in the bridge/app for consistency.
 pub const RAMP_QUIET_RESET_MS: u64 = 10_000;
 
-/// RAM guard on the trade layer: hard cap on total trades one
-/// [`RampState`] (i.e. one `(exchange, symbol, account)` trade layer) will
-/// ever load, regardless of how deep the time ladder or an explicit
-/// `require_target_ts` demand reaches. This is NOT the backfill goal —
-/// the goal is always time (`target_ts`, see [`TradeLadderStage`]) — this
-/// is a safety latch so a pathological deep-demand (or a very high-volume
-/// symbol whose "last 24h" alone is huge) cannot grow one bubble's trade
-/// layer without bound.
-///
-/// Sizing: `RawTrade`/`RawTradeWire` is `{ts_ms: i64, price: f64, qty: f64,
-/// is_buyer_maker: bool}` = 8+8+8+1 bytes, padded to 32 bytes per element
-/// in a `Vec`. 1_500_000 points ≈ 1_500_000 × 32B ≈ 48 MB raw storage for
-/// the layer itself (plus whatever fold/derived views the layer feeds) —
-/// generous enough to cover the full "day-by-day" ladder for very liquid
-/// symbols (BTCUSDT perp is on the order of a few hundred thousand trades
-/// per day) while still bounding worst-case memory for a pathological
-/// demand.
-pub const TRADE_RAM_CAP_POINTS: usize = 1_500_000;
+// The former `TRADE_RAM_CAP_POINTS` cumulative point cap is GONE (owner
+// rule 2026-07-15): raw-trade memory is bounded by the day window
+// (`crate::trade_raw_window_ms()`, profile `trade_raw_window_days`) —
+// the store evicts raw rows behind it, the planner refuses REST depth
+// below it, and zip depth beyond it is fold-then-drop. The cumulative
+// counter latched at 1.79M while the store's own ring had silently
+// clipped to 1M — three uncoordinated limits, live incident 2026-07-15.
 
 /// Wall-clock "now" in epoch milliseconds — the single time source for
 /// every trade-ladder flight (sampled ONCE per [`DataBridge::
@@ -146,8 +135,8 @@ pub type BackfillKey = (ExchangeId, String, AccountType, LayerId);
 // Trade time ladder — owner doctrine 2026-07-12: trade backfill targets a
 // TIME floor, not a point count. "Load the last hour as fast as possible,
 // then the last 12 hours, then the last day, then day-by-day on demand" —
-// counts survive only as [`TRADE_RAM_CAP_POINTS`], a RAM guard, never the
-// goal.
+// no count survives anywhere (the RAM bound is the store's raw-trade day
+// window, owner rule 2026-07-15).
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// One rung of the trade-layer time ladder. Auto-advances Hour → HalfDay →
@@ -308,11 +297,6 @@ pub struct RampState {
     /// (or most recent) flight — every ladder floor for this flight is
     /// computed from this fixed instant, never re-sampled per group.
     pub flight_now_ms: Option<i64>,
-    /// [`TRADE_RAM_CAP_POINTS`] was hit for this key — latched like
-    /// `exhausted` (a RAM-capped key never resumes growing, even if a
-    /// later caller widens `target_ts` further; re-arming would just spend
-    /// a round-trip re-hitting the same cap).
-    pub ram_capped: bool,
     /// Trade layer only: auto-ladder ceiling in ms back from "now" —
     /// see [`TradeDemand::auto_ceiling_ms`]. Deepest wins
     /// ([`Self::widen_auto_ceiling`]); `None` = uncapped auto ladder
@@ -336,7 +320,6 @@ impl Default for RampState {
             target_ts: None,
             ladder_stage: None,
             flight_now_ms: None,
-            ram_capped: false,
             auto_ceiling_ms: None,
         }
     }
@@ -549,9 +532,6 @@ impl RampState {
         if let Some(ts) = new_oldest_ts {
             self.oldest_seen_ts = Some(self.oldest_seen_ts.map_or(ts, |cur| cur.min(ts)));
         }
-        if self.loaded >= TRADE_RAM_CAP_POINTS {
-            self.ram_capped = true;
-        }
     }
 
     /// End the in-flight group, advancing the ramp for the next one.
@@ -574,11 +554,10 @@ impl RampState {
 
     /// Trade layer only: whether the CURRENT ladder rung's floor has been
     /// reached — `oldest_seen_ts <= target_ts`, or the layer is latched
-    /// (`exhausted`/`ram_capped`, both of which make "more" moot regardless
-    /// of the floor). A fresh key with no `target_ts` yet (`None`) has not
-    /// reached anything.
+    /// `exhausted` (which makes "more" moot regardless of the floor). A
+    /// fresh key with no `target_ts` yet (`None`) has not reached anything.
     pub fn ladder_floor_reached(&self) -> bool {
-        if self.exhausted || self.ram_capped {
+        if self.exhausted {
             return true;
         }
         match (self.oldest_seen_ts, self.target_ts) {
@@ -644,7 +623,7 @@ impl RampState {
     /// either the floor isn't reached yet, or the ladder is already at its
     /// auto-advance ceiling with no explicit deeper demand.
     pub fn advance_ladder_if_reached(&mut self) -> bool {
-        if self.exhausted || self.ram_capped || !self.ladder_floor_reached() {
+        if self.exhausted || !self.ladder_floor_reached() {
             return false;
         }
         let Some(stage) = self.ladder_stage else { return false; };
@@ -669,10 +648,10 @@ impl RampState {
     /// `target_ts` only ever moves further back (`min`), matching
     /// `require_target`'s "never shrinks" rule. Moves the stage to
     /// [`TradeLadderStage::Deep`] once the demand reaches past `Day`'s
-    /// floor. A latched key (`exhausted`/`ram_capped`) never re-arms — same
-    /// doctrine as `require_target`.
+    /// floor. A latched key (`exhausted`) never re-arms — same doctrine as
+    /// `require_target`.
     pub fn require_target_ts(&mut self, deeper_ts: i64) -> bool {
-        if self.exhausted || self.ram_capped {
+        if self.exhausted {
             return false;
         }
         let widened = Some(self.target_ts.map_or(deeper_ts, |cur| cur.min(deeper_ts)));
@@ -689,7 +668,7 @@ impl RampState {
     }
 
     fn in_flight_or_floor_unmet(&self) -> bool {
-        if self.in_flight || self.exhausted || self.ram_capped {
+        if self.in_flight || self.exhausted {
             return false;
         }
         !self.ladder_floor_reached()
@@ -1075,13 +1054,13 @@ impl DataBridge {
             // Demands are accepted only BETWEEN flights: the tick-side
             // ×2-doubling demand re-fires every frame, and letting it
             // widen `target_ts` while a flight walks would turn the floor
-            // into a moving target the flight chases to the RAM cap in
-            // one giant run (exactly the rung-dump the ×2 shape exists to
-            // avoid). A latched key (venue-dry / RAM cap) never re-arms.
-            if state.in_flight || state.exhausted || state.ram_capped {
+            // into a moving target the flight chases in one giant run
+            // (exactly the rung-dump the ×2 shape exists to avoid). A
+            // latched key (venue-dry) never re-arms.
+            if state.in_flight || state.exhausted {
                 crate::dlog!(
-                    "[ensure_trade] refused key={:?}/{} in_flight={} exhausted={} ram_capped={} loaded={}",
-                    exchange_id, symbol, state.in_flight, state.exhausted, state.ram_capped, state.loaded
+                    "[ensure_trade] refused key={:?}/{} in_flight={} exhausted={} loaded={}",
+                    exchange_id, symbol, state.in_flight, state.exhausted, state.loaded
                 );
                 return false;
             }
@@ -1119,6 +1098,28 @@ impl DataBridge {
         });
     }
 
+    /// Engine-side loaded low-water mark for the trade layer — the ×2
+    /// deepening demand's base (`RampState::oldest_seen_ts`). This is NOT
+    /// the `TradeStore`'s oldest row: the store is a retention-bound RAM
+    /// cache whose oldest tracks its own eviction horizon (≈ live edge −
+    /// horizon), so a demand window computed from it re-asks for depth the
+    /// engine already fetched. Live incident 2026-07-15 (wave-2 stall):
+    /// the boot stall-branch landed a whole archive day, the store evicted
+    /// it against the 6h default horizon in the same write, the tick-side
+    /// ×2 demand kept reading a near-live store oldest and came out as the
+    /// 1h floor forever — `require_target_ts(now − 1h)` never went past
+    /// the boot rung and the second day of history was never planned.
+    /// `None` = no trade flight has recorded a page yet (cold key).
+    pub fn trade_loaded_oldest_ts(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<i64> {
+        let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
+        self.backfill_engine().snapshot(&key).and_then(|s| s.oldest_seen_ts)
+    }
+
     /// Scroll-pressure entry for the trade layer (unified-data-plane Э2/Э4)
     /// — same doctrine as [`Self::on_kline_scroll_pressure`], mirrored for
     /// trades: fires a pressure signal that escalates the ramp GROUP size,
@@ -1144,7 +1145,7 @@ impl DataBridge {
                     state.require_target_ts(oldest - 86_400_000);
                 }
             }
-            if state.in_flight || state.exhausted || state.ram_capped {
+            if state.in_flight || state.exhausted {
                 return false;
             }
             state.begin_flight();
@@ -1481,8 +1482,8 @@ fn day_from_archive_since(ms: i64) -> chrono::NaiveDate {
 /// walk stops once `RampState::ladder_floor_reached` (the SAME `target_ts`
 /// the REST arm inherits into archive mode — see [`run_trade_ramp`]'s
 /// archive-chaining doc) or the day-file walk itself goes dry, whichever
-/// comes first; [`TRADE_RAM_CAP_POINTS`] is checked per-day as the RAM
-/// guard, independent of the ts floor.
+/// comes first. Raw-trade memory is bounded by the store's day window
+/// (fold-then-drop below it), not by any per-day count check here.
 ///
 /// `start_date`: `Some(d)` drives the walk from an explicit day via
 /// `DayIterator::from_start` — the zip-coverage planner's entry point
@@ -1536,7 +1537,7 @@ async fn run_archive_group(
     // stops a satisfied or RAM-capped walk — this bound alone would
     // otherwise keep pulling `group_pages` more days even past the floor.
     while pages_landed < group_pages {
-        if engine.with_state(key, |s| s.ram_capped || !s.wants_more_ts(gate_on_target)) {
+        if engine.with_state(key, |s| !s.wants_more_ts(gate_on_target)) {
             break;
         }
         let Some(date) = days.next() else {
@@ -1579,6 +1580,23 @@ async fn run_archive_group(
                     "[archive_day] {date} key={:?}/{} raw={} trimmed={} seen_ts={:?}",
                     key.0, key.1, raw_len, trimmed.len(), oldest_loaded_now
                 );
+                // Mark the day LANDED in this instrument's coverage —
+                // unconditionally on a successful file fetch, even when the
+                // trim dropped every row (that re-fetch IS the proof the
+                // store already holds the whole day) and even for a
+                // genuinely empty file (a zero-trade day is still fully
+                // covered). Without this, the planner re-claimed the
+                // boundary day forever: `oldest_seen_ts` sits at the landed
+                // day's first trade (never exactly midnight), the
+                // intersection rule kept the day "touched", each re-fetch
+                // trimmed to zero, and the next day down was never planned
+                // (wave-2 livelock, live incident 2026-07-15).
+                if let Some(zc_key) = zc_key {
+                    let floor = day_from_archive_since(spec.since_ms);
+                    engine.with_zip_coverage(zc_key, floor, |c| {
+                        c.landed_days.insert(date);
+                    });
+                }
                 emit_archive_day_page(tx, engine, key, exchange_id, account_type, symbol_str, &trimmed, false);
             }
             ArchiveDayOutcome::BoundaryReached => {
@@ -1631,7 +1649,7 @@ async fn run_archive_group(
         // `begin_flight()`) — use the ts-floor-only half instead. Same fix
         // `RampState::target_satisfied`'s doc documents for the count-based
         // (kline) path.
-        let done = engine.with_state(key, |s| s.ram_capped || !s.wants_more_ts(gate_on_target));
+        let done = engine.with_state(key, |s| !s.wants_more_ts(gate_on_target));
         if done {
             break;
         }
@@ -1716,7 +1734,7 @@ fn emit_archive_day_page(
 /// Returns `true` iff the group ran to completion for this region (floor
 /// reached, or the region abuts "now" and venue-dry stopped it); `false` if
 /// it stopped early for a reason that leaves the region only partially
-/// covered (transient error, RAM cap, or the `FromId`+non-head case above).
+/// covered (transient error, or the `FromId`+non-head case above).
 async fn run_delta_group(
     fetch_hub: &Arc<digdigdig3::connector_manager::ExchangeHub>,
     rest: &dyn digdigdig3::CoreConnector,
@@ -1764,10 +1782,6 @@ async fn run_delta_group(
     let is_head_cold = until_ts.is_none() && engine.with_state(key, |s| s.oldest_anchor.is_none());
 
     while pages_landed < group_pages {
-        if engine.with_state(key, |s| s.ram_capped) {
-            return false;
-        }
-
         let points: Vec<digdigdig3_station::data::AggTradePoint> = if is_head_cold && pages_landed == 0 {
             // Cold seed: most-recent-first (region abuts "now", nothing
             // loaded for this key yet).
@@ -1825,9 +1839,6 @@ async fn run_delta_group(
 
         if reached_floor {
             return true;
-        }
-        if engine.with_state(key, |s| s.ram_capped) {
-            return false;
         }
     }
 
@@ -1893,7 +1904,7 @@ async fn run_planned_trade_flight(
     // no-op flights in a hot loop and loading stalled dead (live
     // incident 2026-07-15, second half).
     'plan: loop {
-        if engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+        if engine.with_state(key, |s| s.exhausted) {
             break 'plan;
         }
         let target_ts = engine.with_state(key, |s| s.target_ts).unwrap_or(now_ms - 3_600_000);
@@ -1919,7 +1930,23 @@ async fn run_planned_trade_flight(
             .snapshot_zip_coverage(&zc_key)
             .unwrap_or_else(|| crate::zip_coverage::ZipCoverage::new(day_from_archive_since(spec.since_ms)));
         let seen_before = engine.with_state(key, |s| s.oldest_seen_ts);
-        let plan = crate::zip_coverage::plan_fetch((target_ts, upper_ms), &coverage, now_ms);
+        let mut plan = crate::zip_coverage::plan_fetch((target_ts, upper_ms), &coverage, now_ms);
+
+        // Raw-window fetch floor for the REST arm (owner rule 2026-07-15):
+        // delta depth below `now − trade_raw_window` is never fetched —
+        // the store would evict those rows in the same write, so the pages
+        // would be pure waste. ZIP ranges are exempt: an archive day below
+        // the window is fold-then-drop (the fold consumers take it from
+        // the broadcast; the store declines the raw rows), which is
+        // exactly how deep zip history stays RAM-flat.
+        let window_floor = now_ms - crate::trade_raw_window_ms();
+        plan.delta_ranges.retain_mut(|(lo, hi)| {
+            if *hi <= window_floor {
+                return false;
+            }
+            *lo = (*lo).max(window_floor);
+            *hi > *lo
+        });
 
         crate::dlog!(
             "[trade_planner] key={:?}/{} target_ts={} upper={} zip_ranges={} delta_ranges={}",
@@ -1947,7 +1974,7 @@ async fn run_planned_trade_flight(
         // range's NEWER day, recording holes for THIS instrument's
         // coverage as they're discovered.
         for (older_day, newer_day) in plan.zip_ranges.iter() {
-            if engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+            if engine.with_state(key, |s| s.exhausted) {
                 break;
             }
             let _ = older_day; // DayIterator walks down to `spec.since_ms`'s floor on its own; the plan's lower bound is informational (floor is the real stop condition, matching `run_archive_group`'s existing contract).
@@ -1960,7 +1987,7 @@ async fn run_planned_trade_flight(
         // Delta regions after the zips: the head/lag/hole slices REST is
         // responsible for.
         for (region_start, region_end) in &plan.delta_ranges {
-            if engine.with_state(key, |s| s.ram_capped) {
+            if engine.with_state(key, |s| s.exhausted) {
                 break;
             }
             // A region whose newer edge is (approximately) "now" is the
@@ -2001,9 +2028,15 @@ async fn run_planned_trade_flight(
                     .and_hms_opt(0, 0, 0)
                     .map(|dt| dt.and_utc().timestamp_millis())
                     .unwrap_or(i64::MAX);
-                plan.zip_ranges.is_empty() && nd_end_ms <= upper_ms
+                // An already-landed newest day can never move the loaded
+                // edge again (its re-fetch trims to zero by construction) —
+                // pulling it here would just burn one full day file per
+                // stalled flight.
+                plan.zip_ranges.is_empty()
+                    && nd_end_ms <= upper_ms
+                    && !coverage.landed_days.contains(&nd)
             });
-            if zip_reachable && !engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+            if zip_reachable && !engine.with_state(key, |s| s.exhausted) {
                 run_archive_group(
                     &fetcher, tx, engine, key, exchange_id, account_type,
                     symbol_str, wire_sym, spec, gate_on_target, newest, Some(&zc_key),
@@ -2051,8 +2084,9 @@ async fn run_planned_trade_flight(
 /// with nothing deeper armed) reports no advance and the run stops. A
 /// deeper explicit demand ([`RampState::require_target_ts`], driven from
 /// [`DataBridge::ensure_trade_backfill`]) re-arms the loop past `Day`
-/// exactly like a fresh flight. [`TRADE_RAM_CAP_POINTS`] is checked every
-/// group as a hard backstop independent of the ladder.
+/// exactly like a fresh flight. There is no per-group count backstop —
+/// raw-trade memory is bounded by the store's day window (owner rule
+/// 2026-07-15), and REST depth below that window is refused up front.
 ///
 /// Archive chaining (Э6-Ф3, native only — `cfg(not(wasm32))`): when the
 /// venue's `TradeArchiveCapabilities::for_account` declares a spec for this
@@ -2217,6 +2251,35 @@ async fn run_trade_ramp(
         "[trade_ramp] group key={:?}/{} stage={} target_ts={:?} oldest_ts={:?} loaded={}",
         key.0, key.1, stage.map(|s| s.label()).unwrap_or("?"), target_ts, oldest_ts, loaded
     );
+
+    // Raw-window fetch floor, no-archive venues (owner rule 2026-07-15):
+    // this legacy loop only runs when the venue declares NO archive spec
+    // (the planner branch above returns for every archive venue), so
+    // nothing can ever re-supply depth the store's day window evicts —
+    // REST-walking below `now − trade_raw_window` would fetch rows the
+    // store drops in the same write. Clamp the target to the window floor,
+    // and once the walk actually reaches it, latch dry (same `exhausted`
+    // semantics as a venue wall — the gap band marks everything deeper).
+    {
+        let window_floor = engine
+            .with_state(&key, |s| s.flight_now_ms)
+            .unwrap_or_else(now_ms) - crate::trade_raw_window_ms();
+        let reached = engine.with_state(&key, |s| {
+            if let Some(t) = s.target_ts {
+                s.target_ts = Some(t.max(window_floor));
+            }
+            s.oldest_seen_ts.is_some_and(|seen| seen <= window_floor)
+        });
+        if reached {
+            engine.with_state(&key, |s| s.exhausted = true);
+            let _ = tx.send(LiveUpdate::LayerBackfilled {
+                exchange_id, symbol: symbol_str.clone(), account_type,
+                layer: LayerId::Trades.wire_label(), prepended: 0,
+                exhausted: true, stage_boundary: true,
+            });
+            break 'run;
+        }
+    }
 
     // A key already latched into archive mode by a PRIOR run (REST tier
     // already exhausted last time) skips straight back to the day walk —
@@ -2392,22 +2455,13 @@ async fn run_trade_ramp(
         // Mid-flight check MUST bypass the `in_flight` gate — same fix
         // `run_kline_ramp`/`run_archive_group` document on
         // `target_satisfied`/`wants_more_ts`.
-        let done = engine.with_state(&key, |s| !s.wants_more_ts(gate_on_target) || s.ram_capped);
+        let done = engine.with_state(&key, |s| !s.wants_more_ts(gate_on_target));
         if done {
             break;
         }
     }
 
     if chained_to_archive {
-        break 'run;
-    }
-
-    let ram_capped_now = engine.with_state(&key, |s| s.ram_capped);
-    if ram_capped_now {
-        crate::dlog!(
-            "[trade_ramp] RAM cap hit key={:?}/{} loaded={} cap={}",
-            key.0, key.1, engine.with_state(&key, |s| s.loaded), TRADE_RAM_CAP_POINTS
-        );
         break 'run;
     }
 
@@ -2454,7 +2508,7 @@ async fn run_trade_ramp(
 
     // Terminal flush: guarantee exactly one `stage_boundary` sweep per
     // flight no matter how it ended (transient page Err break, pressure
-    // one-group flight, RAM cap, ceiling stop) — flushes any bubbles the
+    // one-group flight, window/ceiling stop) — flushes any bubbles the
     // mid-rung pages left `refold_dirty`, so the layer's final state is
     // never left unrendered. `exhausted` mirrors the latch (idempotent for
     // the depth-badge consumer — `set_history_depth` dedups).
@@ -2473,7 +2527,7 @@ async fn run_trade_ramp(
 /// latched. Mid-rung streaming pages read `false`; the page that completes
 /// a rung naturally reads `true` (see the field's doc on the event).
 fn trade_stage_boundary(engine: &BackfillEngine, key: &BackfillKey) -> bool {
-    engine.with_state(key, |s| s.exhausted || s.ram_capped || !s.wants_more_ts(true))
+    engine.with_state(key, |s| s.exhausted || !s.wants_more_ts(true))
 }
 
 fn emit_trade_page(
@@ -3105,25 +3159,20 @@ mod tests {
     }
 
     #[test]
-    fn ram_cap_latches_when_loaded_reaches_the_cap() {
-        let mut s = RampState::default();
-        s.record_trade_page(TRADE_RAM_CAP_POINTS - 1, Some(0), Some(1_000), false);
-        assert!(!s.ram_capped, "one short of the cap -> not latched yet");
-
-        s.record_trade_page(1, Some(0), Some(999), false);
-        assert!(s.ram_capped, "reaching the cap exactly latches ram_capped");
-    }
-
-    #[test]
-    fn ram_cap_blocks_further_demand_like_exhausted() {
+    fn no_cumulative_point_cap_exists_anymore() {
+        // Owner rule 2026-07-15: the 1.5M cumulative point cap is GONE —
+        // raw-trade memory is bounded by the store's day window
+        // (fold-then-drop), never by a download ledger. A key that has
+        // loaded far past the old cap still accepts deeper demand.
         let mut s = RampState::default();
         let now = 10 * DAY_MS;
         s.begin_trade_flight(now);
-        s.record_trade_page(TRADE_RAM_CAP_POINTS, Some(0), Some(now - 5 * DAY_MS), false);
-        assert!(s.ram_capped);
-        assert!(s.ladder_floor_reached(), "ram_capped makes the floor check report satisfied (stop, not error)");
-        assert!(!s.require_target_ts(now - 30 * DAY_MS), "ram_capped blocks re-arm regardless of depth");
-        assert!(s.ram_capped, "ram_capped stays latched — require_target_ts never clears it");
+        s.record_trade_page(5_000_000, Some(0), Some(now - 5 * DAY_MS), false);
+        assert!(!s.exhausted, "volume alone must never latch a key");
+        assert!(
+            s.require_target_ts(now - 30 * DAY_MS),
+            "deep demand still re-arms regardless of how much was already downloaded"
+        );
     }
 
     #[test]

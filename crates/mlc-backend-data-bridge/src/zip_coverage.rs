@@ -59,13 +59,36 @@ pub struct ZipCoverage {
     /// edge was (re)probed — drives the "lazy refresh: only re-probe the
     /// newest edge after it goes stale" rule in `backfill_engine.rs`.
     pub last_probe_ms: i64,
+    /// UTC days whose archive file has ALREADY been fetched and emitted for
+    /// this instrument (recorded by `run_archive_group` on every
+    /// `ArchiveDayOutcome::Rows`, even one whose emit-time trim dropped
+    /// every row — a re-fetch trimming to zero IS the proof the store
+    /// already holds the whole day). A landed day is fully covered: the day
+    /// file is the day's complete trade record, so no trades exist within
+    /// it below the file's own first row. [`plan_fetch`] therefore excludes
+    /// landed days from BOTH the zip claim and the delta remainder.
+    ///
+    /// Without this set the planner livelocked at every day boundary
+    /// (wave-2 stall, live incident 2026-07-15): the loaded edge
+    /// (`oldest_seen_ts` = the landed day's first trade, virtually never
+    /// exactly at UTC midnight) kept the day "touched" by every deeper
+    /// request, the intersection rule re-claimed it, the re-fetch trimmed
+    /// to zero rows, `oldest_seen_ts` never moved, and the next day of
+    /// history was never planned.
+    pub landed_days: BTreeSet<NaiveDate>,
 }
 
 impl ZipCoverage {
     /// Fresh coverage for an instrument with a known archive floor and
     /// nothing probed yet.
     pub fn new(floor: NaiveDate) -> Self {
-        Self { newest_published_day: None, holes: BTreeSet::new(), floor, last_probe_ms: 0 }
+        Self {
+            newest_published_day: None,
+            holes: BTreeSet::new(),
+            floor,
+            last_probe_ms: 0,
+            landed_days: BTreeSet::new(),
+        }
     }
 }
 
@@ -157,7 +180,10 @@ pub fn plan_fetch(requested_ms: (i64, i64), coverage: &ZipCoverage, now_ms: i64)
             if lo <= hi {
                 let mut d = lo;
                 while d <= hi {
-                    if !coverage.holes.contains(&d) {
+                    // A landed day is already in the store whole — never
+                    // re-claim it (the boundary-day livelock this set
+                    // exists for; see `ZipCoverage::landed_days`).
+                    if !coverage.holes.contains(&d) && !coverage.landed_days.contains(&d) {
                         zip_days.push(d);
                     }
                     d += Duration::days(1);
@@ -187,6 +213,15 @@ pub fn plan_fetch(requested_ms: (i64, i64), coverage: &ZipCoverage, now_ms: i64)
         .iter()
         .map(|(lo, hi)| (ms_from_day(*lo), ms_from_day(*hi) + DAY_MS))
         .collect();
+    // Landed days count as covered too — they contribute neither zip nor
+    // delta (the store already holds the whole day; routing the sub-day
+    // sliver above the day's first trade to delta would ask REST for
+    // trades that do not exist).
+    if touch_day_lo <= touch_day_hi {
+        for d in coverage.landed_days.range(touch_day_lo..=touch_day_hi) {
+            covered.push((ms_from_day(*d), ms_from_day(*d) + DAY_MS));
+        }
+    }
     covered.sort_by_key(|(lo, _)| *lo);
 
     let mut delta_ranges: Vec<(i64, i64)> = Vec::new();
@@ -234,6 +269,7 @@ mod tests {
             holes: BTreeSet::new(),
             floor: day(2026, 1, 1),
             last_probe_ms: now,
+            landed_days: BTreeSet::new(),
         };
         // requested = last 3 hours of "today" only.
         let requested = (now - 3 * 3_600_000, now);
@@ -252,6 +288,7 @@ mod tests {
             holes: BTreeSet::new(),
             floor: day(2026, 1, 1),
             last_probe_ms: now,
+            landed_days: BTreeSet::new(),
         };
         // requested = from start of 2026-07-10 through "now".
         let requested = (day_ms(2026, 7, 10), now);
@@ -274,6 +311,7 @@ mod tests {
             holes,
             floor: day(2026, 1, 1),
             last_probe_ms: now,
+            landed_days: BTreeSet::new(),
         };
         let requested = (day_ms(2026, 7, 9), day_ms(2026, 7, 13));
         let plan = plan_fetch(requested, &coverage, now);
@@ -295,6 +333,7 @@ mod tests {
             holes: BTreeSet::new(),
             floor: day(2026, 6, 1),
             last_probe_ms: now,
+            landed_days: BTreeSet::new(),
         };
         let requested = (day_ms(2026, 5, 1), day_ms(2026, 5, 5));
         let plan = plan_fetch(requested, &coverage, now);
@@ -339,6 +378,7 @@ mod tests {
             holes: BTreeSet::new(),
             floor: day(2026, 1, 1),
             last_probe_ms: now,
+            landed_days: BTreeSet::new(),
         };
         // Store already holds [2026-07-13 00:00 .. now); the scrolled
         // viewport asks down to 22:00 on the 12th — a partial touch of
@@ -347,6 +387,92 @@ mod tests {
         let plan = plan_fetch(requested, &coverage, now);
         assert_eq!(plan.zip_ranges, vec![(day(2026, 7, 12), day(2026, 7, 12))]);
         assert!(plan.delta_ranges.is_empty(), "zip day covers the partial slice; no delta remains");
+    }
+
+    // Regression (wave-2 livelock, live incident 2026-07-15): after the
+    // newest published day has landed whole from its zip, the loaded edge
+    // (`oldest_seen_ts` = that day's FIRST trade, e.g. 00:00:00.047 — never
+    // exactly midnight) kept the day "touched" by every deeper request.
+    // The planner re-claimed it forever: re-fetch, trim to zero, zero
+    // progress, day-2 never planned. A landed day must be excluded from
+    // the zip claim so the plan proceeds straight to the next day down.
+    #[test]
+    fn landed_boundary_day_is_not_reclaimed() {
+        let now = day_ms(2026, 7, 14) + 20 * 3_600_000; // 20:00 UTC on the 14th
+        let mut landed_days = BTreeSet::new();
+        landed_days.insert(day(2026, 7, 13));
+        let coverage = ZipCoverage {
+            newest_published_day: Some(day(2026, 7, 13)),
+            holes: BTreeSet::new(),
+            floor: day(2026, 1, 1),
+            last_probe_ms: now,
+            landed_days,
+        };
+        // Loaded edge = first trade of the landed day-13 (47ms past
+        // midnight); the x2 demand asks ~2 days deeper.
+        let upper = day_ms(2026, 7, 13) + 47;
+        let requested = (day_ms(2026, 7, 11) + 4 * 3_600_000, upper);
+        let plan = plan_fetch(requested, &coverage, now);
+        assert_eq!(
+            plan.zip_ranges,
+            vec![(day(2026, 7, 11), day(2026, 7, 12))],
+            "landed day-13 is skipped; the claim moves on to days 11-12"
+        );
+        assert!(
+            plan.delta_ranges.is_empty(),
+            "the sub-day sliver of the landed day is covered, not delta — no trades exist below the day file's first row"
+        );
+    }
+
+    // Companion: a request falling ENTIRELY inside a landed day's leading
+    // sliver is fully covered — empty plan, no zip, no delta.
+    #[test]
+    fn request_inside_landed_day_sliver_is_fully_covered() {
+        let now = day_ms(2026, 7, 14) + 20 * 3_600_000;
+        let mut landed_days = BTreeSet::new();
+        landed_days.insert(day(2026, 7, 13));
+        let coverage = ZipCoverage {
+            newest_published_day: Some(day(2026, 7, 13)),
+            holes: BTreeSet::new(),
+            floor: day(2026, 1, 1),
+            last_probe_ms: now,
+            landed_days,
+        };
+        let requested = (day_ms(2026, 7, 13) + 10, day_ms(2026, 7, 13) + 47);
+        let plan = plan_fetch(requested, &coverage, now);
+        assert!(plan.zip_ranges.is_empty());
+        assert!(plan.delta_ranges.is_empty());
+    }
+
+    // Companion: a HOLE day (404'd) still routes to delta — landing and
+    // holing are different exclusions (hole = zip absent, REST must try;
+    // landed = store already full, nobody should try).
+    #[test]
+    fn hole_day_still_goes_to_delta_landed_day_does_not() {
+        let now = day_ms(2026, 7, 14) + 1_000;
+        let mut holes = BTreeSet::new();
+        holes.insert(day(2026, 7, 11));
+        let mut landed_days = BTreeSet::new();
+        landed_days.insert(day(2026, 7, 12));
+        let coverage = ZipCoverage {
+            newest_published_day: Some(day(2026, 7, 12)),
+            holes,
+            floor: day(2026, 1, 1),
+            last_probe_ms: now,
+            landed_days,
+        };
+        let requested = (day_ms(2026, 7, 10), day_ms(2026, 7, 12) + 47);
+        let plan = plan_fetch(requested, &coverage, now);
+        assert_eq!(
+            plan.zip_ranges,
+            vec![(day(2026, 7, 10), day(2026, 7, 10))],
+            "day-12 landed (skip), day-11 holed (delta), day-10 claimed"
+        );
+        assert_eq!(
+            plan.delta_ranges,
+            vec![(day_ms(2026, 7, 11), day_ms(2026, 7, 12))],
+            "only the hole day falls to delta; the landed day's sliver does not"
+        );
     }
 
     // Extra: requested end beyond "now" clamps to now.

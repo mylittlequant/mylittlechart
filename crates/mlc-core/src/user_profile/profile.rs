@@ -173,10 +173,17 @@ pub struct DataLoadSettings {
     #[serde(default = "default_kline_layer_capacity")]
     pub kline_layer_capacity: u32,
 
-    /// Ring capacity (points) for one bubble's raw trade layer
-    /// (unified-data-plane Stage Э1). Default 1_000_000.
-    #[serde(default = "default_trade_layer_capacity")]
-    pub trade_layer_capacity: u32,
+    /// Raw-trade retention window in UTC days (owner rule 2026-07-15):
+    /// the shared `TradeStore` keeps raw trades no deeper than this many
+    /// days behind its newest stored trade — THE single raw-trade memory
+    /// bound (it replaced both the 1M count ring and the engine's 1.5M
+    /// cumulative RAM cap, which were three uncoordinated limits in
+    /// different units). Depth beyond the window: zip-covered days are
+    /// fetched, folded, and their raw rows dropped by this same eviction
+    /// (re-pullable from the immutable archive on refold); venues with no
+    /// archive stop fetching at the window and latch dry. Default 4.
+    #[serde(default = "default_trade_raw_window_days")]
+    pub trade_raw_window_days: u32,
 
     /// Target depth (1m bars) the `BackfillEngine` ramps the shared "1m"
     /// kline layer toward for the 7 client-side fold chart types
@@ -221,7 +228,7 @@ impl Default for DataLoadSettings {
             max_store_size_mb: default_max_store_size_mb(),
             store_cleanup_days: default_store_cleanup_days(),
             kline_layer_capacity: default_kline_layer_capacity(),
-            trade_layer_capacity: default_trade_layer_capacity(),
+            trade_raw_window_days: default_trade_raw_window_days(),
             derived_kline_target: default_derived_kline_target(),
             derived_trade_target: default_derived_trade_target(),
             archive_proxy_base: default_archive_proxy_base(),
@@ -735,8 +742,8 @@ fn default_kline_layer_capacity() -> u32 {
     200_000
 }
 
-fn default_trade_layer_capacity() -> u32 {
-    1_000_000
+fn default_trade_raw_window_days() -> u32 {
+    4
 }
 
 fn default_derived_kline_target() -> u32 {

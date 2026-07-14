@@ -149,14 +149,14 @@ async fn create_bubble(
     let tf = Timeframe::new(&body.timeframe, ms as i64);
     let color = body.color;
     // `user()` is a leaf lock — read independently, before acquiring
-    // `bubbles_mut()` (never nested).
-    let (kline_cap, trade_cap) = {
+    // `bubbles_mut()` (never nested). Trade raw retention is the day
+    // window (owner rule 2026-07-15), not a per-bubble capacity.
+    let kline_cap = {
         let user = s.core.user();
-        let dl = &user.profile().domain.data_load;
-        (dl.kline_layer_capacity as usize, dl.trade_layer_capacity as usize)
+        user.profile().domain.data_load.kline_layer_capacity as usize
     };
     let bid = s.core.bubbles_mut().create_bubble_auto(body.symbol, tf);
-    s.core.set_layer_capacities(bid, kline_cap, trade_cap);
+    s.core.set_layer_capacities(bid, kline_cap);
     // Set exchange + account_type on the newly created bubble. This is a bare
     // bubble creation with no chart member attached yet, hence the bid-keyed
     // `set_bubble_instrument` rather than the member-keyed `set_instrument`.
