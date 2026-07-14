@@ -883,6 +883,12 @@ impl ChartApp {
 
         self.flush_pending_autosave();
 
+        // One-shot initial snap-to-end once the first backfill lands. On
+        // wasm the settled-dimensions resize fires before any bars exist
+        // and never again — a resize-only consumer left the viewport
+        // parked on the oldest bars (see try_initial_viewport_fit).
+        self.try_initial_viewport_fit();
+
         self.last_tick_us = tick_start.elapsed().as_micros() as u64;
 
         // broadcast_rx is now owned by BackendCore — direct len() not accessible.

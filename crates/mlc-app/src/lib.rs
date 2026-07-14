@@ -2758,7 +2758,17 @@ impl ChartApp {
             }
             app.panel_app.toolbar_config = ToolbarConfig::standalone();
         } else {
-            let has_saved_preset = app.core.presets().contains_key(&app.panel_app.active_preset_id);
+            // Blank-preset poison guard: a preset that never received a
+            // collect (no bubbles, no window snapshots — the shape
+            // `ChartPreset::new` leaves on disk when nothing autosaved after
+            // creation) restores as a bubble-less container: sym="" zombie
+            // series, dead legend, no data. Route it through the fresh-state
+            // path instead — that path adopts the existing active_preset_id
+            // and collects the real default chart into it.
+            let has_saved_preset = app.core.presets()
+                .get(&app.panel_app.active_preset_id)
+                .map(|p| !p.bubbles.is_empty() || !p.windows.is_empty())
+                .unwrap_or(false);
 
             if has_saved_preset {
                 // ── new_window COLD PATH timer anchor ─────────────────────
@@ -2962,6 +2972,32 @@ impl ChartApp {
                     // create_instance's lookup is case-sensitive.
                     app.core.indicators_mut().add(bid, "volume");
                 }
+
+                // Persist the REAL initial state (auto-bubble + volume
+                // overlay) into the active preset. `ChartPreset::new` above
+                // is a blank shell — a blank on disk restores as a
+                // bubble-less container (empty-symbol zombie) on the next
+                // boot. This also covers the adopted-blank case (existing
+                // empty preset routed here by the poison guard above).
+                {
+                    let pid = app.panel_app.active_preset_id.clone();
+                    if !pid.is_empty() {
+                        // bind-then-use: presets() returns a guard — holding
+                        // it across the &mut self call below is E0502.
+                        let pname = app.core.presets().get(&pid).map(|p| p.name.clone());
+                        if let Some(pname) = pname {
+                            app.collect_state_into_preset(&pid, &pname);
+                            let collected = app.core.presets().get(&pid).cloned();
+                            if let Some(p) = collected {
+                                app.preset_actions.push(crate::PresetAction::Upsert(p));
+                            }
+                        }
+                    }
+                }
+                // Fresh charts need the same one-shot snap-to-end the cold
+                // path arms — without it the viewport stays parked on the
+                // oldest loaded bars after the initial backfill lands.
+                app.needs_initial_viewport_fit = true;
 
                 bridge.ensure_connector(exchange_id);
                 bridge.request_bars(
@@ -3531,6 +3567,16 @@ impl ChartApp {
         // On the very first resize after a preset restore, chart_width is now
         // known. Reposition every window so the last bar has 5 empty bars of
         // right margin (set_bars() couldn't do this because chart_width was 0).
+        self.try_initial_viewport_fit();
+    }
+
+    /// One-shot snap-to-end after a hydration/fresh boot, armed via
+    /// `needs_initial_viewport_fit`. Called from `resize()` AND once per
+    /// frame from the tick: on wasm the settled-dimensions resize fires
+    /// BEFORE the initial request_bars round-trip returns and never again
+    /// (nobody resizes the browser window), so a resize-only consumer left
+    /// the flag armed forever and the viewport parked on the oldest bars.
+    pub(crate) fn try_initial_viewport_fit(&mut self) {
         if self.needs_initial_viewport_fit {
             // Snapshot each chart's ACTIVE series up front (audit D8 — a
             // renko/pnf/kagi/... window fits against its own array, not
@@ -3545,8 +3591,7 @@ impl ChartApp {
             // very first resize that fires before the initial request_bars
             // round-trip returns, and the viewport would freeze on the
             // oldest bars forever. Keeping the flag armed lets the next
-            // resize (which usually happens after BarsLoaded triggers a
-            // chart_dirty redraw) actually do the snap.
+            // call (tick after BarsLoaded, or a later resize) do the snap.
             let any_bars = series_by_chart.values().any(|s| !s.as_active_series().is_empty());
             for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let series = series_by_chart.get(cid)
