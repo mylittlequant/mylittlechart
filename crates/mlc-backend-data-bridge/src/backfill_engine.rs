@@ -700,10 +700,19 @@ impl RampState {
 // BackfillEngine — the registry DataBridge owns
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Registry of [`RampState`] per [`BackfillKey`], owned by [`DataBridge`].
+/// Key identifying one instrument's [`crate::zip_coverage::ZipCoverage`] —
+/// unlike [`BackfillKey`], not layer-scoped (the daily-archive-zip is a
+/// property of the trade layer only, one venue endpoint per instrument, so
+/// there is no `LayerId` axis here).
+pub type ZipCoverageKey = (ExchangeId, String, AccountType);
+
+/// Registry of [`RampState`] per [`BackfillKey`], plus
+/// [`crate::zip_coverage::ZipCoverage`] per instrument, owned by
+/// [`DataBridge`].
 #[derive(Debug, Default, Clone)]
 pub struct BackfillEngine {
     states: Arc<Mutex<HashMap<BackfillKey, RampState>>>,
+    zip_coverage: Arc<Mutex<HashMap<ZipCoverageKey, crate::zip_coverage::ZipCoverage>>>,
 }
 
 impl BackfillEngine {
@@ -720,6 +729,28 @@ impl BackfillEngine {
         let mut guard = self.states.lock().unwrap_or_else(|e| e.into_inner());
         let state = guard.entry(key.clone()).or_insert_with(RampState::default);
         f(state)
+    }
+
+    /// Snapshot the current zip coverage for an instrument (test/debug
+    /// introspection).
+    pub fn snapshot_zip_coverage(&self, key: &ZipCoverageKey) -> Option<crate::zip_coverage::ZipCoverage> {
+        self.zip_coverage.lock().ok()?.get(key).cloned()
+    }
+
+    /// Run `f` against this instrument's [`crate::zip_coverage::ZipCoverage`],
+    /// creating it (via `default_floor`) on first access. Mirrors
+    /// [`Self::with_state`]'s lock-and-mutate shape.
+    fn with_zip_coverage<R>(
+        &self,
+        key: &ZipCoverageKey,
+        default_floor: chrono::NaiveDate,
+        f: impl FnOnce(&mut crate::zip_coverage::ZipCoverage) -> R,
+    ) -> R {
+        let mut guard = self.zip_coverage.lock().unwrap_or_else(|e| e.into_inner());
+        let coverage = guard
+            .entry(key.clone())
+            .or_insert_with(|| crate::zip_coverage::ZipCoverage::new(default_floor));
+        f(coverage)
     }
 }
 
@@ -1048,6 +1079,10 @@ impl DataBridge {
             // one giant run (exactly the rung-dump the ×2 shape exists to
             // avoid). A latched key (venue-dry / RAM cap) never re-arms.
             if state.in_flight || state.exhausted || state.ram_capped {
+                crate::dlog!(
+                    "[ensure_trade] refused key={:?}/{} in_flight={} exhausted={} ram_capped={} loaded={}",
+                    exchange_id, symbol, state.in_flight, state.exhausted, state.ram_capped, state.loaded
+                );
                 return false;
             }
             // A wider ceiling from a later consumer must be able to re-open
@@ -1059,6 +1094,10 @@ impl DataBridge {
                 state.require_target_ts(now_ms - window_ms);
             }
             if !state.wants_more_ts(true) {
+                crate::dlog!(
+                    "[ensure_trade] no-more key={:?}/{} target_ts={:?} oldest_seen={:?} window_req={:?}",
+                    exchange_id, symbol, state.target_ts, state.oldest_seen_ts, window_ms
+                );
                 return false;
             }
             state.begin_flight();
@@ -1257,6 +1296,176 @@ fn day_fetch(proxy_base: Option<String>) -> DayFetch {
     })
 }
 
+/// Existence-probe seam — sibling of [`DayFetch`] for
+/// [`resolve_zip_coverage`]'s edge walks. `Ok(true)` = day file published,
+/// `Ok(false)` = 404, `Err` = transient (never recorded as knowledge).
+#[cfg(not(target_arch = "wasm32"))]
+pub type DayProbe = Arc<
+    dyn Fn(
+            ArchiveSpec,
+            String,
+            chrono::NaiveDate,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, digdigdig3_station::archive::ArchiveDayError>> + Send>,
+        > + Send
+        + Sync,
+>;
+
+/// Wasm counterpart of [`DayProbe`] — same shape, no `Send`/`Sync` bounds
+/// (see [`DayFetch`]'s doc for why that is sound).
+#[cfg(target_arch = "wasm32")]
+pub type DayProbe = Arc<
+    dyn Fn(
+        ArchiveSpec,
+        String,
+        chrono::NaiveDate,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<bool, digdigdig3_station::archive::ArchiveDayError>>>,
+    >,
+>;
+
+/// Real probe seam — thin wrapper over
+/// [`digdigdig3_station::archive::probe_archive_day`] (`Range: bytes=0-0`
+/// status-only GET, body never read) — the coverage edge walk costs a
+/// round-trip per day instead of a full day-file download + parse.
+fn day_probe(proxy_base: Option<String>) -> DayProbe {
+    Arc::new(move |spec, symbol, date| {
+        let proxy_base = proxy_base.clone();
+        Box::pin(async move {
+            digdigdig3_station::archive::probe_archive_day(&spec, &symbol, date, proxy_base.as_deref()).await
+        })
+    })
+}
+
+/// How long a [`crate::zip_coverage::ZipCoverage`]'s `newest_published_day`
+/// edge stays trusted before the planner re-probes it — a fresh key (or one
+/// whose last probe is older than this) gets its newest edge re-walked;
+/// otherwise the cached edge is reused as-is (no network cost per planning
+/// call).
+const ZIP_COVERAGE_REFRESH_MS: i64 = 3_600_000; // 1 hour
+
+/// How many days back from "yesterday UTC" the cold coverage probe walks
+/// looking for the first published day file, per doctrine step 3 ("walk-back
+/// `today_utc-1 .. today_utc-4`; first true = newest_published_day; all 4
+/// false -> newest=None").
+const ZIP_COVERAGE_COLD_PROBE_DAYS: i64 = 4;
+
+/// Resolve (cold-build or lazily refresh) this instrument's
+/// [`crate::zip_coverage::ZipCoverage`] against the real archive host,
+/// through the [`DayProbe`] seam (`Range: bytes=0-0` status-only GET via
+/// `digdigdig3_station::archive::probe_archive_day` in production, a mock
+/// in tests) — an edge-walk step costs one round-trip, never a day-file
+/// body download or parse.
+///
+/// Cold path (`newest_published_day.is_none()` and never probed): walks
+/// `yesterday UTC` down to `yesterday UTC - (ZIP_COVERAGE_COLD_PROBE_DAYS -
+/// 1)` looking for the first day that exists; the first hit becomes
+/// `newest_published_day`. All four missing leaves `newest_published_day:
+/// None` (this instrument's archive is not usable this probe cycle — NOT
+/// recorded as a permanent "no archive" fact, since a future probe may
+/// catch up once publication lag clears).
+///
+/// Warm path (already has a `newest_published_day`, but `last_probe_ms` is
+/// stale): re-probes ONLY the newest edge — walks forward day-by-day from
+/// the current `newest_published_day + 1` while each successive day exists,
+/// advancing the edge; stops at the first miss (still-unpublished) or
+/// transient error.
+///
+/// A transient fetch error at any point during either walk stops the probe
+/// for THIS call without recording anything as a hole or moving
+/// `last_probe_ms` — per the "transient must never be recorded as
+/// knowledge" invariant, the next planning call retries.
+async fn resolve_zip_coverage(
+    prober: &DayProbe,
+    engine: &BackfillEngine,
+    zc_key: &crate::backfill_engine::ZipCoverageKey,
+    wire_sym: &str,
+    spec: ArchiveSpec,
+    now_ms: i64,
+) {
+    let floor = day_from_archive_since(spec.since_ms);
+    let (newest, last_probe_ms) = engine.with_zip_coverage(zc_key, floor, |c| {
+        (c.newest_published_day, c.last_probe_ms)
+    });
+
+    let today = day_from_archive_since(now_ms);
+    let yesterday = today - chrono::Duration::days(1);
+
+    match newest {
+        None => {
+            // Cold: walk back from yesterday looking for the first
+            // published day.
+            let mut probed_any_success = false;
+            let mut d = yesterday;
+            for _ in 0..ZIP_COVERAGE_COLD_PROBE_DAYS {
+                if d < floor {
+                    break;
+                }
+                match prober(spec, wire_sym.to_string(), d).await {
+                    Ok(true) => {
+                        engine.with_zip_coverage(zc_key, floor, |c| {
+                            c.newest_published_day = Some(d);
+                            c.last_probe_ms = now_ms;
+                        });
+                        probed_any_success = true;
+                        break;
+                    }
+                    Ok(false) => {
+                        d -= chrono::Duration::days(1);
+                        continue;
+                    }
+                    Err(_) => {
+                        // Transient — abandon this probe cycle entirely,
+                        // record nothing.
+                        return;
+                    }
+                }
+            }
+            if !probed_any_success {
+                // All probed days 404'd (or floor reached first) — record
+                // the probe attempt time so a pressure-driven re-plan
+                // doesn't hammer the host every call, but leave
+                // `newest_published_day` as `None` (not a permanent "no
+                // archive" verdict).
+                engine.with_zip_coverage(zc_key, floor, |c| c.last_probe_ms = now_ms);
+            }
+        }
+        Some(edge) => {
+            if now_ms.saturating_sub(last_probe_ms) < ZIP_COVERAGE_REFRESH_MS {
+                return; // still fresh, nothing to do
+            }
+            let mut cursor = edge;
+            loop {
+                let candidate = cursor + chrono::Duration::days(1);
+                if candidate > yesterday {
+                    break;
+                }
+                match prober(spec, wire_sym.to_string(), candidate).await {
+                    Ok(true) => {
+                        cursor = candidate;
+                        engine.with_zip_coverage(zc_key, floor, |c| {
+                            c.newest_published_day = Some(cursor);
+                        });
+                    }
+                    Ok(false) => break, // still unpublished — edge stays
+                    Err(_) => return, // transient — abandon, record nothing
+                }
+            }
+            engine.with_zip_coverage(zc_key, floor, |c| c.last_probe_ms = now_ms);
+        }
+    }
+}
+
+/// UTC day containing `ms` — local mirror of
+/// `digdigdig3_station::archive::url`'s private `day_from_ms` (that helper
+/// is not exported; this crate needs the same conversion for the coverage
+/// probe's edge walk).
+fn day_from_archive_since(ms: i64) -> chrono::NaiveDate {
+    chrono::DateTime::from_timestamp(ms.div_euclid(1000), 0)
+        .map(|dt| dt.date_naive())
+        .unwrap_or(chrono::NaiveDate::MIN)
+}
+
 /// Walk one ramp GROUP of archive day files for `key`, oldest-file-per-page,
 /// via `fetcher` (the real native fetch in production, a mock in tests).
 /// The per-day overlap guard (trimming rows at or after whatever
@@ -1274,6 +1483,23 @@ fn day_fetch(proxy_base: Option<String>) -> DayFetch {
 /// archive-chaining doc) or the day-file walk itself goes dry, whichever
 /// comes first; [`TRADE_RAM_CAP_POINTS`] is checked per-day as the RAM
 /// guard, independent of the ts floor.
+///
+/// `start_date`: `Some(d)` drives the walk from an explicit day via
+/// `DayIterator::from_start` — the zip-coverage planner's entry point
+/// (`run_trade_ramp`'s planned zip-range execution walks one explicit
+/// `(newest, oldest)` day range at a time, not the legacy "resume from
+/// wherever `oldest_anchor` last left off" cursor). `None` preserves the
+/// pre-planner behavior (`resume_before(oldest_anchor)` / cold
+/// `DayIterator::new`), unchanged for any caller not going through the
+/// planner.
+///
+/// `zc_key`: `Some(key)` additionally records every REAL 404
+/// (`ArchiveDayOutcome::Gap` — never `TransientError`) into that
+/// instrument's [`crate::zip_coverage::ZipCoverage::holes`], so the NEXT
+/// `plan_fetch` call already knows to route that day to delta instead of
+/// re-attempting the zip. `None` skips this bookkeeping entirely (legacy
+/// non-planner callers, and the archive-chaining unit tests below, which
+/// exercise `RampState`/`LiveUpdate` behavior only).
 async fn run_archive_group(
     fetcher: &DayFetch,
     tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -1285,14 +1511,17 @@ async fn run_archive_group(
     wire_sym: &str,
     spec: ArchiveSpec,
     gate_on_target: bool,
+    start_date: Option<chrono::NaiveDate>,
+    zc_key: Option<&ZipCoverageKey>,
 ) {
     let page_size = TRADE_PAGE_SIZE;
     let group_pages = engine.with_state(key, |s| s.next_group_pages(page_size, gate_on_target));
 
     let oldest_loaded = engine.with_state(key, |s| s.oldest_anchor);
-    let mut days = match oldest_loaded {
-        Some(ms) => digdigdig3_station::archive::DayIterator::resume_before(ms, spec.since_ms),
-        None => digdigdig3_station::archive::DayIterator::new(spec.since_ms),
+    let mut days = match (start_date, oldest_loaded) {
+        (Some(start), _) => digdigdig3_station::archive::DayIterator::from_start(start, spec.since_ms),
+        (None, Some(ms)) => digdigdig3_station::archive::DayIterator::resume_before(ms, spec.since_ms),
+        (None, None) => digdigdig3_station::archive::DayIterator::new(spec.since_ms),
     };
 
     let mut consecutive_mid_range_404s: u32 = 0;
@@ -1336,8 +1565,20 @@ async fn run_archive_group(
             ArchiveDayOutcome::Rows(rows) => {
                 consecutive_mid_range_404s = 0;
                 pages_landed += 1;
-                let oldest_loaded_now = engine.with_state(key, |s| s.oldest_anchor);
+                // Trim against the wall-clock ms low-water mark, NEVER the
+                // pagination cursor: `oldest_anchor` is venue-native (a
+                // synthesized page INDEX on bybit spot RecentOnly — its
+                // seed left anchor=Some(0), so trim(anchor) gutted every
+                // archive day to zero rows; a raw trade ID ~1e9 on OKX
+                // TsCursor would do the same). Live incident 2026-07-15,
+                // act 5.
+                let oldest_loaded_now = engine.with_state(key, |s| s.oldest_seen_ts);
+                let raw_len = rows.len();
                 let trimmed = trim_rows_at_or_after(rows, oldest_loaded_now);
+                crate::dlog!(
+                    "[archive_day] {date} key={:?}/{} raw={} trimmed={} seen_ts={:?}",
+                    key.0, key.1, raw_len, trimmed.len(), oldest_loaded_now
+                );
                 emit_archive_day_page(tx, engine, key, exchange_id, account_type, symbol_str, &trimmed, false);
             }
             ArchiveDayOutcome::BoundaryReached => {
@@ -1349,6 +1590,17 @@ async fn run_archive_group(
                 break;
             }
             ArchiveDayOutcome::Gap => {
+                // Real 404, mid-range — record into this instrument's
+                // coverage map (never for `TransientError`, see this fn's
+                // doc comment and the module-level `zip_coverage` invariant:
+                // holes are populated ONLY from a genuine `Gap`
+                // classification).
+                if let Some(zc_key) = zc_key {
+                    let floor = day_from_archive_since(spec.since_ms);
+                    engine.with_zip_coverage(zc_key, floor, |c| {
+                        c.holes.insert(date);
+                    });
+                }
                 consecutive_mid_range_404s += 1;
                 if consecutive_mid_range_404s >= MAX_CONSECUTIVE_MID_RANGE_404S {
                     // A run of mid-range 404s this long means the symbol's
@@ -1404,9 +1656,13 @@ fn emit_archive_day_page(
     }).collect();
     let prepended = wire.len();
     let new_oldest = wire.iter().map(|t| t.ts_ms).min();
-    // Archive day rows: the venue-side "anchor" (day-file resume cursor) IS
-    // a ts value, same as `new_oldest_ts` — pass it for both.
-    engine.with_state(key, |s| s.record_trade_page(prepended, new_oldest, new_oldest, exhausted));
+    // Archive day rows advance ONLY the wall-clock low-water mark
+    // (`oldest_seen_ts`) — NEVER `oldest_anchor`: the anchor is the
+    // venue-native REST pagination cursor (a trade ID on OKX TsCursor /
+    // Binance FromId), and stamping a day-file ts into it corrupts the
+    // next REST walk's `after=`/`fromId=` param (ts read as an id). The
+    // archive walk itself is day-date-driven and needs no anchor.
+    engine.with_state(key, |s| s.record_trade_page(prepended, None, new_oldest, exhausted));
     if prepended > 0 {
         let _ = tx.send(LiveUpdate::TradeHistoryPrepended {
             exchange_id, account_type, symbol: symbol.to_string(), trades: wire,
@@ -1417,6 +1673,357 @@ fn emit_archive_day_page(
         exchange_id, symbol: symbol.to_string(), account_type,
         layer: LayerId::Trades.wire_label(), prepended, exhausted, stage_boundary,
     });
+}
+
+/// Walk one REST delta-region group for the trade layer — the zip-coverage
+/// planner's REST arm (owner doctrine 2026-07-14 step 5): fetches trade
+/// pages honoring the SAME per-venue cursor-step formulas
+/// `run_trade_ramp`'s legacy walk uses (three-way `HistoryCursor` branch,
+/// unchanged — invariant 7), but bounded to one planned delta region
+/// instead of walking until the ladder floor or venue-dry.
+///
+/// `until_ts`: `Some(ts)` seeds the FIRST page's cursor at the region's
+/// NEWER edge instead of the cold "most recent trades" seed — used when the
+/// planned delta region does not abut "now" (e.g. a publication-lag region
+/// between the newest zip day and the head). `None` uses the existing cold
+/// seed (`agg_trades_paginated`, most-recent-first) — the region abuts
+/// "now".
+///
+/// `floor_ts`: the region's OLDER edge (`delta_range.0`) — the walk stops
+/// once a landed page's rows are at or older than this floor, mirroring
+/// `target_ts` semantics for a single bounded region rather than the whole
+/// ladder.
+///
+/// `HistoryCursor::FromId` (Binance) has no ts-seekable cursor — the trait
+/// only exposes an id-based `from_id` — so an `until_ts`-seeded (non-head)
+/// delta region is not currently walkable for `FromId` venues; interior
+/// gaps for those venues are left to a future band/gap-fill pass (TODO:
+/// FromId delta regions below head are reported to the caller as
+/// unfulfilled via the returned `bool`, so a later re-plan / band marker
+/// can surface the hole — no id-from-timestamp resolution exists in dig3
+/// today). `TsCursor`/`TsWindow` venues seed `until_ts` directly (their
+/// cursors are already ts-shaped or ts-equivalent, matching the legacy
+/// walk's own `next_from_id` formula for those tiers) and walk normally.
+///
+/// After the first page, every subsequent page reuses the SAME
+/// `oldest_anchor`-driven cursor step the legacy resumable walk uses (see
+/// `cursor_kind`'s doc comment on [`run_trade_ramp`]) — `run_delta_group`
+/// does not maintain its own parallel cursor, it reads/advances
+/// `RampState::oldest_anchor` exactly like the pre-planner code did, so
+/// mid-region resume (a group that lands some pages, yields, and is called
+/// again for the same still-unfinished region) is naturally correct.
+///
+/// Returns `true` iff the group ran to completion for this region (floor
+/// reached, or the region abuts "now" and venue-dry stopped it); `false` if
+/// it stopped early for a reason that leaves the region only partially
+/// covered (transient error, RAM cap, or the `FromId`+non-head case above).
+async fn run_delta_group(
+    fetch_hub: &Arc<digdigdig3::connector_manager::ExchangeHub>,
+    rest: &dyn digdigdig3::CoreConnector,
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    engine: &BackfillEngine,
+    key: &BackfillKey,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_str: &str,
+    wire_sym: &str,
+    cursor_kind: HistoryCursor,
+    until_ts: Option<i64>,
+    floor_ts: i64,
+    gate_on_target: bool,
+) -> bool {
+    let page_size = TRADE_PAGE_SIZE;
+
+    if until_ts.is_some() && matches!(cursor_kind, HistoryCursor::FromId) {
+        // See this fn's doc comment — no ts-seekable cursor exists for
+        // `FromId` venues today. Report unfulfilled rather than silently
+        // no-op, so the caller can decide whether to leave the gap for a
+        // later pass.
+        crate::dlog!(
+            "[run_delta_group] FromId venue cannot seed a non-head delta region (until_ts={:?}) key={:?}/{} — skipping, gap left for band/gap-fill",
+            until_ts, key.0, key.1
+        );
+        return false;
+    }
+
+    // A non-head region seeds `oldest_anchor` at the region's newer edge
+    // BEFORE the walk starts (only meaningful the first time this region is
+    // visited — a resumed region already has its own `oldest_anchor` from
+    // the prior partial run, which must NOT be clobbered back to the
+    // region's start).
+    if let Some(seed) = until_ts {
+        engine.with_state(key, |s| {
+            if s.oldest_anchor.is_none() {
+                s.oldest_anchor = Some(seed);
+            }
+        });
+    }
+
+    let group_pages = engine.with_state(key, |s| s.next_group_pages(page_size, gate_on_target));
+    let mut pages_landed: u32 = 0;
+    let is_head_cold = until_ts.is_none() && engine.with_state(key, |s| s.oldest_anchor.is_none());
+
+    while pages_landed < group_pages {
+        if engine.with_state(key, |s| s.ram_capped) {
+            return false;
+        }
+
+        let points: Vec<digdigdig3_station::data::AggTradePoint> = if is_head_cold && pages_landed == 0 {
+            // Cold seed: most-recent-first (region abuts "now", nothing
+            // loaded for this key yet).
+            let (points, _outcome) = digdigdig3_station::backfill::agg_trades_paginated(
+                fetch_hub, exchange_id, account_type, wire_sym, page_size, 1,
+            ).await;
+            points
+        } else {
+            let from_id = engine.with_state(key, |s| s.oldest_anchor);
+            let Some(from_id) = from_id else { break; };
+            if from_id <= 0 {
+                return true; // walked all the way to id 0 — nothing older exists
+            }
+            let next_from_id = match cursor_kind {
+                HistoryCursor::TsWindow => (from_id as u64).saturating_sub(1),
+                HistoryCursor::TsCursor => from_id as u64,
+                HistoryCursor::FromId => (from_id as u64).saturating_sub(page_size as u64),
+            };
+            let res = rest.get_agg_trades(
+                digdigdig3::core::types::SymbolInput::Raw(wire_sym),
+                Some(page_size as u32),
+                Some(next_from_id),
+                account_type,
+            ).await;
+            match res {
+                Ok(trades) => trades.iter().map(|t| digdigdig3_station::data::AggTradePoint {
+                    ts_ms: t.timestamp,
+                    price: t.price,
+                    quantity: t.quantity,
+                    side: if t.is_buy { 0u8 } else { 1u8 },
+                    agg_id: t.aggregate_id as u64,
+                }).collect(),
+                Err(_) => {
+                    crate::dlog!(
+                        "[run_delta_group] page fetch error key={:?}/{} — ending group, no latch",
+                        key.0, key.1
+                    );
+                    return false;
+                }
+            }
+        };
+
+        if points.is_empty() {
+            // Venue-dry for this region — treat as region-complete: either
+            // the region abuts now and truly nothing more exists, or the
+            // venue simply has no rows left above the floor.
+            return true;
+        }
+
+        let min_ts = points.iter().map(|p| p.ts_ms).min();
+        let min_id = points.iter().map(|p| p.agg_id).min();
+        let reached_floor = min_ts.is_some_and(|ts| ts <= floor_ts);
+        emit_trade_agg_page(tx, engine, key, exchange_id, account_type, symbol_str, &points, min_id.map(|v| v as i64), false);
+        pages_landed += 1;
+
+        if reached_floor {
+            return true;
+        }
+        if engine.with_state(key, |s| s.ram_capped) {
+            return false;
+        }
+    }
+
+    // Group budget exhausted without reaching the floor — region only
+    // partially covered; caller re-plans on the next flight.
+    false
+}
+
+/// Zip-coverage planner entry point (owner doctrine 2026-07-14): the
+/// per-flight driver for any instrument whose venue declares a
+/// daily-archive-zip [`ArchiveSpec`] — REPLACES the legacy `run_trade_ramp`
+/// boundary-transition dance for that instrument. Runs ONCE per flight
+/// (mirrors the ladder-driven legacy loop's overall shape — this is the
+/// direct successor to `'run: loop` for archive-spec venues, not a nested
+/// sub-loop of it):
+///
+/// 1. resolve (cold-build / lazily refresh) this instrument's
+///    [`crate::zip_coverage::ZipCoverage`] via [`resolve_zip_coverage`];
+/// 2. compute the requested window `[target_ts .. now_ms)` from the
+///    flight's ladder state (same `target_ts` the legacy ladder already
+///    tracks — the planner does not introduce a second floor concept);
+/// 3. [`crate::zip_coverage::plan_fetch`] the region split;
+/// 4. execute `delta_ranges` FIRST (head paints fastest), then
+///    `zip_ranges` day-by-day oldest-region-first via [`run_archive_group`]
+///    (interleaving delta/zip mid-flight is a future optimization, not
+///    required — sequential-in-one-flight is explicitly allowed by the
+///    owner spec, and is wasm-friendly: no extra task spawning);
+/// 5. a mid-walk 404 inside a zip range is recorded into `holes` by
+///    [`run_archive_group`] itself (`zc_key: Some`) — the NEXT planning
+///    call already routes that day to delta.
+///
+/// Ends the flight (`RampState::end_flight`) exactly once, same as the
+/// legacy `'run: loop`'s tail.
+async fn run_planned_trade_flight(
+    fetch_hub: &Arc<digdigdig3::connector_manager::ExchangeHub>,
+    rest: &dyn digdigdig3::CoreConnector,
+    tx: &tokio::sync::broadcast::Sender<LiveUpdate>,
+    engine: &BackfillEngine,
+    key: &BackfillKey,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_str: &str,
+    wire_sym: &str,
+    cursor_kind: HistoryCursor,
+    spec: ArchiveSpec,
+    proxy_base: Option<String>,
+    gate_on_target: bool,
+) {
+    let now_ms = engine.with_state(key, |s| s.flight_now_ms).unwrap_or_else(now_ms);
+
+    let zc_key: ZipCoverageKey = (exchange_id, symbol_str.to_string(), account_type);
+    let prober = day_probe(proxy_base.clone());
+    let fetcher = day_fetch(proxy_base);
+    resolve_zip_coverage(&prober, engine, &zc_key, wire_sym, spec, now_ms).await;
+
+    // Planner self-drive loop — the planner's mirror of the legacy
+    // `'run: loop`'s ladder mechanics. Each iteration plans against the
+    // CURRENT rung's target and the CURRENT loaded edge, executes, then
+    // either advances the rung (`advance_ladder_if_reached`, exactly the
+    // legacy self-drive) and replans deeper, or stops. Without this loop
+    // an empty plan (rung already covered by the store) was a no-op
+    // flight that never advanced the ladder — pressure then re-fired
+    // no-op flights in a hot loop and loading stalled dead (live
+    // incident 2026-07-15, second half).
+    'plan: loop {
+        if engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+            break 'plan;
+        }
+        let target_ts = engine.with_state(key, |s| s.target_ts).unwrap_or(now_ms - 3_600_000);
+        // Backfill plans only BELOW what is already loaded. The store owns
+        // [oldest_seen_ts .. now] (live ws + prior flights) — planning up
+        // to `now` re-covered the already-loaded region on EVERY
+        // iteration: the newest zip day re-downloaded each time (91
+        // re-fetches of one day, live incident 2026-07-15, first half),
+        // its rows trimmed to zero, zero depth progress, plus the head
+        // REST pages re-walked per flight. Cold store (nothing seen yet)
+        // still plans to `now` — that is the one iteration that genuinely
+        // owns the head. MUST be `oldest_seen_ts` (wall-clock ms), NEVER
+        // `oldest_anchor` — the anchor is the venue-native pagination
+        // CURSOR (a trade ID on FromId/TsCursor venues; OKX ids ~1.03e9
+        // read as ms = year 2002, upper<target, every plan empty, backfill
+        // dead — live incident 2026-07-15, third act).
+        let upper_ms = engine
+            .with_state(key, |s| s.oldest_seen_ts)
+            .map_or(now_ms, |t| t.min(now_ms));
+        // Re-snapshot per iteration — run_archive_group records holes as
+        // it walks; the replan must see them.
+        let coverage = engine
+            .snapshot_zip_coverage(&zc_key)
+            .unwrap_or_else(|| crate::zip_coverage::ZipCoverage::new(day_from_archive_since(spec.since_ms)));
+        let seen_before = engine.with_state(key, |s| s.oldest_seen_ts);
+        let plan = crate::zip_coverage::plan_fetch((target_ts, upper_ms), &coverage, now_ms);
+
+        crate::dlog!(
+            "[trade_planner] key={:?}/{} target_ts={} upper={} zip_ranges={} delta_ranges={}",
+            key.0, key.1, target_ts, upper_ms, plan.zip_ranges.len(), plan.delta_ranges.len()
+        );
+
+        if plan.zip_ranges.is_empty() && plan.delta_ranges.is_empty() {
+            // Rung already covered by the store — advance it (legacy
+            // self-drive) and replan deeper, or we are done.
+            if engine.with_state(key, RampState::advance_ladder_if_reached) {
+                continue 'plan;
+            }
+            break 'plan;
+        }
+
+        // ZIP RANGES FIRST — the zip is the DEFAULT deep source (owner
+        // doctrine): a published day lands in one request while the same
+        // span costs thousands of REST pages (OKX head day = 650k trades
+        // x 100/page = 6.5k pages, ~20 min — executing delta first meant
+        // the zip step was never reached in practice; live incident
+        // 2026-07-15, act 6). NEWEST range first (`zip_ranges` is already
+        // sorted newest-first) — the walk grows contiguously downward
+        // from the loaded edge, matching the prepend direction. Each
+        // range is walked via `DayIterator::from_start` seeded at the
+        // range's NEWER day, recording holes for THIS instrument's
+        // coverage as they're discovered.
+        for (older_day, newer_day) in plan.zip_ranges.iter() {
+            if engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+                break;
+            }
+            let _ = older_day; // DayIterator walks down to `spec.since_ms`'s floor on its own; the plan's lower bound is informational (floor is the real stop condition, matching `run_archive_group`'s existing contract).
+            run_archive_group(
+                &fetcher, tx, engine, key, exchange_id, account_type,
+                symbol_str, wire_sym, spec, gate_on_target, Some(*newer_day), Some(&zc_key),
+            ).await;
+        }
+
+        // Delta regions after the zips: the head/lag/hole slices REST is
+        // responsible for.
+        for (region_start, region_end) in &plan.delta_ranges {
+            if engine.with_state(key, |s| s.ram_capped) {
+                break;
+            }
+            // A region whose newer edge is (approximately) "now" is the
+            // head — seed cold (`until_ts: None`); any other region seeds
+            // explicitly at its newer edge so the walk starts there
+            // instead of resuming whatever `oldest_anchor` last held (a
+            // different, already-covered region).
+            let is_head = (now_ms - *region_end).abs() < 60_000;
+            let until_ts = if is_head { None } else { Some(*region_end) };
+            run_delta_group(
+                fetch_hub, rest, tx, engine, key, exchange_id, account_type,
+                symbol_str, wire_sym, cursor_kind, until_ts, *region_start, gate_on_target,
+            ).await;
+        }
+
+        // Progress check: if this iteration moved the loaded edge, keep
+        // going (pressure phase walks until venue-dry/RAM independent of
+        // rung advances). If it did NOT move and the ladder has no deeper
+        // rung to offer, stop — an unfulfillable plan (e.g. a FromId
+        // venue's non-head delta region, doctrine TODO) must not spin.
+        let seen_after = engine.with_state(key, |s| s.oldest_seen_ts);
+        let advanced = engine.with_state(key, RampState::advance_ladder_if_reached);
+        if seen_after == seen_before && !advanced {
+            // Unfulfillable-delta stall (live incident 2026-07-15, act 4):
+            // a RecentOnly venue (bybit) cannot close the open-day delta
+            // (one shallow 60-row page), the Hour rung's floor is never
+            // reached by data, the ladder refuses to advance, and the zip
+            // region below stays unreachable forever - the legacy loop
+            // chained straight into the archive here. Doctrine: an
+            // uncloseable delta is the gap band's job to MARK, never a
+            // wall in front of the zip. If a published day exists below
+            // the loaded edge and this iteration planned no zips, pull
+            // archive days directly; the landed day moves the loaded
+            // edge, and the next iteration plans normally.
+            let newest = coverage.newest_published_day;
+            let zip_reachable = newest.map_or(false, |nd| {
+                let nd_end_ms = (nd + chrono::Duration::days(1))
+                    .and_hms_opt(0, 0, 0)
+                    .map(|dt| dt.and_utc().timestamp_millis())
+                    .unwrap_or(i64::MAX);
+                plan.zip_ranges.is_empty() && nd_end_ms <= upper_ms
+            });
+            if zip_reachable && !engine.with_state(key, |s| s.ram_capped || s.exhausted) {
+                run_archive_group(
+                    &fetcher, tx, engine, key, exchange_id, account_type,
+                    symbol_str, wire_sym, spec, gate_on_target, newest, Some(&zc_key),
+                ).await;
+                let seen_now = engine.with_state(key, |s| s.oldest_seen_ts);
+                if seen_now != seen_after {
+                    continue 'plan;
+                }
+            }
+            break 'plan;
+        }
+    }
+
+    let final_exhausted = engine.with_state(key, |s| s.exhausted);
+    let _ = tx.send(LiveUpdate::LayerBackfilled {
+        exchange_id, symbol: symbol_str.to_string(), account_type,
+        layer: LayerId::Trades.wire_label(), prepended: 0,
+        exhausted: final_exhausted, stage_boundary: true,
+    });
+    engine.with_state(key, RampState::end_flight);
 }
 
 /// Shared ramp-group runner for the trade layer. The first page of a fresh
@@ -1580,6 +2187,26 @@ async fn run_trade_ramp(
     // call this group makes.
     let proxy_base = crate::archive_proxy_base();
 
+    // Zip-coverage planner (owner doctrine 2026-07-14): for ANY venue that
+    // declares a daily-archive-zip for this instrument, the zip is the
+    // DEFAULT history source — REST only closes the delta regions the zip
+    // cannot cover (head, publication lag, interior holes). This branch
+    // takes over the ENTIRE flight for archive-spec venues and returns;
+    // the legacy `already_in_archive_mode`/`RecentOnly`/REST-wall-chaining
+    // code below this point is therefore reachable ONLY for
+    // `archive_spec.is_none()` venues, where every one of its own
+    // archive-chaining branches is already unreachable on its own terms
+    // (`chain_to_archive` always requires `archive_spec.is_some()`) — i.e.
+    // this branch does not remove any behavior, it just runs BEFORE the
+    // old boundary-transition sites for the venues that used to reach them.
+    if let Some(spec) = archive_spec {
+        run_planned_trade_flight(
+            &fetch_hub, rest.as_ref(), &tx, &engine, &key, exchange_id, account_type,
+            &symbol_str, &wire_sym, cursor_kind, spec, proxy_base.clone(), gate_on_target,
+        ).await;
+        return;
+    }
+
     'run: loop {
     let is_cold = engine.with_state(&key, |s| s.oldest_anchor.is_none() && s.groups_completed == 0);
     let already_in_archive_mode = engine.with_state(&key, |s| s.archive_mode);
@@ -1598,7 +2225,7 @@ async fn run_trade_ramp(
         if let Some(spec) = archive_spec {
             run_archive_group(
                 &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
-                &symbol_str, &wire_sym, spec, gate_on_target,
+                &symbol_str, &wire_sym, spec, gate_on_target, None, None,
             ).await;
         } else {
             // Spec disappeared (shouldn't happen — capability declarations
@@ -1630,7 +2257,7 @@ async fn run_trade_ramp(
             engine.with_state(&key, RampState::enter_archive_mode);
             run_archive_group(
                 &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
-                &symbol_str, &wire_sym, spec, gate_on_target,
+                &symbol_str, &wire_sym, spec, gate_on_target, None, None,
             ).await;
         } else {
             engine.with_state(&key, |s| s.exhausted = true);
@@ -1670,7 +2297,7 @@ async fn run_trade_ramp(
                     if remaining > 0 {
                         run_archive_group(
                             &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
-                            &symbol_str, &wire_sym, spec, gate_on_target,
+                            &symbol_str, &wire_sym, spec, gate_on_target, None, None,
                         ).await;
                     }
                 }
@@ -1750,7 +2377,7 @@ async fn run_trade_ramp(
                     if remaining > 0 {
                         run_archive_group(
                             &day_fetch(proxy_base.clone()), &tx, &engine, &key, exchange_id, account_type,
-                            &symbol_str, &wire_sym, spec, gate_on_target,
+                            &symbol_str, &wire_sym, spec, gate_on_target, None, None,
                         ).await;
                     }
                 }
@@ -2674,7 +3301,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             let mut prepended_batches = 0;
@@ -2720,7 +3347,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             assert!(engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(false), "404 at/below floor must latch exhausted");
@@ -2762,7 +3389,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3, "gap day does not count toward the landed-page budget");
@@ -2799,7 +3426,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             assert!(
@@ -2833,7 +3460,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Bybit, AccountType::Spot,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             assert!(!engine.snapshot(&key).map(|s| s.exhausted).unwrap_or(true), "transient error must not latch exhausted");
@@ -2852,10 +3479,13 @@ mod tests {
             engine.with_state(&key, RampState::begin_flight);
 
             // Simulates the RestWindow → archive continuation seam: REST
-            // already loaded down to `oldest_anchor`, so the FIRST archive
-            // day (which straddles that boundary) must have its overlapping
-            // rows trimmed before being counted/emitted.
+            // already loaded down to `oldest_seen_ts` (the wall-clock ms
+            // low-water mark — the trim reads THIS, never the venue-native
+            // `oldest_anchor` cursor), so the FIRST archive day (which
+            // straddles that boundary) must have its overlapping rows
+            // trimmed before being counted/emitted.
             let wall_ms = day_ms(2026, 1, 10) + 12 * 60 * 60 * 1000; // noon on the 10th
+            engine.with_state(&key, |s| s.oldest_seen_ts = Some(wall_ms));
             engine.with_state(&key, |s| s.oldest_anchor = Some(wall_ms));
             engine.with_state(&key, |s| s.ramp_step = 1);
 
@@ -2882,7 +3512,7 @@ mod tests {
 
             run_archive_group(
                 &fetcher, &tx, &engine, &key, ExchangeId::Binance, AccountType::FuturesCross,
-                "BTCUSDT", "BTCUSDT", spec, true,
+                "BTCUSDT", "BTCUSDT", spec, true, None, None,
             ).await;
 
             let mut all_ts: Vec<i64> = Vec::new();

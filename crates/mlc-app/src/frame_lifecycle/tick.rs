@@ -622,6 +622,17 @@ impl ChartApp {
 
             for (cid_scroll, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                 let chart_type = chart_type_by_chart.get(cid_scroll).copied().unwrap_or("candles");
+                {
+                    static SCROLL_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if SCROLL_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 240 == 0 {
+                        crate::sglog!(
+                            "[scroll_loop] cid={:?} ct={} bid={:?} series_len={:?}",
+                            cid_scroll, chart_type,
+                            bid_by_chart.get(cid_scroll),
+                            active_series_by_chart.get(cid_scroll).map(|s| s.as_active_series().len())
+                        );
+                    }
+                }
                 let is_fold = mlc_backend::chart_type::is_fold_chart_type(chart_type);
                 // Unified-data-plane Э4: the 6 trade-fed fold types
                 // (tick_bar/tick_imbalance_bar/volume_imbalance_bar/run_bar/
@@ -666,8 +677,25 @@ impl ChartApp {
                     None => continue,
                 };
                 let bar_count_scroll = series.len();
-                if bar_count_scroll == 0 { continue; }
-                if window.pending_symbol_load { continue; }
+                // Trade-fold charts are exempt from the zero-bars skip: the
+                // active-series resolver can land on the bubble's KLINE
+                // array, which is legitimately empty for a chart born as a
+                // trade-fed type (request_bars is skipped for them) — the
+                // zero-check then swallowed every deepening demand and the
+                // backfill never went past its first wave (live incident
+                // 2026-07-15, bybit day-2). Their demand math below runs on
+                // the trade store (`trade_oldest_ts`), not on this count.
+                if bar_count_scroll == 0 && !is_trade_fold { continue; }
+                // A symbol switch in flight blocks the KLINE scroll-fetch
+                // below — but NOT the fold/trade-fold layer demands: those
+                // route through BackfillEngine's own single-flight/ladder
+                // guards, and a trade-fed chart may never receive the kline
+                // BarsLoaded that clears this flag (request_bars is skipped
+                // for trade-fed types at boot AND on ApplySymbol), which
+                // left the x2 deepening demand permanently gated — bybit
+                // footprint never loaded past its first archive day (live
+                // incident 2026-07-15, final act).
+                if window.pending_symbol_load && !is_fold && !is_trade_fold { continue; }
 
                 // Scroll-pressure trigger (unified-data-plane Э2 doctrine:
                 // fire at ~80% of LOADED history toward the oldest edge).
@@ -718,6 +746,17 @@ impl ChartApp {
                     need = need.min(fit);
                     fit > 0 && bar_count_scroll < need
                 };
+                if is_trade_fold {
+                    static TF_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if TF_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+                        crate::sglog!(
+                            "[tf_demand] ct={} bars={} visible={} fit={} view_start={} edge={} cold={} pending={}",
+                            chart_type, bar_count_scroll, window.viewport().visible_bars(),
+                            window.viewport().max_fit_bars(), window.viewport().view_start,
+                            edge_pressure, cold_fill, window.pending_symbol_load
+                        );
+                    }
+                }
                 if !edge_pressure && !cold_fill { continue; }
 
                 if max_loaded > 0 && bar_count_scroll >= max_loaded as usize { continue; }
@@ -819,6 +858,15 @@ impl ChartApp {
                 let Some(oldest_ts) = self.core.trade_oldest_ts(eid, &symbol, account_type) else {
                     // Store entry not seeded yet — the subscribe-time Hour
                     // rung is still in flight; nothing to deepen from.
+                    {
+                        static TS_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                        if TS_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+                            crate::sglog!(
+                                "[tf_demand] trade_oldest_ts=None eid={:?} sym={} at={:?}",
+                                eid, symbol, account_type
+                            );
+                        }
+                    }
                     continue;
                 };
                 let now_wall_ms = web_time::SystemTime::now()

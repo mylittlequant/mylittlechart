@@ -47,6 +47,7 @@ mod bridge;
 mod provider;
 mod convert;
 pub mod backfill_engine;
+pub mod zip_coverage;
 
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
