@@ -219,32 +219,18 @@ pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::
 // =============================================================================
 
 /// Parse a timeframe name string (e.g. "1m", "5m", "1H", "4h", "1D") into a
-/// [`Timeframe`].  Case-insensitive for the suffix letter.
+/// [`Timeframe`].  Case-insensitive for the suffix letter (except the
+/// `m`-minute / `M`-month pair, which stays case-sensitive by design).
+///
+/// Thin wrapper over [`mlc_core::state::Timeframe::parse`] (consolidation,
+/// user-granularity-templates-inner arc, кусок 1) — this used to be an
+/// independent closed match table (one of three hand-maintained copies of
+/// "TF name -> duration", alongside `ChangeTimeframe`'s dispatch and
+/// `ALL_TF_IDS`); it is now a generic parser so any `<count><unit>` name
+/// (not just the 17 builtins) resolves here too. Callers are unaffected —
+/// same signature, same `None` on unknown input.
 fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
-    use mlc_core::state::Timeframe;
-    // Match exact Timeframe.name values (case-sensitive: "1m" = minute, "1M" = month).
-    // Convention: `Timeframe.interval_ms` is REAL milliseconds for time TFs
-    // (the exchange-standard unit). Earlier this fn passed minute counts here,
-    // which made the reactor's `period_secs = interval_ms / 1000` round to 0
-    // and silently dropped every live trade for these TFs.
-    match name {
-        "1m"  => Some(Timeframe::m1()),
-        "3m"  => Some(Timeframe::new("3m",  3 * 60_000)),
-        "5m"  => Some(Timeframe::m5()),
-        "15m" => Some(Timeframe::m15()),
-        "30m" => Some(Timeframe::m30()),
-        "1H" | "1h"  => Some(Timeframe::h1()),
-        "2H" | "2h"  => Some(Timeframe::new("2H",  2 * 3_600_000)),
-        "4H" | "4h"  => Some(Timeframe::h4()),
-        "6H" | "6h"  => Some(Timeframe::new("6H",  6 * 3_600_000)),
-        "8H" | "8h"  => Some(Timeframe::new("8H",  8 * 3_600_000)),
-        "12H" | "12h" => Some(Timeframe::new("12H", 12 * 3_600_000)),
-        "1D" | "1d"  => Some(Timeframe::d1()),
-        "3D" | "3d"  => Some(Timeframe::new("3D",  3 * 86_400_000)),
-        "1W" | "1w"  => Some(Timeframe::w1()),
-        "1M"  => Some(Timeframe::mn1()),
-        _ => None,
-    }
+    mlc_core::state::Timeframe::parse(name)
 }
 
 // =============================================================================
@@ -1353,6 +1339,14 @@ impl ChartApp {
         self.core.bubbles().chart_type_param(bid)
     }
 
+    /// `chart_type_param_mode` of the bubble attached to this chart (renko/
+    /// kagi ATR(14) box-size mode — granularity arc, кусок 2).
+    #[inline]
+    pub fn chart_type_param_mode_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<mlc_core::chart_type::ParamMode> {
+        let bid = self.bubble_for_chart(chart_id)?;
+        self.core.bubbles().chart_type_param_mode(bid)
+    }
+
     /// `chart_type_interval` of the bubble attached to this chart.
     #[inline]
     pub fn chart_type_interval_for_chart(&self, chart_id: mlc_core::state::ChartId) -> Option<&'static str> {
@@ -1537,9 +1531,16 @@ impl ChartApp {
     /// no active window, or the venue's kline-interval capability isn't
     /// known yet (exchange not connected) — dropdown renders with no marks
     /// either way.
+    ///
+    /// Also covers user-favorited custom TF ids (`tf_{name}`,
+    /// user-granularity-templates-inner arc, кусок 1) — this is why the map
+    /// is keyed by owned `String` rather than `&'static str`: a favorite
+    /// name (e.g. `"7m"`) has no `'static` literal to key off. Lookups by
+    /// callers holding a `&str` id are unaffected (`HashMap<String,
+    /// _>::get` accepts `&str` via `Borrow`).
     pub fn timeframe_native_map(
         &self,
-    ) -> Option<std::collections::HashMap<&'static str, bool>> {
+    ) -> Option<std::collections::HashMap<String, bool>> {
         let cid = self.panel_app.panel_grid.active_container_id()?;
         let account_type = self.account_type_for_chart(cid).unwrap_or_default();
         let exchange_id = self.exchange_id_for_chart(cid);
@@ -1553,7 +1554,16 @@ impl ChartApp {
                 // map rather than mixing known/unknown marks for one venue.
                 return None;
             };
-            map.insert(tf_id, native);
+            map.insert(tf_id.to_string(), native);
+        }
+        for name in &self.core.user().profile().domain.granularity_favorites.time_tfs {
+            let Some(interval) = crate::active_series::tf_id_to_dig3_interval(&format!("tf_{}", name)) else {
+                continue;
+            };
+            let Some(native) = self.core.kline_interval_native(&interval, exchange_id, account_type) else {
+                return None;
+            };
+            map.insert(format!("tf_{}", name), native);
         }
         Some(map)
     }
@@ -1963,6 +1973,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Granularity favorites (kusok 1): custom TF name (letters+digits,
+            // e.g. "7m") and custom numeric param (digits+dot) input rows.
+            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_alphanumeric())
+                .with_max_len(8));
+            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(16));
             // Wave 1 search/dialog fields.
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
@@ -2179,6 +2197,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Granularity favorites (kusok 1): custom TF name (letters+digits,
+            // e.g. "7m") and custom numeric param (digits+dot) input rows.
+            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_alphanumeric())
+                .with_max_len(8));
+            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(16));
             // Wave 1 search/dialog fields.
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
@@ -3066,6 +3092,14 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            // Granularity favorites (kusok 1): custom TF name (letters+digits,
+            // e.g. "7m") and custom numeric param (digits+dot) input rows.
+            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_alphanumeric())
+                .with_max_len(8));
+            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
+                .with_filter(|c| c.is_ascii_digit() || c == '.')
+                .with_max_len(16));
             // Wave 1 search/dialog fields.
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
@@ -5397,6 +5431,7 @@ impl ChartApp {
             let chart_type_data_modes = self.chart_type_data_modes();
             let timeframe_native_map = self.timeframe_native_map();
             let footprint_live_only = self.footprint_live_only();
+            let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5415,6 +5450,7 @@ impl ChartApp {
                 chart_type_data_modes.as_ref(),
                 timeframe_native_map.as_ref(),
                 footprint_live_only,
+                &granularity_favorites,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6114,6 +6150,7 @@ impl ChartApp {
         let chart_type_data_modes = self.chart_type_data_modes();
         let timeframe_native_map = self.timeframe_native_map();
         let footprint_live_only = self.footprint_live_only();
+        let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6132,6 +6169,7 @@ impl ChartApp {
             chart_type_data_modes.as_ref(),
             timeframe_native_map.as_ref(),
             footprint_live_only,
+            &granularity_favorites,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);

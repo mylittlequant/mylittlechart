@@ -7231,6 +7231,8 @@ impl ChartApp {
                     .unwrap_or("candles").to_string();
                 let snap_chart_type_param = self.chart_type_param_for_chart(chart_id)
                     .unwrap_or(0.0);
+                let snap_chart_type_param_mode = self.chart_type_param_mode_for_chart(chart_id)
+                    .unwrap_or_default();
                 let snap_chart_type_interval = self.chart_type_interval_for_chart(chart_id)
                     .unwrap_or("1m").to_string();
                 // Phase 4 C: panel state (18 display/series fields) is in panels_store.
@@ -7244,7 +7246,7 @@ impl ChartApp {
                 preset.windows.push(crate::persistence::build_chart_window_snapshot(
                     window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
-                    snap_chart_type, snap_chart_type_param, snap_chart_type_interval,
+                    snap_chart_type, snap_chart_type_param, snap_chart_type_param_mode, snap_chart_type_interval,
                 ));
             }
         }

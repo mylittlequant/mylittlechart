@@ -38,6 +38,11 @@ impl ChartApp {
                 notification_settings: existing.domain.notification_settings.clone(),
                 // Preserve profile identity fields managed by the profile system
                 profile_id: existing.domain.profile_id.clone(),
+                // Granularity favorites (kusok 1): mutated in-place via
+                // `self.core.user_mut().profile_mut()` at add/remove time
+                // (chart_out_events.rs), not via this snapshot builder —
+                // preserve whatever is already on the live profile.
+                granularity_favorites: existing.domain.granularity_favorites.clone(),
             },
             ui: mlc_core::user_profile::profile::ProfileUiSettings {
                 active_preset_id: self.panel_app.active_preset_id.clone(),

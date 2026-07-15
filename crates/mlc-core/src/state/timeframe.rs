@@ -150,6 +150,56 @@ impl Timeframe {
     pub fn d1() -> Self { Self::new("1D", 86_400_000) }
     pub fn w1() -> Self { Self::new("1W", 604_800_000) }
     pub fn mn1() -> Self { Self::new("1M", 2_592_000_000) }
+
+    /// Parse a `<count><unit>` timeframe name (e.g. `"7m"`, `"2H"`, `"90m"`,
+    /// `"1D"`) into a [`Timeframe`], generalizing the closed per-name match
+    /// tables that used to live independently in `mlc-app::parse_timeframe_name`
+    /// and `ChangeTimeframe`'s dispatch (user-granularity-templates-inner
+    /// arc, кусок 1).
+    ///
+    /// Unit letters: `s` seconds, `m` minutes, `h`/`H` hours, `d`/`D` days,
+    /// `w`/`W` weeks, `M` months (~30 days, matching [`Self::mn1`]'s
+    /// `interval_ms`). The case split is deliberately narrow: only `m`
+    /// (minute) vs `M` (month) is ambiguous on a bare letter, so lowercase
+    /// `m` always means minute and uppercase `M` always means month; every
+    /// other unit letter is accepted in either case for convenience since it
+    /// has no collision.
+    ///
+    /// Output name casing mirrors the existing named constructors exactly
+    /// (`"1m"`, `"1H"`, `"1D"`, `"1W"`, `"1M"` for hour/day/week/month;
+    /// seconds/minutes stay lowercase) so a parsed builtin TF is
+    /// field-for-field identical to calling its named constructor.
+    ///
+    /// Rejects: empty/non-numeric count, count of `0`, counts longer than 4
+    /// digits (guards against garbage like `"99999999m"`), unknown unit
+    /// letters, and any other malformed input. Returns `None` for all of
+    /// these — callers keep their existing "unknown timeframe_id" logging.
+    pub fn parse(name: &str) -> Option<Self> {
+        let split_at = name.find(|c: char| !c.is_ascii_digit())?;
+        let (digits, unit) = name.split_at(split_at);
+        if digits.is_empty() || digits.len() > 4 {
+            return None;
+        }
+        let count: i64 = digits.parse().ok()?;
+        if count == 0 {
+            return None;
+        }
+        // Reject anything past the single unit letter (e.g. "5ms", "5mm").
+        if unit.chars().count() != 1 {
+            return None;
+        }
+        let unit_char = unit.chars().next()?;
+
+        match unit_char {
+            's' => Some(Self::new(&format!("{}s", count), count * 1_000)),
+            'm' => Some(Self::new(&format!("{}m", count), count * 60_000)),
+            'h' | 'H' => Some(Self::new(&format!("{}H", count), count * 3_600_000)),
+            'd' | 'D' => Some(Self::new(&format!("{}D", count), count * 86_400_000)),
+            'w' | 'W' => Some(Self::new(&format!("{}W", count), count * 604_800_000)),
+            'M' => Some(Self::new(&format!("{}M", count), count * 2_592_000_000)),
+            _ => None,
+        }
+    }
 }
 
 impl Default for Timeframe {
@@ -264,5 +314,75 @@ mod tests {
         assert_eq!(Timeframe::s30().interval_ms, 30_000);
         assert!(Timeframe::s1().is_intraday());
         assert!(!Timeframe::s1().is_daily_or_higher());
+    }
+
+    /// `Timeframe::parse` must reproduce every one of the 17 builtin named
+    /// constructors field-for-field (user-granularity-templates-inner arc,
+    /// кусок 1) — the parser is the single source of truth the three former
+    /// independent closed match tables (`ALL_TF_IDS`, `ChangeTimeframe`,
+    /// `parse_timeframe_name`) now funnel through.
+    #[test]
+    fn parse_matches_all_builtin_named_ctors() {
+        let cases: &[(&str, Timeframe)] = &[
+            ("1s", Timeframe::s1()),
+            ("5s", Timeframe::s5()),
+            ("15s", Timeframe::s15()),
+            ("30s", Timeframe::s30()),
+            ("1m", Timeframe::m1()),
+            ("3m", Timeframe::new("3m", 3 * 60_000)),
+            ("5m", Timeframe::m5()),
+            ("15m", Timeframe::m15()),
+            ("30m", Timeframe::m30()),
+            ("1h", Timeframe::h1()),
+            ("2h", Timeframe::new("2H", 2 * 3_600_000)),
+            ("4h", Timeframe::h4()),
+            ("6h", Timeframe::new("6H", 6 * 3_600_000)),
+            ("12h", Timeframe::new("12H", 12 * 3_600_000)),
+            ("1d", Timeframe::d1()),
+            ("1w", Timeframe::w1()),
+            ("1M", Timeframe::mn1()),
+        ];
+        for (input, expected) in cases {
+            let parsed = Timeframe::parse(input)
+                .unwrap_or_else(|| panic!("parse({input:?}) returned None"));
+            assert_eq!(parsed, *expected, "parse({input:?}) mismatch");
+        }
+
+        // Uppercase hour/day/week inputs must resolve identically to their
+        // lowercase counterparts above (both forms accepted, single output).
+        assert_eq!(Timeframe::parse("1H"), Some(Timeframe::h1()));
+        assert_eq!(Timeframe::parse("1D"), Some(Timeframe::d1()));
+        assert_eq!(Timeframe::parse("1W"), Some(Timeframe::w1()));
+    }
+
+    #[test]
+    fn parse_custom_timeframes_produce_sane_interval_ms() {
+        let seven_m = Timeframe::parse("7m").expect("7m must parse");
+        assert_eq!(seven_m.name, "7m");
+        assert_eq!(seven_m.interval_ms, 7 * 60_000);
+        assert_eq!(seven_m.kind, TfKind::Time);
+
+        let ninety_m = Timeframe::parse("90m").expect("90m must parse");
+        assert_eq!(ninety_m.name, "90m");
+        assert_eq!(ninety_m.interval_ms, 90 * 60_000);
+
+        let ten_s = Timeframe::parse("10s").expect("10s must parse");
+        assert_eq!(ten_s.name, "10s");
+        assert_eq!(ten_s.interval_ms, 10_000);
+
+        let two_d = Timeframe::parse("2D").expect("2D must parse");
+        assert_eq!(two_d.name, "2D");
+        assert_eq!(two_d.interval_ms, 2 * 86_400_000);
+    }
+
+    #[test]
+    fn parse_rejects_invalid_input() {
+        assert_eq!(Timeframe::parse("0m"), None, "zero count must be rejected");
+        assert_eq!(Timeframe::parse("banana"), None, "non-numeric input must be rejected");
+        assert_eq!(Timeframe::parse("1x"), None, "unknown unit letter must be rejected");
+        assert_eq!(Timeframe::parse(""), None, "empty input must be rejected");
+        assert_eq!(Timeframe::parse("m"), None, "missing count must be rejected");
+        assert_eq!(Timeframe::parse("99999m"), None, "5-digit count must be rejected");
+        assert_eq!(Timeframe::parse("5ms"), None, "trailing garbage after unit must be rejected");
     }
 }

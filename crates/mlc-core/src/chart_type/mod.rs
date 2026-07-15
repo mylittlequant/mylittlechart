@@ -14,12 +14,15 @@
 pub mod registry;
 pub mod identity;
 pub mod generation;
+pub mod resolver;
 
 pub use registry::{
     all, by_id, BarsSourceKind, ChartTypeDef, ChartTypeGroup, ChartTypeKind,
     ChartTypeParamOption, ChartTypeParamSpec, DataMode, DataRequirement,
-    DeepenKind, FixedConsts, IdentityKey, MachineKind, RenderPolicy,
-    ResolutionKind, SeriesVariant, WickPolicy, RESOLUTION_PARAM_ITEM_PREFIX,
+    DeepenKind, FixedConsts, IdentityKey, MachineKind, ParamMode, RenderPolicy,
+    ResolutionKind, SeriesVariant, WickPolicy, RESOLUTION_PARAM_ATR14_ITEM_ID,
+    RESOLUTION_PARAM_ITEM_PREFIX, TF_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+    PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID,
 };
 pub use identity::{
     bar_identity, bar_identity_key_fn, cvd_identity, cvd_identity_key_fn,
@@ -29,3 +32,4 @@ pub use identity::{
     three_line_break_identity_key_fn, tpo_identity, tpo_identity_key_fn,
 };
 pub use generation::BarsGeneration;
+pub use resolver::resolve_instrument_relative_default;

@@ -98,3 +98,18 @@ pub const RECOVERY_KEY: &str = "recovery_key";
 
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
+
+/// Custom-timeframe input row ("Custom…") in the `timeframe_selector`
+/// dropdown's FAVORITES section (user-granularity-templates-inner arc,
+/// кусок 1). Accepts a `<count><unit>` string (e.g. `"7m"`, `"90m"`),
+/// validated via `mlc_core::state::Timeframe::parse`. Typing an
+/// already-favorited value removes it instead (toggle semantics) — see
+/// `ChartOutEvent::ToggleTimeframeFavorite`'s doc comment.
+pub const TF_FAVORITE_INPUT: &str = "tf_favorite_input";
+
+/// Custom numeric-param input row ("Custom…") in the `timeframe_selector`
+/// dropdown's FAVORITES section for `ResolutionKind::Param` chart types
+/// (user-granularity-templates-inner arc, кусок 1). Accepts a positive
+/// `f64`. Typing an already-favorited value removes it instead (toggle
+/// semantics) — see `ChartOutEvent::ToggleParamFavorite`'s doc comment.
+pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";

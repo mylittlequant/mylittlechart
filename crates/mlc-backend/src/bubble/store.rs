@@ -60,6 +60,7 @@ impl BubbleStore {
             timeframe,
             chart_type: "candles",
             chart_type_param: 0.0,
+            chart_type_param_mode: mlc_core::chart_type::ParamMode::Fixed,
             chart_type_interval: "1m",
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
@@ -120,6 +121,7 @@ impl BubbleStore {
             timeframe,
             chart_type: "candles",
             chart_type_param: 0.0,
+            chart_type_param_mode: mlc_core::chart_type::ParamMode::Fixed,
             chart_type_interval: "1m",
             sync_flags: SyncFlags::default(),
             scale_mode: ScaleMode::Auto,
@@ -299,6 +301,10 @@ impl BubbleStore {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         if bubble.chart_type != ct {
             bubble.chart_type_param = 0.0;
+            // ATR(14) mode is meaningful only for the type it was computed
+            // against — a genuine chart-type change resets it, same rule as
+            // `chart_type_param` itself just above (granularity arc, кусок 2).
+            bubble.chart_type_param_mode = mlc_core::chart_type::ParamMode::Fixed;
         }
         bubble.chart_type = ct;
         bubble.history_depth = crate::bubble::data_bubble::HistoryDepth::default();
@@ -310,6 +316,15 @@ impl BubbleStore {
     pub fn set_chart_type_param(&mut self, bid: BubbleId, param: f64) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         bubble.chart_type_param = param;
+        true
+    }
+
+    /// Update the box-size computation mode (`Fixed`/`Atr14`, renko/kagi
+    /// only) for a bubble known by id directly. See
+    /// [`super::data_bubble::DataBubble::chart_type_param_mode`].
+    pub fn set_chart_type_param_mode(&mut self, bid: BubbleId, mode: mlc_core::chart_type::ParamMode) -> bool {
+        let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
+        bubble.chart_type_param_mode = mode;
         true
     }
 
@@ -685,6 +700,12 @@ impl BubbleStore {
     /// Chart-type numeric parameter of a bubble known by id directly.
     pub fn chart_type_param(&self, bid: BubbleId) -> Option<f64> {
         self.bubbles.get(&bid).map(|b| b.chart_type_param)
+    }
+
+    /// Box-size computation mode (`Fixed`/`Atr14`, renko/kagi only) of a
+    /// bubble known by id directly.
+    pub fn chart_type_param_mode(&self, bid: BubbleId) -> Option<mlc_core::chart_type::ParamMode> {
+        self.bubbles.get(&bid).map(|b| b.chart_type_param_mode)
     }
 
     /// Chart-type kline interval of a bubble known by id directly.

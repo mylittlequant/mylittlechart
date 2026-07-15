@@ -1126,6 +1126,143 @@ impl BackendCore {
             bid, exchange_id, symbol: symbol.to_string(), account_type: account_type_label.to_string(),
         })
     }
+
+    // =========================================================================
+    // === ATR(14) box-size mode (granularity arc, кусок 2, 2026-07-15) =======
+    // =========================================================================
+
+    /// Compute the ATR(14) box size, in instrument TICKS, for renko/kagi's
+    /// `ParamMode::Atr14` mode — `docs/mlc/research/
+    /// industry-resolution-defaults-2026-07-15.md` §3/§5: ATR(14) is the
+    /// industry-documented "smart default" box-size method for both chart
+    /// types (auto-rescales on a symbol switch, unlike a flat tick count).
+    ///
+    /// **Documented convention (deliberate, not the only valid choice):**
+    /// - **1-hour aggregation.** Renko/kagi are non-time-uniform (their own
+    ///   "timeframe" is a box size, not a wall-clock period), so there is no
+    ///   natural TF to compute ATR against. 1h is the chosen convention here
+    ///   — coarse enough to be stable across a session, fine enough to react
+    ///   to a real volatility-regime change within a day.
+    /// - **SMA of True Range**, not Wilder's smoothed ATR (the textbook
+    ///   recursive EMA-like average) — the simple mean of the last 14
+    ///   COMPLETED hourly True Range values. Chosen for reproducibility (a
+    ///   pure function of the last 14 bars, no running-state carried between
+    ///   recomputes) over the marginal smoothing benefit Wilder's method
+    ///   gives; this box-size use case recomputes from scratch on every
+    ///   pick/switch (see [`Self::atr14_box_ticks`]'s callers) rather than
+    ///   maintaining a live EMA, so there is no state to seed Wilder's
+    ///   method with anyway.
+    ///
+    /// Aggregates `bid`'s "1m" kline layer into 1-hour OHLC bars (whichever
+    /// completed hourly buckets the layer currently covers), computes True
+    /// Range per bar (`max(high-low, |high-prev_close|, |low-prev_close|)`,
+    /// the first bar has no `prev_close` and contributes `high-low` only),
+    /// averages the last 14 values, and converts to ticks
+    /// (`atr / tick_size`, rounded up to at least `1.0`).
+    ///
+    /// `None` when there are fewer than 15 completed hourly bars (14 TR
+    /// values need 14 consecutive closed hourly bars plus the one before
+    /// them for the first True Range's `prev_close`) or `tick_size <= 0.0`.
+    /// Callers leave the current `chart_type_param` untouched on `None` —
+    /// see [`crate::BackendCore`]'s `SetChartTypeParamAtr14` handler
+    /// (`mlc-app::input::chart_out_events`) for the "log, don't recompute
+    /// later" contract this doc comment refers to.
+    pub fn atr14_box_ticks(&self, bid: BubbleId, tick_size: f64) -> Option<f64> {
+        if !(tick_size > 0.0) {
+            return None;
+        }
+        let one_min: Vec<Bar> = self.bubbles().kline_layer_snapshot(bid, "1m");
+        let hourly = aggregate_hourly(&one_min);
+        // 14 TR values need 14 consecutive hourly closes plus the bar before
+        // the first of those 14 (to seed its `prev_close`) — 15 hourly bars
+        // total, all of them CLOSED (the aggregator only ever emits closed
+        // buckets — see `aggregate_hourly`'s doc comment).
+        if hourly.len() < 15 {
+            return None;
+        }
+        let trs: Vec<f64> = true_ranges(&hourly);
+        let last_14: &[f64] = &trs[trs.len() - 14..];
+        let atr = last_14.iter().sum::<f64>() / 14.0;
+        Some((atr / tick_size).max(1.0))
+    }
+}
+
+/// Aggregate a chronological "1m" bar slice into 1-hour OHLC bars — only
+/// FULLY COVERED hourly buckets are emitted (a partial trailing hour, e.g.
+/// the current in-progress hour, is dropped) so [`BackendCore::atr14_box_ticks`]
+/// never computes True Range against an artificially-truncated last bar.
+/// "Fully covered" here means every 1m bar whose wall-clock minute falls
+/// inside the hour is present in `bars` — since the source is a continuous
+/// live-fed ring, this is equivalent to "not the hour containing the last
+/// (newest) 1m bar".
+fn aggregate_hourly(bars: &[Bar]) -> Vec<Bar> {
+    if bars.is_empty() {
+        return Vec::new();
+    }
+    const HOUR_SECS: i64 = 3_600;
+    let last_hour_bucket = bars.last().map(|b| b.timestamp.div_euclid(HOUR_SECS)).unwrap_or(0);
+    let mut out: Vec<Bar> = Vec::new();
+    let mut current_bucket: Option<i64> = None;
+    let mut acc: Option<Bar> = None;
+    for bar in bars {
+        let bucket = bar.timestamp.div_euclid(HOUR_SECS);
+        if bucket == last_hour_bucket {
+            // Trailing partial hour — never emitted, see doc comment.
+            break;
+        }
+        match current_bucket {
+            Some(b) if b == bucket => {
+                if let Some(acc_bar) = acc.as_mut() {
+                    acc_bar.high = acc_bar.high.max(bar.high);
+                    acc_bar.low = acc_bar.low.min(bar.low);
+                    acc_bar.close = bar.close;
+                    acc_bar.volume += bar.volume;
+                }
+            }
+            _ => {
+                if let Some(acc_bar) = acc.take() {
+                    out.push(acc_bar);
+                }
+                current_bucket = Some(bucket);
+                acc = Some(Bar::with_volume(
+                    bucket * HOUR_SECS, bar.open, bar.high, bar.low, bar.close, bar.volume,
+                ));
+            }
+        }
+    }
+    if let Some(acc_bar) = acc.take() {
+        out.push(acc_bar);
+    }
+    out
+}
+
+/// True Range per bar (Wilder's original definition, SMA'd by the caller —
+/// see [`BackendCore::atr14_box_ticks`]'s doc comment for why SMA over
+/// Wilder's recursive smoothing). The FIRST bar has no predecessor, so its
+/// True Range is just `high - low` (no `prev_close` term) — matches the
+/// bar this function drops from consideration in `atr14_box_ticks` (the
+/// caller only averages the LAST 14 of `trs`, so the first entry — whose TR
+/// is a slightly different formula — is naturally excluded once there are
+/// more than 15 hourly bars; with exactly 15 bars, `trs.len() == 15` and
+/// `trs[1..]` — the 14 bars that DO have a `prev_close` — are the ones
+/// averaged).
+fn true_ranges(bars: &[Bar]) -> Vec<f64> {
+    let mut out = Vec::with_capacity(bars.len());
+    let mut prev_close: Option<f64> = None;
+    for bar in bars {
+        let tr = match prev_close {
+            None => bar.high - bar.low,
+            Some(pc) => {
+                let a = bar.high - bar.low;
+                let b = (bar.high - pc).abs();
+                let c = (bar.low - pc).abs();
+                a.max(b).max(c)
+            }
+        };
+        out.push(tr);
+        prev_close = Some(bar.close);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1563,5 +1700,142 @@ mod splice_trade_fold_gap_tests {
         // in sign to the seed buckets' — proving the interior bar really
         // participates rather than being skipped by the restitch.
         assert!(bars_snapshot[1].0 * bars_snapshot[0].0 < 0.0, "gap bucket's delta must oppose the seed's");
+    }
+}
+
+#[cfg(test)]
+mod atr14_box_ticks_tests {
+    //! ATR(14) box-size helper coverage (granularity arc, кусок 2): the two
+    //! pure aggregation/TR functions with synthetic 1m bars (deterministic
+    //! True Range values — see each test's own worked-example comment), plus
+    //! `atr14_box_ticks` end-to-end over a seeded bubble's "1m" kline layer.
+
+    use super::*;
+    use mlc_backend_data_bridge::DataBridge;
+    use mlc_core::ids::BubbleId;
+
+    fn build_core() -> std::sync::Arc<BackendCore> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        BackendCore::new(std::sync::Arc::new(bridge), None)
+    }
+
+    fn make_bubble(core: &BackendCore) -> BubbleId {
+        core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::m1())
+    }
+
+    fn one_min_bar(minute_idx: i64, open: f64, high: f64, low: f64, close: f64) -> Bar {
+        Bar::with_volume(minute_idx * 60, open, high, low, close, 1.0)
+    }
+
+    #[test]
+    fn aggregate_hourly_drops_the_trailing_partial_hour() {
+        // Hour 0: minutes 0..59 (60 bars, fully covered). Hour 1: minutes
+        // 60..61 only (2 bars, partial — must be dropped).
+        let mut bars: Vec<Bar> = (0..60).map(|m| one_min_bar(m, 100.0, 101.0, 99.0, 100.5)).collect();
+        bars.push(one_min_bar(60, 100.5, 102.0, 100.0, 101.5));
+        bars.push(one_min_bar(61, 101.5, 103.0, 101.0, 102.5));
+        let hourly = aggregate_hourly(&bars);
+        assert_eq!(hourly.len(), 1, "the partial trailing hour must not be emitted");
+        assert_eq!(hourly[0].open, 100.0);
+        assert_eq!(hourly[0].high, 101.0);
+        assert_eq!(hourly[0].low, 99.0);
+        assert_eq!(hourly[0].close, 100.5);
+    }
+
+    #[test]
+    fn true_ranges_first_bar_has_no_prev_close_term() {
+        // Bar 0: high=110 low=90 -> TR = high-low = 20 (no prev_close).
+        // Bar 1: high=115 low=95, prev_close=100 -> TR = max(20, |115-100|, |95-100|) = 20.
+        // Bar 2: high=140 low=130, prev_close=105 -> TR = max(10, |140-105|, |130-105|) = 35.
+        let bars = vec![
+            Bar::new(0, 100.0, 110.0, 90.0, 100.0),
+            Bar::new(3600, 100.0, 115.0, 95.0, 105.0),
+            Bar::new(7200, 105.0, 140.0, 130.0, 132.0),
+        ];
+        let trs = true_ranges(&bars);
+        assert_eq!(trs, vec![20.0, 20.0, 35.0]);
+    }
+
+    #[test]
+    fn atr14_box_ticks_averages_last_14_true_ranges_over_1h_bars() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+
+        // 16 hourly bars' worth of 1m data (16 * 60 = 960 minutes), plus one
+        // extra minute to establish a 17th (partial, dropped) hour so the
+        // aggregator has something to trim. Bars are built so hourly bar #k
+        // has TrueRange = 10 + k (k = 0..15), a simple deterministic ramp.
+        // hourly.len() == 16 -> trs.len() == 16 -> last 14 = trs[2..16],
+        // i.e. TR values for hourly bars #2..#15 (TR = 12..25), average =
+        // (12+13+...+25)/14 = (12+25)*14/2/14 = 18.5.
+        let mut bars: Vec<Bar> = Vec::new();
+        let mut prev_close = 1000.0_f64;
+        for hour in 0..16i64 {
+            let tr = 10.0 + hour as f64;
+            let high = prev_close + tr / 2.0;
+            let low = prev_close - tr / 2.0;
+            let close = prev_close; // flat close keeps the next bar's TR == high-low exactly
+            for m in 0..60i64 {
+                let minute_idx = hour * 60 + m;
+                let (o, h, l, c) = if m == 0 {
+                    (prev_close, high, low, close)
+                } else {
+                    (close, close, close, close)
+                };
+                bars.push(one_min_bar(minute_idx, o, h, l, c));
+            }
+            prev_close = close;
+        }
+        // One extra minute -> a 17th, partial hour bucket that must be
+        // dropped by `aggregate_hourly` (asserted indirectly: if it were
+        // NOT dropped, hourly.len() would still be 17, changing which 14
+        // TRs land in the average).
+        bars.push(one_min_bar(16 * 60, prev_close, prev_close, prev_close, prev_close));
+
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.kline_layers.insert("1m".to_string(), {
+                let mut layer = crate::bubble::RawLayer::new(0);
+                for bar in &bars {
+                    layer.push_live(*bar);
+                }
+                layer
+            });
+        });
+
+        let tick_size = 0.5;
+        let resolved = core.atr14_box_ticks(bid, tick_size).expect("15+ hourly bars must resolve");
+        // ATR = 18.5 -> ticks = 18.5 / 0.5 = 37.0.
+        assert!((resolved - 37.0).abs() < 1e-9, "resolved={resolved}");
+    }
+
+    #[test]
+    fn atr14_box_ticks_needs_at_least_15_hourly_bars() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+        // Only 10 hours' worth of 1m bars -> fewer than 15 completed hourly
+        // bars once the trailing partial hour is dropped.
+        let bars: Vec<Bar> = (0..(10 * 60)).map(|m| one_min_bar(m, 100.0, 101.0, 99.0, 100.5)).collect();
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.kline_layers.insert("1m".to_string(), {
+                let mut layer = crate::bubble::RawLayer::new(0);
+                for bar in &bars {
+                    layer.push_live(*bar);
+                }
+                layer
+            });
+        });
+        assert_eq!(core.atr14_box_ticks(bid, 0.5), None);
+    }
+
+    #[test]
+    fn atr14_box_ticks_rejects_non_positive_tick_size() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+        assert_eq!(core.atr14_box_ticks(bid, 0.0), None);
+        assert_eq!(core.atr14_box_ticks(bid, -1.0), None);
     }
 }

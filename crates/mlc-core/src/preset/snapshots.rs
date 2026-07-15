@@ -154,6 +154,14 @@ pub struct ChartWindowSnapshot {
     /// implicitly had.
     #[serde(default)]
     pub chart_type_param: f64,
+    /// Box-size computation mode for `chart_type_param` — meaningful only
+    /// for `"renko"`/`"kagi"` (granularity arc, кусок 2). Mirrors
+    /// `DataBubble::chart_type_param_mode`. Additive field (2026-07-15); old
+    /// presets deserialize via `#[serde(default)]` and land on
+    /// `ParamMode::Fixed` (pixel-identical to the pre-ATR-mode behavior —
+    /// every chart_type_param was a plain ladder/custom value).
+    #[serde(default)]
+    pub chart_type_param_mode: crate::chart_type::ParamMode,
     /// Kline bucket interval for the `"footprint"` chart type (e.g.
     /// `"1m"`, `"5m"`). Mirrors `ChartPanelState::chart_type_interval`.
     /// Additive field (2026-07-05); old presets default to `"1m"`.

@@ -121,6 +121,17 @@ pub enum ChartOutEvent {
     /// with the new threshold.
     UpdateChartTypeParam { value: f64 },
 
+    /// Switch renko/kagi's box-size computation to ATR(14) mode and
+    /// recompute `chart_type_param` from the live ATR value (granularity
+    /// arc, кусок 2). Emitted by the resolution dropdown's "ATR (14)" item
+    /// (renko/kagi only); handler sets `chart_type_param_mode = Atr14`,
+    /// computes the box via `BackendCore::atr14_box_ticks`, and — on
+    /// success — re-subscribes through the same path `UpdateChartTypeParam`
+    /// uses. See `mlc-app::input::chart_out_events`'s handler doc comment
+    /// for the exact recompute-cadence contract (explicit pick / chart-type
+    /// switch INTO the mode only, never continuous).
+    SetChartTypeParamAtr14,
+
     /// Commit the kline interval for the `"footprint"` chart type. Emitted
     /// by the interval-picker popup; handler stores it on the panel and
     /// re-issues the footprint subscription.
@@ -132,6 +143,23 @@ pub enum ChartOutEvent {
     /// step via the instrument tick size and re-folds `footprint_bars`
     /// through a fresh grouped fold machine, zero network.
     UpdateFootprintGroupTicks { ticks: u32 },
+
+    // === Granularity favorites (user-granularity-templates-inner arc,
+    // кусок 1) — user-saved custom TF / param presets, persisted on
+    // `UserProfile::domain::granularity_favorites`. ===
+    /// Toggle a custom timeframe favorite: adds `name` if not already
+    /// favorited (applying it as the active TF, same effect as clicking a
+    /// builtin TF item), removes it if it IS already favorited (does NOT
+    /// change the active TF on removal — typing an existing favorite's name
+    /// again is the removal affordance, not a re-apply). `name` is a bare
+    /// `<count><unit>` string (e.g. `"7m"`), not a `tf_`-prefixed dropdown id.
+    ToggleTimeframeFavorite { name: String },
+    /// Toggle a custom numeric-param favorite for `chart_type`: adds
+    /// `(chart_type, value)` if not already favorited (applying `value` via
+    /// the same path as `UpdateChartTypeParam`), removes it if it IS already
+    /// favorited (does NOT re-apply the value on removal). Mirrors
+    /// `ToggleTimeframeFavorite`'s toggle-by-retyping removal affordance.
+    ToggleParamFavorite { chart_type: String, value: f64 },
 
     // === Overlays (C10 Volume Profile family) ===
     /// Toggle the Volume Profile right-side overlay on the active chart.

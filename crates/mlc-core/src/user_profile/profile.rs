@@ -237,6 +237,42 @@ impl Default for DataLoadSettings {
 }
 
 // =============================================================================
+// GranularityFavorites — user-saved custom TF / param presets
+// =============================================================================
+
+/// One saved numeric-parameter preset for a `ResolutionKind::Param` chart
+/// type (range/tick/volume/dollar/imbalance/run bars, renko/pnf/kagi/
+/// three_line_break) — user-granularity-templates-inner arc, кусок 1.
+///
+/// `chart_type` is the registry id (e.g. `"range_bar"`); `value` is the raw
+/// `chart_type_param` f64, unclamped (mirrors `ChartWindowSnapshot::
+/// chart_type_param`'s existing "free f64, no ladder" contract — favorites
+/// add a discovery/reuse UI on top, not a new value constraint).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParamFavorite {
+    pub chart_type: String,
+    pub value: f64,
+}
+
+/// User-saved custom granularity presets (user-granularity-templates-inner
+/// arc, кусок 1): global custom timeframes plus per-chart-type numeric
+/// param presets, both minted from the toolbar's TF/param dropdown "Custom…"
+/// input row and surfaced back in a "FAVORITES" dropdown section.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GranularityFavorites {
+    /// Custom timeframe names (e.g. `["7m", "90m"]`) — global, offered to
+    /// every chart type whose `resolution == ResolutionKind::Time` and
+    /// `tf_whitelist == None` (never footprint/tpo). Each entry must be a
+    /// string [`crate::state::Timeframe::parse`] accepts.
+    #[serde(default)]
+    pub time_tfs: Vec<String>,
+
+    /// Custom numeric param presets, one entry per (chart_type, value) pair.
+    #[serde(default)]
+    pub params: Vec<ParamFavorite>,
+}
+
+// =============================================================================
 // ProfileDomainSettings
 // =============================================================================
 
@@ -319,6 +355,15 @@ pub struct ProfileDomainSettings {
     /// bridge fetch/eviction behaviour — correctness.
     #[serde(default)]
     pub data_load: DataLoadSettings,
+
+    /// User-saved custom granularity presets (user-granularity-templates-
+    /// inner arc, кусок 1): custom timeframes (e.g. "7m", "90m") and
+    /// per-chart-type numeric param presets, both minted from the toolbar's
+    /// TF/param dropdown "Custom…" input row. Functional, not cosmetic — a
+    /// headless consumer replaying a saved custom TF/param needs these to
+    /// resolve the same value the desktop UI offered.
+    #[serde(default)]
+    pub granularity_favorites: GranularityFavorites,
 }
 
 impl ProfileDomainSettings {
@@ -335,6 +380,7 @@ impl ProfileDomainSettings {
             notification_settings: mlc_alert_delivery::NotificationSettings::default(),
             profile_id: String::new(),
             data_load: DataLoadSettings::default(),
+            granularity_favorites: GranularityFavorites::default(),
         }
     }
 }
@@ -829,6 +875,10 @@ mod json_compat_tests {
         assert_eq!(profile.domain.connector_enabled.get("binance"), Some(&true));
         assert_eq!(profile.domain.profile_id, "profile-uuid-1");
         assert_eq!(profile.domain.data_load.background_bar_count, 2000);
+        // Fixture predates `granularity_favorites` entirely — must default
+        // to empty, never fail deserialization (kusok 1 regression gate).
+        assert!(profile.domain.granularity_favorites.time_tfs.is_empty());
+        assert!(profile.domain.granularity_favorites.params.is_empty());
 
         // UI fields landed on `ui`.
         assert_eq!(profile.ui.active_preset_id, "preset_123_456");
@@ -865,7 +915,7 @@ mod json_compat_tests {
             "\"language\"", "\"server_enabled\"", "\"server_port\"",
             "\"exchange_keys\"", "\"connector_enabled\"", "\"notification_settings\"",
             "\"windows\"", "\"profile_id\"", "\"display_name\"", "\"avatar\"",
-            "\"profile_created_at\"", "\"data_load\"",
+            "\"profile_created_at\"", "\"data_load\"", "\"granularity_favorites\"",
         ] {
             assert!(json.contains(key), "missing flat key {key} in {json}");
         }
@@ -884,5 +934,29 @@ mod json_compat_tests {
         let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
         assert_eq!(restored.domain.version, profile.domain.version);
         assert_eq!(restored.ui.display_name, profile.ui.display_name);
+    }
+
+    #[test]
+    fn granularity_favorites_populated_round_trip() {
+        let mut profile = UserProfile::new();
+        profile.domain.granularity_favorites.time_tfs = vec!["7m".to_string(), "90m".to_string()];
+        profile.domain.granularity_favorites.params = vec![
+            ParamFavorite { chart_type: "range_bar".to_string(), value: 17.0 },
+            ParamFavorite { chart_type: "volume_bar".to_string(), value: 12.5 },
+        ];
+
+        let json = serde_json::to_string(&profile).expect("must serialize");
+        // `granularity_favorites` is itself a nested object (like `data_load`)
+        // — the flatten contract only requires it sit directly on the
+        // top-level object, not nested under "domain"/"ui".
+        assert!(json.contains("\"granularity_favorites\":{"), "granularity_favorites must be present: {json}");
+        assert!(!json.contains("\"domain\":{"), "must not double-nest under domain: {json}");
+
+        let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
+        assert_eq!(restored.domain.granularity_favorites, profile.domain.granularity_favorites);
+        assert_eq!(restored.domain.granularity_favorites.time_tfs, vec!["7m".to_string(), "90m".to_string()]);
+        assert_eq!(restored.domain.granularity_favorites.params.len(), 2);
+        assert_eq!(restored.domain.granularity_favorites.params[0].chart_type, "range_bar");
+        assert_eq!(restored.domain.granularity_favorites.params[0].value, 17.0);
     }
 }

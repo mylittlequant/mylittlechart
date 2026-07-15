@@ -26,9 +26,10 @@ use crate::chart_panel_state::ChartPanelState;
 ///
 /// `symbol`, `timeframe`, `exchange`, and `account_type` are read from
 /// `branch_meta` by the caller (Phase 4 B — instrument fields removed from
-/// `ChartContainer`). `chart_type`/`chart_type_param`/`chart_type_interval`
-/// are likewise read from the bubble by the caller (chart_type moved off
-/// `ChartPanelState` onto `DataBubble`, symmetric with `timeframe`).
+/// `ChartContainer`). `chart_type`/`chart_type_param`/`chart_type_param_mode`/
+/// `chart_type_interval` are likewise read from the bubble by the caller
+/// (chart_type moved off `ChartPanelState` onto `DataBubble`, symmetric with
+/// `timeframe`).
 #[allow(clippy::too_many_arguments)]
 pub fn build_chart_window_snapshot(
     window: &ChartContainer,
@@ -45,6 +46,7 @@ pub fn build_chart_window_snapshot(
     account_type: String,
     chart_type: String,
     chart_type_param: f64,
+    chart_type_param_mode: mlc_core::chart_type::ParamMode,
     chart_type_interval: String,
 ) -> ChartWindowSnapshot {
     let drawings = DrawingSnapshot::from_primitives(window.id.0, primitives);
@@ -75,6 +77,7 @@ pub fn build_chart_window_snapshot(
         tooltip: panel.tooltip.clone(),
         chart_type,
         chart_type_param,
+        chart_type_param_mode,
         chart_type_interval,
         footprint_display: panel.footprint_display,
         tick_intensity: panel.tick_intensity,
@@ -170,6 +173,7 @@ mod json_compat_tests {
             "S".to_string(),
             "candles".to_string(),
             25.5,
+            mlc_core::chart_type::ParamMode::Fixed,
             "5m".to_string(),
         );
 
@@ -235,6 +239,7 @@ mod json_compat_tests {
             "S".to_string(),
             "candles".to_string(),
             0.0,
+            mlc_core::chart_type::ParamMode::Fixed,
             "1m".to_string(),
         );
 

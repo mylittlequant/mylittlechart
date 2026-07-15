@@ -24,6 +24,7 @@ pub use device_settings::DeviceSettings;
 pub use profile::{
     UserProfile, ProfileDomainSettings, ProfileUiSettings, VaultSecrets, WindowState,
     ProfileMeta, ProfileIndex, PersistedAgentLeaf, PersistedAgentCli, PersistedInstanceMode,
+    GranularityFavorites, ParamFavorite,
 };
 pub use snapshots::SettingsSnapshots;
 pub use storage::{

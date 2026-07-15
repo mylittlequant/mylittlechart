@@ -161,6 +161,17 @@ pub struct DataBubble {
     /// subscribe time when this field is non-positive.
     pub chart_type_param: f64,
 
+    /// Box-size computation mode for `chart_type_param` — meaningful only
+    /// for `"renko"`/`"kagi"` (granularity arc, кусок 2). `Fixed` (default)
+    /// means `chart_type_param` is a plain ladder/custom value; `Atr14`
+    /// means it was last written by `BackendCore::atr14_box_ticks`'s
+    /// recompute and should be treated as "derived", not "user-typed", by
+    /// any UI that distinguishes the two. Reset to `Fixed` by
+    /// [`super::store::BubbleStore::set_chart_type`] on a genuine
+    /// chart-type CHANGE (same rule as `chart_type_param`'s own reset
+    /// there) and by an explicit numeric pick (`UpdateChartTypeParam`).
+    pub chart_type_param_mode: mlc_core::chart_type::ParamMode,
+
     /// Kline interval label for `"footprint"` chart type (e.g. `"1m"`, `"5m"`).
     /// Default: `"1m"`. Unused for non-footprint chart types.
     pub chart_type_interval: &'static str,
@@ -478,6 +489,7 @@ impl DataBubble {
             timeframe: snap.timeframe.clone(),
             chart_type: "candles",
             chart_type_param: 0.0,
+            chart_type_param_mode: mlc_core::chart_type::ParamMode::Fixed,
             chart_type_interval: "1m",
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
@@ -919,6 +931,7 @@ impl Clone for DataBubble {
             timeframe: self.timeframe.clone(),
             chart_type: self.chart_type,
             chart_type_param: self.chart_type_param,
+            chart_type_param_mode: self.chart_type_param_mode,
             chart_type_interval: self.chart_type_interval,
             sync_flags: self.sync_flags.clone(),
             scale_mode: self.scale_mode,
@@ -973,6 +986,7 @@ impl std::fmt::Debug for DataBubble {
             .field("timeframe", &self.timeframe)
             .field("chart_type", &self.chart_type)
             .field("chart_type_param", &self.chart_type_param)
+            .field("chart_type_param_mode", &self.chart_type_param_mode)
             .field("chart_type_interval", &self.chart_type_interval)
             .field("sync_flags", &self.sync_flags)
             .field("command_history_size", &self.command_history.size())

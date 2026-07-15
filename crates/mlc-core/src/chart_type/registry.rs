@@ -14,6 +14,8 @@
 //! consumer (2026-07-07): `mlc-app::active_series::chart_type_deepen_is_teardown`
 //! reads `ChartTypeDef::deepen_kind`.
 
+use serde::{Deserialize, Serialize};
+
 /// Coarse visual/data-source grouping, mirrors the dropdown section headers
 /// in `toolbar.rs::chart_type_items()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +191,56 @@ pub enum ResolutionKind {
 /// dependency on the app layer; the id itself carries the numeric value, so
 /// dispatch never needs to know the active chart_type.
 pub const RESOLUTION_PARAM_ITEM_PREFIX: &str = "reso_param:";
+
+/// `timeframe_selector` dropdown item id for the FAVORITES section's custom
+/// TF input row (user-granularity-templates-inner arc, кусок 1). A whole-row
+/// click target (the row's only purpose is text entry, unlike the
+/// `param_field` inline-input mechanism that was reverted 2026-06 for
+/// overlapping a row that also had its own click action) — the click
+/// handler (`mlc-app::input::panel_click`) focuses the dedicated
+/// `TF_FAVORITE_INPUT` text field instead of dispatching through
+/// `ChartToolbarState::handle_dropdown_select_with_chart`. Lives in
+/// `mlc-core` (not `mlc-app-layout`, where the dropdown item list is built,
+/// nor `mlc-app`, where the click is handled) so both sides agree on the id
+/// without a reverse dependency.
+pub const TF_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "tf_favorite_custom_input";
+
+/// `timeframe_selector` dropdown item id for the FAVORITES section's custom
+/// numeric-param input row (`ResolutionKind::Param` chart types). See
+/// [`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`] for the whole-row-click rationale.
+pub const PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "param_favorite_custom_input";
+
+/// `timeframe_selector` dropdown item id for the ATR(14) box-size mode row —
+/// renko/kagi ONLY (granularity arc, кусок 2). Selecting this item dispatches
+/// `ChartOutEvent::SetChartTypeParamAtr14` instead of the plain numeric
+/// `RESOLUTION_PARAM_ITEM_PREFIX` path — a fixed sentinel id (not
+/// value-encoding, unlike the numeric presets) since ATR(14) carries no
+/// user-facing numeric input of its own, just a mode flip + recompute.
+pub const RESOLUTION_PARAM_ATR14_ITEM_ID: &str = "reso_param_atr14";
+
+/// Box-size computation mode for `chart_type_param` on `renko`/`kagi`
+/// (granularity arc, кусок 2 —
+/// `docs/mlc/research/industry-resolution-defaults-2026-07-15.md` §3/§5:
+/// ATR(14) is the industry-documented "smart default" for both, since it
+/// auto-rescales on a symbol switch where a flat tick count would not).
+/// Every other chart type stays implicitly `Fixed` — this mode axis only
+/// has meaning for the two price-action transforms whose box/reversal size
+/// can be volatility-derived instead of a flat ticks value.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ParamMode {
+    /// Plain numeric ladder/custom value, as picked by the user or the
+    /// registry's static/instrument-relative default — today's only mode for
+    /// every chart type before this arc.
+    #[default]
+    Fixed,
+    /// `chart_type_param` is recomputed from a live ATR(14) box-size
+    /// calculation (`BackendCore::atr14_box_ticks`) rather than read
+    /// verbatim off the ladder/user input. Recompute cadence is deliberately
+    /// narrow (explicit ATR-pick time + chart-type-switch-into-mode only —
+    /// see that method's doc comment); this variant does not itself imply
+    /// "keep recomputing forever".
+    Atr14,
+}
 
 /// Which client-side fold machine (if any) computes a chart_type's series —
 /// a pure identifier, no `digdigdig3_station` dependency (mlc-core stays
@@ -521,7 +573,21 @@ static RENKO_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "100", label: "100" },
 ];
 
-static PNF_OPTIONS: &[ChartTypeParamOption] = RENKO_OPTIONS;
+// Pnf's own copy of the box-size-in-ticks ladder (2026-07-15 granularity
+// arc, кусок 2) — was `= RENKO_OPTIONS` (aliased). Split into its own
+// `static` so the ATR(14) box-size mode (renko/kagi only, see `ParamMode`)
+// can be wired onto renko/kagi's dropdown without pnf inheriting it through
+// a shared array identity; the VALUES stay identical to renko's ladder,
+// only the storage is now independent.
+static PNF_OPTIONS: &[ChartTypeParamOption] = &[
+    ChartTypeParamOption { value_id: "1", label: "1" },
+    ChartTypeParamOption { value_id: "2", label: "2" },
+    ChartTypeParamOption { value_id: "5", label: "5" },
+    ChartTypeParamOption { value_id: "10", label: "10" },
+    ChartTypeParamOption { value_id: "20", label: "20" },
+    ChartTypeParamOption { value_id: "50", label: "50" },
+    ChartTypeParamOption { value_id: "100", label: "100" },
+];
 
 // Kagi's reversal-amount ladder is its own — a much coarser NT-family
 // progression than renko/pnf's box-size ticks (2026-07-10 per-type param
@@ -535,17 +601,23 @@ static KAGI_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "500", label: "500" },
 ];
 
-// Range bar's own NT-family ladder — distinct from renko/pnf's box-size
-// ticks (2026-07-10 per-type param ladder split). `inline_default` = "8".
+// Range bar's own ladder — distinct from renko/pnf's box-size ticks
+// (2026-07-10 per-type param ladder split). Reworked to the industry-survey
+// ladder (2026-07-15 granularity arc, кусок 2 —
+// `docs/mlc/research/industry-resolution-defaults-2026-07-15.md` §2):
+// TradingView/Sierra denominate range bars in TICKS, and crypto's tiny tick
+// sizes relative to price need a much larger tick-count than a futures-tuned
+// "4/8/12" ladder to represent a meaningful move. `inline_default` = "100"
+// (static fallback only — the LIVE default is instrument-relative, resolved
+// by `resolve_instrument_relative_default` at subscribe time).
 static RANGE_BAR_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "4", label: "4" },
-    ChartTypeParamOption { value_id: "8", label: "8" },
-    ChartTypeParamOption { value_id: "12", label: "12" },
-    ChartTypeParamOption { value_id: "16", label: "16" },
-    ChartTypeParamOption { value_id: "24", label: "24" },
-    ChartTypeParamOption { value_id: "30", label: "30" },
+    ChartTypeParamOption { value_id: "10", label: "10" },
+    ChartTypeParamOption { value_id: "25", label: "25" },
     ChartTypeParamOption { value_id: "50", label: "50" },
     ChartTypeParamOption { value_id: "100", label: "100" },
+    ChartTypeParamOption { value_id: "250", label: "250" },
+    ChartTypeParamOption { value_id: "500", label: "500" },
+    ChartTypeParamOption { value_id: "1000", label: "1,000" },
 ];
 
 static THREE_LINE_BREAK_OPTIONS: &[ChartTypeParamOption] = &[
@@ -579,17 +651,24 @@ static DOLLAR_BAR_OPTIONS: &[ChartTypeParamOption] = &[
     ChartTypeParamOption { value_id: "10000000", label: "10M" },
 ];
 
+// Fibonacci convention (2026-07-15 granularity arc, кусок 2 —
+// `docs/mlc/research/industry-resolution-defaults-2026-07-15.md` §7): the
+// dominant tick-count ladder across futures/forex communities and ATAS's own
+// documented most-popular values (89/144/233/377/610/1000, ATAS breaks
+// Fibonacci purity at the tail for a "round number" concession) extended one
+// step further with 1597/2584 to keep an 8-rung ladder. `inline_default` =
+// "233" (most-repeated "standard" value, tied with 377 — 233 picked as the
+// smaller/faster of the pair, denser starting view for crypto's high-activity
+// venues).
 static TICK_BAR_OPTIONS: &[ChartTypeParamOption] = &[
-    ChartTypeParamOption { value_id: "1", label: "1" },
-    ChartTypeParamOption { value_id: "2", label: "2" },
-    ChartTypeParamOption { value_id: "5", label: "5" },
-    ChartTypeParamOption { value_id: "10", label: "10" },
-    ChartTypeParamOption { value_id: "25", label: "25" },
-    ChartTypeParamOption { value_id: "50", label: "50" },
-    ChartTypeParamOption { value_id: "100", label: "100" },
-    ChartTypeParamOption { value_id: "250", label: "250" },
-    ChartTypeParamOption { value_id: "500", label: "500" },
-    ChartTypeParamOption { value_id: "1000", label: "1,000" },
+    ChartTypeParamOption { value_id: "89", label: "89" },
+    ChartTypeParamOption { value_id: "144", label: "144" },
+    ChartTypeParamOption { value_id: "233", label: "233" },
+    ChartTypeParamOption { value_id: "377", label: "377" },
+    ChartTypeParamOption { value_id: "610", label: "610" },
+    ChartTypeParamOption { value_id: "1000", label: "1000" },
+    ChartTypeParamOption { value_id: "1597", label: "1597" },
+    ChartTypeParamOption { value_id: "2584", label: "2584" },
 ];
 
 static IMBALANCE_RUN_OPTIONS: &[ChartTypeParamOption] = &[
@@ -919,7 +998,11 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: RANGE_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("8"),
+        // Static fallback only (2026-07-15 granularity arc, кусок 2) — the
+        // LIVE default is instrument-relative, resolved at subscribe time by
+        // `resolve_instrument_relative_default` and written back via
+        // `set_chart_type_param` before this sentinel is ever read.
+        inline_default: Some("100"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,
@@ -1029,7 +1112,7 @@ static REGISTRY: &[ChartTypeDef] = &[
             options: TICK_BAR_OPTIONS,
             fixed_note: None,
         }),
-        inline_default: Some("100"),
+        inline_default: Some("233"),
         deepen_kind: DeepenKind::DerivedPrependFold,
         needs_ts_shadow: false,
         has_bespoke_settings_block: false,

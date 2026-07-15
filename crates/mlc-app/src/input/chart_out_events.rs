@@ -182,25 +182,17 @@ impl ChartApp {
         match event {
             ChartOutEvent::ChangeTimeframe { timeframe_id } => {
                 eprintln!("[ChartApp] ChangeTimeframe: {}", timeframe_id);
-                let timeframe = match timeframe_id.as_str() {
-                    "tf_1s"  => Some(Timeframe::s1()),
-                    "tf_5s"  => Some(Timeframe::s5()),
-                    "tf_15s" => Some(Timeframe::s15()),
-                    "tf_30s" => Some(Timeframe::s30()),
-                    "tf_1m"  => Some(Timeframe::m1()),
-                    "tf_3m"  => Some(Timeframe::new("3m", 3 * 60_000)),
-                    "tf_5m"  => Some(Timeframe::m5()),
-                    "tf_15m" => Some(Timeframe::m15()),
-                    "tf_30m" => Some(Timeframe::m30()),
-                    "tf_1h"  => Some(Timeframe::h1()),
-                    "tf_2h"  => Some(Timeframe::new("2H", 2 * 3_600_000)),
-                    "tf_4h"  => Some(Timeframe::h4()),
-                    "tf_6h"  => Some(Timeframe::new("6H", 6 * 3_600_000)),
-                    "tf_12h" => Some(Timeframe::new("12H", 12 * 3_600_000)),
-                    "tf_1d"  => Some(Timeframe::d1()),
-                    "tf_1w"  => Some(Timeframe::w1()),
-                    "tf_1M"  => Some(Timeframe::mn1()),
-                    _ => {
+                // Generic parse (consolidation, user-granularity-templates-
+                // inner arc, кусок 1): strips the `tf_` dropdown-id prefix
+                // and hands the bare name to `Timeframe::parse`, which
+                // reproduces the former 17-arm closed match for every
+                // builtin AND additionally resolves custom favorite ids
+                // minted as `tf_{name}` (e.g. `tf_7m`) — same dispatch path,
+                // zero extra wiring for favorites.
+                let timeframe = timeframe_id.strip_prefix("tf_").and_then(Timeframe::parse);
+                let timeframe = match timeframe {
+                    Some(tf) => Some(tf),
+                    None => {
                         eprintln!("[ChartApp] unknown timeframe_id: {}", timeframe_id);
                         None
                     }
@@ -235,7 +227,20 @@ impl ChartApp {
                     match crate::active_series::allowed_timeframes(series, chart_type, now_ms) {
                         None => true,
                         Some(allowed) => {
-                            let ok = allowed.contains(timeframe_id.as_str());
+                            // Granularity favorites (кусок 1): `allowed` is
+                            // built over the builtin `ALL_TF_IDS` and can
+                            // never contain a custom favorite id (`tf_7m`).
+                            // The toolbar DOES offer favorites now, so a
+                            // favorited name is as legitimate as a builtin —
+                            // exempt it from the membership check (the guard
+                            // keeps blocking arbitrary non-favorited ids
+                            // forced through the agent-API bypass).
+                            let is_favorite = timeframe_id
+                                .strip_prefix("tf_")
+                                .map(|n| self.core.user().profile().domain
+                                    .granularity_favorites.time_tfs.iter().any(|f| f == n))
+                                .unwrap_or(false);
+                            let ok = is_favorite || allowed.contains(timeframe_id.as_str());
                             if !ok {
                                 log::warn!(
                                     "[ChartApp] ChangeTimeframe: {} not allowed for chart_type {} at current depth, ignoring",
@@ -425,6 +430,26 @@ impl ChartApp {
                     // refcount logic knows what family the window is LEAVING.
                     let previous_ct: Option<&'static str> = bid
                         .and_then(|bid| self.core.bubbles().chart_type(bid));
+                    // Last bar close of the OUTGOING series, captured BEFORE
+                    // any clear runs below (`clear_slot_trade_agg_bars` wipes
+                    // `bubble.bars` a few steps down) — the instrument-
+                    // relative default resolver (granularity arc, кусок 2)
+                    // needs this as its live-price input; a price read AFTER
+                    // the clear would always see an empty array.
+                    let pre_switch_last_price: Option<f64> = bid
+                        .and_then(|bid| self.core.bubbles().bars(bid).last().map(|b| b.close))
+                        .filter(|p| *p > 0.0);
+                    // Box-size mode carried by the OUTGOING chart_type,
+                    // captured BEFORE `set_chart_type` resets it to `Fixed`
+                    // below (granularity arc, кусок 2) — lets a switch back
+                    // INTO renko/kagi on a bubble that was last in ATR(14)
+                    // mode on this SAME type recompute instead of silently
+                    // reverting to Fixed (e.g. renko[Atr14] -> candles ->
+                    // renko again). A genuine cross-family switch (candles ->
+                    // renko for the first time) reads `Fixed` here, same as
+                    // today.
+                    let pre_switch_param_mode: Option<mlc_core::chart_type::ParamMode> = bid
+                        .and_then(|bid| self.core.bubbles().chart_type_param_mode(bid));
                     // Render-only switch (both previous and target are plain
                     // render styles over the same kline bars) — computed here,
                     // early, so the min-spacing enforcement right below does
@@ -445,7 +470,7 @@ impl ChartApp {
                         | Some("baseline")
                     );
                     let render_only_switch = is_render_family(previous_ct) && is_render_family(Some(ct));
-                    let (chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
+                    let (mut chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
                         let previous_type = previous_ct.unwrap_or("candles").to_string();
                         self.core.bubbles_mut().set_chart_type(bid, ct);
                         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
@@ -763,6 +788,56 @@ impl ChartApp {
                                         if !skip {
                                             let bar_count = self.core.user().profile().domain.bar_count as usize;
                                             let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+                                            // Instrument-relative default resolution (granularity
+                                            // arc, кусок 2): the sentinel (`chart_param <= 0.0`,
+                                            // i.e. the user hasn't picked a value on THIS bubble
+                                            // yet) resolves through the live resolver first —
+                                            // range_bar/volume_bar get an instrument-relative
+                                            // value instead of the registry's static fallback.
+                                            // Written back via `set_chart_type_param` BEFORE
+                                            // `build_subscribe_params` runs, so the toolbar button
+                                            // and settings modal show the REAL resolved number
+                                            // (e.g. "500R") and it persists like any user pick.
+                                            if chart_param <= 0.0 {
+                                                if let Some(def) = mlc_core::chart_type::by_id(ct) {
+                                                    // `pre_switch_last_price` was captured before
+                                                    // this fn's own clear_slot ran, above; fall back
+                                                    // to mini_ticker if the outgoing series had no
+                                                    // bars yet (cold subscribe on this bubble).
+                                                    let last_price = pre_switch_last_price.or_else(|| {
+                                                        self.resolve_last_price(eid_str, &symbol, at.short_label(), None)
+                                                    });
+                                                    if let Some(resolved) = mlc_core::chart_type::resolve_instrument_relative_default(
+                                                        def, tick_size, last_price.unwrap_or(0.0),
+                                                    ) {
+                                                        chart_param = resolved;
+                                                        if let Some(bid) = bid {
+                                                            self.core.bubbles_mut().set_chart_type_param(bid, resolved);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // ATR(14) recompute-on-switch (granularity arc,
+                                            // кусок 2): a switch INTO renko/kagi whose
+                                            // bubble carried `Atr14` mode BEFORE
+                                            // `set_chart_type` reset it (captured as
+                                            // `pre_switch_param_mode` at the top of this
+                                            // handler — e.g. renko[Atr14] -> candles ->
+                                            // renko again) recomputes the box from the
+                                            // CURRENT instrument instead of reverting to
+                                            // Fixed silently. Re-applies the mode too (the
+                                            // reset above flipped it to Fixed).
+                                            if matches!(ct, "renko" | "kagi")
+                                                && pre_switch_param_mode == Some(mlc_core::chart_type::ParamMode::Atr14)
+                                            {
+                                                if let Some(bid) = bid {
+                                                    if let Some(ticks) = self.core.atr14_box_ticks(bid, tick_size) {
+                                                        chart_param = ticks;
+                                                        self.core.bubbles_mut().set_chart_type_param(bid, ticks);
+                                                    }
+                                                    self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
+                                                }
+                                            }
                                             let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count, tick_size);
                                             // Unified-data-plane Э3: the 7 kline-sufficient
                                             // fold types install/reseed a client-side
@@ -887,6 +962,11 @@ impl ChartApp {
                     .unwrap_or("candles");
                 if let Some(bid) = bid {
                     self.core.bubbles_mut().set_chart_type_param(bid, value);
+                    // Any explicit numeric pick is a Fixed value by
+                    // definition — resets an ATR(14) mode left over from a
+                    // prior `SetChartTypeParamAtr14` on this bubble
+                    // (granularity arc, кусок 2).
+                    self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Fixed);
                 }
                 if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
                     let cid = active_leaf.id;
@@ -997,6 +1077,66 @@ impl ChartApp {
                 state_mutated = true;
             }
 
+            // ATR(14) box-size mode (granularity arc, кусок 2) — renko/kagi
+            // only. Recompute cadence contract: this event fires ONLY at
+            // explicit pick time (this handler) or at a chart-type switch
+            // INTO renko/kagi when the bubble's mode was already `Atr14`
+            // (the `ChangeChartType`/`ignite_derived_window_target` recompute
+            // blocks, which call `atr14_box_ticks` directly rather than
+            // re-dispatching this event). There is deliberately NO live/
+            // continuous recompute (no timer, no re-fire on every tick) —
+            // out of scope for this arc; a future "keep ATR fresh" mode would
+            // need its own deferred-recompute machine, not built here.
+            ChartOutEvent::SetChartTypeParamAtr14 => {
+                eprintln!("[ChartApp] SetChartTypeParamAtr14");
+                let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                };
+                let Some(bid) = self.bubble_for_chart(cid) else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                };
+                let active_ct: &'static str = self.core.bubbles().chart_type(bid).unwrap_or("candles");
+                if !matches!(active_ct, "renko" | "kagi") {
+                    eprintln!("[ChartApp] SetChartTypeParamAtr14: ignored, active chart_type={active_ct} is not renko/kagi");
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                }
+                // 1. Set mode = Atr14 up front (bubble-level, survives even
+                //    if the compute below returns None — the task spec: "on
+                //    None: leave the current param untouched, log, mode
+                //    stays Atr14").
+                self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
+                // 2. Compute the box.
+                let Some(symbol) = self.symbol_for_chart(cid).filter(|s| !s.is_empty()) else {
+                    eprintln!("[ChartApp] SetChartTypeParamAtr14: no active symbol, leaving param untouched");
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                };
+                let chart_eid = self.exchange_id_for_chart(cid);
+                let eid_str = chart_eid.as_str();
+                let tick_size = self.resolve_tick_size(eid_str, &symbol, Some(bid));
+                match self.core.atr14_box_ticks(bid, tick_size) {
+                    Some(ticks) => {
+                        // 3. Re-subscribe through the EXACT same path
+                        //    `UpdateChartTypeParam` uses (clear slot + fold
+                        //    re-install) — reused, not duplicated. That
+                        //    handler resets mode to `Fixed`, so re-stamp
+                        //    `Atr14` immediately after it returns.
+                        self.process_chart_out_event(ChartOutEvent::UpdateChartTypeParam { value: ticks });
+                        self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
+                        return;
+                    }
+                    None => {
+                        eprintln!(
+                            "[ChartApp] SetChartTypeParamAtr14: fewer than 15 completed hourly bars (or tick_size<=0) for {symbol}, leaving param untouched"
+                        );
+                    }
+                }
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+
             ChartOutEvent::UpdateChartTypeInterval { interval } => {
                 eprintln!("[ChartApp] UpdateChartTypeInterval: {}", interval);
                 // Free-text inline field (footprint's toolbar text input) —
@@ -1028,6 +1168,70 @@ impl ChartApp {
                 eprintln!("[ChartApp] UpdateFootprintGroupTicks: {}", ticks);
                 self.apply_footprint_group_ticks(ticks);
                 state_mutated = true;
+            }
+            ChartOutEvent::ToggleTimeframeFavorite { name } => {
+                eprintln!("[ChartApp] ToggleTimeframeFavorite: {}", name);
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                // Validate first — a garbage string neither applies nor
+                // gets remembered (mirrors ChangeTimeframe's own reject path).
+                if Timeframe::parse(&name).is_none() {
+                    eprintln!("[ChartApp] ToggleTimeframeFavorite: invalid TF name, ignored: {}", name);
+                    return;
+                }
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                let already_favorited = favs.time_tfs.iter().any(|n| n == &name);
+                if already_favorited {
+                    // Toggle-by-retype removal (owner-picked affordance,
+                    // кусок 1): does NOT re-apply the TF on removal.
+                    favs.time_tfs.retain(|n| n != &name);
+                    drop(user_mut);
+                    self.autosave_snapshot();
+                    return;
+                }
+                // Cap 12, dedup already guaranteed by the `already_favorited`
+                // branch above.
+                if favs.time_tfs.len() >= 12 {
+                    favs.time_tfs.remove(0);
+                }
+                favs.time_tfs.push(name.clone());
+                drop(user_mut);
+                self.autosave_snapshot();
+                // Apply exactly like clicking a builtin TF item — same
+                // dispatch path, zero duplicated apply logic.
+                self.process_chart_out_event(ChartOutEvent::ChangeTimeframe { timeframe_id: format!("tf_{}", name) });
+                return;
+            }
+            ChartOutEvent::ToggleParamFavorite { chart_type, value } => {
+                eprintln!("[ChartApp] ToggleParamFavorite: {} = {}", chart_type, value);
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                if value <= 0.0 {
+                    eprintln!("[ChartApp] ToggleParamFavorite: non-positive value, ignored: {}", value);
+                    return;
+                }
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                let already_favorited = favs.params.iter()
+                    .any(|f| f.chart_type == chart_type && f.value == value);
+                if already_favorited {
+                    // Toggle-by-retype removal — does NOT re-apply the value.
+                    favs.params.retain(|f| !(f.chart_type == chart_type && f.value == value));
+                    drop(user_mut);
+                    self.autosave_snapshot();
+                    return;
+                }
+                let cap_hit = favs.params.iter().filter(|f| f.chart_type == chart_type).count() >= 12;
+                if cap_hit {
+                    if let Some(idx) = favs.params.iter().position(|f| f.chart_type == chart_type) {
+                        favs.params.remove(idx);
+                    }
+                }
+                favs.params.push(mlc_core::user_profile::ParamFavorite { chart_type, value });
+                drop(user_mut);
+                self.autosave_snapshot();
+                // Apply exactly like clicking a static ladder preset.
+                self.process_chart_out_event(ChartOutEvent::UpdateChartTypeParam { value });
+                return;
             }
             ChartOutEvent::Consumed => {}
             ChartOutEvent::ToggleIndicators => {
@@ -2981,6 +3185,49 @@ impl ChartApp {
         }
         let at = mlc_backend_data_bridge::account_type_to_dig3(at);
         let bid = self.bubble_for_chart(cid);
+        // Instrument-relative default resolution (granularity arc, кусок 2):
+        // captured BEFORE `ops.clear_slot`/`clear_derived_slots` below wipe
+        // `bubble.bars` (`clear_slot_trade_agg_bars` clears the very array
+        // this reads) — a cold-restore ignite is the ONE call site where the
+        // clear and the read would otherwise race in the wrong order.
+        let mut param = param;
+        if param <= 0.0 {
+            if let Some(def) = mlc_core::chart_type::by_id(ct) {
+                let last_price = self.resolve_last_price(eid.as_str(), &sym, at.short_label(), bid);
+                let tick_size_for_resolve = self.resolve_tick_size(eid.as_str(), &sym, bid);
+                if let Some(resolved) = mlc_core::chart_type::resolve_instrument_relative_default(
+                    def, tick_size_for_resolve, last_price.unwrap_or(0.0),
+                ) {
+                    param = resolved;
+                    if let Some(bid) = bid {
+                        self.core.bubbles_mut().set_chart_type_param(bid, resolved);
+                    }
+                }
+            }
+        }
+        // ATR(14) recompute-on-cold-restore (granularity arc, кусок 2): the
+        // ONE non-explicit-pick recompute trigger this arc allows (see
+        // `atr14_box_ticks`'s doc comment) — a persisted-Atr14 preset
+        // restoring INTO renko/kagi needs a fresh box size for the CURRENT
+        // instrument, not whatever raw number was last saved. Read the mode
+        // BEFORE the clear below (mode isn't touched by any clear, but
+        // reading early keeps this block adjacent to its sibling above).
+        // `atr14_box_ticks` reads the bubble's "1m" kline layer, which is
+        // typically still cold at this exact point in a fresh restore — a
+        // `None` here is expected and falls back to the persisted `param`
+        // untouched (graceful, matches the handler's own None contract).
+        if matches!(ct, "renko" | "kagi") {
+            let mode = bid.and_then(|bid| self.core.bubbles().chart_type_param_mode(bid));
+            if mode == Some(mlc_core::chart_type::ParamMode::Atr14) {
+                if let Some(bid) = bid {
+                    let tick_size_for_atr = self.resolve_tick_size(eid.as_str(), &sym, Some(bid));
+                    if let Some(ticks) = self.core.atr14_box_ticks(bid, tick_size_for_atr) {
+                        param = ticks;
+                        self.core.bubbles_mut().set_chart_type_param(bid, ticks);
+                    }
+                }
+            }
+        }
         if let Some(bid) = bid {
             self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
                 bubble.clear_derived_slots(None);
@@ -3299,6 +3546,38 @@ impl ChartApp {
             exchange_str, symbol
         );
         0.01
+    }
+
+    /// Resolve the active instrument's last traded price for `bid` — the
+    /// live-price input [`mlc_core::chart_type::resolve_instrument_relative_default`]
+    /// needs at subscribe time (granularity arc, кусок 2). Two sources, in
+    /// order:
+    /// 1. The bubble's own last bar close (`bars(bid).last()`) — cheapest,
+    ///    already resident, and captured here BEFORE any clear the caller
+    ///    might run right after.
+    /// 2. `BackendCore::mini_ticker`, keyed `"{symbol}:{exchange}:{account}"`
+    ///    (same key format `MiniTickerUpdate`'s writer and the watchlist
+    ///    reader already use) — covers a cold subscribe where no bar has
+    ///    landed yet but a ticker tick already has.
+    ///
+    /// `None` when neither source has data — callers pass that straight
+    /// through to the resolver, which requires a positive price and
+    /// therefore returns `None` too, falling back to the registry's static
+    /// default exactly as before this resolver existed.
+    pub(crate) fn resolve_last_price(
+        &self,
+        exchange_str: &str,
+        symbol: &str,
+        account_type_label: &str,
+        bid: Option<mlc_core::ids::BubbleId>,
+    ) -> Option<f64> {
+        if let Some(bid) = bid {
+            if let Some(price) = self.core.bubbles().bars(bid).last().map(|b| b.close).filter(|p| *p > 0.0) {
+                return Some(price);
+            }
+        }
+        let key = format!("{}:{}:{}", symbol, exchange_str, account_type_label);
+        self.core.mini_ticker.get(&key).map(|t| t.last_price).filter(|p| *p > 0.0)
     }
 }
 

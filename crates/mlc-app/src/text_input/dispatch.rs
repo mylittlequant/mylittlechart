@@ -66,7 +66,7 @@ impl ChartApp {
     ///
     /// Covers (in order): ALERT_TG_TOKEN, PROFILE_RENAME, NEW_PASSPHRASE,
     /// NEW_PROFILE_NAME, RECOVERY_KEY, CONFIRM_PASSPHRASE, BAR_MODE_PARAM,
-    /// HEX_COLOR, AGENT_PTY, AGENT_CHAT.
+    /// TF_FAVORITE_INPUT, PARAM_FAVORITE_INPUT, HEX_COLOR, AGENT_PTY, AGENT_CHAT.
     pub(crate) fn dispatch_text_key_early(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
 
@@ -93,6 +93,8 @@ impl ChartApp {
                 | RECOVERY_KEY
                 | CONFIRM_PASSPHRASE
                 | BAR_MODE_PARAM
+                | TF_FAVORITE_INPUT
+                | PARAM_FAVORITE_INPUT
                 | HEX_COLOR
                 | AGENT_PTY
                 | AGENT_CHAT
@@ -209,6 +211,8 @@ impl ChartApp {
             AGENT_PTY                        => self.text_action_agent_pty(action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             BAR_MODE_PARAM                   => self.text_action_bar_mode_param(action),
+            TF_FAVORITE_INPUT                => self.text_action_tf_favorite_input(action),
+            PARAM_FAVORITE_INPUT             => self.text_action_param_favorite_input(action),
             PRIMITIVE_SETTINGS_FIELD         => self.text_action_prim_settings_field(action),
             INDICATOR_SETTINGS_FIELD         => self.text_action_ind_settings_field(action),
             CHART_SETTINGS_FIELD             => self.text_action_chart_settings_field(action),
@@ -718,6 +722,67 @@ impl ChartApp {
             TextAction::Cancel => {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 self.panel_app.toolbar_state.active_param_chart_type = None;
+            }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// Commit handler for the `timeframe_selector` dropdown's "Custom…" TF
+    /// favorite input row (user-granularity-templates-inner arc, кусок 1).
+    /// Validates via `Timeframe::parse`, then dispatches a single toggle
+    /// event that both mutates `granularity_favorites` and applies the TF
+    /// (or, if the typed name is already favorited, removes it instead —
+    /// toggle-by-retype, see `ChartOutEvent::ToggleTimeframeFavorite`).
+    fn text_action_tf_favorite_input(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(text) => {
+                let name = text.trim().to_string();
+                if mlc_core::state::Timeframe::parse(&name).is_none() {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                }
+                self.process_chart_out_event(
+                    mlc_core::events::ChartOutEvent::ToggleTimeframeFavorite { name }
+                );
+            }
+            TextAction::Cancel => {
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// Commit handler for the `timeframe_selector` dropdown's "Custom…"
+    /// numeric-param favorite input row (`ResolutionKind::Param` chart
+    /// types) — user-granularity-templates-inner arc, кусок 1. Parses a
+    /// positive `f64`, then dispatches the toggle event scoped to the
+    /// currently active window's chart_type.
+    fn text_action_param_favorite_input(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(text) => {
+                let Ok(value) = text.trim().parse::<f64>() else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                };
+                if value <= 0.0 {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                }
+                let Some(chart_type) = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| self.chart_type_for_chart(cid))
+                else {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    return;
+                };
+                self.process_chart_out_event(
+                    mlc_core::events::ChartOutEvent::ToggleParamFavorite {
+                        chart_type: chart_type.to_string(),
+                        value,
+                    }
+                );
+            }
+            TextAction::Cancel => {
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
         }

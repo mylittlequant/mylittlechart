@@ -1136,7 +1136,10 @@ impl ChartToolbarState {
             // active chart_type. Plain `tf_*` ids (Time/Interval) keep the
             // existing `ChangeTimeframe` flow unchanged.
             "timeframe_selector" => {
-                if let Some(value_str) = item_id.strip_prefix(crate::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
+                if item_id == crate::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID {
+                    eprintln!("[ChartToolbar] resolution param: ATR(14)");
+                    vec![ChartOutEvent::SetChartTypeParamAtr14]
+                } else if let Some(value_str) = item_id.strip_prefix(crate::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
                     eprintln!("[ChartToolbar] resolution param: {}", value_str);
                     match value_str.parse::<f64>() {
                         Ok(value) => vec![ChartOutEvent::UpdateChartTypeParam { value }],

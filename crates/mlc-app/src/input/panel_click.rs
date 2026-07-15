@@ -2875,6 +2875,33 @@ impl ChartApp {
                 // param/interval (or default). Param editing happens via the
                 // toolbar-level field after the chart type is committed.
 
+                // Granularity favorites "Custom…" rows (kusok 1): the WHOLE
+                // row's only purpose is text entry (no separate row-click
+                // action to conflict with — this is why the whole-row
+                // hit zone is safe here, unlike the 2026-06 chart-type-row
+                // inline-input revert, where the input zone overlapped a
+                // row that ALSO had its own click action). Focus the
+                // dedicated field instead of dispatching through
+                // `handle_dropdown_select_with_chart`.
+                if item_id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID {
+                    let field_id = uzor::WidgetId::from(crate::text_input::TF_FAVORITE_INPUT);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, "");
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::TF_FAVORITE_INPUT);
+                    return;
+                }
+                if item_id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID {
+                    let field_id = uzor::WidgetId::from(crate::text_input::PARAM_FAVORITE_INPUT);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, "");
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::PARAM_FAVORITE_INPUT);
+                    return;
+                }
+
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 

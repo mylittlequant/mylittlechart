@@ -642,6 +642,13 @@ impl ChartApp {
                         };
                         self.core.bubbles_mut().set_chart_type(bid, static_ct);
                         self.core.bubbles_mut().set_chart_type_param(bid, snap.chart_type_param);
+                        // Restored AFTER `set_chart_type_param` — `set_chart_type`
+                        // above already reset the mode to `Fixed` on a genuine
+                        // type change; this re-applies the persisted mode
+                        // (granularity arc, кусок 2). Old presets deserialize
+                        // `snap.chart_type_param_mode` to `Fixed` via
+                        // `#[serde(default)]`, matching pre-arc behavior.
+                        self.core.bubbles_mut().set_chart_type_param_mode(bid, snap.chart_type_param_mode);
                         self.core.bubbles_mut().set_chart_type_interval(bid, static_iv);
                     }
                     // Graceful hydration (chart-type → overlay migration):

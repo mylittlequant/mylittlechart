@@ -236,6 +236,10 @@ impl<'a> Bubbles<'a> {
         self.store.chart_type_param(bid)
     }
 
+    pub fn chart_type_param_mode(&self, bid: BubbleId) -> Option<mlc_core::chart_type::ParamMode> {
+        self.store.chart_type_param_mode(bid)
+    }
+
     pub fn chart_type_interval(&self, bid: BubbleId) -> Option<&'static str> {
         self.store.chart_type_interval(bid)
     }
@@ -449,6 +453,10 @@ impl<'a> BubblesMut<'a> {
 
     pub fn set_chart_type_param(&mut self, bid: BubbleId, param: f64) -> bool {
         self.store.set_chart_type_param(bid, param)
+    }
+
+    pub fn set_chart_type_param_mode(&mut self, bid: BubbleId, mode: mlc_core::chart_type::ParamMode) -> bool {
+        self.store.set_chart_type_param_mode(bid, mode)
     }
 
     pub fn set_chart_type_interval(&mut self, bid: BubbleId, iv: &'static str) -> bool {

@@ -350,8 +350,9 @@ pub fn chart_toolbar_render_toolbars(
     active_chart_type: Option<&str>,
     active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
-    timeframe_native_map: Option<&std::collections::HashMap<&'static str, bool>>,
+    timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -848,7 +849,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites)
         } else {
             None
         };
@@ -917,8 +918,9 @@ fn chart_toolbar_render_dropdown(
     active_chart_type: Option<&str>,
     active_chart_type_param: Option<f64>,
     chart_type_data_modes: Option<&std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>>,
-    timeframe_native_map: Option<&std::collections::HashMap<&'static str, bool>>,
+    timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -949,12 +951,42 @@ fn chart_toolbar_render_dropdown(
         // (owner doctrine 2026-07-08): the button's popup lists the
         // registry's numeric presets instead of the static TF list — built
         // fresh here so it always reflects the active chart_type/instrument.
-        let items = if dropdown_id == "timeframe_selector" {
+        let mut items = if dropdown_id == "timeframe_selector" {
             resolution_param_dropdown_items(active_chart_type)
                 .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id))?
         } else {
             chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id)?
         };
+
+        // Granularity favorites (user-granularity-templates-inner arc, кусок
+        // 1): append a FAVORITES section + "Custom…" input row to the
+        // `timeframe_selector` dropdown. Two disjoint cases, matching how
+        // `items` was just built above:
+        // - `Param`-resolution chart types (range/tick/volume/... bars) got
+        //   the numeric preset ladder from `resolution_param_dropdown_items`
+        //   — append the chart_type-filtered `params` favorites.
+        // - Every other case (`Time`/`Interval`, incl. the `None` active
+        //   chart_type fallback) got the static builtin TF list — append
+        //   `time_tfs`, but ONLY when the chart_type is TF-eligible at all
+        //   (`resolution == Time && tf_whitelist == None`; never
+        //   footprint/tpo, matching the task's exact gate).
+        if dropdown_id == "timeframe_selector" {
+            let is_param_dropdown = active_chart_type
+                .and_then(mlc_core::chart_type::by_id)
+                .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }))
+                .unwrap_or(false);
+            if is_param_dropdown {
+                append_param_favorites_items(&mut items, active_chart_type, granularity_favorites);
+            } else {
+                let tf_eligible = active_chart_type
+                    .and_then(mlc_core::chart_type::by_id)
+                    .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Time) && def.tf_whitelist.is_none())
+                    .unwrap_or(true); // no active chart_type known yet -> don't hide the section
+                if tf_eligible {
+                    append_tf_favorites_items(&mut items, granularity_favorites);
+                }
+            }
+        }
 
         // 3. Convert DropdownItemDef -> DropdownItem
         let active_preset_load_id = format!("preset_load:{}", active_preset_id);
@@ -1017,6 +1049,27 @@ fn chart_toolbar_render_dropdown(
                             *accent_color = Some("#2962ff".to_string());
                         }
                     } else {
+                        // Granularity rows (кусок 1/2) are NOT TF items —
+                        // exempt them from the TF whitelist/disable machinery
+                        // below entirely. Their visibility is already decided
+                        // at append time (`append_tf_favorites_items` /
+                        // `append_param_favorites_items` /
+                        // `resolution_param_dropdown_items`' ATR row gate):
+                        // - the two "Custom…" input rows and the ATR (14) row
+                        //   would otherwise hit `allowed_timeframes == None`
+                        //   on Param-resolution types → `disabled` → the
+                        //   click router sees `__noop__` and the input never
+                        //   focuses (live bug 2026-07-15);
+                        // - favorite TF items (`tf_{name}`, e.g. `tf_7m`)
+                        //   aren't members of the builtin `ALL_TF_IDS`-derived
+                        //   allowed set → `return None` would silently omit
+                        //   the whole FAVORITES section on Time types.
+                        let is_granularity_row = id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID
+                            || id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID
+                            || id == mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID;
+                        let is_tf_favorite = id.strip_prefix("tf_")
+                            .map(|n| granularity_favorites.time_tfs.iter().any(|f| f == n))
+                            .unwrap_or(false);
                         // Whitelist filtering (2026-07-08 hide-not-blur): a
                         // chart_type with an explicit `tf_whitelist`
                         // (footprint/tpo) OMITS non-whitelisted TF items from
@@ -1032,10 +1085,12 @@ fn chart_toolbar_render_dropdown(
                         // stays visible so its toolbar position stays stable
                         // across chart-type switches. This is a different
                         // mechanism than whitelist filtering and is unaffected.
-                        match allowed_timeframes {
-                            None => *disabled = true,
-                            Some(allowed) if !allowed.contains(id.as_str()) => return None,
-                            _ => {}
+                        if !is_granularity_row {
+                            match allowed_timeframes {
+                                None => *disabled = true,
+                                Some(allowed) if !allowed.contains(id.as_str()) && !is_tf_favorite => return None,
+                                _ => {}
+                            }
                         }
 
                         // Availability marking (resolution-availability-
@@ -1388,10 +1443,87 @@ fn resolution_param_dropdown_items(active_chart_type: Option<&str>) -> Option<Ve
     let def = mlc_core::chart_type::by_id(ct)?;
     let mlc_core::chart_type::ResolutionKind::Param { suffix } = def.resolution else { return None };
     let spec = def.param_spec?;
-    Some(spec.options.iter().map(|opt| {
+    let mut items: Vec<DropdownItemDef> = spec.options.iter().map(|opt| {
         let label = format_resolution_param_label(opt.label, suffix);
         DropdownItemDef::action(format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, opt.value_id), label)
-    }).collect())
+    }).collect();
+    // ATR(14) box-size mode — renko/kagi ONLY (granularity arc, кусок 2 —
+    // `docs/mlc/research/industry-resolution-defaults-2026-07-15.md` §3/§5).
+    // Appended after the plain numeric ladder, dispatched via the fixed
+    // `RESOLUTION_PARAM_ATR14_ITEM_ID` (not a `RESOLUTION_PARAM_ITEM_PREFIX`
+    // value-encoding id — ATR carries no numeric input of its own).
+    if matches!(ct, "renko" | "kagi") {
+        items.push(DropdownItemDef::action(
+            mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID,
+            "ATR (14)",
+        ));
+    }
+    Some(items)
+}
+
+/// Append the FAVORITES section (custom timeframes) + "Custom…" input row to
+/// the `timeframe_selector` dropdown's item list — user-granularity-
+/// templates-inner arc, кусок 1.
+///
+/// Favorite items reuse the `tf_{name}` id convention (`Timeframe::parse`
+/// resolves them through the EXACT same `ChangeTimeframe` dispatch path as a
+/// builtin `tf_*` item — zero new handling on the apply side). The "Custom…"
+/// row is a dedicated whole-row click target
+/// (`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`) handled by the app's click router,
+/// not a `param_field` inline-input (see that constant's doc comment for why
+/// the whole row is safe to use as the hit zone here).
+fn append_tf_favorites_items(
+    items: &mut Vec<DropdownItemDef>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+) {
+    items.push(DropdownItemDef::Separator);
+    items.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
+    for name in &favorites.time_tfs {
+        items.push(DropdownItemDef::action(format!("tf_{}", name), name.clone()));
+    }
+    items.push(DropdownItemDef::action(
+        mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+        "Custom…",
+    ));
+}
+
+/// Append the FAVORITES section (custom numeric-param presets) + "Custom…"
+/// input row to the `timeframe_selector` dropdown's item list for the active
+/// `ResolutionKind::Param` chart type — user-granularity-templates-inner
+/// arc, кусок 1.
+///
+/// Favorite items reuse the `RESOLUTION_PARAM_ITEM_PREFIX` id convention
+/// (`"reso_param:{value}"`) so `ChartToolbarState::
+/// handle_dropdown_select_with_chart`'s existing `timeframe_selector` arm
+/// dispatches them to `UpdateChartTypeParam` with zero new handling —
+/// exactly like a static ladder preset. Filtered to the active chart_type
+/// only (a range_bar favorite must never leak into the volume_bar dropdown).
+fn append_param_favorites_items(
+    items: &mut Vec<DropdownItemDef>,
+    active_chart_type: Option<&str>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+) {
+    let Some(ct) = active_chart_type else { return };
+    let suffix = match mlc_core::chart_type::by_id(ct).map(|def| def.resolution) {
+        Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => suffix,
+        _ => return,
+    };
+    let matching: Vec<&mlc_core::user_profile::ParamFavorite> = favorites.params.iter()
+        .filter(|f| f.chart_type == ct)
+        .collect();
+    items.push(DropdownItemDef::Separator);
+    items.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
+    for fav in matching {
+        let label = format_resolution_param(fav.value, suffix);
+        items.push(DropdownItemDef::action(
+            format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, fav.value),
+            label,
+        ));
+    }
+    items.push(DropdownItemDef::action(
+        mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+        "Custom…",
+    ));
 }
 
 /// Find the DropdownItemDef list for a given dropdown_id from toolbar definitions.
