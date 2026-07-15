@@ -1690,6 +1690,34 @@ impl BackendCore {
                     }
                 }
 
+                // ── TradeGapFilled (gap-fill pass, owner rule 2026-07-15) ────────
+                // INTERIOR batch closing a visible hole. Store side is the
+                // same `prepend_batch` call — `RawLayer`'s merge path
+                // handles interior rows (sorted merge, key dedup). Fold
+                // side must SPLICE into the middle of the output series;
+                // the prepend arm's stitch-in-front does not apply.
+                LiveUpdate::TradeGapFilled { exchange_id, account_type, symbol, trades } => {
+                    if trades.is_empty() { continue; }
+                    let at_label = account_type.short_label();
+                    let raw_trades: Vec<crate::bubble::RawTrade> = trades.iter().map(|t| crate::bubble::RawTrade {
+                        ts_ms: t.ts_ms,
+                        price: t.price,
+                        qty: t.qty,
+                        is_buyer_maker: t.is_buyer_maker,
+                    }).collect();
+                    let trade_key = mlc_core::instrument::InstrumentAddress::new(
+                        exchange_id.as_str(), symbol.clone(), at_label.parse().unwrap_or_default(),
+                    );
+                    self.trade_store.prepend_batch(&trade_key, &raw_trades);
+                    // Guard-lifetime note: bind before looping (see BarUpdate arm).
+                    let gap_bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, &symbol);
+                    for bid in gap_bids {
+                        events.extend(self.splice_trade_fold_gap(
+                            bid, &raw_trades, exchange_id, &symbol, at_label,
+                        ));
+                    }
+                }
+
                 // ── MiniTickerUpdate ────────────────────────────────────────────
                 LiveUpdate::MiniTickerUpdate { exchange_id, account_type, symbol, last_price,
                     price_change_percent, high_price, low_price, volume } =>

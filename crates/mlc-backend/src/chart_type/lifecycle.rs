@@ -586,6 +586,105 @@ impl BackendCore {
     /// Returns the reconcile-triggering events (same shapes the reseed
     /// path emits — `FootprintBarAppended` drives the derived-series
     /// prepend shift, `CvdSampleAppended` marks indicators dirty).
+    /// SPLICE an interior gap-fill batch into the footprint output series
+    /// (gap-fill pass, owner rule 2026-07-15). Counterpart of
+    /// [`Self::incremental_prepend_trade_folds`] for rows that land in the
+    /// MIDDLE of the loaded range (a cured hole), where stitch-in-front is
+    /// wrong.
+    ///
+    /// v1 SCOPE — the footprint machine family only (incremental +
+    /// `OrderflowSlotted`, trade-fed): its outputs are TIME-BUCKETED bars,
+    /// so an interior insert is well-defined (order by `open_time`,
+    /// existing bucket wins on collision — an existing edge bucket saw
+    /// live/later trades the batch does not carry). Count-based bar
+    /// machines (tick/run/imbalance/dollar) are structurally excluded: an
+    /// interior insert shifts every later bar's identity — a true cure for
+    /// them is a tail refold, which fold-then-drop retention makes a
+    /// re-pull job, not a splice. TPO reseeds from the store (which now
+    /// holds the merged rows) on its own path; the CVD companion keeps its
+    /// gap for now (cumulative line — an interior insert re-offsets every
+    /// later sample; future work). After the insert, one O(n)
+    /// cumulative-delta restitch — same pass the prepend arm runs.
+    pub(crate) fn splice_trade_fold_gap(
+        &self,
+        bid: BubbleId,
+        gap_rows: &[crate::bubble::RawTrade],
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type_label: &str,
+    ) -> Vec<BubbleEvent> {
+        let mut events: Vec<BubbleEvent> = Vec::new();
+        if gap_rows.is_empty() {
+            return events;
+        }
+
+        // Fold the gap batch alone — same policy gate as the prepend arm's
+        // footprint branch. All reads bound BEFORE the write closure.
+        let gap_bars: Option<Vec<mlc_core::types::FootprintBar>> =
+            self.bubbles().with_bubble(bid, |b| {
+                b.active_trade_fold.as_ref().and_then(|f| {
+                    let incremental_fp = mlc_core::chart_type::by_id(f.chart_type())
+                        .map(|d| d.incremental_prepend && matches!(d.kind, mlc_core::chart_type::ChartTypeKind::OrderflowSlotted))
+                        .unwrap_or(false);
+                    if !incremental_fp || !f.feeds_on_trades() {
+                        return None;
+                    }
+                    let mut bars: Vec<mlc_core::types::FootprintBar> = Vec::new();
+                    for o in f.fold_prefix(gap_rows) {
+                        let crate::bubble::TradeFoldOutput::Footprint(fb) = o else { continue };
+                        mlc_core::chart_type::merge_last_wins(&mut bars, fb, mlc_core::chart_type::footprint_identity);
+                    }
+                    if bars.is_empty() { None } else { Some(bars) }
+                })
+            }).flatten();
+
+        let Some(gap_bars) = gap_bars else { return events; };
+
+        let spliced = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            let Some(existing) = b.footprint_bars.take() else { return false; };
+            let existing_opens: std::collections::HashSet<i64> =
+                existing.iter().map(|fb| fb.open_time).collect();
+            // Ordered merge by open_time; EXISTING bucket wins on collision
+            // (it saw live/later trades; the gap batch is bounded to the
+            // hole so collisions only happen at seam buckets).
+            let mut merged: Vec<mlc_core::types::FootprintBar> =
+                Vec::with_capacity(existing.len() + gap_bars.len());
+            let mut gap_iter = gap_bars
+                .into_iter()
+                .filter(|gb| !existing_opens.contains(&gb.open_time))
+                .peekable();
+            for ex in existing.into_iter() {
+                while gap_iter.peek().is_some_and(|gb| gb.open_time < ex.open_time) {
+                    merged.push(gap_iter.next().expect("peeked"));
+                }
+                merged.push(ex);
+            }
+            merged.extend(gap_iter);
+            let mut running = 0.0_f64;
+            for fb in merged.iter_mut() {
+                fb.set_cumulative_delta(running);
+                running = fb.cumulative_delta;
+            }
+            if b.bars_source == crate::bubble::BarsSource::FootprintOhlc {
+                let ohlc: Vec<Bar> = merged.iter().map(|fb| Bar::with_volume(
+                    fb.open_time / 1000, fb.open, fb.high, fb.low, fb.close, fb.volume,
+                )).collect();
+                b.replace_bars(ohlc);
+            }
+            b.footprint_bars = Some(merged);
+            true
+        }).unwrap_or(false);
+
+        if spliced {
+            events.push(BubbleEvent::FootprintBarAppended {
+                bid, exchange_id,
+                symbol: symbol.to_string(),
+                account_type: account_type_label.to_string(),
+            });
+        }
+        events
+    }
+
     pub(crate) fn incremental_prepend_trade_folds(
         &self,
         bid: BubbleId,
@@ -1318,5 +1417,151 @@ mod fold_reseed_last_wins_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod splice_trade_fold_gap_tests {
+    //! Gap-fill splice coverage (owner rule 2026-07-15): an interior batch
+    //! must land IN ORDER between existing footprint buckets, an existing
+    //! bucket must win an open_time collision (it saw live/later trades),
+    //! and the cumulative-delta restitch must run over the merged series.
+
+    use super::*;
+    use mlc_backend_data_bridge::DataBridge;
+    use mlc_core::ids::BubbleId;
+
+    fn build_core() -> std::sync::Arc<BackendCore> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        BackendCore::new(std::sync::Arc::new(bridge), None)
+    }
+
+    fn make_bubble(core: &BackendCore) -> BubbleId {
+        core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::m1())
+    }
+
+    fn trade(ts_ms: i64, price: f64, qty: f64, is_buyer_maker: bool) -> crate::bubble::RawTrade {
+        crate::bubble::RawTrade { ts_ms, price, qty, is_buyer_maker }
+    }
+
+    fn install_footprint(core: &BackendCore, bid: BubbleId) {
+        let rt = crate::bubble::TradeFoldRuntime::new(
+            "footprint",
+            crate::bubble::FoldParams { interval_ms: 60_000, ..Default::default() },
+            digdigdig3_station::TpoSource::TradeBucket,
+            ExchangeId::Bybit,
+            "BTCUSDT",
+        ).expect("footprint runtime");
+        core.bubbles_mut().with_bubble_mut(bid, |b| b.active_trade_fold = Some(rt));
+    }
+
+    /// Fold `rows` through the installed runtime into collapsed footprint
+    /// bars — the same fold+collapse the prepend/splice arms run.
+    fn fold_bars(core: &BackendCore, bid: BubbleId, rows: &[crate::bubble::RawTrade]) -> Vec<mlc_core::types::FootprintBar> {
+        core.bubbles().with_bubble(bid, |b| {
+            let f = b.active_trade_fold.as_ref().expect("runtime installed");
+            let mut bars: Vec<mlc_core::types::FootprintBar> = Vec::new();
+            for o in f.fold_prefix(rows) {
+                let crate::bubble::TradeFoldOutput::Footprint(fb) = o else { continue };
+                mlc_core::chart_type::merge_last_wins(&mut bars, fb, mlc_core::chart_type::footprint_identity);
+            }
+            bars
+        }).expect("bubble exists")
+    }
+
+    #[test]
+    fn interior_batch_splices_in_order_between_existing_buckets() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+        install_footprint(&core, bid);
+
+        // Existing series: buckets 0 and 600k — a hole spanning 60k..600k.
+        let seed = [trade(10_000, 100.0, 1.0, false), trade(610_000, 101.0, 1.0, false)];
+        let existing = fold_bars(&core, bid, &seed);
+        assert_eq!(existing.len(), 2, "seed folds to two buckets around the hole");
+        core.bubbles_mut().with_bubble_mut(bid, |b| b.footprint_bars = Some(existing));
+
+        // Gap batch: rows inside the hole (buckets 120k and 180k).
+        let gap_rows = [
+            trade(130_000, 100.5, 2.0, true),
+            trade(200_000, 100.7, 3.0, false),
+        ];
+        let events = core.splice_trade_fold_gap(bid, &gap_rows, ExchangeId::Bybit, "BTCUSDT", "S");
+        assert_eq!(events.len(), 1, "a successful splice reports one redraw event");
+
+        let opens: Vec<i64> = core.bubbles().with_bubble(bid, |b| {
+            b.footprint_bars.as_ref().map(|v| v.iter().map(|fb| fb.open_time).collect())
+        }).flatten().expect("footprint bars present");
+        assert_eq!(opens, vec![0, 120_000, 180_000, 600_000], "gap buckets inserted IN ORDER between existing ones");
+    }
+
+    #[test]
+    fn existing_bucket_wins_open_time_collision() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+        install_footprint(&core, bid);
+
+        let seed = [trade(10_000, 100.0, 5.0, false), trade(610_000, 101.0, 1.0, false)];
+        let existing = fold_bars(&core, bid, &seed);
+        core.bubbles_mut().with_bubble_mut(bid, |b| b.footprint_bars = Some(existing));
+
+        // Batch carries a row for bucket 0 (already exists, volume 5.0) and
+        // one genuinely new bucket (120k).
+        let gap_rows = [
+            trade(20_000, 100.1, 9.0, false), // bucket 0 — must NOT clobber
+            trade(130_000, 100.5, 2.0, true),
+        ];
+        let _ = core.splice_trade_fold_gap(bid, &gap_rows, ExchangeId::Bybit, "BTCUSDT", "S");
+
+        let (opens, vol0): (Vec<i64>, f64) = core.bubbles().with_bubble(bid, |b| {
+            let v = b.footprint_bars.as_ref().expect("bars");
+            (v.iter().map(|fb| fb.open_time).collect(), v[0].volume)
+        }).expect("bubble exists");
+        assert_eq!(opens, vec![0, 120_000, 600_000]);
+        assert!((vol0 - 5.0).abs() < 1e-9, "existing bucket 0 keeps its own volume (existing wins), got {vol0}");
+    }
+
+    #[test]
+    fn cumulative_delta_is_restitched_across_the_merged_series() {
+        let core = build_core();
+        let bid = make_bubble(&core);
+        install_footprint(&core, bid);
+
+        // Seed deltas: bucket 0 = +1 (buy), bucket 600k = +1 (buy).
+        let seed = [trade(10_000, 100.0, 1.0, false), trade(610_000, 101.0, 1.0, false)];
+        let existing = fold_bars(&core, bid, &seed);
+        core.bubbles_mut().with_bubble_mut(bid, |b| b.footprint_bars = Some(existing));
+
+        // Gap bucket 120k = a sell of 2.0 — opposite-signed to the seeds.
+        let gap_rows = [trade(130_000, 100.5, 2.0, true)];
+        let _ = core.splice_trade_fold_gap(bid, &gap_rows, ExchangeId::Bybit, "BTCUSDT", "S");
+
+        // Restitch property (sign-convention-agnostic): each bar's
+        // cumulative equals the running sum of the bars' OWN deltas
+        // (Σ levels buy−sell) over the MERGED order — i.e. the spliced
+        // bucket participates in the accumulation of everything after it.
+        let bars_snapshot: Vec<(f64, f64)> = core.bubbles().with_bubble(bid, |b| {
+            b.footprint_bars.as_ref().map(|v| v.iter().map(|fb| {
+                let own: f64 = fb.levels.iter().map(|l| l.buy_vol - l.sell_vol).sum();
+                (own, fb.cumulative_delta)
+            }).collect())
+        }).flatten().expect("bars");
+        assert_eq!(bars_snapshot.len(), 3);
+        let mut running = 0.0_f64;
+        for (i, (own, cum)) in bars_snapshot.iter().enumerate() {
+            assert!(
+                (cum - (running + own)).abs() < 1e-9 || (cum - (running - own)).abs() < 1e-9,
+                "bar #{i}: cumulative {cum} is not a running accumulation (running={running}, own={own})"
+            );
+            running = *cum;
+        }
+        // And the spliced bucket's own delta must be NONZERO and opposite
+        // in sign to the seed buckets' — proving the interior bar really
+        // participates rather than being skipped by the restitch.
+        assert!(bars_snapshot[1].0 * bars_snapshot[0].0 < 0.0, "gap bucket's delta must oppose the seed's");
     }
 }

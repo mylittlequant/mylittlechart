@@ -452,6 +452,22 @@ pub enum LiveUpdate {
         trades: Vec<RawTradeWire>,
     },
 
+    /// Batch of INTERIOR trades that close (part of) a data gap — rows
+    /// strictly between already-loaded regions (gap-fill pass, owner rule
+    /// 2026-07-15: a hole in the viewport whose archive day has been
+    /// published must be pulled and cured; nothing did). Distinct from
+    /// [`Self::TradeHistoryPrepended`] because the fold consumers must
+    /// SPLICE these bars into the middle of their output series (the
+    /// prepend arm's stitch-in-front assumption does not hold); the store
+    /// side is the same `TradeStore::prepend_batch` call — its merge path
+    /// already handles interior batches.
+    TradeGapFilled {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        trades: Vec<RawTradeWire>,
+    },
+
     /// A raw-layer backfill page landed (unified-data-plane Э2,
     /// `BackfillEngine`). Layer-level notification for consumers that watch
     /// a bubble's raw `kline_layers` (or the shared per-instrument

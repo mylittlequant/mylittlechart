@@ -266,6 +266,12 @@ pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, cha
     ctx.set_text_baseline(TextBaseline::Top);
 
     let mut markers_drawn = 0usize;
+    // Adjacent bands' centered labels collide when the data island between
+    // two seams is only a few bars wide (live incident 2026-07-15: the 24h
+    // publication-lag band and the 7h sleep-hole band overlapped into an
+    // unreadable stack). Track the previous label's right edge and drop a
+    // colliding label one line-block lower.
+    let mut last_label_right = f64::MIN;
     for i in start..(end - 1) {
         if markers_drawn >= MAX_GAP_MARKERS {
             break;
@@ -313,11 +319,14 @@ pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, cha
         draw_dashed_line(ctx, band_x + band_w, rect.y, band_x + band_w, rect.bottom(), 4.0, 4.0);
 
         ctx.set_fill_color(&theme.crosshair);
-        ctx.fill_text(&label, screen_x, rect.y + rect.height * 0.5 - 14.0);
+        let label_left = screen_x - text_w * 0.5;
+        let y_off = if label_left < last_label_right + 8.0 { 36.0 } else { 0.0 };
+        last_label_right = screen_x + text_w * 0.5;
+        ctx.fill_text(&label, screen_x, rect.y + rect.height * 0.5 - 14.0 + y_off);
         // Archive holes are day-file lag: name the missing UTC day(s) so
         // the user knows what the chart is waiting for.
         if let Some(days) = days_label.as_deref() {
-            ctx.fill_text(days, screen_x, rect.y + rect.height * 0.5 + 2.0);
+            ctx.fill_text(days, screen_x, rect.y + rect.height * 0.5 + 2.0 + y_off);
         }
 
         markers_drawn += 1;

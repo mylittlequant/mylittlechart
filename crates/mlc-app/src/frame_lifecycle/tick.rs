@@ -579,6 +579,12 @@ impl ChartApp {
             // exactly, including the `LayerBackfilled{layer:"trades"}`
             // re-fold-in-place consumer (`tick_writers`).
             let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, mlc_core::ids::BubbleId)> = Vec::new();
+            // Gap-fill scan targets (owner rule 2026-07-15): every visible
+            // trade-fold chart, UNCONDITIONALLY of edge/cold demand — the
+            // day-14 hole sat in a viewport whose depth demand was fully
+            // satisfied, so a scan gated behind edge/cold would never see
+            // it. (bid, symbol, exchange, account_type, interval_ms).
+            let mut trade_fold_gap_scan: Vec<(mlc_core::ids::BubbleId, String, String, mlc_core::instrument::AccountType, i64)> = Vec::new();
             let max_loaded = self.core.user().profile().domain.data_load.max_loaded_bars;
 
             let instrument_by_cid_scroll: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::state::Timeframe, String, mlc_core::instrument::AccountType)> = {
@@ -696,6 +702,15 @@ impl ChartApp {
                 // footprint never loaded past its first archive day (live
                 // incident 2026-07-15, final act).
                 if window.pending_symbol_load && !is_fold && !is_trade_fold { continue; }
+
+                // Collect gap-scan targets BEFORE the edge/cold gate below —
+                // interior holes need curing precisely when depth demand is
+                // quiet (gap-fill pass, owner rule 2026-07-15).
+                if is_trade_fold {
+                    if let Some((sym, tf, exch, at)) = instrument_by_cid_scroll.get(cid_scroll) {
+                        trade_fold_gap_scan.push((bid_scroll, sym.clone(), exch.clone(), *at, tf.interval_ms));
+                    }
+                }
 
                 // Scroll-pressure trigger (unified-data-plane Э2 doctrine:
                 // fire at ~80% of LOADED history toward the oldest edge).
@@ -904,6 +919,57 @@ impl ChartApp {
                 // fold-then-drop and the demand does not need to (and must
                 // not) stretch raw retention to match its own depth.
                 self.core.bridge_handle().ensure_trade_backfill(eid, &symbol, at, Some(demand));
+            }
+
+            // Gap-fill scan (owner rule 2026-07-15): find the NEWEST interior
+            // hole in each trade-fold chart's folded series and ask the
+            // bridge to cure it. Same gap semantics as the band renderer
+            // (threshold = max(10x bucket, 30min) — for a time-bucketed
+            // footprint the median consecutive delta IS the bucket), so
+            // whatever gets a band gets a cure attempt. Per-frame calls are
+            // cheap: the bridge holds a per-key cooldown
+            // (`gap_retry_after_ms`), so an incurable hole degrades to one
+            // coverage probe per 5 minutes. v1 folds scope: footprint family
+            // (`footprint_bars` slot) — count-based bars keep their band
+            // (splice is ill-defined for them; see `splice_trade_fold_gap`).
+            {
+                let mut seen_instruments: std::collections::HashSet<(String, String, mlc_core::instrument::AccountType)> =
+                    std::collections::HashSet::new();
+                for (bid_gap, symbol, exchange, account_type, interval_ms) in trade_fold_gap_scan {
+                    if interval_ms <= 0 { continue; }
+                    if !seen_instruments.insert((symbol.clone(), exchange.clone(), account_type)) {
+                        continue;
+                    }
+                    let opens: Option<Vec<i64>> = self.core.bubbles().with_bubble(bid_gap, |b| {
+                        b.footprint_bars.as_ref().map(|v| v.iter().map(|fb| fb.open_time).collect())
+                    }).flatten();
+                    let Some(opens) = opens else { continue; };
+                    if opens.len() < 2 { continue; }
+                    let threshold_ms = (10 * interval_ms).max(30 * 60 * 1000);
+                    // Newest hole first — one cure request per instrument per
+                    // tick; deeper holes get their turn once this one closes.
+                    for i in (0..opens.len() - 1).rev() {
+                        let delta = opens[i + 1] - opens[i];
+                        if delta > threshold_ms {
+                            let gap_lo = opens[i] + interval_ms;
+                            let gap_hi = opens[i + 1];
+                            {
+                                static GAP_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                                if GAP_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+                                    crate::sglog!(
+                                        "[gap_scan] sym={} gap=[{}..{}) span_h={}",
+                                        symbol, gap_lo, gap_hi, (gap_hi - gap_lo) / 3_600_000
+                                    );
+                                }
+                            }
+                            let eid = digdigdig3::ExchangeId::from_str(&exchange)
+                                .unwrap_or(digdigdig3::ExchangeId::Binance);
+                            let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+                            self.core.bridge_handle().ensure_trade_gap_fill(eid, &symbol, at, gap_lo, gap_hi);
+                            break;
+                        }
+                    }
+                }
             }
         }
 

@@ -302,6 +302,14 @@ pub struct RampState {
     /// ([`Self::widen_auto_ceiling`]); `None` = uncapped auto ladder
     /// (legacy: auto-advance all the way to `Day`).
     pub auto_ceiling_ms: Option<i64>,
+    /// Trade layer only: wall-clock ms before which the next GAP-FILL
+    /// flight for this key must not start (gap-fill pass, owner rule
+    /// 2026-07-15). The tick-side gap scan re-fires every few seconds for
+    /// as long as a band is visible; this backoff is what turns that into
+    /// "one probe attempt per cooldown" when the gap is not yet curable
+    /// (archive day still unpublished) — 5s after a flight that made
+    /// progress, 5min after one that could not.
+    pub gap_retry_after_ms: i64,
 }
 
 impl Default for RampState {
@@ -321,6 +329,7 @@ impl Default for RampState {
             ladder_stage: None,
             flight_now_ms: None,
             auto_ceiling_ms: None,
+            gap_retry_after_ms: 0,
         }
     }
 }
@@ -1098,6 +1107,64 @@ impl DataBridge {
         });
     }
 
+    /// Interior GAP-FILL entry for the trade layer (owner rule 2026-07-15:
+    /// "нет данных за 14-е при опубликованном зипе — баг; ничего не
+    /// триггерит подгрузку"). The tick-side gap scan calls this for the
+    /// newest visible hole `[gap_lo, gap_hi)` in a trade-fed chart's folded
+    /// series; the flight probes the archive coverage (short 5-min
+    /// staleness so a freshly-published day is noticed promptly), plans
+    /// the SAME `plan_fetch` algebra over the gap range, pulls the
+    /// published day files that intersect it, bounds every row to the gap
+    /// (NOT the depth walk's low-water trim — that would drop interior
+    /// rows wholesale), and emits [`LiveUpdate::TradeGapFilled`] so the
+    /// fold consumers SPLICE instead of prepend. v1 scope: zip-covered
+    /// gaps only — a REST-delta arm for interior gaps (deep-REST venues'
+    /// sleep holes inside the open day) is future work; those holes keep
+    /// their honest band until the day's zip publishes.
+    ///
+    /// Re-entry discipline: shares the key's single-flight guard with the
+    /// depth ramp, plus its own cooldown (`RampState::gap_retry_after_ms`)
+    /// so the per-frame scan degrades to one probe per 5 minutes while the
+    /// gap is not yet curable.
+    pub fn ensure_trade_gap_fill(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        gap_lo: i64,
+        gap_hi: i64,
+    ) {
+        if gap_hi <= gap_lo {
+            return;
+        }
+        let key: BackfillKey = (exchange_id, symbol.to_string(), account_type, LayerId::Trades);
+        let now_ms = crate::backfill_engine::now_ms();
+        let should_start = self.backfill_engine().with_state(&key, |state| {
+            if state.in_flight || now_ms < state.gap_retry_after_ms {
+                return false;
+            }
+            state.begin_flight();
+            true
+        });
+        if !should_start {
+            return;
+        }
+
+        let station = self.station();
+        let tx = self.updates_tx();
+        let symbol_str = symbol.to_string();
+        let wire_sym = self.wire_symbol_pub(exchange_id, account_type, symbol);
+        let engine = self.backfill_engine();
+        let fetch_hub = self.station().hub();
+
+        self.spawn_bg_pub(async move {
+            run_trade_gap_flight(
+                fetch_hub, station, tx, engine, key, exchange_id, account_type,
+                symbol_str, wire_sym, gap_lo, gap_hi,
+            ).await;
+        });
+    }
+
     /// Engine-side loaded low-water mark for the trade layer — the ×2
     /// deepening demand's base (`RampState::oldest_seen_ts`). This is NOT
     /// the `TradeStore`'s oldest row: the store is a retention-bound RAM
@@ -1345,6 +1412,29 @@ fn day_probe(proxy_base: Option<String>) -> DayProbe {
 /// call).
 const ZIP_COVERAGE_REFRESH_MS: i64 = 3_600_000; // 1 hour
 
+/// Coverage-probe staleness bound for GAP-FILL flights — much shorter than
+/// the depth walk's [`ZIP_COVERAGE_REFRESH_MS`]: the whole point of the
+/// gap pass is noticing that a venue JUST published the day a visible hole
+/// is waiting for (owner rule 2026-07-15), and gap flights are already
+/// rate-limited to one per [`GAP_RETRY_IDLE_MS`], so the probe traffic is
+/// bounded at ~12 cheap range-GETs/hour per gapped instrument.
+const GAP_COVERAGE_REFRESH_MS: i64 = 300_000; // 5 minutes
+
+/// Cooldown before the next gap-fill flight after one that landed rows
+/// (a multi-day gap chunks across flights — cascade promptly).
+const GAP_RETRY_PROGRESS_MS: i64 = 5_000;
+
+/// Cooldown after a gap-fill flight that could not make progress (day
+/// still unpublished / hole / transient) — the tick scan keeps re-firing
+/// every few seconds for as long as the band is visible; this is what
+/// turns that into a 5-minute publication poll.
+const GAP_RETRY_IDLE_MS: i64 = 300_000;
+
+/// Archive-day budget per gap-fill flight — a wide gap cures in chunks
+/// (progress cooldown is 5s, so the cascade is still fast) instead of one
+/// long-running flight holding the key's single-flight guard.
+const GAP_FLIGHT_MAX_DAYS: u32 = 4;
+
 /// How many days back from "yesterday UTC" the cold coverage probe walks
 /// looking for the first published day file, per doctrine step 3 ("walk-back
 /// `today_utc-1 .. today_utc-4`; first true = newest_published_day; all 4
@@ -1383,6 +1473,7 @@ async fn resolve_zip_coverage(
     wire_sym: &str,
     spec: ArchiveSpec,
     now_ms: i64,
+    max_age_ms: i64,
 ) {
     let floor = day_from_archive_since(spec.since_ms);
     let (newest, last_probe_ms) = engine.with_zip_coverage(zc_key, floor, |c| {
@@ -1432,7 +1523,7 @@ async fn resolve_zip_coverage(
             }
         }
         Some(edge) => {
-            if now_ms.saturating_sub(last_probe_ms) < ZIP_COVERAGE_REFRESH_MS {
+            if now_ms.saturating_sub(last_probe_ms) < max_age_ms {
                 return; // still fresh, nothing to do
             }
             let mut cursor = edge;
@@ -1892,7 +1983,7 @@ async fn run_planned_trade_flight(
     let zc_key: ZipCoverageKey = (exchange_id, symbol_str.to_string(), account_type);
     let prober = day_probe(proxy_base.clone());
     let fetcher = day_fetch(proxy_base);
-    resolve_zip_coverage(&prober, engine, &zc_key, wire_sym, spec, now_ms).await;
+    resolve_zip_coverage(&prober, engine, &zc_key, wire_sym, spec, now_ms, ZIP_COVERAGE_REFRESH_MS).await;
 
     // Planner self-drive loop — the planner's mirror of the legacy
     // `'run: loop`'s ladder mechanics. Each iteration plans against the
@@ -2057,6 +2148,136 @@ async fn run_planned_trade_flight(
         exhausted: final_exhausted, stage_boundary: true,
     });
     engine.with_state(key, RampState::end_flight);
+}
+
+/// One GAP-FILL flight (owner rule 2026-07-15) — cure the interior hole
+/// `[gap_lo, gap_hi)` from published archive day files. See
+/// [`DataBridge::ensure_trade_gap_fill`] for the contract; key mechanical
+/// differences from the depth walk:
+/// - rows are bounded to the GAP RANGE (both edges), never trimmed against
+///   the depth walk's `oldest_seen_ts` low-water mark (which would drop
+///   every interior row wholesale — the original day-14 symptom);
+/// - emits [`LiveUpdate::TradeGapFilled`] (fold consumers SPLICE) and
+///   deliberately NO `LayerBackfilled` — that event's terminal arm reseeds
+///   folds from the store snapshot, which would wipe fold-then-drop days
+///   deeper than the raw window;
+/// - `oldest_anchor` untouched, ladder/`target_ts` untouched — the gap
+///   pass is fully orthogonal to the depth ramp; only the single-flight
+///   guard is shared;
+/// - v1 executes ZIP ranges only (no REST delta arm — see the entry's doc).
+#[allow(clippy::too_many_arguments)]
+async fn run_trade_gap_flight(
+    fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
+    station: Arc<digdigdig3_station::Station>,
+    tx: tokio::sync::broadcast::Sender<LiveUpdate>,
+    engine: BackfillEngine,
+    key: BackfillKey,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_str: String,
+    wire_sym: String,
+    gap_lo: i64,
+    gap_hi: i64,
+) {
+    let now_ms_v = now_ms();
+    // Single confident-resolve attempt — gap flights only ever run long
+    // after boot (a gap needs loaded data on both sides), so the symbol
+    // catalogue is warm; passthrough fallback covers the exotic rest.
+    let wire_sym = crate::bridge::try_resolve_wire_symbol(&station, exchange_id, account_type, &symbol_str)
+        .unwrap_or(wire_sym);
+
+    let Some(rest) = fetch_hub.rest(exchange_id) else {
+        engine.with_state(&key, |s| {
+            s.gap_retry_after_ms = now_ms_v + GAP_RETRY_IDLE_MS;
+            s.end_flight();
+        });
+        return;
+    };
+    let Some(spec) = rest.trade_archive_capabilities().for_account(account_type) else {
+        // Venue publishes no archive — v1 has nothing to cure a gap with;
+        // long cooldown so the scan does not spin on an incurable hole.
+        engine.with_state(&key, |s| {
+            s.gap_retry_after_ms = now_ms_v + 6 * GAP_RETRY_IDLE_MS;
+            s.end_flight();
+        });
+        return;
+    };
+
+    let proxy_base = crate::archive_proxy_base();
+    let zc_key: ZipCoverageKey = (exchange_id, symbol_str.clone(), account_type);
+    let prober = day_probe(proxy_base.clone());
+    let fetcher = day_fetch(proxy_base);
+    let floor = day_from_archive_since(spec.since_ms);
+    resolve_zip_coverage(&prober, &engine, &zc_key, &wire_sym, spec, now_ms_v, GAP_COVERAGE_REFRESH_MS).await;
+
+    let coverage = engine
+        .snapshot_zip_coverage(&zc_key)
+        .unwrap_or_else(|| crate::zip_coverage::ZipCoverage::new(floor));
+    let plan = crate::zip_coverage::plan_fetch((gap_lo, gap_hi), &coverage, now_ms_v);
+    crate::dlog!(
+        "[gap_fill] key={:?}/{} gap=[{}..{}) zip_ranges={} (delta arm: v1 skip)",
+        key.0, key.1, gap_lo, gap_hi, plan.zip_ranges.len()
+    );
+
+    let mut days_fetched: u32 = 0;
+    let mut progressed = false;
+    'ranges: for (older_day, newer_day) in plan.zip_ranges.iter() {
+        let mut d = *newer_day;
+        while d >= *older_day {
+            if days_fetched >= GAP_FLIGHT_MAX_DAYS {
+                break 'ranges;
+            }
+            let result = fetcher(spec, wire_sym.clone(), d).await;
+            match classify_archive_day_result(result, false) {
+                ArchiveDayOutcome::Rows(rows) => {
+                    days_fetched += 1;
+                    let kept: Vec<RawTrade> = rows
+                        .into_iter()
+                        .filter(|r| r.ts_ms >= gap_lo && r.ts_ms < gap_hi)
+                        .collect();
+                    engine.with_zip_coverage(&zc_key, floor, |c| {
+                        c.landed_days.insert(d);
+                    });
+                    crate::dlog!(
+                        "[gap_fill] day {d} key={:?}/{} kept={} of raw (gap-bounded)",
+                        key.0, key.1, kept.len()
+                    );
+                    if !kept.is_empty() {
+                        progressed = true;
+                        let wire: Vec<RawTradeWire> = kept.iter().map(|r| RawTradeWire {
+                            ts_ms: r.ts_ms,
+                            price: r.price,
+                            qty: r.qty,
+                            is_buyer_maker: r.is_buyer_maker,
+                        }).collect();
+                        let prepended = wire.len();
+                        let new_oldest = wire.iter().map(|t| t.ts_ms).min();
+                        engine.with_state(&key, |s| s.record_trade_page(prepended, None, new_oldest, false));
+                        let _ = tx.send(LiveUpdate::TradeGapFilled {
+                            exchange_id, account_type,
+                            symbol: symbol_str.clone(),
+                            trades: wire,
+                        });
+                    }
+                }
+                ArchiveDayOutcome::Gap => {
+                    engine.with_zip_coverage(&zc_key, floor, |c| {
+                        c.holes.insert(d);
+                    });
+                }
+                ArchiveDayOutcome::TransientError | ArchiveDayOutcome::BoundaryReached => {
+                    break 'ranges;
+                }
+            }
+            d -= chrono::Duration::days(1);
+        }
+    }
+
+    engine.with_state(&key, |s| {
+        s.gap_retry_after_ms = now_ms_v
+            + if progressed { GAP_RETRY_PROGRESS_MS } else { GAP_RETRY_IDLE_MS };
+        s.end_flight();
+    });
 }
 
 /// Shared ramp-group runner for the trade layer. The first page of a fresh
