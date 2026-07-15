@@ -728,12 +728,19 @@ impl ChartApp {
     }
 
     /// Commit handler for the `timeframe_selector` dropdown's visible inline
-    /// TF editor (user-granularity-templates-inner arc, кусок 2). Validates
-    /// via `Timeframe::parse`; invalid input does NOT blur — the field stays
+    /// TF editor (user-granularity-templates-inner arc, кусок 2) — SHARED by
+    /// the kline `Time`-flavor editor (`AddTf`/`EditTf`) and the footprint
+    /// bucket-interval editor (`AddInterval`/`EditInterval`, per-family
+    /// scoping arc 2026-07-16), since both mint the SAME `TF_FAVORITE_INPUT`
+    /// text field (see `ChartApp::granularity_edit_render`) and accept the
+    /// same `Timeframe::parse`-shaped grammar. Which
+    /// `GranularityTarget`/profile bucket the commit lands on is decided by
+    /// `self.granularity_edit.kind`, not by the field itself. Validates via
+    /// `Timeframe::parse`; invalid input does NOT blur — the field stays
     /// focused so the user sees their (rejected) text and can keep typing
     /// (owner spec: "Invalid → do NOT blur, keep editing"). Valid input
     /// dispatches `CommitGranularityCustom`, which itself clears
-    /// `granularity_edit` and applies the TF.
+    /// `granularity_edit` and applies the value.
     fn text_action_tf_favorite_input(&mut self, action: TextAction) {
         match action {
             TextAction::Commit(text) => {
@@ -741,10 +748,18 @@ impl ChartApp {
                 if mlc_core::state::Timeframe::parse(&name).is_none() {
                     return;
                 }
+                let is_interval_edit = matches!(
+                    self.granularity_edit.as_ref().map(|e| &e.kind),
+                    Some(crate::GranularityEditKind::AddInterval)
+                        | Some(crate::GranularityEditKind::EditInterval { .. })
+                );
+                let target = if is_interval_edit {
+                    mlc_core::chart_type::GranularityTarget::Interval { name }
+                } else {
+                    mlc_core::chart_type::GranularityTarget::Tf { name }
+                };
                 self.process_chart_out_event(
-                    mlc_core::events::ChartOutEvent::CommitGranularityCustom {
-                        target: mlc_core::chart_type::GranularityTarget::Tf { name },
-                    }
+                    mlc_core::events::ChartOutEvent::CommitGranularityCustom { target }
                 );
             }
             TextAction::Cancel => {

@@ -584,8 +584,16 @@ pub fn chart_toolbar_render_toolbars(
                         for idx in 0..section.items.len() {
                             if section.items[idx].id() == Some("timeframe_selector") {
                                 let insert_at = idx + 1;
+                                // Standard toolbar separator between the TF
+                                // button and the first pinned quick-pick chip
+                                // (owner: "должны быть отделены сепаратором
+                                // от основного ТФ") — the SAME separator item
+                                // kind `convert_toolbar_def_to_sections`/
+                                // toolbar_core already renders elsewhere in
+                                // this strip, no new drawing.
+                                section.items.insert(insert_at, TcToolbarItem::separator());
                                 for (offset, item) in quick_pick_items.into_iter().enumerate() {
-                                    section.items.insert(insert_at + offset, item);
+                                    section.items.insert(insert_at + 1 + offset, item);
                                 }
                                 break 'outer;
                             }
@@ -968,40 +976,54 @@ fn granularity_quick_pick_items(
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
 ) -> Vec<TcToolbarItem> {
     // Build the (hit_value_id, label, is_active) triples for the applicable
-    // starred set — Param-resolution chart types use `starred_params`
-    // (filtered to the active chart_type), everything else uses
-    // `starred_tfs` (mirrors `prepend_param_starred_items`/
-    // `prepend_tf_starred_items`'s own dispatch on `ResolutionKind`).
-    let is_param_kind = active_chart_type
-        .and_then(mlc_core::chart_type::by_id)
-        .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }))
-        .unwrap_or(false);
+    // starred set, keyed by the active chart_type's `ResolutionKind`
+    // (per-family scoping arc 2026-07-16 — mirrors `prepend_param_starred_
+    // items`/`prepend_tf_starred_items`/`prepend_interval_starred_items`'s
+    // own dispatch): `Param` uses `starred_params` (filtered to the active
+    // chart_type), `Interval` (footprint) uses `starred_intervals`, `Time`
+    // (incl. no active chart_type known yet) uses `starred_tfs`. `Interval`
+    // entries reuse the PLAIN `tf_{name}` id encoding (not `ivl_`) — the
+    // click router's `resolve_granularity_target` already disambiguates a
+    // bare `tf_{name}` quick-pick id by the ACTIVE chart_type's
+    // `ResolutionKind` at click time, so no separate encoding is needed
+    // here; this guarantees a footprint quick-pick chip can never render
+    // (or be clicked into) the kline `starred_tfs` bucket and vice versa —
+    // the exact leak the owner reported ("остался запинен 1m на футпринте").
+    let resolution = active_chart_type.and_then(mlc_core::chart_type::by_id).map(|def| def.resolution);
 
-    let entries: Vec<(String, String, bool)> = if is_param_kind {
-        let Some(ct) = active_chart_type else { return Vec::new() };
-        let suffix = match mlc_core::chart_type::by_id(ct).map(|def| def.resolution) {
-            Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => suffix,
-            _ => return Vec::new(),
-        };
-        granularity_favorites.starred_params.iter()
-            .filter(|f| f.chart_type == ct)
-            .map(|f| {
-                let value_id = format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, f.value);
-                let label = format_resolution_param(f.value, suffix);
-                let is_active = active_chart_type_param
-                    .map(|v| (v - f.value).abs() < f64::EPSILON)
-                    .unwrap_or(false);
-                (value_id, label, is_active)
-            })
-            .collect()
-    } else {
-        granularity_favorites.starred_tfs.iter()
-            .map(|name| {
-                let value_id = format!("tf_{}", name);
-                let is_active = active_timeframe == Some(name.as_str());
-                (value_id, name.clone(), is_active)
-            })
-            .collect()
+    let entries: Vec<(String, String, bool)> = match resolution {
+        Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => {
+            let Some(ct) = active_chart_type else { return Vec::new() };
+            granularity_favorites.starred_params.iter()
+                .filter(|f| f.chart_type == ct)
+                .map(|f| {
+                    let value_id = format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, f.value);
+                    let label = format_resolution_param(f.value, suffix);
+                    let is_active = active_chart_type_param
+                        .map(|v| (v - f.value).abs() < f64::EPSILON)
+                        .unwrap_or(false);
+                    (value_id, label, is_active)
+                })
+                .collect()
+        }
+        Some(mlc_core::chart_type::ResolutionKind::Interval) => {
+            granularity_favorites.starred_intervals.iter()
+                .map(|name| {
+                    let value_id = format!("tf_{}", name);
+                    let is_active = active_timeframe == Some(name.as_str());
+                    (value_id, name.clone(), is_active)
+                })
+                .collect()
+        }
+        _ => {
+            granularity_favorites.starred_tfs.iter()
+                .map(|name| {
+                    let value_id = format!("tf_{}", name);
+                    let is_active = active_timeframe == Some(name.as_str());
+                    (value_id, name.clone(), is_active)
+                })
+                .collect()
+        }
     };
 
     if entries.is_empty() {
@@ -1100,19 +1122,25 @@ fn chart_toolbar_render_dropdown(
         };
 
         // Granularity favorites (user-granularity-templates-inner arc, кусок
-        // 2 — owner spec 2026-07-16): three sections appended/prepended
-        // around the `timeframe_selector` dropdown's builtin ladder, matching
-        // how `items` was just built above:
+        // 2 — owner spec 2026-07-16; per-family scoping extended 2026-07-16):
+        // sections appended/prepended around the `timeframe_selector`
+        // dropdown's builtin ladder, matching how `items` was just built
+        // above — keyed by the active chart_type's `ResolutionKind`:
         // - `Param`-resolution chart types (range/tick/volume/... bars) got
         //   the numeric preset ladder from `resolution_param_dropdown_items`
         //   — prepend the chart_type-filtered starred FAVORITES section,
         //   append the chart_type-filtered `params` customs + "+ Add" row.
-        // - Every other case (`Time`/`Interval`, incl. the `None` active
-        //   chart_type fallback) got the static builtin TF list — prepend
-        //   the starred FAVORITES section, append `time_tfs` customs + "+
-        //   Add" row, but ONLY when the chart_type is TF-eligible at all
-        //   (`resolution == Time && tf_whitelist == None`; never
-        //   footprint/tpo, matching кусок 1's exact gate).
+        // - `Interval`-resolution (footprint TODAY, the only member) gets its
+        //   OWN third family — `interval_tfs`/`starred_intervals`, never
+        //   `time_tfs`/`starred_tfs` (owner: "для футпринта вообще не вижу
+        //   ни кастома ни фейворита").
+        // - `Time`-resolution (incl. the `None` active chart_type fallback)
+        //   gets the kline family — prepend the starred FAVORITES section,
+        //   append `time_tfs` customs + "+ Add" row, but ONLY when the
+        //   chart_type is TF-eligible at all (`resolution == Time &&
+        //   tf_whitelist == None`; never tpo, matching кусок 1's exact gate
+        //   minus footprint, which now has its own branch instead of being
+        //   silently excluded).
         // The "+ Add" row's label shows live typed text ONLY while adding
         // (host == None) — while EDITING an existing custom (host ==
         // Some(target)) the Add row stays "+ Add" and the live text renders
@@ -1122,21 +1150,25 @@ fn chart_toolbar_render_dropdown(
             .filter(|r| r.host.is_none())
             .map(|r| r.text.as_str());
         if dropdown_id == "timeframe_selector" {
-            let is_param_dropdown = active_chart_type
-                .and_then(mlc_core::chart_type::by_id)
-                .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }))
-                .unwrap_or(false);
-            if is_param_dropdown {
-                prepend_param_starred_items(&mut items, active_chart_type, granularity_favorites);
-                append_param_customs_and_add_row(&mut items, active_chart_type, granularity_favorites, add_row_editing_text);
-            } else {
-                let tf_eligible = active_chart_type
-                    .and_then(mlc_core::chart_type::by_id)
-                    .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Time) && def.tf_whitelist.is_none())
-                    .unwrap_or(true); // no active chart_type known yet -> don't hide the section
-                if tf_eligible {
-                    prepend_tf_starred_items(&mut items, granularity_favorites);
-                    append_tf_customs_and_add_row(&mut items, granularity_favorites, add_row_editing_text);
+            let resolution = active_chart_type.and_then(mlc_core::chart_type::by_id).map(|def| def.resolution);
+            match resolution {
+                Some(mlc_core::chart_type::ResolutionKind::Param { .. }) => {
+                    prepend_param_starred_items(&mut items, active_chart_type, granularity_favorites);
+                    append_param_customs_and_add_row(&mut items, active_chart_type, granularity_favorites, add_row_editing_text);
+                }
+                Some(mlc_core::chart_type::ResolutionKind::Interval) => {
+                    prepend_interval_starred_items(&mut items, granularity_favorites);
+                    append_interval_customs_and_add_row(&mut items, granularity_favorites, add_row_editing_text);
+                }
+                _ => {
+                    let tf_eligible = active_chart_type
+                        .and_then(mlc_core::chart_type::by_id)
+                        .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Time) && def.tf_whitelist.is_none())
+                        .unwrap_or(true); // no active chart_type known yet -> don't hide the section
+                    if tf_eligible {
+                        prepend_tf_starred_items(&mut items, granularity_favorites);
+                        append_tf_customs_and_add_row(&mut items, granularity_favorites, add_row_editing_text);
+                    }
                 }
             }
         }
@@ -1155,35 +1187,28 @@ fn chart_toolbar_render_dropdown(
         // star(+edit+trash) treatment — position, not id, decides which.
         let mut in_favorites_section = false;
         let dropdown_items: Vec<DropdownItem> = items.iter().filter_map(|item| {
-            let mut is_favorites_header = false;
             if dropdown_id == "timeframe_selector" {
                 match item {
                     DropdownItemDef::Header { label } if label == "FAVORITES" => {
                         in_favorites_section = true;
-                        is_favorites_header = true;
                     }
                     DropdownItemDef::Separator if in_favorites_section => in_favorites_section = false,
                     _ => {}
                 }
             }
             let mut di = convert_dropdown_item(item);
-            // Pin-toggle trailing icon on the FAVORITES header (кусок 3):
-            // accent when ON, secondary/dim (theme's disabled-text tone)
-            // when OFF — same "distinct ON vs OFF" contract as the star
-            // fill state. `#2962ff` is the SAME pre-existing selection
-            // accent this dropdown already uses for the active TF/preset
-            // row (owner-approved accent exception), not a new hardcode.
-            if is_favorites_header {
-                use crate::ui::dropdown::TrailingIcon;
-                let pin = TrailingIcon::new(
-                    mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID,
-                    IconId::new("pin"),
-                ).with_color(if pin_granularity_favorites {
-                    "#2962ff".to_string()
-                } else {
-                    theme.item_text_disabled.clone()
-                });
-                di = di.with_header_trailing_icon(pin);
+            // Explicit pin TOGGLE row (defect fix 2026-07-16, owner:
+            // "тугл неактивен, нужно именно тугл явный") — the row itself is
+            // minted by `push_granularity_pin_toggle_row` as a normal
+            // dropdown action item; this just paints the standard
+            // toggle-switch visual on it, same pattern `presets_menu`'s
+            // `preset_autosave` row uses below.
+            if dropdown_id == "timeframe_selector" {
+                if let DropdownItem::Item { ref id, ref mut toggle, .. } = di {
+                    if id == mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID {
+                        *toggle = Some(pin_granularity_favorites);
+                    }
+                }
             }
             if dropdown_id == "presets_menu" {
                 if let DropdownItem::Item { ref id, ref mut accent_color, ref mut toggle, ref mut disabled, .. } = di {
@@ -1293,9 +1318,23 @@ fn chart_toolbar_render_dropdown(
                         //   `ALL_TF_IDS`-derived allowed set → `return None`
                         //   would silently omit the whole FAVORITES section
                         //   AND the customs list on Time types.
+                        // `ivl_{name}` rows (footprint bucket-interval
+                        // CUSTOM/FAVORITE — per-family scoping arc
+                        // 2026-07-16) are a THIRD family alongside the
+                        // `TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`/`tf_*` rows
+                        // handled below: never members of the builtin
+                        // `ALL_TF_IDS`-derived `allowed_timeframes` set
+                        // (same reason customs/starred TF ids aren't), so
+                        // they get their own exemption + trailing-icon
+                        // membership check against `interval_tfs`/
+                        // `starred_intervals` instead of `time_tfs`/
+                        // `starred_tfs`.
                         let is_granularity_row = lookup_id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID
                             || lookup_id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID
-                            || lookup_id == mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID;
+                            || lookup_id == mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID
+                            || lookup_id == mlc_core::chart_type::INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID
+                            || lookup_id == mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID;
+                        let interval_name = lookup_id.strip_prefix(mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX);
                         let bare_name = lookup_id.strip_prefix("tf_");
                         let is_custom_tf = bare_name
                             .map(|n| granularity_favorites.time_tfs.iter().any(|f| f == n))
@@ -1303,7 +1342,14 @@ fn chart_toolbar_render_dropdown(
                         let is_starred_tf = bare_name
                             .map(|n| granularity_favorites.starred_tfs.iter().any(|f| f == n))
                             .unwrap_or(false);
+                        let is_custom_interval = interval_name
+                            .map(|n| granularity_favorites.interval_tfs.iter().any(|f| f == n))
+                            .unwrap_or(false);
+                        let is_starred_interval = interval_name
+                            .map(|n| granularity_favorites.starred_intervals.iter().any(|f| f == n))
+                            .unwrap_or(false);
                         let is_tf_favorite = is_custom_tf || is_starred_tf;
+                        let is_interval_row = interval_name.is_some();
                         // Whitelist filtering (2026-07-08 hide-not-blur): a
                         // chart_type with an explicit `tf_whitelist`
                         // (footprint/tpo) OMITS non-whitelisted TF items from
@@ -1319,7 +1365,11 @@ fn chart_toolbar_render_dropdown(
                         // stays visible so its toolbar position stays stable
                         // across chart-type switches. This is a different
                         // mechanism than whitelist filtering and is unaffected.
-                        if !is_granularity_row {
+                        //
+                        // `ivl_*` rows are exempt from this membership check
+                        // entirely (same rationale as `is_granularity_row`
+                        // below — they are never members of `ALL_TF_IDS`).
+                        if !is_granularity_row && !is_interval_row {
                             match allowed_timeframes {
                                 None => *disabled = true,
                                 Some(allowed) if !allowed.contains(lookup_id) && !is_tf_favorite => return None,
@@ -1327,12 +1377,40 @@ fn chart_toolbar_render_dropdown(
                             }
                         }
 
-                        // Trailing icons (кусок 2): every plain TF row
-                        // (builtin OR custom) gets a star; customs additionally
-                        // get edit+trash. The two "+ Add" / ATR rows get none.
-                        // Star-action target uses `lookup_id` — see the Param
-                        // branch's comment above for the rationale.
-                        if !is_granularity_row {
+                        // Active chart type is Interval-resolution (footprint)
+                        // — needed by BOTH the trailing-icon family dispatch
+                        // below and the availability marking further down.
+                        let is_footprint_interval = active_chart_type
+                            .and_then(mlc_core::chart_type::by_id)
+                            .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval))
+                            .unwrap_or(false);
+
+                        // Trailing icons (кусок 2): every plain TF/interval
+                        // row (builtin OR custom) gets a star; customs
+                        // additionally get edit+trash. The "+ Add"/ATR rows
+                        // get none. Star-action target uses `lookup_id` —
+                        // see the Param branch's comment above for the
+                        // rationale.
+                        //
+                        // Family dispatch (owner defect 2026-07-16, round
+                        // 3 follow-up): footprint's WHITELIST rows keep
+                        // their `tf_{name}` ids (only its CUSTOM rows are
+                        // `ivl_`-prefixed), so on an Interval-kind chart
+                        // type a bare `tf_` row's star state must read
+                        // `starred_intervals` — reading `starred_tfs`
+                        // there lit the kline-family star ("1m" gold on
+                        // footprint) while the CLICK toggled the interval
+                        // family (display/action mismatch).
+                        if is_interval_row {
+                            *trailing_icons = granularity_trailing_icons(lookup_id, is_custom_interval, is_starred_interval, in_favorites_section);
+                        } else if is_footprint_interval {
+                            if let Some(n) = bare_name {
+                                let starred = granularity_favorites.starred_intervals.iter().any(|f| f == n);
+                                // Whitelist rows are never customs — customs
+                                // render as their own `ivl_`-prefixed rows.
+                                *trailing_icons = granularity_trailing_icons(lookup_id, false, starred, in_favorites_section);
+                            }
+                        } else if !is_granularity_row {
                             *trailing_icons = granularity_trailing_icons(lookup_id, is_custom_tf, is_starred_tf, in_favorites_section);
                         }
 
@@ -1350,10 +1428,6 @@ fn chart_toolbar_render_dropdown(
                         // regardless of interval, so EVERY bucket is
                         // live-only on a RecentOnly venue, not just the
                         // non-native ones.
-                        let is_footprint_interval = active_chart_type
-                            .and_then(mlc_core::chart_type::by_id)
-                            .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval))
-                            .unwrap_or(false);
                         // Mark vocabulary simplified to ONE word and theme
                         // colors only (owner rule 2026-07-15): "live" =
                         // this interval carries no REST history on this
@@ -1423,6 +1497,9 @@ fn chart_toolbar_render_dropdown(
                 mlc_core::chart_type::GranularityTarget::Param { value, .. } => {
                     format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, value)
                 }
+                mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                    format!("{}{}", mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX, name)
+                }
             });
         let mut dropdown_items = dropdown_items;
         if let Some(ref target_id) = edit_target_row_id {
@@ -1469,7 +1546,8 @@ fn chart_toolbar_render_dropdown(
         // already painted that row's label/trailing-icons — the widget's
         // opaque background covers the stale label so nothing double-
         // renders. Host row: the Add row (`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`
-        // / `PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID`) when `host == None`, or
+        // / `PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID` /
+        // `INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID`) when `host == None`, or
         // `edit_target_row_id`'s row when `host == Some(target)` (spec (a):
         // editing renders in place, not relocated to the Add row).
         if dropdown_id == "timeframe_selector" {
@@ -1477,6 +1555,8 @@ fn chart_toolbar_render_dropdown(
                 let host_id: Option<&str> = match &edit.host {
                     None => Some(mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID)
                         .filter(|_| all_item_rects.iter().any(|(id, _)| id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID))
+                        .or_else(|| Some(mlc_core::chart_type::INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID)
+                            .filter(|_| all_item_rects.iter().any(|(id, _)| id == mlc_core::chart_type::INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID)))
                         .or(Some(mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID)),
                     Some(_) => edit_target_row_id.as_deref(),
                 };
@@ -1853,6 +1933,24 @@ fn resolution_param_dropdown_items(active_chart_type: Option<&str>) -> Option<Ve
     Some(items)
 }
 
+/// Append the explicit "Pin to toolbar" toggle row to a FAVORITES section
+/// being built by `prepend_*_starred_items` — defect fix 2026-07-16 (owner:
+/// "тугл неактивен, нужно именно тугл явный"). Replaces the earlier pin
+/// ICON rendered on the FAVORITES header itself (that trailing-icon zone
+/// never read as an interactive toggle) with a standard dropdown row using
+/// the SAME toggle-switch visual `presets_menu`'s `preset_autosave` row
+/// uses — rendered LAST inside the section, after the starred entries and
+/// before the section-ending separator. Reuses the existing
+/// `gran_pin:toggle` hit id / `ToggleGranularityPin` dispatch unchanged
+/// (`mlc-app::input::panel_click` already routes it and keeps the dropdown
+/// open) — only the visual presentation changed, not the wiring.
+fn push_granularity_pin_toggle_row(header: &mut Vec<DropdownItemDef>) {
+    header.push(DropdownItemDef::action(
+        mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID,
+        "Pin to toolbar",
+    ));
+}
+
 /// Prepend the FAVORITES section (starred TF rows — builtin or custom) to
 /// the top of the `timeframe_selector` dropdown's item list — user-
 /// granularity-templates-inner arc, кусок 2 (owner spec 2026-07-16: a star
@@ -1873,7 +1971,7 @@ fn prepend_tf_starred_items(
     if favorites.starred_tfs.is_empty() {
         return;
     }
-    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(favorites.starred_tfs.len() + 2);
+    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(favorites.starred_tfs.len() + 3);
     header.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
     for name in &favorites.starred_tfs {
         header.push(DropdownItemDef::action(
@@ -1881,6 +1979,7 @@ fn prepend_tf_starred_items(
             name.clone(),
         ));
     }
+    push_granularity_pin_toggle_row(&mut header);
     header.push(DropdownItemDef::Separator);
     header.append(items);
     *items = header;
@@ -1907,7 +2006,7 @@ fn prepend_param_starred_items(
     if matching.is_empty() {
         return;
     }
-    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(matching.len() + 2);
+    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(matching.len() + 3);
     header.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
     for fav in matching {
         let label = format_resolution_param(fav.value, suffix);
@@ -1916,6 +2015,38 @@ fn prepend_param_starred_items(
             label,
         ));
     }
+    push_granularity_pin_toggle_row(&mut header);
+    header.push(DropdownItemDef::Separator);
+    header.append(items);
+    *items = header;
+}
+
+/// Prepend the FAVORITES section (starred footprint bucket-interval rows —
+/// builtin or custom) for `ResolutionKind::Interval` chart types
+/// (footprint) — per-family scoping arc 2026-07-16. Mirrors
+/// [`prepend_tf_starred_items`] exactly (same flat-list shape as
+/// `starred_tfs`, per owner spec: interval favorites are NOT chart-type
+/// scoped — footprint is the only `Interval`-resolution chart type today),
+/// except row ids use the `ivl_` prefix so a bucket-interval favorite can
+/// never collide with (or leak into) a kline `Time` favorite sharing the
+/// same literal name (e.g. starred footprint "5m" vs starred kline "5m" are
+/// independent entries).
+fn prepend_interval_starred_items(
+    items: &mut Vec<DropdownItemDef>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+) {
+    if favorites.starred_intervals.is_empty() {
+        return;
+    }
+    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(favorites.starred_intervals.len() + 3);
+    header.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
+    for name in &favorites.starred_intervals {
+        header.push(DropdownItemDef::action(
+            format!("{}{}{}", mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX, mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX, name),
+            name.clone(),
+        ));
+    }
+    push_granularity_pin_toggle_row(&mut header);
     header.push(DropdownItemDef::Separator);
     header.append(items);
     *items = header;
@@ -1989,6 +2120,36 @@ fn append_param_customs_and_add_row(
     };
     items.push(DropdownItemDef::action(
         mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+        add_label,
+    ));
+}
+
+/// Append CUSTOM footprint bucket-interval rows + the trailing "+ Add" row
+/// for `ResolutionKind::Interval` chart types — per-family scoping arc
+/// 2026-07-16. See [`append_tf_customs_and_add_row`] for the id-reuse/
+/// trailing-icon/live-text rationale; uses the `ivl_` id prefix (see
+/// [`prepend_interval_starred_items`]) so a custom bucket interval never
+/// collides with a kline `Time` custom of the same literal name.
+fn append_interval_customs_and_add_row(
+    items: &mut Vec<DropdownItemDef>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+    editing_text: Option<&str>,
+) {
+    if !favorites.interval_tfs.is_empty() {
+        items.push(DropdownItemDef::Separator);
+        for name in &favorites.interval_tfs {
+            items.push(DropdownItemDef::action(
+                format!("{}{}", mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX, name),
+                name.clone(),
+            ));
+        }
+    }
+    let add_label = match editing_text {
+        Some(text) => text.to_string(),
+        None => "+ Add".to_string(),
+    };
+    items.push(DropdownItemDef::action(
+        mlc_core::chart_type::INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID,
         add_label,
     ));
 }

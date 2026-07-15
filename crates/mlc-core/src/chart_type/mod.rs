@@ -15,6 +15,7 @@ pub mod registry;
 pub mod identity;
 pub mod generation;
 pub mod resolver;
+pub mod interval_intern;
 
 pub use registry::{
     all, by_id, BarsSourceKind, ChartTypeDef, ChartTypeGroup, ChartTypeKind,
@@ -24,6 +25,7 @@ pub use registry::{
     ParamMode, RenderPolicy, ResolutionKind, SeriesVariant, WickPolicy,
     RESOLUTION_PARAM_ATR14_ITEM_ID, RESOLUTION_PARAM_ITEM_PREFIX,
     TF_FAVORITE_CUSTOM_INPUT_ITEM_ID, PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+    INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID, GRANULARITY_INTERVAL_ID_PREFIX,
     GRANULARITY_STAR_ACTION_PREFIX, GRANULARITY_EDIT_ACTION_PREFIX,
     GRANULARITY_DELETE_ACTION_PREFIX, GRANULARITY_PIN_TOGGLE_ACTION_ID,
     GRANULARITY_QUICK_PICK_PREFIX, GRANULARITY_FAV_ID_PREFIX,
@@ -37,3 +39,4 @@ pub use identity::{
 };
 pub use generation::BarsGeneration;
 pub use resolver::resolve_instrument_relative_default;
+pub use interval_intern::intern_interval;

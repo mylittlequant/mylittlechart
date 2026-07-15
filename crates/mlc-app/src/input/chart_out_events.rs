@@ -1160,15 +1160,17 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 };
-                let iv_ms: i64 = match static_iv {
-                    "1m"  => 60_000,
-                    "5m"  => 300_000,
-                    "15m" => 900_000,
-                    "30m" => 1_800_000,
-                    "1h"  => 3_600_000,
-                    "4h"  => 14_400_000,
-                    _ => 60_000,
-                };
+                // `static_iv` already passed `footprint_interval_static`'s
+                // validation (builtin literal or a parsed+clamped custom),
+                // so `Timeframe::parse` here cannot fail in practice —
+                // derive `iv_ms` from it directly instead of a second
+                // closed literal match (which used to default unknown
+                // customs to a wrong 60_000, per-family scoping arc
+                // 2026-07-16 fix). `unwrap_or(60_000)` only guards a
+                // theoretical future drift between the two functions.
+                let iv_ms: i64 = Timeframe::parse(static_iv)
+                    .map(|tf| tf.interval_ms)
+                    .unwrap_or(60_000);
                 self.apply_footprint_interval(static_iv, iv_ms);
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 state_mutated = true;
@@ -1192,12 +1194,16 @@ impl ChartApp {
                     Some(crate::GranularityEdit { kind: crate::GranularityEditKind::EditParam { original }, .. }) => {
                         let chart_type = match &target {
                             mlc_core::chart_type::GranularityTarget::Param { chart_type, .. } => chart_type.clone(),
-                            mlc_core::chart_type::GranularityTarget::Tf { .. } => {
+                            mlc_core::chart_type::GranularityTarget::Tf { .. }
+                            | mlc_core::chart_type::GranularityTarget::Interval { .. } => {
                                 eprintln!("[ChartApp] CommitGranularityCustom: EditParam target mismatch, ignored");
                                 return;
                             }
                         };
                         Some(mlc_core::chart_type::GranularityTarget::Param { chart_type, value: original })
+                    }
+                    Some(crate::GranularityEdit { kind: crate::GranularityEditKind::EditInterval { original }, .. }) => {
+                        Some(mlc_core::chart_type::GranularityTarget::Interval { name: original })
                     }
                     _ => None,
                 };
@@ -1216,6 +1222,11 @@ impl ChartApp {
                                 .any(|f| &f.chart_type == chart_type && f.value == *value);
                             favs.params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
                             favs.starred_params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                        }
+                        mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                            was_starred = favs.starred_intervals.iter().any(|n| n == name);
+                            favs.interval_tfs.retain(|n| n != name);
+                            favs.starred_intervals.retain(|n| n != name);
                         }
                     }
                 }
@@ -1273,6 +1284,36 @@ impl ChartApp {
                         self.process_chart_out_event(ChartOutEvent::UpdateChartTypeParam { value: *value });
                         return;
                     }
+                    mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                        // Same validate-first contract as the `Tf` arm —
+                        // `footprint_interval_static` runs `Timeframe::parse`
+                        // + the 1s..=1h clamp before ever touching the
+                        // profile, so an invalid/out-of-range custom bucket
+                        // never gets persisted.
+                        let Some(static_iv) = Self::footprint_interval_static(name) else {
+                            eprintln!("[ChartApp] CommitGranularityCustom: invalid/out-of-range interval, ignored: {}", name);
+                            return;
+                        };
+                        let mut user_mut = self.core.user_mut();
+                        let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                        if !favs.interval_tfs.iter().any(|n| n == static_iv) {
+                            if favs.interval_tfs.len() >= 12 {
+                                favs.interval_tfs.remove(0);
+                            }
+                            favs.interval_tfs.push(static_iv.to_string());
+                        }
+                        if was_starred && !favs.starred_intervals.iter().any(|n| n == static_iv) {
+                            favs.starred_intervals.push(static_iv.to_string());
+                        }
+                        drop(user_mut);
+                        self.autosave_snapshot();
+                        let iv_ms = mlc_core::state::Timeframe::parse(static_iv)
+                            .map(|tf| tf.interval_ms)
+                            .unwrap_or(60_000);
+                        self.apply_footprint_interval(static_iv, iv_ms);
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
                 }
             }
             ChartOutEvent::DeleteGranularityCustom { target } => {
@@ -1287,6 +1328,10 @@ impl ChartApp {
                     mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
                         favs.params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
                         favs.starred_params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                    }
+                    mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                        favs.interval_tfs.retain(|n| n != name);
+                        favs.starred_intervals.retain(|n| n != name);
                     }
                 }
                 drop(user_mut);
@@ -1314,6 +1359,13 @@ impl ChartApp {
                             favs.starred_params.push(mlc_core::user_profile::ParamFavorite {
                                 chart_type: chart_type.clone(), value: *value,
                             });
+                        }
+                    }
+                    mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                        if favs.starred_intervals.iter().any(|n| n == name) {
+                            favs.starred_intervals.retain(|n| n != name);
+                        } else {
+                            favs.starred_intervals.push(name.clone());
                         }
                     }
                 }
@@ -3026,11 +3078,24 @@ impl ChartApp {
     }
 
     /// Canonical `&'static str` form of a footprint bucket-interval label,
-    /// covering every value reachable from either interval-change entry
-    /// point: the toolbar's free-text field (minute-and-up) and the TF
-    /// dropdown (whitelist-gated by `tf_whitelist`, includes 5s/15s/30s).
-    /// `set_chart_type_interval`/`request_footprint` key off this stable
-    /// string, not the caller's owned `String`/`Timeframe::name`.
+    /// covering every value reachable from any interval-change entry point:
+    /// the toolbar's free-text field (minute-and-up), the TF dropdown
+    /// (whitelist-gated by `tf_whitelist`, includes 5s/15s/30s), and now a
+    /// user-typed CUSTOM bucket interval (per-family scoping arc
+    /// 2026-07-16 — `GranularityFavorites::interval_tfs`/
+    /// `starred_intervals`). `set_chart_type_interval`/`request_footprint`
+    /// key off this stable string, not the caller's owned
+    /// `String`/`Timeframe::name`.
+    ///
+    /// The 10 literal arms stay first (fast path, no parse/lock — every
+    /// builtin/whitelisted interval hits this). Anything else is validated
+    /// via `Timeframe::parse` (rejects garbage) and clamped to 1s..=1h
+    /// (footprint buckets beyond 1h are senseless — a hand-typed hour-plus
+    /// bucket would produce single-digit clusters per bar, defeating the
+    /// point of the footprint view), then resolved to a `'static` string
+    /// via `mlc_core::chart_type::intern_interval` — the leak-intern
+    /// registry that makes an arbitrary user-typed value usable where the
+    /// rest of the bubble/fold pipeline expects `&'static str`.
     fn footprint_interval_static(interval: &str) -> Option<&'static str> {
         match interval {
             "5s"  => Some("5s"),
@@ -3043,7 +3108,13 @@ impl ChartApp {
             "30m" => Some("30m"),
             "1h"  => Some("1h"),
             "4h"  => Some("4h"),
-            _ => None,
+            other => {
+                let tf = mlc_core::state::Timeframe::parse(other)?;
+                if tf.interval_ms < 1_000 || tf.interval_ms > 3_600_000 {
+                    return None;
+                }
+                Some(mlc_core::chart_type::intern_interval(&tf.name))
+            }
         }
     }
 

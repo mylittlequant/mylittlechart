@@ -1145,6 +1145,15 @@ impl ChartToolbarState {
                         Ok(value) => vec![ChartOutEvent::UpdateChartTypeParam { value }],
                         Err(_) => vec![ChartOutEvent::Consumed],
                     }
+                } else if let Some(name) = item_id.strip_prefix(crate::chart_type::GRANULARITY_INTERVAL_ID_PREFIX) {
+                    // Footprint bucket-interval CUSTOM/FAVORITE row
+                    // (per-family scoping arc 2026-07-16) — normalize to the
+                    // `tf_{name}` convention `ChangeTimeframe`'s handler
+                    // expects (same `Timeframe::parse`-shaped name, just a
+                    // distinct dropdown-row id prefix so it never collides
+                    // with a kline `Time` custom of the same literal name).
+                    eprintln!("[ChartToolbar] footprint interval: {}", name);
+                    vec![ChartOutEvent::ChangeTimeframe { timeframe_id: format!("tf_{}", name) }]
                 } else {
                     eprintln!("[ChartToolbar] timeframe: {}", item_id);
                     vec![ChartOutEvent::ChangeTimeframe { timeframe_id: item_id.to_string() }]

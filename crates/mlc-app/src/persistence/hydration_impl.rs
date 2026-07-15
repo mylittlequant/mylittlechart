@@ -635,11 +635,19 @@ impl ChartApp {
                         let static_ct: &'static str = mlc_core::chart_type::by_id(snap.chart_type.as_str())
                             .map(|d| d.id)
                             .unwrap_or("candles");
-                        let static_iv: &'static str = match snap.chart_type_interval.as_str() {
-                            "1m" => "1m", "3m" => "3m", "5m" => "5m",
-                            "15m" => "15m", "30m" => "30m", "1h" => "1h",
-                            _ => "1m",
-                        };
+                        // Per-family scoping arc 2026-07-16: the 6-arm
+                        // literal re-clamp used to silently coerce ANY
+                        // persisted custom bucket interval (e.g. a footprint
+                        // window saved with `interval_tfs` custom "7m") back
+                        // to "1m" on restore. Validate via `Timeframe::parse`
+                        // + the same 1s..=1h clamp `footprint_interval_static`
+                        // applies, then resolve to `'static` via the
+                        // leak-intern registry — invalid/out-of-range values
+                        // still fall back to "1m".
+                        let static_iv: &'static str = mlc_core::state::Timeframe::parse(snap.chart_type_interval.as_str())
+                            .filter(|tf| tf.interval_ms >= 1_000 && tf.interval_ms <= 3_600_000)
+                            .map(|tf| mlc_core::chart_type::intern_interval(&tf.name))
+                            .unwrap_or("1m");
                         self.core.bubbles_mut().set_chart_type(bid, static_ct);
                         self.core.bubbles_mut().set_chart_type_param(bid, snap.chart_type_param);
                         // Restored AFTER `set_chart_type_param` — `set_chart_type`

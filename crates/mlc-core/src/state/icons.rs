@@ -1569,7 +1569,12 @@ pub const ICON_COLLAPSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 
 pub const ICON_STAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>"##;
 
-pub const ICON_STAR_FILLED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>"##;
+// `stroke="currentColor" stroke-width="2"` matches [`ICON_STAR`]'s outline
+// exactly (same path, same stroke width) so the filled and outline glyphs
+// occupy identical visual bounds — without it the filled star has no stroke
+// outset and renders visibly smaller than its outline sibling (owner report
+// 2026-07-16: "star icon shrinks when filled").
+pub const ICON_STAR_FILLED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>"##;
 
 // =============================================================================
 // Pin Icon (pinned-favorites-row toggle header)

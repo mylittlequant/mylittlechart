@@ -2798,11 +2798,16 @@ impl ChartApp {
 
             // Pinned-favorites quick-pick buttons on the top toolbar (user-
             // granularity-templates-inner arc, кусок 3 — TradingView
-            // "pinned intervals" style). Reuses the SAME `tf_{name}` /
+            // "pinned intervals" style; extended per-family scoping arc
+            // 2026-07-16 for footprint bucket intervals). Reuses the SAME
+            // `tf_{name}` / `{GRANULARITY_INTERVAL_ID_PREFIX}{name}` /
             // `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` id encoding the
             // dropdown rows use — resolve back to a target and dispatch
             // `ChangeTimeframe`/`UpdateChartTypeParam` directly, no dropdown
-            // involved.
+            // involved. `Interval` dispatches `ChangeTimeframe` too (the
+            // SAME `is_interval_resolution` branch inside its handler routes
+            // it through `apply_footprint_interval`, not a plain kline TF
+            // switch — see that handler's doc comment).
             if let Some(value_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_QUICK_PICK_PREFIX) {
                 if let Some(target) = self.resolve_granularity_target(value_id) {
                     match target {
@@ -2813,6 +2818,11 @@ impl ChartApp {
                         }
                         mlc_core::chart_type::GranularityTarget::Param { value, .. } => {
                             self.process_chart_out_event(mlc_core::events::ChartOutEvent::UpdateChartTypeParam { value });
+                        }
+                        mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                            self.process_chart_out_event(mlc_core::events::ChartOutEvent::ChangeTimeframe {
+                                timeframe_id: format!("tf_{}", name),
+                            });
                         }
                     }
                 }
@@ -2993,6 +3003,16 @@ impl ChartApp {
                     tf.set_text(&field_id, "");
                     tf.begin_edit(&field_id);
                     tf.focus(crate::text_input::PARAM_FAVORITE_INPUT);
+                    return;
+                }
+                if item_id == mlc_core::chart_type::INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID {
+                    self.granularity_edit = Some(crate::GranularityEdit { kind: crate::GranularityEditKind::AddInterval });
+                    let field_id = uzor::WidgetId::from(crate::text_input::TF_FAVORITE_INPUT);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, "");
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::TF_FAVORITE_INPUT);
                     return;
                 }
 
@@ -5058,15 +5078,47 @@ impl ChartApp {
     /// Resolve a `timeframe_selector` dropdown item id (stripped of its
     /// `gran_star:`/`gran_edit:`/`gran_del:` action prefix) back to a
     /// [`mlc_core::chart_type::GranularityTarget`] — user-granularity-
-    /// templates-inner arc, кусок 2. `tf_{name}` ids map to `Tf`;
+    /// templates-inner arc, кусок 2, extended per-family scoping arc
+    /// 2026-07-16 for footprint bucket intervals.
+    ///
+    /// `{GRANULARITY_INTERVAL_ID_PREFIX}{name}` (`ivl_{name}`) ids ALWAYS
+    /// map to `Interval` — the dropdown builder mints this prefix
+    /// exclusively for footprint's own rows (see
+    /// `mlc-app-layout::panel_app::{prepend_interval_starred_items,
+    /// append_interval_customs_and_add_row}`), so no ResolutionKind check is
+    /// needed to disambiguate it from a kline `tf_` row.
+    ///
+    /// `tf_{name}` ids are ambiguous on their own — footprint's BUILTIN
+    /// whitelist rows (`FOOTPRINT_TF_WHITELIST`) also use the `tf_` prefix
+    /// (same TF-name grammar, `bubble.timeframe` mechanism) — so which
+    /// family a plain `tf_{name}` id belongs to is decided by the ACTIVE
+    /// chart type's `ResolutionKind` at click time: `Interval` resolution
+    /// (footprint) → `GranularityTarget::Interval`, everything else →
+    /// `GranularityTarget::Tf`. This is the SAME rule the dropdown/quick-pick
+    /// builders use to decide which favorites bucket to read from — star/
+    /// edit/delete/pin actions on a footprint TF row must land in
+    /// `interval_tfs`/`starred_intervals`, never `time_tfs`/`starred_tfs`
+    /// (owner: "остался запинен 1m на футпринте — тупо").
+    ///
     /// `reso_param:{value}` ids map to `Param`, scoped to the active
     /// window's chart_type (a range_bar star action must never resolve
     /// against the volume_bar chart_type). `None` when the id shape is
     /// unrecognized or there is no active window to scope a `Param` target
     /// to.
     pub(crate) fn resolve_granularity_target(&self, target_id: &str) -> Option<mlc_core::chart_type::GranularityTarget> {
+        if let Some(name) = target_id.strip_prefix(mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX) {
+            return Some(mlc_core::chart_type::GranularityTarget::Interval { name: name.to_string() });
+        }
         if let Some(name) = target_id.strip_prefix("tf_") {
-            return Some(mlc_core::chart_type::GranularityTarget::Tf { name: name.to_string() });
+            let is_interval_kind = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_for_chart(cid))
+                .and_then(mlc_core::chart_type::by_id)
+                .is_some_and(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval));
+            return Some(if is_interval_kind {
+                mlc_core::chart_type::GranularityTarget::Interval { name: name.to_string() }
+            } else {
+                mlc_core::chart_type::GranularityTarget::Tf { name: name.to_string() }
+            });
         }
         if let Some(value_str) = target_id.strip_prefix(mlc_core::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
             let value: f64 = value_str.parse().ok()?;
@@ -5105,6 +5157,17 @@ impl ChartApp {
                 tf.set_text(&field_id, &format_trimmed_param_value(value));
                 tf.begin_edit(&field_id);
                 tf.focus(crate::text_input::PARAM_FAVORITE_INPUT);
+            }
+            mlc_core::chart_type::GranularityTarget::Interval { name } => {
+                self.granularity_edit = Some(crate::GranularityEdit {
+                    kind: crate::GranularityEditKind::EditInterval { original: name.clone() },
+                });
+                let field_id = uzor::WidgetId::from(crate::text_input::TF_FAVORITE_INPUT);
+                let mut coord = self.input_coordinator.borrow_mut();
+                let tf = coord.text_fields_mut();
+                tf.set_text(&field_id, &name);
+                tf.begin_edit(&field_id);
+                tf.focus(crate::text_input::TF_FAVORITE_INPUT);
             }
         }
     }

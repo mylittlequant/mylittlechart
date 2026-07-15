@@ -1045,6 +1045,12 @@ pub enum GranularityEditKind {
     /// Editing an existing custom numeric param's value; `original` is the
     /// pre-edit value.
     EditParam { original: f64 },
+    /// Creating a new custom footprint bucket interval (`Interval`-flavor
+    /// dropdown — per-family scoping arc 2026-07-16).
+    AddInterval,
+    /// Renaming an existing custom bucket interval; `original` is the
+    /// pre-edit name, same rationale as `EditTf`.
+    EditInterval { original: String },
 }
 
 /// Transient RAM-only state for the `timeframe_selector` dropdown's visible
@@ -1667,6 +1673,11 @@ impl ChartApp {
                     Some(mlc_core::chart_type::GranularityTarget::Param { chart_type, value: *original }),
                 )
             }
+            GranularityEditKind::AddInterval => (crate::text_input::TF_FAVORITE_INPUT, None),
+            GranularityEditKind::EditInterval { original } => (
+                crate::text_input::TF_FAVORITE_INPUT,
+                Some(mlc_core::chart_type::GranularityTarget::Interval { name: original.clone() }),
+            ),
         };
         let field_id = uzor::WidgetId::from(field);
         let now_ms = web_time::SystemTime::now()

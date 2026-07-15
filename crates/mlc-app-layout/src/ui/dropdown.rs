@@ -92,15 +92,9 @@ pub enum DropdownItem {
     },
     /// Separator line
     Separator,
-    /// Header/title (non-clickable text), optionally with a single
-    /// right-aligned trailing icon button (e.g. the pinned-favorites-row
-    /// toggle on the `timeframe_selector` dropdown's "FAVORITES" header —
-    /// user-granularity-templates-inner arc, кусок 3). `None` renders the
-    /// header exactly as before (label only, no hit zone besides the
-    /// existing `__noop__:header:` background absorber).
+    /// Header/title (non-clickable text).
     Header {
         label: String,
-        trailing_icon: Option<TrailingIcon>,
     },
     /// Submenu (shows arrow, opens another menu)
     Submenu {
@@ -207,18 +201,7 @@ impl DropdownItem {
     pub fn header(label: &str) -> Self {
         Self::Header {
             label: label.to_string(),
-            trailing_icon: None,
         }
-    }
-
-    /// Attach a single right-aligned trailing icon button to a `Header` row
-    /// (user-granularity-templates-inner arc, кусок 3 — the pinned-row
-    /// toggle on the "FAVORITES" header). No-op on any other variant.
-    pub fn with_header_trailing_icon(mut self, icon: TrailingIcon) -> Self {
-        if let Self::Header { trailing_icon: ref mut t, .. } = self {
-            *t = Some(icon);
-        }
-        self
     }
 
     pub fn submenu(id: &str, label: &str) -> Self {
@@ -450,11 +433,8 @@ where
                 // Track maximum width
                 content_width = content_width.max(item_width);
             }
-            DropdownItem::Header { label, trailing_icon } => {
-                let mut header_width = ctx.measure_text(label) + config.item_padding_x * 2.0;
-                if trailing_icon.is_some() {
-                    header_width += trailing_icons_zone_width(1);
-                }
+            DropdownItem::Header { label } => {
+                let header_width = ctx.measure_text(label) + config.item_padding_x * 2.0;
                 content_width = content_width.max(header_width);
             }
             DropdownItem::Separator => {
@@ -770,7 +750,7 @@ where
                 ctx.line_to(sep_rect.right(), sep_y);
                 ctx.stroke();
             }
-            DropdownItem::Header { label, trailing_icon } => {
+            DropdownItem::Header { label } => {
                 let header_rect = rects[idx];
 
                 ctx.set_font(&format!("bold {}px sans-serif", config.font_size));
@@ -793,23 +773,6 @@ where
                     format!("__noop__:header:{}", label),
                     header_rect,
                 ));
-
-                // Trailing icon (granularity arc — the pinned-row toggle on
-                // the "FAVORITES" header). Its hit zone MUST be registered
-                // AFTER the header's noop absorber: overlapping rects resolve
-                // to the LAST registered one (same priority rule the `Item`
-                // arm relies on — trailing icons there are pushed after the
-                // main row rect and win for exactly this reason). Registering
-                // it before the absorber left the pin dead (2026-07-16 live
-                // bug: every pin click was swallowed by the header noop).
-                if let Some(ti) = trailing_icon {
-                    let icon_x = header_rect.right() - TRAILING_ICON_PAD_RIGHT - TRAILING_ICON_SIZE;
-                    let icon_y = header_rect.center_y() - TRAILING_ICON_SIZE / 2.0;
-                    let icon_color = ti.color.as_deref().unwrap_or(&theme.header_text);
-                    let icon_rect = WidgetRect::new(icon_x, icon_y, TRAILING_ICON_SIZE, TRAILING_ICON_SIZE);
-                    draw_icon(ctx, &ti.icon, icon_rect, icon_color);
-                    result.item_rects.push((ti.action_id.clone(), icon_rect));
-                }
             }
             DropdownItem::Submenu { id, icon, label } => {
                 let item_rect = rects[idx];

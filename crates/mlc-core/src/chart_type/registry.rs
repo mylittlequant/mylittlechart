@@ -210,6 +210,24 @@ pub const TF_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "tf_favorite_custom_input";
 /// [`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`] for the whole-row-click rationale.
 pub const PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "param_favorite_custom_input";
 
+/// `timeframe_selector` dropdown item id for the trailing "+ Add" row
+/// (`ResolutionKind::Interval` chart types — footprint bucket size,
+/// per-family scoping arc 2026-07-16). See
+/// [`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`] for the whole-row-click rationale.
+pub const INTERVAL_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "interval_favorite_custom_input";
+
+/// `timeframe_selector` dropdown item id prefix for a footprint bucket-
+/// interval CUSTOM/FAVORITE row (`ResolutionKind::Interval` chart types) —
+/// per-family scoping arc 2026-07-16 (owner: "остался запинен 1m на
+/// футпринте — тупо; для футпринта вообще не вижу ни кастома ни фейворита").
+/// Distinct from the kline `tf_{name}` prefix so a bucket-interval custom
+/// never collides with (or shares hover/star state with) a kline `Time`
+/// custom of the same literal name — resolves to
+/// [`GranularityTarget::Interval`], stored in
+/// `GranularityFavorites::{interval_tfs,starred_intervals}`, never
+/// `time_tfs`/`starred_tfs`.
+pub const GRANULARITY_INTERVAL_ID_PREFIX: &str = "ivl_";
+
 /// `timeframe_selector` dropdown item id for the ATR(14) box-size mode row —
 /// renko/kagi ONLY (granularity arc, кусок 2). Selecting this item dispatches
 /// `ChartOutEvent::SetChartTypeParamAtr14` instead of the plain numeric
@@ -300,6 +318,14 @@ pub enum GranularityTarget {
     /// `ChartTypeParamSpec` ladder preset or a `GranularityFavorites::params`
     /// custom.
     Param { chart_type: String, value: f64 },
+    /// A footprint bucket-interval name (e.g. `"7m"`) — may reference a
+    /// builtin `tf_*` whitelist id's bare name or a
+    /// `GranularityFavorites::interval_tfs` custom (per-family scoping arc
+    /// 2026-07-16). Flat, not chart_type-scoped — mirrors `Tf`'s shape,
+    /// since `interval_tfs`/`starred_intervals` are global lists exactly
+    /// like `time_tfs`/`starred_tfs` (footprint is the only
+    /// `ResolutionKind::Interval` chart type today).
+    Interval { name: String },
 }
 
 /// Render-side snapshot of the `timeframe_selector` dropdown's visible

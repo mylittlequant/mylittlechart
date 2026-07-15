@@ -297,6 +297,26 @@ pub struct GranularityFavorites {
     /// — may reference a builtin ladder preset or a `params` custom.
     #[serde(default)]
     pub starred_params: Vec<ParamFavorite>,
+
+    /// CUSTOM footprint bucket-interval names (e.g. `["7m", "90s"]`) —
+    /// per-family scoping arc 2026-07-16 (owner: "для футпринта вообще не
+    /// вижу ни кастома ни фейворита"). Global, flat list — mirrors
+    /// `time_tfs`'s shape exactly (footprint is the only
+    /// `ResolutionKind::Interval` chart type today, so no chart_type
+    /// scoping is needed), but kept in its OWN bucket, never merged into
+    /// `time_tfs`: a footprint bucket interval and a kline candle
+    /// timeframe are different concepts sharing the same string grammar
+    /// (`Timeframe::parse`), and must not cross-render on each other's
+    /// toolbar/dropdown (owner: "остался запинен 1m на футпринте — тупо").
+    #[serde(default)]
+    pub interval_tfs: Vec<String>,
+
+    /// Starred footprint bucket-interval names — may reference a builtin
+    /// whitelist entry (`FOOTPRINT_TF_WHITELIST`) or an `interval_tfs`
+    /// custom. See `interval_tfs` doc comment for the separate-bucket
+    /// rationale.
+    #[serde(default)]
+    pub starred_intervals: Vec<String>,
 }
 
 // =============================================================================
@@ -925,6 +945,11 @@ mod json_compat_tests {
         // same empty-default regression gate.
         assert!(profile.domain.granularity_favorites.starred_tfs.is_empty());
         assert!(profile.domain.granularity_favorites.starred_params.is_empty());
+        // Fixture also predates `interval_tfs`/`starred_intervals`
+        // (per-family scoping arc 2026-07-16) — same empty-default
+        // regression gate.
+        assert!(profile.domain.granularity_favorites.interval_tfs.is_empty());
+        assert!(profile.domain.granularity_favorites.starred_intervals.is_empty());
 
         // UI fields landed on `ui`.
         assert_eq!(profile.ui.active_preset_id, "preset_123_456");
@@ -997,6 +1022,8 @@ mod json_compat_tests {
         profile.domain.granularity_favorites.starred_params = vec![
             ParamFavorite { chart_type: "range_bar".to_string(), value: 8.0 },
         ];
+        profile.domain.granularity_favorites.interval_tfs = vec!["7m".to_string(), "90s".to_string()];
+        profile.domain.granularity_favorites.starred_intervals = vec!["5m".to_string()];
 
         let json = serde_json::to_string(&profile).expect("must serialize");
         // `granularity_favorites` is itself a nested object (like `data_load`)
@@ -1014,6 +1041,8 @@ mod json_compat_tests {
         assert_eq!(restored.domain.granularity_favorites.starred_tfs, vec!["1m".to_string(), "7m".to_string()]);
         assert_eq!(restored.domain.granularity_favorites.starred_params.len(), 1);
         assert_eq!(restored.domain.granularity_favorites.starred_params[0].chart_type, "range_bar");
+        assert_eq!(restored.domain.granularity_favorites.interval_tfs, vec!["7m".to_string(), "90s".to_string()]);
+        assert_eq!(restored.domain.granularity_favorites.starred_intervals, vec!["5m".to_string()]);
     }
 
     #[test]
