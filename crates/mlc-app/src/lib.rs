@@ -1305,6 +1305,21 @@ impl ChartApp {
         self.core.bubbles().exchange(bid).map(String::from)
     }
 
+    /// Typed exchange id of the bubble attached to this chart — the resolver
+    /// every per-container data-plane operation must use instead of the
+    /// app-global `active_exchange` (2026-07-15 live bug: `active_exchange`
+    /// only moves on a symbol pick, so on a container whose venue differs
+    /// from the global — multi-container layouts, or post-boot before any
+    /// pick — chart-type/TF switches subscribed klines and folds at the
+    /// WRONG venue and the chart stayed empty forever). Falls back to
+    /// `active_exchange` only when the chart has no bubble/exchange yet.
+    #[inline]
+    pub fn exchange_id_for_chart(&self, chart_id: mlc_core::state::ChartId) -> digdigdig3::ExchangeId {
+        self.exchange_for_chart(chart_id)
+            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
+            .unwrap_or(self.active_exchange)
+    }
+
     /// Account type of the bubble attached to this chart. Callers that need
     /// the persisted/display label go through `Display`/`AccountType::as_label`
     /// at the point of use — this is the canonical typed key, see
@@ -1497,9 +1512,7 @@ impl ChartApp {
     ) -> Option<std::collections::HashMap<&'static str, mlc_core::chart_type::DataMode>> {
         let cid = self.panel_app.panel_grid.active_container_id()?;
         let account_type = self.account_type_for_chart(cid).unwrap_or_default();
-        let exchange_id = self.exchange_for_chart(cid)
-            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
-            .unwrap_or(self.active_exchange);
+        let exchange_id = self.exchange_id_for_chart(cid);
         Some(
             mlc_core::chart_type::all()
                 .iter()
@@ -1529,9 +1542,7 @@ impl ChartApp {
     ) -> Option<std::collections::HashMap<&'static str, bool>> {
         let cid = self.panel_app.panel_grid.active_container_id()?;
         let account_type = self.account_type_for_chart(cid).unwrap_or_default();
-        let exchange_id = self.exchange_for_chart(cid)
-            .and_then(|exch| digdigdig3::ExchangeId::from_str(&exch))
-            .unwrap_or(self.active_exchange);
+        let exchange_id = self.exchange_id_for_chart(cid);
         let mut map = std::collections::HashMap::new();
         for &tf_id in crate::active_series::ALL_TF_IDS {
             let Some(interval) = crate::active_series::tf_id_to_dig3_interval(tf_id) else {

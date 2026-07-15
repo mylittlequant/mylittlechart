@@ -331,7 +331,13 @@ impl ChartApp {
                         // `hydration_impl.rs`'s legacy-preset migration), so
                         // this is unconditionally the kline path.
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue, NOT the app-global
+                            // `active_exchange` (2026-07-15 wrong-venue bug —
+                            // see `exchange_id_for_chart`'s doc).
+                            let chart_eid = active_chart_id
+                                .map(|cid| self.exchange_id_for_chart(cid))
+                                .unwrap_or(self.active_exchange);
+                            let eid_str = chart_eid.as_str();
                             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
                             } else {
@@ -340,9 +346,9 @@ impl ChartApp {
                                 // 1h BarUpdates to the broadcast after the user
                                 // switched to 1m.
                                 if let Some(ref prev_tf) = prev_tf_opt {
-                                    self.core.abort_kline_bars(self.active_exchange, &symbol, at, &prev_tf.name);
+                                    self.core.abort_kline_bars(chart_eid, &symbol, at, &prev_tf.name);
                                 }
-                                self.core.request_kline(self.active_exchange, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
+                                self.core.request_kline(chart_eid, &symbol, &tf, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
                             }
                         }
                         // Propagate new timeframe to all leaves in the same sync group.
@@ -496,7 +502,14 @@ impl ChartApp {
                         let tf_opt = self.timeframe_for_chart(cid);
                         if let (Some(symbol), Some(at), Some(tf)) = (symbol_opt, at_opt, tf_opt) {
                             if !symbol.is_empty() {
-                                let eid_str = self.active_exchange.as_str();
+                                // Per-container venue, NOT the app-global
+                                // `active_exchange` (2026-07-15 wrong-venue
+                                // bug: on a container whose exchange differs
+                                // from the global, every subscribe below went
+                                // to the wrong venue → data landed in a layer
+                                // no bubble reads → empty chart forever).
+                                let chart_eid = self.exchange_id_for_chart(cid);
+                                let eid_str = chart_eid.as_str();
                                 let connector_enabled = self.sidebar_state.connector_enabled
                                     .get(eid_str).copied().unwrap_or(true);
                                 if connector_enabled {
@@ -547,7 +560,7 @@ impl ChartApp {
                                             .any(|(other_cid, _)| {
                                                 if *other_cid == cid { return false; }
                                                 let same_instrument = self.symbol_for_chart(*other_cid).as_deref() == Some(symbol.as_str())
-                                                    && self.exchange_for_chart(*other_cid).as_deref() == Some(self.active_exchange.as_str())
+                                                    && self.exchange_for_chart(*other_cid).as_deref() == Some(eid_str)
                                                     && self.account_type_for_chart(*other_cid) == Some(
                                                         self.account_type_for_chart(cid).unwrap_or_default(),
                                                     )
@@ -557,7 +570,7 @@ impl ChartApp {
                                                 !crate::active_series::chart_type_is_derived_seed(other_ct)
                                             });
                                         if !still_needed {
-                                            self.core.abort_kline_bars(self.active_exchange, &symbol, at, &tf.name);
+                                            self.core.abort_kline_bars(chart_eid, &symbol, at, &tf.name);
                                         }
                                     }
 
@@ -579,7 +592,7 @@ impl ChartApp {
                                     // idempotent when nothing's live.
                                     if !render_only_switch {
                                         self.core.bridge_handle().abort_derived_chart(
-                                            self.active_exchange, &symbol, at,
+                                            chart_eid, &symbol, at,
                                         );
                                     }
 
@@ -649,7 +662,7 @@ impl ChartApp {
                                     // realignment after the TF flip.
                                     let fp_hybrid_backdrop = ct == "footprint"
                                         && mlc_backend::chart_type::is_footprint_hybrid(
-                                            self.core.bridge_handle(), self.active_exchange, at,
+                                            self.core.bridge_handle(), chart_eid, at,
                                         );
                                     if !render_only_switch {
                                         if let Some(bid) = self.bubble_for_chart(cid) {
@@ -713,11 +726,11 @@ impl ChartApp {
                                         // `subscribe_footprint` fires below.
                                         if fp_hybrid_backdrop && tf.name != iv {
                                             self.core.bridge_handle().abort_kline_bars(
-                                                self.active_exchange, &symbol, at, &tf.name,
+                                                chart_eid, &symbol, at, &tf.name,
                                             );
                                             let bar_count = self.core.user().profile().domain.bar_count as usize;
                                             self.core.bridge_handle().request_bars(
-                                                self.active_exchange, &symbol, &footprint_tf, at,
+                                                chart_eid, &symbol, &footprint_tf, at,
                                                 None, Some(bar_count), true,
                                             );
                                         }
@@ -764,7 +777,7 @@ impl ChartApp {
                                                 ) {
                                                     let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
                                                     if let Some(ev) = self.core.subscribe_fold_chart_type(
-                                                        bid, ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
+                                                        bid, ct, fold_params, chart_eid, &symbol, at, Some(derived_target),
                                                     ) {
                                                         self.react_to_bubble_event(&ev, now_ms());
                                                     }
@@ -806,13 +819,13 @@ impl ChartApp {
                                                     let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
                                                     if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                                                         bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                                                        self.active_exchange, &symbol, at, Some(derived_target),
+                                                        chart_eid, &symbol, at, Some(derived_target),
                                                     ) {
                                                         self.react_to_bubble_event(&ev, now_ms());
                                                     }
                                                 }
                                             } else if let Some(subscribe) = ops.subscribe {
-                                                subscribe(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                                subscribe(self.core.bridge_handle(), chart_eid, &symbol, at, &tf, params);
                                             }
                                         }
                                         // The CVD sub-pane companion for footprint
@@ -827,7 +840,7 @@ impl ChartApp {
                                         // through to plain kline.
                                         if !render_only_switch {
                                             self.core.request_kline(
-                                                self.active_exchange, &symbol, &tf, at,
+                                                chart_eid, &symbol, &tf, at,
                                                 None,
                                                 Some(self.core.user().profile().domain.bar_count as usize),
                                                 true,
@@ -881,7 +894,9 @@ impl ChartApp {
                     let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue (2026-07-15 wrong-venue bug).
+                            let chart_eid = self.exchange_id_for_chart(cid);
+                            let eid_str = chart_eid.as_str();
                             if self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at);
                                 let tf = self.timeframe_for_chart(cid).unwrap_or_default();
@@ -918,7 +933,7 @@ impl ChartApp {
                                         bubble.clear_derived_slots(None);
                                         if active_ct == "footprint" {
                                             let hybrid = mlc_backend::chart_type::is_footprint_hybrid(
-                                                self.core.bridge_handle(), self.active_exchange, at,
+                                                self.core.bridge_handle(), chart_eid, at,
                                             );
                                             mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, hybrid);
                                         } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(active_ct) {
@@ -948,7 +963,7 @@ impl ChartApp {
                                     ) {
                                         let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
                                         if let Some(ev) = self.core.subscribe_fold_chart_type(
-                                            bid, active_ct, fold_params, self.active_exchange, &symbol, at, Some(derived_target),
+                                            bid, active_ct, fold_params, chart_eid, &symbol, at, Some(derived_target),
                                         ) {
                                             self.react_to_bubble_event(&ev, now_ms());
                                         }
@@ -966,13 +981,13 @@ impl ChartApp {
                                         let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
                                         if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                                             bid, active_ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                                            self.active_exchange, &symbol, at, Some(derived_target),
+                                            chart_eid, &symbol, at, Some(derived_target),
                                         ) {
                                             self.react_to_bubble_event(&ev, now_ms());
                                         }
                                     }
                                 } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(active_ct).and_then(|ops| ops.subscribe) {
-                                    subscribe(self.core.bridge_handle(), self.active_exchange, &symbol, at, &tf, params);
+                                    subscribe(self.core.bridge_handle(), chart_eid, &symbol, at, &tf, params);
                                 }
                             }
                         }
@@ -1326,7 +1341,9 @@ impl ChartApp {
                     let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue (2026-07-15 wrong-venue bug).
+                            let chart_eid = self.exchange_id_for_chart(cid);
+                            let eid_str = chart_eid.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
@@ -1344,11 +1361,11 @@ impl ChartApp {
                                 }
                                 if oi_show_now {
                                     self.core.subscribe_open_interest(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 } else {
                                     self.core.unsubscribe_open_interest(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 }
                             }
@@ -1365,7 +1382,9 @@ impl ChartApp {
                     let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue (2026-07-15 wrong-venue bug).
+                            let chart_eid = self.exchange_id_for_chart(cid);
+                            let eid_str = chart_eid.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
@@ -1383,11 +1402,11 @@ impl ChartApp {
                                 }
                                 if funding_show_now {
                                     self.core.subscribe_funding_rate(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 } else {
                                     self.core.unsubscribe_funding_rate(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 }
                             }
@@ -1409,7 +1428,9 @@ impl ChartApp {
                     let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue (2026-07-15 wrong-venue bug).
+                            let chart_eid = self.exchange_id_for_chart(cid);
+                            let eid_str = chart_eid.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
@@ -1428,11 +1449,11 @@ impl ChartApp {
                                 }
                                 if dom_show_now {
                                     self.core.subscribe_dom_heatmap(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 } else {
                                     self.core.unsubscribe_dom_heatmap(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 }
                             }
@@ -1450,7 +1471,9 @@ impl ChartApp {
                     let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
                     if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
                         if !symbol.is_empty() {
-                            let eid_str = self.active_exchange.as_str();
+                            // Per-container venue (2026-07-15 wrong-venue bug).
+                            let chart_eid = self.exchange_id_for_chart(cid);
+                            let eid_str = chart_eid.as_str();
                             let connector_enabled = self.sidebar_state.connector_enabled
                                 .get(eid_str).copied().unwrap_or(true);
                             if connector_enabled {
@@ -1469,11 +1492,11 @@ impl ChartApp {
                                 }
                                 if liq_show_now {
                                     self.core.subscribe_liquidation_heatmap(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 } else {
                                     self.core.unsubscribe_liquidation_heatmap(
-                                        self.active_exchange, &symbol, at,
+                                        chart_eid, &symbol, at,
                                     );
                                 }
                             }
@@ -2751,7 +2774,9 @@ impl ChartApp {
         if symbol.is_empty() {
             return;
         }
-        let eid_str = self.active_exchange.as_str();
+        // Per-container venue (2026-07-15 wrong-venue bug).
+        let chart_eid = self.exchange_id_for_chart(cid);
+        let eid_str = chart_eid.as_str();
         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
             return;
         }
@@ -2775,7 +2800,7 @@ impl ChartApp {
         // re-requested fresh at the new interval below so it stays aligned
         // to the bucket grid.
         let fp_hybrid_backdrop = mlc_backend::chart_type::is_footprint_hybrid(
-            self.core.bridge_handle(), self.active_exchange, at,
+            self.core.bridge_handle(), chart_eid, at,
         );
         // Old backdrop TF name — in hybrid mode the kline backdrop always
         // rides the PREVIOUS bucket interval (Step 3 invariant: backdrop TF
@@ -2799,13 +2824,13 @@ impl ChartApp {
         if fp_hybrid_backdrop {
             if let Some(old_tf_name) = old_tf_name {
                 self.core.bridge_handle().abort_kline_bars(
-                    self.active_exchange, &symbol, at, &old_tf_name,
+                    chart_eid, &symbol, at, &old_tf_name,
                 );
             }
             let bar_count = self.core.user().profile().domain.bar_count as usize;
             let backdrop_tf = mlc_core::state::Timeframe::new(interval, interval_ms);
             self.core.bridge_handle().request_bars(
-                self.active_exchange, &symbol, &backdrop_tf, at,
+                chart_eid, &symbol, &backdrop_tf, at,
                 None, Some(bar_count), true,
             );
         }
@@ -2820,7 +2845,7 @@ impl ChartApp {
             let fold_params = mlc_backend::bubble::FoldParams { interval_ms, ..Default::default() };
             if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                 bid, "footprint", fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                self.active_exchange, &symbol, at, Some(derived_target),
+                chart_eid, &symbol, at, Some(derived_target),
             ) {
                 self.react_to_bubble_event(&ev, now_ms());
             }
@@ -2846,7 +2871,9 @@ impl ChartApp {
         if symbol.is_empty() {
             return;
         }
-        let eid_str = self.active_exchange.as_str();
+        // Per-container venue (2026-07-15 wrong-venue bug).
+        let chart_eid = self.exchange_id_for_chart(cid);
+        let eid_str = chart_eid.as_str();
         if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
             return;
         }
@@ -2869,7 +2896,7 @@ impl ChartApp {
             let fold_params = mlc_backend::bubble::FoldParams { interval_ms, group_step, ..Default::default() };
             if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
                 bid, "footprint", fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                self.active_exchange, &symbol, at, Some(derived_target),
+                chart_eid, &symbol, at, Some(derived_target),
             ) {
                 self.react_to_bubble_event(&ev, now_ms());
             }

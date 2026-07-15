@@ -341,7 +341,13 @@ impl ChartApp {
                         .map(|at| at.to_string());
                     if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
                         // Capture old trade-stream identity BEFORE mutating window state.
-                        let old_trade_exchange = self.active_exchange;
+                        // Per-container venue, NOT the app-global `active_exchange`
+                        // (2026-07-15 wrong-venue bug: unsubscribing the OLD stream
+                        // at the global venue leaked the container's real stream and
+                        // decremented a foreign forwarder's refcount).
+                        let old_trade_exchange = wl_active_cid
+                            .map(|cid| self.exchange_id_for_chart(cid))
+                            .unwrap_or(self.active_exchange);
                         let old_trade_symbol: String = wl_active_cid
                             .and_then(|cid| self.symbol_for_chart(cid))
                             .map(String::from)
