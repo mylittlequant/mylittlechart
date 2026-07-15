@@ -8,6 +8,15 @@ use uzor::panel_api::{
     ToolbarIconId,
 };
 use uzor::render::{RenderContext, draw_svg_icon};
+// Extended (chart-specific) trait — needed ONLY where this file calls
+// `mlc-app-layout::ui::widgets::draw_input` (granularity-editor widget
+// overlay, defect fix 2026-07-16), which is typed against it. Kept as a
+// distinct alias rather than swapping the bare `RenderContext` import above:
+// `draw_dropdown`/`draw_grid_dropdown`'s `F: FnMut(&mut dyn RenderContext,
+// ...)` bound needs `chart_icon_renderer`'s fn-item signature to match the
+// BASE trait exactly (fn-pointer coercion is invariant here, unlike a plain
+// reference argument) — widening the bare alias breaks that call site.
+use mlc_core::engine::render::RenderContext as ChartRenderContext;
 use crate::layout::LayoutRect;
 use crate::layout::ExtendedFrameLayout;
 use mlc_core::scale_settings::ScaleSettings;
@@ -327,9 +336,16 @@ pub fn floating_inline_update_drag(
 /// `footprint_live_only` marks every footprint bucket item (`ResolutionKind::
 /// Interval`) "live only" when the active venue's trade-history capability
 /// is the `RecentOnly` tier — writer: `ChartApp::footprint_live_only`.
+///
+/// `pin_granularity_favorites` (user-granularity-templates-inner arc, кусок
+/// 3 — `ProfileUiSettings::pin_granularity_favorites`) renders starred
+/// granularity entries as a row of compact quick-pick buttons on the top
+/// toolbar right after `timeframe_selector`, in addition to their normal
+/// dropdown FAVORITES section. `false` (default) leaves the toolbar
+/// unchanged from today.
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
-    ctx: &mut dyn RenderContext,
+    ctx: &mut dyn ChartRenderContext,
     layout: &ChartPanelLayout,
     toolbar_config: &ToolbarConfig,
     selected_primitive: Option<&SelectedPrimitiveConfig>,
@@ -353,6 +369,8 @@ pub fn chart_toolbar_render_toolbars(
     timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+    granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
+    pin_granularity_favorites: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -541,6 +559,40 @@ pub fn chart_toolbar_render_toolbars(
             // counted-bar family), the popup content is what tells the story
             // via per-item disable (see `chart_toolbar_render_dropdown`);
             // the button itself is not hidden. Owner rule 2026-07-04.
+
+            // Pinned-favorites quick-pick row (user-granularity-templates-
+            // inner arc, кусок 3 — TradingView "pinned intervals" style).
+            // Injected INTO the item flow directly after `timeframe_selector`
+            // (not drawn as a post-pass overlay — the control strip is
+            // packed, there is no free space to overlay into) so every
+            // subsequent item shifts right naturally and the toolbar's
+            // EXISTING overflow/scroll-chevron machinery
+            // (`calculate_section_width` + `draw_toolbar_with_icons`'s own
+            // clip/scroll accounting) applies to it for free. `false`/no
+            // applicable starred entries -> zero items inserted, zero layout
+            // shift from today.
+            if pin_granularity_favorites {
+                let quick_pick_items = granularity_quick_pick_items(
+                    ctx,
+                    active_chart_type,
+                    active_timeframe,
+                    active_chart_type_param,
+                    granularity_favorites,
+                );
+                if !quick_pick_items.is_empty() {
+                    'outer: for section in &mut control_sections {
+                        for idx in 0..section.items.len() {
+                            if section.items[idx].id() == Some("timeframe_selector") {
+                                let insert_at = idx + 1;
+                                for (offset, item) in quick_pick_items.into_iter().enumerate() {
+                                    section.items.insert(insert_at + offset, item);
+                                }
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
 
             let control_config = TcConfig {
                 sections: control_sections,
@@ -849,7 +901,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites)
         } else {
             None
         };
@@ -889,6 +941,93 @@ pub fn chart_toolbar_render_toolbars(
         }
     }
 
+/// Build the pinned-favorites quick-pick `ToolbarItem::Button`s injected
+/// INTO the top control strip's item flow directly after `timeframe_selector`
+/// — user-granularity-templates-inner arc, кусок 3 (owner spec 2026-07-16,
+/// TradingView "pinned intervals" style; fixed 2026-07-16 after live
+/// verification showed the packed strip has no free space for a post-pass
+/// overlay — the row must participate in the SAME item flow so later items
+/// shift right and the toolbar's existing overflow/scroll-chevron machinery
+/// applies to it for free).
+///
+/// One compact text `Button` per starred granularity entry: starred TF names
+/// for `Time`/`Interval`-resolution chart types, starred numeric params
+/// (filtered to the active chart_type) for `Param`-resolution chart types —
+/// same selection the dropdown's FAVORITES section uses. Each item's
+/// `min_width` is set to its OWN measured-text width (+ compact padding) so
+/// `calculate_section_width`/the draw pass size it as a tight chip rather
+/// than the toolbar's default `item_size * 2.5` button width. Hit id is
+/// `"{GRANULARITY_QUICK_PICK_PREFIX}{value_id}"`, reusing the exact
+/// `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` value encoding the
+/// dropdown rows use — `panel_click.rs` already routes this prefix.
+fn granularity_quick_pick_items(
+    ctx: &mut dyn RenderContext,
+    active_chart_type: Option<&str>,
+    active_timeframe: Option<&str>,
+    active_chart_type_param: Option<f64>,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+) -> Vec<TcToolbarItem> {
+    // Build the (hit_value_id, label, is_active) triples for the applicable
+    // starred set — Param-resolution chart types use `starred_params`
+    // (filtered to the active chart_type), everything else uses
+    // `starred_tfs` (mirrors `prepend_param_starred_items`/
+    // `prepend_tf_starred_items`'s own dispatch on `ResolutionKind`).
+    let is_param_kind = active_chart_type
+        .and_then(mlc_core::chart_type::by_id)
+        .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }))
+        .unwrap_or(false);
+
+    let entries: Vec<(String, String, bool)> = if is_param_kind {
+        let Some(ct) = active_chart_type else { return Vec::new() };
+        let suffix = match mlc_core::chart_type::by_id(ct).map(|def| def.resolution) {
+            Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => suffix,
+            _ => return Vec::new(),
+        };
+        granularity_favorites.starred_params.iter()
+            .filter(|f| f.chart_type == ct)
+            .map(|f| {
+                let value_id = format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, f.value);
+                let label = format_resolution_param(f.value, suffix);
+                let is_active = active_chart_type_param
+                    .map(|v| (v - f.value).abs() < f64::EPSILON)
+                    .unwrap_or(false);
+                (value_id, label, is_active)
+            })
+            .collect()
+    } else {
+        granularity_favorites.starred_tfs.iter()
+            .map(|name| {
+                let value_id = format!("tf_{}", name);
+                let is_active = active_timeframe == Some(name.as_str());
+                (value_id, name.clone(), is_active)
+            })
+            .collect()
+    };
+
+    if entries.is_empty() {
+        return Vec::new();
+    }
+
+    const BTN_PAD_X: f64 = 12.0;
+
+    ctx.set_font("13px sans-serif");
+    entries.into_iter().map(|(value_id, label, is_active)| {
+        let text_w = ctx.measure_text(&label);
+        let hit_id = format!("{}{}", mlc_core::chart_type::GRANULARITY_QUICK_PICK_PREFIX, value_id);
+        TcToolbarItem::Button {
+            id: hit_id,
+            icon: None,
+            text: Some(label),
+            // Active entry gets the same `#2962ff` selection accent the
+            // TF button's own active state uses elsewhere in this
+            // dropdown/toolbar (pre-existing accent exception).
+            active: is_active,
+            disabled: false,
+            min_width: text_w + BTN_PAD_X,
+        }
+    }).collect()
+}
+
 /// Render a dropdown menu for the given dropdown_id.
 ///
 /// Finds the dropdown's items from the toolbar definitions, converts them
@@ -900,7 +1039,7 @@ pub fn chart_toolbar_render_toolbars(
 /// chart's ThemeManager so dropdowns respect the active preset.
 fn chart_toolbar_render_dropdown(
     tb: &ChartToolbarState,
-    ctx: &mut dyn RenderContext,
+    ctx: &mut dyn ChartRenderContext,
     dropdown_id: &str,
     toolbar_config: &ToolbarConfig,
     _layout: &ChartPanelLayout,
@@ -921,6 +1060,8 @@ fn chart_toolbar_render_dropdown(
     timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+    granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
+    pin_granularity_favorites: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -959,39 +1100,91 @@ fn chart_toolbar_render_dropdown(
         };
 
         // Granularity favorites (user-granularity-templates-inner arc, кусок
-        // 1): append a FAVORITES section + "Custom…" input row to the
-        // `timeframe_selector` dropdown. Two disjoint cases, matching how
-        // `items` was just built above:
+        // 2 — owner spec 2026-07-16): three sections appended/prepended
+        // around the `timeframe_selector` dropdown's builtin ladder, matching
+        // how `items` was just built above:
         // - `Param`-resolution chart types (range/tick/volume/... bars) got
         //   the numeric preset ladder from `resolution_param_dropdown_items`
-        //   — append the chart_type-filtered `params` favorites.
+        //   — prepend the chart_type-filtered starred FAVORITES section,
+        //   append the chart_type-filtered `params` customs + "+ Add" row.
         // - Every other case (`Time`/`Interval`, incl. the `None` active
-        //   chart_type fallback) got the static builtin TF list — append
-        //   `time_tfs`, but ONLY when the chart_type is TF-eligible at all
+        //   chart_type fallback) got the static builtin TF list — prepend
+        //   the starred FAVORITES section, append `time_tfs` customs + "+
+        //   Add" row, but ONLY when the chart_type is TF-eligible at all
         //   (`resolution == Time && tf_whitelist == None`; never
-        //   footprint/tpo, matching the task's exact gate).
+        //   footprint/tpo, matching кусок 1's exact gate).
+        // The "+ Add" row's label shows live typed text ONLY while adding
+        // (host == None) — while EDITING an existing custom (host ==
+        // Some(target)) the Add row stays "+ Add" and the live text renders
+        // in the TARGET row instead (defect fix 2026-07-16, owner spec (a):
+        // in-place editing). See the widget-overlay block below (step 5b).
+        let add_row_editing_text: Option<&str> = granularity_edit_render
+            .filter(|r| r.host.is_none())
+            .map(|r| r.text.as_str());
         if dropdown_id == "timeframe_selector" {
             let is_param_dropdown = active_chart_type
                 .and_then(mlc_core::chart_type::by_id)
                 .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Param { .. }))
                 .unwrap_or(false);
             if is_param_dropdown {
-                append_param_favorites_items(&mut items, active_chart_type, granularity_favorites);
+                prepend_param_starred_items(&mut items, active_chart_type, granularity_favorites);
+                append_param_customs_and_add_row(&mut items, active_chart_type, granularity_favorites, add_row_editing_text);
             } else {
                 let tf_eligible = active_chart_type
                     .and_then(mlc_core::chart_type::by_id)
                     .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Time) && def.tf_whitelist.is_none())
                     .unwrap_or(true); // no active chart_type known yet -> don't hide the section
                 if tf_eligible {
-                    append_tf_favorites_items(&mut items, granularity_favorites);
+                    prepend_tf_starred_items(&mut items, granularity_favorites);
+                    append_tf_customs_and_add_row(&mut items, granularity_favorites, add_row_editing_text);
                 }
             }
         }
 
         // 3. Convert DropdownItemDef -> DropdownItem
         let active_preset_load_id = format!("preset_load:{}", active_preset_id);
+        // Tracks whether the item currently being converted sits inside the
+        // prepended FAVORITES header section (user-granularity-templates-
+        // inner arc, кусок 2) — `prepend_tf_starred_items`/
+        // `prepend_param_starred_items` emit `Header{"FAVORITES"}` at the
+        // start and a trailing `Separator` right before the builtin ladder
+        // resumes, so this flips true on the header and false again on that
+        // separator. Rows inside the section get an UNSTAR-only trailing
+        // icon; the SAME id's normal-position row (builtin ladder or
+        // customs list, later in the same iteration) gets the full
+        // star(+edit+trash) treatment — position, not id, decides which.
+        let mut in_favorites_section = false;
         let dropdown_items: Vec<DropdownItem> = items.iter().filter_map(|item| {
+            let mut is_favorites_header = false;
+            if dropdown_id == "timeframe_selector" {
+                match item {
+                    DropdownItemDef::Header { label } if label == "FAVORITES" => {
+                        in_favorites_section = true;
+                        is_favorites_header = true;
+                    }
+                    DropdownItemDef::Separator if in_favorites_section => in_favorites_section = false,
+                    _ => {}
+                }
+            }
             let mut di = convert_dropdown_item(item);
+            // Pin-toggle trailing icon on the FAVORITES header (кусок 3):
+            // accent when ON, secondary/dim (theme's disabled-text tone)
+            // when OFF — same "distinct ON vs OFF" contract as the star
+            // fill state. `#2962ff` is the SAME pre-existing selection
+            // accent this dropdown already uses for the active TF/preset
+            // row (owner-approved accent exception), not a new hardcode.
+            if is_favorites_header {
+                use crate::ui::dropdown::TrailingIcon;
+                let pin = TrailingIcon::new(
+                    mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID,
+                    IconId::new("pin"),
+                ).with_color(if pin_granularity_favorites {
+                    "#2962ff".to_string()
+                } else {
+                    theme.item_text_disabled.clone()
+                });
+                di = di.with_header_trailing_icon(pin);
+            }
             if dropdown_id == "presets_menu" {
                 if let DropdownItem::Item { ref id, ref mut accent_color, ref mut toggle, ref mut disabled, .. } = di {
                     // Active preset accent bar
@@ -1031,8 +1224,20 @@ fn chart_toolbar_render_dropdown(
                 }
             }
             if dropdown_id == "timeframe_selector" {
-                if let DropdownItem::Item { ref id, ref mut disabled, ref mut accent_color, ref mut subtitle, .. } = di {
-                    if let Some(value_id) = id.strip_prefix(RESOLUTION_PARAM_ITEM_PREFIX) {
+                if let DropdownItem::Item { ref id, ref mut disabled, ref mut accent_color, ref mut subtitle, ref mut trailing_icons, .. } = di {
+                    // FAVORITES-section rows carry the
+                    // `GRANULARITY_FAV_ID_PREFIX` uniqueness wrapper (defect
+                    // fix 2026-07-16 — see that const's doc comment). Every
+                    // lookup below (whitelist membership, native-availability
+                    // map, custom/starred membership) keys off the profile's
+                    // REAL id shape (`tf_{name}` / `{RESOLUTION_PARAM_ITEM_
+                    // PREFIX}{value}`), so strip the wrapper here and use the
+                    // stripped id for all of them; the row's own `id` field
+                    // (used for the click hit-zone / hover) stays the full
+                    // prefixed string untouched.
+                    let lookup_id: &str = id.strip_prefix(mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX)
+                        .unwrap_or(id.as_str());
+                    if let Some(value_id) = lookup_id.strip_prefix(RESOLUTION_PARAM_ITEM_PREFIX) {
                         // `ResolutionKind::Param` dropdown (owner doctrine
                         // 2026-07-08): items are real presets now, not a
                         // TF-inert placeholder list — the old "disable every
@@ -1048,28 +1253,57 @@ fn chart_toolbar_render_dropdown(
                         if is_current {
                             *accent_color = Some("#2962ff".to_string());
                         }
+                        // Trailing icons (кусок 2): star always (builtin
+                        // ladder preset or custom, `in_favorites_section`
+                        // decides unstar-only vs full set); edit+trash only
+                        // for a value that is a CUSTOM (present in
+                        // `favorites.params` for this chart_type) — a
+                        // builtin ladder preset is never editable/deletable.
+                        let value: Option<f64> = value_id.parse().ok();
+                        let is_custom = value
+                            .map(|v| active_chart_type.map(|ct| granularity_favorites.params.iter()
+                                .any(|f| f.chart_type == ct && f.value == v)).unwrap_or(false))
+                            .unwrap_or(false);
+                        let is_starred = value
+                            .map(|v| active_chart_type.map(|ct| granularity_favorites.starred_params.iter()
+                                .any(|f| f.chart_type == ct && f.value == v)).unwrap_or(false))
+                            .unwrap_or(false);
+                        // Star-action target must resolve to the ORIGINAL
+                        // (unprefixed) id — `granularity_trailing_icons`
+                        // mints `gran_star:{lookup_id}`, so a FAVORITES-
+                        // section row's unstar click still hits the real
+                        // profile entry, not the synthetic `gran_fav:` id.
+                        *trailing_icons = granularity_trailing_icons(lookup_id, is_custom, is_starred, in_favorites_section);
                     } else {
                         // Granularity rows (кусок 1/2) are NOT TF items —
                         // exempt them from the TF whitelist/disable machinery
                         // below entirely. Their visibility is already decided
-                        // at append time (`append_tf_favorites_items` /
-                        // `append_param_favorites_items` /
+                        // at append time (`prepend_tf_starred_items` /
+                        // `prepend_param_starred_items` /
+                        // `append_tf_customs_and_add_row` /
+                        // `append_param_customs_and_add_row` /
                         // `resolution_param_dropdown_items`' ATR row gate):
-                        // - the two "Custom…" input rows and the ATR (14) row
+                        // - the two "+ Add" rows and the ATR (14) row
                         //   would otherwise hit `allowed_timeframes == None`
                         //   on Param-resolution types → `disabled` → the
                         //   click router sees `__noop__` and the input never
                         //   focuses (live bug 2026-07-15);
-                        // - favorite TF items (`tf_{name}`, e.g. `tf_7m`)
-                        //   aren't members of the builtin `ALL_TF_IDS`-derived
-                        //   allowed set → `return None` would silently omit
-                        //   the whole FAVORITES section on Time types.
-                        let is_granularity_row = id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID
-                            || id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID
-                            || id == mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID;
-                        let is_tf_favorite = id.strip_prefix("tf_")
+                        // - custom/starred TF items (`tf_{name}`, e.g.
+                        //   `tf_7m`) aren't members of the builtin
+                        //   `ALL_TF_IDS`-derived allowed set → `return None`
+                        //   would silently omit the whole FAVORITES section
+                        //   AND the customs list on Time types.
+                        let is_granularity_row = lookup_id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID
+                            || lookup_id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID
+                            || lookup_id == mlc_core::chart_type::RESOLUTION_PARAM_ATR14_ITEM_ID;
+                        let bare_name = lookup_id.strip_prefix("tf_");
+                        let is_custom_tf = bare_name
                             .map(|n| granularity_favorites.time_tfs.iter().any(|f| f == n))
                             .unwrap_or(false);
+                        let is_starred_tf = bare_name
+                            .map(|n| granularity_favorites.starred_tfs.iter().any(|f| f == n))
+                            .unwrap_or(false);
+                        let is_tf_favorite = is_custom_tf || is_starred_tf;
                         // Whitelist filtering (2026-07-08 hide-not-blur): a
                         // chart_type with an explicit `tf_whitelist`
                         // (footprint/tpo) OMITS non-whitelisted TF items from
@@ -1088,9 +1322,18 @@ fn chart_toolbar_render_dropdown(
                         if !is_granularity_row {
                             match allowed_timeframes {
                                 None => *disabled = true,
-                                Some(allowed) if !allowed.contains(id.as_str()) && !is_tf_favorite => return None,
+                                Some(allowed) if !allowed.contains(lookup_id) && !is_tf_favorite => return None,
                                 _ => {}
                             }
+                        }
+
+                        // Trailing icons (кусок 2): every plain TF row
+                        // (builtin OR custom) gets a star; customs additionally
+                        // get edit+trash. The two "+ Add" / ATR rows get none.
+                        // Star-action target uses `lookup_id` — see the Param
+                        // branch's comment above for the rationale.
+                        if !is_granularity_row {
+                            *trailing_icons = granularity_trailing_icons(lookup_id, is_custom_tf, is_starred_tf, in_favorites_section);
                         }
 
                         // Availability marking (resolution-availability-
@@ -1121,7 +1364,7 @@ fn chart_toolbar_render_dropdown(
                                 *subtitle = Some("live".to_string());
                             }
                         } else if let Some(native_map) = timeframe_native_map {
-                            if native_map.get(id.as_str()) == Some(&false) {
+                            if native_map.get(lookup_id) == Some(&false) {
                                 *subtitle = Some("live".to_string());
                             }
                         }
@@ -1162,6 +1405,34 @@ fn chart_toolbar_render_dropdown(
             return None;
         }
 
+        // 4b. In-place edit target (defect fix 2026-07-16, owner spec (a)):
+        // when `granularity_edit_render.host` names an existing custom's
+        // row, hide ITS trailing icons while the editor is active (spec
+        // (b)) — the widget-overlay block below (step 5b) draws the real
+        // text-input widget over this row's label area, so the star/edit/
+        // trash icons would otherwise sit awkwardly next to/under it. Only
+        // the row's NORMAL-POSITION twin is targeted (the id shape a plain
+        // `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` row carries)
+        // — a FAVORITES-section twin (if the same value is also starred)
+        // keeps its own unstar icon untouched, matching how star/edit/trash
+        // already treat the two positions independently.
+        let edit_target_row_id: Option<String> = granularity_edit_render
+            .and_then(|r| r.host.as_ref())
+            .map(|target| match target {
+                mlc_core::chart_type::GranularityTarget::Tf { name } => format!("tf_{}", name),
+                mlc_core::chart_type::GranularityTarget::Param { value, .. } => {
+                    format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, value)
+                }
+            });
+        let mut dropdown_items = dropdown_items;
+        if let Some(ref target_id) = edit_target_row_id {
+            if let Some(DropdownItem::Item { trailing_icons, .. }) = dropdown_items.iter_mut()
+                .find(|di| di.id() == Some(target_id.as_str()))
+            {
+                trailing_icons.clear();
+            }
+        }
+
         // 5. Build config and render the main dropdown
         let mut config = DropdownConfig::new(dropdown_items);
         // Chart-type menu: two-column grid inside each section (owner spec
@@ -1188,6 +1459,76 @@ fn chart_toolbar_render_dropdown(
 
         let mut all_item_rects = result.item_rects;
         let mut final_menu_rect = result.menu_rect;
+
+        // 5b. Widget overlay for the visible inline granularity editor
+        // (defect fix 2026-07-16, owner spec (b)) — draws the SAME
+        // centralized text-input widget every modal field uses
+        // (`crate::ui::widgets::{draw_input, draw_input_cursor,
+        // InputConfig}`, e.g. `chart_settings.rs` fields / the preset-name
+        // input) directly over the host row's rect, AFTER `draw_dropdown`
+        // already painted that row's label/trailing-icons — the widget's
+        // opaque background covers the stale label so nothing double-
+        // renders. Host row: the Add row (`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`
+        // / `PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID`) when `host == None`, or
+        // `edit_target_row_id`'s row when `host == Some(target)` (spec (a):
+        // editing renders in place, not relocated to the Add row).
+        if dropdown_id == "timeframe_selector" {
+            if let Some(edit) = granularity_edit_render {
+                let host_id: Option<&str> = match &edit.host {
+                    None => Some(mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID)
+                        .filter(|_| all_item_rects.iter().any(|(id, _)| id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID))
+                        .or(Some(mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID)),
+                    Some(_) => edit_target_row_id.as_deref(),
+                };
+                if let Some(host_id) = host_id {
+                    if let Some(row_rect) = all_item_rects.iter().find(|(id, _)| id == host_id).map(|(_, r)| *r) {
+                        use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+                        use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+
+                        let widget_theme = WidgetTheme {
+                            bg_normal: theme.background.clone(),
+                            bg_hover: theme.item_bg_hover.clone(),
+                            bg_pressed: theme.item_bg_hover.clone(),
+                            bg_disabled: theme.background.clone(),
+                            text_normal: theme.item_text.clone(),
+                            text_hover: theme.item_text_hover.clone(),
+                            text_disabled: theme.item_text_disabled.clone(),
+                            border_normal: theme.border.clone(),
+                            border_hover: theme.item_bg_hover.clone(),
+                            border_focused: "#2962ff".to_string(),
+                            accent: "#2962ff".to_string(),
+                            accent_hover: "#2962ff".to_string(),
+                            success: theme.item_text.clone(),
+                            warning: theme.item_text.clone(),
+                            danger: theme.item_danger.clone(),
+                        };
+                        let input_config = InputConfig::new(&edit.text)
+                            .with_focused(true)
+                            .with_cursor(edit.cursor)
+                            .with_placeholder(if edit.host.is_none() { "e.g. 7m" } else { "" })
+                            .with_selection(edit.selection.map(|(s, _)| s), edit.selection.map(|(_, e)| e))
+                            .with_padding(12.0);
+                        // `draw_input` takes `uzor::types::Rect` — a distinct
+                        // (same-shape) type from this file's `WidgetRect`
+                        // (`mlc_core::state::toolbar_geometry::WidgetRect`,
+                        // no `From` conversion between them), so build one
+                        // from the row rect's fields directly, inset by 2px
+                        // so the widget's own border doesn't touch the
+                        // dropdown row's edges.
+                        let input_rect = uzor::types::Rect::new(
+                            row_rect.x + 2.0,
+                            row_rect.y + 2.0,
+                            (row_rect.width - 4.0).max(0.0),
+                            (row_rect.height - 4.0).max(0.0),
+                        );
+                        let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+                        if edit.cursor_visible {
+                            draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
+                        }
+                    }
+                }
+            }
+        }
 
         // 6. Render submenu grid if one is open
         if let Some(ref submenu_id) = tb.open_submenu_id {
@@ -1428,6 +1769,57 @@ fn format_trimmed(v: f64) -> String {
     }
 }
 
+/// Build the trailing icon buttons for one `timeframe_selector` row —
+/// user-granularity-templates-inner arc, кусок 2 (owner spec 2026-07-16).
+///
+/// - Inside the FAVORITES header section (`in_favorites_section == true`):
+///   a single filled star (unstar on click). No edit/trash there — a
+///   starred row is edited/deleted from its normal-position twin.
+/// - Everywhere else: a star (filled if `is_starred`, empty otherwise, click
+///   toggles); customs (`is_custom == true`) additionally get edit (pencil)
+///   and delete (trash) icons. Builtins get star only.
+///
+/// Icon ids come straight from `mlc_core::state::icons` (`"star"`/
+/// `"star_filled"`/`"pencil"`/`"delete"`) — the exact icon set the watchlist
+/// symbol-search star uses (`search_overlay.rs`'s `Icon::Star`/
+/// `Icon::StarFilled`, same `#FFD700` filled accent reused here verbatim).
+fn granularity_trailing_icons(
+    item_id: &str,
+    is_custom: bool,
+    is_starred: bool,
+    in_favorites_section: bool,
+) -> Vec<crate::ui::dropdown::TrailingIcon> {
+    use crate::ui::dropdown::TrailingIcon;
+    const STAR_FILLED_COLOR: &str = "#FFD700";
+
+    let star_action = format!("{}{}", mlc_core::chart_type::GRANULARITY_STAR_ACTION_PREFIX, item_id);
+    if in_favorites_section {
+        // A FAVORITES-section row is, by construction, always starred —
+        // the icon here is always the filled variant (unstar affordance).
+        return vec![TrailingIcon::new(star_action, IconId::new("star_filled")).with_color(STAR_FILLED_COLOR)];
+    }
+
+    let mut icons = Vec::with_capacity(3);
+    let (star_icon, star_color) = if is_starred {
+        (IconId::new("star_filled"), Some(STAR_FILLED_COLOR.to_string()))
+    } else {
+        (IconId::new("star"), None)
+    };
+    let mut star = TrailingIcon::new(star_action, star_icon);
+    if let Some(c) = star_color {
+        star = star.with_color(c);
+    }
+    icons.push(star);
+
+    if is_custom {
+        let edit_action = format!("{}{}", mlc_core::chart_type::GRANULARITY_EDIT_ACTION_PREFIX, item_id);
+        icons.push(TrailingIcon::new(edit_action, IconId::new("pencil")));
+        let del_action = format!("{}{}", mlc_core::chart_type::GRANULARITY_DELETE_ACTION_PREFIX, item_id);
+        icons.push(TrailingIcon::new(del_action, IconId::new("delete")));
+    }
+    icons
+}
+
 /// Build the `timeframe_selector` dropdown's item list for the active
 /// chart_type's `ResolutionKind::Param` presets (owner doctrine 2026-07-08).
 ///
@@ -1461,44 +1853,45 @@ fn resolution_param_dropdown_items(active_chart_type: Option<&str>) -> Option<Ve
     Some(items)
 }
 
-/// Append the FAVORITES section (custom timeframes) + "Custom…" input row to
-/// the `timeframe_selector` dropdown's item list — user-granularity-
-/// templates-inner arc, кусок 1.
+/// Prepend the FAVORITES section (starred TF rows — builtin or custom) to
+/// the top of the `timeframe_selector` dropdown's item list — user-
+/// granularity-templates-inner arc, кусок 2 (owner spec 2026-07-16: a star
+/// on ANY row, not a separate favorites list).
 ///
-/// Favorite items reuse the `tf_{name}` id convention (`Timeframe::parse`
-/// resolves them through the EXACT same `ChangeTimeframe` dispatch path as a
-/// builtin `tf_*` item — zero new handling on the apply side). The "Custom…"
-/// row is a dedicated whole-row click target
-/// (`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`) handled by the app's click router,
-/// not a `param_field` inline-input (see that constant's doc comment for why
-/// the whole row is safe to use as the hit zone here).
-fn append_tf_favorites_items(
+/// Row ids carry the [`mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX`]
+/// prefix (defect fix 2026-07-16) — a FAVORITES-section row is a SEPARATE
+/// dropdown entry from its normal-position twin further down the list, so it
+/// must have a distinct id or `draw_dropdown`'s id-keyed hover test lights
+/// both rows at once (duplicate-id hover-leak bug). The click router
+/// (`mlc-app::input::panel_click`) strips the prefix and dispatches through
+/// the EXACT same `ChangeTimeframe`/`UpdateChartTypeParam` apply path as the
+/// row's normal-position twin — zero new apply-side wiring beyond the strip.
+fn prepend_tf_starred_items(
     items: &mut Vec<DropdownItemDef>,
     favorites: &mlc_core::user_profile::GranularityFavorites,
 ) {
-    items.push(DropdownItemDef::Separator);
-    items.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
-    for name in &favorites.time_tfs {
-        items.push(DropdownItemDef::action(format!("tf_{}", name), name.clone()));
+    if favorites.starred_tfs.is_empty() {
+        return;
     }
-    items.push(DropdownItemDef::action(
-        mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID,
-        "Custom…",
-    ));
+    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(favorites.starred_tfs.len() + 2);
+    header.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
+    for name in &favorites.starred_tfs {
+        header.push(DropdownItemDef::action(
+            format!("{}tf_{}", mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX, name),
+            name.clone(),
+        ));
+    }
+    header.push(DropdownItemDef::Separator);
+    header.append(items);
+    *items = header;
 }
 
-/// Append the FAVORITES section (custom numeric-param presets) + "Custom…"
-/// input row to the `timeframe_selector` dropdown's item list for the active
-/// `ResolutionKind::Param` chart type — user-granularity-templates-inner
-/// arc, кусок 1.
-///
-/// Favorite items reuse the `RESOLUTION_PARAM_ITEM_PREFIX` id convention
-/// (`"reso_param:{value}"`) so `ChartToolbarState::
-/// handle_dropdown_select_with_chart`'s existing `timeframe_selector` arm
-/// dispatches them to `UpdateChartTypeParam` with zero new handling —
-/// exactly like a static ladder preset. Filtered to the active chart_type
-/// only (a range_bar favorite must never leak into the volume_bar dropdown).
-fn append_param_favorites_items(
+/// Prepend the FAVORITES section (starred numeric-param rows — ladder or
+/// custom) for the active `ResolutionKind::Param` chart type. See
+/// [`prepend_tf_starred_items`] for the id-uniqueness/dispatch rationale.
+/// Filtered to the active chart_type only (a range_bar star must never leak
+/// into the volume_bar dropdown).
+fn prepend_param_starred_items(
     items: &mut Vec<DropdownItemDef>,
     active_chart_type: Option<&str>,
     favorites: &mlc_core::user_profile::GranularityFavorites,
@@ -1508,21 +1901,95 @@ fn append_param_favorites_items(
         Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => suffix,
         _ => return,
     };
-    let matching: Vec<&mlc_core::user_profile::ParamFavorite> = favorites.params.iter()
+    let matching: Vec<&mlc_core::user_profile::ParamFavorite> = favorites.starred_params.iter()
         .filter(|f| f.chart_type == ct)
         .collect();
-    items.push(DropdownItemDef::Separator);
-    items.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
+    if matching.is_empty() {
+        return;
+    }
+    let mut header: Vec<DropdownItemDef> = Vec::with_capacity(matching.len() + 2);
+    header.push(DropdownItemDef::Header { label: "FAVORITES".to_string() });
     for fav in matching {
         let label = format_resolution_param(fav.value, suffix);
-        items.push(DropdownItemDef::action(
-            format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, fav.value),
+        header.push(DropdownItemDef::action(
+            format!("{}{}{}", mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX, RESOLUTION_PARAM_ITEM_PREFIX, fav.value),
             label,
         ));
     }
+    header.push(DropdownItemDef::Separator);
+    header.append(items);
+    *items = header;
+}
+
+/// Append CUSTOM timeframe rows (after a separator, following the builtin
+/// ladder) + the trailing "+ Add" row to the `timeframe_selector` dropdown's
+/// item list — user-granularity-templates-inner arc, кусок 2.
+///
+/// Custom rows reuse the `tf_{name}` id convention (same apply-path rationale
+/// as [`prepend_tf_starred_items`]); the post-processing closure in
+/// `chart_toolbar_render_dropdown` attaches their `[star][edit][trash]`
+/// trailing icons (customs only — builtins get star-only). The "+ Add" row
+/// (`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`) begins inline creation — while
+/// `editing_text` is `Some` (host == Add row), its label is overridden to
+/// the live typed text; the REAL caret is drawn by the widget-overlay block
+/// in `chart_toolbar_render_dropdown` (defect fix 2026-07-16 — no more fake
+/// `▏` glyph baked into the label).
+fn append_tf_customs_and_add_row(
+    items: &mut Vec<DropdownItemDef>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+    editing_text: Option<&str>,
+) {
+    if !favorites.time_tfs.is_empty() {
+        items.push(DropdownItemDef::Separator);
+        for name in &favorites.time_tfs {
+            items.push(DropdownItemDef::action(format!("tf_{}", name), name.clone()));
+        }
+    }
+    let add_label = match editing_text {
+        Some(text) => text.to_string(),
+        None => "+ Add".to_string(),
+    };
+    items.push(DropdownItemDef::action(
+        mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID,
+        add_label,
+    ));
+}
+
+/// Append CUSTOM numeric-param rows + the trailing "+ Add" row for the
+/// active `ResolutionKind::Param` chart type. See
+/// [`append_tf_customs_and_add_row`] for the id-reuse/trailing-icon/live-text
+/// rationale. Filtered to the active chart_type only.
+fn append_param_customs_and_add_row(
+    items: &mut Vec<DropdownItemDef>,
+    active_chart_type: Option<&str>,
+    favorites: &mlc_core::user_profile::GranularityFavorites,
+    editing_text: Option<&str>,
+) {
+    let Some(ct) = active_chart_type else { return };
+    let suffix = match mlc_core::chart_type::by_id(ct).map(|def| def.resolution) {
+        Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => suffix,
+        _ => return,
+    };
+    let matching: Vec<&mlc_core::user_profile::ParamFavorite> = favorites.params.iter()
+        .filter(|f| f.chart_type == ct)
+        .collect();
+    if !matching.is_empty() {
+        items.push(DropdownItemDef::Separator);
+        for fav in matching {
+            let label = format_resolution_param(fav.value, suffix);
+            items.push(DropdownItemDef::action(
+                format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, fav.value),
+                label,
+            ));
+        }
+    }
+    let add_label = match editing_text {
+        Some(text) => text.to_string(),
+        None => "+ Add".to_string(),
+    };
     items.push(DropdownItemDef::action(
         mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID,
-        "Custom…",
+        add_label,
     ));
 }
 
@@ -1794,6 +2261,10 @@ fn find_submenu_in_def(def: &PanelToolbarDef, submenu_id: &str) -> Option<(Vec<D
 /// Draw an icon using the chart's own SVG icon registry.
 ///
 /// Used as the icon renderer callback for both the main dropdown and submenu grids.
+/// Every icon id used by the dropdown/trailing-icon path resolves through
+/// `icon_svg`'s name→SVG registry — no text-glyph fallback (the pinned-
+/// favorites-row toggle's `"pin"` id used to fall back to a 📌 glyph before
+/// `ICON_PIN` was added to the registry, defect fix 2026-07-16).
 fn chart_icon_renderer(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, color: &str) {
     if let Some(svg) = crate::ui::icons::icon_svg(icon_id.name()) {
         draw_svg_icon(ctx, svg, rect.x.floor(), rect.y.floor(), rect.width, rect.height, color);

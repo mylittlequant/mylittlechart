@@ -9,7 +9,7 @@
 //! `compute_chart_internal_layout`, `chart_toolbar_render_toolbars`,
 //! `render_toolbars_with_theme`) stay in `mlc-app-layout::panel_app`.
 
-use uzor::render::RenderContext;
+use mlc_core::engine::render::RenderContext;
 
 use crate::panel_grid::ChartPanelGrid;
 use crate::chart_container::ChartContainer;
@@ -421,6 +421,8 @@ impl ChartPanelApp {
         timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
         footprint_live_only: bool,
         granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+        granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
+        pin_granularity_favorites: bool,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
@@ -428,7 +430,7 @@ impl ChartPanelApp {
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites)
     }
 
     /// Render all chart-owned modals in a single call.

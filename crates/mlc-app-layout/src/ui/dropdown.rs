@@ -6,6 +6,56 @@
 use uzor::render::{RenderContext, TextAlign, TextBaseline};
 use super::toolbar_core::{WidgetRect, IconId};
 
+/// Square size of a trailing icon button.
+const TRAILING_ICON_SIZE: f64 = 16.0;
+/// Gap between adjacent trailing icons.
+const TRAILING_ICON_GAP: f64 = 4.0;
+/// Padding between the rightmost trailing icon and the row's right edge.
+const TRAILING_ICON_PAD_RIGHT: f64 = 8.0;
+
+/// Total horizontal space `n` trailing icons reserve on the right edge of a
+/// dropdown row: `pad_right + n * icon_size + (n - 1) * gap` for `n > 0`,
+/// `0.0` for `n == 0`. Used by BOTH the width-measuring pass and the draw
+/// pass so the two stay in lockstep (same contract as the pre-existing
+/// `right_reserve` logic for toggle/shortcut/subtitle).
+fn trailing_icons_zone_width(n: usize) -> f64 {
+    if n == 0 {
+        return 0.0;
+    }
+    TRAILING_ICON_PAD_RIGHT + n as f64 * TRAILING_ICON_SIZE + (n - 1) as f64 * TRAILING_ICON_GAP
+}
+
+/// One right-aligned trailing icon button on a dropdown row (star/edit/
+/// delete — user-granularity-templates-inner arc, кусок 2). Rendered
+/// right-to-left in `DropdownItem::Item::trailing_icons` order (first entry
+/// = rightmost) and registers its OWN hit rect with id `action_id` — the
+/// row's main click rect is shrunk so it never overlaps a trailing icon's
+/// zone (see `draw_dropdown`'s layout pass).
+#[derive(Clone, Debug)]
+pub struct TrailingIcon {
+    /// Hit-zone id registered in `DropdownResult::item_rects` for this icon
+    /// (the caller mints this, e.g. `"gran_star:tf_7m"` —
+    /// `mlc_core::chart_type::GRANULARITY_STAR_ACTION_PREFIX` + item id).
+    pub action_id: String,
+    /// Icon to draw, resolved via the host's `draw_icon` callback (same
+    /// registry as the row's own leading `icon`).
+    pub icon: IconId,
+    /// Explicit icon color overriding the row's normal/hover text color
+    /// (e.g. the filled-star accent). `None` uses the row's text color.
+    pub color: Option<String>,
+}
+
+impl TrailingIcon {
+    pub fn new(action_id: impl Into<String>, icon: impl Into<IconId>) -> Self {
+        Self { action_id: action_id.into(), icon: icon.into(), color: None }
+    }
+
+    pub fn with_color(mut self, color: impl Into<String>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+}
+
 /// Dropdown menu item
 #[derive(Clone, Debug)]
 pub enum DropdownItem {
@@ -33,12 +83,24 @@ pub enum DropdownItem {
         /// item id); the input area becomes its own hit zone that focuses
         /// the text-field on click.
         param_field: Option<(String, String)>,
+        /// Right-aligned trailing icon buttons (star/edit/delete —
+        /// user-granularity-templates-inner arc, кусок 2). Empty on every
+        /// row that isn't a granularity dropdown row. Each entry gets its
+        /// own hit zone; the row's main click rect is shrunk to make room
+        /// (see `draw_dropdown`).
+        trailing_icons: Vec<TrailingIcon>,
     },
     /// Separator line
     Separator,
-    /// Header/title (non-clickable)
+    /// Header/title (non-clickable text), optionally with a single
+    /// right-aligned trailing icon button (e.g. the pinned-favorites-row
+    /// toggle on the `timeframe_selector` dropdown's "FAVORITES" header —
+    /// user-granularity-templates-inner arc, кусок 3). `None` renders the
+    /// header exactly as before (label only, no hit zone besides the
+    /// existing `__noop__:header:` background absorber).
     Header {
         label: String,
+        trailing_icon: Option<TrailingIcon>,
     },
     /// Submenu (shows arrow, opens another menu)
     Submenu {
@@ -61,7 +123,18 @@ impl DropdownItem {
             accent_color: None,
             toggle: None,
             param_field: None,
+            trailing_icons: Vec::new(),
         }
+    }
+
+    /// Attach right-aligned trailing icon buttons (star/edit/delete —
+    /// user-granularity-templates-inner arc, кусок 2). See
+    /// [`TrailingIcon`]'s doc comment for the hit-zone/render contract.
+    pub fn with_trailing_icons(mut self, icons: Vec<TrailingIcon>) -> Self {
+        if let Self::Item { trailing_icons: ref mut t, .. } = self {
+            *t = icons;
+        }
+        self
     }
 
     /// Attach an inline text-input field on the right side of the row.
@@ -134,7 +207,18 @@ impl DropdownItem {
     pub fn header(label: &str) -> Self {
         Self::Header {
             label: label.to_string(),
+            trailing_icon: None,
         }
+    }
+
+    /// Attach a single right-aligned trailing icon button to a `Header` row
+    /// (user-granularity-templates-inner arc, кусок 3 — the pinned-row
+    /// toggle on the "FAVORITES" header). No-op on any other variant.
+    pub fn with_header_trailing_icon(mut self, icon: TrailingIcon) -> Self {
+        if let Self::Header { trailing_icon: ref mut t, .. } = self {
+            *t = Some(icon);
+        }
+        self
     }
 
     pub fn submenu(id: &str, label: &str) -> Self {
@@ -326,7 +410,7 @@ where
 
     for item in &config.items {
         match item {
-            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle, param_field: _ } => {
+            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle, param_field: _, trailing_icons } => {
                 // Measure label text
                 let label_width = ctx.measure_text(label);
                 let mut item_width = label_width;
@@ -354,14 +438,23 @@ where
                     item_width += 4.0;
                 }
 
+                // Trailing icon buttons (star/edit/delete) reserve their own
+                // zone ON TOP of the right-side reserve above — see
+                // `trailing_icons_zone_width`'s doc comment for the exact
+                // geometry (mirrors the draw pass below).
+                item_width += trailing_icons_zone_width(trailing_icons.len());
+
                 // Add horizontal padding (both sides)
                 item_width += config.item_padding_x * 2.0;
 
                 // Track maximum width
                 content_width = content_width.max(item_width);
             }
-            DropdownItem::Header { label } => {
-                let header_width = ctx.measure_text(label) + config.item_padding_x * 2.0;
+            DropdownItem::Header { label, trailing_icon } => {
+                let mut header_width = ctx.measure_text(label) + config.item_padding_x * 2.0;
+                if trailing_icon.is_some() {
+                    header_width += trailing_icons_zone_width(1);
+                }
                 content_width = content_width.max(header_width);
             }
             DropdownItem::Separator => {
@@ -483,8 +576,20 @@ where
     // Draw items — rects precomputed by the layout pass above.
     for (idx, item) in config.items.iter().enumerate() {
         match item {
-            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field } => {
+            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field, trailing_icons } => {
                 let item_rect = rects[idx];
+                // Trailing-icon zone: reserved on the RIGHT edge of the row,
+                // right-to-left draw order (first `trailing_icons` entry =
+                // rightmost). The main row's click rect (registered below)
+                // is shrunk by this zone width so it never overlaps an
+                // icon's own hit rect — see `trailing_icons_zone_width`'s
+                // doc comment for the exact geometry.
+                let trailing_zone_w = trailing_icons_zone_width(trailing_icons.len());
+                let main_click_rect = if trailing_zone_w > 0.0 {
+                    WidgetRect::new(item_rect.x, item_rect.y, (item_rect.width - trailing_zone_w).max(0.0), item_rect.height)
+                } else {
+                    item_rect
+                };
 
                 let is_hovered = hovered_id == Some(id.as_str()) && !*disabled;
 
@@ -534,6 +639,11 @@ where
                     text_x += config.icon_size + 8.0;
                 }
 
+                // Right edge available to label/toggle/shortcut/subtitle —
+                // pulled in by the trailing-icon zone so nothing under it
+                // gets clipped or overdrawn.
+                let right_content_edge = item_rect.right() - trailing_zone_w;
+
                 // Draw label (clipped to avoid overflow into toggle/shortcut/input zone)
                 ctx.set_font(&format!("{}px sans-serif", config.font_size));
                 ctx.set_fill_color(text_color);
@@ -549,7 +659,7 @@ where
                     else if shortcut.is_some() || subtitle.is_some() { 40.0 }
                     else { 4.0 };
                 let _ = param_field;
-                let label_max_w = (item_rect.right() - text_x - config.item_padding_x - right_reserve).max(20.0);
+                let label_max_w = (right_content_edge - text_x - config.item_padding_x - right_reserve).max(20.0);
                 ctx.rect(text_x, item_rect.y, label_max_w, item_rect.height);
                 ctx.clip();
                 ctx.fill_text(label, text_x, item_rect.center_y());
@@ -560,7 +670,7 @@ where
                     // Toggle switch: 36x18 rounded pill
                     let track_w = 36.0;
                     let track_h = 18.0;
-                    let track_x = item_rect.right() - config.item_padding_x - track_w;
+                    let track_x = right_content_edge - config.item_padding_x - track_w;
                     let track_y = item_rect.center_y() - track_h / 2.0;
                     let track_r = track_h / 2.0;
 
@@ -586,13 +696,35 @@ where
                     // Draw shortcut (takes priority over subtitle)
                     ctx.set_fill_color(&theme.shortcut_text);
                     ctx.set_text_align(TextAlign::Right);
-                    ctx.fill_text(shortcut, item_rect.right() - config.item_padding_x, item_rect.center_y());
+                    ctx.fill_text(shortcut, right_content_edge - config.item_padding_x, item_rect.center_y());
                 } else if let Some(ref sub) = subtitle {
                     // Draw subtitle only when no shortcut is present
                     ctx.set_fill_color(&theme.shortcut_text);
                     ctx.set_font(&format!("{}px sans-serif", config.font_size - 1.0));
                     ctx.set_text_align(TextAlign::Right);
-                    ctx.fill_text(sub, item_rect.right() - config.item_padding_x, item_rect.center_y());
+                    ctx.fill_text(sub, right_content_edge - config.item_padding_x, item_rect.center_y());
+                }
+
+                // Draw trailing icon buttons right-to-left (first entry =
+                // rightmost — user-granularity-templates-inner arc, кусок 2).
+                // Each icon gets its own square hit zone registered AFTER
+                // the main row hit zone below so icon clicks win on overlap
+                // (matches the star-rects-registered-after-items pattern in
+                // `search_overlay.rs`).
+                let mut trailing_rects: Vec<(String, WidgetRect)> = Vec::new();
+                if !trailing_icons.is_empty() {
+                    let mut icon_right = item_rect.right() - TRAILING_ICON_PAD_RIGHT;
+                    for ti in trailing_icons {
+                        let icon_x = icon_right - TRAILING_ICON_SIZE;
+                        let icon_y = item_rect.center_y() - TRAILING_ICON_SIZE / 2.0;
+                        let icon_color = ti.color.as_deref().unwrap_or(text_color);
+                        let icon_rect = WidgetRect::new(icon_x, icon_y, TRAILING_ICON_SIZE, TRAILING_ICON_SIZE);
+                        draw_icon(ctx, &ti.icon, icon_rect, icon_color);
+                        if !*disabled {
+                            trailing_rects.push((ti.action_id.clone(), icon_rect));
+                        }
+                        icon_right = icon_x - TRAILING_ICON_GAP;
+                    }
                 }
 
                 // Inline param input was removed — the input rectangle is no
@@ -607,11 +739,16 @@ where
                 // Register click hit zone for all items so clicks inside the dropdown
                 // are always consumed and don't fall through to the background handler.
                 // Disabled items use a "__noop__:" prefix — the caller must treat them
-                // as "click consumed, no action, keep dropdown open".
+                // as "click consumed, no action, keep dropdown open". The MAIN row
+                // rect is shrunk by the trailing-icon zone (`main_click_rect`) so it
+                // never overlaps an icon's own hit rect; icon rects are pushed
+                // AFTER the row rect (registration order = priority on overlap,
+                // though geometrically they no longer overlap by construction).
                 if *disabled {
-                    result.item_rects.push((format!("__noop__:{}", id), item_rect));
+                    result.item_rects.push((format!("__noop__:{}", id), main_click_rect));
                 } else {
-                    result.item_rects.push((id.clone(), item_rect));
+                    result.item_rects.push((id.clone(), main_click_rect));
+                    result.item_rects.extend(trailing_rects);
                 }
                 // Inline input is display-only (shows current param value). NOT a
                 // hit zone — clicks land on the row and fire ChangeChartType with
@@ -633,7 +770,7 @@ where
                 ctx.line_to(sep_rect.right(), sep_y);
                 ctx.stroke();
             }
-            DropdownItem::Header { label } => {
+            DropdownItem::Header { label, trailing_icon } => {
                 let header_rect = rects[idx];
 
                 ctx.set_font(&format!("bold {}px sans-serif", config.font_size));
@@ -656,6 +793,23 @@ where
                     format!("__noop__:header:{}", label),
                     header_rect,
                 ));
+
+                // Trailing icon (granularity arc — the pinned-row toggle on
+                // the "FAVORITES" header). Its hit zone MUST be registered
+                // AFTER the header's noop absorber: overlapping rects resolve
+                // to the LAST registered one (same priority rule the `Item`
+                // arm relies on — trailing icons there are pushed after the
+                // main row rect and win for exactly this reason). Registering
+                // it before the absorber left the pin dead (2026-07-16 live
+                // bug: every pin click was swallowed by the header noop).
+                if let Some(ti) = trailing_icon {
+                    let icon_x = header_rect.right() - TRAILING_ICON_PAD_RIGHT - TRAILING_ICON_SIZE;
+                    let icon_y = header_rect.center_y() - TRAILING_ICON_SIZE / 2.0;
+                    let icon_color = ti.color.as_deref().unwrap_or(&theme.header_text);
+                    let icon_rect = WidgetRect::new(icon_x, icon_y, TRAILING_ICON_SIZE, TRAILING_ICON_SIZE);
+                    draw_icon(ctx, &ti.icon, icon_rect, icon_color);
+                    result.item_rects.push((ti.action_id.clone(), icon_rect));
+                }
             }
             DropdownItem::Submenu { id, icon, label } => {
                 let item_rect = rects[idx];

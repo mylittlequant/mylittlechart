@@ -47,6 +47,7 @@ mod bridge;
 mod provider;
 mod convert;
 pub mod backfill_engine;
+pub mod kline_agg;
 pub mod zip_coverage;
 
 pub use bridge::{
@@ -55,10 +56,11 @@ pub use bridge::{
     RawTradeWire,
 };
 pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState, TradeDemand, TradeLadderStage};
+pub use kline_agg::{aggregation_base, bucket_start_ms, fold_bars_into_buckets, MAX_AGGREGATION_RATIO};
 pub use provider::LiveDataProvider;
 pub use convert::{
-    account_type_from_dig3, account_type_to_dig3, kline_to_bar, resolve_exchange, timeframe_to_interval,
-    to_dig3, UnknownExchange,
+    account_type_from_dig3, account_type_to_dig3, interval_to_ms, kline_to_bar, resolve_exchange,
+    timeframe_to_interval, to_dig3, UnknownExchange,
 };
 
 // ── Debug log gate (MLC_PERF_LOG) ────────────────────────────────────────────

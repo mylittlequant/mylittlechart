@@ -112,3 +112,80 @@ pub fn interval_label(tf_name: &str) -> String {
 pub fn timeframe_to_interval(tf: &Timeframe) -> String {
     interval_label(&tf.name)
 }
+
+/// Duration in milliseconds for a canonical dig3 kline-interval string
+/// (`"1s"`, `"5m"`, `"2h"`, `"1d"`, `"1w"`, `"1M"`, ...) — the numeric-suffix
+/// convention every `KlineIntervalCapabilities::intervals_for` entry and
+/// [`interval_label`]'s output both follow. Used by
+/// `crate::kline_agg::aggregation_base`'s callers to turn a venue's native
+/// interval-string set into `(label, duration_ms)` pairs.
+///
+/// Mirrors `mlc_app::active_series::dig3_interval_to_ms` (the dropdown-side
+/// twin of this function — `mlc-app` sits above this crate in the layering
+/// and cannot be depended on from here, so the same closed-form logic is
+/// duplicated at this lower layer rather than shared).
+///
+/// Month (`M`) uses a fixed 30-day approximation for divisibility purposes
+/// only (calendar months vary 28-31 days, so no exact millisecond count
+/// exists) — this only affects whether some OTHER interval divides evenly
+/// into "1 month", a comparison that in practice never fires for the
+/// second/minute/hour/day/week intervals this module actually aggregates.
+///
+/// Returns `None` for a suffix outside the `s/m/h/d/w/M` set, an empty
+/// string, a non-numeric prefix, or a non-positive count.
+pub fn interval_to_ms(interval: &str) -> Option<i64> {
+    let bytes = interval.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let unit = *bytes.last()?;
+    let n_str = std::str::from_utf8(&bytes[..bytes.len().saturating_sub(1)]).ok()?;
+    let n: i64 = n_str.parse().ok()?;
+    if n <= 0 {
+        return None;
+    }
+    const SEC: i64 = 1_000;
+    const MIN: i64 = 60 * SEC;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    match unit {
+        b's' => Some(n * SEC),
+        b'm' => Some(n * MIN),
+        b'h' => Some(n * HOUR),
+        b'd' => Some(n * DAY),
+        b'w' => Some(n * 7 * DAY),
+        b'M' => Some(n * 30 * DAY),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod interval_to_ms_tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_unit() {
+        assert_eq!(interval_to_ms("1s"), Some(1_000));
+        assert_eq!(interval_to_ms("5m"), Some(300_000));
+        assert_eq!(interval_to_ms("2h"), Some(7_200_000));
+        assert_eq!(interval_to_ms("1d"), Some(86_400_000));
+        assert_eq!(interval_to_ms("1w"), Some(604_800_000));
+        assert_eq!(interval_to_ms("1M"), Some(2_592_000_000));
+    }
+
+    #[test]
+    fn rejects_malformed_input() {
+        assert_eq!(interval_to_ms(""), None);
+        assert_eq!(interval_to_ms("m"), None);
+        assert_eq!(interval_to_ms("0m"), None);
+        assert_eq!(interval_to_ms("-5m"), None);
+        assert_eq!(interval_to_ms("5x"), None);
+    }
+
+    #[test]
+    fn month_vs_minute_case_sensitivity_preserved() {
+        // "1M" (month) and "1m" (minute) must resolve to different durations
+        // — the one case-sensitive pair on the wire (see `interval_label`).
+        assert_ne!(interval_to_ms("1M"), interval_to_ms("1m"));
+    }
+}

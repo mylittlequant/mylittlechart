@@ -99,17 +99,21 @@ pub const RECOVERY_KEY: &str = "recovery_key";
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 
-/// Custom-timeframe input row ("Custom…") in the `timeframe_selector`
-/// dropdown's FAVORITES section (user-granularity-templates-inner arc,
-/// кусок 1). Accepts a `<count><unit>` string (e.g. `"7m"`, `"90m"`),
-/// validated via `mlc_core::state::Timeframe::parse`. Typing an
-/// already-favorited value removes it instead (toggle semantics) — see
-/// `ChartOutEvent::ToggleTimeframeFavorite`'s doc comment.
+/// Visible inline custom-timeframe editor field, shown in the "+ Add" row
+/// slot of the `timeframe_selector` dropdown (user-granularity-templates-
+/// inner arc, кусок 2 — owner spec 2026-07-16 replaced the invisible
+/// "Custom…" input row with a visible inline editor; see
+/// `ChartApp::granularity_edit`). Accepts a `<count><unit>` string (e.g.
+/// `"7m"`, `"90m"`), validated via `mlc_core::state::Timeframe::parse` on
+/// commit — see `ChartOutEvent::CommitGranularityCustom`'s doc comment.
+/// Reused for both add (empty prefill) and rename (prefilled with the
+/// original name) — the mode lives in `granularity_edit`, not the field id.
 pub const TF_FAVORITE_INPUT: &str = "tf_favorite_input";
 
-/// Custom numeric-param input row ("Custom…") in the `timeframe_selector`
-/// dropdown's FAVORITES section for `ResolutionKind::Param` chart types
-/// (user-granularity-templates-inner arc, кусок 1). Accepts a positive
-/// `f64`. Typing an already-favorited value removes it instead (toggle
-/// semantics) — see `ChartOutEvent::ToggleParamFavorite`'s doc comment.
+/// Visible inline custom numeric-param editor field, shown in the "+ Add"
+/// row slot of the `timeframe_selector` dropdown for `ResolutionKind::Param`
+/// chart types (user-granularity-templates-inner arc, кусок 2). Accepts a
+/// positive `f64`, validated on commit — see
+/// `ChartOutEvent::CommitGranularityCustom`'s doc comment. Reused for both
+/// add and edit, same as `TF_FAVORITE_INPUT`.
 pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";

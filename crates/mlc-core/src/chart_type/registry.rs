@@ -192,12 +192,12 @@ pub enum ResolutionKind {
 /// dispatch never needs to know the active chart_type.
 pub const RESOLUTION_PARAM_ITEM_PREFIX: &str = "reso_param:";
 
-/// `timeframe_selector` dropdown item id for the FAVORITES section's custom
-/// TF input row (user-granularity-templates-inner arc, кусок 1). A whole-row
-/// click target (the row's only purpose is text entry, unlike the
-/// `param_field` inline-input mechanism that was reverted 2026-06 for
-/// overlapping a row that also had its own click action) — the click
-/// handler (`mlc-app::input::panel_click`) focuses the dedicated
+/// `timeframe_selector` dropdown item id for the trailing "+ Add" row that
+/// begins inline CUSTOM-TF creation (user-granularity-templates-inner arc —
+/// owner spec 2026-07-16 replaced the invisible "Custom…" input row with a
+/// visible inline editor; see `ChartApp::granularity_edit`). A whole-row
+/// click target — the click handler (`mlc-app::input::panel_click`) sets
+/// `granularity_edit = Some(AddTf)` and focuses the dedicated
 /// `TF_FAVORITE_INPUT` text field instead of dispatching through
 /// `ChartToolbarState::handle_dropdown_select_with_chart`. Lives in
 /// `mlc-core` (not `mlc-app-layout`, where the dropdown item list is built,
@@ -205,8 +205,8 @@ pub const RESOLUTION_PARAM_ITEM_PREFIX: &str = "reso_param:";
 /// without a reverse dependency.
 pub const TF_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "tf_favorite_custom_input";
 
-/// `timeframe_selector` dropdown item id for the FAVORITES section's custom
-/// numeric-param input row (`ResolutionKind::Param` chart types). See
+/// `timeframe_selector` dropdown item id for the trailing "+ Add" row
+/// (`ResolutionKind::Param` chart types). See
 /// [`TF_FAVORITE_CUSTOM_INPUT_ITEM_ID`] for the whole-row-click rationale.
 pub const PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "param_favorite_custom_input";
 
@@ -217,6 +217,120 @@ pub const PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID: &str = "param_favorite_custom_inp
 /// value-encoding, unlike the numeric presets) since ATR(14) carries no
 /// user-facing numeric input of its own, just a mode flip + recompute.
 pub const RESOLUTION_PARAM_ATR14_ITEM_ID: &str = "reso_param_atr14";
+
+// =============================================================================
+// Granularity trailing-icon actions (user-granularity-templates-inner arc,
+// кусок 2 — star/edit/delete on `timeframe_selector` dropdown rows)
+// =============================================================================
+
+/// Trailing-icon action id prefix for the star toggle on a `timeframe_selector`
+/// row (builtin or custom, TF or param). Full hit-zone id is
+/// `"{GRANULARITY_STAR_ACTION_PREFIX}{item_id}"` (e.g. `"gran_star:tf_7m"`,
+/// `"gran_star:reso_param:8"`) — the click router
+/// (`mlc-app::input::panel_click`) strips the prefix, maps the remainder back
+/// to a [`GranularityTarget`], and dispatches `ChartOutEvent::
+/// ToggleGranularityStar`. Lives in `mlc-core` so the dropdown-row builder
+/// (`mlc-app-layout`) and the click router (`mlc-app`) agree on the id
+/// without a reverse dependency.
+pub const GRANULARITY_STAR_ACTION_PREFIX: &str = "gran_star:";
+
+/// Trailing-icon action id prefix for the edit (pencil) icon on a CUSTOM
+/// `timeframe_selector` row — builtins never render this icon. See
+/// [`GRANULARITY_STAR_ACTION_PREFIX`] for the id-shape/dispatch contract;
+/// dispatches `ChartApp::granularity_edit = Some(EditTf/EditParam)` (a local
+/// UI-only transition, not a `ChartOutEvent`) instead of mutating the profile.
+pub const GRANULARITY_EDIT_ACTION_PREFIX: &str = "gran_edit:";
+
+/// Trailing-icon action id prefix for the delete (trash) icon on a CUSTOM
+/// `timeframe_selector` row — builtins never render this icon. See
+/// [`GRANULARITY_STAR_ACTION_PREFIX`] for the id-shape/dispatch contract;
+/// dispatches `ChartOutEvent::DeleteGranularityCustom`.
+pub const GRANULARITY_DELETE_ACTION_PREFIX: &str = "gran_del:";
+
+/// Hit-zone id for the pin toggle on the `timeframe_selector` dropdown's
+/// "FAVORITES" header row (user-granularity-templates-inner arc, кусок 3 —
+/// owner spec 2026-07-16). A fixed id (not a prefix — there is exactly one
+/// pin toggle per dropdown, unlike star/edit/delete which key off a target
+/// row). The click router (`mlc-app::input::panel_click`) dispatches
+/// `ChartOutEvent::ToggleGranularityPin` on match.
+pub const GRANULARITY_PIN_TOGGLE_ACTION_ID: &str = "gran_pin:toggle";
+
+/// Hit-id prefix for a pinned-favorites quick-pick button on the TOP
+/// toolbar (user-granularity-templates-inner arc, кусок 3) — rendered right
+/// after the `timeframe_selector` button when `ProfileUiSettings::
+/// pin_granularity_favorites` is on. Full id is
+/// `"{GRANULARITY_QUICK_PICK_PREFIX}{value_id}"` where `value_id` reuses
+/// the SAME `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` encoding
+/// as the dropdown rows — the click router strips this prefix, then
+/// resolves the remainder exactly like a dropdown-row click (dispatches
+/// `ChangeTimeframe`/`UpdateChartTypeParam` directly, no dropdown open).
+pub const GRANULARITY_QUICK_PICK_PREFIX: &str = "gran_quick:";
+
+/// Row-id prefix for the `timeframe_selector` dropdown's prepended FAVORITES
+/// section (user-granularity-templates-inner arc, кусок 2 — defect fix
+/// 2026-07-16). `prepend_tf_starred_items`/`prepend_param_starred_items`
+/// used to reuse the SAME `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}
+/// {value}` id as the row's normal-position twin further down the list —
+/// two `DropdownItem::Item` rows sharing one id means `draw_dropdown`'s
+/// id-keyed hover test (`hovered_id == Some(id.as_str())`) lights BOTH rows
+/// at once when either is hovered. Full id is
+/// `"{GRANULARITY_FAV_ID_PREFIX}{value_id}"` — unique per row, so hover
+/// (and the click hit-zone) is scoped to exactly one row. The click router
+/// (`mlc-app::input::panel_click`) strips this prefix before doing anything
+/// else with the remainder — clicking the FAVORITES-section row body
+/// dispatches through the EXACT same apply path
+/// (`ChangeTimeframe`/`UpdateChartTypeParam`) as the row's normal-position
+/// twin; the row's own trailing filled-star action targets the STRIPPED
+/// (original) id via [`GRANULARITY_STAR_ACTION_PREFIX`], so unstarring
+/// resolves against the real favorite, not this synthetic row id.
+pub const GRANULARITY_FAV_ID_PREFIX: &str = "gran_fav:";
+
+/// Which granularity concept a granularity UI action (star/edit/delete/
+/// commit) applies to — user-granularity-templates-inner arc, кусок 2.
+///
+/// `Tf`/`Param` carry enough identity to resolve back to a profile entry
+/// (`GranularityFavorites::{time_tfs,params,starred_tfs,starred_params}`)
+/// without needing the dropdown item id string at the mutation site.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GranularityTarget {
+    /// A timeframe name (e.g. `"7m"`) — may reference a builtin `tf_*` id's
+    /// bare name or a `GranularityFavorites::time_tfs` custom.
+    Tf { name: String },
+    /// A numeric param value scoped to one chart_type — may reference a
+    /// `ChartTypeParamSpec` ladder preset or a `GranularityFavorites::params`
+    /// custom.
+    Param { chart_type: String, value: f64 },
+}
+
+/// Render-side snapshot of the `timeframe_selector` dropdown's visible
+/// inline granularity editor (user-granularity-templates-inner arc, кусок 2
+/// — defect fix 2026-07-16: real text-field widget, in-place row hosting).
+///
+/// Carries everything `mlc-app-layout`'s dropdown builder needs to render
+/// the SAME centralized text-input widget used by every other modal field
+/// (`mlc-app-layout::ui::widgets::{draw_input, draw_input_cursor,
+/// InputConfig}`) embedded inside a dropdown row rect, without depending on
+/// `mlc-app::GranularityEdit` (a layer `mlc-app-layout` cannot see —
+/// dependency points the other way). Built once per frame in `mlc-app` from
+/// `ChartApp::granularity_edit` + the live `TextFieldStore` state for
+/// whichever of `TF_FAVORITE_INPUT`/`PARAM_FAVORITE_INPUT` is active.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GranularityEditRender {
+    /// Which row hosts the editor. `None` = the trailing "+ Add" row (owner
+    /// spec: adding renders in the Add row). `Some(target)` = an EXISTING
+    /// custom's row, identified the same way a star/edit/delete action
+    /// targets it — the editor renders IN THAT ROW, in place, not in the Add
+    /// row (owner spec (a): editing must not relocate to the bottom).
+    pub host: Option<GranularityTarget>,
+    /// Live typed text (mirrors `TextFieldStore::text`).
+    pub text: String,
+    /// Cursor position (character index).
+    pub cursor: usize,
+    /// Selection range (start, end), sorted — `None` when nothing selected.
+    pub selection: Option<(usize, usize)>,
+    /// Whether the blinking cursor is in its "on" phase this frame.
+    pub cursor_visible: bool,
+}
 
 /// Box-size computation mode for `chart_type_param` on `renko`/`kagi`
 /// (granularity arc, кусок 2 —

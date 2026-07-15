@@ -1447,15 +1447,41 @@ pub fn draw_toolbar_with_icons(
                     WidgetRect::new(rect.x + (rect.width - config.item_size) / 2.0, pos, config.item_size, config.item_size)
                 };
 
+                // Adaptive hover/active highlight width: a long label (e.g.
+                // "500R", "3811.79B" on the resolution/`timeframe_selector`
+                // button) can render wider than the button's fixed LAYOUT
+                // width (`item_width`, unchanged above — hit-test rect and
+                // toolbar flow stay exactly as before). When that happens,
+                // the highlight rect the owner sees on hover/active must
+                // widen to cover the full rendered label instead of clipping
+                // it. Formula: `highlight_w = max(item_width, icon_reserve +
+                // text_w + right_pad)`, where `icon_reserve` mirrors the
+                // exact `icon_x + icon_size` / `text_x` offsets used below
+                // (4px icon inset when no text, `icon_size + 8` gap when
+                // there's a label) and `right_pad` is the same 10px chevron
+                // clearance `show_chevron` already reserves — grown
+                // RIGHTWARD only (left edge/position pinned), matching how
+                // the label itself overflows past `item_rect.right()`.
+                let text_w = text.as_deref().map(|t| ctx.measure_text(t)).unwrap_or(0.0);
+                let icon_reserve = if text.is_some() { config.icon_size + 8.0 } else { 4.0 + config.icon_size };
+                let right_pad = if *show_chevron { 14.0 } else { 8.0 };
+                let content_w = icon_reserve + text_w + right_pad;
+                let highlight_w = item_width.max(content_w);
+                let highlight_rect = if highlight_w > item_rect.width {
+                    WidgetRect::new(item_rect.x, item_rect.y, highlight_w, item_rect.height)
+                } else {
+                    item_rect
+                };
+
                 let icon_color = if *active {
                     ctx.draw_active_rounded_rect(
-                        item_rect.x, item_rect.y, item_rect.width, item_rect.height,
+                        highlight_rect.x, highlight_rect.y, highlight_rect.width, highlight_rect.height,
                         4.0, &theme.item_bg_active,
                     );
                     &theme.item_text_active
                 } else if is_hovered {
                     ctx.draw_hover_rounded_rect(
-                        item_rect.x, item_rect.y, item_rect.width, item_rect.height,
+                        highlight_rect.x, highlight_rect.y, highlight_rect.width, highlight_rect.height,
                         4.0, &theme.item_bg_hover,
                     );
                     &theme.item_text_hover
@@ -1496,6 +1522,8 @@ pub fn draw_toolbar_with_icons(
                     ctx.fill();
                 }
 
+                // Hit-test rect stays the LAYOUT rect (owner constraint) —
+                // only the drawn highlight above widened.
                 result.item_rects.push((id.clone(), item_rect));
                 if is_hovered {
                     result.hovered = Some(id.clone());

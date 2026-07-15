@@ -227,19 +227,28 @@ impl ChartApp {
                     match crate::active_series::allowed_timeframes(series, chart_type, now_ms) {
                         None => true,
                         Some(allowed) => {
-                            // Granularity favorites (кусок 1): `allowed` is
+                            // Granularity favorites (кусок 1/2): `allowed` is
                             // built over the builtin `ALL_TF_IDS` and can
-                            // never contain a custom favorite id (`tf_7m`).
-                            // The toolbar DOES offer favorites now, so a
-                            // favorited name is as legitimate as a builtin —
+                            // never contain a custom TF id (`tf_7m`). The
+                            // toolbar DOES offer customs and starred builtins
+                            // now, so membership in EITHER `time_tfs`
+                            // (customs) or `starred_tfs` (a starred builtin,
+                            // or a starred custom — belt-and-suspenders in
+                            // case a builtin gets un-starred while still
+                            // referenced) is as legitimate as a builtin —
                             // exempt it from the membership check (the guard
-                            // keeps blocking arbitrary non-favorited ids
-                            // forced through the agent-API bypass).
+                            // keeps blocking arbitrary non-custom/non-starred
+                            // ids forced through the agent-API bypass).
+                            let user_guard = self.core.user();
+                            let favs = &user_guard.profile().domain.granularity_favorites;
                             let is_favorite = timeframe_id
                                 .strip_prefix("tf_")
-                                .map(|n| self.core.user().profile().domain
-                                    .granularity_favorites.time_tfs.iter().any(|f| f == n))
+                                .map(|n| {
+                                    favs.time_tfs.iter().any(|f| f == n)
+                                        || favs.starred_tfs.iter().any(|f| f == n)
+                                })
                                 .unwrap_or(false);
+                            drop(user_guard);
                             let ok = is_favorite || allowed.contains(timeframe_id.as_str());
                             if !ok {
                                 log::warn!(
@@ -1169,68 +1178,156 @@ impl ChartApp {
                 self.apply_footprint_group_ticks(ticks);
                 state_mutated = true;
             }
-            ChartOutEvent::ToggleTimeframeFavorite { name } => {
-                eprintln!("[ChartApp] ToggleTimeframeFavorite: {}", name);
+            ChartOutEvent::CommitGranularityCustom { target } => {
+                eprintln!("[ChartApp] CommitGranularityCustom: {:?}", target);
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                // Validate first — a garbage string neither applies nor
-                // gets remembered (mirrors ChangeTimeframe's own reject path).
-                if Timeframe::parse(&name).is_none() {
-                    eprintln!("[ChartApp] ToggleTimeframeFavorite: invalid TF name, ignored: {}", name);
-                    return;
-                }
-                let mut user_mut = self.core.user_mut();
-                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
-                let already_favorited = favs.time_tfs.iter().any(|n| n == &name);
-                if already_favorited {
-                    // Toggle-by-retype removal (owner-picked affordance,
-                    // кусок 1): does NOT re-apply the TF on removal.
-                    favs.time_tfs.retain(|n| n != &name);
-                    drop(user_mut);
-                    self.autosave_snapshot();
-                    return;
-                }
-                // Cap 12, dedup already guaranteed by the `already_favorited`
-                // branch above.
-                if favs.time_tfs.len() >= 12 {
-                    favs.time_tfs.remove(0);
-                }
-                favs.time_tfs.push(name.clone());
-                drop(user_mut);
-                self.autosave_snapshot();
-                // Apply exactly like clicking a builtin TF item — same
-                // dispatch path, zero duplicated apply logic.
-                self.process_chart_out_event(ChartOutEvent::ChangeTimeframe { timeframe_id: format!("tf_{}", name) });
-                return;
-            }
-            ChartOutEvent::ToggleParamFavorite { chart_type, value } => {
-                eprintln!("[ChartApp] ToggleParamFavorite: {} = {}", chart_type, value);
-                self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                if value <= 0.0 {
-                    eprintln!("[ChartApp] ToggleParamFavorite: non-positive value, ignored: {}", value);
-                    return;
-                }
-                let mut user_mut = self.core.user_mut();
-                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
-                let already_favorited = favs.params.iter()
-                    .any(|f| f.chart_type == chart_type && f.value == value);
-                if already_favorited {
-                    // Toggle-by-retype removal — does NOT re-apply the value.
-                    favs.params.retain(|f| !(f.chart_type == chart_type && f.value == value));
-                    drop(user_mut);
-                    self.autosave_snapshot();
-                    return;
-                }
-                let cap_hit = favs.params.iter().filter(|f| f.chart_type == chart_type).count() >= 12;
-                if cap_hit {
-                    if let Some(idx) = favs.params.iter().position(|f| f.chart_type == chart_type) {
-                        favs.params.remove(idx);
+                // Edit mode: remove the original custom (+ its star, if any)
+                // BEFORE adding the new value — a rename keeps its star
+                // because the star is re-added under the new value below
+                // when it was present on the original.
+                let editing_original = match self.granularity_edit.take() {
+                    Some(crate::GranularityEdit { kind: crate::GranularityEditKind::EditTf { original }, .. }) => {
+                        Some(mlc_core::chart_type::GranularityTarget::Tf { name: original })
+                    }
+                    Some(crate::GranularityEdit { kind: crate::GranularityEditKind::EditParam { original }, .. }) => {
+                        let chart_type = match &target {
+                            mlc_core::chart_type::GranularityTarget::Param { chart_type, .. } => chart_type.clone(),
+                            mlc_core::chart_type::GranularityTarget::Tf { .. } => {
+                                eprintln!("[ChartApp] CommitGranularityCustom: EditParam target mismatch, ignored");
+                                return;
+                            }
+                        };
+                        Some(mlc_core::chart_type::GranularityTarget::Param { chart_type, value: original })
+                    }
+                    _ => None,
+                };
+                let mut was_starred = false;
+                if let Some(orig_target) = editing_original {
+                    let mut user_mut = self.core.user_mut();
+                    let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                    match &orig_target {
+                        mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                            was_starred = favs.starred_tfs.iter().any(|n| n == name);
+                            favs.time_tfs.retain(|n| n != name);
+                            favs.starred_tfs.retain(|n| n != name);
+                        }
+                        mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
+                            was_starred = favs.starred_params.iter()
+                                .any(|f| &f.chart_type == chart_type && f.value == *value);
+                            favs.params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                            favs.starred_params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                        }
                     }
                 }
-                favs.params.push(mlc_core::user_profile::ParamFavorite { chart_type, value });
+                match &target {
+                    mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                        if Timeframe::parse(name).is_none() {
+                            eprintln!("[ChartApp] CommitGranularityCustom: invalid TF name, ignored: {}", name);
+                            return;
+                        }
+                        let mut user_mut = self.core.user_mut();
+                        let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                        if !favs.time_tfs.iter().any(|n| n == name) {
+                            if favs.time_tfs.len() >= 12 {
+                                favs.time_tfs.remove(0);
+                            }
+                            favs.time_tfs.push(name.clone());
+                        }
+                        if was_starred && !favs.starred_tfs.iter().any(|n| n == name) {
+                            favs.starred_tfs.push(name.clone());
+                        }
+                        drop(user_mut);
+                        self.autosave_snapshot();
+                        self.process_chart_out_event(ChartOutEvent::ChangeTimeframe { timeframe_id: format!("tf_{}", name) });
+                        return;
+                    }
+                    mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
+                        if *value <= 0.0 {
+                            eprintln!("[ChartApp] CommitGranularityCustom: non-positive value, ignored: {}", value);
+                            return;
+                        }
+                        let mut user_mut = self.core.user_mut();
+                        let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                        let already = favs.params.iter()
+                            .any(|f| &f.chart_type == chart_type && f.value == *value);
+                        if !already {
+                            let cap_hit = favs.params.iter().filter(|f| &f.chart_type == chart_type).count() >= 12;
+                            if cap_hit {
+                                if let Some(idx) = favs.params.iter().position(|f| &f.chart_type == chart_type) {
+                                    favs.params.remove(idx);
+                                }
+                            }
+                            favs.params.push(mlc_core::user_profile::ParamFavorite {
+                                chart_type: chart_type.clone(), value: *value,
+                            });
+                        }
+                        if was_starred && !favs.starred_params.iter()
+                            .any(|f| &f.chart_type == chart_type && f.value == *value)
+                        {
+                            favs.starred_params.push(mlc_core::user_profile::ParamFavorite {
+                                chart_type: chart_type.clone(), value: *value,
+                            });
+                        }
+                        drop(user_mut);
+                        self.autosave_snapshot();
+                        self.process_chart_out_event(ChartOutEvent::UpdateChartTypeParam { value: *value });
+                        return;
+                    }
+                }
+            }
+            ChartOutEvent::DeleteGranularityCustom { target } => {
+                eprintln!("[ChartApp] DeleteGranularityCustom: {:?}", target);
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                match &target {
+                    mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                        favs.time_tfs.retain(|n| n != name);
+                        favs.starred_tfs.retain(|n| n != name);
+                    }
+                    mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
+                        favs.params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                        favs.starred_params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                    }
+                }
                 drop(user_mut);
                 self.autosave_snapshot();
-                // Apply exactly like clicking a static ladder preset.
-                self.process_chart_out_event(ChartOutEvent::UpdateChartTypeParam { value });
+                return;
+            }
+            ChartOutEvent::ToggleGranularityStar { target } => {
+                eprintln!("[ChartApp] ToggleGranularityStar: {:?}", target);
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                match &target {
+                    mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                        if favs.starred_tfs.iter().any(|n| n == name) {
+                            favs.starred_tfs.retain(|n| n != name);
+                        } else {
+                            favs.starred_tfs.push(name.clone());
+                        }
+                    }
+                    mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
+                        let starred = favs.starred_params.iter()
+                            .any(|f| &f.chart_type == chart_type && f.value == *value);
+                        if starred {
+                            favs.starred_params.retain(|f| !(&f.chart_type == chart_type && f.value == *value));
+                        } else {
+                            favs.starred_params.push(mlc_core::user_profile::ParamFavorite {
+                                chart_type: chart_type.clone(), value: *value,
+                            });
+                        }
+                    }
+                }
+                drop(user_mut);
+                self.autosave_snapshot();
+                return;
+            }
+            ChartOutEvent::ToggleGranularityPin => {
+                let mut user_mut = self.core.user_mut();
+                let ui = &mut user_mut.profile_mut().ui;
+                ui.pin_granularity_favorites = !ui.pin_granularity_favorites;
+                eprintln!("[ChartApp] ToggleGranularityPin: {}", ui.pin_granularity_favorites);
+                drop(user_mut);
+                self.autosave_snapshot();
                 return;
             }
             ChartOutEvent::Consumed => {}

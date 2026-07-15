@@ -164,6 +164,8 @@ pub enum Icon {
     Star,
     /// Filled (solid) star — for watchlist toggle (active state).
     StarFilled,
+    /// Pushpin outline — pinned-favorites-row toggle header.
+    Pin,
 
     // === Positions ===
     LongPosition,
@@ -1570,6 +1572,20 @@ pub const ICON_STAR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
 pub const ICON_STAR_FILLED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>"##;
 
 // =============================================================================
+// Pin Icon (pinned-favorites-row toggle header)
+// =============================================================================
+
+/// Pushpin outline — same 24x24 stroke style as [`ICON_STAR`] et al. Used
+/// for the `timeframe_selector` dropdown's FAVORITES-header pin toggle
+/// (user-granularity-templates-inner arc, кусок 3 — defect fix 2026-07-16
+/// replaced the 📌 text glyph with this native SVG). Color alone conveys
+/// ON/OFF state (accent vs theme secondary) — no separate filled variant.
+pub const ICON_PIN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 17v5"/>
+  <path d="M8 3h8l-1 6 3 3v2H6v-2l3-3-1-6z"/>
+</svg>"##;
+
+// =============================================================================
 // Icon enum implementation (svg lookup, from_name)
 // =============================================================================
 
@@ -1685,6 +1701,7 @@ impl Icon {
             Icon::Close => ICON_CLOSE,
             Icon::Star => ICON_STAR,
             Icon::StarFilled => ICON_STAR_FILLED,
+            Icon::Pin => ICON_PIN,
             Icon::LongPosition => ICON_LONG_POSITION,
             Icon::ShortPosition => ICON_SHORT_POSITION,
             Icon::ChevronUp => ICON_CHEVRON_UP,
@@ -1848,6 +1865,7 @@ impl Icon {
             "close" => Some(Icon::Close),
             "star" => Some(Icon::Star),
             "star_filled" | "starfilled" => Some(Icon::StarFilled),
+            "pin" => Some(Icon::Pin),
             "long_position" | "longposition" => Some(Icon::LongPosition),
             "short_position" | "shortposition" => Some(Icon::ShortPosition),
             "chevron_up" | "chevronup" => Some(Icon::ChevronUp),
@@ -2235,6 +2253,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "copy" => Some(ICON_COPY),
         "close" => Some(ICON_CLOSE),
         "pencil" | "edit" | "rename" => Some(ICON_PENCIL),
+        "star" => Some(ICON_STAR),
+        "star_filled" | "starfilled" => Some(ICON_STAR_FILLED),
+        "pin" => Some(ICON_PIN),
         "bookmark" => Some(ICON_BOOKMARK),
         "expand" => Some(ICON_EXPAND),
         "collapse" => Some(ICON_COLLAPSE),

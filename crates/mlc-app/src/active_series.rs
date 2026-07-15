@@ -551,3 +551,44 @@ pub fn tf_id_to_dig3_interval(tf_id: &str) -> Option<String> {
         Some(suffix.to_lowercase())
     }
 }
+
+/// Duration in milliseconds for a canonical dig3 kline-interval string
+/// (`"1s"`, `"5m"`, `"2h"`, `"1d"`, `"1w"`, `"1M"`, ...) — the numeric-suffix
+/// convention [`tf_id_to_dig3_interval`] produces. Used by the aggregatability
+/// predicate ([`timeframe_aggregates_from`] in `mlc-app/src/lib.rs`,
+/// granularity arc defect fix 2026-07-16) to test whether one interval is an
+/// exact integer multiple of another.
+///
+/// Month (`M`) uses a fixed 30-day approximation for divisibility purposes
+/// only (calendar months vary 28-31 days, so no exact millisecond count
+/// exists) — this only affects whether some OTHER interval divides evenly
+/// into "1 month", a comparison that in practice never fires for the
+/// second/minute/hour/day intervals this predicate actually gates.
+///
+/// Returns `None` for a suffix outside the `s/m/h/d/w/M` set (defensive —
+/// mirrors [`tf_id_to_dig3_interval`]'s own closed suffix range).
+pub fn dig3_interval_to_ms(interval: &str) -> Option<i64> {
+    let bytes = interval.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let unit = *bytes.last()?;
+    let n_str = std::str::from_utf8(&bytes[..bytes.len().saturating_sub(1)]).ok()?;
+    let n: i64 = n_str.parse().ok()?;
+    if n <= 0 {
+        return None;
+    }
+    const SEC: i64 = 1_000;
+    const MIN: i64 = 60 * SEC;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    match unit {
+        b's' => Some(n * SEC),
+        b'm' => Some(n * MIN),
+        b'h' => Some(n * HOUR),
+        b'd' => Some(n * DAY),
+        b'w' => Some(n * 7 * DAY),
+        b'M' => Some(n * 30 * DAY),
+        _ => None,
+    }
+}

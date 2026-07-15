@@ -145,21 +145,29 @@ pub enum ChartOutEvent {
     UpdateFootprintGroupTicks { ticks: u32 },
 
     // === Granularity favorites (user-granularity-templates-inner arc,
-    // кусок 1) — user-saved custom TF / param presets, persisted on
-    // `UserProfile::domain::granularity_favorites`. ===
-    /// Toggle a custom timeframe favorite: adds `name` if not already
-    /// favorited (applying it as the active TF, same effect as clicking a
-    /// builtin TF item), removes it if it IS already favorited (does NOT
-    /// change the active TF on removal — typing an existing favorite's name
-    /// again is the removal affordance, not a re-apply). `name` is a bare
-    /// `<count><unit>` string (e.g. `"7m"`), not a `tf_`-prefixed dropdown id.
-    ToggleTimeframeFavorite { name: String },
-    /// Toggle a custom numeric-param favorite for `chart_type`: adds
-    /// `(chart_type, value)` if not already favorited (applying `value` via
-    /// the same path as `UpdateChartTypeParam`), removes it if it IS already
-    /// favorited (does NOT re-apply the value on removal). Mirrors
-    /// `ToggleTimeframeFavorite`'s toggle-by-retyping removal affordance.
-    ToggleParamFavorite { chart_type: String, value: f64 },
+    // кусок 2 — owner spec 2026-07-16) — CUSTOM values (user-typed TF names
+    // / numeric params) and STARRED rows (builtin or custom), persisted on
+    // `UserProfile::domain::granularity_favorites`. Replaces кусок 1's
+    // toggle-by-retype `ToggleTimeframeFavorite`/`ToggleParamFavorite`. ===
+    /// Add (or, in edit mode — see `ChartApp::granularity_edit` — replace) a
+    /// CUSTOM granularity value and APPLY it (dispatches `ChangeTimeframe`
+    /// for `Tf`, `UpdateChartTypeParam` for `Param`, same as clicking a
+    /// builtin row). Committing an already-existing custom value just
+    /// applies it — dedup, no delete (no toggle-by-retype).
+    CommitGranularityCustom { target: crate::chart_type::GranularityTarget },
+    /// Remove a CUSTOM granularity value. Also removes it from the starred
+    /// list if present (a deleted custom can't stay starred). Does NOT
+    /// apply/change the active TF or param.
+    DeleteGranularityCustom { target: crate::chart_type::GranularityTarget },
+    /// Flip star membership for a `timeframe_selector` row — builtin or
+    /// custom, TF or param. Does NOT apply/change the active TF or param.
+    ToggleGranularityStar { target: crate::chart_type::GranularityTarget },
+    /// Flip `ProfileUiSettings::pin_granularity_favorites` — user-
+    /// granularity-templates-inner arc, кусок 3 (owner spec 2026-07-16).
+    /// Emitted by the pin icon on the `timeframe_selector` dropdown's
+    /// "FAVORITES" header row. Pure presentation toggle — does not touch
+    /// `granularity_favorites` itself.
+    ToggleGranularityPin,
 
     // === Overlays (C10 Volume Profile family) ===
     /// Toggle the Volume Profile right-side overlay on the active chart.

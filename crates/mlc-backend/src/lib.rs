@@ -2427,6 +2427,29 @@ impl BackendCore {
         Some(caps.supports(interval, dig3_at))
     }
 
+    /// The full set of natively-served kline intervals (canonical dig3
+    /// form, e.g. `"1m"`, `"1h"`) for `(exchange_id, account_type)` — sibling
+    /// of [`Self::kline_interval_native`], returning the venue's whole
+    /// REST-backed interval list instead of a single-interval bool.
+    ///
+    /// Consumed by the TF dropdown's aggregatability predicate
+    /// (`mlc-app::ChartApp::timeframe_native_map`, granularity arc defect
+    /// fix 2026-07-16): a non-native interval that is an exact integer
+    /// multiple of one of THESE intervals aggregates client-side from real
+    /// history (client-only doctrine: only claim history that genuinely
+    /// exists — divisibility against the venue's OWN native set, never a
+    /// hardcoded list). `None` when the exchange isn't connected yet
+    /// (mirrors `kline_interval_native`'s contract).
+    pub fn kline_native_intervals(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: mlc_core::instrument::AccountType,
+    ) -> Option<Vec<String>> {
+        let caps = self.bridge.kline_interval_capabilities(exchange_id)?;
+        let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
+        Some(caps.intervals_for(dig3_at).iter().map(|s| s.to_string()).collect())
+    }
+
     /// Subscribe to the live trade stream for an instrument, returning the
     /// station's shared trade series handle for direct reads (trade tape,
     /// big-trades, volume-profile panels).

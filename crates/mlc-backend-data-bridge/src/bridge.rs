@@ -1143,6 +1143,48 @@ impl DataBridge {
         self.hub.kline_interval_capabilities(exchange_id)
     }
 
+    /// Resolve the client-side aggregation BASE for a `target` timeframe on
+    /// `(exchange_id, account_type)` — the single entry point every kline
+    /// fetch path (Phase A, ramp, live forwarder) consults BEFORE dialing
+    /// dig3 for that timeframe (granularity arc defect fix 2026-07-16).
+    ///
+    /// Returns `None` when EITHER `target` is itself natively served (the
+    /// caller should use the plain native path unchanged), OR the exchange
+    /// isn't connected yet (capability unknown — same fail-open contract as
+    /// [`Self::kline_interval_native`]), OR no native interval divides
+    /// `target`'s duration within [`crate::kline_agg::MAX_AGGREGATION_RATIO`]
+    /// (the existing live-trade-aggregation path is left untouched for that
+    /// TF — owner directive: no divisor, no behavior change).
+    ///
+    /// `Some((base_interval, base_ms, ratio))` otherwise — `base_interval`
+    /// is the canonical dig3 interval string to actually fetch/subscribe
+    /// (e.g. `"1m"`), `base_ms` its duration, `ratio = target_ms / base_ms`
+    /// the fan-in the caller folds.
+    pub fn resolve_kline_aggregation(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        target_interval: &str,
+        target_ms: i64,
+    ) -> Option<(String, i64, i64)> {
+        let caps = self.hub.kline_interval_capabilities(exchange_id)?;
+        if caps.supports(target_interval, account_type) {
+            return None;
+        }
+        let native: Vec<(&str, i64)> = caps
+            .intervals_for(account_type)
+            .iter()
+            .filter_map(|&label| crate::convert::interval_to_ms(label).map(|ms| (label, ms)))
+            .collect();
+        let (base_label, ratio) = crate::kline_agg::aggregation_base(target_ms, &native)?;
+        let base_ms = target_ms / ratio;
+        crate::dlog!(
+            "[kline_agg] resolve {:?} target={} base={} ratio={}",
+            exchange_id, target_interval, base_label, ratio,
+        );
+        Some((base_label.to_string(), base_ms, ratio))
+    }
+
     /// Record the oldest bar timestamp seen for a given key.
     ///
     /// Only updates the stored value when `ts` is strictly older (smaller) than
@@ -1353,7 +1395,22 @@ impl DataBridge {
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let tf_name_for_log = tf_name.clone();
+        // Owned copy — `timeframe` is a borrow scoped to this call, but both
+        // the fetch task and the forwarder task below are `'static` spawns.
+        let target_interval_ms = timeframe.interval_ms;
         let active_fetches = self.active_fetches.clone();
+
+        // Granularity arc defect fix (2026-07-16): resolve whether `tf_name`
+        // is natively served by this venue BEFORE dialing dig3 for it. When
+        // it is not, and a native divisor exists, every downstream fetch
+        // (Phase A REST below + the live forwarder spawned right after)
+        // uses the BASE interval and folds into target-TF buckets — the
+        // kline layer for `tf_name` never sees a dig3 fallback-interval bar
+        // mislabeled as `tf_name` (the bug: every venue's
+        // `map_kline_interval` silently falls back, e.g. Bybit `_ => "60"`).
+        // `None` = native TF (zero behavior change) OR no divisor exists
+        // (existing live-trade-aggregation path, also zero behavior change).
+        let kline_agg = self.resolve_kline_aggregation(exchange_id, account_type, &interval, target_interval_ms);
 
         let cache_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
         let station_bar_seriskey = station_bar_key(exchange_id, account_type, &symbol_str, &tf_name);
@@ -1448,8 +1505,16 @@ impl DataBridge {
             let station_symbol_canonical = symbol_str.clone();
             // Wire form — passed to dig3 station for the actual subscription.
             let station_symbol_wire = wire_sym.clone();
-            let station_interval = interval.clone();
+            // Non-native target: subscribe the BASE interval on the wire but
+            // still emit under the TARGET tf name — `agg_fold` carries the
+            // fold parameters (`base_ms` unused directly here, `ratio` for
+            // the log line) plus the running target-bucket accumulator.
+            let station_interval = kline_agg
+                .as_ref()
+                .map(|(base, _, _)| base.clone())
+                .unwrap_or_else(|| interval.clone());
             let station_tf_name = tf_name.clone();
+            let agg_target_ms = kline_agg.as_ref().map(|_| target_interval_ms);
             // Dedup-gate guards, cloned so the task can evict its own key on
             // every exit path — mirrors the trade path (subscribe_trades'
             // task tail). Without this a dead forwarder leaves the key
@@ -1486,17 +1551,50 @@ impl DataBridge {
                         exchange_id, station_symbol_wire, station_tf_name, report.failed.len());
                 }
                 let mut bar_n: u64 = 0;
+                // Running target-bucket accumulator for the aggregated path
+                // — `Some(bucket)` once the first base bar of the current
+                // (possibly partial) target bucket has arrived. `None` on
+                // the native path (no aggregation, forwarded 1:1 below).
+                let mut agg_bucket: Option<Bar> = None;
                 while let Some(ev) = report.handle.recv().await {
                     if let digdigdig3_station::Event::Bar { point, .. } = ev {
-                        let bar = bar_point_to_bar(&point);
+                        let base_bar = bar_point_to_bar(&point);
                         bar_n = bar_n.wrapping_add(1);
                         // Sample-log to confirm forwarder is alive without flooding.
                         if bar_n <= 3 || bar_n % 50 == 0 {
                             crate::dlog!(
                                 "[Bridge::kline-fwd emit BarUpdate] n={} {:?} {} at={:?} tf={} bar_ts={}",
-                                bar_n, exchange_id, station_symbol_canonical, account_type, station_tf_name, bar.timestamp,
+                                bar_n, exchange_id, station_symbol_canonical, account_type, station_tf_name, base_bar.timestamp,
                             );
                         }
+                        let bar = match agg_target_ms {
+                            None => base_bar,
+                            Some(target_ms) => {
+                                let bucket_start = crate::kline_agg::bucket_start_ms(base_bar.derived_ts_ms, target_ms);
+                                match &mut agg_bucket {
+                                    Some(cur) if cur.derived_ts_ms == bucket_start => {
+                                        cur.high = cur.high.max(base_bar.high);
+                                        cur.low = cur.low.min(base_bar.low);
+                                        cur.close = base_bar.close;
+                                        cur.volume += base_bar.volume;
+                                        *cur
+                                    }
+                                    _ => {
+                                        let fresh = Bar {
+                                            timestamp: bucket_start / 1000,
+                                            open: base_bar.open,
+                                            high: base_bar.high,
+                                            low: base_bar.low,
+                                            close: base_bar.close,
+                                            volume: base_bar.volume,
+                                            derived_ts_ms: bucket_start,
+                                        };
+                                        agg_bucket = Some(fresh);
+                                        fresh
+                                    }
+                                }
+                            }
+                        };
                         let _ = station_tx.send(LiveUpdate::BarUpdate {
                             exchange_id,
                             account_type,
@@ -1612,8 +1710,20 @@ impl DataBridge {
             // station_kline_subscribed) to suppress repeat callers within a
             // single UI event. Repeat callers from later UI events get a
             // legitimate refresh.
-            crate::dlog!("[Bridge] Phase A: {:?} sym={} wire={} interval={} fetching 300 fresh bars",
-                exchange_id, symbol_str, wire_sym, interval);
+            // Non-native target: fetch the BASE interval instead, requesting
+            // `300 * ratio` base bars (capped at dig3's own 1000-per-request
+            // ceiling — `fetch_history` clamps internally) so folding still
+            // yields close to 300 target bars. Native path unchanged (300 @
+            // target interval, exactly as before).
+            let (fetch_interval, fetch_limit): (&str, u16) = match &kline_agg {
+                Some((base_interval, _base_ms, ratio)) => {
+                    let scaled = 300i64.saturating_mul(*ratio).min(1000);
+                    (base_interval.as_str(), scaled.max(1) as u16)
+                }
+                None => (interval.as_str(), 300),
+            };
+            crate::dlog!("[Bridge] Phase A: {:?} sym={} wire={} interval={} fetch_interval={} fetching {} fresh bars",
+                exchange_id, symbol_str, wire_sym, interval, fetch_interval, fetch_limit);
 
             // Phase 2B: route Phase A historical fetch through dig3-station's
             // `backfill::fetch_history` (REST `get_klines` under the hood;
@@ -1632,9 +1742,9 @@ impl DataBridge {
                 exchange_id,
                 &wire_sym,
                 account_type,
-                &KlineInterval::new(interval.as_str()),
+                &KlineInterval::new(fetch_interval),
                 now_ms,
-                300,
+                fetch_limit,
             )
             .await;
 
@@ -1642,8 +1752,12 @@ impl DataBridge {
                 Ok(points) => {
                     let n = points.len();
                     crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", n);
-                    let bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
-                    crate::dlog!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} bars", exchange_id, symbol_str, account_type, tf_name, n);
+                    let base_bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
+                    let bars = match &kline_agg {
+                        Some((_, _, _)) => crate::kline_agg::fold_bars_into_buckets(&base_bars, target_interval_ms),
+                        None => base_bars,
+                    };
+                    crate::dlog!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} base bars -> {} folded bars", exchange_id, symbol_str, account_type, tf_name, n, bars.len());
                     bars
                 }
                 Err(e) => {
@@ -1715,6 +1829,14 @@ impl DataBridge {
     /// Without this call the old subscriber stays live indefinitely after
     /// a TF switch (logs show e.g. 1H BarUpdates arriving on the broadcast
     /// while the user is already viewing 1m).
+    ///
+    /// `timeframe` is always the TARGET tf name here — for a non-native
+    /// aggregated TF (granularity arc defect fix 2026-07-16) the forwarder
+    /// registered itself under the target key in `request_bars` even
+    /// though it subscribes the venue's BASE interval on the wire, so this
+    /// call correctly tears down the aggregated subscription without
+    /// touching a separate, independently-keyed direct subscription to
+    /// that same base interval from another chart.
     pub fn abort_kline_bars(
         &self,
         exchange_id: ExchangeId,

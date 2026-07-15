@@ -237,16 +237,31 @@ impl Default for DataLoadSettings {
 }
 
 // =============================================================================
-// GranularityFavorites — user-saved custom TF / param presets
+// GranularityFavorites — user-saved CUSTOM TF / param values + STARRED rows
 // =============================================================================
+//
+// Two separate concepts (user-granularity-templates-inner arc, кусок 2 —
+// owner spec 2026-07-16 replaces кусок 1's single-list semantics):
+//
+// - CUSTOM = a user-created value (a TF name like "7m", or a numeric param
+//   per chart type) that does not exist in the builtin ladder. Lives in the
+//   dropdown's main list, editable and deletable. Struct/field names below
+//   are UNCHANGED from кусок 1 for on-disk compat — a profile saved under
+//   the old "favorites" semantics loads its `time_tfs`/`params` entries as
+//   customs today, which is the correct migration (an old favorite WAS a
+//   user-typed custom value).
+// - STARRED = a star on ANY row — builtin OR custom (watchlist-style star).
+//   Starred rows additionally surface in a "FAVORITES" header section at
+//   the top of the dropdown. New fields, additive, `#[serde(default)]` so
+//   old profiles deserialize with empty star lists.
 
-/// One saved numeric-parameter preset for a `ResolutionKind::Param` chart
-/// type (range/tick/volume/dollar/imbalance/run bars, renko/pnf/kagi/
-/// three_line_break) — user-granularity-templates-inner arc, кусок 1.
+/// One saved numeric-parameter CUSTOM value for a `ResolutionKind::Param`
+/// chart type (range/tick/volume/dollar/imbalance/run bars, renko/pnf/kagi/
+/// three_line_break) — user-granularity-templates-inner arc.
 ///
 /// `chart_type` is the registry id (e.g. `"range_bar"`); `value` is the raw
 /// `chart_type_param` f64, unclamped (mirrors `ChartWindowSnapshot::
-/// chart_type_param`'s existing "free f64, no ladder" contract — favorites
+/// chart_type_param`'s existing "free f64, no ladder" contract — customs
 /// add a discovery/reuse UI on top, not a new value constraint).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParamFavorite {
@@ -254,22 +269,34 @@ pub struct ParamFavorite {
     pub value: f64,
 }
 
-/// User-saved custom granularity presets (user-granularity-templates-inner
-/// arc, кусок 1): global custom timeframes plus per-chart-type numeric
-/// param presets, both minted from the toolbar's TF/param dropdown "Custom…"
-/// input row and surfaced back in a "FAVORITES" dropdown section.
+/// User-saved custom granularity values plus starred rows
+/// (user-granularity-templates-inner arc): global custom timeframes and
+/// per-chart-type numeric CUSTOM values, both minted from the toolbar's
+/// TF/param dropdown "+ Add" row; plus independently-starred TF/param rows
+/// (builtin or custom) surfaced in a "FAVORITES" dropdown section.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct GranularityFavorites {
-    /// Custom timeframe names (e.g. `["7m", "90m"]`) — global, offered to
+    /// CUSTOM timeframe names (e.g. `["7m", "90m"]`) — global, offered to
     /// every chart type whose `resolution == ResolutionKind::Time` and
     /// `tf_whitelist == None` (never footprint/tpo). Each entry must be a
     /// string [`crate::state::Timeframe::parse`] accepts.
     #[serde(default)]
     pub time_tfs: Vec<String>,
 
-    /// Custom numeric param presets, one entry per (chart_type, value) pair.
+    /// CUSTOM numeric param values, one entry per (chart_type, value) pair.
     #[serde(default)]
     pub params: Vec<ParamFavorite>,
+
+    /// Starred TF names (e.g. `["1m", "7m"]`) — may reference a builtin
+    /// (`ALL_TF_IDS`) or a `time_tfs` custom. A starred row surfaces in the
+    /// "FAVORITES" header section in addition to its normal list position.
+    #[serde(default)]
+    pub starred_tfs: Vec<String>,
+
+    /// Starred numeric param values, one entry per (chart_type, value) pair
+    /// — may reference a builtin ladder preset or a `params` custom.
+    #[serde(default)]
+    pub starred_params: Vec<ParamFavorite>,
 }
 
 // =============================================================================
@@ -356,12 +383,13 @@ pub struct ProfileDomainSettings {
     #[serde(default)]
     pub data_load: DataLoadSettings,
 
-    /// User-saved custom granularity presets (user-granularity-templates-
-    /// inner arc, кусок 1): custom timeframes (e.g. "7m", "90m") and
-    /// per-chart-type numeric param presets, both minted from the toolbar's
-    /// TF/param dropdown "Custom…" input row. Functional, not cosmetic — a
-    /// headless consumer replaying a saved custom TF/param needs these to
-    /// resolve the same value the desktop UI offered.
+    /// User-saved CUSTOM granularity values plus STARRED rows
+    /// (user-granularity-templates-inner arc): custom timeframes (e.g. "7m",
+    /// "90m") and per-chart-type numeric CUSTOM values, both minted from the
+    /// toolbar's TF/param dropdown "+ Add" row; plus independently-starred
+    /// builtin/custom TF and param rows. Functional, not cosmetic — a
+    /// headless consumer replaying a saved custom/starred TF/param needs
+    /// these to resolve the same value the desktop UI offered.
     #[serde(default)]
     pub granularity_favorites: GranularityFavorites,
 }
@@ -479,6 +507,19 @@ pub struct ProfileUiSettings {
     /// (sort/display in the profile picker).
     #[serde(default)]
     pub profile_created_at: i64,
+
+    /// When `true`, starred granularity entries (starred TF names for
+    /// `Time`-resolution chart types / starred numeric params for the
+    /// active `Param`-resolution chart type) additionally render as a row
+    /// of compact quick-pick buttons on the top toolbar, right after the
+    /// `timeframe_selector` button — TradingView "pinned intervals" style
+    /// (user-granularity-templates-inner arc, кусок 3 — owner spec
+    /// 2026-07-16). `false` (default) keeps today's behaviour: starred
+    /// entries only surface in the dropdown's FAVORITES section. Purely a
+    /// toolbar-layout presentation toggle — no daemon/headless consumer
+    /// reads this.
+    #[serde(default)]
+    pub pin_granularity_favorites: bool,
 }
 
 impl ProfileUiSettings {
@@ -499,6 +540,7 @@ impl ProfileUiSettings {
             display_name: "Default".to_string(),
             avatar: "chart".to_string(),
             profile_created_at: 0,
+            pin_granularity_favorites: false,
         }
     }
 }
@@ -879,6 +921,10 @@ mod json_compat_tests {
         // to empty, never fail deserialization (kusok 1 regression gate).
         assert!(profile.domain.granularity_favorites.time_tfs.is_empty());
         assert!(profile.domain.granularity_favorites.params.is_empty());
+        // Fixture also predates `starred_tfs`/`starred_params` (kusok 2) —
+        // same empty-default regression gate.
+        assert!(profile.domain.granularity_favorites.starred_tfs.is_empty());
+        assert!(profile.domain.granularity_favorites.starred_params.is_empty());
 
         // UI fields landed on `ui`.
         assert_eq!(profile.ui.active_preset_id, "preset_123_456");
@@ -893,6 +939,9 @@ mod json_compat_tests {
         assert_eq!(profile.ui.display_name, "Default");
         assert_eq!(profile.ui.avatar, "chart");
         assert_eq!(profile.ui.profile_created_at, 1700000000);
+        // Fixture predates `pin_granularity_favorites` (кусок 3) — must
+        // default to false, never fail deserialization.
+        assert!(!profile.ui.pin_granularity_favorites);
     }
 
     #[test]
@@ -944,6 +993,10 @@ mod json_compat_tests {
             ParamFavorite { chart_type: "range_bar".to_string(), value: 17.0 },
             ParamFavorite { chart_type: "volume_bar".to_string(), value: 12.5 },
         ];
+        profile.domain.granularity_favorites.starred_tfs = vec!["1m".to_string(), "7m".to_string()];
+        profile.domain.granularity_favorites.starred_params = vec![
+            ParamFavorite { chart_type: "range_bar".to_string(), value: 8.0 },
+        ];
 
         let json = serde_json::to_string(&profile).expect("must serialize");
         // `granularity_favorites` is itself a nested object (like `data_load`)
@@ -958,5 +1011,22 @@ mod json_compat_tests {
         assert_eq!(restored.domain.granularity_favorites.params.len(), 2);
         assert_eq!(restored.domain.granularity_favorites.params[0].chart_type, "range_bar");
         assert_eq!(restored.domain.granularity_favorites.params[0].value, 17.0);
+        assert_eq!(restored.domain.granularity_favorites.starred_tfs, vec!["1m".to_string(), "7m".to_string()]);
+        assert_eq!(restored.domain.granularity_favorites.starred_params.len(), 1);
+        assert_eq!(restored.domain.granularity_favorites.starred_params[0].chart_type, "range_bar");
+    }
+
+    #[test]
+    fn pin_granularity_favorites_flag_round_trips() {
+        let mut profile = UserProfile::new();
+        assert!(!profile.ui.pin_granularity_favorites, "default must be false");
+
+        profile.ui.pin_granularity_favorites = true;
+        let json = serde_json::to_string(&profile).expect("must serialize");
+        assert!(json.contains("\"pin_granularity_favorites\":true"), "flag must be flat on disk: {json}");
+        assert!(!json.contains("\"ui\":{"), "must not nest under ui: {json}");
+
+        let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
+        assert!(restored.ui.pin_granularity_favorites);
     }
 }

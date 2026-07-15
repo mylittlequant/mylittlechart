@@ -727,61 +727,67 @@ impl ChartApp {
         }
     }
 
-    /// Commit handler for the `timeframe_selector` dropdown's "Custom…" TF
-    /// favorite input row (user-granularity-templates-inner arc, кусок 1).
-    /// Validates via `Timeframe::parse`, then dispatches a single toggle
-    /// event that both mutates `granularity_favorites` and applies the TF
-    /// (or, if the typed name is already favorited, removes it instead —
-    /// toggle-by-retype, see `ChartOutEvent::ToggleTimeframeFavorite`).
+    /// Commit handler for the `timeframe_selector` dropdown's visible inline
+    /// TF editor (user-granularity-templates-inner arc, кусок 2). Validates
+    /// via `Timeframe::parse`; invalid input does NOT blur — the field stays
+    /// focused so the user sees their (rejected) text and can keep typing
+    /// (owner spec: "Invalid → do NOT blur, keep editing"). Valid input
+    /// dispatches `CommitGranularityCustom`, which itself clears
+    /// `granularity_edit` and applies the TF.
     fn text_action_tf_favorite_input(&mut self, action: TextAction) {
         match action {
             TextAction::Commit(text) => {
                 let name = text.trim().to_string();
                 if mlc_core::state::Timeframe::parse(&name).is_none() {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 }
                 self.process_chart_out_event(
-                    mlc_core::events::ChartOutEvent::ToggleTimeframeFavorite { name }
+                    mlc_core::events::ChartOutEvent::CommitGranularityCustom {
+                        target: mlc_core::chart_type::GranularityTarget::Tf { name },
+                    }
                 );
             }
             TextAction::Cancel => {
+                self.granularity_edit = None;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
         }
     }
 
-    /// Commit handler for the `timeframe_selector` dropdown's "Custom…"
-    /// numeric-param favorite input row (`ResolutionKind::Param` chart
-    /// types) — user-granularity-templates-inner arc, кусок 1. Parses a
-    /// positive `f64`, then dispatches the toggle event scoped to the
-    /// currently active window's chart_type.
+    /// Commit handler for the `timeframe_selector` dropdown's visible inline
+    /// numeric-param editor (`ResolutionKind::Param` chart types) —
+    /// user-granularity-templates-inner arc, кусок 2. Parses a positive
+    /// `f64`; invalid input does NOT blur (same contract as
+    /// `text_action_tf_favorite_input`). Scoped to the currently active
+    /// window's chart_type.
     fn text_action_param_favorite_input(&mut self, action: TextAction) {
         match action {
             TextAction::Commit(text) => {
                 let Ok(value) = text.trim().parse::<f64>() else {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 };
                 if value <= 0.0 {
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 }
                 let Some(chart_type) = self.panel_app.panel_grid.active_container_id()
                     .and_then(|cid| self.chart_type_for_chart(cid))
                 else {
+                    self.granularity_edit = None;
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 };
                 self.process_chart_out_event(
-                    mlc_core::events::ChartOutEvent::ToggleParamFavorite {
-                        chart_type: chart_type.to_string(),
-                        value,
+                    mlc_core::events::ChartOutEvent::CommitGranularityCustom {
+                        target: mlc_core::chart_type::GranularityTarget::Param {
+                            chart_type: chart_type.to_string(),
+                            value,
+                        },
                     }
                 );
             }
             TextAction::Cancel => {
+                self.granularity_edit = None;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}

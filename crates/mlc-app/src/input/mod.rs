@@ -496,6 +496,7 @@ impl ChartApp {
         // Close any existing context menu / dropdown first.
         self.panel_app.context_menu_state.close();
         self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.granularity_edit = None;
 
         // Make the window UNDER THE CURSOR active before hit-testing, so the
         // context menu opens in the hovered window (not whichever was focused).

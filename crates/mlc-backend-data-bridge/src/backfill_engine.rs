@@ -800,11 +800,15 @@ impl DataBridge {
         let interval = crate::convert::timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let engine = self.backfill_engine();
+        // Granularity arc defect fix (2026-07-16): resolve non-native
+        // aggregation BEFORE dialing dig3 — see `run_kline_ramp`'s `agg`
+        // param doc comment.
+        let agg = self.resolve_kline_aggregation(exchange_id, account_type, &interval, timeframe.interval_ms);
 
         self.spawn_bg_pub(async move {
             run_kline_ramp(
                 fetch_hub, tx, engine, key, exchange_id, account_type,
-                symbol_str, wire_sym, interval, tf_name, true,
+                symbol_str, wire_sym, interval, tf_name, true, agg,
             ).await;
         });
     }
@@ -865,11 +869,13 @@ impl DataBridge {
         let interval = crate::convert::timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let engine = self.backfill_engine();
+        // Granularity arc defect fix (2026-07-16): see `ensure_kline_backfill`.
+        let agg = self.resolve_kline_aggregation(exchange_id, account_type, &interval, timeframe.interval_ms);
 
         self.spawn_bg_pub(async move {
             run_kline_ramp(
                 fetch_hub, tx, engine, key, exchange_id, account_type,
-                symbol_str, wire_sym, interval, tf_name, false,
+                symbol_str, wire_sym, interval, tf_name, false, agg,
             ).await;
         });
     }
@@ -882,6 +888,17 @@ impl DataBridge {
 /// selects the phase: `true` for the auto-ensure path (target bounds the
 /// run), `false` for the scroll-pressure path (target ignored — unbounded
 /// until venue-dry).
+///
+/// `agg`, when `Some((base_interval, target_ms, ratio))`, means `tf_name`
+/// is a non-native target this venue does not natively serve (granularity
+/// arc defect fix 2026-07-16) — every REST page fetches `base_interval`
+/// bars instead of `interval`, folds them into `target_ms`-duration
+/// buckets, and records the FOLDED bar count into `RampState` so
+/// `loaded`/`target` stay in target-bar units (honest `loaded/target`
+/// counters — a caller asking for 500 target bars sees the ramp stop once
+/// 500 target bars have actually landed, not 500 base bars = far fewer
+/// folded target bars). `interval` is still passed for logging/native use;
+/// ignored for the actual fetch when `agg` is `Some`.
 async fn run_kline_ramp(
     fetch_hub: Arc<digdigdig3::connector_manager::ExchangeHub>,
     tx: tokio::sync::broadcast::Sender<LiveUpdate>,
@@ -894,6 +911,7 @@ async fn run_kline_ramp(
     interval: String,
     tf_name: String,
     gate_on_target: bool,
+    agg: Option<(String, i64, i64)>,
 ) {
     // Readiness barrier — same pattern as the legacy backfill/scroll fns.
     {
@@ -916,6 +934,24 @@ async fn run_kline_ramp(
     }
 
     let page_size = KLINE_PAGE_SIZE;
+    // Fetch interval/page-size: on the aggregated path, request `ratio`
+    // times as many BASE bars per page so one page still yields close to
+    // `page_size` folded TARGET bars — `klines_paginated`'s own `limit`
+    // clamp (`page_size.min(1000)`) caps the burst regardless of ratio.
+    let (fetch_interval, fetch_page_size, target_ms): (&str, usize, Option<i64>) = match &agg {
+        Some((base_interval, target_ms, ratio)) => {
+            (base_interval.as_str(), page_size.saturating_mul((*ratio).max(1) as usize), Some(*target_ms))
+        }
+        None => (interval.as_str(), page_size, None),
+    };
+    if agg.is_some() {
+        crate::dlog!(
+            "[kline_agg] target={} base={} ratio={} key={:?}/{}",
+            tf_name, fetch_interval,
+            agg.as_ref().map(|(_, _, r)| *r).unwrap_or(1),
+            key.0, key.1,
+        );
+    }
     let mut is_first_page_of_run = engine.with_state(&key, |s| s.groups_completed == 0 && s.oldest_anchor.is_none());
 
     // Auto-phase self-drive: one `ensure_kline_backfill` call walks GROUPS
@@ -937,8 +973,8 @@ async fn run_kline_ramp(
         let older_than_ms = engine.with_state(&key, |s| s.oldest_anchor);
 
         let (points, outcome) = digdigdig3_station::backfill::klines_paginated(
-            &fetch_hub, exchange_id, account_type, &wire_sym, &interval,
-            page_size, 1, older_than_ms,
+            &fetch_hub, exchange_id, account_type, &wire_sym, fetch_interval,
+            fetch_page_size, 1, older_than_ms,
         ).await;
 
         if points.is_empty() {
@@ -952,7 +988,11 @@ async fn run_kline_ramp(
         }
 
         let new_oldest = points.iter().map(|p| p.open_time).min();
-        let bars: Vec<mlc_core::Bar> = points.iter().map(bar_point_to_bar).collect();
+        let base_bars: Vec<mlc_core::Bar> = points.iter().map(bar_point_to_bar).collect();
+        let bars: Vec<mlc_core::Bar> = match target_ms {
+            Some(t) => crate::kline_agg::fold_bars_into_buckets(&base_bars, t),
+            None => base_bars,
+        };
         let prepended = bars.len();
         // A `VenueWindowCap`/`VenueRecentOnly` truncation is a genuine wall
         // (stop asking); `VenueHistoryExhausted` on a single-page request

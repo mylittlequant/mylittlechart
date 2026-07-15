@@ -61,6 +61,12 @@ impl ChartApp {
                 device_name: existing.ui.device_name.clone(),
                 language: self.panel_app.user_settings_state.language.clone(),
                 windows: existing.ui.windows.clone(),
+                // Pinned-favorites-row toggle (kusok 3): mutated in-place via
+                // `self.core.user_mut().profile_mut()` at toggle time
+                // (chart_out_events.rs's `ToggleGranularityPin` handler),
+                // not via this snapshot builder — preserve the live value,
+                // same pattern as `granularity_favorites` above.
+                pin_granularity_favorites: existing.ui.pin_granularity_favorites,
             },
         }
     }

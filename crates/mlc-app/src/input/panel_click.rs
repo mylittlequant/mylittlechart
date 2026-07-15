@@ -2796,6 +2796,29 @@ impl ChartApp {
                 return;
             }
 
+            // Pinned-favorites quick-pick buttons on the top toolbar (user-
+            // granularity-templates-inner arc, кусок 3 — TradingView
+            // "pinned intervals" style). Reuses the SAME `tf_{name}` /
+            // `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` id encoding the
+            // dropdown rows use — resolve back to a target and dispatch
+            // `ChangeTimeframe`/`UpdateChartTypeParam` directly, no dropdown
+            // involved.
+            if let Some(value_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_QUICK_PICK_PREFIX) {
+                if let Some(target) = self.resolve_granularity_target(value_id) {
+                    match target {
+                        mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                            self.process_chart_out_event(mlc_core::events::ChartOutEvent::ChangeTimeframe {
+                                timeframe_id: format!("tf_{}", name),
+                            });
+                        }
+                        mlc_core::chart_type::GranularityTarget::Param { value, .. } => {
+                            self.process_chart_out_event(mlc_core::events::ChartOutEvent::UpdateChartTypeParam { value });
+                        }
+                    }
+                }
+                return;
+            }
+
             // Close inline dropdowns when clicking any toolbar button that is not
             // an inline dropdown item or the dropdown menu triggers themselves.
             if !item_id.starts_with("inline:style_option:")
@@ -2856,6 +2879,13 @@ impl ChartApp {
             if rest == "__bg__" {
                 self.panel_app.toolbar_state.open_dropdown_id = None;
                 self.panel_app.toolbar_state.open_dropdown_position = None;
+                // Dropdown closing abandons any in-progress inline
+                // granularity edit (user-granularity-templates-inner arc,
+                // кусок 2) — no persisted partial state, no lingering focus
+                // on a field the user can no longer see.
+                if self.granularity_edit.take().is_some() {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
                 return;
             }
 
@@ -2869,21 +2899,84 @@ impl ChartApp {
                     return;
                 }
 
+                // Inline granularity editor is ACTIVE (owner rule 2026-07-16):
+                // while the text input lives, item clicks inside the dropdown
+                // must not select/apply anything — the user commits with
+                // Enter or abandons via Escape / background-click (the
+                // `__bg__` arm above cancels the edit). Consume the click,
+                // keep the dropdown open, keep editing.
+                if self.granularity_edit.is_some() {
+                    return;
+                }
+
                 // Inline-input "__input__:{real_id}" hit zones were retired —
                 // dropdown rows for range_bar / volume_bar / footprint now fire
                 // the regular ChangeChartType action with the panel's current
                 // param/interval (or default). Param editing happens via the
                 // toolbar-level field after the chart type is committed.
 
-                // Granularity favorites "Custom…" rows (kusok 1): the WHOLE
-                // row's only purpose is text entry (no separate row-click
-                // action to conflict with — this is why the whole-row
-                // hit zone is safe here, unlike the 2026-06 chart-type-row
+                // FAVORITES-section row click (user-granularity-templates-
+                // inner arc, кусок 2 — defect fix 2026-07-16). These rows
+                // carry the `GRANULARITY_FAV_ID_PREFIX` uniqueness wrapper
+                // (distinct dropdown-item id so hover doesn't leak into the
+                // row's normal-position twin — see that const's doc
+                // comment). Strip it here, BEFORE every other prefix check
+                // below, so a FAVORITES row's body click dispatches through
+                // the EXACT same path as its normal-position twin
+                // (`handle_dropdown_select_with_chart` at the bottom of this
+                // block sees the real `tf_{name}` / `reso_param:{value}` id).
+                let item_id: &str = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX)
+                    .unwrap_or(item_id);
+
+                // Granularity trailing-icon clicks (star/edit/delete —
+                // user-granularity-templates-inner arc, кусок 2). Checked
+                // BEFORE the "+ Add" row and the normal dispatch path below
+                // (mirrors кусок 1's custom-row-first ordering). These do
+                // NOT close the dropdown — the user should see the list
+                // update in place (star fill flip, row removed on delete).
+                if let Some(target_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_STAR_ACTION_PREFIX) {
+                    if let Some(target) = self.resolve_granularity_target(target_id) {
+                        self.process_chart_out_event(
+                            mlc_core::events::ChartOutEvent::ToggleGranularityStar { target }
+                        );
+                    }
+                    return;
+                }
+                if let Some(target_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_DELETE_ACTION_PREFIX) {
+                    if let Some(target) = self.resolve_granularity_target(target_id) {
+                        self.process_chart_out_event(
+                            mlc_core::events::ChartOutEvent::DeleteGranularityCustom { target }
+                        );
+                    }
+                    return;
+                }
+                if let Some(target_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_EDIT_ACTION_PREFIX) {
+                    if let Some(target) = self.resolve_granularity_target(target_id) {
+                        self.begin_granularity_edit(target);
+                    }
+                    return;
+                }
+
+                // Pinned-favorites-row toggle on the "FAVORITES" header
+                // (кусок 3). Same "stay open, update in place" contract as
+                // the star/edit/delete icons above.
+                if item_id == mlc_core::chart_type::GRANULARITY_PIN_TOGGLE_ACTION_ID {
+                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::ToggleGranularityPin);
+                    return;
+                }
+
+                // Granularity "+ Add" rows (кусок 2 — replaces кусок 1's
+                // invisible "Custom…" input row): the WHOLE row's only
+                // purpose is starting inline creation (no separate row-click
+                // action to conflict with — this is why the whole-row hit
+                // zone is safe here, unlike the 2026-06 chart-type-row
                 // inline-input revert, where the input zone overlapped a
-                // row that ALSO had its own click action). Focus the
-                // dedicated field instead of dispatching through
+                // row that ALSO had its own click action). Sets
+                // `granularity_edit` and focuses the dedicated field with an
+                // empty prefill instead of dispatching through
                 // `handle_dropdown_select_with_chart`.
                 if item_id == mlc_core::chart_type::TF_FAVORITE_CUSTOM_INPUT_ITEM_ID {
+                    self.granularity_edit = Some(crate::GranularityEdit { kind: crate::GranularityEditKind::AddTf });
                     let field_id = uzor::WidgetId::from(crate::text_input::TF_FAVORITE_INPUT);
                     let mut coord = self.input_coordinator.borrow_mut();
                     let tf = coord.text_fields_mut();
@@ -2893,6 +2986,7 @@ impl ChartApp {
                     return;
                 }
                 if item_id == mlc_core::chart_type::PARAM_FAVORITE_CUSTOM_INPUT_ITEM_ID {
+                    self.granularity_edit = Some(crate::GranularityEdit { kind: crate::GranularityEditKind::AddParam });
                     let field_id = uzor::WidgetId::from(crate::text_input::PARAM_FAVORITE_INPUT);
                     let mut coord = self.input_coordinator.borrow_mut();
                     let tf = coord.text_fields_mut();
@@ -4961,4 +5055,72 @@ impl ChartApp {
         }
     }
 
+    /// Resolve a `timeframe_selector` dropdown item id (stripped of its
+    /// `gran_star:`/`gran_edit:`/`gran_del:` action prefix) back to a
+    /// [`mlc_core::chart_type::GranularityTarget`] — user-granularity-
+    /// templates-inner arc, кусок 2. `tf_{name}` ids map to `Tf`;
+    /// `reso_param:{value}` ids map to `Param`, scoped to the active
+    /// window's chart_type (a range_bar star action must never resolve
+    /// against the volume_bar chart_type). `None` when the id shape is
+    /// unrecognized or there is no active window to scope a `Param` target
+    /// to.
+    pub(crate) fn resolve_granularity_target(&self, target_id: &str) -> Option<mlc_core::chart_type::GranularityTarget> {
+        if let Some(name) = target_id.strip_prefix("tf_") {
+            return Some(mlc_core::chart_type::GranularityTarget::Tf { name: name.to_string() });
+        }
+        if let Some(value_str) = target_id.strip_prefix(mlc_core::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
+            let value: f64 = value_str.parse().ok()?;
+            let chart_type = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_for_chart(cid))?;
+            return Some(mlc_core::chart_type::GranularityTarget::Param { chart_type: chart_type.to_string(), value });
+        }
+        None
+    }
+
+    /// Begin inline editing of an existing CUSTOM granularity value (pencil
+    /// icon click) — user-granularity-templates-inner arc, кусок 2. Sets
+    /// `granularity_edit` to the matching `EditTf`/`EditParam` variant and
+    /// prefills+focuses the dedicated field with the current value's text
+    /// (mirrors the "+ Add" row's empty-prefill focus sequence).
+    pub(crate) fn begin_granularity_edit(&mut self, target: mlc_core::chart_type::GranularityTarget) {
+        match target {
+            mlc_core::chart_type::GranularityTarget::Tf { name } => {
+                self.granularity_edit = Some(crate::GranularityEdit {
+                    kind: crate::GranularityEditKind::EditTf { original: name.clone() },
+                });
+                let field_id = uzor::WidgetId::from(crate::text_input::TF_FAVORITE_INPUT);
+                let mut coord = self.input_coordinator.borrow_mut();
+                let tf = coord.text_fields_mut();
+                tf.set_text(&field_id, &name);
+                tf.begin_edit(&field_id);
+                tf.focus(crate::text_input::TF_FAVORITE_INPUT);
+            }
+            mlc_core::chart_type::GranularityTarget::Param { value, .. } => {
+                self.granularity_edit = Some(crate::GranularityEdit {
+                    kind: crate::GranularityEditKind::EditParam { original: value },
+                });
+                let field_id = uzor::WidgetId::from(crate::text_input::PARAM_FAVORITE_INPUT);
+                let mut coord = self.input_coordinator.borrow_mut();
+                let tf = coord.text_fields_mut();
+                tf.set_text(&field_id, &format_trimmed_param_value(value));
+                tf.begin_edit(&field_id);
+                tf.focus(crate::text_input::PARAM_FAVORITE_INPUT);
+            }
+        }
+    }
+
+}
+
+/// Trim a trailing `.0` (or more generally any trailing fractional zeros)
+/// from an `f64`'s decimal rendering — prefill text for
+/// [`ChartApp::begin_granularity_edit`]'s `EditParam` field
+/// (`PARAM_FAVORITE_INPUT` only accepts digits+dot, so the prefill must
+/// already be plain decimal text, no scientific notation).
+fn format_trimmed_param_value(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        let s = format!("{:.2}", v);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
 }

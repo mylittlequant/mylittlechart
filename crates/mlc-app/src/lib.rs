@@ -865,6 +865,10 @@ pub struct ChartApp {
     pub(crate) compare_add_success: u32,
     pub(crate) compare_add_queued: u32,
 
+    /// Transient state for the `timeframe_selector` dropdown's visible
+    /// inline granularity editor (user-granularity-templates-inner arc,
+    /// кусок 2). `None` when no "+ Add"/edit editor is active.
+    pub(crate) granularity_edit: Option<GranularityEdit>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1022,6 +1026,33 @@ pub(crate) struct SplitSeparatorDragState {
     pub start_x: f64,
     /// Screen Y at drag start
     pub start_y: f64,
+}
+
+/// Which granularity value the visible inline editor in the
+/// `timeframe_selector` dropdown's "+ Add" row slot is currently editing
+/// (user-granularity-templates-inner arc, кусок 2 — owner spec 2026-07-16
+/// replaced the invisible custom-input-row UX with a visible inline editor).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GranularityEditKind {
+    /// Creating a new custom timeframe (TF-flavor dropdown).
+    AddTf,
+    /// Creating a new custom numeric param (Param-flavor dropdown).
+    AddParam,
+    /// Renaming an existing custom TF; `original` is the pre-edit name so
+    /// commit can remove it (and re-add the star, if it had one) before
+    /// inserting the new name.
+    EditTf { original: String },
+    /// Editing an existing custom numeric param's value; `original` is the
+    /// pre-edit value.
+    EditParam { original: f64 },
+}
+
+/// Transient RAM-only state for the `timeframe_selector` dropdown's visible
+/// inline granularity editor. `None` when no "+ Add"/edit editor is active.
+/// Cleared on commit, cancel (Escape), and dropdown close — never persisted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GranularityEdit {
+    pub kind: GranularityEditKind,
 }
 
 // =============================================================================
@@ -1515,16 +1546,19 @@ impl ChartApp {
         )
     }
 
-    /// `timeframe_selector` per-item native-availability marks for the
+    /// `timeframe_selector` per-item history-capability marks for the
     /// ACTIVE window's (exchange, account_type) — resolution-availability-
-    /// 2026-07-08 Phase 3. Maps every `tf_*` dropdown item id to whether
-    /// THIS venue natively serves that kline interval
-    /// (`KlineIntervalCapabilities::supports`, via `BackendCore::
-    /// kline_interval_native`). `false` does not mean the interval is
-    /// unusable — the station still builds it live from trade aggregation
-    /// (`TradeToBarDerived`) — it means there is no REST-backed history for
-    /// it, which the dropdown marks as "(no history)" (client-only doctrine:
-    /// never imply history that doesn't exist).
+    /// 2026-07-08 Phase 3, widened by the granularity arc defect fix
+    /// 2026-07-16 (aggregatability, not raw nativeness). Maps every `tf_*`
+    /// dropdown item id to whether THIS venue can serve REST-backed history
+    /// for that interval, via [`Self::timeframe_has_history`] — `true` when
+    /// EITHER the interval is natively served OR it aggregates cleanly
+    /// (exact integer multiple) from some interval the venue natively
+    /// serves. `false` does not mean the interval is unusable — the station
+    /// still builds it live from trade aggregation (`TradeToBarDerived`) —
+    /// it means there is no REST-backed history for it, which the dropdown
+    /// marks as "live" (client-only doctrine: never imply history that
+    /// doesn't exist).
     ///
     /// Computed fresh every frame (RAM-only, same discipline as
     /// `chart_type_data_modes`/`allowed_timeframes`). `None` when there is
@@ -1544,28 +1578,110 @@ impl ChartApp {
         let cid = self.panel_app.panel_grid.active_container_id()?;
         let account_type = self.account_type_for_chart(cid).unwrap_or_default();
         let exchange_id = self.exchange_id_for_chart(cid);
+        let native_intervals = self.core.kline_native_intervals(exchange_id, account_type)?;
         let mut map = std::collections::HashMap::new();
         for &tf_id in crate::active_series::ALL_TF_IDS {
             let Some(interval) = crate::active_series::tf_id_to_dig3_interval(tf_id) else {
                 continue;
             };
-            let Some(native) = self.core.kline_interval_native(&interval, exchange_id, account_type) else {
-                // Capability unknown for at least one id — bail on the whole
-                // map rather than mixing known/unknown marks for one venue.
-                return None;
-            };
-            map.insert(tf_id.to_string(), native);
+            map.insert(tf_id.to_string(), Self::timeframe_has_history(&interval, &native_intervals));
         }
         for name in &self.core.user().profile().domain.granularity_favorites.time_tfs {
             let Some(interval) = crate::active_series::tf_id_to_dig3_interval(&format!("tf_{}", name)) else {
                 continue;
             };
-            let Some(native) = self.core.kline_interval_native(&interval, exchange_id, account_type) else {
-                return None;
-            };
-            map.insert(format!("tf_{}", name), native);
+            map.insert(format!("tf_{}", name), Self::timeframe_has_history(&interval, &native_intervals));
         }
         Some(map)
+    }
+
+    /// Whether `interval` (canonical dig3 form) carries REST-backed history
+    /// on a venue whose natively-served interval set is `native_intervals` —
+    /// the aggregatability predicate behind [`Self::timeframe_native_map`]
+    /// (granularity arc defect fix 2026-07-16, owner spec: detect
+    /// aggregatability, not raw nativeness).
+    ///
+    /// `true` when EITHER `interval` is itself in `native_intervals`, OR
+    /// its duration is an EXACT integer multiple of some interval in
+    /// `native_intervals` (client-side re-cut from real bars/trades — same
+    /// "kline-sufficient re-cut" doctrine as renko/pnf/kagi: a clean
+    /// integer multiple of a natively-history-backed interval has FULL
+    /// history, not partial). Divisors come from the venue's OWN native set
+    /// — never a hardcoded list — so a venue whose finest native interval
+    /// is `"1m"` correctly leaves every sub-minute interval (`"30s"`,
+    /// `"15s"`, ...) marked "live" (no minute-granularity interval divides
+    /// evenly into a sub-minute duration), while `"7m"`/`"12m"` mark
+    /// history-capable wherever `"1m"` is native (7 and 12 are both exact
+    /// multiples of 1).
+    fn timeframe_has_history(interval: &str, native_intervals: &[String]) -> bool {
+        if native_intervals.iter().any(|n| n == interval) {
+            return true;
+        }
+        let Some(target_ms) = crate::active_series::dig3_interval_to_ms(interval) else {
+            return false;
+        };
+        native_intervals.iter().any(|native| {
+            crate::active_series::dig3_interval_to_ms(native)
+                .map(|native_ms| native_ms > 0 && target_ms % native_ms == 0)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Render-side snapshot of the `timeframe_selector` dropdown's visible
+    /// inline granularity editor (user-granularity-templates-inner arc,
+    /// кусок 2 — defect fix 2026-07-16: real text-field widget, in-place row
+    /// hosting) — `None` when no "+ Add"/edit editor is active
+    /// (`granularity_edit.is_none()`).
+    ///
+    /// Reads the same `TF_FAVORITE_INPUT`/`PARAM_FAVORITE_INPUT` field the
+    /// commit handlers in `text_input::dispatch` consume (text/cursor/
+    /// selection), keyed by which editor kind is active. `host` carries
+    /// which row the dropdown builder (`mlc-app-layout::panel_app`) must
+    /// render the editor INTO: `None` for `AddTf`/`AddParam` (the "+ Add"
+    /// row), `Some(target)` for `EditTf`/`EditParam` (the existing custom's
+    /// own row, identified by its pre-edit value — owner spec (a): editing
+    /// renders in place, not relocated to the Add row).
+    ///
+    /// `cursor_visible` uses a coarse wall-clock read (matches the
+    /// `clock_time` computation a few lines above this method's call sites)
+    /// rather than a threaded `current_time_ms` — `render_toolbar_only`
+    /// (one of the two render paths that reach this) has no such parameter
+    /// and widening its signature would ripple into the vello shell for a
+    /// blink-cadence detail that tolerates a few ms of jitter.
+    pub fn granularity_edit_render(&self) -> Option<mlc_core::chart_type::GranularityEditRender> {
+        let edit = self.granularity_edit.as_ref()?;
+        let (field, host) = match &edit.kind {
+            GranularityEditKind::AddTf => (crate::text_input::TF_FAVORITE_INPUT, None),
+            GranularityEditKind::AddParam => (crate::text_input::PARAM_FAVORITE_INPUT, None),
+            GranularityEditKind::EditTf { original } => (
+                crate::text_input::TF_FAVORITE_INPUT,
+                Some(mlc_core::chart_type::GranularityTarget::Tf { name: original.clone() }),
+            ),
+            GranularityEditKind::EditParam { original } => {
+                let chart_type = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| self.chart_type_for_chart(cid))
+                    .unwrap_or("candles")
+                    .to_string();
+                (
+                    crate::text_input::PARAM_FAVORITE_INPUT,
+                    Some(mlc_core::chart_type::GranularityTarget::Param { chart_type, value: *original }),
+                )
+            }
+        };
+        let field_id = uzor::WidgetId::from(field);
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let tf = self.input_coordinator.borrow();
+        let store = tf.text_fields();
+        Some(mlc_core::chart_type::GranularityEditRender {
+            host,
+            text: store.text(&field_id).to_string(),
+            cursor: store.cursor(&field_id),
+            selection: store.selection_range(&field_id),
+            cursor_visible: store.cursor_visible(now_ms),
+        })
     }
 
     /// Whether the footprint bucket dropdown (`ResolutionKind::Interval`)
@@ -1775,6 +1891,7 @@ impl ChartApp {
             frame_layouts: std::collections::HashMap::new(),
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
+            granularity_edit: None,
         };
 
         if let Some(tm) = app.core.trading() {
@@ -2154,6 +2271,7 @@ impl ChartApp {
             frame_layouts: std::collections::HashMap::new(),
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
+            granularity_edit: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -2679,6 +2797,7 @@ impl ChartApp {
             frame_layouts: std::collections::HashMap::new(),
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
+            granularity_edit: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -5432,6 +5551,8 @@ impl ChartApp {
             let timeframe_native_map = self.timeframe_native_map();
             let footprint_live_only = self.footprint_live_only();
             let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
+            let granularity_edit_render = self.granularity_edit_render();
+            let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5451,6 +5572,8 @@ impl ChartApp {
                 timeframe_native_map.as_ref(),
                 footprint_live_only,
                 &granularity_favorites,
+                granularity_edit_render.as_ref(),
+                pin_granularity_favorites,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6151,6 +6274,8 @@ impl ChartApp {
         let timeframe_native_map = self.timeframe_native_map();
         let footprint_live_only = self.footprint_live_only();
         let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
+        let granularity_edit_render = self.granularity_edit_render();
+        let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6170,6 +6295,8 @@ impl ChartApp {
             timeframe_native_map.as_ref(),
             footprint_live_only,
             &granularity_favorites,
+            granularity_edit_render.as_ref(),
+            pin_granularity_favorites,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
