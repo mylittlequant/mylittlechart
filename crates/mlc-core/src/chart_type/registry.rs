@@ -104,15 +104,30 @@ pub enum DataRequirement {
 /// data, no dig3 types — mlc-core stays capability-blind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataMode {
-    /// Klines-backed or LiveFeed-by-design type, or DeepTrades type on a
-    /// venue/account with RestDeep/RestWindow capability — real history.
+    /// History arrives in BULK: klines-backed types, or DeepTrades types on
+    /// a venue/account with a daily trade-archive zip (whole days land in
+    /// one request). The healthy default — the dropdown renders NO mark
+    /// (owner vocabulary 2026-07-15).
     Full,
-    /// DeepTrades type on a RecentOnly venue, footprint specifically —
-    /// hybrid (kline backdrop + live clusters).
+    /// DeepTrades type whose only history source is deep REST pagination
+    /// (RestDeep/RestWindow tier, NO archive) — history crawls page by
+    /// page. Dropdown mark: "slow" (owner vocabulary 2026-07-15).
+    Paged,
+    /// DeepTrades type on a RecentOnly+no-archive venue, footprint
+    /// specifically — kline backdrop + live clusters. Dropdown mark:
+    /// "live" (simplified from "hybrid", owner vocabulary 2026-07-15 —
+    /// the cluster data IS live-only; the backdrop is presentation).
     Hybrid,
-    /// DeepTrades type on a RecentOnly venue, NOT footprint (counted-bar
-    /// family) — live-only, empty space before the live window.
+    /// DeepTrades type on a RecentOnly+no-archive venue, NOT footprint
+    /// (counted-bar family) — live-only, empty space before the live
+    /// window. Dropdown mark: "live".
     LiveOnly,
+    /// NO data source for this type on this venue at all — the dropdown
+    /// HIDES the type entirely (owner rule 2026-07-15: never show a chart
+    /// type the instrument cannot feed). Not currently produced for any
+    /// live exchange (every connector has a trade stream); exists so
+    /// future trade-less sources hide trade-fed types by contract.
+    Unavailable,
     /// Capability unknown (exchange not connected yet / unrecognized type).
     Unknown,
 }

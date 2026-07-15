@@ -2386,10 +2386,18 @@ impl BackendCore {
                 let Some(deep) = self.deep_trade_history_available(exchange_id, account_type) else {
                     return DataMode::Unknown;
                 };
-                match (deep, chart_type) {
-                    (true, _) => DataMode::Full,
-                    (false, "footprint") => DataMode::Hybrid,
-                    (false, _) => DataMode::LiveOnly,
+                // Bulk-vs-paged split (owner vocabulary 2026-07-15): a
+                // daily zip archive means whole days land in one request —
+                // that IS "Full" history. Deep REST alone (no archive)
+                // crawls page by page → `Paged`, marked "slow" in the
+                // dropdown. `deep_trade_history_available` counts BOTH
+                // sources, so subtract the archive to isolate REST-only.
+                let has_archive = self.trade_archive_available(exchange_id, account_type);
+                match (has_archive, deep, chart_type) {
+                    (true, _, _) => DataMode::Full,
+                    (false, true, _) => DataMode::Paged,
+                    (false, false, "footprint") => DataMode::Hybrid,
+                    (false, false, _) => DataMode::LiveOnly,
                 }
             }
         }

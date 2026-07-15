@@ -1056,36 +1056,44 @@ fn chart_toolbar_render_dropdown(
                             .and_then(mlc_core::chart_type::by_id)
                             .map(|def| matches!(def.resolution, mlc_core::chart_type::ResolutionKind::Interval))
                             .unwrap_or(false);
+                        // Mark vocabulary simplified to ONE word and theme
+                        // colors only (owner rule 2026-07-15): "live" =
+                        // this interval carries no REST history on this
+                        // venue (built live). No accent bar — the subtitle
+                        // renders in the theme's secondary text color.
                         if is_footprint_interval {
                             if footprint_live_only {
-                                *subtitle = Some("live only".to_string());
-                                *accent_color = Some("#ef5350".to_string());
+                                *subtitle = Some("live".to_string());
                             }
                         } else if let Some(native_map) = timeframe_native_map {
                             if native_map.get(id.as_str()) == Some(&false) {
-                                *subtitle = Some("(no history)".to_string());
-                                *accent_color = Some("#ffa726".to_string());
+                                *subtitle = Some("live".to_string());
                             }
                         }
                     }
                 }
             }
             if dropdown_id == "chart_type_selector" {
-                if let DropdownItem::Item { ref id, ref mut subtitle, ref mut accent_color, .. } = di {
-                    // Data-availability marking (hybrid-data-modes-plan-
-                    // 2026-07-08, Step 5): transparency-only — every chart
-                    // type stays clickable (owner directive), `disabled` is
-                    // never set here. `None`/`Unknown`/`Full` render no
-                    // marker at all.
+                if let DropdownItem::Item { ref id, ref mut subtitle, .. } = di {
+                    // Data-availability marking, simplified vocabulary
+                    // (owner rule 2026-07-15): bulk history (klines or
+                    // trade zips) = no mark; REST-paginated history =
+                    // "slow"; no history at all = "live"; no data source
+                    // whatsoever = the type is HIDDEN from the dropdown
+                    // (not disabled — absent). Marks are subtitle-only in
+                    // the theme's secondary text color — no accent bars,
+                    // no hardcoded palette. Marked items stay clickable.
                     if let Some(marks) = chart_type_data_modes {
                         match marks.get(id.as_str()) {
-                            Some(mlc_core::chart_type::DataMode::Hybrid) => {
-                                *subtitle = Some("hybrid".to_string());
-                                *accent_color = Some("#ffa726".to_string());
+                            Some(mlc_core::chart_type::DataMode::Paged) => {
+                                *subtitle = Some("slow".to_string());
                             }
-                            Some(mlc_core::chart_type::DataMode::LiveOnly) => {
-                                *subtitle = Some("live only".to_string());
-                                *accent_color = Some("#ef5350".to_string());
+                            Some(mlc_core::chart_type::DataMode::Hybrid)
+                            | Some(mlc_core::chart_type::DataMode::LiveOnly) => {
+                                *subtitle = Some("live".to_string());
+                            }
+                            Some(mlc_core::chart_type::DataMode::Unavailable) => {
+                                return None;
                             }
                             _ => {}
                         }
