@@ -289,9 +289,28 @@ pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, cha
         let x_b = viewport.x_for_bar(i + 1, ts_b);
         let screen_x = rect.x + (x_a + x_b) * 0.5;
 
-        // Floor-to-ceiling band ~5 bar slots wide, clamped so it stays a
-        // readable block at extreme zooms and never narrower than its label.
-        let label = format!("no data \u{b7} {}", humanize_gap_duration(delta_ms));
+        // Band = 4 bar slots anchored to the seam bars (2 each side —
+        // owner spec 2026-07-15: the band hugs the bars being stitched,
+        // NEVER sized by its own label; a label that doesn't fit
+        // horizontally renders vertically instead of widening the band).
+        let band_w = (4.0 * viewport.bar_spacing).max(8.0);
+        let band_x = screen_x - band_w * 0.5;
+        ctx.set_fill_color("rgba(150, 152, 161, 0.10)");
+        ctx.fill_rect(band_x, rect.y, band_w, rect.height);
+
+        // draw_dashed_line strokes with whatever color is current — pin it,
+        // or the marker inherits the last grid/scale stroke.
+        ctx.set_stroke_color(&theme.crosshair);
+        ctx.set_stroke_width(1.0);
+        draw_dashed_line(ctx, band_x, rect.y, band_x, rect.bottom(), 4.0, 4.0);
+        draw_dashed_line(ctx, band_x + band_w, rect.y, band_x + band_w, rect.bottom(), 4.0, 4.0);
+
+        // Honest duration: `delta_ms` is open-to-open across the seam,
+        // which includes the pre-gap bar's OWN interval — subtract the
+        // series' typical spacing so "no data · 13h" means 13 hours of
+        // actually-missing tape (owner call-out 2026-07-15).
+        let hole_ms = (delta_ms - median_delta_ms).max(0);
+        let label = format!("no data \u{b7} {}", humanize_gap_duration(hole_ms));
         // Only promise the pending-archive day(s) when the venue actually
         // HAS a trade archive for this instrument's account type — an
         // honest "no data" label alone otherwise (owner doctrine
@@ -304,29 +323,36 @@ pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, cha
         let text_w = ctx
             .measure_text(&label)
             .max(days_label.as_deref().map(|d| ctx.measure_text(d)).unwrap_or(0.0));
-        let band_w = (5.0 * viewport.bar_spacing)
-            .clamp(28.0, 180.0)
-            .max(text_w + 14.0);
-        let band_x = screen_x - band_w * 0.5;
-        ctx.set_fill_color("rgba(150, 152, 161, 0.10)");
-        ctx.fill_rect(band_x, rect.y, band_w, rect.height);
-
-        // draw_dashed_line strokes with whatever color is current — pin it,
-        // or the marker inherits the last grid/scale stroke.
-        ctx.set_stroke_color(&theme.crosshair);
-        ctx.set_stroke_width(1.0);
-        draw_dashed_line(ctx, band_x, rect.y, band_x, rect.bottom(), 4.0, 4.0);
-        draw_dashed_line(ctx, band_x + band_w, rect.y, band_x + band_w, rect.bottom(), 4.0, 4.0);
 
         ctx.set_fill_color(&theme.crosshair);
-        let label_left = screen_x - text_w * 0.5;
-        let y_off = if label_left < last_label_right + 8.0 { 36.0 } else { 0.0 };
-        last_label_right = screen_x + text_w * 0.5;
-        ctx.fill_text(&label, screen_x, rect.y + rect.height * 0.5 - 14.0 + y_off);
-        // Archive holes are day-file lag: name the missing UTC day(s) so
-        // the user knows what the chart is waiting for.
-        if let Some(days) = days_label.as_deref() {
-            ctx.fill_text(days, screen_x, rect.y + rect.height * 0.5 + 2.0 + y_off);
+        if text_w + 10.0 <= band_w {
+            // Horizontal layout (band wide enough): both lines, with the
+            // adjacent-label collision drop (live incident 2026-07-15).
+            let label_left = screen_x - text_w * 0.5;
+            let y_off = if label_left < last_label_right + 8.0 { 36.0 } else { 0.0 };
+            last_label_right = screen_x + text_w * 0.5;
+            ctx.fill_text(&label, screen_x, rect.y + rect.height * 0.5 - 14.0 + y_off);
+            // Archive holes are day-file lag: name the missing UTC day(s)
+            // so the user knows what the chart is waiting for.
+            if let Some(days) = days_label.as_deref() {
+                ctx.fill_text(days, screen_x, rect.y + rect.height * 0.5 + 2.0 + y_off);
+            }
+        } else {
+            // Vertical layout (narrow band): one compact line, rotated
+            // -90°, centered in the band — no middle dot, no pending line
+            // (owner spec 2026-07-15).
+            let vlabel = format!("no data {}", humanize_gap_duration(hole_ms));
+            ctx.save();
+            ctx.translate(screen_x, rect.y + rect.height * 0.5);
+            ctx.rotate(-std::f64::consts::FRAC_PI_2);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&vlabel, 0.0, 0.0);
+            ctx.restore();
+            // restore() drops the rotation but text alignment/baseline are
+            // context state on some backends — re-pin what the horizontal
+            // path expects.
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Top);
         }
 
         markers_drawn += 1;
