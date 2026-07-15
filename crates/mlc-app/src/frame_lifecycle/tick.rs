@@ -578,7 +578,7 @@ impl ChartApp {
             // list above (trades instead of "1m" klines) — mirrors it
             // exactly, including the `LayerBackfilled{layer:"trades"}`
             // re-fold-in-place consumer (`tick_writers`).
-            let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, mlc_core::ids::BubbleId)> = Vec::new();
+            let mut trade_fold_scroll_pressure_requests: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType, mlc_core::ids::BubbleId, i64)> = Vec::new();
             // Gap-fill scan targets (owner rule 2026-07-15): every visible
             // trade-fold chart, UNCONDITIONALLY of edge/cold demand — the
             // day-14 hole sat in a viewport whose depth demand was fully
@@ -741,25 +741,27 @@ impl ChartApp {
                 // engines' single-flight/exhausted/RAM-cap latches make
                 // this per-tick re-trigger a cheap no-op while a flight is
                 // running or the source is dry.
-                let cold_fill = {
-                    // Demand = the CURRENT viewport's need (owner doctrine
-                    // 2026-07-13: load for what the viewport actually
-                    // shows — trades are a heavyweight source, nothing
-                    // like the sub-second kline REST). Target = 1.5
-                    // screens at the ACTIVE zoom; zooming out grows
-                    // `visible_bars`, so the loop tops up progressively —
-                    // same reactive shape as the scroll-edge threshold.
-                    // `viewport_fit_cap` (450 for the footprint family)
-                    // and the global pixel clamp bound ZOOM, and therefore
-                    // bound this need transitively — they are NOT download
-                    // targets of their own.
+                // Demand = the CURRENT viewport's need (owner doctrine
+                // 2026-07-13: load for what the viewport actually
+                // shows — trades are a heavyweight source, nothing
+                // like the sub-second kline REST). Target = 1.5
+                // screens at the ACTIVE zoom; zooming out grows
+                // `visible_bars`, so the loop tops up progressively —
+                // same reactive shape as the scroll-edge threshold.
+                // `viewport_fit_cap` (450 for the footprint family)
+                // and the global pixel clamp bound ZOOM, and therefore
+                // bound this need transitively — they are NOT download
+                // targets of their own. `need_bars` is hoisted out of the
+                // cold_fill check because it is ALSO the ×2 demand's depth
+                // ceiling below (runaway-march fix, 2026-07-15 #2).
+                let (need_bars, cold_fill) = {
                     let fit = window.viewport().max_fit_bars();
                     let mut need = window.viewport().visible_bars().saturating_mul(3) / 2;
                     if let Some(cap) = mlc_core::chart_type::by_id(chart_type).and_then(|d| d.viewport_fit_cap) {
                         need = need.min(cap as usize);
                     }
                     need = need.min(fit);
-                    fit > 0 && bar_count_scroll < need
+                    (need, fit > 0 && bar_count_scroll < need)
                 };
                 if is_trade_fold {
                     static TF_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -789,12 +791,25 @@ impl ChartApp {
                         *win_at_sc,
                     ));
                 } else if is_trade_fold {
+                    // Depth ceiling for the ×2 demand (runaway-march fix,
+                    // live incident 2026-07-15 #2): the demand window may
+                    // never exceed what the viewport actually needs. On a
+                    // time-TF the need is exact (`need_bars × interval`);
+                    // count-TF bars have no fixed time-per-bar — a hard
+                    // 30-day guard bounds the worst case until the gap/band
+                    // arc gives them a real measure.
+                    let need_ms = if !win_tf_sc.is_tick() && win_tf_sc.interval_ms > 0 {
+                        (need_bars as i64).saturating_mul(win_tf_sc.interval_ms).saturating_mul(13) / 10
+                    } else {
+                        30 * 86_400_000
+                    };
                     trade_fold_scroll_pressure_requests.push((
                         *cid_scroll,
                         win_sym_sc.clone(),
                         win_exch_sc.clone(),
                         *win_at_sc,
                         bid_scroll,
+                        need_ms,
                     ));
                 } else {
                     self.core.bubbles_mut().with_bubble_mut(bid_scroll, |b| {
@@ -866,7 +881,7 @@ impl ChartApp {
             // chunk). Engine latches (in-flight / venue-dry / RAM cap) make
             // the per-tick re-arm a no-op while a chunk runs or the source
             // is done.
-            for (_cid_req, symbol, exchange, account_type, _bid_req) in trade_fold_scroll_pressure_requests {
+            for (_cid_req, symbol, exchange, account_type, _bid_req, need_ms) in trade_fold_scroll_pressure_requests {
                 let eid = digdigdig3::ExchangeId::from_str(&exchange)
                     .unwrap_or(digdigdig3::ExchangeId::Binance);
                 let at = mlc_backend_data_bridge::account_type_to_dig3(account_type);
@@ -909,7 +924,16 @@ impl ChartApp {
                 // logarithmic. `ensure_trade_backfill` ignores demands
                 // while a flight is running, so the ×2 base is always the
                 // settled post-refold window, not a moving target.
-                let demand_window_ms = (have_window_ms * 2).max(3_600_000);
+                // Viewport ceiling (runaway-march fix, live incident
+                // 2026-07-15 #2): without the `min(need_ms)` a chart whose
+                // fold does not grow (e.g. TPO switched on with an empty
+                // series) doubled the window from the engine's own
+                // low-water mark forever — 89M rows marched toward the
+                // archive floor before it was caught. The demand may only
+                // ever ask for what the viewport can show.
+                let demand_window_ms = (have_window_ms * 2)
+                    .max(3_600_000)
+                    .min(need_ms.max(3_600_000));
                 let demand = mlc_backend_data_bridge::TradeDemand {
                     window_ms: Some(demand_window_ms),
                     auto_ceiling_ms: None,
