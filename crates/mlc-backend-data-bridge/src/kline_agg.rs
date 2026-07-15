@@ -21,6 +21,29 @@
 
 use mlc_core::Bar;
 
+/// Resolved aggregation plan for one non-native target TF — the TYPED
+/// return of `DataBridge::resolve_kline_aggregation` (was a positional
+/// `(String, i64, i64)` tuple; the 2026-07-16 runaway-ramp live bug came
+/// from a caller destructuring the middle field as the TARGET duration
+/// when it was the BASE duration — a named struct makes that class of
+/// mistake unrepresentable).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KlineAggregation {
+    /// Canonical dig3 interval string to actually fetch/subscribe (e.g. "1m").
+    pub base_interval: String,
+    /// The base interval's duration in ms.
+    pub base_ms: i64,
+    /// Fan-in: how many base bars fold into one target bucket.
+    pub ratio: i64,
+}
+
+impl KlineAggregation {
+    /// The TARGET bucket duration in ms — the value every fold call must use.
+    pub fn target_ms(&self) -> i64 {
+        self.base_ms.saturating_mul(self.ratio)
+    }
+}
+
 /// Ratio ceiling for treating a native interval as a usable aggregation
 /// base. Above this, the fan-in (number of base bars folded into one
 /// target bucket) is judged impractical — the caller falls back to the
@@ -151,6 +174,25 @@ mod tests {
     //! alignment, partial tail, volume sum, DST-agnostic epoch alignment).
 
     use super::*;
+
+    /// Regression pin for the 2026-07-16 runaway-ramp live bug: a caller
+    /// folding with the plan's BASE duration instead of `target_ms()`
+    /// produces zero folding (1000 base bars → 1000 "target" bars). The
+    /// typed struct exists so the only ergonomic duration to reach for is
+    /// the right one — pin its arithmetic here.
+    #[test]
+    fn plan_target_ms_is_base_times_ratio() {
+        let plan = KlineAggregation {
+            base_interval: "1m".to_string(),
+            base_ms: 60_000,
+            ratio: 7,
+        };
+        assert_eq!(plan.target_ms(), 420_000);
+        // Folding at target_ms() actually folds; folding at base_ms would not.
+        let bars: Vec<Bar> = (0..14).map(|i| bar(i * 60_000, 1.0, 2.0, 0.5, 1.5, 1.0)).collect();
+        assert_eq!(fold_bars_into_buckets(&bars, plan.target_ms()).len(), 2);
+        assert_eq!(fold_bars_into_buckets(&bars, plan.base_ms).len(), 14);
+    }
 
     fn bar(derived_ts_ms: i64, o: f64, h: f64, l: f64, c: f64, v: f64) -> Bar {
         Bar {

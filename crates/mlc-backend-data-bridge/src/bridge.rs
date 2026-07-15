@@ -1156,17 +1156,16 @@ impl DataBridge {
     /// (the existing live-trade-aggregation path is left untouched for that
     /// TF — owner directive: no divisor, no behavior change).
     ///
-    /// `Some((base_interval, base_ms, ratio))` otherwise — `base_interval`
-    /// is the canonical dig3 interval string to actually fetch/subscribe
-    /// (e.g. `"1m"`), `base_ms` its duration, `ratio = target_ms / base_ms`
-    /// the fan-in the caller folds.
+    /// `Some(`[`crate::kline_agg::KlineAggregation`]`)` otherwise — the
+    /// typed plan (base interval string + base duration + fan-in ratio;
+    /// fold callers use its `target_ms()`).
     pub fn resolve_kline_aggregation(
         &self,
         exchange_id: ExchangeId,
         account_type: AccountType,
         target_interval: &str,
         target_ms: i64,
-    ) -> Option<(String, i64, i64)> {
+    ) -> Option<crate::kline_agg::KlineAggregation> {
         let caps = self.hub.kline_interval_capabilities(exchange_id)?;
         if caps.supports(target_interval, account_type) {
             return None;
@@ -1182,7 +1181,11 @@ impl DataBridge {
             "[kline_agg] resolve {:?} target={} base={} ratio={}",
             exchange_id, target_interval, base_label, ratio,
         );
-        Some((base_label.to_string(), base_ms, ratio))
+        Some(crate::kline_agg::KlineAggregation {
+            base_interval: base_label.to_string(),
+            base_ms,
+            ratio,
+        })
     }
 
     /// Record the oldest bar timestamp seen for a given key.
@@ -1511,7 +1514,7 @@ impl DataBridge {
             // the log line) plus the running target-bucket accumulator.
             let station_interval = kline_agg
                 .as_ref()
-                .map(|(base, _, _)| base.clone())
+                .map(|agg| agg.base_interval.clone())
                 .unwrap_or_else(|| interval.clone());
             let station_tf_name = tf_name.clone();
             let agg_target_ms = kline_agg.as_ref().map(|_| target_interval_ms);
@@ -1716,9 +1719,9 @@ impl DataBridge {
             // yields close to 300 target bars. Native path unchanged (300 @
             // target interval, exactly as before).
             let (fetch_interval, fetch_limit): (&str, u16) = match &kline_agg {
-                Some((base_interval, _base_ms, ratio)) => {
-                    let scaled = 300i64.saturating_mul(*ratio).min(1000);
-                    (base_interval.as_str(), scaled.max(1) as u16)
+                Some(agg) => {
+                    let scaled = 300i64.saturating_mul(agg.ratio).min(1000);
+                    (agg.base_interval.as_str(), scaled.max(1) as u16)
                 }
                 None => (interval.as_str(), 300),
             };
@@ -1754,7 +1757,7 @@ impl DataBridge {
                     crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", n);
                     let base_bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
                     let bars = match &kline_agg {
-                        Some((_, _, _)) => crate::kline_agg::fold_bars_into_buckets(&base_bars, target_interval_ms),
+                        Some(agg) => crate::kline_agg::fold_bars_into_buckets(&base_bars, agg.target_ms()),
                         None => base_bars,
                     };
                     crate::dlog!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} base bars -> {} folded bars", exchange_id, symbol_str, account_type, tf_name, n, bars.len());

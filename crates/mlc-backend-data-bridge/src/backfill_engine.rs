@@ -889,11 +889,12 @@ impl DataBridge {
 /// run), `false` for the scroll-pressure path (target ignored — unbounded
 /// until venue-dry).
 ///
-/// `agg`, when `Some((base_interval, target_ms, ratio))`, means `tf_name`
-/// is a non-native target this venue does not natively serve (granularity
-/// arc defect fix 2026-07-16) — every REST page fetches `base_interval`
-/// bars instead of `interval`, folds them into `target_ms`-duration
-/// buckets, and records the FOLDED bar count into `RampState` so
+/// `agg`, when `Some(`[`crate::kline_agg::KlineAggregation`]`)`, means
+/// `tf_name` is a non-native target this venue does not natively serve
+/// (granularity arc defect fix 2026-07-16) — every REST page fetches
+/// `agg.base_interval` bars instead of `interval`, folds them into
+/// `agg.target_ms()`-duration target buckets, and records the FOLDED bar
+/// count into `RampState` so
 /// `loaded`/`target` stay in target-bar units (honest `loaded/target`
 /// counters — a caller asking for 500 target bars sees the ramp stop once
 /// 500 target bars have actually landed, not 500 base bars = far fewer
@@ -911,7 +912,7 @@ async fn run_kline_ramp(
     interval: String,
     tf_name: String,
     gate_on_target: bool,
-    agg: Option<(String, i64, i64)>,
+    agg: Option<crate::kline_agg::KlineAggregation>,
 ) {
     // Readiness barrier — same pattern as the legacy backfill/scroll fns.
     {
@@ -938,17 +939,28 @@ async fn run_kline_ramp(
     // times as many BASE bars per page so one page still yields close to
     // `page_size` folded TARGET bars — `klines_paginated`'s own `limit`
     // clamp (`page_size.min(1000)`) caps the burst regardless of ratio.
+    // 2026-07-16 LIVE BUG (runaway ramp, 792k 1m bars fetched against a
+    // 2000-bar target): the old positional tuple's middle field was
+    // `base_ms`, NOT the target duration — destructuring it as `target_ms`
+    // made `fold_bars_into_buckets` bucket 1m base bars into 1m buckets
+    // (zero folding): 1000 raw base bars per page flooded the target-TF
+    // layer (1m bars rendered under a "7m" label), `loaded` grew in base
+    // units, and the demand side kept firing because time coverage never
+    // grew as computed. The typed `KlineAggregation::target_ms()` makes
+    // the mistake unrepresentable.
     let (fetch_interval, fetch_page_size, target_ms): (&str, usize, Option<i64>) = match &agg {
-        Some((base_interval, target_ms, ratio)) => {
-            (base_interval.as_str(), page_size.saturating_mul((*ratio).max(1) as usize), Some(*target_ms))
-        }
+        Some(a) => (
+            a.base_interval.as_str(),
+            page_size.saturating_mul(a.ratio.max(1) as usize),
+            Some(a.target_ms()),
+        ),
         None => (interval.as_str(), page_size, None),
     };
     if agg.is_some() {
         crate::dlog!(
             "[kline_agg] target={} base={} ratio={} key={:?}/{}",
             tf_name, fetch_interval,
-            agg.as_ref().map(|(_, _, r)| *r).unwrap_or(1),
+            agg.as_ref().map(|a| a.ratio).unwrap_or(1),
             key.0, key.1,
         );
     }
@@ -1049,6 +1061,16 @@ async fn run_kline_ramp(
     // (ramp-escalated) group. Brief inter-group pause keeps the REST cadence
     // polite (mirrors the trade ramp's pacing).
     if engine.with_state(&key, |s| !s.target_satisfied(gate_on_target)) {
+        break 'run;
+    }
+    // Scroll-pressure phase (`gate_on_target == false`): ONE group per
+    // flight, always. `target_satisfied(false)` is unconditionally `true`
+    // (target ignored by design), so without this bound the 'run loop
+    // marches groups until venue-dry — the demand side re-fires pressure
+    // while the user actually holds the edge, which is the correct pacing
+    // signal; a single flight must not self-drive to the beginning of
+    // venue history (2026-07-16 runaway incident, co-factor #2).
+    if !gate_on_target {
         break 'run;
     }
     sleep_ms(150).await;
