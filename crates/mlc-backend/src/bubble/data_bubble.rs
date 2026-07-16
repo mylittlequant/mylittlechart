@@ -425,6 +425,19 @@ pub struct DataBubble {
     /// `active_fold`.
     pub active_cvd_fold: Option<super::view_fold::TradeFoldRuntime>,
 
+    /// Installed when the bubble's ACTIVE timeframe is TRADE-BUILT (owner
+    /// report 2026-07-16 — no native kline source and no native divisor
+    /// exists for it on the active venue; see
+    /// `mlc_backend_data_bridge::is_trade_built`). `None` otherwise —
+    /// including while the active TF is native or client-side-aggregated
+    /// from a native divisor (that family keeps riding the ordinary kline
+    /// path unchanged). Folds the shared per-instrument `TradeStore` into
+    /// `kline_layers[tf_name]` (+ `bubble.bars` when display-writable) —
+    /// see `crate::bubble::trade_built_kline` module doc. Not carried
+    /// across `Clone` — same stateful-accumulator rationale as
+    /// `active_fold`.
+    pub active_trade_built_kline: Option<super::trade_built_kline::TradeBuiltKlineRuntime>,
+
     // =========================================================================
     // === Refold debounce (P0 hang fix part 2, chart-series arc 2026-07-10) ==
     // =========================================================================
@@ -525,6 +538,7 @@ impl DataBubble {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            active_trade_built_kline: None,
             last_refold_at: None,
             refold_dirty: false,
         }
@@ -792,6 +806,16 @@ impl DataBubble {
         // lifecycle is independent of chart_type (see doc comment above).
         self.active_fold = None;
         self.active_trade_fold = None;
+        // TRADE-BUILT kline runtime (owner report 2026-07-16): serves ONLY
+        // the render-only kline family (candles/bars/line/...) on its
+        // installed TF — a switch AWAY from that family (this method's
+        // caller, e.g. kline -> footprint/renko) has no further use for it.
+        // A render-only-to-render-only switch (candles -> line) never calls
+        // this method (`render_only_switch` short-circuits it at the call
+        // site) so the runtime survives exactly the cases where it's still
+        // needed. `abort_kline_bars` is the OTHER teardown path (TF switch
+        // away from the trade-built TF while staying in the kline family).
+        self.active_trade_built_kline = None;
         if keep != Some("renko") { self.clear_renko(); }
         if keep != Some("pnf") { self.clear_pnf(); }
         if keep != Some("kagi") { self.clear_kagi(); }
@@ -970,6 +994,7 @@ impl Clone for DataBubble {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            active_trade_built_kline: None,
             last_refold_at: None,
             refold_dirty: false,
         }

@@ -1188,6 +1188,39 @@ impl DataBridge {
         })
     }
 
+    /// Whether `target_interval` on `(exchange_id, account_type)` must be
+    /// built by folding raw TRADES rather than fetched/aggregated from
+    /// kline REST/WS (TRADE-BUILT klines fix, 2026-07-16 — see
+    /// [`crate::kline_agg::is_trade_built`]'s doc comment for the exact
+    /// classification rule).
+    ///
+    /// `false` when the exchange isn't connected yet (capability unknown —
+    /// same fail-open contract as [`Self::kline_interval_native`] /
+    /// [`Self::resolve_kline_aggregation`]: callers must not treat an
+    /// unresolved capability as "trade-built", or a chart would flip into
+    /// the trade-fold path for an instant before the connector answers,
+    /// then flip back once `kline_interval_capabilities` resolves).
+    ///
+    /// Every venue serves a trade stream (`DataMode` doc, every connector
+    /// has one) — there is no "trades unavailable" case to additionally
+    /// gate on here.
+    pub fn is_kline_trade_built(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        target_ms: i64,
+    ) -> bool {
+        let Some(caps) = self.hub.kline_interval_capabilities(exchange_id) else {
+            return false;
+        };
+        let native: Vec<(&str, i64)> = caps
+            .intervals_for(account_type)
+            .iter()
+            .filter_map(|&label| crate::convert::interval_to_ms(label).map(|ms| (label, ms)))
+            .collect();
+        crate::kline_agg::is_trade_built(target_ms, &native)
+    }
+
     /// Record the oldest bar timestamp seen for a given key.
     ///
     /// Only updates the stored value when `ts` is strictly older (smaller) than
@@ -1374,6 +1407,35 @@ impl DataBridge {
             crate::dlog!("[request_bars] empty symbol refused exchange={} tf={}", exchange_id.as_str(), timeframe.name);
             return;
         }
+
+        // TRADE-BUILT klines fix (2026-07-16): a target TF with no native
+        // divisor (e.g. Bybit 15s — smallest native kline is 1m) must NOT
+        // dial dig3 kline REST/WS at all — `map_kline_interval` silently
+        // falls back to some unrelated native interval (Bybit `_ => "60"`),
+        // which previously showed hourly bars mislabeled with the target
+        // TF's name and no live sub-minute bars ever formed. `mlc-backend`
+        // owns TRADE-BUILT history/live entirely (folds the shared
+        // `TradeStore` — see `chart_type/lifecycle.rs`'s
+        // `subscribe_trade_built_kline`); this bridge call's ONLY
+        // responsibility for such a TF is to clear whatever stale/
+        // mislabeled bars the kline layer/display might be holding from a
+        // previous (wrong) subscription, via the exact same full-replace
+        // `BarsLoaded` shape a normal fresh load emits (empty `bars`).
+        if self.is_kline_trade_built(exchange_id, account_type, timeframe.interval_ms) {
+            crate::dlog!(
+                "[request_bars] trade-built TF, skip dig3 dial exchange={} sym={} tf={}",
+                exchange_id.as_str(), symbol, timeframe.name,
+            );
+            let _ = self.tx.send(LiveUpdate::BarsLoaded {
+                exchange_id,
+                account_type,
+                symbol: symbol.to_string(),
+                timeframe: timeframe.name.clone(),
+                bars: Vec::new(),
+            });
+            return;
+        }
+
         let _rb_total = web_time::Instant::now();
         // Phase 2B: historical fetch (Phase A + Phase B) runs through the
         // STATION's shared hub so it reuses the same connector pool as live

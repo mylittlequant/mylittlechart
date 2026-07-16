@@ -56,7 +56,10 @@ pub use bridge::{
     RawTradeWire,
 };
 pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState, TradeDemand, TradeLadderStage};
-pub use kline_agg::{aggregation_base, bucket_start_ms, fold_bars_into_buckets, MAX_AGGREGATION_RATIO};
+pub use kline_agg::{
+    aggregation_base, bucket_start_ms, fold_bars_into_buckets, fold_trades_into_bars,
+    is_trade_built, MAX_AGGREGATION_RATIO,
+};
 pub use provider::LiveDataProvider;
 pub use convert::{
     account_type_from_dig3, account_type_to_dig3, interval_to_ms, kline_to_bar, resolve_exchange,

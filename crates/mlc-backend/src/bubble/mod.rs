@@ -5,6 +5,7 @@ mod snapshot;
 mod facade;
 mod raw_layer;
 mod view_fold;
+mod trade_built_kline;
 pub use data_bubble::*;
 pub use store::{BubbleStore, InstrumentKey};
 pub use render::{build_chart_render_state, ChartWindowRenderInputs};
@@ -14,3 +15,4 @@ pub use view_fold::{
     bar_to_bar_point, raw_trade_to_trade_point, FoldOutput, FoldParams, FoldRuntime,
     TradeFoldOutput, TradeFoldRuntime,
 };
+pub use trade_built_kline::TradeBuiltKlineRuntime;

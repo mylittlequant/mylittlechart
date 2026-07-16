@@ -97,6 +97,7 @@ impl BubbleStore {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            active_trade_built_kline: None,
             last_refold_at: None,
             refold_dirty: false,
         };
@@ -158,6 +159,7 @@ impl BubbleStore {
             active_fold: None,
             active_trade_fold: None,
             active_cvd_fold: None,
+            active_trade_built_kline: None,
             last_refold_at: None,
             refold_dirty: false,
         };

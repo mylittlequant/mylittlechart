@@ -770,6 +770,15 @@ impl DataBridge {
         account_type: AccountType,
         target_bars: Option<u32>,
     ) {
+        // TRADE-BUILT klines fix (2026-07-16): never start a kline REST
+        // flight for a target TF with no native divisor — see
+        // `DataBridge::request_bars`'s matching guard for the full
+        // rationale. History for this key rides the trade plane's own
+        // demand (`ensure_trade_backfill`), not the kline ramp.
+        if self.is_kline_trade_built(exchange_id, account_type, timeframe.interval_ms) {
+            return;
+        }
+
         let key: BackfillKey = (
             exchange_id,
             symbol.to_string(),
@@ -843,6 +852,14 @@ impl DataBridge {
         timeframe: &mlc_core::state::Timeframe,
         account_type: AccountType,
     ) {
+        // TRADE-BUILT klines fix (2026-07-16): see `ensure_kline_backfill`'s
+        // matching guard — a trade-built target never starts a kline ramp,
+        // scroll pressure included. Deeper history for these keys rides
+        // the trade plane's own store window, not kline scroll.
+        if self.is_kline_trade_built(exchange_id, account_type, timeframe.interval_ms) {
+            return;
+        }
+
         let key: BackfillKey = (
             exchange_id,
             symbol.to_string(),

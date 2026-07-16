@@ -21,6 +21,8 @@
 
 use mlc_core::Bar;
 
+use crate::bridge::RawTradeWire;
+
 /// Resolved aggregation plan for one non-native target TF — the TYPED
 /// return of `DataBridge::resolve_kline_aggregation` (was a positional
 /// `(String, i64, i64)` tuple; the 2026-07-16 runaway-ramp live bug came
@@ -97,6 +99,35 @@ pub fn aggregation_base<'a>(
         .map(|(label, ratio)| (label, ratio))
 }
 
+/// Whether a `target_ms`-duration timeframe must be built by folding raw
+/// TRADES rather than fetched/aggregated from kline REST/WS (TRADE-BUILT
+/// klines fix, 2026-07-16 — owner report: selecting 15s on Bybit silently
+/// fell back to hourly bars mislabeled "15s", because Bybit's smallest
+/// native kline is 1m and no native interval divides 15s evenly).
+///
+/// `true` iff `target_ms` is NOT itself in `native` AND
+/// [`aggregation_base`] finds no usable native divisor for it. This is
+/// intentionally NOT restricted to sub-minute targets: ANY non-native,
+/// non-divisible target (e.g. a hypothetical 90s TF on a venue whose
+/// smallest native interval is 1m — 90s doesn't divide by 60s either) is
+/// trade-built by the same rule, because the underlying problem
+/// (`aggregation_base` returning `None`) is identical regardless of
+/// whether the target is smaller or larger than the smallest native
+/// interval. Callers must check nativeness is not already established by
+/// their own faster path first (same caller contract as
+/// [`aggregation_base`]) — this function re-derives it internally so it is
+/// safe to call standalone.
+pub fn is_trade_built(target_ms: i64, native: &[(&str, i64)]) -> bool {
+    if target_ms <= 0 {
+        return false;
+    }
+    let is_native = native.iter().any(|&(_, base_ms)| base_ms == target_ms);
+    if is_native {
+        return false;
+    }
+    aggregation_base(target_ms, native).is_none()
+}
+
 /// Epoch-aligned bucket boundary (ms) containing `ts_ms` for a
 /// `target_ms`-duration bucket grid — `ts_ms - ts_ms.rem_euclid(target_ms)`.
 /// DST-agnostic (pure integer arithmetic on UTC epoch ms, no calendar/zone
@@ -161,6 +192,69 @@ pub fn fold_bars_into_buckets(base_bars: &[Bar], target_ms: i64) -> Vec<Bar> {
             last.low = last.low.min(bar.low);
             last.close = bar.close;
             last.volume += bar.volume;
+        }
+    }
+
+    out
+}
+
+/// Fold a slice of raw trades (any order — sorted internally) into
+/// `target_ms`-duration OHLCV buckets, for TRADE-BUILT timeframes (see
+/// [`is_trade_built`]) — the trade-plane analogue of
+/// [`fold_bars_into_buckets`], which folds kline bars instead.
+///
+/// Bucketing is keyed by each trade's `ts_ms`, epoch-aligned via
+/// [`bucket_start_ms`] exactly like the kline fold. Per bucket: `open` =
+/// first trade's price, `close` = last trade's price, `high`/`low` =
+/// max/min price across the bucket's trades, `volume` = sum of `qty`. The
+/// output bucket's `timestamp`/`derived_ts_ms` are the bucket's own
+/// epoch-aligned start, never copied from any input trade.
+///
+/// **A bucket with no trades emits NO bar** — gaps are honest (unlike the
+/// kline fold, there is no upstream bar to carry a flat OHLC forward for a
+/// silent interval; a chart consumer sees a genuine hole exactly where no
+/// trading happened). This is the one behavioral difference from
+/// [`fold_bars_into_buckets`], which always emits a bucket for every base
+/// bar it consumes (base bars themselves already encode "no gap" from the
+/// venue). The trailing (possibly partial) bucket IS included as long as
+/// at least one trade landed in it — that partial bucket is the live
+/// in-progress bar.
+///
+/// `target_ms <= 0` or an empty `trades` slice returns an empty `Vec`.
+pub fn fold_trades_into_bars(trades: &[RawTradeWire], target_ms: i64) -> Vec<Bar> {
+    if target_ms <= 0 || trades.is_empty() {
+        return Vec::new();
+    }
+
+    let mut sorted: Vec<&RawTradeWire> = trades.iter().collect();
+    sorted.sort_by_key(|t| t.ts_ms);
+
+    let mut out: Vec<Bar> = Vec::new();
+    let mut current_bucket_start: Option<i64> = None;
+
+    for trade in sorted {
+        let bucket_start = bucket_start_ms(trade.ts_ms, target_ms);
+        let start_new_bucket = match current_bucket_start {
+            Some(cur) => bucket_start != cur,
+            None => true,
+        };
+
+        if start_new_bucket {
+            out.push(Bar {
+                timestamp: bucket_start / 1000,
+                open: trade.price,
+                high: trade.price,
+                low: trade.price,
+                close: trade.price,
+                volume: trade.qty,
+                derived_ts_ms: bucket_start,
+            });
+            current_bucket_start = Some(bucket_start);
+        } else if let Some(last) = out.last_mut() {
+            last.high = last.high.max(trade.price);
+            last.low = last.low.min(trade.price);
+            last.close = trade.price;
+            last.volume += trade.qty;
         }
     }
 
@@ -433,5 +527,193 @@ mod tests {
         let folded = fold_bars_into_buckets(&bars, target_ms);
         assert_eq!(folded.len(), 1);
         assert_eq!(folded[0].timestamp, folded[0].derived_ts_ms / 1000);
+    }
+
+    // ── is_trade_built (TRADE-BUILT klines fix, 2026-07-16) ─────────────────
+
+    /// Bybit-like native set: smallest native kline is 1m.
+    const BYBIT_LIKE_NATIVE: [(&str, i64); 3] = [("1m", 60_000), ("5m", 300_000), ("1h", 3_600_000)];
+
+    #[test]
+    fn sub_native_15s_is_trade_built() {
+        assert!(is_trade_built(15_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn sub_native_1s_is_trade_built() {
+        assert!(is_trade_built(1_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn sub_native_30s_is_trade_built() {
+        assert!(is_trade_built(30_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn seven_minute_target_is_aggregated_not_trade_built() {
+        // 7m has a native divisor (1m, ratio 7) — aggregated, not trade-built.
+        assert!(!is_trade_built(7 * 60_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn thirty_minute_target_is_native_not_trade_built() {
+        // Not in BYBIT_LIKE_NATIVE directly, but divisible by 1m (ratio 30) —
+        // aggregated. A genuinely NATIVE match (exact same duration in the
+        // native set) must also resolve false; cover that with 1h below.
+        assert!(!is_trade_built(30 * 60_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn exact_native_match_is_not_trade_built() {
+        assert!(!is_trade_built(3_600_000, &BYBIT_LIKE_NATIVE)); // == "1h"
+    }
+
+    #[test]
+    fn supra_native_non_divisor_is_trade_built() {
+        // 90s: larger than the smallest native interval (60s) but NOT an
+        // integer multiple of it (90 % 60 != 0) — still trade-built. Any
+        // no-divisor TF is trade-built regardless of whether it's smaller
+        // or larger than the smallest native interval (doc comment on
+        // `is_trade_built`).
+        let native = [("1m", 60_000)];
+        assert!(is_trade_built(90_000, &native));
+    }
+
+    #[test]
+    fn zero_or_negative_target_is_not_trade_built() {
+        assert!(!is_trade_built(0, &BYBIT_LIKE_NATIVE));
+        assert!(!is_trade_built(-1_000, &BYBIT_LIKE_NATIVE));
+    }
+
+    #[test]
+    fn empty_native_set_makes_everything_trade_built() {
+        // A venue with zero known native intervals (not yet connected, or
+        // genuinely has none) — every positive target is trade-built.
+        let native: [(&str, i64); 0] = [];
+        assert!(is_trade_built(60_000, &native));
+        assert!(is_trade_built(15_000, &native));
+    }
+
+    // ── fold_trades_into_bars ────────────────────────────────────────────
+
+    fn trade(ts_ms: i64, price: f64, qty: f64) -> RawTradeWire {
+        RawTradeWire { ts_ms, price, qty, is_buyer_maker: false }
+    }
+
+    #[test]
+    fn folds_trades_into_seconds_scale_buckets() {
+        // 15s buckets — the exact owner-report scale (Bybit 15s sub-native).
+        let target_ms = 15_000i64;
+        let trades = vec![
+            trade(0, 100.0, 1.0),
+            trade(5_000, 101.0, 2.0),
+            trade(14_999, 99.0, 3.0),
+            // New bucket starts at 15_000.
+            trade(15_000, 102.0, 1.0),
+            trade(20_000, 103.0, 0.5),
+        ];
+        let bars = fold_trades_into_bars(&trades, target_ms);
+        assert_eq!(bars.len(), 2);
+
+        assert_eq!(bars[0].derived_ts_ms, 0);
+        assert_eq!(bars[0].open, 100.0);
+        assert_eq!(bars[0].close, 99.0);
+        assert_eq!(bars[0].high, 101.0);
+        assert_eq!(bars[0].low, 99.0);
+        assert_eq!(bars[0].volume, 6.0);
+
+        assert_eq!(bars[1].derived_ts_ms, 15_000);
+        assert_eq!(bars[1].open, 102.0);
+        assert_eq!(bars[1].close, 103.0);
+        assert_eq!(bars[1].high, 103.0);
+        assert_eq!(bars[1].low, 102.0);
+        assert_eq!(bars[1].volume, 1.5);
+    }
+
+    #[test]
+    fn gap_buckets_are_omitted_not_flat_filled() {
+        // Trades in bucket 0 and bucket 3 (buckets 1, 2 have no trades) —
+        // the fold must NOT synthesize flat bars for the empty buckets.
+        let target_ms = 10_000i64;
+        let trades = vec![
+            trade(0, 50.0, 1.0),
+            trade(30_000, 55.0, 1.0), // bucket index 3 (30_000 / 10_000)
+        ];
+        let bars = fold_trades_into_bars(&trades, target_ms);
+        assert_eq!(bars.len(), 2, "only 2 buckets have trades — no gap-filled bars");
+        assert_eq!(bars[0].derived_ts_ms, 0);
+        assert_eq!(bars[1].derived_ts_ms, 30_000);
+    }
+
+    #[test]
+    fn volume_is_sum_of_trade_qty_in_bucket() {
+        let target_ms = 60_000i64;
+        let trades = vec![
+            trade(0, 10.0, 0.1),
+            trade(10_000, 10.5, 0.2),
+            trade(20_000, 10.2, 0.3),
+            trade(30_000, 10.8, 0.05),
+        ];
+        let bars = fold_trades_into_bars(&trades, target_ms);
+        assert_eq!(bars.len(), 1);
+        assert!((bars[0].volume - 0.65).abs() < 1e-12);
+    }
+
+    #[test]
+    fn open_close_ordering_is_first_and_last_trade_by_time_not_input_order() {
+        // Input given out of chronological order — fold must sort by ts_ms
+        // first, so open = earliest trade's price, close = latest trade's.
+        let target_ms = 60_000i64;
+        let trades = vec![
+            trade(40_000, 30.0, 1.0), // latest -> should become close
+            trade(0, 10.0, 1.0),      // earliest -> should become open
+            trade(20_000, 50.0, 1.0), // highest -> should become high
+            trade(10_000, 5.0, 1.0),  // lowest -> should become low
+        ];
+        let bars = fold_trades_into_bars(&trades, target_ms);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].open, 10.0);
+        assert_eq!(bars[0].close, 30.0);
+        assert_eq!(bars[0].high, 50.0);
+        assert_eq!(bars[0].low, 5.0);
+    }
+
+    #[test]
+    fn trade_fold_trailing_partial_bucket_is_the_live_bar() {
+        let target_ms = 15_000i64;
+        let trades = vec![trade(15_000, 100.0, 1.0), trade(16_000, 101.0, 1.0)];
+        let bars = fold_trades_into_bars(&trades, target_ms);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].derived_ts_ms, 15_000);
+        assert_eq!(bars[0].close, 101.0);
+    }
+
+    #[test]
+    fn trade_fold_empty_input_returns_empty() {
+        assert!(fold_trades_into_bars(&[], 15_000).is_empty());
+    }
+
+    #[test]
+    fn trade_fold_zero_target_ms_returns_empty() {
+        let trades = vec![trade(0, 1.0, 1.0)];
+        assert!(fold_trades_into_bars(&trades, 0).is_empty());
+    }
+
+    #[test]
+    fn trade_fold_single_trade_is_a_single_ohlc_point() {
+        let bars = fold_trades_into_bars(&[trade(1_000, 42.0, 3.5)], 15_000);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].open, 42.0);
+        assert_eq!(bars[0].high, 42.0);
+        assert_eq!(bars[0].low, 42.0);
+        assert_eq!(bars[0].close, 42.0);
+        assert_eq!(bars[0].volume, 3.5);
+    }
+
+    #[test]
+    fn trade_fold_timestamp_seconds_matches_derived_ts_ms_bucket() {
+        let bars = fold_trades_into_bars(&[trade(1_000, 1.0, 1.0)], 15_000);
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].timestamp, bars[0].derived_ts_ms / 1000);
     }
 }

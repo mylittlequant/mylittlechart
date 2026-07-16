@@ -1128,6 +1128,167 @@ impl BackendCore {
     }
 
     // =========================================================================
+    // === TRADE-BUILT kline fold (owner report 2026-07-16) ===================
+    // =========================================================================
+    //
+    // Target TFs with no native kline source AND no native divisor (see
+    // `mlc_backend_data_bridge::is_trade_built`) — the bridge's
+    // `request_bars`/`ensure_kline_backfill`/`on_kline_scroll_pressure`
+    // never dial dig3 for these; `mlc-backend` builds the whole series by
+    // folding the shared per-instrument `TradeStore`, mirroring the
+    // trade-fold family's install → reseed → live-fold shape one layer
+    // over (writes into `kline_layers[tf_name]` + `bubble.bars`, not a
+    // dedicated bubble slot).
+
+    /// Install (or replace) `bid`'s [`bubble::TradeBuiltKlineRuntime`] for
+    /// `tf_name`/`target_ms`, ensure the bubble's instrument has a live
+    /// trade feed + backfill demand (same ensure/subscribe calls
+    /// [`Self::subscribe_trade_fold_chart_type`] uses), and reseed
+    /// synchronously from whatever the shared `TradeStore` already holds.
+    ///
+    /// Called from the `request_kline` facade (`lib.rs`) when the caller's
+    /// TF resolves as trade-built on the active venue — the bridge side of
+    /// that same call already cleared the stale kline layer/display via an
+    /// empty full-replace `BarsLoaded` (see `DataBridge::request_bars`'s
+    /// matching guard), so the seed below always starts from a clean slate
+    /// display-wise.
+    ///
+    /// Returns the [`BubbleEvent`] the caller should feed through
+    /// `ChartApp::react_to_bubble_event` — `None` when `bid` doesn't
+    /// resolve to a live bubble.
+    pub fn subscribe_trade_built_kline(
+        &self,
+        bid: BubbleId,
+        tf_name: &str,
+        target_ms: i64,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<BubbleEvent> {
+        // Live feed + history demand — mirrors `subscribe_trade_fold_chart_type`'s
+        // ordering (install/reseed BEFORE the async ensure calls land, so a
+        // `TradeHistoryPrepended`/`LayerBackfilled` racing in cannot find
+        // this bubble mid-install and skip it).
+        let mut fold = crate::bubble::TradeBuiltKlineRuntime::new(tf_name.to_string(), target_ms);
+        let trade_key = mlc_core::instrument::InstrumentAddress::new(
+            exchange_id.as_str(), symbol.to_string(), account_type.short_label().parse().unwrap_or_default(),
+        );
+        let trade_snapshot: Vec<crate::bubble::RawTrade> = self.trade_store.snapshot_all(&trade_key);
+        let bars = fold.reseed(&trade_snapshot);
+        self.bubbles_mut().with_bubble_mut(bid, |b| b.active_trade_built_kline = Some(fold));
+        let event = self.apply_trade_built_kline_outputs(bid, tf_name, bars, exchange_id, symbol, account_type);
+
+        self.subscribe_trades(exchange_id, symbol, account_type);
+        // TF-scaled ceiling (mirrors `subscribe_trade_fold_chart_type`'s
+        // ladder choice): a sub-minute/odd-duration target's natural depth
+        // unit is small, so the 1h floor already used for every other
+        // trade-fed subscribe is the right shallow-warm ceiling here too —
+        // scroll demand widens further, bounded by the store's own 4-day
+        // raw window (module doc, "Store window honesty").
+        self.bridge.ensure_trade_backfill(
+            exchange_id, symbol, account_type,
+            Some(mlc_backend_data_bridge::TradeDemand { window_ms: None, auto_ceiling_ms: Some(3_600_000) }),
+        );
+
+        event
+    }
+
+    /// Replace `bid`'s kline layer for `tf_name` wholesale with `bars` (a
+    /// full reseed's worth, oldest-first) and — when the bubble's active
+    /// series is display-writable for this exact TF (mirrors the
+    /// `bars_source == Kline && timeframe.name == tf_name` gate
+    /// `tick_writers`' `BarsLoaded` arm enforces for the ordinary kline
+    /// path) — replace `bubble.bars` too, returning the matching
+    /// [`BubbleEvent::BarsLoaded`]. Shared by [`Self::subscribe_trade_built_kline`]
+    /// (install) and the `LayerBackfilled`/`TradeGapFilled` deepening path
+    /// in `tick_writers` — both are "the trade layer got deeper/wider, redo
+    /// the full fold" operations.
+    pub(crate) fn apply_trade_built_kline_outputs(
+        &self,
+        bid: BubbleId,
+        tf_name: &str,
+        bars: Vec<Bar>,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<BubbleEvent> {
+        let mut mgr = self.bubbles_mut();
+        mgr.kline_layer_seed_block(bid, tf_name, bars.clone());
+        let display_writable = mgr.bars_source(bid) == crate::bubble::BarsSource::Kline
+            && mgr.timeframe(bid).map(|tf| tf.name.as_str()) == Some(tf_name);
+        if !display_writable {
+            return None;
+        }
+        let prev_bars = mgr.bars(bid).to_vec();
+        let display_bars = mgr.kline_layer_snapshot(bid, tf_name);
+        mgr.replace_bars(bid, display_bars.clone());
+        drop(mgr);
+        Some(BubbleEvent::BarsLoaded {
+            bid,
+            exchange_id,
+            symbol: symbol.to_string(),
+            account_type: account_type.short_label().to_string(),
+            timeframe: tf_name.to_string(),
+            bars: display_bars,
+            prev_bars,
+        })
+    }
+
+    /// Fold one live trade into `bid`'s active [`bubble::TradeBuiltKlineRuntime`],
+    /// if installed, and upsert the resulting bar into `kline_layers[tf_name]`
+    /// + (when display-writable) `bubble.bars` — mirrors [`Self::fold_on_live_1m`]'s
+    /// same-bucket-update-in-place / new-bucket-append split, one layer
+    /// over (trade tick instead of 1m kline tick as the upstream event).
+    /// `tick_writers`' `TradeUpdate` arm calls this for every bubble on the
+    /// instrument; a no-op (returns `None`) when the bubble has no active
+    /// trade-built-kline runtime.
+    pub(crate) fn trade_built_kline_on_live_trade(
+        &self,
+        bid: BubbleId,
+        trade: crate::bubble::RawTrade,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<BubbleEvent> {
+        let (tf_name, bar) = self.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.active_trade_built_kline.as_mut().map(|f| (f.tf_name().to_string(), f.on_live_trade(trade)))
+        }).flatten()?;
+
+        let mut mgr = self.bubbles_mut();
+        mgr.kline_layer_push_live(bid, &tf_name, bar);
+        let display_writable = mgr.bars_source(bid) == crate::bubble::BarsSource::Kline
+            && mgr.timeframe(bid).map(|tf| tf.name.as_str()) == Some(tf_name.as_str());
+        if !display_writable {
+            return None;
+        }
+        let last_ts_identity = mgr.bars(bid).last().map(|b| {
+            if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp }
+        });
+        let new_ts_identity = if bar.derived_ts_ms != 0 { bar.derived_ts_ms } else { bar.timestamp };
+        if last_ts_identity == Some(new_ts_identity) {
+            mgr.with_bubble_mut(bid, |b| {
+                if let Some(last) = b.last_bar_mut() {
+                    last.open = bar.open;
+                    last.high = bar.high;
+                    last.low = bar.low;
+                    last.close = bar.close;
+                    last.volume = bar.volume;
+                }
+            });
+        } else {
+            mgr.with_bubble_mut(bid, |b| b.append_bar(bar));
+        }
+        let last_bar = mgr.bars(bid).last().copied().unwrap_or(bar);
+        drop(mgr);
+        Some(BubbleEvent::BarUpdatePassthrough {
+            exchange_id,
+            account_type: account_type.short_label().to_string(),
+            symbol: symbol.to_string(),
+            bar: last_bar,
+        })
+    }
+
+    // =========================================================================
     // === ATR(14) box-size mode (granularity arc, кусок 2, 2026-07-15) =======
     // =========================================================================
 

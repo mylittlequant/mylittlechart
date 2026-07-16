@@ -719,6 +719,20 @@ pub struct BackendCore {
     /// `mlc-app`'s demand dispatch via [`Self::trade_oldest_ts`].
     pub trade_store: TradeStore,
 
+    /// Synchronous [`BubbleEvent`]s queued by facade calls that mutate the
+    /// bubble store OUTSIDE the broadcast-driven `tick_writers` loop and
+    /// have no per-bubble caller in hand to hand the event to directly
+    /// (unlike `subscribe_fold_chart_type`/`subscribe_trade_fold_chart_type`,
+    /// whose callers always already hold `bid` and consume the returned
+    /// `Option<BubbleEvent>` inline). [`Self::request_kline`]'s TRADE-BUILT
+    /// branch is the first user: it fans out to every bubble on the
+    /// instrument (mirrors `tick_writers`' own `BarsLoaded` fan-out) with
+    /// no single caller-held `bid`. Drained at the START of every
+    /// `tick_writers` call, ahead of the broadcast drain, so a same-frame
+    /// `request_kline` → next `tick()` round-trip sees the seed exactly
+    /// like an ordinary async `LiveUpdate::BarsLoaded` would have.
+    pending_bubble_events: std::sync::Mutex<Vec<BubbleEvent>>,
+
     /// Symbol catalogue per exchange — populated asynchronously from
     /// `LiveUpdate::SymbolsLoaded`. Same for every consumer of this backend.
     /// `RwLock` because writes are rare (once per exchange) and reads are
@@ -877,6 +891,7 @@ impl BackendCore {
             bridge,
             mini_ticker: DashMap::new(),
             trade_store: TradeStore::new(),
+            pending_bubble_events: std::sync::Mutex::new(Vec::new()),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
@@ -1276,6 +1291,16 @@ impl BackendCore {
     /// can detect a lag by comparing event counts across ticks if needed.
     pub fn tick_writers(&self, _now_ms: u64) -> Vec<BubbleEvent> {
         let mut events: Vec<BubbleEvent> = Vec::new();
+
+        // Drain synchronous facade-queued events FIRST — see
+        // `pending_bubble_events`'s doc comment. These already mutated the
+        // bubble store at queue time (facade calls write synchronously);
+        // this only surfaces the matching `BubbleEvent` to the reactor.
+        {
+            let mut pending = self.pending_bubble_events.lock().expect("BackendCore.pending_bubble_events poisoned");
+            events.append(&mut pending);
+        }
+
         let mut rx = self.broadcast_rx.lock().expect("BackendCore.broadcast_rx poisoned");
 
         loop {
@@ -1642,6 +1667,22 @@ impl BackendCore {
                         if let Some(ev) = self.cvd_fold_on_live_trade(bid, raw_trade, exchange_id, &symbol, at_label) {
                             events.push(ev);
                         }
+                        // TRADE-BUILT kline fold (owner report 2026-07-16):
+                        // independent slot, independent lifecycle (installed
+                        // by `request_kline` when the bubble's active TF
+                        // resolves as trade-built — see
+                        // `DataBubble.active_trade_built_kline` doc
+                        // comment). A bubble is never BOTH trade-fed
+                        // (`active_trade_fold`) AND trade-built-kline at
+                        // once in practice (the trade-fold family installs
+                        // only for its own 6 chart_types, trade-built-kline
+                        // only for the render-only kline family — see
+                        // `subscribe_trade_built_kline`'s `bars_source ==
+                        // Kline` display gate), but the slot is independent
+                        // regardless, same rationale as CVD above.
+                        if let Some(ev) = self.trade_built_kline_on_live_trade(bid, raw_trade, exchange_id, &symbol, account_type) {
+                            events.push(ev);
+                        }
                     }
                     events.push(BubbleEvent::TradeUpdatePassthrough {
                         exchange_id,
@@ -1926,9 +1967,19 @@ impl BackendCore {
                             }).unwrap_or(false);
                             let has_cvd_fold = exhausted && self.bubbles()
                                 .with_bubble(bid, |b| b.active_cvd_fold.is_some()).unwrap_or(false);
-                            if !has_trade_fold && !has_cvd_fold { continue; }
-                            // One debounce decision per bubble covers BOTH
-                            // fold slots — they read the SAME trade-layer
+                            // TRADE-BUILT kline (owner report 2026-07-16):
+                            // no incremental-prepend counterpart exists yet
+                            // (v1, task contract) — every backfill page that
+                            // reaches a stage boundary must refold, same
+                            // debounce as the trade-fold family (a full
+                            // trade-store fold is NOT the "kline refolds are
+                            // cheap" class — see `stage_boundary`'s doc
+                            // comment above).
+                            let has_trade_built_kline = self.bubbles()
+                                .with_bubble(bid, |b| b.active_trade_built_kline.is_some()).unwrap_or(false);
+                            if !has_trade_fold && !has_cvd_fold && !has_trade_built_kline { continue; }
+                            // One debounce decision per bubble covers ALL
+                            // THREE fold slots — they read the SAME trade-layer
                             // snapshot and are the same "this bubble just
                             // got a heavier reseed" event from the main
                             // thread's point of view.
@@ -1990,6 +2041,32 @@ impl BackendCore {
                                 }).flatten();
                                 if let Some(outputs) = outputs {
                                     if let Some(ev) = self.apply_trade_fold_reseed_outputs(bid, "cvd", outputs, exchange_id, &symbol, at_label) {
+                                        events.push(ev);
+                                    }
+                                }
+                            }
+
+                            if has_trade_built_kline {
+                                // DEEPENING (owner report 2026-07-16, task
+                                // contract): re-fold the FULL widened store
+                                // snapshot — v1-acceptable full reseed since
+                                // trades in the store are bounded by the
+                                // existing 4-day raw window (module doc on
+                                // `TradeStore`). `apply_trade_built_kline_outputs`
+                                // prepends/merges into `kline_layers[tf_name]`
+                                // via `seed_block` and rebuilds the display
+                                // array when this bubble is display-writable
+                                // for that TF.
+                                let tf_name_and_bars = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                    b.active_trade_built_kline.as_mut().map(|f| {
+                                        let bars = f.reseed(&trade_snapshot.snapshot());
+                                        (f.tf_name().to_string(), bars)
+                                    })
+                                }).flatten();
+                                if let Some((tf_name, bars)) = tf_name_and_bars {
+                                    if let Some(ev) = self.apply_trade_built_kline_outputs(
+                                        bid, &tf_name, bars, exchange_id, &symbol, account_type,
+                                    ) {
                                         events.push(ev);
                                     }
                                 }
@@ -2141,6 +2218,21 @@ impl BackendCore {
     /// Thin wrapper over [`DataBridge::request_bars`] — parameter names kept
     /// as `_limit`/`_total_bars` to match the underlying signature verbatim
     /// (the leading underscores are the bridge's own naming, not a typo).
+    ///
+    /// TRADE-BUILT klines (owner report 2026-07-16): when `tf` has no
+    /// native kline source and no native divisor on `(exchange_id,
+    /// account_type)` (see [`mlc_backend_data_bridge::DataBridge::is_kline_trade_built`]),
+    /// the bridge call above never dials dig3 — it clears any stale/
+    /// mislabeled kline layer via an empty full-replace `BarsLoaded`
+    /// (`DataBridge::request_bars`'s matching guard) and returns. This
+    /// facade then installs `subscribe_trade_built_kline` for every bubble
+    /// currently tracking this instrument (mirrors how `tick_writers`'
+    /// `BarsLoaded` arm fans a kline page out to every bubble on the same
+    /// instrument — this facade, unlike the trade-fold family's
+    /// `subscribe_trade_fold_chart_type`, is called with no single `bid`
+    /// in hand) and queues the resulting `BubbleEvent`s onto
+    /// `pending_bubble_events` for the next `tick_writers` drain to
+    /// surface to the reactor (see that field's doc comment).
     pub fn request_kline(
         &self,
         exchange_id: ExchangeId,
@@ -2152,6 +2244,21 @@ impl BackendCore {
         force: bool,
     ) {
         self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);
+
+        if self.bridge.is_kline_trade_built(exchange_id, account_type, tf.interval_ms) {
+            let at_label = account_type.short_label();
+            let bids = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, symbol);
+            let mut queued: Vec<BubbleEvent> = Vec::new();
+            for bid in bids {
+                if let Some(ev) = self.subscribe_trade_built_kline(bid, &tf.name, tf.interval_ms, exchange_id, symbol, account_type) {
+                    queued.push(ev);
+                }
+            }
+            if !queued.is_empty() {
+                let mut pending = self.pending_bubble_events.lock().expect("BackendCore.pending_bubble_events poisoned");
+                pending.extend(queued);
+            }
+        }
     }
 
     /// Abort the active kline forwarder for an instrument + timeframe.
@@ -2163,6 +2270,25 @@ impl BackendCore {
         timeframe: &str,
     ) {
         self.bridge.abort_kline_bars(exchange_id, symbol, account_type, timeframe);
+        // TRADE-BUILT klines teardown (owner report 2026-07-16): a bridge
+        // kline forwarder never existed for a trade-built TF (see
+        // `DataBridge::request_bars`'s guard), so the abort call above is a
+        // no-op for it — but `active_trade_built_kline` is a live-fold
+        // runtime this facade IS responsible for retiring on every TF
+        // switch away from it (every `ChangeTimeframe` caller already calls
+        // this with the OLD tf name right before requesting the new one).
+        // Without this, switching 15s -> 1h left the 15s runtime folding
+        // every live trade forever into a `kline_layers["15s"]` nobody
+        // displays anymore.
+        let at_label = account_type.short_label();
+        let bids = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, symbol);
+        for bid in bids {
+            self.bubbles_mut().with_bubble_mut(bid, |b| {
+                if b.active_trade_built_kline.as_ref().map(|f| f.tf_name() == timeframe).unwrap_or(false) {
+                    b.active_trade_built_kline = None;
+                }
+            });
+        }
     }
 
     /// Fetch the next older page of bars for scroll-left backfill.
