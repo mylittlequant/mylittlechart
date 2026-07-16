@@ -328,6 +328,49 @@ pub enum GranularityTarget {
     Interval { name: String },
 }
 
+/// Which granularity list a drag-reorder targets — orthogonal to
+/// [`GranularityTarget`]'s per-row identity — owner spec 2026-07-16 items
+/// 2+3 (drag-to-reorder FAVORITES and CUSTOM rows). `Tf`/`Interval` name the
+/// flat global list directly; `Param { chart_type }` scopes to one
+/// chart_type's slice of the flat `GranularityFavorites::{params,
+/// starred_params}` vec (the mutation handler filters by `chart_type` before
+/// indexing — see `ChartApp`'s `ReorderGranularity` handler).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GranularityFamily {
+    Tf,
+    Param { chart_type: String },
+    Interval,
+}
+
+/// Which of the two reorderable granularity lists a drag-reorder targets —
+/// mirrors the dropdown's two distinct row groups (owner spec: "FAVORITES
+/// rows and CUSTOM rows" are independently reorderable, never merged into
+/// one combined index space).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GranularitySection {
+    /// The prepended "FAVORITES" header section (`starred_tfs`/
+    /// `starred_params`/`starred_intervals`).
+    Favorites,
+    /// The main CUSTOM values list (`time_tfs`/`params`/`interval_tfs`).
+    Customs,
+}
+
+/// Render-side drag-reorder state for the `timeframe_selector` dropdown's
+/// FAVORITES/CUSTOM row lists (owner spec 2026-07-16 items 2+3). Built once
+/// per frame in `mlc-app` from `ChartApp`'s transient `granularity_drag`
+/// field; consumed by `mlc-app-layout`'s dropdown builder to paint the
+/// dragged-row highlight + insertion-gap line, mirroring
+/// `WatchlistModalState`'s `drag_reorder`/`drop_index` render contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GranularityDragRender {
+    pub family: GranularityFamily,
+    pub section: GranularitySection,
+    pub from_index: usize,
+    /// Current drop index, `None` until the first `on_mouse_move` after the
+    /// drag promotes past the pending-drag threshold.
+    pub drop_index: Option<usize>,
+}
+
 /// Render-side snapshot of the `timeframe_selector` dropdown's visible
 /// inline granularity editor (user-granularity-templates-inner arc, кусок 2
 /// — defect fix 2026-07-16: real text-field widget, in-place row hosting).

@@ -168,6 +168,22 @@ pub enum ChartOutEvent {
     /// "FAVORITES" header row. Pure presentation toggle — does not touch
     /// `granularity_favorites` itself.
     ToggleGranularityPin,
+    /// Move one row within a granularity FAVORITES/CUSTOM list from
+    /// `from_index` to `to_index` — drag-to-reorder (owner spec 2026-07-16
+    /// items 2+3). Indices are scoped to the exact rendered subset
+    /// `section`+`family` identifies: for `GranularityFamily::Param`, the
+    /// handler filters `GranularityFavorites::{params,starred_params}` by
+    /// `chart_type` FIRST, reorders within that filtered view, then writes
+    /// the result back at the matching absolute positions in the flat vec —
+    /// reordering one chart_type's params must never disturb another
+    /// chart_type's entries interleaved in the same flat vec. Does NOT
+    /// change the reordered value's applied/starred status.
+    ReorderGranularity {
+        family: crate::chart_type::GranularityFamily,
+        section: crate::chart_type::GranularitySection,
+        from_index: usize,
+        to_index: usize,
+    },
 
     // === Overlays (C10 Volume Profile family) ===
     /// Toggle the Volume Profile right-side overlay on the active chart.

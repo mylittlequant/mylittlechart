@@ -497,6 +497,8 @@ impl ChartApp {
         self.panel_app.context_menu_state.close();
         self.panel_app.toolbar_state.open_dropdown_id = None;
         self.granularity_edit = None;
+        self.granularity_drag_pending = None;
+        self.granularity_drag = None;
 
         // Make the window UNDER THE CURSOR active before hit-testing, so the
         // context menu opens in the hovered window (not whichever was focused).
@@ -1082,6 +1084,32 @@ impl ChartApp {
                         }
                     }
                     return false;
+                }
+            }
+        }
+
+        // Granularity FAVORITES/CUSTOM row drag — begin pending drag-to-
+        // reorder (owner spec 2026-07-16 items 2+3). Mirrors the watchlist
+        // modal's mousedown arm exactly: find the row via the LIVE hovered
+        // widget id, store as PENDING (not yet an active drag), do NOT
+        // return early — a short click still falls through to the normal
+        // `on_click` dropdown-item routing further down the pipeline.
+        // Skipped entirely while the inline text editor is active (owner:
+        // trailing-icon zones/other rows are inert during edit — same
+        // contract `panel_click.rs`'s dropdown-item guard already enforces)
+        // and while a reorder-drag is already pending/active (avoids
+        // re-arming mid-gesture).
+        if self.granularity_edit.is_none()
+            && self.granularity_drag_pending.is_none()
+            && self.granularity_drag.is_none()
+        {
+            if let Some(row_id) = live_hover.as_deref()
+                .and_then(|h| h.strip_prefix("dropdown:timeframe_selector:"))
+            {
+                if let Some((family, section, index)) = self.resolve_granularity_reorder_row(row_id) {
+                    self.granularity_drag_pending = Some(crate::GranularityDragPending {
+                        family, section, from_index: index, start_x: x, start_y: y,
+                    });
                 }
             }
         }
@@ -2551,6 +2579,44 @@ impl ChartApp {
     /// Handle drag move to `(x, y)` with deltas `(dx, dy)`.
     pub fn on_drag_move(&mut self, x: f64, y: f64, dx: f64, dy: f64) {
         let _ = (x, dx);
+
+        // ── Granularity row drag-reorder: promote pending drag once mouse
+        // moves >= 4px (owner spec 2026-07-16 items 2+3 — mirrors
+        // `WatchlistModalState::drag_reorder_pending`'s 5px promote
+        // threshold, tightened slightly per the owner's explicit "~4px"
+        // spec). MUST run before any early-return branch below it so a
+        // pending granularity drag is never silently dropped by an
+        // unrelated drag handler claiming the move first. ─────────────────
+        if let Some(pending) = self.granularity_drag_pending.clone() {
+            let ddx = x - pending.start_x;
+            let ddy = y - pending.start_y;
+            if ddx * ddx + ddy * ddy >= 16.0 {
+                self.granularity_drag_pending = None;
+                self.granularity_drag = Some(crate::GranularityDrag {
+                    family: pending.family,
+                    section: pending.section,
+                    from_index: pending.from_index,
+                    drop_index: Some(pending.from_index),
+                });
+            }
+        }
+        if let Some(drag) = self.granularity_drag.clone() {
+            // Resolve the drop index from the row currently hovered under the
+            // cursor — reuse the SAME live hit-test the mousedown handler
+            // used, scoped to rows within this drag's own family+section so
+            // hovering a row from a different list never cross-contaminates
+            // the index.
+            let hovered = self.input_coordinator.borrow().hit_test_now(x, y).map(|h| h.as_str().to_string());
+            if let Some(row_id) = hovered.as_deref().and_then(|h| h.strip_prefix("dropdown:timeframe_selector:")) {
+                if let Some((family, section, index)) = self.resolve_granularity_reorder_row(row_id) {
+                    if family == drag.family && section == drag.section {
+                        self.granularity_drag = Some(crate::GranularityDrag { drop_index: Some(index), ..drag });
+                    }
+                }
+            }
+            return;
+        }
+
         // ── Sub-pane separator resize drag (mirrors slot_sep_drag) ───────────
         // MUST run BEFORE any other drag-handling branch so the event isn't
         // swallowed by panel-content drag, freehand-extend, or other
@@ -3518,6 +3584,27 @@ impl ChartApp {
     /// Handle drag end at `(x, y)`.
     pub fn on_drag_end(&mut self, x: f64, y: f64) {
         self.ui_drag_active = false;
+
+        // ── End granularity row drag-reorder: clear any pending drag that
+        // never crossed the promote threshold (falls through to the normal
+        // click routing below, unchanged). ───────────────────────────────
+        self.granularity_drag_pending = None;
+
+        // ── End granularity row drag-reorder: apply the reorder then clear
+        // drag state (owner spec 2026-07-16 items 2+3) — mirrors the
+        // watchlist modal's drag-reorder-end block exactly. ───────────────
+        if let Some(drag) = self.granularity_drag.take() {
+            let to_index = drag.drop_index.unwrap_or(drag.from_index);
+            if drag.from_index != to_index {
+                self.process_chart_out_event(mlc_core::events::ChartOutEvent::ReorderGranularity {
+                    family: drag.family,
+                    section: drag.section,
+                    from_index: drag.from_index,
+                    to_index,
+                });
+            }
+            return;
+        }
 
         // ── End agent-panel separator drag ───────────────────────────────────
         if self.agent_sep_drag.take().is_some() {
@@ -5795,6 +5882,13 @@ impl ChartApp {
 
     /// Handle the Escape key — close any open modal or deselect the active tool.
     pub fn on_escape(&mut self) {
+        // Cancel an in-progress granularity row drag-reorder first (owner
+        // spec 2026-07-16 items 2+3: "Escape ... cancels the drag") — no
+        // reorder applies, the dropdown itself stays open.
+        if self.granularity_drag_pending.take().is_some() || self.granularity_drag.take().is_some() {
+            return;
+        }
+
         // If chart browser modal is open, close it.
         if self.panel_app.chart_browser.is_open {
             self.panel_app.chart_browser.close();

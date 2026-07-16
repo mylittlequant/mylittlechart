@@ -1945,6 +1945,11 @@ impl ChartApp {
         // `dropdown:__bg__` handler in `panel_click.rs` for the same rule on
         // the explicit background-click path.
         self.granularity_edit = None;
+        // Dropdown closing also cancels any pending/active row drag-reorder
+        // (owner spec 2026-07-16 items 2+3) — no reorder applies when the
+        // dropdown vanishes mid-drag.
+        self.granularity_drag_pending = None;
+        self.granularity_drag = None;
         self.panel_app.toolbar_state.open_inline_style_dropdown = false;
         self.panel_app.toolbar_state.open_inline_width_dropdown = false;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;

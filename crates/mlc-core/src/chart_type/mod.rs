@@ -20,7 +20,8 @@ pub mod interval_intern;
 pub use registry::{
     all, by_id, BarsSourceKind, ChartTypeDef, ChartTypeGroup, ChartTypeKind,
     ChartTypeParamOption, ChartTypeParamSpec, DataMode, DataRequirement,
-    DeepenKind, FixedConsts, GranularityEditRender, GranularityTarget,
+    DeepenKind, FixedConsts, GranularityDragRender, GranularityEditRender,
+    GranularityFamily, GranularitySection, GranularityTarget,
     IdentityKey, MachineKind,
     ParamMode, RenderPolicy, ResolutionKind, SeriesVariant, WickPolicy,
     RESOLUTION_PARAM_ATR14_ITEM_ID, RESOLUTION_PARAM_ITEM_PREFIX,

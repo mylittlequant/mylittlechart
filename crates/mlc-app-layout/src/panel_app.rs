@@ -371,6 +371,7 @@ pub fn chart_toolbar_render_toolbars(
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
+    granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -505,16 +506,35 @@ pub fn chart_toolbar_render_toolbars(
                 },
                 None => active_timeframe.map(String::from),
             };
-            if active_symbol.is_some() || tf_button_label.is_some() {
+            // Smart TF button label (owner spec 2026-07-16 item 4): when
+            // pinning is on AND the active resolution value is one of the
+            // quick-pick chips currently rendered in the strip (same
+            // family/active-match rule `granularity_quick_pick_items` uses
+            // — see `active_granularity_is_pinned`), the button drops its
+            // text entirely and renders icon+chevron-only, since the pinned
+            // chip already shows the value redundantly right next to it.
+            // Otherwise (pin off, or active value not pinned) the button
+            // keeps its normal icon+text rendering unchanged.
+            let tf_button_icon_only = pin_granularity_favorites
+                && active_granularity_is_pinned(
+                    active_chart_type,
+                    active_timeframe,
+                    active_chart_type_param,
+                    granularity_favorites,
+                );
+            if active_symbol.is_some() || tf_button_label.is_some() || tf_button_icon_only {
                 for section in &mut control_sections {
                     for item in &mut section.items {
-                        if let TcToolbarItem::Dropdown { id, text, .. } = item {
+                        if let TcToolbarItem::Dropdown { id, text, show_chevron, .. } = item {
                             if id == "symbol_selector" {
                                 if let Some(sym) = active_symbol {
                                     *text = Some(sym.to_string());
                                 }
                             } else if id == "timeframe_selector" {
-                                if let Some(ref label) = tf_button_label {
+                                if tf_button_icon_only {
+                                    *text = None;
+                                    *show_chevron = true;
+                                } else if let Some(ref label) = tf_button_label {
                                     *text = Some(label.clone());
                                 }
                             }
@@ -909,7 +929,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render)
         } else {
             None
         };
@@ -968,30 +988,35 @@ pub fn chart_toolbar_render_toolbars(
 /// `"{GRANULARITY_QUICK_PICK_PREFIX}{value_id}"`, reusing the exact
 /// `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` value encoding the
 /// dropdown rows use — `panel_click.rs` already routes this prefix.
-fn granularity_quick_pick_items(
-    ctx: &mut dyn RenderContext,
+/// Build the (hit_value_id, label, is_active) triples for the applicable
+/// starred set, keyed by the active chart_type's `ResolutionKind`
+/// (per-family scoping arc 2026-07-16 — mirrors `prepend_param_starred_
+/// items`/`prepend_tf_starred_items`/`prepend_interval_starred_items`'s own
+/// dispatch): `Param` uses `starred_params` (filtered to the active
+/// chart_type), `Interval` (footprint) uses `starred_intervals`, `Time`
+/// (incl. no active chart_type known yet) uses `starred_tfs`. `Interval`
+/// entries reuse the PLAIN `tf_{name}` id encoding (not `ivl_`) — the click
+/// router's `resolve_granularity_target` already disambiguates a bare
+/// `tf_{name}` quick-pick id by the ACTIVE chart_type's `ResolutionKind` at
+/// click time, so no separate encoding is needed here; this guarantees a
+/// footprint quick-pick chip can never render (or be clicked into) the
+/// kline `starred_tfs` bucket and vice versa — the exact leak the owner
+/// reported ("остался запинен 1m на футпринте").
+///
+/// Shared by [`granularity_quick_pick_items`] (toolbar row build) and
+/// [`active_granularity_is_pinned`] (TF button smart-label gate) so both
+/// read the identical family-dispatch/active-match rule — no risk of the
+/// button's label state disagreeing with which chip actually renders active
+/// in the strip.
+fn granularity_quick_pick_entries(
     active_chart_type: Option<&str>,
     active_timeframe: Option<&str>,
     active_chart_type_param: Option<f64>,
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
-) -> Vec<TcToolbarItem> {
-    // Build the (hit_value_id, label, is_active) triples for the applicable
-    // starred set, keyed by the active chart_type's `ResolutionKind`
-    // (per-family scoping arc 2026-07-16 — mirrors `prepend_param_starred_
-    // items`/`prepend_tf_starred_items`/`prepend_interval_starred_items`'s
-    // own dispatch): `Param` uses `starred_params` (filtered to the active
-    // chart_type), `Interval` (footprint) uses `starred_intervals`, `Time`
-    // (incl. no active chart_type known yet) uses `starred_tfs`. `Interval`
-    // entries reuse the PLAIN `tf_{name}` id encoding (not `ivl_`) — the
-    // click router's `resolve_granularity_target` already disambiguates a
-    // bare `tf_{name}` quick-pick id by the ACTIVE chart_type's
-    // `ResolutionKind` at click time, so no separate encoding is needed
-    // here; this guarantees a footprint quick-pick chip can never render
-    // (or be clicked into) the kline `starred_tfs` bucket and vice versa —
-    // the exact leak the owner reported ("остался запинен 1m на футпринте").
+) -> Vec<(String, String, bool)> {
     let resolution = active_chart_type.and_then(mlc_core::chart_type::by_id).map(|def| def.resolution);
 
-    let entries: Vec<(String, String, bool)> = match resolution {
+    match resolution {
         Some(mlc_core::chart_type::ResolutionKind::Param { suffix }) => {
             let Some(ct) = active_chart_type else { return Vec::new() };
             granularity_favorites.starred_params.iter()
@@ -1024,8 +1049,42 @@ fn granularity_quick_pick_items(
                 })
                 .collect()
         }
-    };
+    }
+}
 
+/// Build the pinned-favorites quick-pick `ToolbarItem::Button`s injected
+/// INTO the top control strip's item flow directly after `timeframe_selector`
+/// — user-granularity-templates-inner arc, кусок 3 (owner spec 2026-07-16,
+/// TradingView "pinned intervals" style; fixed 2026-07-16 after live
+/// verification showed the packed strip has no free space for a post-pass
+/// overlay — the row must participate in the SAME item flow so later items
+/// shift right and the toolbar's existing overflow/scroll-chevron machinery
+/// applies to it for free). `false`/no applicable starred entries -> zero
+/// items inserted, zero layout shift from today.
+///
+/// One compact text `Button` per starred granularity entry: starred TF names
+/// for `Time`/`Interval`-resolution chart types, starred numeric params
+/// (filtered to the active chart_type) for `Param`-resolution chart types —
+/// same selection the dropdown's FAVORITES section uses. Each item's
+/// `min_width` is set to its OWN measured-text width (+ compact padding) so
+/// `calculate_section_width`/the draw pass size it as a tight chip rather
+/// than the toolbar's default `item_size * 2.5` button width. Hit id is
+/// `"{GRANULARITY_QUICK_PICK_PREFIX}{value_id}"`, reusing the exact
+/// `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` value encoding the
+/// dropdown rows use — `panel_click.rs` already routes this prefix.
+fn granularity_quick_pick_items(
+    ctx: &mut dyn RenderContext,
+    active_chart_type: Option<&str>,
+    active_timeframe: Option<&str>,
+    active_chart_type_param: Option<f64>,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+) -> Vec<TcToolbarItem> {
+    let entries = granularity_quick_pick_entries(
+        active_chart_type,
+        active_timeframe,
+        active_chart_type_param,
+        granularity_favorites,
+    );
     if entries.is_empty() {
         return Vec::new();
     }
@@ -1048,6 +1107,29 @@ fn granularity_quick_pick_items(
             min_width: text_w + BTN_PAD_X,
         }
     }).collect()
+}
+
+/// Whether the ACTIVE granularity value (the same "current TF/param/interval"
+/// the TF button's own label reflects) is one of the quick-pick entries
+/// currently rendered in the pinned-favorites strip — smart TF button label
+/// gate (owner spec 2026-07-16 item 4). Reuses
+/// [`granularity_quick_pick_entries`] so "is the active value pinned" can
+/// never disagree with which chip [`granularity_quick_pick_items`] actually
+/// marks active. `false` whenever `pin_granularity_favorites` is off (caller
+/// gates that separately) or no starred entry matches the active value —
+/// the button falls back to its normal icon+text rendering in both cases.
+fn active_granularity_is_pinned(
+    active_chart_type: Option<&str>,
+    active_timeframe: Option<&str>,
+    active_chart_type_param: Option<f64>,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+) -> bool {
+    granularity_quick_pick_entries(
+        active_chart_type,
+        active_timeframe,
+        active_chart_type_param,
+        granularity_favorites,
+    ).iter().any(|(_, _, is_active)| *is_active)
 }
 
 /// Render a dropdown menu for the given dropdown_id.
@@ -1084,6 +1166,7 @@ fn chart_toolbar_render_dropdown(
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
+    granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1537,6 +1620,13 @@ fn chart_toolbar_render_dropdown(
         let mut all_item_rects = result.item_rects;
         let mut final_menu_rect = result.menu_rect;
 
+        // Populated by the widget-overlay block below (mouse-support arc,
+        // item 1) with `(text_rect, char_x_positions)` from `draw_input`'s
+        // `InputResult` — fed into `TextFieldStore::update_field` by
+        // `ChartApp::update_text_field_geometry` so click-to-cursor and
+        // drag-select work against the SAME metrics just rendered here.
+        let mut granularity_edit_input: Option<(WidgetRect, Vec<f64>)> = None;
+
         // 5b. Widget overlay for the visible inline granularity editor
         // (defect fix 2026-07-16, owner spec (b)) — draws the SAME
         // centralized text-input widget every modal field uses
@@ -1605,6 +1695,56 @@ fn chart_toolbar_render_dropdown(
                         if edit.cursor_visible {
                             draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
                         }
+                        // Capture the widget's rendered text_rect + char
+                        // boundary positions (mouse-support arc, item 1) —
+                        // `text_rect` uses `uzor::types::Rect`, convert to
+                        // this module's `WidgetRect` for the render-result
+                        // struct (same shape, no `From` impl between them).
+                        let tr = input_result.text_rect;
+                        granularity_edit_input = Some((
+                            WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
+                            input_result.char_x_positions,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 5c. Drag-to-reorder visual: dragged-row highlight + insertion-gap
+        // line (owner spec 2026-07-16 items 2+3) — mirrors
+        // `WatchlistModalState`'s drag-reorder overlay (`watchlist_modal.rs`,
+        // "Drag-reorder visual" block) exactly: a semi-transparent accent
+        // overlay on the row being dragged, plus a 2px theme-accent line at
+        // the current drop index. Only paints for `timeframe_selector` —
+        // rows are looked up via `granularity_section_row_ids` so the
+        // highlight tracks the SAME index space `ReorderGranularity`'s
+        // mutation handler operates on.
+        if dropdown_id == "timeframe_selector" {
+            if let Some(drag) = granularity_drag_render {
+                let row_ids = granularity_section_row_ids(&drag.family, drag.section, granularity_favorites);
+                if let Some(from_rect) = row_ids.get(drag.from_index)
+                    .and_then(|id| all_item_rects.iter().find(|(rid, _)| rid == id))
+                    .map(|(_, r)| *r)
+                {
+                    ctx.set_fill_color("#2962ff33");
+                    ctx.fill_rect(from_rect.x, from_rect.y, from_rect.width, from_rect.height);
+                }
+                if let Some(drop_idx) = drag.drop_index {
+                    // Drop line sits ABOVE the row currently at `drop_idx`,
+                    // or below the last row when dropping past the end.
+                    let drop_line_rect = row_ids.get(drop_idx)
+                        .and_then(|id| all_item_rects.iter().find(|(rid, _)| rid == id))
+                        .map(|(_, r)| (r.x, r.y, r.width))
+                        .or_else(|| row_ids.last()
+                            .and_then(|id| all_item_rects.iter().find(|(rid, _)| rid == id))
+                            .map(|(_, r)| (r.x, r.bottom(), r.width)));
+                    if let Some((lx, ly, lw)) = drop_line_rect {
+                        ctx.set_stroke_color("#2962ff");
+                        ctx.set_stroke_width(2.0);
+                        ctx.begin_path();
+                        ctx.move_to(lx, ly);
+                        ctx.line_to(lx + lw, ly);
+                        ctx.stroke();
                     }
                 }
             }
@@ -1678,6 +1818,7 @@ fn chart_toolbar_render_dropdown(
             menu_rect: final_menu_rect,
             open_submenu: hover_open_submenu,
             hovered: hover_hovered,
+            granularity_edit_input,
         })
     }
 
@@ -1898,6 +2039,67 @@ fn granularity_trailing_icons(
         icons.push(TrailingIcon::new(del_action, IconId::new("delete")));
     }
     icons
+}
+
+/// Ordered dropdown row ids for one granularity FAVORITES/CUSTOM list —
+/// drag-to-reorder support (owner spec 2026-07-16 items 2+3). Index `i` in
+/// the returned `Vec` is exactly the `from_index`/`to_index`
+/// `ChartOutEvent::ReorderGranularity` operates on for this
+/// `(family, section)` pair — mirrors the EXACT emission order
+/// `prepend_tf_starred_items`/`prepend_param_starred_items`/
+/// `prepend_interval_starred_items` (Favorites) and
+/// `append_tf_customs_and_add_row`/`append_param_customs_and_add_row`/
+/// `append_interval_customs_and_add_row` (Customs) use when building
+/// `items`, so index N here always names the same profile-list entry index
+/// N those mutation-side helpers (and `move_within`/`move_within_filtered`
+/// in `chart_out_events.rs`) work against.
+///
+/// Favorites-section ids carry the `GRANULARITY_FAV_ID_PREFIX` wrapper
+/// (matching how those rows are actually keyed in `all_item_rects` — see
+/// that const's doc comment); Customs-section ids are the plain
+/// `tf_{name}` / `{RESOLUTION_PARAM_ITEM_PREFIX}{value}` / `ivl_{name}` row
+/// ids.
+pub fn granularity_section_row_ids(
+    family: &mlc_core::chart_type::GranularityFamily,
+    section: mlc_core::chart_type::GranularitySection,
+    granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+) -> Vec<String> {
+    use mlc_core::chart_type::{GranularityFamily, GranularitySection, GRANULARITY_FAV_ID_PREFIX, GRANULARITY_INTERVAL_ID_PREFIX};
+
+    match (family, section) {
+        (GranularityFamily::Tf, GranularitySection::Favorites) => {
+            granularity_favorites.starred_tfs.iter()
+                .map(|name| format!("{}tf_{}", GRANULARITY_FAV_ID_PREFIX, name))
+                .collect()
+        }
+        (GranularityFamily::Tf, GranularitySection::Customs) => {
+            granularity_favorites.time_tfs.iter()
+                .map(|name| format!("tf_{}", name))
+                .collect()
+        }
+        (GranularityFamily::Interval, GranularitySection::Favorites) => {
+            granularity_favorites.starred_intervals.iter()
+                .map(|name| format!("{}{}{}", GRANULARITY_FAV_ID_PREFIX, GRANULARITY_INTERVAL_ID_PREFIX, name))
+                .collect()
+        }
+        (GranularityFamily::Interval, GranularitySection::Customs) => {
+            granularity_favorites.interval_tfs.iter()
+                .map(|name| format!("{}{}", GRANULARITY_INTERVAL_ID_PREFIX, name))
+                .collect()
+        }
+        (GranularityFamily::Param { chart_type }, GranularitySection::Favorites) => {
+            granularity_favorites.starred_params.iter()
+                .filter(|f| &f.chart_type == chart_type)
+                .map(|f| format!("{}{}{}", GRANULARITY_FAV_ID_PREFIX, RESOLUTION_PARAM_ITEM_PREFIX, f.value))
+                .collect()
+        }
+        (GranularityFamily::Param { chart_type }, GranularitySection::Customs) => {
+            granularity_favorites.params.iter()
+                .filter(|f| &f.chart_type == chart_type)
+                .map(|f| format!("{}{}", RESOLUTION_PARAM_ITEM_PREFIX, f.value))
+                .collect()
+        }
+    }
 }
 
 /// Build the `timeframe_selector` dropdown's item list for the active

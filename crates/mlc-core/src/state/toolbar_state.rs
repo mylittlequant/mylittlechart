@@ -529,6 +529,15 @@ pub struct DropdownRenderInfo {
     pub open_submenu: Option<String>,
     /// The hovered item id from draw_dropdown (if any pointer is over an item).
     pub hovered: Option<String>,
+    /// `(text_rect, char_x_positions)` of the `timeframe_selector` dropdown's
+    /// visible inline granularity editor widget, when one is rendered this
+    /// frame (mouse-support arc, item 1). `None` whenever no editor is
+    /// active or the dropdown rendered is not `timeframe_selector`. Fed into
+    /// `TextFieldStore::update_field` (mirrors every other modal text field —
+    /// see `ChartApp::update_text_field_geometry`) so `on_drag_start`/
+    /// `on_drag_move` can hit-test click-to-cursor and drag-select against
+    /// the SAME metrics `draw_input` just rendered with.
+    pub granularity_edit_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).

@@ -2896,6 +2896,10 @@ impl ChartApp {
                 if self.granularity_edit.take().is_some() {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
+                // Dropdown closing also cancels any pending/active row
+                // drag-reorder (owner spec 2026-07-16 items 2+3).
+                self.granularity_drag_pending = None;
+                self.granularity_drag = None;
                 return;
             }
 
@@ -5127,6 +5131,53 @@ impl ChartApp {
             return Some(mlc_core::chart_type::GranularityTarget::Param { chart_type: chart_type.to_string(), value });
         }
         None
+    }
+
+    /// Resolve a `timeframe_selector` dropdown ROW WIDGET id (the raw
+    /// `"dropdown:timeframe_selector:{row_id}"` hit-zone id, BEFORE any
+    /// trailing-icon-action prefix stripping) into a `(family, section,
+    /// index)` triple for drag-to-reorder — owner spec 2026-07-16 items 2+3.
+    ///
+    /// `None` when `row_id` is not a reorderable row body: the "+ Add" rows,
+    /// the `gran_pin:toggle` row, ATR(14), or any id the row-id list built
+    /// by `granularity_section_row_ids` does not contain (trailing-icon
+    /// action ids like `gran_star:…`/`gran_edit:…`/`gran_del:…` never reach
+    /// here — see the caller in `on_drag_start`, which checks the row's OWN
+    /// id, not an action sub-id, so a trailing-icon click is never
+    /// misclassified as a reorder-handle press).
+    pub(crate) fn resolve_granularity_reorder_row(
+        &self,
+        row_id: &str,
+    ) -> Option<(mlc_core::chart_type::GranularityFamily, mlc_core::chart_type::GranularitySection, usize)> {
+        use mlc_core::chart_type::{GranularityFamily, GranularitySection};
+
+        let (section, bare_id) = match row_id.strip_prefix(mlc_core::chart_type::GRANULARITY_FAV_ID_PREFIX) {
+            Some(stripped) => (GranularitySection::Favorites, stripped),
+            None => (GranularitySection::Customs, row_id),
+        };
+
+        let resolution = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.chart_type_for_chart(cid))
+            .and_then(mlc_core::chart_type::by_id)
+            .map(|def| def.resolution);
+        let family = if bare_id.starts_with(mlc_core::chart_type::GRANULARITY_INTERVAL_ID_PREFIX) {
+            GranularityFamily::Interval
+        } else if let Some(_value_str) = bare_id.strip_prefix(mlc_core::chart_type::RESOLUTION_PARAM_ITEM_PREFIX) {
+            let chart_type = self.panel_app.panel_grid.active_container_id()
+                .and_then(|cid| self.chart_type_for_chart(cid))?;
+            GranularityFamily::Param { chart_type: chart_type.to_string() }
+        } else if bare_id.starts_with("tf_") {
+            let is_interval_kind = matches!(resolution, Some(mlc_core::chart_type::ResolutionKind::Interval));
+            if is_interval_kind { GranularityFamily::Interval } else { GranularityFamily::Tf }
+        } else {
+            return None;
+        };
+
+        let user = self.core.user();
+        let favorites = &user.profile().domain.granularity_favorites;
+        let row_ids = mlc_app_layout::panel_app::granularity_section_row_ids(&family, section, favorites);
+        let index = row_ids.iter().position(|id| id == row_id)?;
+        Some((family, section, index))
     }
 
     /// Begin inline editing of an existing CUSTOM granularity value (pencil

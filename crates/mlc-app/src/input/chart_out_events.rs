@@ -1382,6 +1382,38 @@ impl ChartApp {
                 self.autosave_snapshot();
                 return;
             }
+            ChartOutEvent::ReorderGranularity { family, section, from_index, to_index } => {
+                use mlc_core::chart_type::{GranularityFamily, GranularitySection};
+                eprintln!(
+                    "[ChartApp] ReorderGranularity: family={:?} section={:?} {} -> {}",
+                    family, section, from_index, to_index
+                );
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
+                match (family, section) {
+                    (GranularityFamily::Tf, GranularitySection::Favorites) => {
+                        move_within(&mut favs.starred_tfs, from_index, to_index);
+                    }
+                    (GranularityFamily::Tf, GranularitySection::Customs) => {
+                        move_within(&mut favs.time_tfs, from_index, to_index);
+                    }
+                    (GranularityFamily::Interval, GranularitySection::Favorites) => {
+                        move_within(&mut favs.starred_intervals, from_index, to_index);
+                    }
+                    (GranularityFamily::Interval, GranularitySection::Customs) => {
+                        move_within(&mut favs.interval_tfs, from_index, to_index);
+                    }
+                    (GranularityFamily::Param { chart_type }, GranularitySection::Favorites) => {
+                        move_within_filtered(&mut favs.starred_params, from_index, to_index, |f| f.chart_type == chart_type);
+                    }
+                    (GranularityFamily::Param { chart_type }, GranularitySection::Customs) => {
+                        move_within_filtered(&mut favs.params, from_index, to_index, |f| f.chart_type == chart_type);
+                    }
+                }
+                drop(user_mut);
+                self.autosave_snapshot();
+                return;
+            }
             ChartOutEvent::Consumed => {}
             ChartOutEvent::ToggleIndicators => {
                 self.modal_state.toggle(OpenModal::IndicatorSearch);
@@ -3786,6 +3818,63 @@ pub fn min_usable_bar_spacing(chart_type: &str) -> Option<f64> {
 /// resolves it the same way `chart_out_events.rs`'s own TF-gate check
 /// already does a few hundred lines up (`allowed_timeframes`'s `now_ms`
 /// local).
+/// Move `list[from]` to sit at `to` (shifting everything between), clamping
+/// both indices to the list's valid range — the plain single-vec case of
+/// `ChartOutEvent::ReorderGranularity` (`Tf`/`Interval` families, whose
+/// `starred_*`/`time_tfs`/`interval_tfs` lists are flat and global). No-op
+/// when the list is empty or `from == to` after clamping.
+fn move_within<T>(list: &mut Vec<T>, from: usize, to: usize) {
+    if list.is_empty() {
+        return;
+    }
+    let max = list.len() - 1;
+    let from = from.min(max);
+    let to = to.min(max);
+    if from == to {
+        return;
+    }
+    let item = list.remove(from);
+    list.insert(to, item);
+}
+
+/// Move an item within the FILTERED subset of `list` matching `pred` (the
+/// `GranularityFamily::Param` case — `GranularityFavorites::{params,
+/// starred_params}` is one flat vec shared across every chart_type, so
+/// `from`/`to` are indices into the chart_type-filtered view, not the flat
+/// vec). Reorders by rebuilding: collect the matching subset in-order,
+/// perform the move within it, then reinsert the reordered items back at
+/// their ORIGINAL flat-vec positions (positions are invariant under a
+/// same-chart_type reorder — only the values at those positions change) —
+/// this guarantees another chart_type's entries interleaved in the same flat
+/// vec are never disturbed. No-op when the filtered subset is empty or
+/// `from == to` after clamping.
+fn move_within_filtered<T: Clone>(
+    list: &mut [T],
+    from: usize,
+    to: usize,
+    pred: impl Fn(&T) -> bool,
+) {
+    let positions: Vec<usize> = list.iter().enumerate()
+        .filter(|(_, item)| pred(item))
+        .map(|(idx, _)| idx)
+        .collect();
+    if positions.is_empty() {
+        return;
+    }
+    let max = positions.len() - 1;
+    let from = from.min(max);
+    let to = to.min(max);
+    if from == to {
+        return;
+    }
+    let mut subset: Vec<T> = positions.iter().map(|&idx| list[idx].clone()).collect();
+    let item = subset.remove(from);
+    subset.insert(to, item);
+    for (slot, value) in positions.into_iter().zip(subset.into_iter()) {
+        list[slot] = value;
+    }
+}
+
 fn now_ms() -> u64 {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)

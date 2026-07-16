@@ -869,6 +869,15 @@ pub struct ChartApp {
     /// inline granularity editor (user-granularity-templates-inner arc,
     /// кусок 2). `None` when no "+ Add"/edit editor is active.
     pub(crate) granularity_edit: Option<GranularityEdit>,
+
+    /// Pending granularity row drag (owner spec 2026-07-16 items 2+3) — set
+    /// on mousedown over a reorderable FAVORITES/CUSTOM row, promoted to
+    /// `granularity_drag` past the ~4px threshold. `None` outside a
+    /// just-started possible drag.
+    pub(crate) granularity_drag_pending: Option<GranularityDragPending>,
+    /// Active granularity row drag-to-reorder. `None` when no row is being
+    /// dragged.
+    pub(crate) granularity_drag: Option<GranularityDrag>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1059,6 +1068,35 @@ pub enum GranularityEditKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GranularityEdit {
     pub kind: GranularityEditKind,
+}
+
+/// Pending granularity row drag — set on mousedown over a reorderable row,
+/// promoted to [`GranularityDrag`] only once the pointer has moved past the
+/// ~4px threshold (owner spec 2026-07-16 items 2+3; mirrors
+/// `WatchlistModalState::drag_reorder_pending`'s promote-or-fall-through-to-
+/// click contract exactly). Never promoted -> the mouseup still reaches the
+/// normal click routing (apply/star/edit) unchanged.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GranularityDragPending {
+    pub family: mlc_core::chart_type::GranularityFamily,
+    pub section: mlc_core::chart_type::GranularitySection,
+    pub from_index: usize,
+    pub start_x: f64,
+    pub start_y: f64,
+}
+
+/// Active granularity row drag-to-reorder (owner spec 2026-07-16 items
+/// 2+3). `None` when no row is being dragged. Cleared on mouseup (after
+/// dispatching `ChartOutEvent::ReorderGranularity` if the drop index moved)
+/// and on Escape/dropdown close (cancels without reordering).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GranularityDrag {
+    pub family: mlc_core::chart_type::GranularityFamily,
+    pub section: mlc_core::chart_type::GranularitySection,
+    pub from_index: usize,
+    /// Current drop index under the cursor — `None` until the first
+    /// `on_drag_move` after promotion computes one from row geometry.
+    pub drop_index: Option<usize>,
 }
 
 // =============================================================================
@@ -1695,6 +1733,23 @@ impl ChartApp {
         })
     }
 
+    /// Render-side snapshot of the `timeframe_selector` dropdown's active
+    /// FAVORITES/CUSTOM row drag-to-reorder (owner spec 2026-07-16 items
+    /// 2+3) — `None` whenever `self.granularity_drag` is `None` (no row is
+    /// being dragged this frame). Mirrors [`Self::granularity_edit_render`]'s
+    /// role: converts `mlc-app`-only state into the `mlc_core::chart_type`
+    /// render type `mlc-app-layout`'s dropdown builder can consume without
+    /// depending on this crate.
+    pub fn granularity_drag_render(&self) -> Option<mlc_core::chart_type::GranularityDragRender> {
+        let drag = self.granularity_drag.as_ref()?;
+        Some(mlc_core::chart_type::GranularityDragRender {
+            family: drag.family.clone(),
+            section: drag.section,
+            from_index: drag.from_index,
+            drop_index: drag.drop_index,
+        })
+    }
+
     /// Whether the footprint bucket dropdown (`ResolutionKind::Interval`)
     /// should mark every item "live only" for the ACTIVE window's (exchange,
     /// account_type) — true exactly when `mlc_backend::chart_type::
@@ -1903,6 +1958,8 @@ impl ChartApp {
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
             granularity_edit: None,
+            granularity_drag_pending: None,
+            granularity_drag: None,
         };
 
         if let Some(tm) = app.core.trading() {
@@ -2283,6 +2340,8 @@ impl ChartApp {
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
             granularity_edit: None,
+            granularity_drag_pending: None,
+            granularity_drag: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -2809,6 +2868,8 @@ impl ChartApp {
             pending_compare: Vec::new(),
             compare_add_attempts: 0, compare_add_success: 0, compare_add_queued: 0,
             granularity_edit: None,
+            granularity_drag_pending: None,
+            granularity_drag: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -5564,6 +5625,7 @@ impl ChartApp {
             let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
             let granularity_edit_render = self.granularity_edit_render();
             let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
+            let granularity_drag_render = self.granularity_drag_render();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5585,6 +5647,7 @@ impl ChartApp {
                 &granularity_favorites,
                 granularity_edit_render.as_ref(),
                 pin_granularity_favorites,
+                granularity_drag_render.as_ref(),
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6287,6 +6350,7 @@ impl ChartApp {
         let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
         let granularity_edit_render = self.granularity_edit_render();
         let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
+        let granularity_drag_render = self.granularity_drag_render();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6308,6 +6372,7 @@ impl ChartApp {
             &granularity_favorites,
             granularity_edit_render.as_ref(),
             pin_granularity_favorites,
+            granularity_drag_render.as_ref(),
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -7317,6 +7382,33 @@ impl ChartApp {
                             positions,
                         );
                     }
+                }
+            }
+        }
+
+        // Inline granularity editor's widget-overlay input (mouse-support
+        // arc, item 1) — `TF_FAVORITE_INPUT`/`PARAM_FAVORITE_INPUT` are the
+        // SAME two fields `granularity_edit_render`'s `field_id` reads
+        // (keyed by `GranularityEditKind`, see that method); feeding their
+        // geometry here lets `on_drag_start`/`on_drag_move` hit-test
+        // click-to-cursor and drag-select against the rect+char positions
+        // `chart_toolbar_render_dropdown`'s widget overlay just rendered
+        // with, mirroring every other modal text field above.
+        if let Some(ref toolbar_result) = self.last_toolbar_result {
+            if let Some(ref dd) = toolbar_result.dropdown_result {
+                if let Some((rect, ref positions)) = dd.granularity_edit_input {
+                    let field = match self.granularity_edit.as_ref().map(|e| &e.kind) {
+                        Some(GranularityEditKind::AddParam) | Some(GranularityEditKind::EditParam { .. }) => {
+                            text_input::PARAM_FAVORITE_INPUT
+                        }
+                        _ => text_input::TF_FAVORITE_INPUT,
+                    };
+                    let field_id = WidgetId::from(field);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &field_id,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        positions.clone(),
+                    );
                 }
             }
         }
