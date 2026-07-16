@@ -1761,6 +1761,24 @@ impl ChartApp {
         })
     }
 
+    /// Seed text for `symbol_quick_edit`/`SYMBOL_QUICK_SEARCH` when opening
+    /// the `symbol_selector` fast-search (symbol-search-compare-inner arc,
+    /// Wave 4 rework — owner spec 2026-07-16). Mode 3 "inline" starts the
+    /// editor with the ACTIVE SYMBOL already in place (e.g. "BTCUSDT") —
+    /// same value the toolbar button's own live-value-override label uses
+    /// (`chart_toolbar_render_toolbars`'s `active_symbol` param) — so the
+    /// button's text IS the editable text from the first frame, not an
+    /// empty box; the caller places the cursor at the end. Mode 2 (dropdown-
+    /// hosted input row) keeps the historical empty-start behaviour: `""`.
+    pub(crate) fn symbol_quick_seed_text(&self) -> String {
+        if !self.core.user().profile().ui.symbol_inline_input {
+            return String::new();
+        }
+        self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.symbol_for_chart(cid))
+            .unwrap_or_default()
+    }
+
     /// Render-side snapshot of the `symbol_selector` toolbar dropdown's
     /// inline fast-search editor (symbol-search-compare-inner arc, Wave 2,
     /// кусок 4) — `None` whenever `self.symbol_quick_edit` is `None` (the
@@ -5736,6 +5754,7 @@ impl ChartApp {
             let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
             let symbol_quick_search_render = self.symbol_quick_search_render();
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
+            let symbol_inline_input = self.core.user().profile().ui.symbol_inline_input;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5761,6 +5780,7 @@ impl ChartApp {
                 split_symbol_compare,
                 symbol_quick_search_render.as_ref(),
                 symbol_quick_search,
+                symbol_inline_input,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6467,6 +6487,7 @@ impl ChartApp {
         let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
         let symbol_quick_search_render = self.symbol_quick_search_render();
         let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
+        let symbol_inline_input = self.core.user().profile().ui.symbol_inline_input;
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6492,6 +6513,7 @@ impl ChartApp {
             split_symbol_compare,
             symbol_quick_search_render.as_ref(),
             symbol_quick_search,
+            symbol_inline_input,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -7150,10 +7172,10 @@ impl ChartApp {
                     mlc_core::state::modal_state::OpenModal::CompareSearch => crate::text_input::COMPARE_SEARCH,
                     _ => crate::text_input::SYMBOL_SEARCH,
                 };
-                let (split_symbol_compare_search, symbol_quick_search_search) = {
+                let (split_symbol_compare_search, symbol_quick_search_search, symbol_inline_input_search) = {
                     let user_guard = self.core.user();
                     let ui = &user_guard.profile().ui;
-                    (ui.split_symbol_compare, ui.symbol_quick_search)
+                    (ui.split_symbol_compare, ui.symbol_quick_search, ui.symbol_inline_input)
                 };
                 Some(render_search_overlay(
                     ctx,
@@ -7169,6 +7191,7 @@ impl ChartApp {
                     search_field_id,
                     split_symbol_compare_search,
                     symbol_quick_search_search,
+                    symbol_inline_input_search,
                 ))
             } else {
                 None
@@ -7389,11 +7412,23 @@ impl ChartApp {
                 == Some("symbol_selector");
             let quick_enabled = self.core.user().profile().ui.symbol_quick_search;
             if quick_open && quick_enabled && self.symbol_quick_edit.is_none() {
-                self.symbol_quick_edit = Some(crate::SymbolQuickEdit::default());
+                // Mode 3 "inline" seeds the active symbol (see
+                // `symbol_quick_seed_text`'s doc) — same seeding contract
+                // `open_symbol_quick_dropdown` uses; this reconcile is the
+                // fallback path when the dropdown opened via the raw
+                // toolbar Dropdown-toggle arm instead of going through that
+                // helper.
+                let seed = self.symbol_quick_seed_text();
+                let cursor = seed.chars().count();
+                self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+                    text: seed.clone(),
+                    cursor,
+                    selection: None,
+                });
                 let q_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
                 let mut ic = self.input_coordinator.borrow_mut();
                 let tf = ic.text_fields_mut();
-                tf.clear(&q_id);
+                tf.set_text(&q_id, &seed);
                 tf.begin_edit(&q_id);
                 tf.focus(text_input::SYMBOL_QUICK_SEARCH);
             } else if quick_open && self.symbol_quick_edit.is_some() {
@@ -7590,6 +7625,22 @@ impl ChartApp {
                         positions.clone(),
                     );
                 }
+            }
+            // Mode 3 "inline" (symbol-search-compare-inner arc, Wave 4 —
+            // owner spec 2026-07-16): the SAME `SYMBOL_QUICK_SEARCH` field
+            // id, geometry sourced from the toolbar BUTTON's own overlay
+            // instead of the dropdown's input host row — the two are
+            // mutually exclusive per frame (mode 3 never renders
+            // `dd.symbol_quick_input`, see `symbol_quick_dropdown_items`'s
+            // `inline_input` gate), so there is no risk of one overwriting
+            // the other with stale geometry the same frame.
+            if let Some((rect, ref positions)) = toolbar_result.symbol_inline_input {
+                let field_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &field_id,
+                    (rect.x, rect.y, rect.width, rect.height),
+                    positions.clone(),
+                );
             }
         }
     }

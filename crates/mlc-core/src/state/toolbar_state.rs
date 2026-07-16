@@ -603,6 +603,16 @@ pub struct ChartToolbarRenderResult {
     pub bottom_max_scroll: f64,
     pub left_max_scroll: f64,
     pub right_max_scroll: f64,
+    /// `(text_rect, char_x_positions)` of the `symbol_selector` toolbar
+    /// BUTTON's own widget-overlay text input, when mode 3 "inline" is
+    /// active and currently editing/open this frame (symbol-search-
+    /// compare-inner arc, Wave 4 — owner spec 2026-07-16). Sibling channel
+    /// to `DropdownRenderInfo::symbol_quick_input` (mode 2's dropdown-
+    /// hosted input) — the two are mutually exclusive per frame (mode 3
+    /// never renders the dropdown's own input host row). Fed into
+    /// `TextFieldStore::update_field` by `ChartApp::update_text_field_geometry`
+    /// exactly like `symbol_quick_input`.
+    pub symbol_inline_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
 // =============================================================================
@@ -997,6 +1007,11 @@ impl ChartToolbarState {
             }
 
             // === App-level: symbol / compare search ===
+            // Whole button (text + magnifier icon, no separate hit zone —
+            // symbol-search-compare-inner arc, Wave 4 rework, owner spec
+            // 2026-07-16: any click on `symbol_selector` opens the fast-
+            // search with the active symbol already seeded and editable in
+            // place) routes through the same handler.
             "symbol_selector" => vec![ChartOutEvent::OpenSymbolSearch],
             "compare" => vec![ChartOutEvent::OpenCompareSearch],
 

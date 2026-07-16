@@ -827,18 +827,20 @@ impl ChartApp {
                 // Enter: apply the first result row exactly as if it had
                 // been clicked — same dispatch `handle_search_modal_click`'s
                 // Commit-via-first-result contract uses for the full-screen
-                // modal (`text_action_search_overlay`).
+                // modal (`text_action_search_overlay`). Bug fix (Wave 4
+                // audit): the composite key must carry the full
+                // `SYMBOL_QUICK_ITEM_PREFIX` (`"sym_quick:item:"`), not a
+                // bare `"item:"` — `handle_symbol_quick_click` only strips
+                // the former, so Enter silently no-op'd before this fix.
                 let first_key = self.symbol_quick_search_render()
                     .and_then(|r| r.results.first().map(|res| {
                         format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type)
                     }));
                 if let Some(key) = first_key {
-                    let rest = format!("item:{}", key);
+                    let rest = format!("{}{}", mlc_app_layout::panel_app::SYMBOL_QUICK_ITEM_PREFIX, key);
                     self.handle_symbol_quick_click(&rest);
                 } else {
-                    self.panel_app.toolbar_state.open_dropdown_id = None;
-                    self.symbol_quick_edit = None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    self.close_symbol_quick_dropdown();
                 }
             }
             TextAction::TextChanged(ref new_text) => {
@@ -855,9 +857,7 @@ impl ChartApp {
                 }
             }
             TextAction::Cancel => {
-                self.panel_app.toolbar_state.open_dropdown_id = None;
-                self.symbol_quick_edit = None;
-                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                self.close_symbol_quick_dropdown();
             }
             TextAction::None | TextAction::RawInput(_) => {}
         }

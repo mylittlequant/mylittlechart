@@ -562,6 +562,21 @@ pub struct ProfileUiSettings {
     /// daemon/headless consumer reads this.
     #[serde(default = "default_true")]
     pub symbol_quick_search: bool,
+
+    /// When `true` (and `symbol_quick_search` is also on), clicking the
+    /// TEXT part of `symbol_selector` starts editing IN PLACE on the
+    /// toolbar button itself — caret renders inside the button, typing
+    /// filters, the dropdown opens automatically below showing results
+    /// (mode 3 "inline"). The button's leading magnifier icon becomes a
+    /// separate hit zone that just toggles the dropdown open/closed. `false`
+    /// (the default) keeps mode 2's behaviour: the button is a plain
+    /// click-to-open trigger, the real text input lives inside the dropdown
+    /// (`SYMBOL_QUICK_SEARCH` input host row) (symbol-search-compare-inner
+    /// arc, Wave 4 — owner spec 2026-07-16). Meaningless when
+    /// `symbol_quick_search` is off — purely a toolbar-layout presentation
+    /// toggle, no daemon/headless consumer reads this.
+    #[serde(default)]
+    pub symbol_inline_input: bool,
 }
 
 fn default_true() -> bool {
@@ -589,6 +604,7 @@ impl ProfileUiSettings {
             pin_granularity_favorites: false,
             split_symbol_compare: false,
             symbol_quick_search: true,
+            symbol_inline_input: false,
         }
     }
 }
@@ -1092,22 +1108,27 @@ mod json_compat_tests {
         let mut profile = UserProfile::new();
         assert!(!profile.ui.split_symbol_compare, "split_symbol_compare default must be false (merged)");
         assert!(profile.ui.symbol_quick_search, "symbol_quick_search default must be true (inline fast-search)");
+        assert!(!profile.ui.symbol_inline_input, "symbol_inline_input default must be false (mode 2)");
 
         profile.ui.split_symbol_compare = true;
         profile.ui.symbol_quick_search = false;
+        profile.ui.symbol_inline_input = true;
         let json = serde_json::to_string(&profile).expect("must serialize");
         assert!(json.contains("\"split_symbol_compare\":true"), "flag must be flat on disk: {json}");
         assert!(json.contains("\"symbol_quick_search\":false"), "flag must be flat on disk: {json}");
+        assert!(json.contains("\"symbol_inline_input\":true"), "flag must be flat on disk: {json}");
         assert!(!json.contains("\"ui\":{"), "must not nest under ui: {json}");
 
         let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
         assert!(restored.ui.split_symbol_compare);
         assert!(!restored.ui.symbol_quick_search);
+        assert!(restored.ui.symbol_inline_input);
 
-        // Old profile.json missing both keys must deserialize with the new defaults.
+        // Old profile.json missing all three keys must deserialize with the new defaults.
         let legacy_json = r#"{"pin_granularity_favorites":true}"#;
         let legacy: UserProfile = serde_json::from_str(legacy_json).expect("must deserialize legacy json");
         assert!(!legacy.ui.split_symbol_compare);
         assert!(legacy.ui.symbol_quick_search);
+        assert!(!legacy.ui.symbol_inline_input);
     }
 }

@@ -31,6 +31,15 @@ pub struct InputConfig {
     pub radius: f64,
     /// Input type (for visual style)
     pub input_type: InputType,
+    /// Whether to draw the background fill + border ("chrome"). `true`
+    /// (default) is the normal bordered-box look every existing caller
+    /// relies on. `false` skips both draws entirely — text/selection/
+    /// cursor still render exactly as usual — for hosting an editable
+    /// field directly on top of an existing widget's own paint (e.g. a
+    /// toolbar button's label becoming editable in place) without a
+    /// visible box around it (symbol-search-compare-inner arc, Wave 4
+    /// rework — owner spec 2026-07-16: "no focus frame / no bordered box").
+    pub chrome: bool,
 }
 
 /// Input types for different styling
@@ -57,6 +66,7 @@ impl Default for InputConfig {
             padding: 8.0,
             radius: 4.0,
             input_type: InputType::Text,
+            chrome: true,
         }
     }
 }
@@ -113,6 +123,14 @@ impl InputConfig {
 
     pub fn with_radius(mut self, radius: f64) -> Self {
         self.radius = radius;
+        self
+    }
+
+    /// Toggle background+border chrome. `false` renders text/caret/
+    /// selection only — no box — for hosting an editable field on top of
+    /// another widget's own paint (e.g. a toolbar button label).
+    pub fn with_chrome(mut self, chrome: bool) -> Self {
+        self.chrome = chrome;
         self
     }
 
@@ -206,15 +224,17 @@ pub fn draw_input(
         ),
     };
 
-    // Draw background
-    ctx.set_fill_color(bg_color);
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
+    if config.chrome {
+        // Draw background
+        ctx.set_fill_color(bg_color);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
 
-    // Draw border
-    let border_width = if config.focused { 2.0 } else { 1.0 };
-    ctx.set_stroke_color(border_color);
-    ctx.set_stroke_width(border_width);
-    ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
+        // Draw border
+        let border_width = if config.focused { 2.0 } else { 1.0 };
+        ctx.set_stroke_color(border_color);
+        ctx.set_stroke_width(border_width);
+        ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
+    }
 
     // Text area (with padding).
     // `text_rect.x` is used as the left origin for text and selection X positions —

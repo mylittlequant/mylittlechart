@@ -5263,14 +5263,28 @@ impl ChartApp {
     /// handler's quick branch and the instant quick-toggle transition
     /// (owner defect 2026-07-16: flipping the toggle must switch
     /// dropdown⇄modal immediately, not on next open).
+    ///
+    /// Mode 3 "inline" (Wave 4 rework — owner spec 2026-07-16): the editor
+    /// starts SEEDED with the active symbol (`symbol_quick_seed_text()`),
+    /// cursor at the end, so the button's text IS the editable text from
+    /// frame one and the dropdown's first-frame results are the query for
+    /// that symbol across venues. Mode 2 (dropdown-hosted input row) keeps
+    /// the historical empty-start behaviour — `symbol_quick_seed_text()`
+    /// returns `""` there.
     pub(crate) fn open_symbol_quick_dropdown(&mut self) {
         self.panel_app.toolbar_state.open_dropdown_id = Some("symbol_selector".to_string());
         self.panel_app.toolbar_state.open_dropdown_position = None;
-        self.symbol_quick_edit = Some(crate::SymbolQuickEdit::default());
+        let seed = self.symbol_quick_seed_text();
+        let cursor = seed.chars().count();
+        self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+            text: seed.clone(),
+            cursor,
+            selection: None,
+        });
         let q_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
         let mut ic = self.input_coordinator.borrow_mut();
         let tf = ic.text_fields_mut();
-        tf.clear(&q_id);
+        tf.set_text(&q_id, &seed);
         tf.begin_edit(&q_id);
         tf.focus(crate::text_input::SYMBOL_QUICK_SEARCH);
     }
@@ -5337,6 +5351,26 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+    /// Flip `ProfileUiSettings::symbol_inline_input` and autosave — shared
+    /// by the `symbol_selector` inline dropdown's toggle row
+    /// (`sym_quick:toggle_inline`) and the full-screen search modal header's
+    /// toggle (`modal_search:toggle_inline`, symbol-search-compare-inner
+    /// arc, Wave 4, mode 3 "inline" — owner spec 2026-07-16). No mode
+    /// transition beyond closing an already-open dropdown/edit state
+    /// cleanly (`close_symbol_quick_dropdown`) so the next open picks up
+    /// the new button-vs-dropdown input shape instead of leaving a stale
+    /// editor half-migrated mid-session.
+    pub(crate) fn toggle_symbol_inline_input(&mut self) {
+        let mut user_mut = self.core.user_mut();
+        let ui = &mut user_mut.profile_mut().ui;
+        ui.symbol_inline_input = !ui.symbol_inline_input;
+        drop(user_mut);
+        self.autosave_snapshot();
+        if self.symbol_quick_edit.is_some() {
+            self.close_symbol_quick_dropdown();
+        }
+    }
+
     /// Route a click inside the `symbol_selector` inline fast-search
     /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
     /// spec 2026-07-16). `item_id` is the raw row id AFTER the
@@ -5370,6 +5404,10 @@ impl ChartApp {
         }
         if item_id == "sym_quick:toggle_split" {
             self.toggle_split_symbol_compare();
+            return;
+        }
+        if item_id == "sym_quick:toggle_inline" {
+            self.toggle_symbol_inline_input();
             return;
         }
         if item_id == "sym_quick:open_modal" {

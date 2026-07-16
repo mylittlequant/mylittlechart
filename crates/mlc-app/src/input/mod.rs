@@ -5889,6 +5889,18 @@ impl ChartApp {
             return;
         }
 
+        // Symbol fast-search dropdown (symbol-search-compare arc): Escape
+        // closes it and reverts the button to the active symbol. Escape is
+        // routed HERE by the input shell (`chart.on_escape()`), never
+        // through the text-field key dispatch — the `TextAction::Cancel`
+        // arm in `text_action_symbol_quick_search` only fires for the
+        // in-band `\x1b` char path, which the shell does not use (live
+        // repro 2026-07-16: Escape left the inline editor open).
+        if self.symbol_quick_edit.is_some() {
+            self.close_symbol_quick_dropdown();
+            return;
+        }
+
         // If chart browser modal is open, close it.
         if self.panel_app.chart_browser.is_open {
             self.panel_app.chart_browser.close();
