@@ -878,6 +878,16 @@ pub struct ChartApp {
     /// Active granularity row drag-to-reorder. `None` when no row is being
     /// dragged.
     pub(crate) granularity_drag: Option<GranularityDrag>,
+
+    /// Transient state for the `symbol_selector` toolbar dropdown's inline
+    /// fast-search editor (symbol-search-compare-inner arc, Wave 2, кусок 4
+    /// — owner spec 2026-07-16, `ProfileUiSettings::symbol_quick_search`).
+    /// `None` when the dropdown isn't showing the fast-search input (i.e.
+    /// `symbol_quick_search == false`, dropdown closed, or the full-screen
+    /// modal is open instead). Mirrors `granularity_edit`'s lifecycle:
+    /// created on dropdown open with an empty query, cleared on dropdown
+    /// close / Escape / apply.
+    pub(crate) symbol_quick_edit: Option<SymbolQuickEdit>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1068,6 +1078,24 @@ pub enum GranularityEditKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GranularityEdit {
     pub kind: GranularityEditKind,
+}
+
+/// Transient RAM-only state for the `symbol_selector` toolbar dropdown's
+/// inline fast-search editor (symbol-search-compare-inner arc, Wave 2, кусок
+/// 4). Mirrors `GranularityEdit`'s shape/lifecycle: created empty on
+/// dropdown open, live-updated on every keystroke (drives
+/// `ChartApp::build_symbol_search_results` each frame — no separate results
+/// cache field, same "recompute is cheap enough" contract
+/// `ModalState::symbol_search_results` already relies on for the full-screen
+/// modal), cleared on Escape / apply / dropdown close.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SymbolQuickEdit {
+    /// Live typed query text.
+    pub text: String,
+    /// Cursor position (character index).
+    pub cursor: usize,
+    /// Selection range (start, end) — `None` when nothing selected.
+    pub selection: Option<(usize, usize)>,
 }
 
 /// Pending granularity row drag — set on mousedown over a reorderable row,
@@ -1733,6 +1761,49 @@ impl ChartApp {
         })
     }
 
+    /// Render-side snapshot of the `symbol_selector` toolbar dropdown's
+    /// inline fast-search editor (symbol-search-compare-inner arc, Wave 2,
+    /// кусок 4) — `None` whenever `self.symbol_quick_edit` is `None` (the
+    /// dropdown isn't showing the fast-search input this frame). Mirrors
+    /// [`Self::granularity_edit_render`]'s role: reads the live
+    /// `SYMBOL_QUICK_SEARCH` text field + recomputes the top-10 result rows
+    /// from `build_symbol_search_results` (same per-frame recompute
+    /// contract `ModalState::symbol_search_results` uses for the full-screen
+    /// modal — mlc-app-layout cannot call back into mlc-app, so the results
+    /// are computed HERE and passed down as plain `SearchResult` data,
+    /// mirroring how `granularity_favorites` is passed by reference).
+    pub fn symbol_quick_search_render(&self) -> Option<mlc_core::state::modal_state::SymbolQuickSearchRender> {
+        let edit = self.symbol_quick_edit.as_ref()?;
+        let field_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let (text, cursor, selection, cursor_visible) = {
+            let tf = self.input_coordinator.borrow();
+            let store = tf.text_fields();
+            (
+                store.text(&field_id).to_string(),
+                store.cursor(&field_id),
+                store.selection_range(&field_id),
+                store.cursor_visible(now_ms),
+            )
+        };
+        let mut results = Self::build_symbol_search_results(
+            &edit.text,
+            self.core.watchlists().find(self.watchlist_ui.active_list_id),
+            self.core.exchange_symbols().as_map(),
+        );
+        results.truncate(10);
+        Some(mlc_core::state::modal_state::SymbolQuickSearchRender {
+            text,
+            cursor,
+            selection,
+            cursor_visible,
+            results,
+        })
+    }
+
     /// Render-side snapshot of the `timeframe_selector` dropdown's active
     /// FAVORITES/CUSTOM row drag-to-reorder (owner spec 2026-07-16 items
     /// 2+3) — `None` whenever `self.granularity_drag` is `None` (no row is
@@ -1960,6 +2031,7 @@ impl ChartApp {
             granularity_edit: None,
             granularity_drag_pending: None,
             granularity_drag: None,
+            symbol_quick_edit: None,
         };
 
         if let Some(tm) = app.core.trading() {
@@ -2170,6 +2242,13 @@ impl ChartApp {
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            // Symbol fast-search dropdown input (symbol-search-compare arc,
+            // Wave 2). Registration is MANDATORY, not cosmetic: an
+            // unregistered id can still be focus()ed (the store only tracks
+            // the id), but `on_char` looks the field state up and returns
+            // `TextAction::None` when missing — live repro 2026-07-16:
+            // caret rendered, keystrokes silently dropped.
+            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
             tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
@@ -2342,6 +2421,7 @@ impl ChartApp {
             granularity_edit: None,
             granularity_drag_pending: None,
             granularity_drag: None,
+            symbol_quick_edit: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -2397,6 +2477,13 @@ impl ChartApp {
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            // Symbol fast-search dropdown input (symbol-search-compare arc,
+            // Wave 2). Registration is MANDATORY, not cosmetic: an
+            // unregistered id can still be focus()ed (the store only tracks
+            // the id), but `on_char` looks the field state up and returns
+            // `TextAction::None` when missing — live repro 2026-07-16:
+            // caret rendered, keystrokes silently dropped.
+            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
             tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
@@ -2870,6 +2957,7 @@ impl ChartApp {
             granularity_edit: None,
             granularity_drag_pending: None,
             granularity_drag: None,
+            symbol_quick_edit: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -3295,6 +3383,13 @@ impl ChartApp {
             tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
             tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
             tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+            // Symbol fast-search dropdown input (symbol-search-compare arc,
+            // Wave 2). Registration is MANDATORY, not cosmetic: an
+            // unregistered id can still be focus()ed (the store only tracks
+            // the id), but `on_char` looks the field state up and returns
+            // `TextAction::None` when missing — live repro 2026-07-16:
+            // caret rendered, keystrokes silently dropped.
+            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
             tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
             tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
@@ -3698,6 +3793,18 @@ impl ChartApp {
     pub fn apply_symbol(&mut self, chart_id: mlc_core::state::ChartId, symbol: &str, exchange: &str, account_type: &str) {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::ApplySymbol {
             chart_id: chart_id.0,
+            symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            account_type: account_type.to_string(),
+        });
+    }
+
+    /// Programmatic compare-overlay add on the active chart container,
+    /// bypassing the compare search modal. Same effect as a user-driven
+    /// compare modal item click. Routed through the canonical
+    /// `ChartOutEvent::AddCompareSymbol` path.
+    pub fn add_compare_symbol(&mut self, symbol: &str, exchange: &str, account_type: &str) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::AddCompareSymbol {
             symbol: symbol.to_string(),
             exchange: exchange.to_string(),
             account_type: account_type.to_string(),
@@ -5626,6 +5733,9 @@ impl ChartApp {
             let granularity_edit_render = self.granularity_edit_render();
             let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
             let granularity_drag_render = self.granularity_drag_render();
+            let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
+            let symbol_quick_search_render = self.symbol_quick_search_render();
+            let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5648,6 +5758,9 @@ impl ChartApp {
                 granularity_edit_render.as_ref(),
                 pin_granularity_favorites,
                 granularity_drag_render.as_ref(),
+                split_symbol_compare,
+                symbol_quick_search_render.as_ref(),
+                symbol_quick_search,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6351,6 +6464,9 @@ impl ChartApp {
         let granularity_edit_render = self.granularity_edit_render();
         let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
         let granularity_drag_render = self.granularity_drag_render();
+        let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
+        let symbol_quick_search_render = self.symbol_quick_search_render();
+        let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6373,6 +6489,9 @@ impl ChartApp {
             granularity_edit_render.as_ref(),
             pin_granularity_favorites,
             granularity_drag_render.as_ref(),
+            split_symbol_compare,
+            symbol_quick_search_render.as_ref(),
+            symbol_quick_search,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -7031,6 +7150,11 @@ impl ChartApp {
                     mlc_core::state::modal_state::OpenModal::CompareSearch => crate::text_input::COMPARE_SEARCH,
                     _ => crate::text_input::SYMBOL_SEARCH,
                 };
+                let (split_symbol_compare_search, symbol_quick_search_search) = {
+                    let user_guard = self.core.user();
+                    let ui = &user_guard.profile().ui;
+                    (ui.split_symbol_compare, ui.symbol_quick_search)
+                };
                 Some(render_search_overlay(
                     ctx,
                     screen,
@@ -7043,6 +7167,8 @@ impl ChartApp {
                     current_time_ms,
                     &mut self.input_coordinator.borrow_mut(),
                     search_field_id,
+                    split_symbol_compare_search,
+                    symbol_quick_search_search,
                 ))
             } else {
                 None
@@ -7246,6 +7372,49 @@ impl ChartApp {
     /// `render_modal_layer` calls this at the end automatically; external
     /// callers that bypass that path must invoke it themselves.
     pub fn update_text_field_geometry(&mut self) {
+        // Symbol fast-search open/close reconcile (symbol-search-compare
+        // arc, Wave 2 hotfix): the symbol_selector dropdown can open through
+        // TWO paths — the `OpenSymbolSearch` handler (which seeds
+        // `symbol_quick_edit` + focuses `SYMBOL_QUICK_SEARCH`) and the
+        // toolbar's own Dropdown-toggle arm (which knows nothing about
+        // either — live repro 2026-07-16: dropdown open, caret rendered,
+        // keystrokes dropped because `symbol_quick_edit` was `None` and the
+        // field never focused). Reconciling here — a guaranteed per-frame
+        // call in both shells — makes the edit-state lifecycle path-agnostic:
+        // dropdown open without edit state → seed + focus; dropdown gone
+        // (click-outside, Escape, other dropdown) with edit state → clear +
+        // blur (only when our field still holds focus, never someone else's).
+        {
+            let quick_open = self.panel_app.toolbar_state.open_dropdown_id.as_deref()
+                == Some("symbol_selector");
+            let quick_enabled = self.core.user().profile().ui.symbol_quick_search;
+            if quick_open && quick_enabled && self.symbol_quick_edit.is_none() {
+                self.symbol_quick_edit = Some(crate::SymbolQuickEdit::default());
+                let q_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
+                let mut ic = self.input_coordinator.borrow_mut();
+                let tf = ic.text_fields_mut();
+                tf.clear(&q_id);
+                tf.begin_edit(&q_id);
+                tf.focus(text_input::SYMBOL_QUICK_SEARCH);
+            } else if quick_open && self.symbol_quick_edit.is_some() {
+                // Focus is sticky while the dropdown is open: a generic
+                // click-outside-any-field blur pass (row clicks, toggle
+                // clicks) must not leave the keyboard dead — the input is
+                // the only focusable thing in this dropdown.
+                let q_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
+                let mut ic = self.input_coordinator.borrow_mut();
+                if !ic.text_fields().is_focused(&q_id) {
+                    ic.text_fields_mut().focus(text_input::SYMBOL_QUICK_SEARCH);
+                }
+            } else if !quick_open && self.symbol_quick_edit.is_some() {
+                self.symbol_quick_edit = None;
+                let q_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
+                let mut ic = self.input_coordinator.borrow_mut();
+                if ic.text_fields().is_focused(&q_id) {
+                    ic.text_fields_mut().blur();
+                }
+            }
+        }
         // Update text-field geometry for the HexColor field whenever the
         // L2 color picker is visible.  This gives on_drag_start accurate rect +
         // char positions so cursor-from-click works correctly.
@@ -7404,6 +7573,17 @@ impl ChartApp {
                         _ => text_input::TF_FAVORITE_INPUT,
                     };
                     let field_id = WidgetId::from(field);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &field_id,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        positions.clone(),
+                    );
+                }
+                // Inline symbol fast-search editor's widget-overlay input
+                // (symbol-search-compare-inner arc, Wave 2, кусок 4) —
+                // mirrors the granularity block immediately above.
+                if let Some((rect, ref positions)) = dd.symbol_quick_input {
+                    let field_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
                     self.input_coordinator.borrow_mut().text_fields_mut().update_field(
                         &field_id,
                         (rect.x, rect.y, rect.width, rect.height),

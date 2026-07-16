@@ -343,6 +343,18 @@ pub fn floating_inline_update_drag(
 /// toolbar right after `timeframe_selector`, in addition to their normal
 /// dropdown FAVORITES section. `false` (default) leaves the toolbar
 /// unchanged from today.
+///
+/// `split_symbol_compare` (symbol-search-compare-inner arc, Wave 2, кусок 3
+/// — `ProfileUiSettings::split_symbol_compare`) `false` (the new default)
+/// merges the standalone `compare` icon button into `symbol_selector`'s
+/// fast-search dropdown — the `compare` item is dropped from the control
+/// strip entirely. `true` keeps today's two-button look.
+///
+/// `symbol_quick_search_render` (кусок 4) carries the live query text/
+/// cursor/selection + top result rows for the `symbol_selector` dropdown's
+/// inline fast-search editor, built once per frame in `mlc-app` from
+/// `ChartApp::symbol_quick_edit` — mirrors `granularity_edit_render`'s role.
+/// `None` whenever the editor isn't active this frame.
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn ChartRenderContext,
@@ -372,6 +384,9 @@ pub fn chart_toolbar_render_toolbars(
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
     granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
+    split_symbol_compare: bool,
+    symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+    symbol_quick_search: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -619,6 +634,21 @@ pub fn chart_toolbar_render_toolbars(
                             }
                         }
                     }
+                }
+            }
+
+            // Symbol/compare toolbar merge (symbol-search-compare-inner arc,
+            // Wave 2, кусок 3 — owner spec 2026-07-16). `false` (default)
+            // drops the standalone `compare` icon button from the control
+            // strip: its function is reached via the merged
+            // `symbol_selector` fast-search dropdown instead (see
+            // `chart_toolbar_find_dropdown_items`'s `"symbol_selector"` arm
+            // in this module). `true` keeps today's two-button look
+            // unchanged — zero layout change from today when this flag is
+            // on.
+            if !split_symbol_compare {
+                for section in &mut control_sections {
+                    section.items.retain(|item| item.id() != Some("compare"));
                 }
             }
 
@@ -929,7 +959,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare)
         } else {
             None
         };
@@ -1167,6 +1197,9 @@ fn chart_toolbar_render_dropdown(
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
     granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
+    symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+    symbol_quick_search_enabled: bool,
+    split_symbol_compare: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1254,6 +1287,21 @@ fn chart_toolbar_render_dropdown(
                     }
                 }
             }
+        }
+
+        // symbol_selector's inline fast-search dropdown (symbol-search-
+        // compare-inner arc, Wave 2, кусок 4 — owner spec 2026-07-16).
+        // Replaces the placeholder `chart_toolbar_find_dropdown_items`
+        // returned (input host row only) with the full live list: input
+        // host row (unchanged, its rect hosts the widget-overlay text input
+        // built in step 5b below) + top-10 result rows + separator + two
+        // toggle rows + "Advanced search…" row. Built here (not in the
+        // finder fn) because it needs `symbol_quick_search_render`'s live
+        // per-frame query results, mirroring how granularity favorites are
+        // appended to the `timeframe_selector` base list above rather than
+        // built in the finder.
+        if dropdown_id == "symbol_selector" {
+            items = symbol_quick_dropdown_items(symbol_quick_search_render);
         }
 
         // 3. Convert DropdownItemDef -> DropdownItem
@@ -1593,6 +1641,49 @@ fn chart_toolbar_render_dropdown(
             }
         }
 
+        // symbol_selector result rows (кусок 4): attach the star (watchlist
+        // toggle) + plus (add-compare) trailing icons — done here rather
+        // than inline in `symbol_quick_dropdown_items` because
+        // `TrailingIcon` is a `mlc-app-layout::ui::dropdown` type the
+        // `DropdownItemDef` builder (uzor-panel-api, shared with every other
+        // static toolbar def) has no field for, same reason granularity's
+        // star/edit/delete icons are attached in this post-processing pass
+        // rather than at `DropdownItemDef` construction time.
+        if dropdown_id == "symbol_selector" {
+            for di in dropdown_items.iter_mut() {
+                if let DropdownItem::Item { id, toggle, trailing_icons, .. } = di {
+                    if let Some(key) = id.strip_prefix(SYMBOL_QUICK_ITEM_PREFIX) {
+                        let in_watchlist = symbol_quick_search_render
+                            .map(|r| &r.results)
+                            .and_then(|results| results.iter().find(|res| {
+                                format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type) == key
+                            }))
+                            .map(|res| res.in_watchlist)
+                            .unwrap_or(false);
+                        let (star_icon, star_color) = if in_watchlist {
+                            (IconId::new("star_filled"), Some("#FFD700".to_string()))
+                        } else {
+                            (IconId::new("star"), None)
+                        };
+                        let mut star = crate::ui::dropdown::TrailingIcon::new(
+                            format!("sym_quick_star:{}", key), star_icon,
+                        );
+                        if let Some(c) = star_color {
+                            star = star.with_color(c);
+                        }
+                        let plus = crate::ui::dropdown::TrailingIcon::new(
+                            format!("sym_quick_cmp:{}", key), IconId::new("Plus"),
+                        );
+                        *trailing_icons = vec![star, plus];
+                    } else if id == "sym_quick:toggle_quick" {
+                        *toggle = Some(symbol_quick_search_enabled);
+                    } else if id == "sym_quick:toggle_split" {
+                        *toggle = Some(split_symbol_compare);
+                    }
+                }
+            }
+        }
+
         // 5. Build config and render the main dropdown
         let mut config = DropdownConfig::new(dropdown_items);
         // Chart-type menu: two-column grid inside each section (owner spec
@@ -1710,6 +1801,66 @@ fn chart_toolbar_render_dropdown(
             }
         }
 
+        // Populated by the widget-overlay block below (symbol-search-
+        // compare-inner arc, Wave 2, кусок 4) with `(text_rect,
+        // char_x_positions)` from `draw_input`'s `InputResult` — same
+        // geometry-capture contract `granularity_edit_input` above uses.
+        let mut symbol_quick_input: Option<(WidgetRect, Vec<f64>)> = None;
+
+        // 5b'. Widget overlay for the `symbol_selector` inline fast-search
+        // editor (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
+        // spec 2026-07-16). Mirrors the granularity inline-editor overlay
+        // above verbatim: draws the SAME centralized text-input widget
+        // directly over the `"sym_quick:input"` host row's rect, AFTER
+        // `draw_dropdown` already painted it.
+        if dropdown_id == "symbol_selector" {
+            if let Some(render) = symbol_quick_search_render {
+                if let Some(row_rect) = all_item_rects.iter().find(|(id, _)| id == "sym_quick:input").map(|(_, r)| *r) {
+                    use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+                    use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+
+                    let widget_theme = WidgetTheme {
+                        bg_normal: theme.background.clone(),
+                        bg_hover: theme.item_bg_hover.clone(),
+                        bg_pressed: theme.item_bg_hover.clone(),
+                        bg_disabled: theme.background.clone(),
+                        text_normal: theme.item_text.clone(),
+                        text_hover: theme.item_text_hover.clone(),
+                        text_disabled: theme.item_text_disabled.clone(),
+                        border_normal: theme.border.clone(),
+                        border_hover: theme.item_bg_hover.clone(),
+                        border_focused: "#2962ff".to_string(),
+                        accent: "#2962ff".to_string(),
+                        accent_hover: "#2962ff".to_string(),
+                        success: theme.item_text.clone(),
+                        warning: theme.item_text.clone(),
+                        danger: theme.item_danger.clone(),
+                    };
+                    let input_config = InputConfig::new(&render.text)
+                        .with_focused(true)
+                        .with_cursor(render.cursor)
+                        .with_placeholder("Search symbol\u{2026}")
+                        .with_selection(render.selection.map(|(s, _)| s), render.selection.map(|(_, e)| e))
+                        .with_padding(12.0);
+                    let input_rect = uzor::types::Rect::new(
+                        row_rect.x + 2.0,
+                        row_rect.y + 2.0,
+                        (row_rect.width - 4.0).max(0.0),
+                        (row_rect.height - 4.0).max(0.0),
+                    );
+                    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+                    if render.cursor_visible {
+                        draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
+                    }
+                    let tr = input_result.text_rect;
+                    symbol_quick_input = Some((
+                        WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
+                        input_result.char_x_positions,
+                    ));
+                }
+            }
+        }
+
         // 5c. Drag-to-reorder visual: dragged-row highlight + insertion-gap
         // line (owner spec 2026-07-16 items 2+3) — mirrors
         // `WatchlistModalState`'s drag-reorder overlay (`watchlist_modal.rs`,
@@ -1819,6 +1970,7 @@ fn chart_toolbar_render_dropdown(
             open_submenu: hover_open_submenu,
             hovered: hover_hovered,
             granularity_edit_input,
+            symbol_quick_input,
         })
     }
 
@@ -2039,6 +2191,65 @@ fn granularity_trailing_icons(
         icons.push(TrailingIcon::new(del_action, IconId::new("delete")));
     }
     icons
+}
+
+/// Hit-id prefix for one `symbol_selector` fast-search result row
+/// (symbol-search-compare-inner arc, Wave 2, кусок 4). The suffix is the
+/// composite `"SYMBOL:exchange_id:account_type"` key — same shape the
+/// full-screen search modal's `"modal_search:item:"` rows use
+/// (`modals.rs`'s `rest.starts_with("item:")` parse), so
+/// `panel_click.rs`'s click handler can reuse the identical rfind-twice
+/// parse. `sym_quick_star:`/`sym_quick_cmp:` (trailing-icon actions) and
+/// `sym_quick:item:` (row body click) all share this same key suffix.
+pub const SYMBOL_QUICK_ITEM_PREFIX: &str = "sym_quick:item:";
+
+/// Build the `symbol_selector` toolbar dropdown's full item list
+/// (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
+/// 2026-07-16): input host row, top-10 live query results, a separator,
+/// two toggle rows ("Quick search" / "Separate compare button"), and an
+/// "Advanced search…" row that falls back to the full-screen modal.
+///
+/// Star/plus `TrailingIcon`s for the result rows are attached by the CALLER
+/// (`chart_toolbar_render_dropdown`'s post-processing pass) since
+/// `DropdownItemDef` (uzor-panel-api, shared with every static toolbar def)
+/// has no trailing-icon field — same split `granularity_trailing_icons`
+/// uses for the `timeframe_selector` dropdown's star/edit/delete icons.
+fn symbol_quick_dropdown_items(
+    render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+) -> Vec<DropdownItemDef> {
+    let mut items: Vec<DropdownItemDef> = Vec::new();
+
+    // Input host row — the real text-input widget is drawn over this row's
+    // rect by the widget-overlay block (step 5b), same pattern
+    // `TF_FAVORITE_CUSTOM_INPUT_ITEM_ID` uses for the granularity "+ Add"
+    // row. Empty label: the live typed text renders via the overlay, not
+    // this row's own label.
+    items.push(DropdownItemDef::action("sym_quick:input", ""));
+
+    if let Some(r) = render {
+        if !r.results.is_empty() {
+            items.push(DropdownItemDef::Separator);
+            for res in &r.results {
+                let key = format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type);
+                let label = format!("{} \u{b7} {} \u{b7} {}", res.symbol, res.exchange, res.account_type);
+                items.push(DropdownItemDef::action(
+                    format!("{}{}", SYMBOL_QUICK_ITEM_PREFIX, key),
+                    label,
+                ));
+            }
+        }
+    }
+
+    items.push(DropdownItemDef::Separator);
+    items.push(DropdownItemDef::action("sym_quick:toggle_quick", "Quick search"));
+    items.push(DropdownItemDef::action("sym_quick:toggle_split", "Separate compare button"));
+    items.push(DropdownItemDef::Separator);
+    items.push(
+        DropdownItemDef::action("sym_quick:open_modal", "Advanced search\u{2026}")
+            .with_icon(ToolbarIconId::new("Search")),
+    );
+
+    items
 }
 
 /// Ordered dropdown row ids for one granularity FAVORITES/CUSTOM list —
@@ -2370,6 +2581,23 @@ fn chart_toolbar_find_dropdown_items(
     presets: &[mlc_core::PresetSummary],
     active_preset_id: &str,
 ) -> Option<Vec<DropdownItemDef>> {
+        // Special case: symbol_selector's inline fast-search dropdown
+        // (symbol-search-compare-inner arc, Wave 2, кусок 4). The toolbar
+        // def's own `symbol_selector` entry carries an empty static item
+        // list (it never opened a dropdown before this arc — click used to
+        // route straight to the full-screen modal), so the base fetch below
+        // would return `Some(vec![])`. Returning a non-empty placeholder
+        // here (just the input host row) makes `chart_toolbar_render_dropdown`
+        // enter its item-building path unconditionally; the REAL dynamic
+        // rows (live query results + toggle rows) are appended there
+        // (mirrors how granularity favorites are appended to the
+        // `timeframe_selector` base list, not built here) because building
+        // them needs `symbol_quick_search_render` — live per-frame data this
+        // finder fn has no access to (only static toolbar defs + presets).
+        if dropdown_id == "symbol_selector" {
+            return Some(vec![DropdownItemDef::action("sym_quick:input", "")]);
+        }
+
         // Special case: magnet is an icon_button that opens a dropdown on double-click.
         // Its items are not in the toolbar definition — return them directly.
         if dropdown_id == "magnet" {

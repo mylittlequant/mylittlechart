@@ -67,6 +67,12 @@ impl ChartApp {
                 // not via this snapshot builder — preserve the live value,
                 // same pattern as `granularity_favorites` above.
                 pin_granularity_favorites: existing.ui.pin_granularity_favorites,
+                // Toolbar-merge / inline-fast-search toggles (symbol-search-
+                // compare-inner arc, Wave 2, кусок 3/4): mutated in-place via
+                // the user facade at toggle time, same preserve-live-value
+                // pattern as `pin_granularity_favorites` above.
+                split_symbol_compare: existing.ui.split_symbol_compare,
+                symbol_quick_search: existing.ui.symbol_quick_search,
             },
         }
     }

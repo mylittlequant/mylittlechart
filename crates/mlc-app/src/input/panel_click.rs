@@ -2913,6 +2913,20 @@ impl ChartApp {
                     return;
                 }
 
+                // symbol_selector inline fast-search dropdown rows
+                // (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
+                // spec 2026-07-16). Checked BEFORE the granularity_edit
+                // guard below (that guard only applies to the
+                // `timeframe_selector` dropdown's OWN inline editor —
+                // `symbol_quick_edit` is a separate, independent state) and
+                // before the generic `handle_dropdown_select_with_chart`
+                // fallback, mirroring exactly how granularity's own
+                // trailing-icon prefixes are checked first.
+                if dropdown_id == "symbol_selector" {
+                    self.handle_symbol_quick_click(item_id);
+                    return;
+                }
+
                 // Inline granularity editor is ACTIVE (owner rule 2026-07-16):
                 // while the text input lives, item clicks inside the dropdown
                 // must not select/apply anything — the user commits with
@@ -3479,6 +3493,15 @@ impl ChartApp {
         // === Search modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("modal_search:") {
             self.handle_search_modal_click(rest, x, y);
+            return;
+        }
+
+        // === Search modal compare-plus icon (merged-mode, symbol-search-
+        // compare-inner arc, Wave 2, кусок 5) — its own top-level prefix
+        // (not nested under "modal_search:") since it registers its own
+        // hover rect distinct from the row body / star icon.
+        if let Some(rest) = widget_id.strip_prefix("modal_cmp:") {
+            self.handle_search_modal_cmp_click(rest);
             return;
         }
 
@@ -5220,6 +5243,166 @@ impl ChartApp {
                 tf.begin_edit(&field_id);
                 tf.focus(crate::text_input::TF_FAVORITE_INPUT);
             }
+        }
+    }
+
+    /// Close the `symbol_selector` inline fast-search dropdown and clear its
+    /// transient editor state (symbol-search-compare-inner arc, Wave 2,
+    /// кусок 4). Shared by every exit path: row apply, "Advanced search…",
+    /// Escape, background-click.
+    pub(crate) fn close_symbol_quick_dropdown(&mut self) {
+        self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.panel_app.toolbar_state.open_dropdown_position = None;
+        self.symbol_quick_edit = None;
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+    }
+
+    /// Open the `symbol_selector` inline fast-search dropdown: set the
+    /// toolbar dropdown-open state, seed the RAM edit state and focus the
+    /// `SYMBOL_QUICK_SEARCH` field. Shared by the `OpenSymbolSearch`
+    /// handler's quick branch and the instant quick-toggle transition
+    /// (owner defect 2026-07-16: flipping the toggle must switch
+    /// dropdown⇄modal immediately, not on next open).
+    pub(crate) fn open_symbol_quick_dropdown(&mut self) {
+        self.panel_app.toolbar_state.open_dropdown_id = Some("symbol_selector".to_string());
+        self.panel_app.toolbar_state.open_dropdown_position = None;
+        self.symbol_quick_edit = Some(crate::SymbolQuickEdit::default());
+        let q_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        tf.clear(&q_id);
+        tf.begin_edit(&q_id);
+        tf.focus(crate::text_input::SYMBOL_QUICK_SEARCH);
+    }
+
+    /// Open the full-screen symbol-search MODAL directly, bypassing the
+    /// `symbol_quick_search` branch in the `OpenSymbolSearch` handler —
+    /// used by "Advanced search…" inside the quick dropdown (owner defect
+    /// 2026-07-16: re-dispatching `OpenSymbolSearch` with quick ON looped
+    /// straight back into the dropdown, making the row look dead) and by
+    /// the instant quick-toggle transition.
+    pub(crate) fn open_symbol_search_modal_direct(&mut self) {
+        self.modal_state.open(mlc_core::state::modal_state::OpenModal::SymbolSearch);
+        self.modal_state.symbol_search_results = crate::ChartApp::build_demo_symbol_results(
+            "",
+            self.core.watchlists().find(self.watchlist_ui.active_list_id),
+            self.core.exchange_symbols().as_map(),
+        );
+        let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        tf.clear(&sym_id);
+        tf.begin_edit(&sym_id);
+        tf.focus(crate::text_input::SYMBOL_SEARCH);
+    }
+
+    /// Flip `ProfileUiSettings::symbol_quick_search` and autosave — shared by
+    /// the `symbol_selector` inline dropdown's toggle row
+    /// (`sym_quick:toggle_quick`) and the full-screen search modal header's
+    /// toggle (`modal_search:toggle_quick`, symbol-search-compare-inner arc,
+    /// Wave 3 — owner spec 2026-07-16). The flip takes effect IMMEDIATELY
+    /// (owner defect 2026-07-16): quick turned OFF while the dropdown is
+    /// open → dropdown closes, modal opens in its place; quick turned ON
+    /// while the symbol-search modal is open → modal closes, dropdown opens.
+    pub(crate) fn toggle_symbol_quick_search(&mut self) {
+        let now_on = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.symbol_quick_search = !ui.symbol_quick_search;
+            ui.symbol_quick_search
+        };
+        self.autosave_snapshot();
+        if !now_on && self.symbol_quick_edit.is_some() {
+            self.close_symbol_quick_dropdown();
+            self.open_symbol_search_modal_direct();
+        } else if now_on
+            && self.modal_state.current == mlc_core::state::modal_state::OpenModal::SymbolSearch
+        {
+            self.modal_state.close();
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            self.open_symbol_quick_dropdown();
+        }
+    }
+
+    /// Flip `ProfileUiSettings::split_symbol_compare` and autosave — shared
+    /// by the `symbol_selector` inline dropdown's toggle row
+    /// (`sym_quick:toggle_split`) and the full-screen search modal header's
+    /// toggle (`modal_search:toggle_split`, symbol-search-compare-inner arc,
+    /// Wave 3 — owner spec 2026-07-16).
+    pub(crate) fn toggle_split_symbol_compare(&mut self) {
+        let mut user_mut = self.core.user_mut();
+        let ui = &mut user_mut.profile_mut().ui;
+        ui.split_symbol_compare = !ui.split_symbol_compare;
+        drop(user_mut);
+        self.autosave_snapshot();
+    }
+
+    /// Route a click inside the `symbol_selector` inline fast-search
+    /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
+    /// spec 2026-07-16). `item_id` is the raw row id AFTER the
+    /// `"dropdown:symbol_selector:"` prefix has been stripped by the
+    /// caller — same shape `handle_dropdown_select_with_chart` would
+    /// otherwise receive.
+    pub(crate) fn handle_symbol_quick_click(&mut self, item_id: &str) {
+        // Composite key format: "SYMBOL:exchange_id:account_type" — split
+        // from the right twice (symbols may contain ':') — same parse shape
+        // `handle_search_modal_click`'s "star:"/"item:" arms use
+        // (modals.rs).
+        fn parse_key(key: &str) -> (String, String, String) {
+            if let Some(at_pos) = key.rfind(':') {
+                let at_part = &key[at_pos + 1..];
+                let remainder = &key[..at_pos];
+                if let Some(ex_pos) = remainder.rfind(':') {
+                    return (remainder[..ex_pos].to_string(), remainder[ex_pos + 1..].to_string(), at_part.to_string());
+                }
+                return (remainder.to_string(), String::new(), at_part.to_string());
+            }
+            (key.to_string(), String::new(), "S".to_string())
+        }
+
+        if item_id == "sym_quick:input" {
+            // Absorber row — the real text input sits on top; keep focus.
+            return;
+        }
+        if item_id == "sym_quick:toggle_quick" {
+            self.toggle_symbol_quick_search();
+            return;
+        }
+        if item_id == "sym_quick:toggle_split" {
+            self.toggle_split_symbol_compare();
+            return;
+        }
+        if item_id == "sym_quick:open_modal" {
+            // DIRECT modal open — re-dispatching `OpenSymbolSearch` here
+            // loops back into the quick branch while quick is ON and
+            // reopens the dropdown (owner defect 2026-07-16, "Advanced
+            // search does nothing").
+            self.close_symbol_quick_dropdown();
+            self.open_symbol_search_modal_direct();
+            return;
+        }
+        if let Some(key) = item_id.strip_prefix("sym_quick_star:") {
+            let (symbol, exchange, account_type) = parse_key(key);
+            self.watchlist_actions.push(crate::WatchlistAction::Toggle { symbol, exchange, account_type });
+            self.watchlists_dirty = true;
+            return;
+        }
+        if let Some(key) = item_id.strip_prefix("sym_quick_cmp:") {
+            let (symbol, exchange, account_type) = parse_key(key);
+            self.add_compare_symbol(&symbol, &exchange, &account_type);
+            self.close_symbol_quick_dropdown();
+            return;
+        }
+        if let Some(key) = item_id.strip_prefix(mlc_app_layout::panel_app::SYMBOL_QUICK_ITEM_PREFIX) {
+            let (symbol, exchange_id, account_type) = parse_key(key);
+            let resolved_exchange = self.core.exchange_symbols()
+                .find_by_label(&exchange_id)
+                .unwrap_or(self.active_exchange);
+            if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                self.apply_symbol(chart_id, &symbol, resolved_exchange.as_str(), &account_type);
+            }
+            self.close_symbol_quick_dropdown();
+            return;
         }
     }
 

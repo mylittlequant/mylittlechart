@@ -168,6 +168,7 @@ impl ChartApp {
                 | SYMBOL_SEARCH
                 | INDICATOR_SEARCH
                 | COMPARE_SEARCH
+                | SYMBOL_QUICK_SEARCH
         );
         if !is_late_field {
             return false;
@@ -213,6 +214,7 @@ impl ChartApp {
             BAR_MODE_PARAM                   => self.text_action_bar_mode_param(action),
             TF_FAVORITE_INPUT                => self.text_action_tf_favorite_input(action),
             PARAM_FAVORITE_INPUT             => self.text_action_param_favorite_input(action),
+            SYMBOL_QUICK_SEARCH              => self.text_action_symbol_quick_search(action),
             PRIMITIVE_SETTINGS_FIELD         => self.text_action_prim_settings_field(action),
             INDICATOR_SETTINGS_FIELD         => self.text_action_ind_settings_field(action),
             CHART_SETTINGS_FIELD             => self.text_action_chart_settings_field(action),
@@ -806,6 +808,58 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// Commit handler for the `symbol_selector` toolbar dropdown's inline
+    /// fast-search editor (symbol-search-compare-inner arc, Wave 2, кусок 4
+    /// — owner spec 2026-07-16). Unlike `text_action_tf_favorite_input`,
+    /// there is no commit-time validation grammar — any text is a valid
+    /// substring query (mirrors `text_action_search_overlay`'s
+    /// `TextChanged` contract for the full-screen modal). `TextChanged`
+    /// only updates the live query text/cursor; the result-row rebuild
+    /// itself happens per-frame in `ChartApp::symbol_quick_search_render`
+    /// (reads `self.symbol_quick_edit.text` fresh every frame — no
+    /// separate results cache to keep in sync here).
+    fn text_action_symbol_quick_search(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(_) => {
+                // Enter: apply the first result row exactly as if it had
+                // been clicked — same dispatch `handle_search_modal_click`'s
+                // Commit-via-first-result contract uses for the full-screen
+                // modal (`text_action_search_overlay`).
+                let first_key = self.symbol_quick_search_render()
+                    .and_then(|r| r.results.first().map(|res| {
+                        format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type)
+                    }));
+                if let Some(key) = first_key {
+                    let rest = format!("item:{}", key);
+                    self.handle_symbol_quick_click(&rest);
+                } else {
+                    self.panel_app.toolbar_state.open_dropdown_id = None;
+                    self.symbol_quick_edit = None;
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
+            }
+            TextAction::TextChanged(ref new_text) => {
+                let field_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
+                let (cursor, selection) = {
+                    let tf = self.input_coordinator.borrow();
+                    let store = tf.text_fields();
+                    (store.cursor(&field_id), store.selection_range(&field_id))
+                };
+                if let Some(ref mut edit) = self.symbol_quick_edit {
+                    edit.text = new_text.clone();
+                    edit.cursor = cursor;
+                    edit.selection = selection;
+                }
+            }
+            TextAction::Cancel => {
+                self.panel_app.toolbar_state.open_dropdown_id = None;
+                self.symbol_quick_edit = None;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::None | TextAction::RawInput(_) => {}
         }
     }
 

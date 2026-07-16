@@ -540,6 +540,32 @@ pub struct ProfileUiSettings {
     /// reads this.
     #[serde(default)]
     pub pin_granularity_favorites: bool,
+
+    /// When `true`, the top toolbar keeps `symbol_selector` and `compare`
+    /// as two SEPARATE items (today's look). `false` (the new default)
+    /// merges them: the standalone `compare` icon button is dropped from
+    /// the control strip and its function is reached via the merged
+    /// `symbol_selector` fast-search dropdown instead
+    /// (symbol-search-compare-inner arc, Wave 2, кусок 3 — owner spec
+    /// 2026-07-16). Purely a toolbar-layout presentation toggle — no
+    /// daemon/headless consumer reads this.
+    #[serde(default)]
+    pub split_symbol_compare: bool,
+
+    /// When `true` (the default), clicking `symbol_selector` opens an
+    /// inline fast-search DROPDOWN on the toolbar (like
+    /// `timeframe_selector`'s) instead of the full-screen search modal.
+    /// `false` restores today's behaviour: click opens
+    /// `ChartOutEvent::OpenSymbolSearch`'s full-screen modal directly
+    /// (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
+    /// 2026-07-16). Purely a toolbar-layout presentation toggle — no
+    /// daemon/headless consumer reads this.
+    #[serde(default = "default_true")]
+    pub symbol_quick_search: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl ProfileUiSettings {
@@ -561,6 +587,8 @@ impl ProfileUiSettings {
             avatar: "chart".to_string(),
             profile_created_at: 0,
             pin_granularity_favorites: false,
+            split_symbol_compare: false,
+            symbol_quick_search: true,
         }
     }
 }
@@ -1057,5 +1085,29 @@ mod json_compat_tests {
 
         let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
         assert!(restored.ui.pin_granularity_favorites);
+    }
+
+    #[test]
+    fn symbol_compare_toolbar_flags_round_trip() {
+        let mut profile = UserProfile::new();
+        assert!(!profile.ui.split_symbol_compare, "split_symbol_compare default must be false (merged)");
+        assert!(profile.ui.symbol_quick_search, "symbol_quick_search default must be true (inline fast-search)");
+
+        profile.ui.split_symbol_compare = true;
+        profile.ui.symbol_quick_search = false;
+        let json = serde_json::to_string(&profile).expect("must serialize");
+        assert!(json.contains("\"split_symbol_compare\":true"), "flag must be flat on disk: {json}");
+        assert!(json.contains("\"symbol_quick_search\":false"), "flag must be flat on disk: {json}");
+        assert!(!json.contains("\"ui\":{"), "must not nest under ui: {json}");
+
+        let restored: UserProfile = serde_json::from_str(&json).expect("must deserialize");
+        assert!(restored.ui.split_symbol_compare);
+        assert!(!restored.ui.symbol_quick_search);
+
+        // Old profile.json missing both keys must deserialize with the new defaults.
+        let legacy_json = r#"{"pin_granularity_favorites":true}"#;
+        let legacy: UserProfile = serde_json::from_str(legacy_json).expect("must deserialize legacy json");
+        assert!(!legacy.ui.split_symbol_compare);
+        assert!(legacy.ui.symbol_quick_search);
     }
 }

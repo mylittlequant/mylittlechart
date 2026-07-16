@@ -1636,6 +1636,8 @@ pub struct CompareSettingsState {
     pub color_picker_field: Option<String>,
     /// Whether the line-style dropdown is open.
     pub line_style_dropdown_open: bool,
+    /// Whether the chart-type dropdown is open.
+    pub chart_type_dropdown_open: bool,
     /// Hovered item ID (for hover highlight).
     pub hovered_item_id: Option<String>,
     /// Slider drag state (line width slider).
@@ -1651,6 +1653,9 @@ pub struct CompareSettingsState {
     pub cached_line_width: f32,
     /// Cached line style ("solid", "dashed", "dotted").
     pub cached_line_style: String,
+    /// Cached chart type ("line", "step_line", "area", "candles", "bars",
+    /// "hollow_candles", "heikin_ashi").
+    pub cached_chart_type: String,
     /// Cached visibility flag.
     pub cached_visible: bool,
     /// Cached bar count.
@@ -1667,6 +1672,8 @@ pub struct CompareSettingsState {
     pub original_line_width: f32,
     /// Original line style before any edits.
     pub original_line_style: String,
+    /// Original chart type before any edits.
+    pub original_chart_type: String,
     /// Original timeframe visibility (for Cancel revert).
     pub original_timeframe_visibility: Option<TimeframeVisibilityConfig>,
     // ---- Inline text editing for tf min/max number fields ----
@@ -1698,6 +1705,7 @@ impl Default for CompareSettingsState {
             color_picker: ColorPickerState::new(),
             color_picker_field: None,
             line_style_dropdown_open: false,
+            chart_type_dropdown_open: false,
             hovered_item_id: None,
             slider_drag: None,
             cached_symbol: String::new(),
@@ -1705,6 +1713,7 @@ impl Default for CompareSettingsState {
             cached_color: "#2196F3".to_string(),
             cached_line_width: 2.0,
             cached_line_style: "solid".to_string(),
+            cached_chart_type: "line".to_string(),
             cached_visible: true,
             cached_bar_count: 0,
             cached_base_price: 0.0,
@@ -1712,6 +1721,7 @@ impl Default for CompareSettingsState {
             original_color: "#2196F3".to_string(),
             original_line_width: 2.0,
             original_line_style: "solid".to_string(),
+            original_chart_type: "line".to_string(),
             original_timeframe_visibility: None,
             active_field_id: None,
             active_render: ActiveFieldRender::default(),
@@ -1732,6 +1742,7 @@ impl CompareSettingsState {
     ///
     /// Pass the series fields so the renderer can display them without needing
     /// a live borrow on the compare overlay.
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         &mut self,
         series_index: usize,
@@ -1740,6 +1751,7 @@ impl CompareSettingsState {
         color: &str,
         line_width: f32,
         line_style: &str,
+        chart_type: &str,
         visible: bool,
         bar_count: usize,
         base_price: f64,
@@ -1749,6 +1761,7 @@ impl CompareSettingsState {
         self.series_index = series_index;
         self.active_tab = CompareSettingsTab::Style;
         self.line_style_dropdown_open = false;
+        self.chart_type_dropdown_open = false;
         self.hovered_item_id = None;
         self.slider_drag = None;
         self.active_field_id = None;
@@ -1758,6 +1771,7 @@ impl CompareSettingsState {
         self.cached_color = color.to_string();
         self.cached_line_width = line_width;
         self.cached_line_style = line_style.to_string();
+        self.cached_chart_type = chart_type.to_string();
         self.cached_visible = visible;
         self.cached_bar_count = bar_count;
         self.cached_base_price = base_price;
@@ -1766,17 +1780,20 @@ impl CompareSettingsState {
         self.original_color = color.to_string();
         self.original_line_width = line_width;
         self.original_line_style = line_style.to_string();
+        self.original_chart_type = chart_type.to_string();
         self.original_timeframe_visibility = timeframe_visibility;
         // Don't reset position — keep last for convenience.
     }
 
     /// Refresh the cached display data from an updated series.
     /// Call each frame while the modal is open to keep displays current.
+    #[allow(clippy::too_many_arguments)]
     pub fn refresh_cache(
         &mut self,
         color: &str,
         line_width: f32,
         line_style: &str,
+        chart_type: &str,
         visible: bool,
         bar_count: usize,
         base_price: f64,
@@ -1784,6 +1801,7 @@ impl CompareSettingsState {
         self.cached_color = color.to_string();
         self.cached_line_width = line_width;
         self.cached_line_style = line_style.to_string();
+        self.cached_chart_type = chart_type.to_string();
         self.cached_visible = visible;
         self.cached_bar_count = bar_count;
         self.cached_base_price = base_price;

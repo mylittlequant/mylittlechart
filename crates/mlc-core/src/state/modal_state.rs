@@ -55,6 +55,38 @@ pub struct SearchResult {
 }
 
 // =============================================================================
+// SymbolQuickSearchRender — render-side snapshot of the symbol_selector
+// toolbar dropdown's inline fast-search editor
+// =============================================================================
+
+/// Render-side snapshot of the `symbol_selector` toolbar dropdown's inline
+/// fast-search editor (symbol-search-compare-inner arc, Wave 2, кусок 4 —
+/// owner spec 2026-07-16). Mirrors
+/// [`crate::chart_type::GranularityEditRender`]'s role exactly: carries
+/// everything `mlc-app-layout`'s dropdown builder needs to render the text
+/// input + result rows without depending on `mlc-app::SymbolQuickEdit` (a
+/// layer `mlc-app-layout` cannot see — dependency points the other way).
+/// Built once per frame in `mlc-app` from `ChartApp::symbol_quick_edit` +
+/// a fresh `build_symbol_search_results` call (same recompute-per-frame
+/// contract `ModalState::symbol_search_results` already uses for the
+/// full-screen modal).
+#[derive(Debug, Clone, Default)]
+pub struct SymbolQuickSearchRender {
+    /// Live typed query text.
+    pub text: String,
+    /// Cursor position (character index).
+    pub cursor: usize,
+    /// Selection range (start, end), sorted — `None` when nothing selected.
+    pub selection: Option<(usize, usize)>,
+    /// Whether the blinking cursor is in its "on" phase this frame.
+    pub cursor_visible: bool,
+    /// Top N matching results for the live query (`mlc-app` truncates —
+    /// same shared `SearchResult` shape the full-screen modal uses,
+    /// `in_watchlist` already resolved against the active watchlist).
+    pub results: Vec<SearchResult>,
+}
+
+// =============================================================================
 // IndicatorCategory — simple categorisation of indicators
 // =============================================================================
 

@@ -24,6 +24,13 @@ pub struct CompareSeries {
     /// Line style: "solid", "dashed", "dotted"
     #[serde(default = "default_line_style")]
     pub line_style: String,
+    /// Chart type used to render this series' overlay: one of the
+    /// kline-renderable family ("line", "step_line", "area", "candles",
+    /// "bars", "hollow_candles", "heikin_ashi"). Defaults to "line" so old
+    /// persisted `CompareSeries` JSON (no `chart_type` key) still
+    /// deserializes — see `default_compare_chart_type`.
+    #[serde(default = "default_compare_chart_type")]
+    pub chart_type: String,
     /// Whether this series is visible
     pub visible: bool,
     /// Base price for percentage calculation (first visible bar's close)
@@ -40,6 +47,10 @@ fn default_line_style() -> String {
     "solid".to_string()
 }
 
+fn default_compare_chart_type() -> String {
+    "line".to_string()
+}
+
 impl CompareSeries {
     /// Create a new compare series
     pub fn new(symbol: impl Into<String>, bars: Vec<Bar>, color: impl Into<String>) -> Self {
@@ -54,6 +65,7 @@ impl CompareSeries {
             color: color.into(),
             line_width: 2.0,
             line_style: "solid".to_string(),
+            chart_type: "line".to_string(),
             visible: true,
             base_price,
             base_timestamp,
@@ -343,6 +355,15 @@ impl CompareOverlay {
         }
     }
 
+    /// Set chart type of a series by index (kline-renderable family only —
+    /// "line", "step_line", "area", "candles", "bars", "hollow_candles",
+    /// "heikin_ashi").
+    pub fn set_series_chart_type_by_index(&mut self, index: usize, chart_type: impl Into<String>) {
+        if let Some(series) = self.series.get_mut(index) {
+            series.chart_type = chart_type.into();
+        }
+    }
+
     /// Set the timeframe visibility config for a series by index.
     pub fn set_series_timeframe_visibility(&mut self, index: usize, config: TimeframeVisibilityConfig) {
         if let Some(series) = self.series.get_mut(index) {
@@ -444,5 +465,26 @@ mod tests {
         assert_eq!(mode.next(), PriceScaleMode::Logarithmic);
         assert_eq!(mode.next().next(), PriceScaleMode::Percent);
         assert_eq!(mode.next().next().next(), PriceScaleMode::Normal);
+    }
+
+    /// Old persisted `CompareSeries` JSON predates the `chart_type` field
+    /// (added 2026-07-16). Deserializing it must not error, and must
+    /// default to "line" so existing presets keep their current rendering.
+    #[test]
+    fn compare_series_missing_chart_type_defaults_to_line() {
+        let old_json = r##"{
+            "symbol": "ETHUSDT",
+            "name": "ETHUSDT",
+            "bars": [],
+            "color": "#2196F3",
+            "line_width": 2.0,
+            "line_style": "solid",
+            "visible": true,
+            "base_price": 100.0,
+            "base_timestamp": 1000
+        }"##;
+        let series: CompareSeries = serde_json::from_str(old_json)
+            .expect("old CompareSeries JSON without chart_type must still deserialize");
+        assert_eq!(series.chart_type, "line");
     }
 }

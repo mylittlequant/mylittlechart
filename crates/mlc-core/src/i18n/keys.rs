@@ -668,10 +668,32 @@ pub enum SettingsKey {
     TabStatusLine               = 109,
     TabScalesLines              = 110,
     TabAppearance               = 111,
+
+    // ---- Compare Settings modal (symbol-search-compare-inner arc, Wave 3
+    // — owner spec 2026-07-16) ----
+    // Tab names
+    CompareTabStyle              = 112,
+    CompareTabVisibility         = 113,
+    CompareTabInfo                = 114,
+
+    // Info tab row labels
+    CompareInfoSymbol             = 115,
+    CompareInfoName                = 116,
+    CompareInfoBars                = 117,
+    CompareInfoBase                = 118,
+
+    // Visibility tab — timeframe-family row labels
+    TfTicks                        = 119,
+    TfSeconds                      = 120,
+    TfMinutes                      = 121,
+    TfHours                        = 122,
+    TfDays                         = 123,
+    TfWeeks                        = 124,
+    TfMonths                       = 125,
 }
 
 impl SettingsKey {
-    pub const COUNT: usize = 112;
+    pub const COUNT: usize = 126;
 
     /// Get translation for this key
     #[inline]
@@ -1000,10 +1022,17 @@ pub enum ModalKey {
     HkZoom                 = 71,
     /// "Pan chart"
     HkPan                  = 72,
+
+    // ---- Search Overlay header toggles (symbol-search-compare-inner arc,
+    // Wave 3 — owner spec 2026-07-16) ----
+    /// "Quick search" toggle label
+    QuickSearchToggle      = 73,
+    /// "Separate compare button" toggle label
+    SeparateCompareToggle  = 74,
 }
 
 impl ModalKey {
-    pub const COUNT: usize = 73;
+    pub const COUNT: usize = 75;
 
     /// Get translation for this key.
     #[inline]

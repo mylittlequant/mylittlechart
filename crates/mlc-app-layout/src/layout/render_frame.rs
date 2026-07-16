@@ -136,6 +136,14 @@ pub struct ModalSearchResult {
     /// Stored separately so they can be registered after item rects, giving
     /// them higher input priority on the overlapping row hit zone.
     pub star_rects: Vec<(String, WidgetRect)>,
+    /// Compare-plus icon rects for symbol search results, merged-mode only
+    /// (symbol-search-compare-inner arc, Wave 2, кусок 5 — owner spec
+    /// 2026-07-16): (composite key, rect). Empty whenever
+    /// `modal_state.current != OpenModal::SymbolSearch` or
+    /// `split_symbol_compare == true` (the separate compare toolbar path
+    /// stays unchanged in that case). Registered after item rects for the
+    /// same overlap-priority reason as `star_rects`.
+    pub cmp_rects: Vec<(String, WidgetRect)>,
     /// Currently hovered item type_id
     pub hovered_item_id: Option<String>,
     /// Total content height (for scrollbar calculation)

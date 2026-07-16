@@ -538,6 +538,13 @@ pub struct DropdownRenderInfo {
     /// `on_drag_move` can hit-test click-to-cursor and drag-select against
     /// the SAME metrics `draw_input` just rendered with.
     pub granularity_edit_input: Option<(WidgetRect, Vec<f64>)>,
+    /// `(text_rect, char_x_positions)` of the `symbol_selector` dropdown's
+    /// inline fast-search editor widget, when one is rendered this frame
+    /// (symbol-search-compare-inner arc, Wave 2, кусок 4). `None` whenever
+    /// no editor is active or the dropdown rendered is not
+    /// `symbol_selector`. Fed into `TextFieldStore::update_field` exactly
+    /// like `granularity_edit_input` above.
+    pub symbol_quick_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).

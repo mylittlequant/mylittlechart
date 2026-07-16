@@ -28,6 +28,26 @@ pub enum ChartOutEvent {
         account_type: String,
     },
 
+    /// Canonical compare-overlay-add entry point. Emitted by the compare
+    /// search modal's item-click and reachable headlessly (agent HTTP API,
+    /// test harness) the same way `ApplySymbol` is for the main symbol.
+    /// Operates on the active chart container (same target resolution the
+    /// compare toolbar button/search modal has always used — unlike
+    /// `ApplySymbol` this does not take an explicit `chart_id`, since
+    /// compare-add has never been window-addressable from outside the
+    /// active-container context). Handler resolves the compare symbol's
+    /// venue against `exchange`/`account_type`, attempts a cache-hit add
+    /// (`ChartContainer::add_compare_symbol`) with undo recording on
+    /// success, or queues a `PendingCompareAdd` retry + fires an explicit
+    /// cross-exchange kline request on a cache miss — see the doc comment
+    /// on the handler in `chart_out_events.rs` for the cross-exchange
+    /// gotcha this replicates.
+    AddCompareSymbol {
+        symbol: String,
+        exchange: String,
+        account_type: String,
+    },
+
     // === Sidebar / Panel toggles (app-level) ===
     ToggleWatchlist,
     ToggleAlerts,

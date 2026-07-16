@@ -33,6 +33,8 @@ pub fn render_search_overlay(
     current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     field_id: &str,
+    split_symbol_compare: bool,
+    symbol_quick_search: bool,
 ) -> ModalSearchResult {
     use mlc_core::render::{TextAlign, TextBaseline};
     use mlc_core::engine::render::draw_svg_icon;
@@ -105,7 +107,31 @@ pub fn render_search_overlay(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(title, modal_x + modal_padding, modal_y + header_height / 2.0);
 
+    // ── Header toggles (symbol-search-compare-inner arc, Wave 3 — owner
+    // spec 2026-07-16): "Quick search" / "Separate compare button", the
+    // ONLY way back to the inline fast-search dropdown once the modal is
+    // open with `symbol_quick_search == false`. Drawn on both
+    // SymbolSearch and CompareSearch variants; skipped for
+    // IndicatorSearch (irrelevant toggles for that modal).
     let close_x = modal_x + modal_width - modal_padding - close_btn_size;
+    if !is_indicator_search {
+        let toggle_gap = 10.0;
+        let mut toggle_right_edge = close_x - toggle_gap;
+        toggle_right_edge = draw_header_toggle(
+            ctx, input_coordinator, &layer_id,
+            toggle_right_edge, modal_y, header_height,
+            t_modal(ModalKey::SeparateCompareToggle), split_symbol_compare,
+            "modal_search:toggle_split", toolbar_theme,
+        );
+        toggle_right_edge -= toggle_gap;
+        let _ = draw_header_toggle(
+            ctx, input_coordinator, &layer_id,
+            toggle_right_edge, modal_y, header_height,
+            t_modal(ModalKey::QuickSearchToggle), symbol_quick_search,
+            "modal_search:toggle_quick", toolbar_theme,
+        );
+    }
+
     let close_y = modal_y + (header_height - close_btn_size) / 2.0;
 
     draw_svg_icon(
@@ -344,12 +370,21 @@ pub fn render_search_overlay(
     } else if (modal_state.current == OpenModal::SymbolSearch || modal_state.current == OpenModal::CompareSearch)
         && !modal_state.symbol_search_results.is_empty()
     {
-        let (rects, star_rects, height) = render_symbol_search_results_scrollable(
+        // Merged-mode compare-plus icon (symbol-search-compare-inner arc,
+        // Wave 2, кусок 5 — owner spec 2026-07-16): only on the SymbolSearch
+        // modal (not CompareSearch, which is already the compare-add path
+        // itself) and only when `split_symbol_compare == false` — the
+        // separate `compare` toolbar button + its own CompareSearch modal
+        // remain the compare path unchanged when the flag is `true`.
+        let show_cmp_plus = modal_state.current == OpenModal::SymbolSearch && !split_symbol_compare;
+        let (rects, star_rects, cmp_rects, height) = render_symbol_search_results_scrollable(
             ctx, content_x + modal_padding, results_y, results_width, results_height,
             &modal_state.symbol_search_results, hovered_item_id, scroll_offset, theme, toolbar_theme,
+            show_cmp_plus,
         );
         result.item_rects = rects;
         result.star_rects = star_rects;
+        result.cmp_rects = cmp_rects;
         total_content_height = height;
         result.hovered_item_id = hovered_item_id.map(|s| s.to_string());
     } else {
@@ -415,8 +450,84 @@ pub fn render_search_overlay(
         );
     }
 
+    // Register compare-plus zones AFTER star zones (merged-mode, кусок 5) —
+    // same overlap-priority reasoning as star zones above.
+    for (key, cmp_rect) in &result.cmp_rects {
+        input_coordinator.register_on_layer(
+            format!("modal_cmp:{}", key),
+            uzor::types::Rect::new(cmp_rect.x, cmp_rect.y, cmp_rect.width, cmp_rect.height),
+            uzor::input::Sense::CLICK,
+            &layer_id,
+        );
+    }
+
     input_coordinator.pop_layer(&layer_id);
     result
+}
+
+/// Draw one compact labeled toggle switch in the search-overlay header
+/// (symbol-search-compare-inner arc, Wave 3 — owner spec 2026-07-16),
+/// right-aligned so the caller can chain multiple toggles leftward.
+///
+/// Layout: `[label] [pill]`, positioned so its RIGHT edge lands at
+/// `right_edge`. Returns the toggle's own left edge (x) so the caller can
+/// place the next toggle further left with its own gap.
+///
+/// The pill visual mirrors the dropdown-row toggle switch
+/// (`crate::ui::dropdown`'s `DropdownItem::Item::toggle` rendering) scaled
+/// down to fit the header's `header_height`.
+#[allow(clippy::too_many_arguments)]
+fn draw_header_toggle(
+    ctx: &mut dyn RenderContext,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    right_edge: f64,
+    modal_y: f64,
+    header_height: f64,
+    label: &str,
+    is_on: bool,
+    widget_id: &str,
+    toolbar_theme: &ToolbarTheme,
+) -> f64 {
+    use mlc_core::render::{TextAlign, TextBaseline};
+
+    let track_w = 28.0;
+    let track_h = 14.0;
+    let track_r = track_h / 2.0;
+    let label_gap = 6.0;
+
+    let track_x = right_edge - track_w;
+    let track_y = modal_y + (header_height - track_h) / 2.0;
+
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let label_width = ctx.measure_text(label);
+    let label_x = track_x - label_gap;
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.fill_text(label, label_x, modal_y + header_height / 2.0);
+
+    // Track background
+    ctx.set_fill_color(if is_on { "#2962ff" } else { &toolbar_theme.item_text_muted });
+    ctx.fill_rounded_rect(track_x, track_y, track_w, track_h, track_r);
+
+    // Thumb circle (10px diameter, 2px inset)
+    let thumb_d = 10.0;
+    let thumb_x = if is_on { track_x + track_w - thumb_d - 2.0 } else { track_x + 2.0 };
+    let thumb_y = track_y + (track_h - thumb_d) / 2.0;
+    ctx.set_fill_color("#ffffff");
+    ctx.fill_rounded_rect(thumb_x, thumb_y, thumb_d, thumb_d, thumb_d / 2.0);
+
+    let hit_x = label_x - label_width;
+    let hit_rect = WidgetRect::new(hit_x, modal_y, right_edge - hit_x, header_height);
+    input_coordinator.register_on_layer(
+        widget_id,
+        uzor::types::Rect::new(hit_rect.x, hit_rect.y, hit_rect.width, hit_rect.height),
+        uzor::input::Sense::CLICK,
+        layer_id,
+    );
+
+    hit_x
 }
 
 /// Render indicator search results with scroll support (filtered).
@@ -474,8 +585,11 @@ fn render_indicator_search_results_scrollable_filtered(
 
 /// Render symbol search results with scroll support.
 ///
-/// Returns `(item_rects, star_rects, total_height)`.  The caller must register
-/// item zones first and star zones second so that stars take priority on overlap.
+/// Returns `(item_rects, star_rects, cmp_rects, total_height)`.  The caller
+/// must register item zones first, star zones second, compare-plus zones
+/// third so that overlapping icons take priority over the row's own hit
+/// zone. `show_cmp_plus` gates the compare-plus icon (merged-mode
+/// SymbolSearch only — кусок 5); `cmp_rects` is always empty when `false`.
 fn render_symbol_search_results_scrollable(
     ctx: &mut dyn RenderContext,
     x: f64, y: f64, width: f64, viewport_height: f64,
@@ -484,7 +598,8 @@ fn render_symbol_search_results_scrollable(
     scroll_offset: f64,
     _theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-) -> (Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, f64) {
+    show_cmp_plus: bool,
+) -> (Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, f64) {
     use mlc_core::render::{TextAlign, TextBaseline};
     use mlc_core::engine::render::draw_svg_icon;
 
@@ -494,6 +609,10 @@ fn render_symbol_search_results_scrollable(
     let star_pad_x = 8.0;
     // Space the star occupies (star_pad_x + star_size + gap after star).
     let star_col_w = star_pad_x + star_size + 4.0;
+    // Compare-plus icon (merged-mode, кусок 5) — right side, its own hover
+    // rect like the star, positioned left of the exchange/category text.
+    let cmp_size = 16.0;
+    let cmp_pad_right = 8.0;
 
     let total_height = items.len() as f64 * item_height;
     let mut current_y = y - scroll_offset;
@@ -501,6 +620,7 @@ fn render_symbol_search_results_scrollable(
     // Star rects returned separately so they can be registered AFTER items,
     // giving them higher input priority despite the overlapping row hit zone.
     let mut star_rects: Vec<(String, WidgetRect)> = Vec::new();
+    let mut cmp_rects: Vec<(String, WidgetRect)> = Vec::new();
     for item in items.iter() {
         // Composite key: "BTC-USDT:binance:S" — unique even when the same ticker
         // appears under multiple account types on the same exchange.
@@ -527,6 +647,14 @@ fn render_symbol_search_results_scrollable(
         // Collect star rect — registration happens after all item rects so star wins.
         star_rects.push((item_key.clone(), WidgetRect::new(star_x, star_y, star_size, star_size)));
 
+        // --- Compare-plus icon (right side, merged-mode only — кусок 5) ---
+        if show_cmp_plus {
+            let cmp_x = x + width - cmp_pad_right - cmp_size;
+            let cmp_y = current_y + (item_height - cmp_size) / 2.0;
+            draw_svg_icon(ctx, crate::ui::Icon::Plus.svg(), cmp_x, cmp_y, cmp_size, cmp_size, toolbar_theme.item_text_muted.as_str());
+            cmp_rects.push((item_key.clone(), WidgetRect::new(cmp_x, cmp_y, cmp_size, cmp_size)));
+        }
+
         // --- Symbol text (shifted right to make room for star) ---
         let text_x = x + star_col_w;
         ctx.set_font("bold 13px sans-serif");
@@ -538,18 +666,21 @@ fn render_symbol_search_results_scrollable(
         ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted });
         ctx.fill_text(&item.name, text_x, current_y + 28.0);
 
-        // --- Exchange / category (right side — unchanged) ---
+        // --- Exchange / category (right side) --- shifted left when the
+        // compare-plus icon occupies the row's right edge (merged-mode,
+        // кусок 5) so the two never overlap.
+        let right_edge = if show_cmp_plus { x + width - cmp_pad_right - cmp_size - 8.0 } else { x + width - 12.0 };
         ctx.set_font("10px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&item.exchange, x + width - 12.0, current_y + item_height / 2.0);
+        ctx.fill_text(&item.exchange, right_edge, current_y + item_height / 2.0);
         ctx.set_font("12px sans-serif");
-        ctx.fill_text(&item.category_icon, x + width - 70.0, current_y + item_height / 2.0);
+        ctx.fill_text(&item.category_icon, right_edge - 58.0, current_y + item_height / 2.0);
 
         // Account type badge (S/F) — same style as category icon
         if !item.account_type.is_empty() {
-            ctx.fill_text(&item.account_type, x + width - 90.0, current_y + item_height / 2.0);
+            ctx.fill_text(&item.account_type, right_edge - 78.0, current_y + item_height / 2.0);
         }
 
         ctx.set_stroke_color(&toolbar_theme.separator);
@@ -560,7 +691,7 @@ fn render_symbol_search_results_scrollable(
         ctx.stroke();
         current_y += item_height;
     }
-    (item_rects, star_rects, total_height)
+    (item_rects, star_rects, cmp_rects, total_height)
 }
 
 /// Render the Indicator Sets list in the content area.

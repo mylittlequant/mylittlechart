@@ -158,6 +158,7 @@ impl ChartApp {
                                 &series.color.clone(),
                                 series.line_width,
                                 &series.line_style.clone(),
+                                &series.chart_type.clone(),
                                 series.visible,
                                 series.bars.len(),
                                 series.base_price,
@@ -237,6 +238,7 @@ impl ChartApp {
                                 &series.color.clone(),
                                 series.line_width,
                                 &series.line_style.clone(),
+                                &series.chart_type.clone(),
                                 series.visible,
                                 series.bars.len(),
                                 series.base_price,
@@ -295,6 +297,8 @@ impl ChartApp {
     /// - `cmp_settings:line_width_slider` — start line-width slider drag
     /// - `cmp_settings:toggle_visible` — toggle series visibility
     /// - `cmp_settings:line_style_dd` — line style dropdown (no-op placeholder)
+    /// - `cmp_settings:chart_type_dd` — chart type dropdown (toggle open)
+    /// - `cmp_settings:chart_type_option:{id}` — select chart type
     pub(super) fn handle_cmp_settings_click(&mut self, rest: &str, x: f64, y: f64) {
         // Close template dropdown on any non-template click
         if !rest.starts_with("template_") {
@@ -312,11 +316,13 @@ impl ChartApp {
                 let orig_color = self.panel_app.compare_settings_state.original_color.clone();
                 let orig_width = self.panel_app.compare_settings_state.original_line_width;
                 let orig_style = self.panel_app.compare_settings_state.original_line_style.clone();
+                let orig_chart_type = self.panel_app.compare_settings_state.original_chart_type.clone();
                 let orig_tf = self.panel_app.compare_settings_state.original_timeframe_visibility.clone();
                 if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     window.compare_overlay.set_series_color_by_index(idx, &orig_color);
                     window.compare_overlay.set_series_line_width_by_index(idx, orig_width);
                     window.compare_overlay.set_series_line_style_by_index(idx, &orig_style);
+                    window.compare_overlay.set_series_chart_type_by_index(idx, &orig_chart_type);
                     if let Some(tf) = orig_tf.clone() {
                         window.compare_overlay.set_series_timeframe_visibility(idx, tf);
                     }
@@ -324,6 +330,7 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.cached_color = orig_color;
                 self.panel_app.compare_settings_state.cached_line_width = orig_width;
                 self.panel_app.compare_settings_state.cached_line_style = orig_style;
+                self.panel_app.compare_settings_state.cached_chart_type = orig_chart_type;
                 self.panel_app.compare_settings_state.cached_timeframe_visibility = orig_tf;
                 self.panel_app.compare_settings_state.close();
                 self.autosave_snapshot();
@@ -405,6 +412,23 @@ impl ChartApp {
                 }
                 self.autosave_snapshot();
                 eprintln!("[ChartApp] cmp_settings line_style set to: {}", style);
+            }
+            "chart_type_dd" => {
+                // Toggle the chart-type dropdown open/closed.
+                self.panel_app.compare_settings_state.chart_type_dropdown_open =
+                    !self.panel_app.compare_settings_state.chart_type_dropdown_open;
+                eprintln!("[ChartApp] cmp_settings chart_type_dd toggled: {}", self.panel_app.compare_settings_state.chart_type_dropdown_open);
+            }
+            id if id.starts_with("chart_type_option:") => {
+                let chart_type = &id["chart_type_option:".len()..];
+                let idx = self.panel_app.compare_settings_state.series_index;
+                self.panel_app.compare_settings_state.cached_chart_type = chart_type.to_string();
+                self.panel_app.compare_settings_state.chart_type_dropdown_open = false;
+                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    window.compare_overlay.set_series_chart_type_by_index(idx, chart_type);
+                }
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] cmp_settings chart_type set to: {}", chart_type);
             }
             // ---- Visibility tab: tf_*_toggle ----
             id if id.starts_with("item:tf_") && id.ends_with("_toggle") => {

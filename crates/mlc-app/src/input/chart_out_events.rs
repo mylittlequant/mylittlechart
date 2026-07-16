@@ -1448,15 +1448,34 @@ impl ChartApp {
                 eprintln!("[ChartApp] indicator search modal toggled: {:?}", self.modal_state.current);
             }
             ChartOutEvent::OpenSymbolSearch => {
-                self.modal_state.open(OpenModal::SymbolSearch);
-                self.modal_state.symbol_search_results =
-                    crate::ChartApp::build_demo_symbol_results("", self.core.watchlists().find(self.watchlist_ui.active_list_id), self.core.exchange_symbols().as_map());
-                {
-                    let sym_id = uzor::WidgetId::from(crate::text_input::SYMBOL_SEARCH);
-                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&sym_id);
-                    self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&sym_id);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::SYMBOL_SEARCH);
+                // Toolbar merge (symbol-search-compare-inner arc, Wave 2,
+                // кусок 4 — owner spec 2026-07-16): when
+                // `symbol_quick_search` is on, `symbol_selector` opens an
+                // inline fast-search DROPDOWN on the toolbar instead of the
+                // full-screen modal — same toggle-open contract
+                // `timeframe_selector`'s dropdown uses
+                // (`ChartToolbarState::handle_toolbar_click`'s
+                // "Dropdown toggles" arm), triggered here rather than in
+                // `toolbar_state.rs` because opening also needs to seed
+                // `symbol_quick_edit` + focus a NEW text field
+                // (`SYMBOL_QUICK_SEARCH`) — state `toolbar_state.rs` cannot
+                // see (it lives in `mlc-app`, `toolbar_state` is `mlc-core`).
+                if self.core.user().profile().ui.symbol_quick_search {
+                    // Toggle semantics (owner defect 2026-07-16: "везде клик
+                    // по той же кнопке закрывает"): a click on the button
+                    // while its dropdown is open must CLOSE it. The truth
+                    // signal is `symbol_quick_edit` — `open_dropdown_id` may
+                    // already have been cleared by an earlier pass of the
+                    // same click, but the RAM edit state is only cleared by
+                    // the per-frame reconcile / explicit close paths.
+                    if self.symbol_quick_edit.is_some() {
+                        self.close_symbol_quick_dropdown();
+                        return;
+                    }
+                    self.open_symbol_quick_dropdown();
+                    return;
                 }
+                self.open_symbol_search_modal_direct();
                 eprintln!("[ChartApp] symbol search modal opened");
             }
             ChartOutEvent::ApplySymbol { chart_id, symbol, exchange, account_type } => {
@@ -1644,6 +1663,99 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
                 state_mutated = true;
+            }
+            ChartOutEvent::AddCompareSymbol { symbol, exchange, account_type } => {
+                // Canonical compare-add path (2026-07-16 hard cutover — moved
+                // verbatim from `modals.rs`'s `OpenModal::CompareSearch`
+                // click arm, which is now a thin re-dispatch onto this
+                // event). Target is the active chart container, exactly as
+                // the compare toolbar/search modal has always resolved it.
+                self.compare_add_attempts = self.compare_add_attempts.saturating_add(1);
+
+                let resolved_exchange = self.core.exchange_symbols()
+                    .find_by_label(exchange.as_str())
+                    .unwrap_or(self.active_exchange);
+
+                // Add the selected symbol as a compare overlay on the active chart window.
+                // `add_compare_symbol` calls data_provider.get_bars() which on a cache
+                // miss fires an async bridge.request_bars() and returns None → false.
+                // In that case we queue a PendingCompareAdd so react.rs can retry once
+                // the BarsLoaded event arrives.
+                let active_cmp_cid = self.panel_app.panel_grid.active_container_id();
+                let main_sym_for_cmp = active_cmp_cid
+                    .and_then(|cid| self.symbol_for_chart(cid))
+                    .unwrap_or_default();
+                let main_tf_for_cmp = active_cmp_cid
+                    .and_then(|cid| self.timeframe_for_chart(cid))
+                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                let main_bars_for_cmp = self.active_chart_bars();
+                let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    let added = window.add_compare_symbol(&symbol, &main_sym_for_cmp, &main_tf_for_cmp, &main_bars_for_cmp);
+                    eprintln!(
+                        "[ChartApp] Compare symbol {}: {}",
+                        symbol,
+                        if added { "added" } else { "queuing retry (bars not yet cached)" }
+                    );
+                    if added {
+                        // Capture the newly-added series for the undo record.
+                        window.compare_overlay.get_series(&symbol).cloned()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                // Record AddCompareSeries so the user can undo adding this overlay.
+                if let Some(series) = added_series {
+                    self.compare_add_success = self.compare_add_success.saturating_add(1);
+                    self.push_undo_command(mlc_core::Command::AddCompareSeries {
+                        series: series.without_bars(),
+                    });
+                    eprintln!("[ChartApp] Recorded AddCompareSeries {}", symbol);
+                    self.autosave_snapshot();
+                } else if let Some(cid) = active_cmp_cid {
+                    self.compare_add_queued = self.compare_add_queued.saturating_add(1);
+                    // add_compare_symbol returned false — bars not in cache.
+                    //
+                    // The window's `data_provider` is hardwired to the window's
+                    // OWN exchange + account_type (BTCUSDT@binance/Spot in the
+                    // default seed), so calling `data_provider.get_bars` for a
+                    // compare symbol that lives on a different exchange/AT
+                    // would fire `bridge.request_bars` against the WRONG
+                    // exchange/AT pair — the server returns nothing for
+                    // ETH-USD-SWAP @ Binance@Spot, so no BarsLoaded ever fires.
+                    //
+                    // Fire the request explicitly here with the resolved
+                    // exchange + account type from the compare modal pick.
+                    // `force=true` so we bypass dedup-L1 / dedup-L2 —
+                    // the user explicitly asked for this overlay, and
+                    // a non-force call would silently no-op if any
+                    // previous session subscribed the same kline key.
+                    let cmp_at = crate::account_type_from_label(&account_type);
+                    self.core.ensure_connector(resolved_exchange);
+                    self.core.request_kline(
+                        resolved_exchange,
+                        &symbol,
+                        &main_tf_for_cmp,
+                        cmp_at,
+                        None,
+                        Some(self.core.user().profile().domain.bar_count as usize),
+                        true,
+                    );
+                    eprintln!(
+                        "[Compare] Queued retry + bridge.request_bars for {}@{} ({})",
+                        symbol,
+                        resolved_exchange.as_str(),
+                        account_type
+                    );
+                    self.pending_compare.push(crate::PendingCompareAdd {
+                        chart_id: mlc_core::ChartId(cid.0),
+                        symbol: symbol.clone(),
+                        exchange: resolved_exchange,
+                        account_type_label: account_type.clone(),
+                        deadline_frames: 600,
+                    });
+                }
             }
             ChartOutEvent::OpenCompareSearch => {
                 self.modal_state.open(OpenModal::CompareSearch);

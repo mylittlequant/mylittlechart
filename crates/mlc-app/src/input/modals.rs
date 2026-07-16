@@ -657,6 +657,29 @@ impl ChartApp {
         self.template_actions.push(crate::TemplateAction::AddIndicatorSet(set));
     }
 
+    /// Handle clicks on widgets registered with the "modal_cmp:" prefix —
+    /// the merged-mode compare-plus icon on a SymbolSearch modal row
+    /// (symbol-search-compare-inner arc, Wave 2, кусок 5 — owner spec
+    /// 2026-07-16). `rest` is the composite `"SYMBOL:exchange_id:
+    /// account_type"` key, same shape `"star:"`/`"item:"` parse (rfind
+    /// twice so symbols containing ':' are handled correctly).
+    pub(crate) fn handle_search_modal_cmp_click(&mut self, rest: &str) {
+        let (sym_part, exchange_part, at_label) =
+            if let Some(at_pos) = rest.rfind(':') {
+                let at_part = &rest[at_pos + 1..];
+                let remainder = &rest[..at_pos];
+                if let Some(ex_pos) = remainder.rfind(':') {
+                    (&remainder[..ex_pos], &remainder[ex_pos + 1..], at_part.to_string())
+                } else {
+                    (remainder, self.active_exchange.as_str(), at_part.to_string())
+                }
+            } else {
+                (rest, self.active_exchange.as_str(), "S".to_string())
+            };
+        self.add_compare_symbol(sym_part, exchange_part, &at_label);
+        self.modal_state.close();
+    }
+
     /// Handle clicks on widgets registered with the "modal_search:" prefix.
     pub(crate) fn handle_search_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
@@ -666,6 +689,18 @@ impl ChartApp {
             }
             "modal_bg" => {
                 // Click inside modal body — no-op (prevents backdrop close)
+            }
+            "toggle_quick" => {
+                // Header toggle (symbol-search-compare-inner arc, Wave 3 —
+                // owner spec 2026-07-16): the ONLY UI path back to the
+                // inline fast-search dropdown once the modal is open with
+                // `symbol_quick_search == false`. Does NOT auto-close the
+                // modal — same helper the toolbar dropdown's own toggle row
+                // uses (`panel_click.rs::handle_symbol_quick_click`).
+                self.toggle_symbol_quick_search();
+            }
+            "toggle_split" => {
+                self.toggle_split_symbol_compare();
             }
             "search_input" => {
                 // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
@@ -754,88 +789,13 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::CompareSearch => {
-                        self.compare_add_attempts = self.compare_add_attempts.saturating_add(1);
-                        // Add the selected symbol as a compare overlay on the active chart window.
-                        // `add_compare_symbol` calls data_provider.get_bars() which on a cache
-                        // miss fires an async bridge.request_bars() and returns None → false.
-                        // In that case we queue a PendingCompareAdd so react.rs can retry once
-                        // the BarsLoaded event arrives.
-                        let active_cmp_cid = self.panel_app.panel_grid.active_container_id();
-                        let main_sym_for_cmp = active_cmp_cid
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let main_tf_for_cmp = active_cmp_cid
-                            .and_then(|cid| self.timeframe_for_chart(cid))
-                            .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                        let main_bars_for_cmp = self.active_chart_bars();
-                        let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            let added = window.add_compare_symbol(symbol_part, &main_sym_for_cmp, &main_tf_for_cmp, &main_bars_for_cmp);
-                            eprintln!(
-                                "[ChartApp] Compare symbol {}: {}",
-                                symbol_part,
-                                if added { "added" } else { "queuing retry (bars not yet cached)" }
-                            );
-                            if added {
-                                // Capture the newly-added series for the undo record.
-                                window.compare_overlay.get_series(symbol_part).cloned()
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        // Record AddCompareSeries so the user can undo adding this overlay.
-                        if let Some(series) = added_series {
-                            self.compare_add_success = self.compare_add_success.saturating_add(1);
-                            self.push_undo_command(mlc_core::Command::AddCompareSeries {
-                                series: series.without_bars(),
-                            });
-                            eprintln!("[ChartApp] Recorded AddCompareSeries {}", symbol_part);
-                            self.autosave_snapshot();
-                        } else if let Some(cid) = active_cmp_cid {
-                            self.compare_add_queued = self.compare_add_queued.saturating_add(1);
-                            // add_compare_symbol returned false — bars not in cache.
-                            //
-                            // The window's `data_provider` is hardwired to the window's
-                            // OWN exchange + account_type (BTCUSDT@binance/Spot in the
-                            // default seed), so calling `data_provider.get_bars` for a
-                            // compare symbol that lives on a different exchange/AT
-                            // would fire `bridge.request_bars` against the WRONG
-                            // exchange/AT pair — the server returns nothing for
-                            // ETH-USD-SWAP @ Binance@Spot, so no BarsLoaded ever fires.
-                            //
-                            // Fire the request explicitly here with the resolved
-                            // exchange + account type from the compare modal pick.
-                            // `force=true` so we bypass dedup-L1 / dedup-L2 —
-                            // the user explicitly asked for this overlay, and
-                            // a non-force call would silently no-op if any
-                            // previous session subscribed the same kline key.
-                            let cmp_at = crate::account_type_from_label(&item_at_label);
-                            self.core.ensure_connector(resolved_exchange);
-                            self.core.request_kline(
-                                resolved_exchange,
-                                symbol_part,
-                                &main_tf_for_cmp,
-                                cmp_at,
-                                None,
-                                Some(self.core.user().profile().domain.bar_count as usize),
-                                true,
-                            );
-                            eprintln!(
-                                "[Compare] Queued retry + bridge.request_bars for {}@{} ({})",
-                                symbol_part,
-                                resolved_exchange.as_str(),
-                                item_at_label
-                            );
-                            self.pending_compare.push(crate::PendingCompareAdd {
-                                chart_id: mlc_core::ChartId(cid.0),
-                                symbol: symbol_part.to_string(),
-                                exchange: resolved_exchange,
-                                account_type_label: item_at_label.clone(),
-                                deadline_frames: 600,
-                            });
-                        }
+                        // Hard cutover (2026-07-16, mirrors the ApplySymbol
+                        // cutover at :742-750 above): compare-add used to be
+                        // hand-rolled inline here, with no `ChartOutEvent`
+                        // variant and no agent-reachable path. Now routed
+                        // through the canonical `AddCompareSymbol` event —
+                        // one dispatch, one code path.
+                        self.add_compare_symbol(symbol_part, resolved_exchange.as_str(), &item_at_label);
                         self.modal_state.close();
                     }
                     OpenModal::IndicatorSearch => {

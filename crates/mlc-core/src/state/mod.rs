@@ -137,7 +137,7 @@ pub use scroll_state::ScrollState;
 // (`modal_state: &ModalState`), zero backend consumers, and the render fn
 // reads many fields across ~300 lines (not a narrow 2-accessor case like
 // ChartPanelGrid's `.docking()`/`.is_expanded()`).
-pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState};
+pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, IndicatorCategoryFilter, IndicatorCatalogItem, ClockPopupState, SymbolQuickSearchRender};
 
 // SubPaneButton/SubPaneOverlayState/IndicatorDisplayInfo/IndicatorParamDef/
 // IndicatorParamType/IndicatorOutputDef/IndicatorOutputType: STAYS IN

@@ -117,3 +117,15 @@ pub const TF_FAVORITE_INPUT: &str = "tf_favorite_input";
 /// `ChartOutEvent::CommitGranularityCustom`'s doc comment. Reused for both
 /// add and edit, same as `TF_FAVORITE_INPUT`.
 pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";
+
+/// Inline fast-search text field hosted in the `symbol_selector` toolbar
+/// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
+/// 2026-07-16, `ProfileUiSettings::symbol_quick_search`). Mirrors
+/// `TF_FAVORITE_INPUT`'s plumbing exactly: same `draw_input`/
+/// `draw_input_cursor` widget hosted over a dropdown row, same
+/// `DropdownRenderInfo`-threaded geometry channel, same
+/// `update_text_field_geometry` wiring. Live text drives
+/// `ChartApp::symbol_quick_edit`'s per-frame result rebuild (no commit
+/// validation grammar — any text is a valid substring query, unlike
+/// `TF_FAVORITE_INPUT`'s `Timeframe::parse` gate).
+pub const SYMBOL_QUICK_SEARCH: &str = "symbol_quick_search";

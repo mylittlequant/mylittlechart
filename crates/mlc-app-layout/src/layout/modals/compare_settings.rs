@@ -25,7 +25,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
-use mlc_core::i18n::{SettingsKey, TextKey, t_settings, t_text};
+use mlc_core::i18n::{SettingsKey, TextKey, ToolbarTooltipKey, t_settings, t_text, t_toolbar};
 
 // =============================================================================
 // Result type
@@ -74,7 +74,7 @@ pub struct SliderTrackInfo {
 // =============================================================================
 
 const MODAL_W: f64 = 460.0;
-const MODAL_H: f64 = 392.0;
+const MODAL_H: f64 = 422.0;
 const HEADER_H: f64 = 40.0;
 const TAB_BAR_H: f64 = 32.0;
 const FOOTER_H: f64 = 52.0;
@@ -280,7 +280,7 @@ fn draw_tab_bar(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(tab.label(), tx + tab_w / 2.0, tab_y + tab_h / 2.0);
+        ctx.fill_text(compare_tab_label(*tab), tx + tab_w / 2.0, tab_y + tab_h / 2.0);
 
         // Register click zone
         let widget_id = format!("cmp_settings:tab:{}", tab.id());
@@ -434,11 +434,7 @@ fn draw_style_tab(
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(dd_x, dd_y, dd_w, dd_h, 3.0);
 
-    let style_label = match state.cached_line_style.as_str() {
-        "dashed" => "Пунктирная",
-        "dotted" => "Точечная",
-        _ => "Сплошная",
-    };
+    let style_label = line_style_label(state.cached_line_style.as_str());
 
     // Draw line style preview inside the dropdown button
     {
@@ -500,9 +496,9 @@ fn draw_style_tab(
     // Line style dropdown options (shown below the dropdown if open)
     if state.line_style_dropdown_open {
         let opts: &[(&str, &str)] = &[
-            ("solid",  "Сплошная"),
-            ("dashed", "Пунктирная"),
-            ("dotted", "Точечная"),
+            ("solid",  line_style_label("solid")),
+            ("dashed", line_style_label("dashed")),
+            ("dotted", line_style_label("dotted")),
         ];
         let opt_h = 24.0;
         let menu_w = dd_w;
@@ -588,6 +584,154 @@ fn draw_style_tab(
             );
         }
     }
+
+    row_y += ROW_H;
+
+    // --- Row 4: Chart type dropdown ---
+    draw_chart_type_row(ctx, content_x, content_w, row_y, state, toolbar_theme, input_coordinator, layer_id);
+}
+
+/// Kline-renderable chart-type family available for a compare overlay
+/// series — derived types (renko/footprint/etc.) need their own data
+/// slots and are out of scope (see `draw_compare_overlay` dispatch).
+const COMPARE_CHART_TYPES: &[&str] = &[
+    "line", "step_line", "area", "candles", "bars", "hollow_candles", "heikin_ashi",
+];
+
+/// Human-readable label for a compare chart-type id — mirrors the
+/// `chart_type_selector` toolbar dropdown's own localization
+/// (`mlc-core/src/toolbar.rs::chart_type_items`): every id in
+/// `COMPARE_CHART_TYPES` is one of the 10 plain render styles that dropdown
+/// already routes through `ToolbarMenuKey`, so this uses the SAME keys
+/// (symbol-search-compare-inner arc, Wave 3 — owner spec 2026-07-16: "verify
+/// the toolbar dropdown does the same and match it"). Falls back to the
+/// chart-type registry's raw `label` for any id outside that localized set.
+fn compare_chart_type_label(id: &str) -> &str {
+    use mlc_core::i18n::{t_toolbar_menu, ToolbarMenuKey};
+    match id {
+        "candles" => t_toolbar_menu(ToolbarMenuKey::Candles),
+        "bars" => t_toolbar_menu(ToolbarMenuKey::Bars),
+        "hollow_candles" => t_toolbar_menu(ToolbarMenuKey::HollowCandles),
+        "heikin_ashi" => t_toolbar_menu(ToolbarMenuKey::HeikinAshi),
+        "line" => t_toolbar_menu(ToolbarMenuKey::Line),
+        "step_line" => t_toolbar_menu(ToolbarMenuKey::StepLine),
+        "area" => t_toolbar_menu(ToolbarMenuKey::Area),
+        _ => mlc_core::chart_type::by_id(id).map(|def| def.label).unwrap_or(id),
+    }
+}
+
+/// Localized label for a compare series' line-style id ("solid" / "dashed"
+/// / "dotted") — reuses the SAME `SettingsKey::LineStyle*` keys the chart
+/// settings modal's own line-style rows use (symbol-search-compare-inner
+/// arc, Wave 3 — owner spec 2026-07-16). Unknown ids fall back to "solid".
+fn line_style_label(style_id: &str) -> &'static str {
+    match style_id {
+        "dashed" => t_settings(SettingsKey::LineStyleDashed),
+        "dotted" => t_settings(SettingsKey::LineStyleDotted),
+        _ => t_settings(SettingsKey::LineStyleSolid),
+    }
+}
+
+/// Localized label for a `CompareSettingsTab` (Style / Visibility / Info) —
+/// symbol-search-compare-inner arc, Wave 3 (owner spec 2026-07-16): the
+/// modal's tab bar previously used `CompareSettingsTab::label()`, which
+/// returns a hardcoded Russian literal. Routed through `SettingsKey` (the
+/// same table `compare_settings.rs`'s footer buttons already use).
+fn compare_tab_label(tab: CompareSettingsTab) -> &'static str {
+    match tab {
+        CompareSettingsTab::Style => t_settings(SettingsKey::CompareTabStyle),
+        CompareSettingsTab::Visibility => t_settings(SettingsKey::CompareTabVisibility),
+        CompareSettingsTab::Info => t_settings(SettingsKey::CompareTabInfo),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_chart_type_row(
+    ctx: &mut dyn RenderContext,
+    content_x: f64,
+    content_w: f64,
+    row_y: f64,
+    state: &CompareSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+) {
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_toolbar(ToolbarTooltipKey::ChartType), content_x, row_y + ROW_H / 2.0);
+
+    let dd_x = content_x + LABEL_W;
+    let dd_w = content_w - LABEL_W;
+    let dd_h = 22.0;
+    let dd_y = row_y + (ROW_H - dd_h) / 2.0;
+
+    let is_hovered = state.hovered_item_id.as_deref() == Some("chart_type_dd");
+    ctx.set_fill_color(if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg });
+    ctx.fill_rounded_rect(dd_x, dd_y, dd_w, dd_h, 3.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(dd_x, dd_y, dd_w, dd_h, 3.0);
+
+    let label = compare_chart_type_label(state.cached_chart_type.as_str());
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(label, dd_x + 8.0, dd_y + dd_h / 2.0);
+
+    let arrow_size = 12.0;
+    let arrow_x = dd_x + dd_w - arrow_size - 4.0;
+    let arrow_y = dd_y + (dd_h - arrow_size) / 2.0;
+    draw_svg_icon(ctx, Icon::ChevronDown.svg(), arrow_x, arrow_y, arrow_size, arrow_size, &toolbar_theme.item_text_muted);
+
+    input_coordinator.register_on_layer(
+        "cmp_settings:chart_type_dd",
+        WidgetRect::new(dd_x, dd_y, dd_w, dd_h),
+        Sense::click(),
+        layer_id,
+    );
+
+    // Chart type dropdown options (shown below the dropdown if open)
+    if state.chart_type_dropdown_open {
+        let opt_h = 24.0;
+        let menu_w = dd_w;
+        let menu_x = dd_x;
+        let menu_y = dd_y + dd_h;
+        let menu_total_h = opt_h * COMPARE_CHART_TYPES.len() as f64;
+
+        // Background
+        ctx.set_fill_color(&toolbar_theme.dropdown_bg);
+        ctx.fill_rounded_rect(menu_x, menu_y, menu_w, menu_total_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(menu_x, menu_y, menu_w, menu_total_h, 3.0);
+
+        for (i, ct_id) in COMPARE_CHART_TYPES.iter().enumerate() {
+            let opt_y = menu_y + i as f64 * opt_h;
+            let widget_id = format!("cmp_settings:chart_type_option:{}", ct_id);
+
+            let is_opt_hovered = state.hovered_item_id.as_deref()
+                == Some(widget_id.strip_prefix("cmp_settings:").unwrap_or(""));
+            let is_selected = state.cached_chart_type.as_str() == *ct_id;
+
+            if is_opt_hovered || is_selected {
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rect(menu_x, opt_y, menu_w, opt_h);
+            }
+
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(compare_chart_type_label(ct_id), menu_x + 8.0, opt_y + opt_h / 2.0);
+
+            input_coordinator.register_on_layer(
+                widget_id.as_str(),
+                WidgetRect::new(menu_x, opt_y, menu_w, opt_h),
+                Sense::click(),
+                layer_id,
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -608,13 +752,13 @@ fn draw_visibility_tab(
 
     // 7 rows: label, is_bool_only, enabled, range, min_allowed, max_allowed
     let timeframes: [(&str, bool, bool, Option<(u32, u32)>, u32, u32); 7] = [
-        ("Тики",    true,  tf_config.ticks,             None,                  0, 0),
-        ("Секунды", false, tf_config.seconds.is_some(), tf_config.seconds,     1, 59),
-        ("Минуты",  false, tf_config.minutes.is_some(), tf_config.minutes,     1, 59),
-        ("Часы",    false, tf_config.hours.is_some(),   tf_config.hours,       1, 24),
-        ("Дни",     false, tf_config.days.is_some(),    tf_config.days,        1, 366),
-        ("Недели",  false, tf_config.weeks.is_some(),   tf_config.weeks,       1, 52),
-        ("Месяцы",  false, tf_config.months.is_some(),  tf_config.months,      1, 12),
+        (t_settings(SettingsKey::TfTicks),   true,  tf_config.ticks,             None,                  0, 0),
+        (t_settings(SettingsKey::TfSeconds), false, tf_config.seconds.is_some(), tf_config.seconds,     1, 59),
+        (t_settings(SettingsKey::TfMinutes), false, tf_config.minutes.is_some(), tf_config.minutes,     1, 59),
+        (t_settings(SettingsKey::TfHours),   false, tf_config.hours.is_some(),   tf_config.hours,       1, 24),
+        (t_settings(SettingsKey::TfDays),    false, tf_config.days.is_some(),    tf_config.days,        1, 366),
+        (t_settings(SettingsKey::TfWeeks),   false, tf_config.weeks.is_some(),   tf_config.weeks,       1, 52),
+        (t_settings(SettingsKey::TfMonths),  false, tf_config.months.is_some(),  tf_config.months,      1, 12),
     ];
 
     let checkbox_size = 16.0;
@@ -799,10 +943,10 @@ fn draw_info_tab(
     let base_str = format!("{:.4}", state.cached_base_price);
 
     let rows: [(&str, &str); 4] = [
-        ("Символ",   state.cached_symbol.as_str()),
-        ("Название", state.cached_name.as_str()),
-        ("Баров",    bars_str.as_str()),
-        ("База",     base_str.as_str()),
+        (t_settings(SettingsKey::CompareInfoSymbol), state.cached_symbol.as_str()),
+        (t_settings(SettingsKey::CompareInfoName),   state.cached_name.as_str()),
+        (t_settings(SettingsKey::CompareInfoBars),   bars_str.as_str()),
+        (t_settings(SettingsKey::CompareInfoBase),   base_str.as_str()),
     ];
 
     for (i, (label, value)) in rows.iter().enumerate() {
@@ -986,7 +1130,7 @@ fn draw_footer(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
+            ctx.fill_text(t_settings(SettingsKey::NoTemplates), dd_x + 8.0, row_y + opt_h / 2.0);
         } else {
             for tmpl in templates {
                 let row_id = format!("template_option:{}", tmpl.id);
