@@ -1204,6 +1204,22 @@ impl DataBridge {
     /// Every venue serves a trade stream (`DataMode` doc, every connector
     /// has one) — there is no "trades unavailable" case to additionally
     /// gate on here.
+    /// Whether the venue's kline interval capabilities are RESOLVED (the
+    /// connector has answered). While this is `false`, BOTH
+    /// [`Self::is_kline_trade_built`] and [`Self::resolve_kline_aggregation`]
+    /// fail open ("not trade-built" / "no aggregation") — any kline dial
+    /// issued in that window goes out RAW and the venue's
+    /// `map_kline_interval` silently substitutes an unrelated interval,
+    /// producing coarse bars stamped with the requested TF's name (the
+    /// "1m-under-15s at boot" class, 2026-07-17). Every kline fetch entry
+    /// point must therefore DEFER (drop the request) while this is `false`
+    /// — the `ConnectorReady` sweep (react.rs) re-issues `request_kline`
+    /// for every open window the moment the connector lands, so a deferred
+    /// request is re-driven, never lost.
+    pub fn kline_caps_known(&self, exchange_id: ExchangeId) -> bool {
+        self.hub.kline_interval_capabilities(exchange_id).is_some()
+    }
+
     pub fn is_kline_trade_built(
         &self,
         exchange_id: ExchangeId,
@@ -1405,6 +1421,21 @@ impl DataBridge {
         // silence-timeout-healed forever. Refuse at the door.
         if symbol.is_empty() {
             crate::dlog!("[request_bars] empty symbol refused exchange={} tf={}", exchange_id.as_str(), timeframe.name);
+            return;
+        }
+
+        // TF-ROUTING determinism (2026-07-17): never dial while interval
+        // capabilities are unresolved — the trade-built classification and
+        // the aggregation plan below would both fail open and the dial
+        // would go out RAW (venue fallback → coarse bars mislabeled with
+        // this TF's name, poisoning the station series + kline layer). The
+        // `ConnectorReady` sweep re-issues this request once caps resolve
+        // — see `kline_caps_known`'s doc comment.
+        if !self.kline_caps_known(exchange_id) {
+            crate::dlog!(
+                "[request_bars] caps unknown, defer until ConnectorReady exchange={} sym={} tf={}",
+                exchange_id.as_str(), symbol, timeframe.name,
+            );
             return;
         }
 

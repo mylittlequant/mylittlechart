@@ -371,14 +371,24 @@ impl ChartApp {
                 // overwrites panel state.symbol with that stale value on the very
                 // first frame (when last_active_leaf=None ≠ current_leaf).
                 if let Some(active_cid_sync) = self.panel_app.panel_grid.active_container_id() {
-                    let sym = self.symbol_for_chart(active_cid_sync)
-                        .map(String::from).unwrap_or_default();
-                    let exch = self.exchange_for_chart(active_cid_sync)
-                        .map(String::from).unwrap_or_default();
-                    let at = self.account_type_for_chart(active_cid_sync)
-                        .map(|at| at.to_string()).unwrap_or_else(|| "S".to_string());
-                    self.core.bubbles_mut().set_bubble_instrument(new_active_group, exch, at);
-                    self.core.bubbles_mut().with_bubble_mut(new_active_group, |g| g.address.symbol = sym);
+                    // KEY-INTEGRITY (series-leak fix 2026-07-17): the full
+                    // (symbol, exchange, AT) key goes through ONE resetting
+                    // setter. The previous shape — `set_bubble_instrument`
+                    // (exchange+AT) plus a RAW `g.address.symbol = sym` — was
+                    // a partial-key write that could flip the bubble's symbol
+                    // without `reset_raw_layers()`, leaving the old symbol's
+                    // series in the layers (two series on one chart). And no
+                    // guessed parts: when any leg of the key is unresolved
+                    // (empty symbol/exchange, unknown AT), SKIP the sync
+                    // entirely rather than writing a fabricated key.
+                    let sym = self.symbol_for_chart(active_cid_sync).map(String::from);
+                    let exch = self.exchange_for_chart(active_cid_sync).map(String::from);
+                    let at = self.account_type_for_chart(active_cid_sync).map(|at| at.to_string());
+                    if let (Some(sym), Some(exch), Some(at)) = (sym, exch, at) {
+                        if !sym.is_empty() && !exch.is_empty() {
+                            self.core.bubbles_mut().set_instrument(new_active_group, sym, exch, at);
+                        }
+                    }
                 }
                 self.core.tags_mut().reassign_synced_panels(new_active_group);
                 self.apply_key_to_panels_in_group(new_active_group);

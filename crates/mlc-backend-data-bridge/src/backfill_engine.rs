@@ -770,6 +770,13 @@ impl DataBridge {
         account_type: AccountType,
         target_bars: Option<u32>,
     ) {
+        // TF-ROUTING determinism (2026-07-17): defer while capabilities are
+        // unresolved — the trade-built check below fails open and a ramp
+        // for a trade-built TF would dial raw (venue-fallback coarse bars
+        // mislabeled with this TF). See `kline_caps_known`'s doc comment.
+        if !self.kline_caps_known(exchange_id) {
+            return;
+        }
         // TRADE-BUILT klines fix (2026-07-16): never start a kline REST
         // flight for a target TF with no native divisor — see
         // `DataBridge::request_bars`'s matching guard for the full
@@ -852,6 +859,11 @@ impl DataBridge {
         timeframe: &mlc_core::state::Timeframe,
         account_type: AccountType,
     ) {
+        // TF-ROUTING determinism (2026-07-17): defer while capabilities are
+        // unresolved — see `ensure_kline_backfill`'s matching guard.
+        if !self.kline_caps_known(exchange_id) {
+            return;
+        }
         // TRADE-BUILT klines fix (2026-07-16): see `ensure_kline_backfill`'s
         // matching guard — a trade-built target never starts a kline ramp,
         // scroll pressure included. Deeper history for these keys rides

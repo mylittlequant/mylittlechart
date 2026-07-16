@@ -1092,9 +1092,16 @@ impl ChartApp {
             // below at line ~784 — see the wasm32 RwLock note in the auto-mono
             // loop above for why this matters.
             if created_fresh_group {
+                // KEY-INTEGRITY (series-leak fix 2026-07-17): complete the
+                // fresh group's identity through the resetting setter, not
+                // raw partial field writes — exchange+AT here, symbol was
+                // already set by `create_tagged_bubble`. On a fresh bubble
+                // the reset is a no-op; the point is that NO code path
+                // writes `address.*` fields directly.
+                self.core.bubbles_mut().set_bubble_instrument(
+                    group_id, source_exch.clone(), source_at.clone(),
+                );
                 self.core.bubbles_mut().with_bubble_mut(group_id, |bubble| {
-                    bubble.address.exchange = source_exch.clone();
-                    bubble.address.account_type = source_at.parse().unwrap_or_default();
                     // Phase X0 / C5c regression fix: seed bars from the source
                     // bubble snapshot taken at the top of do_split.  Without
                     // this, every new sibling chart renders blank until the
@@ -1569,23 +1576,29 @@ impl ChartApp {
         // Also update the TagManager group's canonical instrument so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            let source_exchange = self.exchange_for_chart(chart_id)
-                .map(String::from)
-                .unwrap_or_default();
-            let source_account_type = self.account_type_for_chart(chart_id)
-                .map(|at| at.to_string())
-                .unwrap_or_else(|| "S".to_string());
+            // KEY-INTEGRITY (series-leak fix 2026-07-17): no guessed key
+            // parts — when exchange/AT can't be resolved from the source
+            // chart, skip the group-key update instead of fabricating
+            // ("" / "S") legs. A fabricated leg here flipped the group
+            // bubble onto a WRONG instrument key without the layers ever
+            // matching it (dead routing + leak surface).
+            let source_exchange = self.exchange_for_chart(chart_id).map(String::from);
+            let source_account_type = self.account_type_for_chart(chart_id).map(|at| at.to_string());
 
             let group_id = self.panel_app.panel_grid.container_id_for_leaf(source_leaf)
                 .and_then(|cid| self.bubble_for_chart(cid));
 
-            if let Some(bid) = group_id {
-                self.core.bubbles_mut().set_instrument(
-                    bid,
-                    symbol.to_string(),
-                    source_exchange,
-                    source_account_type,
-                );
+            if let (Some(bid), Some(source_exchange), Some(source_account_type)) =
+                (group_id, source_exchange, source_account_type)
+            {
+                if !source_exchange.is_empty() {
+                    self.core.bubbles_mut().set_instrument(
+                        bid,
+                        symbol.to_string(),
+                        source_exchange,
+                        source_account_type,
+                    );
+                }
             }
             eprintln!(
                 "[BubbleStore] Updated group symbol to '{}' via chart {:?}",

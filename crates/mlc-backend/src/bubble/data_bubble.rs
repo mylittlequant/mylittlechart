@@ -896,6 +896,22 @@ impl DataBubble {
     /// "Instrument-switch semantics").
     pub fn reset_raw_layers(&mut self) {
         self.kline_layers.clear();
+        // TRADE-BUILT kline runtime is INSTRUMENT-scoped (its `last_bars`
+        // are the old symbol's series and its store key is the old
+        // instrument) — surviving a symbol switch made `request_kline`'s
+        // `already_active` guard skip the display-clearing empty
+        // full-replace, and the stale series leaked into the new symbol's
+        // chart (owner artifact 2026-07-17: BTCDOMUSDT ~5k bars mixed into
+        // binance F BTCUSDT). The ApplySymbol re-ignition always follows
+        // with a fresh `subscribe_trade_built_kline` when the TF is
+        // trade-built on the new instrument.
+        self.active_trade_built_kline = None;
+        // The display array is equally instrument-scoped: for native TFs
+        // the follow-up Phase A full-replace overwrites it anyway, but for
+        // trade-built TFs the fresh seed can be TINY (cold store) and every
+        // BarsLoaded consumer sees `prev_bars` — leaving the old symbol's
+        // bars here lets an anchor/merge path resurrect them wholesale.
+        self.bars.clear();
     }
 
     // =========================================================================

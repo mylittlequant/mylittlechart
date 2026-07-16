@@ -1660,7 +1660,17 @@ impl DrawingManager {
         };
         let old_primitives: Vec<PrimitiveSnapshot> = b.primitives.iter().map(|p| PrimitiveSnapshot::from_primitive(p.as_ref())).collect();
 
-        b.address = address.clone();
+        // KEY-INTEGRITY (series-leak fix 2026-07-17): this manager must NOT
+        // rebind the data bubble's instrument address. It used to write
+        // `b.address = address.clone()` here — and because every ApplySymbol
+        // caller runs this compound BEFORE `set_bid_instrument_full`, the
+        // proper setter then saw `identity_changed == false` and skipped
+        // `reset_raw_layers()` on EVERY symbol switch: the old instrument's
+        // kline layers/display/trade-built runtime survived and the new
+        // symbol's series merged on top (two series on one chart). Instrument
+        // identity is owned by `BubbleStore::set_*` alone; drawings only need
+        // the new address for stamping restored primitives — taken from the
+        // `address` PARAM below.
         b.primitives.clear();
 
         let mut restored = 0usize;
@@ -1670,7 +1680,7 @@ impl DrawingManager {
                     if let Some(mut prim) = reg.from_json(&snap.type_id, &snap.json) {
                         prim.data_mut().id = alloc_primitive_id();
                         if prim.data().symbol.is_empty() {
-                            prim.data_mut().symbol = b.address.symbol.clone();
+                            prim.data_mut().symbol = address.symbol.clone();
                         }
                         b.primitives.push(prim);
                         restored += 1;
