@@ -396,6 +396,8 @@ pub fn chart_toolbar_render_toolbars(
     symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
     symbol_quick_search: bool,
     symbol_inline_input: bool,
+    active_exchange: Option<&str>,
+    active_account_type: Option<&str>,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -555,10 +557,54 @@ pub fn chart_toolbar_render_toolbars(
             // `draw_toolbar_with_icons` never paints the old label under
             // the editable overlay text.
             let symbol_selector_editing = symbol_inline_input && symbol_quick_search_render.is_some();
+            // Adaptive symbol-button label (owner spec 2026-07-17): pick
+            // the FIRST tier that fits the button's standard width —
+            //   1. "SYMBOL · exch · AT"
+            //   2. "SYMBOL · AT"      (account type outranks exchange)
+            //   3. "SYMBOL"
+            // Measured with the exact font/metrics `draw_toolbar_with_icons`'
+            // Dropdown arm draws with (13px sans-serif; text starts at
+            // icon_size+8 past the item's left edge, 8px right pad). The
+            // layout width stays the fixed min_width (150) — tiers exist so
+            // the label never exceeds it and the strip never jumps.
+            let symbol_button_label: Option<String> = active_symbol.map(|sym| {
+                let exch = active_exchange.unwrap_or("");
+                let at = active_account_type.unwrap_or("");
+                ctx.set_font("13px sans-serif");
+                // 150 (fixed min_width) - (icon 24 + 8 gap) - 8 right pad.
+                let budget = 150.0 - (24.0 + 8.0) - 8.0;
+                let mut candidates: Vec<String> = Vec::new();
+                if !exch.is_empty() && !at.is_empty() {
+                    candidates.push(format!("{} · {} · {}", sym, exch, at));
+                }
+                if !at.is_empty() {
+                    candidates.push(format!("{} · {}", sym, at));
+                }
+                candidates.push(sym.to_string());
+                candidates
+                    .into_iter()
+                    .find(|c| ctx.measure_text(c) <= budget)
+                    .unwrap_or_else(|| sym.to_string())
+            });
+            // One-off expansion while the inline editor is live (owner spec
+            // 2026-07-17): the button grows to fit the full composite key
+            // (and whatever the user has typed since) + caret headroom, and
+            // snaps back when editing ends — per-frame override, no
+            // persistent state. The strip shifting right during editing is
+            // by design ("разово расширить сам рект").
+            let symbol_editing_min_width: Option<f64> = if symbol_selector_editing {
+                symbol_quick_search_render.map(|r| {
+                    ctx.set_font("13px sans-serif");
+                    let text_w = ctx.measure_text(&r.text);
+                    (24.0 + 8.0 + text_w + 24.0 + 8.0).max(150.0)
+                })
+            } else {
+                None
+            };
             if active_symbol.is_some() || tf_button_label.is_some() || tf_button_icon_only || symbol_selector_editing {
                 for section in &mut control_sections {
                     for item in &mut section.items {
-                        if let TcToolbarItem::Dropdown { id, text, show_chevron, active, .. } = item {
+                        if let TcToolbarItem::Dropdown { id, text, show_chevron, active, min_width, .. } = item {
                             if id == "symbol_selector" {
                                 if symbol_selector_editing {
                                     *text = None;
@@ -569,8 +615,11 @@ pub fn chart_toolbar_render_toolbars(
                                     // the button instead, so text selection
                                     // stays readable on the normal background.
                                     *active = false;
-                                } else if let Some(sym) = active_symbol {
-                                    *text = Some(sym.to_string());
+                                    if let Some(w) = symbol_editing_min_width {
+                                        *min_width = w;
+                                    }
+                                } else if let Some(ref label) = symbol_button_label {
+                                    *text = Some(label.clone());
                                 }
                             } else if id == "timeframe_selector" {
                                 if tf_button_icon_only {

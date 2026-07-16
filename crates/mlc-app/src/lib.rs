@@ -1763,20 +1763,31 @@ impl ChartApp {
 
     /// Seed text for `symbol_quick_edit`/`SYMBOL_QUICK_SEARCH` when opening
     /// the `symbol_selector` fast-search (symbol-search-compare-inner arc,
-    /// Wave 4 rework — owner spec 2026-07-16). Mode 3 "inline" starts the
-    /// editor with the ACTIVE SYMBOL already in place (e.g. "BTCUSDT") —
-    /// same value the toolbar button's own live-value-override label uses
-    /// (`chart_toolbar_render_toolbars`'s `active_symbol` param) — so the
-    /// button's text IS the editable text from the first frame, not an
-    /// empty box; the caller places the cursor at the end. Mode 2 (dropdown-
-    /// hosted input row) keeps the historical empty-start behaviour: `""`.
+    /// Wave 4 rework — owner spec 2026-07-17). Mode 3 "inline" starts the
+    /// editor with the FULL COMPOSITE KEY of the active instrument —
+    /// `"SYMBOL:exch:AT"` (e.g. `"BTCUSDT:bybit:S"`) — which is valid
+    /// composite-query syntax for [`Self::build_symbol_search_results`], so
+    /// the dropdown opens on the exact instrument and the user backspaces
+    /// the suffix to widen the search. The button rect expands one-off to
+    /// fit it (see the editing branch in `chart_toolbar_render_toolbars`).
+    /// The caller places the cursor at the end. Mode 2 (dropdown-hosted
+    /// input row) keeps the historical empty-start behaviour: `""`.
     pub(crate) fn symbol_quick_seed_text(&self) -> String {
         if !self.core.user().profile().ui.symbol_inline_input {
             return String::new();
         }
-        self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.symbol_for_chart(cid))
-            .unwrap_or_default()
+        let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
+            return String::new();
+        };
+        let Some(sym) = self.symbol_for_chart(cid) else {
+            return String::new();
+        };
+        let exch = self.exchange_for_chart(cid).unwrap_or_default();
+        let at = self.account_type_for_chart(cid).unwrap_or_default();
+        if exch.is_empty() {
+            return sym.to_string();
+        }
+        format!("{}:{}:{}", sym, exch, at.as_label())
     }
 
     /// Render-side snapshot of the `symbol_selector` toolbar dropdown's
@@ -5706,7 +5717,7 @@ impl ChartApp {
         // The caller composites the previously-built toolbar scene on top.
         let out_last_toolbar_result: Option<mlc_core::ChartToolbarRenderResult> = if !skip_toolbar_draw {
             // S2.7.1: read active symbol/timeframe from branch_meta.
-            let (active_sym_str, active_tf_str, active_gid) = {
+            let (active_sym_str, active_tf_str, active_gid, active_exch_str, active_at_str) = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 let sym = cid.and_then(|c| self.symbol_for_chart(c))
                     .map(String::from).unwrap_or_default();
@@ -5714,7 +5725,13 @@ impl ChartApp {
                     .map(|tf| tf.name.clone())
                     .unwrap_or_default();
                 let gid = cid.and_then(|c| self.bubble_for_chart(c));
-                (sym, tf, gid)
+                // Adaptive symbol-button suffix (owner spec 2026-07-17):
+                // venue + account-type of the active instrument, threaded
+                // to the 3-tier label fit in chart_toolbar_render_toolbars.
+                let exch = cid.and_then(|c| self.exchange_for_chart(c)).unwrap_or_default();
+                let at = cid.and_then(|c| self.account_type_for_chart(c))
+                    .map(|a| a.as_label().to_string()).unwrap_or_default();
+                (sym, tf, gid, exch, at)
             };
             let bubble_guard_tb = self.core.bubbles();
             let tags_guard_tb = self.core.tags();
@@ -5781,6 +5798,8 @@ impl ChartApp {
                 symbol_quick_search_render.as_ref(),
                 symbol_quick_search,
                 symbol_inline_input,
+                Some(active_exch_str.as_str()),
+                Some(active_at_str.as_str()),
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6444,7 +6463,7 @@ impl ChartApp {
         };
 
         // S2.7.1: read active symbol/timeframe from branch_meta.
-        let (active_sym_str, active_tf_str, active_gid) = {
+        let (active_sym_str, active_tf_str, active_gid, active_exch_str, active_at_str) = {
             let cid = self.panel_app.panel_grid.active_container_id();
             let sym = cid.and_then(|c| self.symbol_for_chart(c))
                 .map(String::from).unwrap_or_default();
@@ -6452,7 +6471,12 @@ impl ChartApp {
                 .map(|tf| tf.name.clone())
                 .unwrap_or_default();
             let gid = cid.and_then(|c| self.bubble_for_chart(c));
-            (sym, tf, gid)
+            // Adaptive symbol-button suffix (owner spec 2026-07-17) — see
+            // the `render()` call site for rationale.
+            let exch = cid.and_then(|c| self.exchange_for_chart(c)).unwrap_or_default();
+            let at = cid.and_then(|c| self.account_type_for_chart(c))
+                .map(|a| a.as_label().to_string()).unwrap_or_default();
+            (sym, tf, gid, exch, at)
         };
 
         let bubble_guard_tb2 = self.core.bubbles();
@@ -6514,6 +6538,8 @@ impl ChartApp {
             symbol_quick_search_render.as_ref(),
             symbol_quick_search,
             symbol_inline_input,
+            Some(active_exch_str.as_str()),
+            Some(active_at_str.as_str()),
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
