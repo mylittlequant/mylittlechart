@@ -2266,6 +2266,17 @@ impl BackendCore {
     /// in hand) and queues the resulting `BubbleEvent`s onto
     /// `pending_bubble_events` for the next `tick_writers` drain to
     /// surface to the reactor (see that field's doc comment).
+    ///
+    /// GUARD (owner incident 2026-07-16): re-requesting an already-active
+    /// trade-built TF (e.g. a `ConnectorReady` refetch, a programmatic
+    /// refresh, or any future same-TF caller) must NOT wipe the display —
+    /// `DataBridge::request_bars`'s empty full-replace `BarsLoaded` exists
+    /// ONLY to clear a stale/mislabeled kline layer when arriving from a
+    /// DIFFERENT TF. When a bubble on this instrument already holds a live
+    /// `active_trade_built_kline` runtime for this exact `tf`, the bridge
+    /// call is skipped entirely and only the reinstall+reseed subscribe
+    /// loop below runs — its `BarsLoaded` carries the REAL current bars, so
+    /// the reactor reconciles the view instead of fresh-snapping it.
     pub fn request_kline(
         &self,
         exchange_id: ExchangeId,
@@ -2276,10 +2287,20 @@ impl BackendCore {
         total_bars: Option<usize>,
         force: bool,
     ) {
-        self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);
+        let trade_built = self.bridge.is_kline_trade_built(exchange_id, account_type, tf.interval_ms);
+        let at_label = account_type.short_label();
+        let already_active = trade_built && self.bubbles()
+            .bubbles_for_instrument(exchange_id.as_str(), at_label, symbol)
+            .iter()
+            .any(|bid| self.bubbles().with_bubble(*bid, |b| {
+                b.active_trade_built_kline.as_ref().map(|f| f.tf_name() == tf.name).unwrap_or(false)
+            }).unwrap_or(false));
 
-        if self.bridge.is_kline_trade_built(exchange_id, account_type, tf.interval_ms) {
-            let at_label = account_type.short_label();
+        if !(trade_built && already_active) {
+            self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);
+        }
+
+        if trade_built {
             let bids = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, symbol);
             let mut queued: Vec<BubbleEvent> = Vec::new();
             for bid in bids {
@@ -2937,5 +2958,74 @@ mod trade_built_kline_gap_fill_tests {
         assert_eq!(bars[0].derived_ts_ms, 0);
         assert_eq!(bars[1].derived_ts_ms, 15_000);
         assert_eq!(bars[1].close, 105.0);
+    }
+
+    /// FIX 4 (owner incident 2026-07-16): `request_kline`'s `already_active`
+    /// guard must be true when a bubble already holds a live
+    /// `active_trade_built_kline` runtime for the exact TF being
+    /// re-requested — this is what makes the facade skip
+    /// `DataBridge::request_bars`'s destructive empty full-replace
+    /// `BarsLoaded`. `is_kline_trade_built` itself depends on live
+    /// exchange-connector capability data (`ExchangeHub`, unavailable in
+    /// this unit-test harness — `DataBridge::new()` dials no connector), so
+    /// this test exercises the guard's own bubble-lookup expression
+    /// directly (same shape `request_kline` runs) rather than the full
+    /// `request_kline` call end-to-end; a >50-line connector-capability
+    /// stand-up would be needed to flip `is_kline_trade_built` true in-test,
+    /// out of scope here. `subscribe_trade_built_kline` — the reinstall+
+    /// reseed half of the same facade, called unconditionally whenever
+    /// `trade_built` is true — is exercised for real below and proven to
+    /// leave `bubble.bars` non-empty and surface a non-empty `BarsLoaded`,
+    /// which is the only path FIX 4's guard leaves reachable once the
+    /// bridge's empty-replace call is skipped.
+    #[test]
+    fn request_kline_already_active_guard_finds_live_runtime_and_reseed_stays_non_empty() {
+        let (core, _bridge) = build_core();
+
+        // Install a bubble already displaying a trade-built "15s" kline
+        // series — mirrors an already-active window.
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("15s", 15_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+            b.bars_source = crate::bubble::BarsSource::Kline;
+            b.active_trade_built_kline = Some(crate::bubble::TradeBuiltKlineRuntime::new("15s".to_string(), 15_000));
+        });
+
+        let tf = Timeframe::new("15s", 15_000);
+        let at_label = AccountType::Spot.short_label();
+
+        // Same expression `request_kline`'s `already_active` computes.
+        let already_active = core.bubbles()
+            .bubbles_for_instrument(ExchangeId::Bybit.as_str(), at_label, "BTCUSDT")
+            .iter()
+            .any(|b| core.bubbles().with_bubble(*b, |bb| {
+                bb.active_trade_built_kline.as_ref().map(|f| f.tf_name() == tf.name).unwrap_or(false)
+            }).unwrap_or(false));
+        assert!(already_active, "an already-installed same-TF runtime must be found by the guard's lookup");
+
+        // A DIFFERENT tf must NOT be reported active (guard must not
+        // over-match and skip a genuine cross-TF request).
+        let other_tf_active = core.bubbles()
+            .bubbles_for_instrument(ExchangeId::Bybit.as_str(), at_label, "BTCUSDT")
+            .iter()
+            .any(|b| core.bubbles().with_bubble(*b, |bb| {
+                bb.active_trade_built_kline.as_ref().map(|f| f.tf_name() == "1s").unwrap_or(false)
+            }).unwrap_or(false));
+        assert!(!other_tf_active, "the guard must not match a runtime installed for a different TF");
+
+        // Seed the shared trade store so the reseed (the real writer FIX 4
+        // leaves reachable) has something to fold.
+        let trade_key = mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT".to_string(), mlc_core::instrument::AccountType::Spot);
+        core.trade_store.push_live(&trade_key, crate::bubble::RawTrade { ts_ms: 0, price: 100.0, qty: 1.0, is_buyer_maker: false });
+
+        let event = core.subscribe_trade_built_kline(bid, &tf.name, tf.interval_ms, ExchangeId::Bybit, "BTCUSDT", AccountType::Spot);
+        assert!(
+            matches!(event, Some(BubbleEvent::BarsLoaded { ref bars, .. }) if !bars.is_empty()),
+            "reinstall+reseed must surface a non-empty BarsLoaded, never an empty full-replace; event={:?}", event
+        );
+
+        let bars = core.bubbles().with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
+        assert!(!bars.is_empty(), "bubble.bars must not be wiped by the reinstall+reseed FIX 4 leaves reachable for an already-active runtime");
     }
 }

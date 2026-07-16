@@ -315,6 +315,23 @@ impl ChartApp {
                             Some(_) => false,
                             None => true,
                         };
+                        // Same-TF re-click (an existing window already on
+                        // `tf`) must be a no-op for the destructive tail
+                        // below — on trade-built TFs the abort+re-request
+                        // cycle tears down the live fold runtime
+                        // (`abort_kline_bars` retires
+                        // `active_trade_built_kline`) and the facade's empty
+                        // full-replace `BarsLoaded` wipes the display, then
+                        // `reconcile_view_fresh`+`snap_to_end` pins the
+                        // viewport at absolute indices with follow never
+                        // resuming (owner incident 2026-07-16); on native
+                        // TFs it needlessly kills the live forwarder and
+                        // re-subscribes for no reason. `tf_changed` is also
+                        // `true` for a brand-new window (`prev_tf_opt ==
+                        // None`) — that fresh-window path must still run the
+                        // full fetch, so the skip condition below is
+                        // strictly narrower than `!tf_changed`.
+                        let same_tf_reclick = matches!(prev_tf_opt, Some(ref prev_tf) if *prev_tf == tf);
                         // Set timeframe, clear bars, and request new data asynchronously.
                         // (change_timeframe tries a sync cache lookup which fails for live data.)
                         let symbol = active_chart_id
@@ -324,14 +341,16 @@ impl ChartApp {
                         let at_tf: mlc_core::instrument::AccountType = active_chart_id
                             .and_then(|cid| self.account_type_for_chart(cid))
                             .unwrap_or_default();
-                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            // Mark a fresh load so a stray TradeUpdate can't synthesize a
-                            // bar before BarsLoaded arrives (which would strand view_start
-                            // at 0 = oldest bar at the left edge).
-                            window.begin_fresh_load();
-                            // Snap to right edge once first batch lands — without this
-                            // the last bar sits at view_start=0 (left edge) after TF switch.
-                            window.needs_snap_after_backfill = true;
+                        if !same_tf_reclick {
+                            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                                // Mark a fresh load so a stray TradeUpdate can't synthesize a
+                                // bar before BarsLoaded arrives (which would strand view_start
+                                // at 0 = oldest bar at the left edge).
+                                window.begin_fresh_load();
+                                // Snap to right edge once first batch lands — without this
+                                // the last bar sits at view_start=0 (left edge) after TF switch.
+                                window.needs_snap_after_backfill = true;
+                            }
                         }
                         if let Some(chart_id) = active_chart_id {
                             if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
@@ -344,7 +363,7 @@ impl ChartApp {
                         // `tick_bar` chart_type's own `chart_type_param`, see
                         // `hydration_impl.rs`'s legacy-preset migration), so
                         // this is unconditionally the kline path.
-                        if !symbol.is_empty() {
+                        if !symbol.is_empty() && !same_tf_reclick {
                             // Per-container venue, NOT the app-global
                             // `active_exchange` (2026-07-15 wrong-venue bug —
                             // see `exchange_id_for_chart`'s doc).

@@ -728,7 +728,7 @@ impl ChartApp {
             BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar: _bar } => {
                 let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
-                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool)> = {
+                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool, bool)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
@@ -746,7 +746,19 @@ impl ChartApp {
                             let is_derived = self.chart_type_for_chart(*cid)
                                 .map(crate::active_series::chart_type_is_trade_agg_bar)
                                 .unwrap_or(false);
-                            Some((*cid, (sym, at, is_derived)))
+                            // TRADE-BUILT kline windows (owner incident
+                            // 2026-07-16) get their per-append viewport
+                            // bookkeeping (cold-snap consumption,
+                            // set_bar_count, auto-scale, `advance_view_on_tick`
+                            // with the len-derived is_new_bar) from THIS arm —
+                            // the backend emits BarUpdatePassthrough for every
+                            // trade-built live fold, and no other path
+                            // advances their view (the wall-clock builder that
+                            // accidentally did is now excluded, FIX 1).
+                            let is_trade_built = self.core.tags().tag_for_chart(*cid)
+                                .and_then(|bid| self.core.bubbles().with_bubble(bid, |b| b.active_trade_built_kline.is_some()))
+                                .unwrap_or(false);
+                            Some((*cid, (sym, at, is_derived, is_trade_built)))
                         })
                         .collect()
                 };
@@ -787,13 +799,28 @@ impl ChartApp {
                 // 30R range_bar). This arm is now purely a repaint trigger +
                 // viewport-bookkeeping signal for that family — see the
                 // read-only `bu_is_new_bar` derivation below.
+                //
+                // TRADE-BUILT kline bubbles (owner incident 2026-07-16) join
+                // this same repaint-trigger + viewport-bookkeeping role, for
+                // a different reason: their writer is
+                // `trade_built_kline_on_live_trade`
+                // (`mlc-backend/src/chart_type/lifecycle.rs`), which folds
+                // raw trades into `bubble.bars` earlier in the SAME
+                // `tick_writers` drain — this arm never writes bars for them
+                // either, it only reads the already-current length to derive
+                // `is_new_bar_for_window` and drive the per-window viewport.
 
                 for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    let (win_sym, win_at, is_derived) = match instrument_by_cid_bu.get(cid_bu) {
+                    let (win_sym, win_at, is_derived, is_trade_built) = match instrument_by_cid_bu.get(cid_bu) {
                         Some(t) => t,
                         None => continue,
                     };
-                    if !is_derived {
+                    // Trade-agg-bar (fold-owned) windows AND trade-built kline
+                    // windows both reach viewport bookkeeping only through
+                    // this arm — see the `is_trade_built` doc comment above.
+                    // Every other window (native-TF kline, footprint) is
+                    // driven by its own dedicated arm/passthrough.
+                    if !*is_derived && !*is_trade_built {
                         continue;
                     }
                     if win_sym.as_str() != bar_symbol || *win_at != bar_event_at {
@@ -819,16 +846,19 @@ impl ChartApp {
                     };
                     let bu_bubble_bars_owned: Vec<mlc_core::Bar> =
                         self.core.bubbles().bars(bid_for_window).to_vec();
-                    // These windows are gated `is_derived` == trade-agg-bar
-                    // family (range/volume/tick/dollar/imbalance/run) — the
-                    // fold engine writes that series directly INTO
-                    // bubble.bars (`fold_on_live_1m`/`trade_fold_on_live_trade`,
-                    // `mlc-backend/src/chart_type/lifecycle.rs`), so it IS
-                    // the kline array for this chart_type family (audit D8
-                    // resolution table) — plain `Bars` wrap is correct here.
-                    // Footprint is NOT part of this arm (it reaches viewport
-                    // bookkeeping via `FootprintBarAppended` instead, see the
-                    // exclusion comment above).
+                    // These windows are gated `is_derived` (trade-agg-bar
+                    // family: range/volume/tick/dollar/imbalance/run) OR
+                    // `is_trade_built` (trade-built kline TFs, e.g. bybit
+                    // 15s) — in both cases the backend fold engine
+                    // (`fold_on_live_1m`/`trade_fold_on_live_trade`/
+                    // `trade_built_kline_on_live_trade`,
+                    // `mlc-backend/src/chart_type/lifecycle.rs`) writes that
+                    // series directly INTO bubble.bars, so it IS the kline
+                    // array for this window (audit D8 resolution table) —
+                    // plain `Bars` wrap is correct here. Footprint is NOT
+                    // part of this arm (it reaches viewport bookkeeping via
+                    // `FootprintBarAppended` instead, see the exclusion
+                    // comment above).
                     let series = crate::active_series::ActiveSeries::Bars(&bu_bubble_bars_owned);
                     // Read-only "did a new bar land for THIS window" — no
                     // write happened above (see the no-write doc comment),
@@ -956,6 +986,17 @@ impl ChartApp {
                         // this arm defend the invariant even if that upstream
                         // filter's set ever drifts from the ownership map.
                         if bubble.bars_source != mlc_backend::bubble::BarsSource::Kline {
+                            return (false, false);
+                        }
+                        // TRADE-BUILT kline bubbles have their own single writer
+                        // (`trade_built_kline_on_live_trade`, runs earlier in the SAME
+                        // tick_writers drain) — this wall-clock builder double-writing was
+                        // masked only by that ordering (it always saw the already-updated
+                        // bucket), and its `needs_bf` re-request below is destructive for
+                        // trade-built TFs (owner incident 2026-07-16: empty-replace +
+                        // fresh-snap cascade pinned the viewport). Same exclusion class as
+                        // the trade-agg-bar upstream filter.
+                        if bubble.active_trade_built_kline.is_some() {
                             return (false, false);
                         }
                         if let Some(last_ts) = bubble.bars.last().map(|b| b.timestamp) {

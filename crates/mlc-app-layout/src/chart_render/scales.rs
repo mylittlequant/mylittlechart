@@ -104,19 +104,24 @@ pub fn draw_price_scale(
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0);
                         let bar_interval_secs = (tf_interval_ms / 1000).max(1);
-                        // Bar-grid start from the wall-clock, not from data arrival.
-                        // On a sparse-tick instrument (e.g. HyperLiquid for a
-                        // low-liquidity symbol) the exchange emits no candle for a
-                        // zero-trade interval, so `last_bar` stays on the last
-                        // received (often REST) bar. Anchoring the countdown to
-                        // that stale bar makes `bar_close_time` fall into the past
-                        // and the timer freeze at 00:00. Use the later of the last
-                        // bar's start and the current wall-clock bar-grid cell so
-                        // the countdown always ticks against the live interval. No
-                        // mutation of `window.bars` — empty intervals stay empty
-                        // (a gap, not a synthetic flat candle).
+                        // Bar-grid start from the LOCAL wall-clock ONLY, never
+                        // from `last_bar.timestamp`. Anchoring to the data
+                        // is wrong in BOTH directions: a stale bar (sparse-
+                        // tick instrument, e.g. HyperLiquid for a
+                        // low-liquidity symbol — no candle for a zero-trade
+                        // interval) sits BELOW the grid cell and used to
+                        // freeze the timer at 00:00; an exchange-stamped bar
+                        // can sit ABOVE the grid cell when the local clock
+                        // trails the venue (owner incident 2026-07-16: ~15s
+                        // epoch skew vs bybit made a 15s TF countdown read
+                        // up to 00:30, looking like a 1m timer). Anchored
+                        // purely to the local grid, `remaining` is always
+                        // within [0, interval] regardless of data staleness
+                        // or clock skew. No mutation of `window.bars` —
+                        // empty intervals stay empty (a gap, not a
+                        // synthetic flat candle).
                         let grid_bar_start = (now / bar_interval_secs) * bar_interval_secs;
-                        let bar_start = last_bar.timestamp.max(grid_bar_start);
+                        let bar_start = grid_bar_start;
                         let bar_close_time = bar_start + bar_interval_secs;
                         let remaining_secs = (bar_close_time - now).max(0);
                         let formatted = if remaining_secs >= 3600 {
