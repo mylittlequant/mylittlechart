@@ -1756,6 +1756,39 @@ impl BackendCore {
                         events.extend(self.splice_trade_fold_gap(
                             bid, &raw_trades, exchange_id, &symbol, at_label,
                         ));
+                        // TRADE-BUILT kline refold (owner report 2026-07-16):
+                        // splice-in-place is undefined for a folded kline
+                        // bucket series the way it is for footprint's
+                        // time-bucketed slot — a gap-filled trade can widen
+                        // an EXISTING bucket's OHLC (the bucket already had
+                        // partial coverage either side of the hole), which
+                        // a pure interior insert would miss. A full reseed
+                        // per gap batch is v1-acceptable (see
+                        // `TradeBuiltKlineRuntime::reseed`'s doc comment —
+                        // trades are bounded by the store's fixed raw
+                        // window). Mirrors the deepening-sweep's
+                        // `has_trade_built_kline` branch: bind the snapshot,
+                        // reseed under `with_bubble_mut`, drop the guard,
+                        // THEN apply outputs (which re-acquires the bubble
+                        // lock via `apply_trade_built_kline_outputs`).
+                        let has_trade_built_kline = self.bubbles()
+                            .with_bubble(bid, |b| b.active_trade_built_kline.is_some()).unwrap_or(false);
+                        if has_trade_built_kline {
+                            let full_snapshot = self.trade_store.snapshot_all(&trade_key);
+                            let tf_name_and_bars = self.bubbles_mut().with_bubble_mut(bid, |b| {
+                                b.active_trade_built_kline.as_mut().map(|f| {
+                                    let bars = f.reseed(&full_snapshot);
+                                    (f.tf_name().to_string(), bars)
+                                })
+                            }).flatten();
+                            if let Some((tf_name, bars)) = tf_name_and_bars {
+                                if let Some(ev) = self.apply_trade_built_kline_outputs(
+                                    bid, &tf_name, bars, exchange_id, &symbol, account_type,
+                                ) {
+                                    events.push(ev);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2834,5 +2867,75 @@ mod phase_b_facade_accessor_tests {
         // it explicitly) — round-trip via a second set + no panic/poison
         // confirms the RwLock write path is sound end-to-end.
         core.templates_mut().set_vault_key(None);
+    }
+}
+
+#[cfg(test)]
+mod trade_built_kline_gap_fill_tests {
+    //! Coverage for FIX 3 (owner report 2026-07-16): `LiveUpdate::
+    //! TradeGapFilled` must refold a bubble's `active_trade_built_kline`
+    //! runtime, not just splice trade-fold slots. Uses `DataBridge::
+    //! debug_broadcast_tx` to inject the synthetic update (same harness
+    //! shape as `mlc-backend-test-harness::BackendHarness`).
+
+    use super::*;
+    use mlc_backend_data_bridge::RawTradeWire;
+
+    fn build_core() -> (Arc<BackendCore>, Arc<DataBridge>) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        let bridge = Arc::new(bridge);
+        let core = BackendCore::new(bridge.clone(), None);
+        (core, bridge)
+    }
+
+    #[test]
+    fn trade_gap_filled_refolds_trade_built_kline_bars() {
+        let (core, bridge) = build_core();
+
+        // Install a bubble displaying a trade-built "15s" kline series, on
+        // the SAME instrument key `TradeGapFilled` will carry.
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("15s", 15_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+            b.bars_source = crate::bubble::BarsSource::Kline;
+            b.active_trade_built_kline = Some(crate::bubble::TradeBuiltKlineRuntime::new("15s".to_string(), 15_000));
+        });
+
+        // Seed the shared trade store with a trade OUTSIDE the gap batch —
+        // the reseed must fold BOTH the pre-existing store contents and the
+        // gap batch together (a real reseed, not just the gap rows).
+        let trade_key = mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT".to_string(), mlc_core::instrument::AccountType::Spot);
+        core.trade_store.push_live(&trade_key, crate::bubble::RawTrade { ts_ms: 0, price: 100.0, qty: 1.0, is_buyer_maker: false });
+
+        // Bubble starts with no bars — the install path is out of scope for
+        // this test (FIX 3 is specifically the gap-fill refold arm).
+        assert!(core.bubbles().with_bubble(bid, |b| b.bars.is_empty()).unwrap_or(false));
+
+        // Inject a TradeGapFilled batch landing in a LATER bucket than the
+        // seeded trade — the refolded series must contain both buckets.
+        let tx = bridge.debug_broadcast_tx();
+        tx.send(LiveUpdate::TradeGapFilled {
+            exchange_id: ExchangeId::Bybit,
+            account_type: AccountType::Spot,
+            symbol: "BTCUSDT".to_string(),
+            trades: vec![RawTradeWire { ts_ms: 20_000, price: 105.0, qty: 2.0, is_buyer_maker: false }],
+        }).expect("broadcast send");
+
+        let events = core.tick_writers(0);
+        assert!(
+            events.iter().any(|e| matches!(e, BubbleEvent::BarsLoaded { bid: ev_bid, .. } if *ev_bid == bid)),
+            "TradeGapFilled must emit a BarsLoaded event for the trade-built kline bubble; events={:?}", events
+        );
+
+        let bars = core.bubbles().with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
+        assert_eq!(bars.len(), 2, "refold must cover both the pre-existing store trade and the gap batch");
+        assert_eq!(bars[0].derived_ts_ms, 0);
+        assert_eq!(bars[1].derived_ts_ms, 15_000);
+        assert_eq!(bars[1].close, 105.0);
     }
 }

@@ -374,7 +374,19 @@ fn run_render_loop(
     let state_clone = state.clone();
     let provider_clone = provider.clone();
 
+    // RAF-stall watchdog (incident 2026-07-16): overnight Chrome throttled
+    // requestAnimationFrame to zero on a background tab — the frame closure
+    // below never ran, `tick_writers`' 65536-cap broadcast overflowed, and
+    // 112,652 `LiveUpdate`s dropped silently while the WS callbacks kept
+    // delivering. Stamped at the TOP of the frame closure body (below); the
+    // `set_interval` watchdog further down reads it to detect the stall.
+    let last_frame_ms: Rc<std::cell::Cell<f64>> = Rc::new(std::cell::Cell::new(js_sys::Date::now()));
+    let last_frame_ms_for_raf = last_frame_ms.clone();
+
     *closure.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+        // ── RAF-stall watchdog stamp ─────────────────────────────────────────
+        last_frame_ms_for_raf.set(js_sys::Date::now());
+
         // ── Diag counter ─────────────────────────────────────────────────────
         if let Some(win) = web_sys::window() {
             let _ = js_sys::Reflect::set(
@@ -679,6 +691,50 @@ fn run_render_loop(
     }
 
     std::mem::forget(closure);
+
+    // RAF-stall fallback drain (incident 2026-07-16): `setInterval` keeps
+    // firing at roughly its requested cadence even on a backgrounded tab
+    // under Chrome's intensive-timer-throttling policy (clamped to ~1/min),
+    // unlike `requestAnimationFrame`, which Chrome can throttle all the way
+    // to zero. When the RAF frame closure hasn't stamped `last_frame_ms` in
+    // over 15s, RAF is stalled — run a DATA-ONLY `ChartApp::tick` (the
+    // sanctioned single-window `tick_writers` drain +
+    // `react_to_events`, see `mlc-app/src/frame_lifecycle/tick.rs`) so the
+    // 65536-cap broadcast channel keeps draining instead of overflowing.
+    // Even a once-per-minute drain comfortably keeps up with the ~700
+    // updates/min the incident's overflow was measured at (112,652 dropped
+    // over ~4h). Deliberately does NOT render and does NOT reschedule RAF
+    // (rendering into a backgrounded/invisible tab is wasted GPU work the
+    // browser will throttle anyway) and does NOT stamp `last_frame_ms`
+    // (which would silence the watchdog while RAF is still stalled).
+    {
+        let state_for_watchdog = state.clone();
+        let watchdog_closure = Closure::wrap(Box::new(move || {
+            if js_sys::Date::now() - last_frame_ms.get() > 15_000.0 {
+                // Timestamp source matches the RAF frame closure's own
+                // `tick` call above (`web_time::SystemTime`), not
+                // `js_sys::Date::now()` (used only for the stall check
+                // against `last_frame_ms`, which is stamped from the same
+                // source) — keeps `ChartApp::tick`'s wall-clock reads
+                // consistent regardless of which path drove them.
+                let now_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                if let Ok(mut st) = state_for_watchdog.try_borrow_mut() {
+                    st.chart.tick(now_ms);
+                }
+            }
+        }) as Box<dyn FnMut()>);
+        if let Some(win) = web_sys::window() {
+            let _ = win.set_interval_with_callback_and_timeout_and_arguments_0(
+                watchdog_closure.as_ref().unchecked_ref(),
+                5_000,
+            );
+        }
+        std::mem::forget(watchdog_closure);
+    }
+
     Ok(())
 }
 

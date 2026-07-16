@@ -804,6 +804,18 @@ pub struct ChartRenderState<'a> {
     /// actually has one. Default `false` (no promise) — matches the
     /// "exchange not connected yet" / no-archive case.
     pub trade_archive_available: bool,
+    /// True when the displayed kline series is TRADE-BUILT (owner report
+    /// 2026-07-16) — folded client-side from the shared `TradeStore`
+    /// because the active timeframe has no native venue source and no
+    /// native divisor to aggregate from (`DataBubble::
+    /// active_trade_built_kline` is `Some` for the rendered bubble). Its
+    /// history is owned by the zip/trade plane exactly like the
+    /// incremental-prepend fold family, so the data-gap band
+    /// (`chart_render::grid::draw_data_gaps`) applies to it too — a hole in
+    /// a trade-built series is a real missing-trades hole, not glued kline
+    /// continuity. Default `false` (kline-fed types glue gaps and show no
+    /// band, matching pre-existing behavior).
+    pub bars_trade_built: bool,
 }
 
 impl<'a> ChartRenderState<'a> {

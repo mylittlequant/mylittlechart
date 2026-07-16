@@ -648,6 +648,14 @@ impl ChartApp {
                 // instead of the "1m" kline layer.
                 let is_trade_fold = !is_fold && mlc_backend::chart_type::is_trade_fold_chart_type(chart_type);
                 let Some(bid_scroll) = bid_by_chart.get(cid_scroll).copied() else { continue; };
+                // TRADE-BUILT kline (owner report 2026-07-16): a bubble
+                // whose active TF is folded client-side from the shared
+                // `TradeStore` (no native venue source) has zip/trade-plane
+                // history too — the gap-scan/gap-fill cure pass below must
+                // reach it the same way it reaches the trade-fold family,
+                // otherwise a hole (e.g. yesterday's zip publishing this
+                // morning) never cures without a reload.
+                let is_trade_built = self.core.bubbles().with_bubble(bid_scroll, |b| b.active_trade_built_kline.is_some()).unwrap_or(false);
 
                 // Per-chart-type-family in-flight guard: fold types (both
                 // families) skip this guard entirely —
@@ -705,8 +713,11 @@ impl ChartApp {
 
                 // Collect gap-scan targets BEFORE the edge/cold gate below —
                 // interior holes need curing precisely when depth demand is
-                // quiet (gap-fill pass, owner rule 2026-07-15).
-                if is_trade_fold {
+                // quiet (gap-fill pass, owner rule 2026-07-15). Trade-built
+                // kline bubbles (owner report 2026-07-16) have zip/trade-
+                // plane history too — their interior holes need the same
+                // cure pass, so they share this scan target list.
+                if is_trade_fold || is_trade_built {
                     if let Some((sym, tf, exch, at)) = instrument_by_cid_scroll.get(cid_scroll) {
                         trade_fold_gap_scan.push((bid_scroll, sym.clone(), exch.clone(), *at, tf.interval_ms));
                     }
@@ -956,6 +967,11 @@ impl ChartApp {
             // coverage probe per 5 minutes. v1 folds scope: footprint family
             // (`footprint_bars` slot) — count-based bars keep their band
             // (splice is ill-defined for them; see `splice_trade_fold_gap`).
+            // TRADE-BUILT kline (owner report 2026-07-16) falls back to the
+            // bubble's own display array (`bars`) when there is no
+            // `footprint_bars` slot — its history is folded straight into
+            // `bubble.bars`/`kline_layers`, not a footprint slot, so the
+            // open-time series lives there instead.
             {
                 let mut seen_instruments: std::collections::HashSet<(String, String, mlc_core::instrument::AccountType)> =
                     std::collections::HashSet::new();
@@ -965,7 +981,13 @@ impl ChartApp {
                         continue;
                     }
                     let opens: Option<Vec<i64>> = self.core.bubbles().with_bubble(bid_gap, |b| {
-                        b.footprint_bars.as_ref().map(|v| v.iter().map(|fb| fb.open_time).collect())
+                        if let Some(v) = b.footprint_bars.as_ref() {
+                            Some(v.iter().map(|fb| fb.open_time).collect())
+                        } else if b.active_trade_built_kline.is_some() {
+                            Some(b.bars.iter().map(|bar| if bar.derived_ts_ms != 0 { bar.derived_ts_ms } else { bar.timestamp * 1000 }).collect())
+                        } else {
+                            None
+                        }
                     }).flatten();
                     let Some(opens) = opens else { continue; };
                     if opens.len() < 2 { continue; }

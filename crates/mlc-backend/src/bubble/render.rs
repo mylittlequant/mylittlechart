@@ -212,6 +212,12 @@ pub fn build_chart_render_state<'a>(
         // 1:1 forward — the caller already resolved this against the
         // connector hub (this bubble-scoped builder has no bridge access).
         trade_archive_available: window.trade_archive_available,
+        // Direct bubble read (owner report 2026-07-16) — unlike
+        // `trade_archive_available` this needs no bridge/connector-hub
+        // lookup, just the bubble's own installed-runtime slot, so this
+        // builder resolves it itself instead of threading it through
+        // `ChartWindowRenderInputs`.
+        bars_trade_built: bubble.active_trade_built_kline.is_some(),
     }
 }
 

@@ -3210,6 +3210,7 @@ pub fn render_full_chart_panel(
         history_depth: data.state.history_depth,
         cvd_paint_deltas: data.state.cvd_paint_deltas.clone(),
         trade_archive_available: data.state.trade_archive_available,
+        bars_trade_built: data.state.bars_trade_built,
     };
 
     // 1. Background — fill the full window rect to avoid gaps when scales are
@@ -3659,6 +3660,7 @@ pub fn render_chart_overlay(
         history_depth: state.history_depth,
         cvd_paint_deltas: state.cvd_paint_deltas.clone(),
         trade_archive_available: state.trade_archive_available,
+        bars_trade_built: state.bars_trade_built,
     };
 
     // Compute total chart bounds (main + all sub-panes) for the vertical crosshair span.

@@ -222,16 +222,25 @@ pub fn draw_grid_extended(
 /// falling back to the whole series when the visible range is too short to
 /// give a stable median).
 ///
-/// SCOPE (owner doctrine 2026-07-13): trade-fed history only — footprint +
-/// the count-bar family, whose bars glue at a time-marked seam and whose
-/// history is deepened by an in-place prepend fold
-/// (`ChartTypeDef::incremental_prepend == true`). Kline-fed chart types
-/// (candles/etc.) glue gaps the way every other charting product does — no
-/// band there. Gated via the chart-type REGISTRY lookup (`chart_type`
-/// param, mirrors `draw_series`'s own `chart_type: &str` parameter), NEVER
-/// a chart_type string match.
+/// SCOPE (owner doctrine 2026-07-13, extended 2026-07-16): trade/zip-plane
+/// history only — footprint + the count-bar family, whose bars glue at a
+/// time-marked seam and whose history is deepened by an in-place prepend
+/// fold (`ChartTypeDef::incremental_prepend == true`), PLUS trade-built
+/// kline series (`state.bars_trade_built` — owner report 2026-07-16: target
+/// timeframes with no native venue source, folded client-side from the
+/// shared `TradeStore`). Kline-fed chart types glue gaps the way every
+/// other charting product does — no band there — but that 2026-07-13
+/// doctrine predates trade-built klines, which glue NOTHING: a hole in a
+/// trade-built series is a real missing-trades hole, not glued kline
+/// continuity, so it joins the band scope even though its `chart_type` is
+/// still nominally kline-rendered (candles/etc.). Gated via the chart-type
+/// REGISTRY lookup (`chart_type` param, mirrors `draw_series`'s own
+/// `chart_type: &str` parameter) OR the render-state flag, NEVER a
+/// chart_type string match.
 pub fn draw_data_gaps(ctx: &mut dyn RenderContext, state: &ChartRenderState, chart_type: &str) {
-    if !mlc_core::chart_type::by_id(chart_type).is_some_and(|d| d.incremental_prepend) {
+    let trade_owned = mlc_core::chart_type::by_id(chart_type).is_some_and(|d| d.incremental_prepend)
+        || state.bars_trade_built;
+    if !trade_owned {
         return;
     }
 
