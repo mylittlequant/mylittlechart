@@ -2295,6 +2295,15 @@ impl BackendCore {
             .any(|bid| self.bubbles().with_bubble(*bid, |b| {
                 b.active_trade_built_kline.as_ref().map(|f| f.tf_name() == tf.name).unwrap_or(false)
             }).unwrap_or(false));
+        // Lifecycle tripwire (2026-07-17): the routing decision for every
+        // kline request — which source class serves this (instrument, tf)
+        // and whether the trade-built fold was already live. First stop
+        // when a TF renders the wrong granularity.
+        mlc_backend_data_bridge::dlog!(
+            "[request_kline] {}:{}:{} tf={} caps_known={} trade_built={} already_active={} force={}",
+            exchange_id.as_str(), at_label, symbol, tf.name,
+            self.bridge.kline_caps_known(exchange_id), trade_built, already_active, force,
+        );
 
         if !(trade_built && already_active) {
             self.bridge.request_bars(exchange_id, symbol, tf, account_type, limit, total_bars, force);

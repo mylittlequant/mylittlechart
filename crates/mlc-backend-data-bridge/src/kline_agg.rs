@@ -125,7 +125,54 @@ pub fn is_trade_built(target_ms: i64, native: &[(&str, i64)]) -> bool {
     if is_native {
         return false;
     }
+    // SUB-MINUTE RULE (owner doctrine 2026-07-17): every non-native
+    // sub-minute target is TRADE-BUILT unconditionally — divisor kline
+    // aggregation (e.g. 1s→15s) is NOT consulted at this scale. Trades
+    // are the canonical sub-minute source (zip archives + paginated REST
+    // trades + live WS trades, all universally served), while sub-minute
+    // kline endpoints are venue-exotic (one venue advertises them, its
+    // REST map silently substituted hourly bars — live-caught 2026-07-17:
+    // binance spot "1s" fell into a `_ => "1h"` connector default and 15s
+    // rendered a wall of hourly bars while the trade plane STOOD DOWN
+    // because this classifier said "the kline plane will serve"). One TF
+    // = one source class; the trade plane must never stand down on a
+    // sub-minute TF.
+    if target_ms < 60_000 {
+        return true;
+    }
     aggregation_base(target_ms, native).is_none()
+}
+
+/// GRANULARITY VERIFICATION at the fetch boundary (owner invariant
+/// 2026-07-17): do fetched bars actually carry the interval we asked
+/// for? Venue connectors' `map_kline_interval` fall back SILENTLY on
+/// unsupported intervals (live-caught: binance "1s" fell into a
+/// `_ => "1h"` default and a 1s fetch returned hourly bars) — a
+/// substituted page must be treated as an ERROR by the fetch path, never
+/// emitted under the requested label.
+///
+/// Discriminator = the LOW percentile (p10) of consecutive steps, not
+/// the median: pages glued from sparse session fragments have hours-wide
+/// boundary gaps, but the steps INSIDE fragments equal the true
+/// interval. Honest page → p10 == interval; substituted page → p10 ==
+/// the substituted interval (out of tolerance either direction).
+/// Empty / single-point pages carry no measurable step and pass.
+pub fn bars_match_interval(bars: &[mlc_core::Bar], interval_ms: i64) -> bool {
+    if bars.len() < 2 || interval_ms <= 0 {
+        return true;
+    }
+    let ts_ms = |b: &mlc_core::Bar| if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp * 1000 };
+    let mut steps: Vec<i64> = bars
+        .windows(2)
+        .map(|w| ts_ms(&w[1]) - ts_ms(&w[0]))
+        .filter(|d| *d > 0)
+        .collect();
+    if steps.is_empty() {
+        return true;
+    }
+    steps.sort_unstable();
+    let p10 = steps[steps.len() / 10];
+    p10 >= interval_ms / 2 && p10 <= interval_ms * 2
 }
 
 /// Epoch-aligned bucket boundary (ms) containing `ts_ms` for a

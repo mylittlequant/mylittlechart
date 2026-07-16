@@ -26,6 +26,28 @@ pub struct BubbleStore {
     next_indicator_config_id: u64,
 }
 
+/// Lifecycle tripwire (2026-07-17): every genuine instrument-identity
+/// change (the ONLY trigger of `reset_raw_layers`) is logged with the
+/// full old→new key and the setter that drove it. Identity changes are
+/// rare, user-driven events; an unexpected line here is the first stop
+/// when a chart loses its series (series-leak / display-wipe forensics).
+fn log_identity_reset(
+    bubble: &DataBubble,
+    bid: BubbleId,
+    new_exchange: &str,
+    new_at: mlc_core::instrument::AccountType,
+    new_symbol: &str,
+    via: &str,
+) {
+    mlc_backend_data_bridge::dlog!(
+        "[instrument-reset] via={} bid={:?} old={}:{}:{} new={}:{}:{} ({} display bars dropped)",
+        via, bid,
+        bubble.address.exchange, bubble.address.account_type.as_label(), bubble.address.symbol,
+        new_exchange, new_at.as_label(), new_symbol,
+        bubble.bars.len(),
+    );
+}
+
 
 impl BubbleStore {
     /// Create an empty `BubbleStore`.
@@ -361,6 +383,9 @@ impl BubbleStore {
         let identity_changed = bubble.address.symbol != symbol
             || bubble.address.exchange != exchange
             || bubble.address.account_type != at;
+        if identity_changed {
+            log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_instrument");
+        }
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
@@ -381,6 +406,10 @@ impl BubbleStore {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         let at: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
         let identity_changed = bubble.address.exchange != exchange || bubble.address.account_type != at;
+        if identity_changed {
+            let symbol = bubble.address.symbol.clone();
+            log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_bubble_instrument");
+        }
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
         if identity_changed {
@@ -408,6 +437,9 @@ impl BubbleStore {
         let identity_changed = bubble.address.symbol != symbol
             || bubble.address.exchange != exchange
             || bubble.address.account_type != at;
+        if identity_changed {
+            log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_bid_instrument_full");
+        }
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
@@ -425,6 +457,10 @@ impl BubbleStore {
     pub fn set_exchange_for_bid(&mut self, bid: BubbleId, exchange: String) -> bool {
         let Some(bubble) = self.bubbles.get_mut(&bid) else { return false };
         let identity_changed = bubble.address.exchange != exchange;
+        if identity_changed {
+            let symbol = bubble.address.symbol.clone();
+            log_identity_reset(bubble, bid, &exchange, bubble.address.account_type, &symbol, "set_exchange_for_bid");
+        }
         bubble.address.exchange = exchange;
         if identity_changed {
             bubble.reset_raw_layers();
@@ -775,6 +811,17 @@ impl BubbleStore {
     /// Replace a bubble's entire OHLC series.
     pub fn replace_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
+            // Lifecycle tripwire (2026-07-17): a populated display going
+            // EMPTY through the choke point is a rare, significant event
+            // (fresh-load clear, instrument reset, or — historically — a
+            // defect). Keep it visible in the debug log permanently.
+            if !b.bars.is_empty() && bars.is_empty() {
+                mlc_backend_data_bridge::dlog!(
+                    "[display-wipe] bid={:?} {}:{}:{} tf={} {} bars -> 0",
+                    bid, b.address.exchange, b.address.account_type.as_label(),
+                    b.address.symbol, b.timeframe.name, b.bars.len(),
+                );
+            }
             b.replace_bars(bars);
         }
     }

@@ -1849,6 +1849,27 @@ impl DataBridge {
                     let n = points.len();
                     crate::dlog!("[Bridge] Phase A: got {} bars (dig3)", n);
                     let base_bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
+                    // FETCH-BOUNDARY VERIFICATION (owner invariant
+                    // 2026-07-17): the venue must have honored the
+                    // requested interval — a silently-substituted page
+                    // (connector `map_kline_interval` fallback) is an
+                    // ERROR, never an emit under the requested label.
+                    let expected_ms = crate::convert::interval_to_ms(fetch_interval).unwrap_or(0);
+                    if !crate::kline_agg::bars_match_interval(&base_bars, expected_ms) {
+                        crate::dlog!(
+                            "[Bridge] Phase A REJECT: venue substituted interval {:?} {} at={:?} requested={} n={}",
+                            exchange_id, symbol_str, account_type, fetch_interval, n,
+                        );
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
+                            message: format!("venue does not serve interval {} (substituted response rejected)", fetch_interval),
+                        });
+                        finish_fetch!();
+                        return;
+                    }
                     let bars = match &kline_agg {
                         Some(agg) => crate::kline_agg::fold_bars_into_buckets(&base_bars, agg.target_ms()),
                         None => base_bars,

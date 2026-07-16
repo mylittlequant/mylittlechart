@@ -1030,6 +1030,25 @@ async fn run_kline_ramp(
 
         let new_oldest = points.iter().map(|p| p.open_time).min();
         let base_bars: Vec<mlc_core::Bar> = points.iter().map(bar_point_to_bar).collect();
+        // FETCH-BOUNDARY VERIFICATION (owner invariant 2026-07-17): same
+        // check as Phase A — a venue-substituted page (connector interval
+        // fallback) ends the ramp as an error instead of poisoning the
+        // layer under the requested TF's label.
+        let expected_ms = crate::convert::interval_to_ms(fetch_interval).unwrap_or(0);
+        if !crate::kline_agg::bars_match_interval(&base_bars, expected_ms) {
+            crate::dlog!(
+                "[kline_ramp] REJECT: venue substituted interval key={:?}/{} requested={} n={}",
+                key.0, key.1, fetch_interval, base_bars.len(),
+            );
+            let _ = tx.send(LiveUpdate::Error {
+                exchange_id,
+                account_type,
+                symbol: symbol_str.clone(),
+                timeframe: tf_name.clone(),
+                message: format!("venue does not serve interval {} (substituted response rejected)", fetch_interval),
+            });
+            break 'run;
+        }
         let bars: Vec<mlc_core::Bar> = match target_ms {
             Some(t) => crate::kline_agg::fold_bars_into_buckets(&base_bars, t),
             None => base_bars,
