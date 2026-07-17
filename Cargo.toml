@@ -55,10 +55,12 @@ strip = "none"
 opt-level = 2
 
 [patch.crates-io]
-# Local uzor path build. Pins below track the published version (1.4.16)
-# so the manifest stays honest; the patch just resolves them to the
-# working tree so in-flight uzor fixes are picked up without a publish
-# round-trip. Keep pins == published uzor version on every bump.
+# Local uzor path build. Pins are =1.4.18 = the LOCAL uzor tree version
+# (published is 1.4.16) — the exact pin must match the local tree or this
+# patch silently deactivates and mlc builds against crates.io (drifted
+# 2026-07-18: pins were =1.4.16 while the tree was 1.4.18 → per-element
+# stroke-width fix invisible). Keep pins == local uzor workspace version;
+# re-align on every uzor bump/publish.
 uzor                  = { path = "../uzor/uzor" }
 uzor-fonts            = { path = "../uzor/uzor-fonts" }
 uzor-window-web       = { path = "../uzor/uzor-window-web" }

@@ -10,7 +10,7 @@ name = "mlc_app_sidebar_content"
 web-time = "1"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
-uzor = "=1.4.16"
+uzor = "=1.4.18"
 serde = { version = "1.0", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

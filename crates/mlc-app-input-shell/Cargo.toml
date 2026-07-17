@@ -11,6 +11,6 @@ name = "mlc_app_input_shell"
 mlc-app    = { path = "../mlc-app",    package = "mylittlechart-app"    }
 mlc-core   = { path = "../mlc-core",   package = "mylittlechart-core"   }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-uzor       = "=1.4.16"
+uzor       = "=1.4.18"
 web-time   = "1"
 # NO winit, NO arboard, NO wasm-bindgen, NO vello

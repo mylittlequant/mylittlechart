@@ -631,35 +631,39 @@ pub const ICON_FIB_CIRCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
   <circle cx="12" cy="12" r="1" fill="currentColor"/>
 </svg>"##;
 
-pub const ICON_FIB_SPIRAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 12a5 5 0 0 1 5 5"/>
-  <path d="M12 12a8 8 0 0 0-8 8"/>
-  <path d="M12 12a3 3 0 0 1-3-3"/>
-  <path d="M12 12a2 2 0 0 0 2-2"/>
-  <circle cx="12" cy="12" r="1" fill="currentColor"/>
-</svg>"##;
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_FIB_SPIRAL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6 A12.5 12.5 0 0 0 14.5 18.5 A8 8 0 0 0 22.5 10.5 A5 5 0 0 0 17.5 5.5 A3 3 0 0 0 14.5 8.5"/><circle cx="14.5" cy="8.5" r="1.2" fill="currentColor" stroke="none"/></svg>"##;
 
 pub const ICON_FIB_TIME_ZONES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 4v16"/><path d="M8 4v16"/><path d="M13 4v16" stroke-dasharray="2 2"/><path d="M20 4v16" stroke-dasharray="2 2"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_FIB_SPEED_RESISTANCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 10" stroke-dasharray="2 2"/><path d="M4 20L20 16" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
+  <rect x="2" y="2" width="20" height="20" stroke-dasharray="2 2"/>
+  <path d="M2 22L22 2"/>
+  <path d="M8.67 2v20"/><path d="M15.33 2v20"/>
+  <circle cx="2" cy="22" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 pub const ICON_FIB_TREND_TIME: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 18L12 6L20 14"/><path d="M4 18v-14"/><path d="M12 6v12" stroke-dasharray="2 2"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_FIB_ARCS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20Q4 8 20 4"/><path d="M4 20Q4 12 14 8" stroke-dasharray="2 2"/><path d="M4 20Q4 16 10 14" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
+  <path d="M4 20L20 4"/>
+  <path d="M4 13A7 7 0 0 1 11 20" stroke-dasharray="2 2"/>
+  <path d="M4 8A12 12 0 0 1 16 20" stroke-dasharray="2 2"/>
+  <path d="M4 3A17 17 0 0 1 21 20"/>
+  <circle cx="4" cy="20" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_FIB_WEDGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 12"/><path d="M4 20L20 8" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
+  <path d="M4 20L10.16 3.09"/><path d="M4 20L21.73 16.87"/>
+  <path d="M10.16 3.09A18 18 0 0 1 21.73 16.87"/>
+  <circle cx="4" cy="20" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 pub const ICON_FIB_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -680,52 +684,88 @@ pub const ICON_GANN_SQUARE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" v
   <path d="M4 4L20 20" stroke-dasharray="2 2"/><path d="M20 4L4 20" stroke-dasharray="2 2"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_GANN_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/><path d="M4 20L20 8"/><path d="M4 20L20 12"/><path d="M4 20L20 16"/><path d="M4 20h16"/>
-  <circle cx="4" cy="20" r="2" fill="currentColor"/>
+  <path d="M4 20L7 4" stroke-width="1.2"/>
+  <path d="M4 20L12 4" stroke-width="1.2"/>
+  <path d="M4 20L20 4"/>
+  <path d="M4 20L20 10" stroke-width="1.2"/>
+  <path d="M4 20L20 16" stroke-width="1.2"/>
+  <circle cx="4" cy="20" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 // =============================================================================
 // Pattern Icons
 // =============================================================================
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_XABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 18L6 6L12 14L16 8L22 16"/>
-  <circle cx="2" cy="18" r="1.5" fill="currentColor"/><circle cx="6" cy="6" r="1.5" fill="currentColor"/>
-  <circle cx="12" cy="14" r="1.5" fill="currentColor"/><circle cx="16" cy="8" r="1.5" fill="currentColor"/>
-  <circle cx="22" cy="16" r="1.5" fill="currentColor"/>
+  <path d="M2 18L7 6L11 13L16 5L21 15"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_CYPHER_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 8L7 18L11 10L16 19L21 3"/>
+</svg>"##;
+
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_HEAD_SHOULDERS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 16L6 10L10 14L12 4L14 14L18 10L22 16"/>
-  <path d="M6 14h12" stroke-dasharray="2 2"/>
+  <path d="M2 18L6 9L10 15L12 4L14 15L18 9L22 18"/>
+  <path d="M6 15L18 15" stroke-width="1.2"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_ABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18L8 6L16 14L20 6"/>
-  <circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="8" cy="6" r="1.5" fill="currentColor"/>
-  <circle cx="16" cy="14" r="1.5" fill="currentColor"/><circle cx="20" cy="6" r="1.5" fill="currentColor"/>
+  <path d="M4 18L9 6L15 15L20 5"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_TRIANGLE_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 8L8 16L12 8L16 16L20 12"/>
-  <path d="M4 6L20 10" stroke-dasharray="2 2"/><path d="M4 18L20 14" stroke-dasharray="2 2"/>
+  <path d="M3 6L21 11" stroke-width="1.2"/>
+  <path d="M3 18L21 11" stroke-width="1.2"/>
+  <path d="M4 8L7 16L10 9L13 15L16 10L19 12"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_THREE_DRIVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 20L6 8L10 14L14 6L18 12L22 4"/>
-  <circle cx="6" cy="8" r="1.5" fill="currentColor"/><circle cx="14" cy="6" r="1.5" fill="currentColor"/><circle cx="22" cy="4" r="1.5" fill="currentColor"/>
+  <path d="M2 20L6 12L8 15L12 8L14 11L18 4L22 7"/>
 </svg>"##;
 
 // =============================================================================
 // Elliott Wave Icons
 // =============================================================================
 
-pub const ICON_ELLIOTT_WAVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 18L5 14L8 16L12 4L15 12L18 10L22 14"/>
-  <circle cx="5" cy="14" r="1.5" fill="currentColor"/>
-  <circle cx="12" cy="4" r="1.5" fill="currentColor"/>
-  <circle cx="22" cy="14" r="1.5" fill="currentColor"/>
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_ELLIOTT_IMPULSE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polyline points="2,20 6,9 9,14 13,3 17,11 22,2"/>
+  <circle cx="6" cy="9" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="9" cy="14" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="13" cy="3" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="17" cy="11" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="22" cy="2" r="1.2" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_ELLIOTT_CORRECTION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polyline points="2,6 8,16 13,9 22,20"/>
+  <circle cx="8" cy="16" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="13" cy="9" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="22" cy="20" r="1.2" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_ELLIOTT_TRIANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 4L21 11"/>
+  <path d="M3 20L21 11"/>
+  <polyline points="2,5 6,18 10,7 14,15 18,10" stroke-width="1.2"/>
+</svg>"##;
+
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+pub const ICON_ELLIOTT_COMBO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polyline points="2,6 5,13 7,9 9,15 13,5 16,12 18,8 22,16"/>
+  <circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="13" cy="5" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="22" cy="16" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 // =============================================================================
@@ -1065,16 +1105,20 @@ pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
 // Position Icons
 // =============================================================================
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 20V4"/>
-  <path d="M5 11l7-7 7 7"/>
-  <path d="M5 20h14"/>
+  <rect x="3" y="4" width="18" height="9" stroke-width="1.2"/>
+  <rect x="3" y="13" width="18" height="6" stroke-width="1.2"/>
+  <line x1="3" y1="13" x2="21" y2="13"/>
+  <polyline points="6,6 6,11 9,11" stroke-width="1.3"/>
 </svg>"##;
 
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
 pub const ICON_SHORT_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M12 4v16"/>
-  <path d="M5 13l7 7 7-7"/>
-  <path d="M5 4h14"/>
+  <rect x="3" y="4" width="18" height="7" stroke-width="1.2"/>
+  <rect x="3" y="11" width="18" height="9" stroke-width="1.2"/>
+  <line x1="3" y1="11" x2="21" y2="11"/>
+  <path d="M8,13.5 C8,12.5 5,12.5 5,14 C5,15.5 8,15.5 8,17 C8,18.5 5,18.5 5,17.5" stroke-width="1.3"/>
 </svg>"##;
 
 // =============================================================================
@@ -1365,42 +1409,37 @@ pub const ICON_SLOT_TRADING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" 
   <path d="M3 13h18"/>
 </svg>"##;
 
-/// DOM slot — rows around a solid price axis. Owner-approved final design
+/// DOM slot. Redrawn 2026-07-18 (owner-approved design round; see
+/// nemo/docs/mlc/research/icon-drafts/); previous design owner-approved
 /// 2026-07-11.
 pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="12" y1="4" x2="12" y2="20"/>
-  <line x1="3" y1="6" x2="9" y2="6"/>
-  <line x1="5" y1="10" x2="9" y2="10"/>
-  <line x1="3" y1="14" x2="9" y2="14"/>
-  <line x1="6" y1="18" x2="9" y2="18"/>
-  <line x1="15" y1="6" x2="20" y2="6"/>
-  <line x1="15" y1="10" x2="21" y2="10"/>
-  <line x1="15" y1="14" x2="18" y2="14"/>
-  <line x1="15" y1="18" x2="21" y2="18"/>
+  <rect x="10" y="3" width="4" height="18" rx="0.5"/>
+  <line x1="2" y1="6" x2="10" y2="6"/>
+  <line x1="2" y1="10" x2="10" y2="10"/>
+  <line x1="5" y1="14" x2="10" y2="14"/>
+  <line x1="6" y1="18" x2="10" y2="18"/>
+  <line x1="14" y1="6" x2="18" y2="6"/>
+  <line x1="14" y1="10" x2="22" y2="10"/>
+  <line x1="14" y1="14" x2="19" y2="14"/>
+  <line x1="14" y1="18" x2="22" y2="18"/>
 </svg>"##;
 
-/// Trade Tape slot — print rows: dot + tick per print, dots alternating
-/// sides (buy/sell), varying tick lengths (sizes). Owner-picked from the
-/// researched candidates (round 4, T-b), 2026-07-11.
+/// Trade Tape slot. Redrawn 2026-07-18 (owner-approved design round; see
+/// nemo/docs/mlc/research/icon-drafts/); previous design owner-picked
+/// (round 4, T-b) 2026-07-11.
 pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="5" cy="6" r="1.3" fill="currentColor" stroke="none"/>
-  <line x1="9" y1="6" x2="19" y2="6"/>
-  <line x1="5" y1="12" x2="15" y2="12"/>
-  <circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none"/>
-  <circle cx="5" cy="18" r="1.3" fill="currentColor" stroke="none"/>
-  <line x1="9" y1="18" x2="17" y2="18"/>
+  <line x1="4" y1="2" x2="20" y2="2" stroke-width="1.2"/>
+  <line x1="5" y1="7" x2="17" y2="7"/>
+  <line x1="7" y1="11" x2="20" y2="11"/>
+  <line x1="5" y1="15" x2="14" y2="15"/>
+  <line x1="7" y1="19" x2="18" y2="19"/>
+  <line x1="4" y1="22" x2="20" y2="22" stroke-width="1.2"/>
 </svg>"##;
 
-/// L2 Tape slot — order-book EVENT stream: vertical book spine with an
-/// insert arrow (into the book) and a cancel arrow (out of it). This panel
-/// shows ALL L2 events (quote inserts/changes/cancels), not trades and not
-/// depth. Owner-picked from the researched candidates (round 4, L-b),
-/// 2026-07-11.
-pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="12" y1="3" x2="12" y2="21"/>
-  <path d="M4 6l4 2-4 2"/>
-  <path d="M20 13l-4 2 4 2"/>
-</svg>"##;
+/// L2 Tape slot — text-chip glyph. Redrawn 2026-07-18 (owner-picked
+/// chip design; see nemo/docs/mlc/research/icon-drafts/); previous design
+/// owner-picked (round 4, L-b) 2026-07-11.
+pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><polyline points="7,9.5 7,14.5 10,14.5"/><path d="M12.5 10.6 C12.5 8.9 16.3 8.9 16.3 10.6 C16.3 12 13 12.9 12.7 14.5 L16.6 14.5"/></svg>"##;
 
 /// Big Trades slot — sonar/ripple: a print whose impact radiates outward
 /// (big order hitting the tape). Owner-picked #12 of 24 candidates,
@@ -1641,15 +1680,15 @@ impl Icon {
             Icon::GannSquare => ICON_GANN_SQUARE,
             Icon::GannFan => ICON_GANN_FAN,
             Icon::XabcdPattern => ICON_XABCD_PATTERN,
-            Icon::CypherPattern => ICON_XABCD_PATTERN,
+            Icon::CypherPattern => ICON_CYPHER_PATTERN,
             Icon::HeadShoulders => ICON_HEAD_SHOULDERS,
             Icon::AbcdPattern => ICON_ABCD_PATTERN,
             Icon::TrianglePattern => ICON_TRIANGLE_PATTERN,
             Icon::ThreeDrives => ICON_THREE_DRIVES,
-            Icon::ElliottImpulse => ICON_ELLIOTT_WAVE,
-            Icon::ElliottCorrection => ICON_ELLIOTT_WAVE,
-            Icon::ElliottTriangle => ICON_ELLIOTT_WAVE,
-            Icon::ElliottCombo => ICON_ELLIOTT_WAVE,
+            Icon::ElliottImpulse => ICON_ELLIOTT_IMPULSE,
+            Icon::ElliottCorrection => ICON_ELLIOTT_CORRECTION,
+            Icon::ElliottTriangle => ICON_ELLIOTT_TRIANGLE,
+            Icon::ElliottCombo => ICON_ELLIOTT_COMBO,
             Icon::CycleLines => ICON_CYCLE_LINES,
             Icon::TimeCycles => ICON_TIME_CYCLES,
             Icon::SineWave => ICON_SINE_WAVE,
@@ -2126,18 +2165,18 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
 
         // Patterns
         "xabcd_pattern" | "xabcdpattern" => Some(ICON_XABCD_PATTERN),
-        "cypher_pattern" | "cypherpattern" => Some(ICON_XABCD_PATTERN),
+        "cypher_pattern" | "cypherpattern" => Some(ICON_CYPHER_PATTERN),
         "head_shoulders" | "headshoulders" => Some(ICON_HEAD_SHOULDERS),
         "abcd_pattern" | "abcdpattern" => Some(ICON_ABCD_PATTERN),
         "triangle_pattern" | "trianglepattern" => Some(ICON_TRIANGLE_PATTERN),
         "three_drives" | "threedrives" => Some(ICON_THREE_DRIVES),
 
-        // Elliott waves (all share same icon)
-        "elliott_impulse" | "elliottimpulse"
-        | "elliott_correction" | "elliottcorrection"
-        | "elliott_triangle" | "elliotttriangle"
-        | "elliott_combo" | "elliottcombo"
-        | "elliott_double_combo" | "elliott_triple_combo" => Some(ICON_ELLIOTT_WAVE),
+        // Elliott waves
+        "elliott_impulse" | "elliottimpulse" => Some(ICON_ELLIOTT_IMPULSE),
+        "elliott_correction" | "elliottcorrection" => Some(ICON_ELLIOTT_CORRECTION),
+        "elliott_triangle" | "elliotttriangle" => Some(ICON_ELLIOTT_TRIANGLE),
+        "elliott_combo" | "elliottcombo"
+        | "elliott_double_combo" | "elliott_triple_combo" => Some(ICON_ELLIOTT_COMBO),
 
         // Cycles
         "cycle_lines" | "cyclelines" => Some(ICON_CYCLE_LINES),
