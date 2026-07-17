@@ -1585,9 +1585,20 @@ impl ChartApp {
                     let at_typed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                     let at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
                     self.core.ensure_connector(resolved_exchange);
+                    // force=true — an explicit user symbol switch MUST get a
+                    // fresh Phase A. The bridge's dedup-L2 silently skips
+                    // non-force requests whenever a station kline subscriber
+                    // for this key is still alive (e.g. this instrument was
+                    // visited earlier in the session) — live-caught
+                    // 2026-07-17: switch to a previously-visited instrument
+                    // rendered an EMPTY chart (reset cleared the display,
+                    // dedup-L2 skipped the refetch, only live ticks painted).
+                    // Matches dedup-L2's own documented contract:
+                    // "force=true callers (ChangeTimeframe, ChangeSymbol,
+                    // LoadPreset) still get a fresh Phase A".
                     self.core.request_kline(
                         resolved_exchange, &symbol, &timeframe, at, None,
-                        Some(self.core.user().profile().domain.bar_count as usize), false,
+                        Some(self.core.user().profile().domain.bar_count as usize), true,
                     );
                     // Re-ignite, deliverable 1 (2026-07-13 live-bug fix):
                     // `set_bid_instrument_full` above rebinds the bubble's

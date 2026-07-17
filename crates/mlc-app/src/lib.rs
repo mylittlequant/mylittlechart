@@ -3755,7 +3755,9 @@ impl ChartApp {
             window.data_provider = provider;
             let at = account_type_from_label(&cur_at_label_exc);
             mirror_args = Some((cur_sym_exc.clone(), cur_tf_exc.clone(), exchange_name.clone(), cur_at_label_exc.clone()));
-            self.core.request_kline(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
+            // force=true — explicit user exchange switch (see the
+            // ApplySymbol handler's dedup-L2 comment).
+            self.core.request_kline(exchange_id, &cur_sym_exc, &cur_tf_exc, at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
         }
         if let (Some(chart_id), Some((_, _, exch, _))) = (active_chart_id, mirror_args) {
             if let Some(bid) = self.bubble_for_chart(chart_id) {

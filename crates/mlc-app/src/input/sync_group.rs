@@ -1566,7 +1566,13 @@ impl ChartApp {
             }
             let at = crate::account_type_from_label(&account_type_owned);
             self.core.ensure_connector(resolved_exchange);
-            self.core.request_kline(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), false);
+            // force=true — a sync-propagated symbol switch is the same
+            // explicit user action as ApplySymbol's own request: dedup-L2
+            // silently skips non-force requests when a station kline
+            // subscriber for this key is still alive, leaving the peer
+            // chart empty after the identity reset (see the matching
+            // comment in chart_out_events.rs's ApplySymbol handler).
+            self.core.request_kline(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), true);
             eprintln!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe

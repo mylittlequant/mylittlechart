@@ -3434,13 +3434,54 @@ impl DataBridge {
             return resolved;
         }
 
-        // (4) Fallback — return the requested string unchanged.
-        // Don't cache the fallback: the symbol catalogue may still be
-        // warming up (REST `exchange_info` not in yet). A cache hit here
-        // would freeze the resolution to passthrough until shutdown.
+        // (4) Normalizer fallback — the SAME venue-specific canonical→wire
+        // translation the WS subscribe path already uses (station's
+        // `parse_symbol` + `SymbolNormalizer::to_exchange`), which needs no
+        // symbol catalogue at all. Covers the boot window when the venue's
+        // `exchange_info` hasn't arrived yet (live-caught 2026-07-17:
+        // HyperLiquid "BTCUSD" went out as-is to candleSnapshot → HTTP 500
+        // "Server error: null"; the wire coin is "BTC" — the WS side
+        // translated fine the whole time, only this REST fallback didn't).
+        // Not cached — a later catalogue-backed resolution may be more
+        // precise (exotic raw forms), and cache hits here would freeze it.
+        let parsed = parse_canonical_symbol(requested);
+        if !parsed.quote.is_empty() {
+            if let Ok(wire) = digdigdig3::core::utils::SymbolNormalizer::to_exchange(
+                exchange_id, &parsed, account_type,
+            ) {
+                if !wire.is_empty() {
+                    return wire;
+                }
+            }
+        }
+
+        // (5) Last resort — return the requested string unchanged.
+        // Don't cache: the symbol catalogue may still be warming up. A
+        // cache hit here would freeze the resolution to passthrough until
+        // shutdown.
         requested.to_string()
     }
 
+}
+
+/// Parse a canonical concatenated symbol string ("BTCUSD", "BTC-USDT",
+/// "MU/USDC") into a dig3 `Symbol` — byte-for-byte the same heuristic
+/// `digdigdig3-station`'s private `parse_symbol` uses for the WS subscribe
+/// path (duplicated here because it is not exported; keep the two in sync).
+fn parse_canonical_symbol(s: &str) -> digdigdig3::core::types::Symbol {
+    use digdigdig3::core::types::Symbol;
+    if let Some((b, q)) = s.split_once(['-', '/', '_']) {
+        return Symbol::new(b, q);
+    }
+    let upper = s.to_uppercase();
+    for q in ["USDT", "USDC", "USD", "BTC", "ETH", "BUSD", "EUR", "JPY"] {
+        if let Some(base) = upper.strip_suffix(q) {
+            if !base.is_empty() {
+                return Symbol::new(base, q);
+            }
+        }
+    }
+    Symbol::new(&upper, "")
 }
 
 /// Attempt a confident wire-symbol resolution for `requested` against the

@@ -418,7 +418,12 @@ impl ChartApp {
                         } else {
                             let item_at = crate::account_type_from_label(&item_account_type);
                             self.core.ensure_connector(resolved_exchange);
-                            self.core.request_kline(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), false);
+                            // force=true — watchlist-click is an explicit
+                            // user symbol switch; non-force is silently
+                            // dedup-L2-skipped when this instrument's kline
+                            // subscriber is still alive (see the ApplySymbol
+                            // handler's matching comment).
+                            self.core.request_kline(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
                         }
                         // Propagate the new symbol+exchange+account_type to all other windows
                         // in the same sync group so the full instrument key is consistent.
