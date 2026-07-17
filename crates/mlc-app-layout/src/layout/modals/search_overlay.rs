@@ -35,7 +35,6 @@ pub fn render_search_overlay(
     field_id: &str,
     split_symbol_compare: bool,
     symbol_quick_search: bool,
-    symbol_inline_input: bool,
 ) -> ModalSearchResult {
     use mlc_core::render::{TextAlign, TextBaseline};
     use mlc_core::engine::render::draw_svg_icon;
@@ -108,17 +107,13 @@ pub fn render_search_overlay(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(title, modal_x + modal_padding, modal_y + header_height / 2.0);
 
-    // ── Header toggles (symbol-search-compare-inner arc, Wave 3 — owner
-    // spec 2026-07-16): "Quick search" / "Separate compare button", the
-    // ONLY way back to the inline fast-search dropdown once the modal is
-    // open with `symbol_quick_search == false`. Drawn on both
-    // SymbolSearch and CompareSearch variants; skipped for
-    // IndicatorSearch (irrelevant toggles for that modal).
-    //
-    // "Inline input" (Wave 4 — mode 3) is a THIRD toggle, only meaningful
-    // once quick search is already on (mirrors the dropdown's own hidden-
-    // when-off rule) — shown only when `symbol_quick_search` is true,
-    // leftmost of the three.
+    // ── Header toggles (2026-07-17 rework — TWO toggles only): "Quick
+    // search" / "Separate compare button", the ONLY way back to the
+    // button-hosted fast-search once the modal is open with
+    // `symbol_quick_search == false`. Drawn on both SymbolSearch and
+    // CompareSearch variants; skipped for IndicatorSearch (irrelevant
+    // toggles for that modal). The former third "Inline input" toggle is
+    // deleted (the inline behavior IS quick search now).
     let close_x = modal_x + modal_width - modal_padding - close_btn_size;
     if !is_indicator_search {
         let toggle_gap = 10.0;
@@ -130,21 +125,12 @@ pub fn render_search_overlay(
             "modal_search:toggle_split", toolbar_theme,
         );
         toggle_right_edge -= toggle_gap;
-        toggle_right_edge = draw_header_toggle(
+        let _ = draw_header_toggle(
             ctx, input_coordinator, &layer_id,
             toggle_right_edge, modal_y, header_height,
             t_modal(ModalKey::QuickSearchToggle), symbol_quick_search,
             "modal_search:toggle_quick", toolbar_theme,
         );
-        if symbol_quick_search {
-            toggle_right_edge -= toggle_gap;
-            let _ = draw_header_toggle(
-                ctx, input_coordinator, &layer_id,
-                toggle_right_edge, modal_y, header_height,
-                t_modal(ModalKey::InlineInputToggle), symbol_inline_input,
-                "modal_search:toggle_inline", toolbar_theme,
-            );
-        }
     }
 
     let close_y = modal_y + (header_height - close_btn_size) / 2.0;
@@ -689,7 +675,9 @@ fn render_symbol_search_results_scrollable(
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&item.exchange, right_edge, current_y + item_height / 2.0);
+        // Exchange labels render UPPERCASE everywhere (display-only, owner
+        // rule 2026-07-17 — keys/queries keep the canonical lowercase id).
+        ctx.fill_text(&item.exchange.to_uppercase(), right_edge, current_y + item_height / 2.0);
         ctx.set_font("12px sans-serif");
         ctx.fill_text(&item.category_icon, right_edge - 58.0, current_y + item_height / 2.0);
 

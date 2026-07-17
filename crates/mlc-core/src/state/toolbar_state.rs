@@ -538,13 +538,6 @@ pub struct DropdownRenderInfo {
     /// `on_drag_move` can hit-test click-to-cursor and drag-select against
     /// the SAME metrics `draw_input` just rendered with.
     pub granularity_edit_input: Option<(WidgetRect, Vec<f64>)>,
-    /// `(text_rect, char_x_positions)` of the `symbol_selector` dropdown's
-    /// inline fast-search editor widget, when one is rendered this frame
-    /// (symbol-search-compare-inner arc, Wave 2, кусок 4). `None` whenever
-    /// no editor is active or the dropdown rendered is not
-    /// `symbol_selector`. Fed into `TextFieldStore::update_field` exactly
-    /// like `granularity_edit_input` above.
-    pub symbol_quick_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).
@@ -604,14 +597,11 @@ pub struct ChartToolbarRenderResult {
     pub left_max_scroll: f64,
     pub right_max_scroll: f64,
     /// `(text_rect, char_x_positions)` of the `symbol_selector` toolbar
-    /// BUTTON's own widget-overlay text input, when mode 3 "inline" is
-    /// active and currently editing/open this frame (symbol-search-
-    /// compare-inner arc, Wave 4 — owner spec 2026-07-16). Sibling channel
-    /// to `DropdownRenderInfo::symbol_quick_input` (mode 2's dropdown-
-    /// hosted input) — the two are mutually exclusive per frame (mode 3
-    /// never renders the dropdown's own input host row). Fed into
-    /// `TextFieldStore::update_field` by `ChartApp::update_text_field_geometry`
-    /// exactly like `symbol_quick_input`.
+    /// BUTTON's own widget-overlay text input, when the quick-search
+    /// editor is live this frame (2026-07-17 rework: the button-hosted
+    /// editor is the ONLY quick-search input — the former dropdown-hosted
+    /// variant is deleted). Fed into `TextFieldStore::update_field` by
+    /// `ChartApp::update_text_field_geometry`.
     pub symbol_inline_input: Option<(WidgetRect, Vec<f64>)>,
 }
 

@@ -702,14 +702,6 @@ impl ChartApp {
             "toggle_split" => {
                 self.toggle_split_symbol_compare();
             }
-            "toggle_inline" => {
-                // Header toggle (symbol-search-compare-inner arc, Wave 4,
-                // mode 3 "inline" — owner spec 2026-07-16): only rendered
-                // by `render_search_overlay` when `symbol_quick_search` is
-                // already on, same shared helper the toolbar dropdown's own
-                // toggle row uses.
-                self.toggle_symbol_inline_input();
-            }
             "search_input" => {
                 // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
                 // via the global path in mod.rs::on_drag_end (line ~3614).

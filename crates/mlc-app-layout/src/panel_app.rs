@@ -356,13 +356,11 @@ pub fn floating_inline_update_drag(
 /// `ChartApp::symbol_quick_edit` — mirrors `granularity_edit_render`'s role.
 /// `None` whenever the editor isn't active this frame.
 ///
-/// `symbol_inline_input` (symbol-search-compare-inner arc, Wave 4 — mode 3
-/// "inline", `ProfileUiSettings::symbol_inline_input`) `true` (only
-/// meaningful when `symbol_quick_search` is also on): ANY click on
-/// `symbol_selector` (text or magnifier icon — one hit zone, no sub-zone
-/// split) opens the fast-search with the active symbol already seeded as
-/// the editable text directly on the button, instead of an empty dropdown-
-/// hosted input row.
+/// Quick search (2026-07-17 rework): when `symbol_quick_search` is on, ANY
+/// click on `symbol_selector` (text or magnifier icon — one hit zone, no
+/// sub-zone split) opens the fast-search with the active symbol seeded as
+/// editable text directly ON the button; the dropdown shows live results.
+/// The former separate "inline input" mode/flag is deleted.
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn ChartRenderContext,
@@ -395,7 +393,6 @@ pub fn chart_toolbar_render_toolbars(
     split_symbol_compare: bool,
     symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
     symbol_quick_search: bool,
-    symbol_inline_input: bool,
     active_exchange: Option<&str>,
     active_account_type: Option<&str>,
 ) -> ChartToolbarRenderResult {
@@ -548,43 +545,52 @@ pub fn chart_toolbar_render_toolbars(
                     active_chart_type_param,
                     granularity_favorites,
                 );
-            // Mode 3 "inline" (symbol-search-compare-inner arc, Wave 4
-            // rework — owner spec 2026-07-16): while the button-hosted
-            // editor is live this frame (`symbol_quick_search_render` is
-            // `Some` exactly then, mirroring the widget-overlay block
-            // below's own gate), suppress `symbol_selector`'s static text
-            // entirely — REAL suppression, not an opaque cover-rect — so
-            // `draw_toolbar_with_icons` never paints the old label under
-            // the editable overlay text.
-            let symbol_selector_editing = symbol_inline_input && symbol_quick_search_render.is_some();
-            // Adaptive symbol-button label (owner spec 2026-07-17): pick
-            // the FIRST tier that fits the button's standard width —
-            //   1. "SYMBOL · exch · AT"
+            // Quick search = button-hosted editor (2026-07-17 rework: the
+            // former mode-2 "dropdown-hosted input row" variant is DELETED —
+            // the owner kept only the inline behavior; `symbol_inline_input`
+            // no longer exists). While the editor is live this frame
+            // (`symbol_quick_search_render` is `Some` exactly then,
+            // mirroring the widget-overlay block below's own gate), suppress
+            // `symbol_selector`'s static text entirely — REAL suppression,
+            // not an opaque cover-rect — so `draw_toolbar_with_icons` never
+            // paints the old label under the editable overlay text.
+            let symbol_selector_editing = symbol_quick_search_render.is_some();
+            // Adaptive symbol button (owner-approved variant A, 2026-07-17):
+            // the button WIDTH fits the tier-1 label of the ACTIVE
+            // instrument — "SYMBOL · EXCH · AT" (exchange UPPERCASE, owner
+            // rule), clamped 150..220, 4px right pad. The measurement
+            // depends only on the active key, so the width changes exactly
+            // on a symbol switch and never jumps mid-session. When even the
+            // clamp can't fit tier 1, fall back through the tiers —
+            //   1. "SYMBOL · EXCH · AT"
             //   2. "SYMBOL · AT"      (account type outranks exchange)
             //   3. "SYMBOL"
             // Measured with the exact font/metrics `draw_toolbar_with_icons`'
             // Dropdown arm draws with (13px sans-serif; text starts at
-            // icon_size+8 past the item's left edge, 8px right pad). The
-            // layout width stays the fixed min_width (150) — tiers exist so
-            // the label never exceeds it and the strip never jumps.
-            let symbol_button_label: Option<String> = active_symbol.map(|sym| {
-                let exch = active_exchange.unwrap_or("");
+            // icon_size+8 past the item's left edge).
+            let symbol_button_layout: Option<(String, f64)> = active_symbol.map(|sym| {
+                let exch = active_exchange.map(str::to_uppercase).unwrap_or_default();
                 let at = active_account_type.unwrap_or("");
                 ctx.set_font("13px sans-serif");
-                // 150 (fixed min_width) - (icon 24 + 8 gap) - 8 right pad.
-                let budget = 150.0 - (24.0 + 8.0) - 8.0;
-                let mut candidates: Vec<String> = Vec::new();
-                if !exch.is_empty() && !at.is_empty() {
-                    candidates.push(format!("{} · {} · {}", sym, exch, at));
-                }
+                let tier1 = if !exch.is_empty() && !at.is_empty() {
+                    format!("{} · {} · {}", sym, exch, at)
+                } else if !at.is_empty() {
+                    format!("{} · {}", sym, at)
+                } else {
+                    sym.to_string()
+                };
+                let width = (24.0 + 8.0 + ctx.measure_text(&tier1) + 4.0).clamp(150.0, 220.0);
+                let budget = width - (24.0 + 8.0) - 4.0;
+                let mut candidates: Vec<String> = vec![tier1];
                 if !at.is_empty() {
                     candidates.push(format!("{} · {}", sym, at));
                 }
                 candidates.push(sym.to_string());
-                candidates
+                let label = candidates
                     .into_iter()
                     .find(|c| ctx.measure_text(c) <= budget)
-                    .unwrap_or_else(|| sym.to_string())
+                    .unwrap_or_else(|| sym.to_string());
+                (label, width)
             });
             // One-off expansion while the inline editor is live (owner spec
             // 2026-07-17): the button grows to fit the full composite key
@@ -618,8 +624,9 @@ pub fn chart_toolbar_render_toolbars(
                                     if let Some(w) = symbol_editing_min_width {
                                         *min_width = w;
                                     }
-                                } else if let Some(ref label) = symbol_button_label {
+                                } else if let Some((ref label, width)) = symbol_button_layout {
                                     *text = Some(label.clone());
+                                    *min_width = width;
                                 }
                             } else if id == "timeframe_selector" {
                                 if tf_button_icon_only {
@@ -1033,12 +1040,10 @@ pub fn chart_toolbar_render_toolbars(
             }
         };
 
-        // Widget overlay for `symbol_selector`'s mode 3 "inline" fast-search
-        // editor, hosted directly ON THE TOOLBAR BUTTON instead of inside
-        // its dropdown (symbol-search-compare-inner arc, Wave 4 rework —
-        // owner spec 2026-07-16). Unlike the dropdown-hosted overlay
-        // (`chart_toolbar_render_dropdown`'s `symbol_quick_input` block),
-        // this one is CHROMELESS (`InputConfig::with_chrome(false)` — no
+        // Widget overlay for `symbol_selector`'s quick-search editor,
+        // hosted directly ON THE TOOLBAR BUTTON (2026-07-17 rework: this
+        // is the ONLY quick-search input — the dropdown-hosted variant is
+        // deleted). It is CHROMELESS (`InputConfig::with_chrome(false)` — no
         // background fill, no border, no focus frame) so the text renders
         // exactly like the button's own normal label, just editable, with
         // only a caret / selection highlight on top. The button's static
@@ -1052,7 +1057,7 @@ pub fn chart_toolbar_render_toolbars(
         // gap after a 4px icon inset, matching `toolbar_core.rs`'s Dropdown
         // draw arm) so the editable text lands in exactly the same place
         // the static label used to.
-        let symbol_inline_input_result: Option<(WidgetRect, Vec<f64>)> = if symbol_inline_input {
+        let symbol_inline_input_result: Option<(WidgetRect, Vec<f64>)> = {
             symbol_quick_search_render.and_then(|render| {
                 let button_rect = control_result.item_rects.iter()
                     .find(|(id, _)| id == "symbol_selector")
@@ -1122,13 +1127,11 @@ pub fn chart_toolbar_render_toolbars(
                     input_result.char_x_positions,
                 ))
             })
-        } else {
-            None
         };
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, symbol_inline_input)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare)
         } else {
             None
         };
@@ -1370,7 +1373,6 @@ fn chart_toolbar_render_dropdown(
     symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
     symbol_quick_search_enabled: bool,
     split_symbol_compare: bool,
-    symbol_inline_input: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1465,15 +1467,16 @@ fn chart_toolbar_render_dropdown(
         // owner spec 2026-07-16). Replaces the placeholder
         // `chart_toolbar_find_dropdown_items` returned (input host row
         // only) with the full live list: input host row (mode 2 only —
-        // skipped in mode 3, its rect hosts the widget-overlay text input
-        // built in step 5b below) + top-10 result rows + separator + three
-        // toggle rows + "Advanced search…" row. Built here (not in the
-        // finder fn) because it needs `symbol_quick_search_render`'s live
-        // per-frame query results, mirroring how granularity favorites are
-        // appended to the `timeframe_selector` base list above rather than
-        // built in the finder.
+        // top-10 result rows + separator + two toggle rows + "Advanced
+        // search…" row (the input itself lives ON the toolbar button —
+        // 2026-07-17 rework, the dropdown-hosted input row is gone). Built
+        // here (not in the finder fn) because it needs
+        // `symbol_quick_search_render`'s live per-frame query results,
+        // mirroring how granularity favorites are appended to the
+        // `timeframe_selector` base list above rather than built in the
+        // finder.
         if dropdown_id == "symbol_selector" {
-            items = symbol_quick_dropdown_items(symbol_quick_search_render, symbol_inline_input);
+            items = symbol_quick_dropdown_items(symbol_quick_search_render);
         }
 
         // 3. Convert DropdownItemDef -> DropdownItem
@@ -1851,8 +1854,6 @@ fn chart_toolbar_render_dropdown(
                         *toggle = Some(symbol_quick_search_enabled);
                     } else if id == "sym_quick:toggle_split" {
                         *toggle = Some(split_symbol_compare);
-                    } else if id == "sym_quick:toggle_inline" {
-                        *toggle = Some(symbol_inline_input);
                     }
                 }
             }
@@ -1975,65 +1976,9 @@ fn chart_toolbar_render_dropdown(
             }
         }
 
-        // Populated by the widget-overlay block below (symbol-search-
-        // compare-inner arc, Wave 2, кусок 4) with `(text_rect,
-        // char_x_positions)` from `draw_input`'s `InputResult` — same
-        // geometry-capture contract `granularity_edit_input` above uses.
-        let mut symbol_quick_input: Option<(WidgetRect, Vec<f64>)> = None;
-
-        // 5b'. Widget overlay for the `symbol_selector` inline fast-search
-        // editor (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
-        // spec 2026-07-16). Mirrors the granularity inline-editor overlay
-        // above verbatim: draws the SAME centralized text-input widget
-        // directly over the `"sym_quick:input"` host row's rect, AFTER
-        // `draw_dropdown` already painted it.
-        if dropdown_id == "symbol_selector" {
-            if let Some(render) = symbol_quick_search_render {
-                if let Some(row_rect) = all_item_rects.iter().find(|(id, _)| id == "sym_quick:input").map(|(_, r)| *r) {
-                    use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
-                    use crate::ui::widgets::types::{WidgetState, WidgetTheme};
-
-                    let widget_theme = WidgetTheme {
-                        bg_normal: theme.background.clone(),
-                        bg_hover: theme.item_bg_hover.clone(),
-                        bg_pressed: theme.item_bg_hover.clone(),
-                        bg_disabled: theme.background.clone(),
-                        text_normal: theme.item_text.clone(),
-                        text_hover: theme.item_text_hover.clone(),
-                        text_disabled: theme.item_text_disabled.clone(),
-                        border_normal: theme.border.clone(),
-                        border_hover: theme.item_bg_hover.clone(),
-                        border_focused: "#2962ff".to_string(),
-                        accent: "#2962ff".to_string(),
-                        accent_hover: "#2962ff".to_string(),
-                        success: theme.item_text.clone(),
-                        warning: theme.item_text.clone(),
-                        danger: theme.item_danger.clone(),
-                    };
-                    let input_config = InputConfig::new(&render.text)
-                        .with_focused(true)
-                        .with_cursor(render.cursor)
-                        .with_placeholder("Search symbol\u{2026}")
-                        .with_selection(render.selection.map(|(s, _)| s), render.selection.map(|(_, e)| e))
-                        .with_padding(12.0);
-                    let input_rect = uzor::types::Rect::new(
-                        row_rect.x + 2.0,
-                        row_rect.y + 2.0,
-                        (row_rect.width - 4.0).max(0.0),
-                        (row_rect.height - 4.0).max(0.0),
-                    );
-                    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
-                    if render.cursor_visible {
-                        draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
-                    }
-                    let tr = input_result.text_rect;
-                    symbol_quick_input = Some((
-                        WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
-                        input_result.char_x_positions,
-                    ));
-                }
-            }
-        }
+        // (2026-07-17 rework: the former 5b' dropdown-hosted symbol input
+        // overlay is deleted — the quick-search input lives ON the toolbar
+        // button, drawn by `chart_toolbar_render_toolbars`' own overlay.)
 
         // 5c. Drag-to-reorder visual: dragged-row highlight + insertion-gap
         // line (owner spec 2026-07-16 items 2+3) — mirrors
@@ -2144,7 +2089,6 @@ fn chart_toolbar_render_dropdown(
             open_submenu: hover_open_submenu,
             hovered: hover_hovered,
             granularity_edit_input,
-            symbol_quick_input,
         })
     }
 
@@ -2378,18 +2322,13 @@ fn granularity_trailing_icons(
 pub const SYMBOL_QUICK_ITEM_PREFIX: &str = "sym_quick:item:";
 
 /// Build the `symbol_selector` toolbar dropdown's full item list
-/// (symbol-search-compare-inner arc, Wave 2, кусок 4; Wave 4 adds the
-/// "Inline input" toggle — owner spec 2026-07-16): input host row (SKIPPED
-/// entirely in mode 3 "inline" — the real input lives on the toolbar button
-/// itself instead), top-10 live query results, a separator, three toggle
-/// rows ("Quick search" / "Separate compare button" / "Inline input"), and
-/// an "Advanced search…" row that falls back to the full-screen modal.
-///
-/// `inline_input` is only meaningful while this dropdown is even reachable
-/// (i.e. `symbol_quick_search` already on — the dropdown never opens
-/// otherwise), so the toggle row itself is unconditionally shown here; the
-/// owner spec's "hidden when quick search is off" requirement is satisfied
-/// implicitly by the dropdown not existing in that case.
+/// (symbol-search-compare-inner arc; 2026-07-17 rework — the input lives ON
+/// the toolbar button, the former dropdown-hosted input row and the
+/// "Inline input" mode/toggle are deleted): top-10 live query results, a
+/// separator, two toggle rows ("Quick search" / "Separate compare
+/// button"), and an "Advanced search…" row that falls back to the
+/// full-screen modal. Exchange names render UPPERCASE (display-only, owner
+/// rule 2026-07-17 — the commit key keeps the canonical lowercase id).
 ///
 /// Star/plus `TrailingIcon`s for the result rows are attached by the CALLER
 /// (`chart_toolbar_render_dropdown`'s post-processing pass) since
@@ -2398,29 +2337,18 @@ pub const SYMBOL_QUICK_ITEM_PREFIX: &str = "sym_quick:item:";
 /// uses for the `timeframe_selector` dropdown's star/edit/delete icons.
 fn symbol_quick_dropdown_items(
     render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
-    inline_input: bool,
 ) -> Vec<DropdownItemDef> {
     let mut items: Vec<DropdownItemDef> = Vec::new();
-
-    // Input host row — the real text-input widget is drawn over this row's
-    // rect by the widget-overlay block (step 5b), same pattern
-    // `TF_FAVORITE_CUSTOM_INPUT_ITEM_ID` uses for the granularity "+ Add"
-    // row. Empty label: the live typed text renders via the overlay, not
-    // this row's own label.
-    //
-    // Mode 3 "inline": the input lives on the toolbar BUTTON instead — this
-    // host row (and its widget-overlay) is skipped entirely, so results
-    // start right at the top of the dropdown.
-    if !inline_input {
-        items.push(DropdownItemDef::action("sym_quick:input", ""));
-    }
 
     if let Some(r) = render {
         if !r.results.is_empty() {
             items.push(DropdownItemDef::Separator);
             for res in &r.results {
                 let key = format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type);
-                let label = format!("{} \u{b7} {} \u{b7} {}", res.symbol, res.exchange, res.account_type);
+                let label = format!(
+                    "{} \u{b7} {} \u{b7} {}",
+                    res.symbol, res.exchange.to_uppercase(), res.account_type,
+                );
                 items.push(DropdownItemDef::action(
                     format!("{}{}", SYMBOL_QUICK_ITEM_PREFIX, key),
                     label,
@@ -2432,7 +2360,6 @@ fn symbol_quick_dropdown_items(
     items.push(DropdownItemDef::Separator);
     items.push(DropdownItemDef::action("sym_quick:toggle_quick", "Quick search"));
     items.push(DropdownItemDef::action("sym_quick:toggle_split", "Separate compare button"));
-    items.push(DropdownItemDef::action("sym_quick:toggle_inline", "Inline input"));
     items.push(DropdownItemDef::Separator);
     items.push(
         DropdownItemDef::action("sym_quick:open_modal", "Advanced search\u{2026}")
@@ -2785,7 +2712,10 @@ fn chart_toolbar_find_dropdown_items(
         // them needs `symbol_quick_search_render` — live per-frame data this
         // finder fn has no access to (only static toolbar defs + presets).
         if dropdown_id == "symbol_selector" {
-            return Some(vec![DropdownItemDef::action("sym_quick:input", "")]);
+            // Inert placeholder — unconditionally replaced by
+            // `symbol_quick_dropdown_items` in the render path; exists only
+            // so the base fetch is non-empty.
+            return Some(vec![DropdownItemDef::action("sym_quick:placeholder", "")]);
         }
 
         // Special case: magnet is an icon_button that opens a dropdown on double-click.

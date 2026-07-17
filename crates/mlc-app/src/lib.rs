@@ -1762,20 +1762,16 @@ impl ChartApp {
     }
 
     /// Seed text for `symbol_quick_edit`/`SYMBOL_QUICK_SEARCH` when opening
-    /// the `symbol_selector` fast-search (symbol-search-compare-inner arc,
-    /// Wave 4 rework — owner spec 2026-07-17). Mode 3 "inline" starts the
-    /// editor with the FULL COMPOSITE KEY of the active instrument —
+    /// the `symbol_selector` fast-search (2026-07-17 rework: the
+    /// button-hosted editor is the ONLY quick-search mode). The editor
+    /// starts with the FULL COMPOSITE KEY of the active instrument —
     /// `"SYMBOL:exch:AT"` (e.g. `"BTCUSDT:bybit:S"`) — which is valid
     /// composite-query syntax for [`Self::build_symbol_search_results`], so
     /// the dropdown opens on the exact instrument and the user backspaces
     /// the suffix to widen the search. The button rect expands one-off to
     /// fit it (see the editing branch in `chart_toolbar_render_toolbars`).
-    /// The caller places the cursor at the end. Mode 2 (dropdown-hosted
-    /// input row) keeps the historical empty-start behaviour: `""`.
+    /// The caller places the cursor at the end.
     pub(crate) fn symbol_quick_seed_text(&self) -> String {
-        if !self.core.user().profile().ui.symbol_inline_input {
-            return String::new();
-        }
         let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
             return String::new();
         };
@@ -5771,7 +5767,6 @@ impl ChartApp {
             let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
             let symbol_quick_search_render = self.symbol_quick_search_render();
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
-            let symbol_inline_input = self.core.user().profile().ui.symbol_inline_input;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -5797,7 +5792,6 @@ impl ChartApp {
                 split_symbol_compare,
                 symbol_quick_search_render.as_ref(),
                 symbol_quick_search,
-                symbol_inline_input,
                 Some(active_exch_str.as_str()),
                 Some(active_at_str.as_str()),
             );
@@ -6511,7 +6505,6 @@ impl ChartApp {
         let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
         let symbol_quick_search_render = self.symbol_quick_search_render();
         let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
-        let symbol_inline_input = self.core.user().profile().ui.symbol_inline_input;
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -6537,7 +6530,6 @@ impl ChartApp {
             split_symbol_compare,
             symbol_quick_search_render.as_ref(),
             symbol_quick_search,
-            symbol_inline_input,
             Some(active_exch_str.as_str()),
             Some(active_at_str.as_str()),
         );
@@ -7198,10 +7190,10 @@ impl ChartApp {
                     mlc_core::state::modal_state::OpenModal::CompareSearch => crate::text_input::COMPARE_SEARCH,
                     _ => crate::text_input::SYMBOL_SEARCH,
                 };
-                let (split_symbol_compare_search, symbol_quick_search_search, symbol_inline_input_search) = {
+                let (split_symbol_compare_search, symbol_quick_search_search) = {
                     let user_guard = self.core.user();
                     let ui = &user_guard.profile().ui;
-                    (ui.split_symbol_compare, ui.symbol_quick_search, ui.symbol_inline_input)
+                    (ui.split_symbol_compare, ui.symbol_quick_search)
                 };
                 Some(render_search_overlay(
                     ctx,
@@ -7217,7 +7209,6 @@ impl ChartApp {
                     search_field_id,
                     split_symbol_compare_search,
                     symbol_quick_search_search,
-                    symbol_inline_input_search,
                 ))
             } else {
                 None
@@ -7640,26 +7631,11 @@ impl ChartApp {
                         positions.clone(),
                     );
                 }
-                // Inline symbol fast-search editor's widget-overlay input
-                // (symbol-search-compare-inner arc, Wave 2, кусок 4) —
-                // mirrors the granularity block immediately above.
-                if let Some((rect, ref positions)) = dd.symbol_quick_input {
-                    let field_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
-                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                        &field_id,
-                        (rect.x, rect.y, rect.width, rect.height),
-                        positions.clone(),
-                    );
-                }
             }
-            // Mode 3 "inline" (symbol-search-compare-inner arc, Wave 4 —
-            // owner spec 2026-07-16): the SAME `SYMBOL_QUICK_SEARCH` field
-            // id, geometry sourced from the toolbar BUTTON's own overlay
-            // instead of the dropdown's input host row — the two are
-            // mutually exclusive per frame (mode 3 never renders
-            // `dd.symbol_quick_input`, see `symbol_quick_dropdown_items`'s
-            // `inline_input` gate), so there is no risk of one overwriting
-            // the other with stale geometry the same frame.
+            // Quick-search editor geometry (2026-07-17 rework: the
+            // button-hosted editor is the ONLY quick-search input) — the
+            // `SYMBOL_QUICK_SEARCH` field's rect/char-positions come from
+            // the toolbar BUTTON's own overlay.
             if let Some((rect, ref positions)) = toolbar_result.symbol_inline_input {
                 let field_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
                 self.input_coordinator.borrow_mut().text_fields_mut().update_field(
@@ -8536,7 +8512,11 @@ impl ChartApp {
         // Composite query syntax: "SYMBOL[:EXCHANGE[:AT]]" — TradingView-style.
         // Part 1 filters exchanges (full slug, slug prefix, or a short alias),
         // part 2 filters account type ("s"/"f", also "spot"/"fut"/"futures"/"perp").
-        let mut q_parts = q_full.splitn(3, ':');
+        // ANY common separator is accepted — `:`, `/`, or whitespace (owner
+        // rule 2026-07-17: "ввести как удобно — принять и зарезолвить");
+        // parts stay positional. Symbols never contain these characters in
+        // canonical form, so the split is unambiguous.
+        let mut q_parts = q_full.splitn(3, |c: char| c == ':' || c == '/' || c.is_whitespace());
         let q = q_parts.next().unwrap_or_default().to_string();
         let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
         let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());

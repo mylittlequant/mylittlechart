@@ -5351,26 +5351,6 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
-    /// Flip `ProfileUiSettings::symbol_inline_input` and autosave — shared
-    /// by the `symbol_selector` inline dropdown's toggle row
-    /// (`sym_quick:toggle_inline`) and the full-screen search modal header's
-    /// toggle (`modal_search:toggle_inline`, symbol-search-compare-inner
-    /// arc, Wave 4, mode 3 "inline" — owner spec 2026-07-16). No mode
-    /// transition beyond closing an already-open dropdown/edit state
-    /// cleanly (`close_symbol_quick_dropdown`) so the next open picks up
-    /// the new button-vs-dropdown input shape instead of leaving a stale
-    /// editor half-migrated mid-session.
-    pub(crate) fn toggle_symbol_inline_input(&mut self) {
-        let mut user_mut = self.core.user_mut();
-        let ui = &mut user_mut.profile_mut().ui;
-        ui.symbol_inline_input = !ui.symbol_inline_input;
-        drop(user_mut);
-        self.autosave_snapshot();
-        if self.symbol_quick_edit.is_some() {
-            self.close_symbol_quick_dropdown();
-        }
-    }
-
     /// Route a click inside the `symbol_selector` inline fast-search
     /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
     /// spec 2026-07-16). `item_id` is the raw row id AFTER the
@@ -5394,20 +5374,12 @@ impl ChartApp {
             (key.to_string(), String::new(), "S".to_string())
         }
 
-        if item_id == "sym_quick:input" {
-            // Absorber row — the real text input sits on top; keep focus.
-            return;
-        }
         if item_id == "sym_quick:toggle_quick" {
             self.toggle_symbol_quick_search();
             return;
         }
         if item_id == "sym_quick:toggle_split" {
             self.toggle_split_symbol_compare();
-            return;
-        }
-        if item_id == "sym_quick:toggle_inline" {
-            self.toggle_symbol_inline_input();
             return;
         }
         if item_id == "sym_quick:open_modal" {

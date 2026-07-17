@@ -1024,20 +1024,17 @@ pub enum ModalKey {
     HkPan                  = 72,
 
     // ---- Search Overlay header toggles (symbol-search-compare-inner arc,
-    // Wave 3 — owner spec 2026-07-16) ----
+    // Wave 3 — owner spec 2026-07-16; 2026-07-17 rework: the third
+    // "Inline input" toggle is deleted — the button-hosted editor IS
+    // quick search) ----
     /// "Quick search" toggle label
     QuickSearchToggle      = 73,
     /// "Separate compare button" toggle label
     SeparateCompareToggle  = 74,
-
-    // ---- Search Overlay header toggle (symbol-search-compare-inner arc,
-    // Wave 4 — mode 3 "inline", owner spec 2026-07-16) ----
-    /// "Inline input" toggle label — button-hosted fast-search text input.
-    InlineInputToggle      = 75,
 }
 
 impl ModalKey {
-    pub const COUNT: usize = 76;
+    pub const COUNT: usize = 75;
 
     /// Get translation for this key.
     #[inline]
