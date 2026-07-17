@@ -2325,8 +2325,8 @@ async fn run_trade_gap_flight(
         .unwrap_or_else(|| crate::zip_coverage::ZipCoverage::new(floor));
     let plan = crate::zip_coverage::plan_fetch((gap_lo, gap_hi), &coverage, now_ms_v);
     crate::dlog!(
-        "[gap_fill] key={:?}/{} gap=[{}..{}) zip_ranges={} (delta arm: v1 skip)",
-        key.0, key.1, gap_lo, gap_hi, plan.zip_ranges.len()
+        "[gap_fill] key={:?}/{} gap=[{}..{}) zip_ranges={} delta_ranges={}",
+        key.0, key.1, gap_lo, gap_hi, plan.zip_ranges.len(), plan.delta_ranges.len()
     );
 
     let mut days_fetched: u32 = 0;
@@ -2380,6 +2380,122 @@ async fn run_trade_gap_flight(
                 }
             }
             d -= chrono::Duration::days(1);
+        }
+    }
+
+    // REST-delta arm (2026-07-17 — replaces the v1 skip; owner report: a
+    // 23h hole between the newest published zip day and the live head sat
+    // un-healed until tomorrow's zip even though binance serves paginated
+    // REST trades over exactly that region). Deep-REST venues only. The
+    // walk keeps a REGION-LOCAL id cursor — the ladder's own
+    // `RampState::oldest_anchor` is never touched (it is the PRIMARY
+    // backfill walk's resume point; sharing it would teleport the ladder
+    // into the gap region). Seed: `get_agg_trades_by_time` at the region's
+    // NEWER edge (FromId venues have no ts-seekable cursor — dig3 method
+    // added 2026-07-17), widening windows on quiet symbols; then the
+    // normal descending from_id walk, rows clipped to the gap, emitted as
+    // `TradeGapFilled` (the splice event — same consumer path as the zip
+    // arm). Page budget per flight keeps the flight polite; progress
+    // re-arms the 5s retry so a deep region drains across flights.
+    let is_deep_rest = matches!(
+        rest.trade_history_capabilities().tier_for(account_type),
+        digdigdig3::core::types::TradeHistoryTier::RestDeep { .. }
+    );
+    if is_deep_rest {
+        const GAP_DELTA_MAX_PAGES: u32 = 100;
+        let mut pages: u32 = 0;
+        'delta: for (d_lo, d_hi) in plan.delta_ranges.iter().rev() {
+            let (d_lo, mut d_hi) = (*d_lo, *d_hi);
+            // The region's newer edge may abut "now" (publication-lag
+            // region) — live WS already covers the head; clip to the
+            // requested gap so the walk only fills the actual hole.
+            if d_hi > gap_hi { d_hi = gap_hi; }
+            if d_hi <= d_lo { continue; }
+            let mut cursor_id: Option<u64> = None;
+            loop {
+                if pages >= GAP_DELTA_MAX_PAGES {
+                    break 'delta;
+                }
+                let trades = if let Some(cur) = cursor_id {
+                    let next_from_id = cur.saturating_sub(TRADE_PAGE_SIZE as u64);
+                    match rest.get_agg_trades(
+                        digdigdig3::core::types::SymbolInput::Raw(&wire_sym),
+                        Some(TRADE_PAGE_SIZE as u32), Some(next_from_id), account_type,
+                    ).await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            crate::dlog!("[gap_fill] delta page error key={:?}/{}: {e}", key.0, key.1);
+                            break 'delta;
+                        }
+                    }
+                } else {
+                    // Temporal seed at the region's newer edge — widen on
+                    // empty windows (binance caps start/end span at 1h).
+                    let mut seed: Vec<digdigdig3::core::types::AggTrade> = Vec::new();
+                    for window_ms in [60_000i64, 600_000, 3_540_000] {
+                        match rest.get_agg_trades_by_time(
+                            digdigdig3::core::types::SymbolInput::Raw(&wire_sym),
+                            (d_hi - window_ms).max(d_lo - 1), d_hi,
+                            Some(TRADE_PAGE_SIZE as u32), account_type,
+                        ).await {
+                            Ok(t) if !t.is_empty() => { seed = t; break; }
+                            Ok(_) => continue,
+                            Err(e) => {
+                                crate::dlog!("[gap_fill] delta seed unavailable key={:?}/{}: {e}", key.0, key.1);
+                                break 'delta;
+                            }
+                        }
+                    }
+                    if seed.is_empty() {
+                        crate::dlog!("[gap_fill] delta seed found no trades near region edge key={:?}/{}", key.0, key.1);
+                        break;
+                    }
+                    seed
+                };
+                if trades.is_empty() {
+                    break;
+                }
+                pages += 1;
+                let min_id = trades.iter().map(|t| t.aggregate_id as u64).min();
+                let min_ts = trades.iter().map(|t| t.timestamp).min().unwrap_or(d_lo);
+                // Zip-arm wire semantics: `is_buyer_maker` carries the
+                // venue's own maker flag verbatim (`m`); dig3 `AggTrade`
+                // exposes the taker direction (`is_buy = !m`) — invert
+                // back so gap rows match the zip/live rows they splice
+                // between.
+                let kept: Vec<RawTradeWire> = trades.iter()
+                    .filter(|t| t.timestamp >= gap_lo && t.timestamp < gap_hi
+                        && t.timestamp >= d_lo && t.timestamp < d_hi)
+                    .map(|t| RawTradeWire {
+                        ts_ms: t.timestamp,
+                        price: t.price,
+                        qty: t.quantity,
+                        is_buyer_maker: !t.is_buy,
+                    })
+                    .collect();
+                if !kept.is_empty() {
+                    progressed = true;
+                    let prepended = kept.len();
+                    let new_oldest = kept.iter().map(|t| t.ts_ms).min();
+                    engine.with_state(&key, |s| s.record_trade_page(prepended, None, new_oldest, false));
+                    let _ = tx.send(LiveUpdate::TradeGapFilled {
+                        exchange_id, account_type,
+                        symbol: symbol_str.clone(),
+                        trades: kept,
+                    });
+                }
+                let Some(min_id) = min_id else { break; };
+                if min_ts <= d_lo || min_id == 0 {
+                    break; // region floor reached
+                }
+                cursor_id = Some(min_id);
+            }
+        }
+        if pages > 0 {
+            crate::dlog!(
+                "[gap_fill] delta arm key={:?}/{} pages={} progressed={}",
+                key.0, key.1, pages, progressed
+            );
         }
     }
 
