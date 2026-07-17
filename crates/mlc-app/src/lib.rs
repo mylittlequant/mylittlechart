@@ -1783,7 +1783,11 @@ impl ChartApp {
         if exch.is_empty() {
             return sym.to_string();
         }
-        format!("{}:{}:{}", sym, exch, at.as_label())
+        // Exchange UPPERCASE in the visible seed too (owner rule
+        // 2026-07-17) — safe for search (the query parser lowercases) and
+        // for apply (the commit key is built from the result row's
+        // canonical `exchange_id`, never from this text).
+        format!("{}:{}:{}", sym, exch.to_uppercase(), at.as_label())
     }
 
     /// Render-side snapshot of the `symbol_selector` toolbar dropdown's
