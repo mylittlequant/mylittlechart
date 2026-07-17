@@ -1051,16 +1051,17 @@ fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, 
     }
 }
 
-/// Width of a clock item, sized to its text so a long string like
-/// "[UTC+0] 9:26:03 PM" cannot overflow into the neighbouring button.
-/// 13px monospace glyphs advance ~7.8px; 8px padding on each side.
-fn clock_width(time: &str) -> f64 {
-    let glyphs = time.chars().count() as f64;
-    (glyphs * 7.8 + 16.0).max(80.0)
+/// Width of a clock item: exact `measure_text` of the string in the same
+/// font it renders with, plus 8px padding per side. The text draws
+/// right-aligned, so any width overestimate would surface as dead space
+/// on the LEFT — between the expand button and the `[UTC…]` label.
+fn clock_width(ctx: &mut dyn RenderContext, time: &str) -> f64 {
+    ctx.set_font("13px monospace");
+    (ctx.measure_text(time) + 16.0).max(40.0)
 }
 
 /// Calculate width of a section's items
-pub fn calculate_section_width(section: &ToolbarSection, config: &ToolbarConfig) -> f64 {
+pub fn calculate_section_width(ctx: &mut dyn RenderContext, section: &ToolbarSection, config: &ToolbarConfig) -> f64 {
     let mut width = 0.0;
     for item in &section.items {
         match item {
@@ -1099,7 +1100,7 @@ pub fn calculate_section_width(section: &ToolbarSection, config: &ToolbarConfig)
                 width += item_width + config.spacing;
             }
             ToolbarItem::Clock { time, .. } => {
-                width += clock_width(time) + config.spacing;
+                width += clock_width(ctx, time) + config.spacing;
             }
             ToolbarItem::ColorButton { .. } => {
                 width += config.item_size + config.spacing;
@@ -1168,14 +1169,14 @@ pub fn draw_toolbar_with_icons(
 
     // Calculate total width/height of end-aligned sections
     let end_width: f64 = end_sections.iter()
-        .map(|(_, s)| calculate_section_width(s, config))
+        .map(|(_, s)| calculate_section_width(&mut *ctx, s, config))
         .sum();
 
     // Calculate total width/height of start-aligned content (to detect overflow).
     // Includes inter-section separators that are drawn between sections during rendering.
     let start_content_size: f64 = {
         let items_size: f64 = start_sections.iter()
-            .map(|(_, s)| calculate_section_width(s, config))
+            .map(|(_, s)| calculate_section_width(&mut *ctx, s, config))
             .sum();
         // Count separators between sections (sections with show_separator that aren't the last)
         let sep_count = start_sections.iter()
@@ -1532,7 +1533,7 @@ pub fn draw_toolbar_with_icons(
                 advance
             }
             ToolbarItem::Clock { id, time } => {
-                let clock_width = clock_width(time);
+                let clock_width = clock_width(ctx, time);
                 let advance = clock_width + config.spacing;
                 let item_end = pos + clock_width;
 

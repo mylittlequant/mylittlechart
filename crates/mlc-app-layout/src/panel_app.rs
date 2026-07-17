@@ -980,7 +980,7 @@ pub fn chart_toolbar_render_toolbars(
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).
             let sections_width: f64 = inline_tc_config.sections.iter()
-                .map(|s| calculate_section_width(s, &inline_tc_config))
+                .map(|s| calculate_section_width(&mut *ctx, s, &inline_tc_config))
                 .sum();
             let bar_width = sections_width + inline_tc_config.padding * 2.0;
             let bar_rect = floating_inline_absolute_rect(&tb.floating_inline_bar, layout, bar_width, &top_slide, &bottom_slide, sidebar_w);
