@@ -804,11 +804,16 @@ impl TimeScale {
             }
 
             // Intraday boundaries within the calendar day walk.
+            // Skip ONLY the literal midnight second (already emitted as the
+            // day boundary above). The previous `hour != 0` guard was too
+            // broad and dropped every 00:05, 00:10 … 00:55 too, leaving the
+            // first hour of every new day with no gridlines (visible on live
+            // 15s series just after crossing midnight).
+            const DAY_SEC: i64 = 86_400;
             let first_boundary = (start_ts / time_interval) * time_interval;
             let mut boundary_ts = first_boundary;
             while boundary_ts <= end_ts {
-                let (_, _, _, hour, _, _) = timestamp_to_date(boundary_ts);
-                if hour != 0 {
+                if boundary_ts.rem_euclid(DAY_SEC) != 0 {
                     boundaries.push((boundary_ts, weight));
                 }
                 boundary_ts += time_interval;
@@ -984,10 +989,12 @@ impl TimeScale {
             let x = viewport.bar_to_x_f64(bar_idx as f64);
 
             if x >= -100.0 && x <= viewport.chart_width + 100.0 {
-                // Check if this is a day boundary (midnight)
-                let (_, _, _, hour, _, _) = timestamp_to_date(boundary_ts);
-                if hour != 0 {
-                    // Not midnight, add as intraday
+                // Skip ONLY the literal midnight second (day boundary is
+                // added separately by add_day_boundaries). The prior
+                // `hour != 0` guard was too broad and dropped every
+                // 00:05, 00:10 … 00:55 too — see calendar-grid path.
+                const DAY_SEC_I: i64 = 86_400;
+                if boundary_ts.rem_euclid(DAY_SEC_I) != 0 {
                     candidates.push((bar_idx, x, weight, boundary_ts));
                 }
             }
@@ -1893,6 +1900,182 @@ mod tests {
             !ticks.iter().all(|t| matches!(t.weight, TickMarkWeight::Day | TickMarkWeight::Month | TickMarkWeight::Year)),
             "seconds-scale shadow must NOT be misclassified into the DAY_STEPS regime, got weights {:?}",
             ticks.iter().map(|t| t.weight).collect::<Vec<_>>()
+        );
+    }
+
+    // =========================================================================
+    // DEBUG REPRO — live 15s trade-built series crossing midnight
+    // (owner-reported: gridlines/labels stop dead at the "18.07" day-boundary
+    // tick, ~10 min of real bars render to its right with zero ticks).
+    // =========================================================================
+
+    #[test]
+    fn regress_intraday_ticks_survive_midnight_uniform() {
+        // ~40 min at uniform 15s cadence, 23:20 -> 00:10 UTC, crossing
+        // midnight July 17 -> 18. No gap yet — pins whether the UNIFORM
+        // intraday path alone reproduces the symptom.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2026, 7, 17, 23, 20, 0);
+        let end_ts = date_to_timestamp(2026, 7, 18, 0, 10, 0);
+        while ts <= end_ts {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += 15;
+        }
+        eprintln!("bars: {} first={} last={}", bars.len(), bars[0].timestamp, bars[bars.len() - 1].timestamp);
+        assert!(!is_non_uniform(&bars), "uniform 15s series must not trip the non-uniform gate");
+
+        // bar_spacing chosen so the 5-min tick step is selected:
+        // day_width_px = (86400/15)*bar_spacing = 5760*bar_spacing.
+        // Need 288*MIN_CELL_WIDTH(50) < day_width_px <= 1440*MIN_CELL_WIDTH
+        // i.e. 14400 < 5760*bs <= 72000 => 2.5 < bs <= 12.5. Use bs=8.0.
+        // Wide viewport so all ~200 bars sit inside the clip window
+        // (matches the owner's live-follow chart state where 00:05-00:10
+        // bars are visibly rendered to the right of the day-boundary
+        // label). At bar_spacing=8 and bar_count=200, chart_width=1800px
+        // clips to bar_idx ≤ 225 comfortably.
+        let mut viewport = test_viewport(bars.len(), 8.0, 1800.0);
+        viewport.view_start = 0.0;
+
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        let midnight_ts = date_to_timestamp(2026, 7, 18, 0, 0, 0);
+        let post_midnight: Vec<&TimeTick> = ticks.iter().filter(|t| {
+            // Recover ts from bar_idx via the same bar_idx_to_timestamp the
+            // generator used — bars array is uniform so timestamp = first + idx*15.
+            let approx_ts = bars[0].timestamp + t.bar_idx * 15;
+            approx_ts > midnight_ts
+        }).collect();
+
+        eprintln!(
+            "total ticks: {}, post-midnight ticks: {}",
+            ticks.len(),
+            post_midnight.len()
+        );
+        for t in &ticks {
+            let approx_ts = bars[0].timestamp + t.bar_idx * 15;
+            eprintln!(
+                "  tick bar_idx={} x={:.1} weight={:?} label={:?} approx_ts={}",
+                t.bar_idx, t.x, t.weight, t.label, approx_ts
+            );
+        }
+
+        assert!(
+            !post_midnight.is_empty(),
+            "expected at least one tick with ts > midnight (e.g. 00:05), got NONE — reproduces the bug. \
+             All ticks: {:?}",
+            ticks.iter().map(|t| (t.bar_idx, t.weight, t.label.clone())).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn regress_intraday_ticks_survive_midnight_non_uniform() {
+        // Same as above but with a realistic trade-built session gap
+        // (e.g. venue reconnect / quiet period) shortly before midnight —
+        // triggers `is_non_uniform` and routes through
+        // `generate_calendar_grid_ticks` instead of the uniform intraday path.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2026, 7, 17, 23, 20, 0);
+        let gap_before = date_to_timestamp(2026, 7, 17, 23, 55, 0);
+        let end_ts = date_to_timestamp(2026, 7, 18, 0, 10, 0);
+        while ts <= end_ts {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            if ts == gap_before {
+                // 3-minute session gap (12x the 15s median) right before midnight.
+                ts += 3 * MINUTE;
+            } else {
+                ts += 15;
+            }
+        }
+        eprintln!("bars: {} first={} last={}", bars.len(), bars[0].timestamp, bars[bars.len() - 1].timestamp);
+        assert!(is_non_uniform(&bars), "session-gap fixture must trip the non-uniform gate");
+
+        // Wide viewport (same rationale as the uniform test above).
+        let mut viewport = test_viewport(bars.len(), 8.0, 1800.0);
+        viewport.view_start = 0.0;
+
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        let midnight_ts = date_to_timestamp(2026, 7, 18, 0, 0, 0);
+        let post_midnight: Vec<&TimeTick> = ticks.iter().filter(|t| {
+            let idx = t.bar_idx as usize;
+            let approx_ts = if idx < bars.len() {
+                bars[idx].timestamp
+            } else {
+                bars[bars.len() - 1].timestamp + (t.bar_idx - (bars.len() as i64 - 1)) * 15
+            };
+            approx_ts > midnight_ts
+        }).collect();
+
+        eprintln!(
+            "total ticks: {}, post-midnight ticks: {}",
+            ticks.len(),
+            post_midnight.len()
+        );
+        for t in &ticks {
+            eprintln!(
+                "  tick bar_idx={} x={:.1} weight={:?} label={:?}",
+                t.bar_idx, t.x, t.weight, t.label
+            );
+        }
+
+        assert!(
+            !post_midnight.is_empty(),
+            "non-uniform (gap-before-midnight) path: expected at least one tick with ts > midnight, got NONE. \
+             All ticks: {:?}",
+            ticks.iter().map(|t| (t.bar_idx, t.weight, t.label.clone())).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn regress_intraday_ticks_survive_midnight_panned() {
+        // View panned so the last visible bars sit near the right edge
+        // (typical live-follow chart state) instead of view_start=0 showing
+        // the whole 40min history in one screen.
+        let mut bars = Vec::new();
+        let mut ts = date_to_timestamp(2026, 7, 17, 23, 20, 0);
+        let end_ts = date_to_timestamp(2026, 7, 18, 0, 10, 0);
+        while ts <= end_ts {
+            bars.push(Bar::new(ts, 0.0, 0.0, 0.0, 0.0));
+            ts += 15;
+        }
+        let last_idx = bars.len() - 1;
+
+        let mut viewport = test_viewport(bars.len(), 8.0, 1200.0);
+        // visible_bars = 1200/8 = 150; pan so the tail sits near the right edge.
+        viewport.view_start = (last_idx as f64) - 100.0;
+
+        let scale = TimeScale::new();
+        let ticks = scale.generate_ticks(&viewport, &bars, narrow_measure, None, false);
+
+        let midnight_ts = date_to_timestamp(2026, 7, 18, 0, 0, 0);
+        let post_midnight: Vec<&TimeTick> = ticks.iter().filter(|t| {
+            let idx = t.bar_idx as usize;
+            let approx_ts = if t.bar_idx >= 0 && idx < bars.len() {
+                bars[idx].timestamp
+            } else {
+                bars[bars.len() - 1].timestamp + (t.bar_idx - (bars.len() as i64 - 1)) * 15
+            };
+            approx_ts > midnight_ts
+        }).collect();
+
+        eprintln!(
+            "panned-to-tail: total ticks: {}, post-midnight ticks: {}",
+            ticks.len(),
+            post_midnight.len()
+        );
+        for t in &ticks {
+            eprintln!(
+                "  tick bar_idx={} x={:.1} weight={:?} label={:?}",
+                t.bar_idx, t.x, t.weight, t.label
+            );
+        }
+
+        assert!(
+            !post_midnight.is_empty(),
+            "panned-to-tail: expected at least one tick with ts > midnight, got NONE. All ticks: {:?}",
+            ticks.iter().map(|t| (t.bar_idx, t.weight, t.label.clone())).collect::<Vec<_>>()
         );
     }
 }
