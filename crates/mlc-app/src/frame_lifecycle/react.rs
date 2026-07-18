@@ -99,15 +99,29 @@ impl ChartApp {
                             // stack in ONE drain. Event #2's `prev_bars`
                             // snapshot predates event #1's reconcile, so the
                             // window's `view_start` is already in POST-#1
-                            // coordinates — indexing it into the #2 snapshot
-                            // clamps to the newest bar and teleports the view
-                            // to the live edge. If the snapshot length doesn't
-                            // match the window's current bookkeeping, skip the
-                            // anchor math entirely (count-adopt only).
+                            // coordinates.
+                            //
+                            // Directional refinement (2026-07-18, trade-built
+                            // 15s drift fix): only PROTUKHSHIY snapshot is
+                            // dangerous — the one that's SHORTER than what the
+                            // window already knows (event #2 pre-#1 snapshot).
+                            // A snapshot LARGER than the window's bar_count is
+                            // an honest big prepend/append — the exact case
+                            // reconcile_view_keep_anchor was designed for, and
+                            // exactly what trade-built reseed produces at 2Hz
+                            // when the trade-store snapshot re-folds after
+                            // TradeGapFilled / LayerBackfilled. Previously we
+                            // skipped BOTH via `abs_diff > 2` and killed the
+                            // trade-built compensation entirely — that path
+                            // drifted the viewport right on every tick.
+                            //
+                            // Wider tolerance below (`< wc - 2`) preserves the
+                            // original stack-race skip for the small-shorter
+                            // case while letting the large-larger case through.
                             let wc = window.viewport().bar_count;
-                            if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                            if wc != 0 && prev_bars_for_anchor.len() + 2 < wc {
                                 log::warn!(
-                                    "[VPANCHOR stale] BarsLoaded: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                    "[VPANCHOR stale] BarsLoaded: snapshot len {} shorter than window bar_count {} — skipping anchor reconcile (stack-race)",
                                     prev_bars_for_anchor.len(), wc
                                 );
                                 None
@@ -489,11 +503,18 @@ impl ChartApp {
                     // anchor math when this event's pre-merge snapshot no
                     // longer matches the window's bookkeeping (an earlier
                     // event in the same drain already reconciled it).
+                    // Directional refinement (2026-07-18): only PROTUKHSHIY
+                    // snapshot (shorter than window's bar_count — event #2
+                    // pre-dating event #1's reconcile) is dangerous. Bigger
+                    // snapshot = honest large prepend/append — reconcile
+                    // MUST run. Was killing trade-built compensation on
+                    // reseed dumps (15s drift). See BarsLoaded branch for full
+                    // rationale.
                     let anchor = {
                         let wc = window.viewport().bar_count;
-                        if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                        if wc != 0 && prev_bars_for_anchor.len() + 2 < wc {
                             log::warn!(
-                                "[VPANCHOR stale] BackfillCompleted: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                "[VPANCHOR stale] BackfillCompleted: snapshot len {} shorter than window bar_count {} — skipping anchor reconcile (stack-race)",
                                 prev_bars_for_anchor.len(), wc
                             );
                             None
@@ -668,11 +689,13 @@ impl ChartApp {
                     }
                     any_matched = true;
                     // Stale-snapshot guard — see BarsLoaded branch.
+                    // Directional refinement 2026-07-18: shorter-than-window
+                    // = stack-race (skip); larger = honest big prepend (run).
                     let anchor = {
                         let wc = window.viewport().bar_count;
-                        if wc != 0 && prev_bars_for_anchor.len().abs_diff(wc) > 2 {
+                        if wc != 0 && prev_bars_for_anchor.len() + 2 < wc {
                             log::warn!(
-                                "[VPANCHOR stale] ScrollBarsAppended: snapshot len {} vs window bar_count {} — skipping anchor reconcile",
+                                "[VPANCHOR stale] ScrollBarsAppended: snapshot len {} shorter than window bar_count {} — skipping anchor reconcile (stack-race)",
                                 prev_bars_for_anchor.len(), wc
                             );
                             None
