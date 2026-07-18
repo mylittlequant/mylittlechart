@@ -273,7 +273,7 @@ pub fn render_right_sidebar(
 
     // Agents + Slot panels run their own docking layout that has no
     // sidebar-level scrollbar — they take the full width. Other panels
-    // (Watchlist, Alerts, ObjectTree, Signals, Connectors, Performance,
+    // (Watchlist, Alerts, ObjectTree, Signals, Monitoring,
     // Slot dropdowns when fed list content) reserve 8 px on the right for
     // the scrollbar gutter.
     let owns_full_width = matches!(
@@ -331,8 +331,9 @@ pub fn render_right_sidebar(
         RightSidebarPanel::Alerts      => ("Alerts",       Icon::Alert),
         RightSidebarPanel::ObjectTree  => ("Object Tree",  Icon::Layers),
         RightSidebarPanel::Signals     => ("Signals",      Icon::Signal),
-        RightSidebarPanel::Connectors  => ("Connectors",   Icon::CircuitBoard),
-        RightSidebarPanel::Performance => ("Performance",  Icon::Gauge),
+        // Icon kept as Gauge (former Performance icon) for now — owner will
+        // pick a final combined icon later (see toolbar.rs right_toolbar()).
+        RightSidebarPanel::Monitoring  => ("Monitoring",   Icon::Gauge),
         RightSidebarPanel::Agents      => ("Agents",       Icon::Bot),
         RightSidebarPanel::SlotTrading   => ("Trading",     Icon::SlotTrading),
         RightSidebarPanel::SlotDom       => ("DOM",          Icon::SlotDom),
@@ -638,21 +639,8 @@ pub fn render_right_sidebar(
             );
         }
 
-        RightSidebarPanel::Connectors => {
-            content_height = render_connectors_panel(
-                ctx,
-                rect,
-                content_y,
-                content_width,
-                sidebar_state,
-                toolbar_theme,
-                &mut result,
-                input_coordinator,
-            );
-        }
-
-        RightSidebarPanel::Performance => {
-            content_height = render_performance_panel(
+        RightSidebarPanel::Monitoring => {
+            content_height = render_monitoring_panel(
                 ctx,
                 rect,
                 content_y,
@@ -2713,6 +2701,165 @@ fn render_indicator_signals(
 // =============================================================================
 // Price formatting helper (local — format_price_smart is not pub in mlc_core)
 // =============================================================================
+
+// =============================================================================
+// Monitoring panel (merged Connectors + Performance, 2026-07-18)
+// =============================================================================
+
+/// Render the merged Monitoring sidebar panel.
+///
+/// Two vertically-stacked collapsible sections in one panel (not tabs — both
+/// are "quick health check" dashboards that should stay glanceable together):
+/// "CONNECTORS" on top (exchange connector health/capabilities, reusing
+/// [`render_connectors_panel`] unchanged), "PERFORMANCE" below (frame/render/
+/// resource timings, reusing [`render_performance_panel`] unchanged). Each
+/// section gets its own collapse header, mirroring the existing
+/// `connector_group:*` collapse pattern already used one level down inside
+/// the Connectors section itself. Section expand/collapse state is
+/// runtime-only (`SidebarState::monitoring_sections_expanded`) — both default
+/// to expanded, nothing is persisted to disk.
+fn render_monitoring_panel(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    content_y: f64,
+    content_width: f64,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) -> f64 {
+    use crate::state::MonitoringSection;
+
+    let mut current_y = content_y;
+
+    current_y += render_monitoring_section_header(
+        ctx,
+        rect,
+        current_y,
+        content_width,
+        "CONNECTORS",
+        MonitoringSection::Connectors,
+        state,
+        theme,
+        result,
+        input_coordinator,
+    );
+    if state.monitoring_section_expanded(MonitoringSection::Connectors) {
+        current_y += render_connectors_panel(
+            ctx,
+            rect,
+            current_y,
+            content_width,
+            state,
+            theme,
+            result,
+            input_coordinator,
+        );
+    }
+
+    // Separator between the two sections.
+    ctx.set_fill_color(&format!("{}40", theme.separator));
+    ctx.fill_rect(rect.x, current_y, content_width, 2.0);
+    current_y += 2.0;
+
+    current_y += render_monitoring_section_header(
+        ctx,
+        rect,
+        current_y,
+        content_width,
+        "PERFORMANCE",
+        MonitoringSection::Performance,
+        state,
+        theme,
+        result,
+        input_coordinator,
+    );
+    if state.monitoring_section_expanded(MonitoringSection::Performance) {
+        current_y += render_performance_panel(
+            ctx,
+            rect,
+            current_y,
+            content_width,
+            state,
+            theme,
+            result,
+            input_coordinator,
+        );
+    }
+
+    current_y - content_y
+}
+
+/// Draws one collapsible top-level section header for the Monitoring panel
+/// ("CONNECTORS" / "PERFORMANCE") and registers its click widget
+/// (`monitoring_section:{key}`, handled in `panel_click.rs` the same way
+/// `connector_group:*` is). Returns the header's height (to advance `y`).
+#[allow(clippy::too_many_arguments)]
+fn render_monitoring_section_header(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    y: f64,
+    content_width: f64,
+    label: &str,
+    section: crate::state::MonitoringSection,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) -> f64 {
+    let header_h = 28.0;
+    let pad = 10.0;
+    let is_expanded = state.monitoring_section_expanded(section);
+    let widget_id = format!("monitoring_section:{}", section.key());
+    let is_hovered = input_coordinator
+        .is_hovered(&uzor::types::WidgetId::from(widget_id.as_str()));
+
+    if is_hovered {
+        ctx.set_fill_color(&theme.item_bg_hover);
+    } else {
+        ctx.set_fill_color(&format!("{}18", theme.separator));
+    }
+    ctx.fill_rect(rect.x, y, content_width, header_h);
+
+    // Bottom border line under the header.
+    ctx.set_fill_color(&format!("{}40", theme.separator));
+    ctx.fill_rect(rect.x, y + header_h - 1.0, content_width, 1.0);
+
+    // Chevron (hand-drawn, matches connector_group:* chevron style).
+    let chev_cx = rect.x + pad + 5.0;
+    let chev_cy = y + header_h / 2.0;
+    ctx.set_stroke_color(&theme.item_text_muted);
+    ctx.set_stroke_width(1.5);
+    ctx.begin_path();
+    if !is_expanded {
+        // Right-pointing chevron (collapsed).
+        ctx.move_to(chev_cx, chev_cy - 4.0);
+        ctx.line_to(chev_cx + 5.0, chev_cy);
+        ctx.line_to(chev_cx, chev_cy + 4.0);
+    } else {
+        // Down-pointing chevron (expanded).
+        ctx.move_to(chev_cx, chev_cy - 3.0);
+        ctx.line_to(chev_cx + 5.0, chev_cy + 3.0);
+        ctx.line_to(chev_cx + 10.0, chev_cy - 3.0);
+    }
+    ctx.stroke();
+
+    // Section label text.
+    let label_x = rect.x + pad + 18.0;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, label_x, y + header_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    // Register header click widget.
+    let header_rect = WidgetRect::new(rect.x, y, content_width, header_h);
+    input_coordinator.register(widget_id.as_str(), header_rect, uzor::input::Sense::CLICK);
+    result.item_rects.push((widget_id, header_rect));
+
+    header_h
+}
 
 // =============================================================================
 // Connectors panel

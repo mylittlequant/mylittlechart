@@ -2124,22 +2124,12 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
-            ChartOutEvent::ToggleConnectors => {
+            ChartOutEvent::ToggleMonitoring => {
                 let result = self.sidebar_state.toggle_right_panel(
-                    mlc_app_sidebar_content::state::RightSidebarPanel::Connectors,
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Monitoring,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Connectors panel: {}", if opening { "opened" } else { "closed" });
-                }
-                self.sidebar_data_dirty = true;
-                self.persist_profile();
-            }
-            ChartOutEvent::TogglePerformance => {
-                let result = self.sidebar_state.toggle_right_panel(
-                    mlc_app_sidebar_content::state::RightSidebarPanel::Performance,
-                );
-                if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Performance panel: {}", if opening { "opened" } else { "closed" });
+                    eprintln!("[ChartApp] Monitoring panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();

@@ -9526,8 +9526,12 @@ impl ChartApp {
             RightSidebarPanel::Alerts => Some("alerts".to_string()),
             RightSidebarPanel::ObjectTree => Some("object_tree".to_string()),
             RightSidebarPanel::Signals => Some("signals".to_string()),
-            RightSidebarPanel::Connectors => Some("connectors".to_string()),
-            RightSidebarPanel::Performance => Some("performance".to_string()),
+            // Wire/persisted key stays "performance" (pre-merge label) so
+            // profiles saved before the Connectors+Performance merge
+            // (2026-07-18) keep opening the same panel — see `str_to_panel`
+            // below for the read-side back-compat mapping (old "connectors"
+            // key also resolves to Monitoring).
+            RightSidebarPanel::Monitoring => Some("performance".to_string()),
             RightSidebarPanel::Agents => Some("agents".to_string()),
             RightSidebarPanel::SlotTrading => Some("slot_trading".to_string()),
             RightSidebarPanel::SlotDom => Some("slot_dom".to_string()),
@@ -9552,8 +9556,10 @@ impl ChartApp {
             "alerts" => RightSidebarPanel::Alerts,
             "object_tree" => RightSidebarPanel::ObjectTree,
             "signals" => RightSidebarPanel::Signals,
-            "connectors" => RightSidebarPanel::Connectors,
-            "performance" => RightSidebarPanel::Performance,
+            // Both pre-merge keys ("connectors" and "performance") resolve to
+            // the merged Monitoring panel — old saved profiles must still
+            // hydrate (hard cutover, no dropped sessions per merge task spec).
+            "connectors" | "performance" => RightSidebarPanel::Monitoring,
             "agents" => RightSidebarPanel::Agents,
             "slot_trading" | "slot1" => RightSidebarPanel::SlotTrading,
             "slot_dom" | "slot2" => RightSidebarPanel::SlotDom,
@@ -10008,5 +10014,25 @@ mod typed_slot_hydration_tests {
     fn unknown_key_falls_back_to_none() {
         assert_eq!(crate::ChartApp::str_to_panel("bogus_panel_id"), RightSidebarPanel::None);
         assert_eq!(crate::ChartApp::str_to_panel(""), RightSidebarPanel::None);
+    }
+
+    /// Both pre-merge panel keys ("connectors" and "performance", written by
+    /// profiles saved before the Connectors+Performance → Monitoring merge,
+    /// 2026-07-18) must hydrate to the merged panel — no dropped sessions.
+    #[test]
+    fn legacy_connectors_and_performance_keys_map_to_monitoring() {
+        assert_eq!(crate::ChartApp::str_to_panel("connectors"), RightSidebarPanel::Monitoring);
+        assert_eq!(crate::ChartApp::str_to_panel("performance"), RightSidebarPanel::Monitoring);
+    }
+
+    /// The writer always emits the pre-existing "performance" key for the
+    /// merged panel (not a new "monitoring" key) — avoids a migration for
+    /// anything that persists this string (cheaper than introducing a new key).
+    #[test]
+    fn panel_to_str_writes_performance_key_for_monitoring() {
+        assert_eq!(
+            crate::ChartApp::panel_to_str(RightSidebarPanel::Monitoring),
+            Some("performance".to_string()),
+        );
     }
 }

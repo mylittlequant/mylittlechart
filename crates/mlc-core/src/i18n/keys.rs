@@ -382,19 +382,21 @@ pub enum ToolbarTooltipKey {
     ObjectTree        = 37,
     Templates         = 38,
     Signals           = 39,
-    Connectors        = 40,
-    Performance       = 41,
-    Agents            = 42,
+    /// Merged Connectors + Performance panel (2026-07-18). Replaces the two
+    /// former separate keys `Connectors`/`Performance` — the standalone
+    /// `Connectors` key is gone (row 40 reused).
+    Monitoring        = 40,
+    Agents            = 41,
 
     // General
-    Search            = 43,
-    FullScreen        = 44,
-    SplitView         = 45,
-    ServerTime        = 46,
+    Search            = 42,
+    FullScreen        = 43,
+    SplitView         = 44,
+    ServerTime        = 45,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 47;
+    pub const COUNT: usize = 46;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

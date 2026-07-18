@@ -313,6 +313,14 @@ struct WebAppState {
     /// reaches viewport geometry — cost is one frame (~16ms) of extra latency.
     last_measured:      Option<(u32, u32)>,
     last_applied:       Option<(u32, u32)>,
+    /// Frame-time EMA for the Monitoring panel (wasm-native browsers have
+    /// no sysinfo; fps/frame-time is the honest subset we can measure via
+    /// `performance.now()`). `last_render_ms` holds the previous frame's
+    /// `now_ms` at the top of the render callback; delta feeds `fps_ema`
+    /// with the same 0.9/0.1 low-pass as `mlc-app-shell-vello`.
+    fps_ema:            f64,
+    last_frame_time_ms: f64,
+    last_render_ms:     Option<f64>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -334,6 +342,9 @@ impl WebAppState {
             canvas_id:          canvas_id.to_string(),
             last_measured:      None,
             last_applied:       None,
+            fps_ema:            60.0,
+            last_frame_time_ms: 16.0,
+            last_render_ms:     None,
         }
     }
 }
@@ -1013,6 +1024,50 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         .performance()
         .map(|p| p.now() as u64)
         .unwrap_or(0);
+
+    // ── Perf sample (fps + frame_time) — same EMA as mlc-app-shell-vello ──────
+    // Only fields the browser can honestly give us: fps + frame_time from
+    // `performance.now()` deltas, RAM via performance.memory (Chromium-only,
+    // best-effort). Everything sysinfo-only (per-core CPU, RAM total, GPU
+    // name/driver) stays 0 / empty under wasm — the Monitoring panel already
+    // no-ops those tiles when the source is absent.
+    let now_hires = win.performance().map(|p| p.now()).unwrap_or(0.0);
+    {
+        let mut st = state.borrow_mut();
+        if let Some(prev) = st.last_render_ms {
+            let dt_ms = (now_hires - prev).max(0.001);
+            let instant_fps = 1000.0 / dt_ms;
+            st.fps_ema = st.fps_ema * 0.9 + instant_fps * 0.1;
+            st.last_frame_time_ms = dt_ms;
+        }
+        st.last_render_ms = Some(now_hires);
+
+        // Write perf tiles only when the Monitoring panel is open.
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
+        let monitoring_open = st.chart.sidebar_state.is_right_open()
+            && st.chart.sidebar_state.right_panel == RightSidebarPanel::Monitoring;
+        if monitoring_open {
+            let fps = st.fps_ema;
+            let frame_time_ms = st.last_frame_time_ms;
+            // performance.memory is Chromium-only, non-standard, quantized to
+            // 100KB — best-effort, browsers may return None.
+            let ram_mb = js_sys::Reflect::get(&win.performance().unwrap(), &"memory".into())
+                .ok()
+                .and_then(|mem| js_sys::Reflect::get(&mem, &"usedJSHeapSize".into()).ok())
+                .and_then(|v| v.as_f64())
+                .map(|b| b / (1024.0 * 1024.0))
+                .unwrap_or(0.0);
+            let perf = &mut st.chart.sidebar_state.performance_data;
+            perf.fps = fps;
+            perf.frame_time_ms = frame_time_ms;
+            perf.ram_mb = ram_mb;
+            // render_backend left at its default — the RenderBackend enum
+            // only enumerates native backends (VelloGpu / InstancedWgpu /
+            // VelloCpu / VelloHybrid / TinySkia); wasm draws to canvas2d
+            // which isn't one of them. The panel row will render the
+            // default value; UI cleanup for wasm is a separate concern.
+        }
+    }
 
     // ── Tab sync (mirror of scene_builder.rs:63-94 for the web shell) ─────────
     {

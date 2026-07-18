@@ -101,10 +101,13 @@ pub enum RightSidebarPanel {
     ObjectTree,
     /// Strategy signals panel — separate from user primitives.
     Signals,
-    /// Exchange connector control panel — health status and capabilities.
-    Connectors,
-    /// Application performance monitoring and resource control panel.
-    Performance,
+    /// System health panel — merges the former Connectors (exchange connector
+    /// health/capabilities) and Performance (frame/render/resource timings)
+    /// panels into two vertically-stacked collapsible sections. Wire/persisted
+    /// label stays `"performance"` (serde alias) so pre-merge saved profiles
+    /// still hydrate — see `Serialize`/`Deserialize` note below and
+    /// `ChartApp::str_to_panel` in `mlc-app/src/lib.rs`.
+    Monitoring,
     /// AI agent control panel — terminal / chat modes.
     Agents,
     /// Trading slot — hosts `TradingContainer` panels only, one per instrument.
@@ -133,8 +136,10 @@ impl RightSidebarPanel {
             RightSidebarPanel::Alerts        => "alerts",
             RightSidebarPanel::ObjectTree    => "object_tree",
             RightSidebarPanel::Signals       => "signals",
-            RightSidebarPanel::Connectors    => "connectors",
-            RightSidebarPanel::Performance   => "performance",
+            // Wire/persisted key stays "performance" (pre-merge scroll-key
+            // compat; the merged panel's scroll state continues the old
+            // Performance panel's scroll position rather than resetting).
+            RightSidebarPanel::Monitoring    => "performance",
             RightSidebarPanel::Agents        => "agents",
             RightSidebarPanel::SlotTrading   => "slot_trading",
             RightSidebarPanel::SlotDom       => "slot_dom",
@@ -263,6 +268,15 @@ pub struct SidebarState {
     /// Keyed by group label string (e.g. "NO API KEY", "REQUIRES API KEY", "NON-CHART DATA").
     /// When `true`, the group is collapsed (items hidden).
     pub connector_group_collapsed: HashMap<String, bool>,
+
+    /// Runtime-only (in-memory, not persisted) expand/collapse state for the
+    /// two top-level sections of the merged Monitoring panel — "CONNECTORS"
+    /// and "PERFORMANCE". Keyed by `MonitoringSection::key()`. Missing entry
+    /// defaults to expanded (see `SidebarState::monitoring_section_expanded`
+    /// accessor). Deliberately not a persisted field — resets to
+    /// both-expanded every session, matching the owner's "no new persistent
+    /// field" instruction.
+    pub monitoring_sections_expanded: HashMap<&'static str, bool>,
 
     /// Whether the watchlist column-config dropdown is open.
     ///
@@ -776,6 +790,7 @@ impl Default for SidebarState {
             connector_enabled: HashMap::new(),
             connector_metrics_visible: HashMap::new(),
             connector_group_collapsed: HashMap::new(),
+            monitoring_sections_expanded: HashMap::new(),
             hovered_object_tree_id: None,
             hovered_alert_id: None,
             right_scroll: ScrollState::default(),
@@ -955,6 +970,46 @@ impl SidebarState {
         let key = self.right_panel.scroll_key().to_owned();
         self.panel_scroll.entry(key).or_default()
     }
+
+    // =========================================================================
+    // Monitoring panel section collapse (runtime-only)
+    // =========================================================================
+
+    /// Returns `true` when the given Monitoring section is expanded.
+    ///
+    /// Missing entries default to expanded (both sections start open).
+    pub fn monitoring_section_expanded(&self, section: MonitoringSection) -> bool {
+        self.monitoring_sections_expanded
+            .get(section.key())
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// Flips the expand/collapse state of the given Monitoring section.
+    pub fn toggle_monitoring_section(&mut self, section: MonitoringSection) {
+        let current = self.monitoring_section_expanded(section);
+        self.monitoring_sections_expanded.insert(section.key(), !current);
+    }
+}
+
+/// The two collapsible sub-sections of the merged Monitoring panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MonitoringSection {
+    /// "CONNECTORS" section — exchange connector health/capabilities.
+    Connectors,
+    /// "PERFORMANCE" section — frame/render/resource timings.
+    Performance,
+}
+
+impl MonitoringSection {
+    /// Stable string key used to index `SidebarState::monitoring_sections_expanded`
+    /// and to build widget ids (`monitoring_section:{key}`).
+    pub fn key(self) -> &'static str {
+        match self {
+            MonitoringSection::Connectors => "connectors",
+            MonitoringSection::Performance => "performance",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -992,8 +1047,7 @@ mod typed_slot_tests {
             RightSidebarPanel::Alerts,
             RightSidebarPanel::ObjectTree,
             RightSidebarPanel::Signals,
-            RightSidebarPanel::Connectors,
-            RightSidebarPanel::Performance,
+            RightSidebarPanel::Monitoring,
             RightSidebarPanel::Agents,
         ];
         for panel in non_slots {

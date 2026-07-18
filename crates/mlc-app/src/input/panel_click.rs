@@ -497,6 +497,29 @@ impl ChartApp {
             return;
         }
 
+        // Pattern: "monitoring_section:{section_key}" — toggle the merged
+        // Monitoring panel's top-level CONNECTORS/PERFORMANCE section collapse
+        // (runtime-only, not persisted — see `SidebarState::monitoring_sections_expanded`).
+        if widget_id.starts_with("monitoring_section:") {
+            if let Some(section_key) = widget_id.strip_prefix("monitoring_section:") {
+                use mlc_app_sidebar_content::state::MonitoringSection;
+                let section = match section_key {
+                    "connectors" => Some(MonitoringSection::Connectors),
+                    "performance" => Some(MonitoringSection::Performance),
+                    _ => None,
+                };
+                if let Some(section) = section {
+                    self.sidebar_state.toggle_monitoring_section(section);
+                    eprintln!(
+                        "[Sidebar] Monitoring section toggled: {} -> expanded={}",
+                        section_key,
+                        self.sidebar_state.monitoring_section_expanded(section)
+                    );
+                }
+            }
+            return;
+        }
+
         // === Performance panel control clicks — cycle through values ===
         if widget_id == "perf:backend" {
             use mlc_app_sidebar_content::state::RenderBackend;

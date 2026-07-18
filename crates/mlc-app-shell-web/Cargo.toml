@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 # MLC lib graph — all 12 lib crates compile to wasm32 after Phase 0-2
 mlc-app          = { path = "../mlc-app",          package = "mylittlechart-app"          }
 mlc-app-input-shell  = { path = "../mlc-app-input-shell",  package = "mylittlechart-app-input-shell"  }
+mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 mlc-backend-data-bridge    = { path = "../mlc-backend-data-bridge",    package = "mylittlechart-backend-data-bridge"    }
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 mlc-core         = { path = "../mlc-core",         package = "mylittlechart-core"         }

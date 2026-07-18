@@ -50,10 +50,11 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip(t_toolbar(TK::ObjectTree)),
             ToolbarItemDef::icon_button("signals", ToolbarIconId::new("Zap"))
                 .with_tooltip(t_toolbar(TK::Signals)),
-            ToolbarItemDef::icon_button("connectors", ToolbarIconId::new("CircuitBoard"))
-                .with_tooltip(t_toolbar(TK::Connectors)),
-            ToolbarItemDef::icon_button("performance", ToolbarIconId::new("Gauge"))
-                .with_tooltip(t_toolbar(TK::Performance)),
+            // Merged Connectors + Performance panel (2026-07-18). Icon kept as
+            // `Gauge` (former Performance icon) for now — owner will pick a
+            // final combined icon later.
+            ToolbarItemDef::icon_button("monitoring", ToolbarIconId::new("Gauge"))
+                .with_tooltip(t_toolbar(TK::Monitoring)),
             ToolbarItemDef::icon_button("agents", ToolbarIconId::new("Bot"))
                 .with_tooltip(t_toolbar(TK::Agents)),
             ToolbarItemDef::icon_button("slot_trading", ToolbarIconId::new("slot_trading"))

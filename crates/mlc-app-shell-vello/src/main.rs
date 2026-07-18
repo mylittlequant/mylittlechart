@@ -4194,12 +4194,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         let _t5 = web_time::Instant::now();
 
         // ── Populate performance panel data ─────────────────────────────────
-        // Only run when the Performance panel is actually visible — avoids
-        // per_core_cpu.clone() + gpu_name.clone() + ~25 field writes every frame.
+        // Only run when the merged Monitoring panel (which now hosts the
+        // Performance section, merged 2026-07-18) is actually visible —
+        // avoids per_core_cpu.clone() + gpu_name.clone() + ~25 field writes
+        // every frame. CRITICAL: this must track `RightSidebarPanel::Monitoring`
+        // — if it silently reverts to matching the old `Performance` variant
+        // (which no longer exists), this gate never fires again and the
+        // native Performance-data writer stops populating fields.
         let perf_visible = self.windows.values().any(|pw| {
             pw.chart.sidebar_state.is_right_open()
                 && pw.chart.sidebar_state.right_panel
-                    == mlc_app_sidebar_content::state::RightSidebarPanel::Performance
+                    == mlc_app_sidebar_content::state::RightSidebarPanel::Monitoring
         });
         if perf_visible {
             let ws_connections = self.bridge.ws_task_count_total();

@@ -17,7 +17,7 @@ pub mod state;
 pub mod render;
 
 pub use render::{render_right_sidebar, RightSidebarResult};
-pub use state::{SidebarState, RightSidebarPanel, RIGHT_SIDEBAR_WIDTH, MetricsSnapshot};
+pub use state::{SidebarState, RightSidebarPanel, RIGHT_SIDEBAR_WIDTH, MetricsSnapshot, MonitoringSection};
 pub use types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, WatchlistColumnConfig, ConnectorGroup, ConnectorStatusItem};
 pub use agent_types::{AgentCli, AgentRenderSnapshot, AgentSnapshotMode, TermGrid, TermCell, ChatMessage, ChatRole};
 pub use agents_dock::{AgentPaneLeaf, AgentLeafDescriptor, AgentDockingManager};

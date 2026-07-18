@@ -53,8 +53,9 @@ pub enum ChartOutEvent {
     ToggleAlerts,
     ToggleObjectTree,
     ToggleSignals,
-    ToggleConnectors,
-    TogglePerformance,
+    /// Toggle the merged Monitoring panel (former separate Connectors +
+    /// Performance panels/buttons, merged 2026-07-18).
+    ToggleMonitoring,
     ToggleAgents,
     /// Toggle a typed slot sidebar (0..=4: Trading, Dom, Tape, L2, BigTrades —
     /// see `mlc_app_sidebar_content::free_slot::SlotKind`). Each slot hosts a
