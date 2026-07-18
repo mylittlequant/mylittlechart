@@ -1113,11 +1113,12 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             perf.ob_event_count = ob_event_count;
             perf.trade_event_count = trade_event_count;
             perf.composite_us = composite_us;
+            perf.render_backend = mlc_app_sidebar_content::state::RenderBackend::Canvas2d;
             // Sysinfo-only fields (per_core_cpu, gpu_name/driver, ram_total_mb,
             // system CPU, process CPU) stay at their defaults — browsers do
-            // not expose those. render_backend, msaa_samples, fps_limit,
-            // scene_build_us, gpu_render_us also stay at defaults (no
-            // wgpu/native-render pipeline in canvas2d).
+            // not expose those. msaa_samples, fps_limit, scene_build_us,
+            // gpu_render_us also stay at defaults (no wgpu/native-render
+            // pipeline in canvas2d).
         }
     }
 

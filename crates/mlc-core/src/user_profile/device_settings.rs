@@ -20,6 +20,8 @@ pub enum RenderBackend {
     VelloCpu,
     VelloHybrid,
     TinySkia,
+    /// Browser canvas2d — wasm shell only, never auto-detect on native.
+    Canvas2d,
 }
 
 fn default_fps_limit() -> u32 {

@@ -600,6 +600,8 @@ pub enum RenderBackend {
     VelloCpu,
     VelloHybrid,
     TinySkia,
+    /// Browser canvas2d — wasm shell only, never auto-detect on native.
+    Canvas2d,
 }
 
 impl RenderBackend {
@@ -611,6 +613,7 @@ impl RenderBackend {
             Self::VelloCpu => "Vello CPU",
             Self::VelloHybrid => "Vello Hybrid",
             Self::TinySkia => "Tiny-Skia CPU",
+            Self::Canvas2d => "Canvas 2D (wasm)",
         }
     }
 
@@ -978,12 +981,12 @@ impl SidebarState {
     /// Returns `true` when the given Monitoring TAB is active (the panel now
     /// renders two tabs, exactly one active at a time). Kept name+signature
     /// stable so persistence/click plumbing doesn't churn; semantics are
-    /// "is-active" not "is-expanded". Missing entry defaults to Connectors
-    /// active — matches the pre-merge default landing.
+    /// "is-active" not "is-expanded". Missing entry defaults to Performance
+    /// active — owner-ordered landing (Perf more important than Connectors).
     pub fn monitoring_section_expanded(&self, section: MonitoringSection) -> bool {
         match self.monitoring_sections_expanded.get(section.key()).copied() {
             Some(v) => v,
-            None => matches!(section, MonitoringSection::Connectors),
+            None => matches!(section, MonitoringSection::Performance),
         }
     }
 

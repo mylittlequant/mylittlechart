@@ -1172,6 +1172,8 @@ impl App<'_> {
                     // TinySkia retained as a variant for serde back-compat
                     // but never selected here; treat as VelloCpu defaults.
                     RenderBackend::TinySkia      => (30,     0),
+                    // Canvas2d is wasm-only, unreachable on native auto-detect.
+                    RenderBackend::Canvas2d      => unreachable!("Canvas2d is wasm-only"),
                 };
 
                 // Save auto-detected choice and perf defaults so next launch skips auto-detect.
@@ -1183,6 +1185,7 @@ impl App<'_> {
                         RenderBackend::VelloCpu => mlc_core::user_profile::device_settings::RenderBackend::VelloCpu,
                         RenderBackend::VelloHybrid => mlc_core::user_profile::device_settings::RenderBackend::VelloHybrid,
                         RenderBackend::TinySkia => mlc_core::user_profile::device_settings::RenderBackend::TinySkia,
+                        RenderBackend::Canvas2d => unreachable!("Canvas2d is wasm-only"),
                     });
                     ds.fps_limit = fps;
                     ds.msaa_samples = msaa;
@@ -2709,6 +2712,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 RenderBackend::VelloCpu => mlc_core::user_profile::device_settings::RenderBackend::VelloCpu,
                                 RenderBackend::VelloHybrid => mlc_core::user_profile::device_settings::RenderBackend::VelloHybrid,
                                 RenderBackend::TinySkia => mlc_core::user_profile::device_settings::RenderBackend::TinySkia,
+                                RenderBackend::Canvas2d => unreachable!("Canvas2d is wasm-only"),
                             });
                             ds.save();
                             self.backend_auto_detect = false;

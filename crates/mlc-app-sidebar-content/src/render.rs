@@ -2733,22 +2733,23 @@ fn render_monitoring_panel(
     let mut current_y = content_y;
 
     // Two tabs — active tab body fills the rest of the panel.
-    // "Expanded" flag is reused as "active": exactly ONE of the two is true
-    // at any time (invariant enforced in toggle_monitoring_section).
-    let connectors_active = state.monitoring_section_expanded(MonitoringSection::Connectors);
+    // Owner-ordered: Performance FIRST (more important than Connectors).
+    // "Expanded" flag reused as "active": exactly ONE is true at a time
+    // (invariant enforced in toggle_monitoring_section).
+    let performance_active = state.monitoring_section_expanded(MonitoringSection::Performance);
     current_y += render_monitoring_tab_bar(
         ctx,
         rect,
         current_y,
         content_width,
-        connectors_active,
+        performance_active,
         theme,
         result,
         input_coordinator,
     );
 
-    if connectors_active {
-        current_y += render_connectors_panel(
+    if performance_active {
+        current_y += render_performance_panel(
             ctx,
             rect,
             current_y,
@@ -2759,7 +2760,7 @@ fn render_monitoring_panel(
             input_coordinator,
         );
     } else {
-        current_y += render_performance_panel(
+        current_y += render_connectors_panel(
             ctx,
             rect,
             current_y,
@@ -2785,7 +2786,7 @@ fn render_monitoring_tab_bar(
     rect: &LayoutRect,
     y: f64,
     content_width: f64,
-    connectors_active: bool,
+    performance_active: bool,
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
@@ -2800,8 +2801,8 @@ fn render_monitoring_tab_bar(
     ctx.fill_rect(rect.x, y + bar_h - 1.0, content_width, 1.0);
 
     let tabs: [(f64, &str, bool, &str); 2] = [
-        (rect.x, "Connectors", connectors_active, "monitoring_section:connectors"),
-        (rect.x + half, "Performance", !connectors_active, "monitoring_section:performance"),
+        (rect.x, "Performance", performance_active, "monitoring_section:performance"),
+        (rect.x + half, "Connectors", !performance_active, "monitoring_section:connectors"),
     ];
 
     for (tx, label, active, widget_id) in tabs {
@@ -2815,14 +2816,14 @@ fn render_monitoring_tab_bar(
             ctx.fill_rect(tx, y, half, bar_h - 1.0);
         }
 
-        // Active underline in the accent color.
+        // Active underline in the theme accent color (blue).
         if active {
-            ctx.set_fill_color(&theme.item_text_active);
+            ctx.set_fill_color(&theme.accent);
             ctx.fill_rect(tx, y + bar_h - 2.0, half, 2.0);
         }
 
-        // Label — active gets stronger color.
-        let color = if active { &theme.item_text_active } else { &theme.item_text_muted };
+        // Label — active also picks up the accent color.
+        let color = if active { &theme.accent } else { &theme.item_text_muted };
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(color);
         ctx.set_text_align(TextAlign::Center);

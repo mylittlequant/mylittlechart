@@ -699,6 +699,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 pw.hybrid_ctx = Some(inner);
             }
             RenderBackend::VelloGpu => unreachable!("handled above"),
+            RenderBackend::Canvas2d => unreachable!("Canvas2d is wasm-only"),
         }
         // Non-VelloGpu backends render the whole chart each frame (no cached
         // chart_scene). Same retire rule as VelloGpu — hold the big spinner
