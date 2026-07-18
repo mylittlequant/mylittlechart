@@ -913,10 +913,32 @@ impl ChartApp {
                     item.expanded = *self.sidebar_state.connector_expanded
                         .get(exchange_id.as_str())
                         .unwrap_or(&false);
-                    item.rest_healthy = item.enabled;
 
                     let has_ws = md_caps.map_or(false, |md| md.has_ws_klines || md.has_ws_trades || md.has_ws_orderbook);
-                    item.ws_connected = item.enabled && has_ws;
+
+                    // --- Rate-limit descriptors (static, declared per-connector) ---
+                    // `RateLimitCapabilities` (via `ExchangeIdentity::rate_limit_capabilities`)
+                    // has no direct auth_type/requires_api_key/free_tier/base_url/ws_url
+                    // fields (those live in the pub(crate) registry, unreachable from
+                    // here) — those five stay at construction default. Only the
+                    // rate-limit numbers are derived from the primary REST pool.
+                    let rate_caps = connector.rate_limit_capabilities();
+                    if let Some(primary) = rate_caps.rest_pools.first() {
+                        item.rate_window_seconds = primary.window_seconds;
+                        let per_minute = if primary.window_seconds > 0 {
+                            Some((primary.max_budget as u64 * 60 / primary.window_seconds as u64) as u32)
+                        } else {
+                            None
+                        };
+                        if primary.is_weight {
+                            item.weight_per_minute = per_minute;
+                        } else {
+                            item.rate_limit_per_minute = per_minute;
+                            if primary.window_seconds <= 1 {
+                                item.rate_limit_per_second = Some(primary.max_budget);
+                            }
+                        }
+                    }
 
                     item.group = if md_caps.map_or(true, |md| !md.has_klines) {
                         ConnectorGroup::NonChartData
@@ -970,6 +992,27 @@ impl ChartApp {
                         item.rate_groups = stats.rate_groups.clone();
                         item.ws_ping_rtt_ms = stats.ws_ping_rtt_ms;
                     }
+
+                    // --- Health dots: derived from real REST error ratio, not the
+                    // enabled toggle bit. Simple first cut per owner spec:
+                    //   disabled            -> grey  (rest_healthy = false)
+                    //   no traffic yet      -> grey  (rest_healthy = false)
+                    //   errors/requests<5%  -> green (rest_healthy = true)
+                    //   errors/requests>=5% -> amber (render.rs draws amber via the
+                    //                          existing "rest_healthy XOR ws_connected"
+                    //                          partial-health branch)
+                    item.rest_healthy = item.enabled
+                        && item.http_requests_total > 0
+                        && (item.http_errors_total as f64) < (item.http_requests_total as f64) * 0.05;
+
+                    // WS liveness: `has_ws` above is a declared capability, not a live
+                    // socket check. `ws_ping_rtt_ms > 0` is the best live signal dig3
+                    // currently surfaces (a completed ping round-trip implies an open
+                    // socket); fall back to the capability check when no ping has
+                    // landed yet so a freshly (re)connected socket isn't shown dead.
+                    item.ws_connected = item.enabled
+                        && has_ws
+                        && (item.ws_ping_rtt_ms > 0 || item.ws_active_count > 0);
 
                     item.show_metrics = *self.sidebar_state.connector_metrics_visible
                         .get(exchange_id.as_str())

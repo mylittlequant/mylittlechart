@@ -3279,18 +3279,21 @@ impl DataBridge {
         self.ensure_connector(exchange_id);
     }
 
-    /// Count active WebSocket tasks for a specific exchange.
+    /// Count active WebSocket tasks (pool entries) for a specific exchange.
     ///
-    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
-    pub fn ws_task_count(&self, _exchange_id: ExchangeId) -> usize {
-        0
+    /// Delegates to `ExchangeHub::ws_task_count`, which counts live entries in
+    /// the hub's WS pool for that exchange across all connected account types.
+    pub fn ws_task_count(&self, exchange_id: ExchangeId) -> usize {
+        self.hub.ws_task_count(exchange_id)
     }
 
-    /// Count total active WebSocket tasks across all exchanges.
-    ///
-    /// Returns 0 — legacy ws_actor map removed. Station reports liveness via `ws_health`.
+    /// Count total active WebSocket tasks across all connected exchanges.
     pub fn ws_task_count_total(&self) -> usize {
-        0
+        self.hub
+            .list_connected()
+            .into_iter()
+            .map(|id| self.hub.ws_task_count(id))
+            .sum()
     }
 
     /// Get summary metrics for all active connectors.

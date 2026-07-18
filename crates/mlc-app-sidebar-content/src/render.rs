@@ -2822,8 +2822,10 @@ fn render_monitoring_tab_bar(
             ctx.fill_rect(tx, y + bar_h - 2.0, half, 2.0);
         }
 
-        // Label — active also picks up the accent color.
-        let color = if active { &theme.accent } else { &theme.item_text_muted };
+        // Label — active tab is marked by the underline only (owner: text
+        // must NOT be tinted). Both states use the muted body-text color;
+        // hover would already highlight via the fill above.
+        let color = &theme.item_text_muted;
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(color);
         ctx.set_text_align(TextAlign::Center);
