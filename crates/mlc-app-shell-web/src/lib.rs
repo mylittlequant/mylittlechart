@@ -321,11 +321,14 @@ struct WebAppState {
     fps_ema:            f64,
     last_frame_time_ms: f64,
     last_render_ms:     Option<f64>,
+    /// DataBridge handle so the Monitoring/Performance tab can read live
+    /// counts (ws_task_count_total, connector count) same as native.
+    bridge:             Arc<mlc_backend_data_bridge::DataBridge>,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WebAppState {
-    fn new(chart: ChartApp, canvas_id: &str) -> Self {
+    fn new(chart: ChartApp, canvas_id: &str, bridge: Arc<mlc_backend_data_bridge::DataBridge>) -> Self {
         let mut input = mlc_app_input_shell::InputState::default();
         // Web shell renders chrome — offset chart by chrome height.
         input.chrome_height = CHROME_HEIGHT;
@@ -345,6 +348,7 @@ impl WebAppState {
             fps_ema:            60.0,
             last_frame_time_ms: 16.0,
             last_render_ms:     None,
+            bridge,
         }
     }
 }
@@ -357,7 +361,7 @@ fn run_render_loop(
     provider: WebWindowProvider,
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
 ) -> Result<(), JsValue> {
-    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart")));
+    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone())));
 
     // Wire Ctrl+C / Ctrl+X to read the active selection out of TextFieldStore.
     // The closure runs synchronously inside the DOM `copy` / `cut` listener in
@@ -1057,15 +1061,63 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
                 .and_then(|v| v.as_f64())
                 .map(|b| b / (1024.0 * 1024.0))
                 .unwrap_or(0.0);
+
+            // Cross-cutting counts (same source as mlc-app-shell-vello).
+            let ws_connections = st.bridge.ws_task_count_total();
+            let active_connectors = st.chart.core.agent_metrics_snapshot().len();
+            let lag_events = st.chart.lag_event_count;
+            let total_bars: usize = st.chart.panel_app.panel_grid.containers()
+                .values()
+                .map(|w| st.chart.core.bubbles().bars(w.current_tag_id).len())
+                .sum();
+            // Chart-app internal profiling — same fields shell-vello reads.
+            let tick_us = st.chart.last_tick_us;
+            let event_process_us = st.chart.last_event_process_us;
+            let auto_scale_us = st.chart.last_auto_scale_us;
+            let indicator_recalc_us = st.chart.last_indicator_recalc_us;
+            let indicator_recalc_count = st.chart.core.indicators().count() as u32;
+            let (indicator_incremental_count, indicator_full_count) =
+                st.chart.core.indicators().recalc_stats();
+            let orderbook_panel_us = st.chart.last_orderbook_panel_us;
+            let dom_panel_us = st.chart.last_dom_panel_us;
+            let l2_panel_us = st.chart.last_l2_panel_us;
+            let heatmap_panel_us = st.chart.last_heatmap_panel_us;
+            let trade_panel_us = st.chart.last_trade_panel_us;
+            let bar_apply_us = st.chart.last_bar_apply_us;
+            let ob_event_count = st.chart.last_ob_event_count;
+            let trade_event_count = st.chart.last_trade_event_count;
+            let composite_us = st.chart.last_composite_us;
+
             let perf = &mut st.chart.sidebar_state.performance_data;
             perf.fps = fps;
             perf.frame_time_ms = frame_time_ms;
             perf.ram_mb = ram_mb;
-            // render_backend left at its default — the RenderBackend enum
-            // only enumerates native backends (VelloGpu / InstancedWgpu /
-            // VelloCpu / VelloHybrid / TinySkia); wasm draws to canvas2d
-            // which isn't one of them. The panel row will render the
-            // default value; UI cleanup for wasm is a separate concern.
+            perf.window_count = 1; // wasm shell is single-window by design
+            perf.total_bars = total_bars;
+            perf.ws_connections = ws_connections;
+            perf.active_connectors = active_connectors;
+            perf.lag_events = lag_events;
+            perf.tick_us = tick_us;
+            perf.event_process_us = event_process_us;
+            perf.auto_scale_us = auto_scale_us;
+            perf.indicator_recalc_us = indicator_recalc_us;
+            perf.indicator_recalc_count = indicator_recalc_count;
+            perf.indicator_incremental_count = indicator_incremental_count;
+            perf.indicator_full_count = indicator_full_count;
+            perf.orderbook_panel_us = orderbook_panel_us;
+            perf.dom_panel_us = dom_panel_us;
+            perf.l2_panel_us = l2_panel_us;
+            perf.heatmap_panel_us = heatmap_panel_us;
+            perf.trade_panel_us = trade_panel_us;
+            perf.bar_apply_us = bar_apply_us;
+            perf.ob_event_count = ob_event_count;
+            perf.trade_event_count = trade_event_count;
+            perf.composite_us = composite_us;
+            // Sysinfo-only fields (per_core_cpu, gpu_name/driver, ram_total_mb,
+            // system CPU, process CPU) stay at their defaults — browsers do
+            // not expose those. render_backend, msaa_samples, fps_limit,
+            // scene_build_us, gpu_render_us also stay at defaults (no
+            // wgpu/native-render pipeline in canvas2d).
         }
     }
 

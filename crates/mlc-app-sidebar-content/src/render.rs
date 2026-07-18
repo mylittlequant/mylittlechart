@@ -2732,19 +2732,22 @@ fn render_monitoring_panel(
 
     let mut current_y = content_y;
 
-    current_y += render_monitoring_section_header(
+    // Two tabs — active tab body fills the rest of the panel.
+    // "Expanded" flag is reused as "active": exactly ONE of the two is true
+    // at any time (invariant enforced in toggle_monitoring_section).
+    let connectors_active = state.monitoring_section_expanded(MonitoringSection::Connectors);
+    current_y += render_monitoring_tab_bar(
         ctx,
         rect,
         current_y,
         content_width,
-        "CONNECTORS",
-        MonitoringSection::Connectors,
-        state,
+        connectors_active,
         theme,
         result,
         input_coordinator,
     );
-    if state.monitoring_section_expanded(MonitoringSection::Connectors) {
+
+    if connectors_active {
         current_y += render_connectors_panel(
             ctx,
             rect,
@@ -2755,26 +2758,7 @@ fn render_monitoring_panel(
             result,
             input_coordinator,
         );
-    }
-
-    // Separator between the two sections.
-    ctx.set_fill_color(&format!("{}40", theme.separator));
-    ctx.fill_rect(rect.x, current_y, content_width, 2.0);
-    current_y += 2.0;
-
-    current_y += render_monitoring_section_header(
-        ctx,
-        rect,
-        current_y,
-        content_width,
-        "PERFORMANCE",
-        MonitoringSection::Performance,
-        state,
-        theme,
-        result,
-        input_coordinator,
-    );
-    if state.monitoring_section_expanded(MonitoringSection::Performance) {
+    } else {
         current_y += render_performance_panel(
             ctx,
             rect,
@@ -2790,75 +2774,68 @@ fn render_monitoring_panel(
     current_y - content_y
 }
 
-/// Draws one collapsible top-level section header for the Monitoring panel
-/// ("CONNECTORS" / "PERFORMANCE") and registers its click widget
-/// (`monitoring_section:{key}`, handled in `panel_click.rs` the same way
-/// `connector_group:*` is). Returns the header's height (to advance `y`).
+/// Draws the Monitoring panel's tab bar — two segments ("Connectors" |
+/// "Performance") side-by-side, one active. Clicking a tab is routed through
+/// `panel_click.rs` (`monitoring_section:connectors|performance`) which
+/// activates that tab (invariant: exactly one active). Returns the tab-bar
+/// height (to advance `y`).
 #[allow(clippy::too_many_arguments)]
-fn render_monitoring_section_header(
+fn render_monitoring_tab_bar(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
     y: f64,
     content_width: f64,
-    label: &str,
-    section: crate::state::MonitoringSection,
-    state: &SidebarState,
+    connectors_active: bool,
     theme: &ToolbarTheme,
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
 ) -> f64 {
-    let header_h = 28.0;
-    let pad = 10.0;
-    let is_expanded = state.monitoring_section_expanded(section);
-    let widget_id = format!("monitoring_section:{}", section.key());
-    let is_hovered = input_coordinator
-        .is_hovered(&uzor::types::WidgetId::from(widget_id.as_str()));
+    let bar_h = 32.0;
+    let half = content_width / 2.0;
 
-    if is_hovered {
-        ctx.set_fill_color(&theme.item_bg_hover);
-    } else {
-        ctx.set_fill_color(&format!("{}18", theme.separator));
-    }
-    ctx.fill_rect(rect.x, y, content_width, header_h);
-
-    // Bottom border line under the header.
+    // Background strip + bottom rule.
+    ctx.set_fill_color(&format!("{}18", theme.separator));
+    ctx.fill_rect(rect.x, y, content_width, bar_h);
     ctx.set_fill_color(&format!("{}40", theme.separator));
-    ctx.fill_rect(rect.x, y + header_h - 1.0, content_width, 1.0);
+    ctx.fill_rect(rect.x, y + bar_h - 1.0, content_width, 1.0);
 
-    // Chevron (hand-drawn, matches connector_group:* chevron style).
-    let chev_cx = rect.x + pad + 5.0;
-    let chev_cy = y + header_h / 2.0;
-    ctx.set_stroke_color(&theme.item_text_muted);
-    ctx.set_stroke_width(1.5);
-    ctx.begin_path();
-    if !is_expanded {
-        // Right-pointing chevron (collapsed).
-        ctx.move_to(chev_cx, chev_cy - 4.0);
-        ctx.line_to(chev_cx + 5.0, chev_cy);
-        ctx.line_to(chev_cx, chev_cy + 4.0);
-    } else {
-        // Down-pointing chevron (expanded).
-        ctx.move_to(chev_cx, chev_cy - 3.0);
-        ctx.line_to(chev_cx + 5.0, chev_cy + 3.0);
-        ctx.line_to(chev_cx + 10.0, chev_cy - 3.0);
+    let tabs: [(f64, &str, bool, &str); 2] = [
+        (rect.x, "Connectors", connectors_active, "monitoring_section:connectors"),
+        (rect.x + half, "Performance", !connectors_active, "monitoring_section:performance"),
+    ];
+
+    for (tx, label, active, widget_id) in tabs {
+        let is_hovered = input_coordinator
+            .is_hovered(&uzor::types::WidgetId::from(widget_id));
+
+        // Hover only — active tab is marked by the underline alone
+        // (owner: no active fill, tab looks stupid painted).
+        if !active && is_hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+            ctx.fill_rect(tx, y, half, bar_h - 1.0);
+        }
+
+        // Active underline in the accent color.
+        if active {
+            ctx.set_fill_color(&theme.item_text_active);
+            ctx.fill_rect(tx, y + bar_h - 2.0, half, 2.0);
+        }
+
+        // Label — active gets stronger color.
+        let color = if active { &theme.item_text_active } else { &theme.item_text_muted };
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(color);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, tx + half / 2.0, y + bar_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        let tab_rect = WidgetRect::new(tx, y, half, bar_h);
+        input_coordinator.register(widget_id, tab_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((widget_id.to_string(), tab_rect));
     }
-    ctx.stroke();
 
-    // Section label text.
-    let label_x = rect.x + pad + 18.0;
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, label_x, y + header_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    // Register header click widget.
-    let header_rect = WidgetRect::new(rect.x, y, content_width, header_h);
-    input_coordinator.register(widget_id.as_str(), header_rect, uzor::input::Sense::CLICK);
-    result.item_rects.push((widget_id, header_rect));
-
-    header_h
+    bar_h
 }
 
 // =============================================================================

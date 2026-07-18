@@ -975,20 +975,27 @@ impl SidebarState {
     // Monitoring panel section collapse (runtime-only)
     // =========================================================================
 
-    /// Returns `true` when the given Monitoring section is expanded.
-    ///
-    /// Missing entries default to expanded (both sections start open).
+    /// Returns `true` when the given Monitoring TAB is active (the panel now
+    /// renders two tabs, exactly one active at a time). Kept name+signature
+    /// stable so persistence/click plumbing doesn't churn; semantics are
+    /// "is-active" not "is-expanded". Missing entry defaults to Connectors
+    /// active — matches the pre-merge default landing.
     pub fn monitoring_section_expanded(&self, section: MonitoringSection) -> bool {
-        self.monitoring_sections_expanded
-            .get(section.key())
-            .copied()
-            .unwrap_or(true)
+        match self.monitoring_sections_expanded.get(section.key()).copied() {
+            Some(v) => v,
+            None => matches!(section, MonitoringSection::Connectors),
+        }
     }
 
-    /// Flips the expand/collapse state of the given Monitoring section.
+    /// Activate the given Monitoring tab (mutually exclusive — activating
+    /// one deactivates the other). Called by the tab-bar click handler.
     pub fn toggle_monitoring_section(&mut self, section: MonitoringSection) {
-        let current = self.monitoring_section_expanded(section);
-        self.monitoring_sections_expanded.insert(section.key(), !current);
+        let (on, off) = match section {
+            MonitoringSection::Connectors => (MonitoringSection::Connectors, MonitoringSection::Performance),
+            MonitoringSection::Performance => (MonitoringSection::Performance, MonitoringSection::Connectors),
+        };
+        self.monitoring_sections_expanded.insert(on.key(), true);
+        self.monitoring_sections_expanded.insert(off.key(), false);
     }
 }
 
