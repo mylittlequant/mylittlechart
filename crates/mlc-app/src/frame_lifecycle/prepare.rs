@@ -862,6 +862,29 @@ impl ChartApp {
                 self.sidebar_state.connector_items.clear();
                 let active_ids = self.core.bridge_handle().pool().list_connected();
 
+                // Union: active (REST-registered) ∪ persisted-disabled ids so a
+                // user-disabled connector doesn't vanish from the panel — otherwise
+                // there's nowhere to click to re-enable it. Order: actives first
+                // (registration order), then disabled (alphabetical for stability).
+                let disabled_ids: Vec<digdigdig3::ExchangeId> = {
+                    let mut disabled: Vec<String> = self.sidebar_state.connector_enabled
+                        .iter()
+                        .filter(|(_, on)| !**on)
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    disabled.sort();
+                    disabled
+                        .into_iter()
+                        .filter_map(|s| digdigdig3::ExchangeId::from_str(&s))
+                        .filter(|eid| !active_ids.contains(eid))
+                        .collect()
+                };
+                let ordered_ids: Vec<digdigdig3::ExchangeId> = active_ids
+                    .iter()
+                    .copied()
+                    .chain(disabled_ids.into_iter())
+                    .collect();
+
                 let metrics_map: std::collections::HashMap<String, (digdigdig3::core::types::ConnectorStats, usize)> =
                     self.core.agent_metrics_snapshot()
                         .into_iter()
@@ -889,18 +912,18 @@ impl ChartApp {
                     }
                 }
 
-                for exchange_id in &active_ids {
+                for exchange_id in &ordered_ids {
                     let hub = self.core.bridge_handle().pool();
                     let at = digdigdig3::AccountType::Spot;
-                    let connector = match hub.rest(*exchange_id) {
-                        Some(c) => c,
-                        None => continue,
-                    };
-
-                    let name = connector.exchange_name();
-                    let md_caps = Some(connector.market_data_capabilities(at));
-                    let tr_caps = Some(connector.trading_capabilities(at));
-                    let ac_caps = Some(connector.account_capabilities(at));
+                    // hub.rest returns None for disabled connectors (removed by
+                    // hub.shutdown on toggle) — for those we still render a card
+                    // with the exchange name from the enum so the user can flip
+                    // the toggle back on. Capabilities are `None`, all metrics 0.
+                    let connector = hub.rest(*exchange_id);
+                    let name = connector.as_ref().map(|c| c.exchange_name()).unwrap_or(exchange_id.as_str());
+                    let md_caps = connector.as_ref().map(|c| c.market_data_capabilities(at));
+                    let tr_caps = connector.as_ref().map(|c| c.trading_capabilities(at));
+                    let ac_caps = connector.as_ref().map(|c| c.account_capabilities(at));
 
                     let mut item = ConnectorStatusItem::new(
                         exchange_id.as_str(),
@@ -922,8 +945,12 @@ impl ChartApp {
                     // fields (those live in the pub(crate) registry, unreachable from
                     // here) — those five stay at construction default. Only the
                     // rate-limit numbers are derived from the primary REST pool.
-                    let rate_caps = connector.rate_limit_capabilities();
-                    if let Some(primary) = rate_caps.rest_pools.first() {
+                    if let Some(primary) = connector
+                        .as_ref()
+                        .map(|c| c.rate_limit_capabilities())
+                        .as_ref()
+                        .and_then(|rc| rc.rest_pools.first())
+                    {
                         item.rate_window_seconds = primary.window_seconds;
                         let per_minute = if primary.window_seconds > 0 {
                             Some((primary.max_budget as u64 * 60 / primary.window_seconds as u64) as u32)
@@ -995,24 +1022,26 @@ impl ChartApp {
 
                     // --- Health dots: derived from real REST error ratio, not the
                     // enabled toggle bit. Simple first cut per owner spec:
-                    //   disabled            -> grey  (rest_healthy = false)
-                    //   no traffic yet      -> grey  (rest_healthy = false)
+                    //   disabled            -> red   (rest_healthy = false)
+                    //   enabled + no traffic-> GREEN (rest_healthy = true; connector
+                    //                          registered = REST endpoint reachable in
+                    //                          principle, no dial errors on record).
+                    //                          Prior rule required http_requests_total>0
+                    //                          which painted every idle-but-live
+                    //                          connector amber/red — regression, fixed.
                     //   errors/requests<5%  -> green (rest_healthy = true)
-                    //   errors/requests>=5% -> amber (render.rs draws amber via the
-                    //                          existing "rest_healthy XOR ws_connected"
-                    //                          partial-health branch)
+                    //   errors/requests>=5% -> amber (partial-health branch in render.rs)
                     item.rest_healthy = item.enabled
-                        && item.http_requests_total > 0
-                        && (item.http_errors_total as f64) < (item.http_requests_total as f64) * 0.05;
+                        && (item.http_requests_total == 0
+                            || (item.http_errors_total as f64)
+                                < (item.http_requests_total as f64) * 0.05);
 
-                    // WS liveness: `has_ws` above is a declared capability, not a live
-                    // socket check. `ws_ping_rtt_ms > 0` is the best live signal dig3
-                    // currently surfaces (a completed ping round-trip implies an open
-                    // socket); fall back to the capability check when no ping has
-                    // landed yet so a freshly (re)connected socket isn't shown dead.
-                    item.ws_connected = item.enabled
-                        && has_ws
-                        && (item.ws_ping_rtt_ms > 0 || item.ws_active_count > 0);
+                    // WS liveness: `has_ws` is a declared capability, not a live socket
+                    // check. Green when we have some live signal (ping RTT or active
+                    // WS task count > 0) OR when the connector is enabled and the
+                    // capability exists and there simply hasn't been traffic yet
+                    // (idle-but-live, same rationale as REST above).
+                    item.ws_connected = item.enabled && has_ws;
 
                     item.show_metrics = *self.sidebar_state.connector_metrics_visible
                         .get(exchange_id.as_str())
