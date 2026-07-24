@@ -41,6 +41,11 @@ impl ChartApp {
     ///
     /// The bar index is always derived from the main chart's viewport X-axis since
     /// all panes share the same time axis.
+    ///
+    /// Always resolves against the ACTIVE container. Use
+    /// [`Self::screen_to_data_coords_for_window`] when the target window is
+    /// not necessarily the active one (e.g. the pane under the cursor in
+    /// split mode).
     pub(crate) fn screen_to_data_coords(
         &self,
         screen_x: f64,
@@ -51,12 +56,36 @@ impl ChartApp {
         chart_y: f64,
         chart_h: f64,
     ) -> (f64, f64) {
-        // X-axis is shared across all panes — always convert using main chart origin.
-        let local_x = screen_x - chart_x;
-
         let Some(window) = self.panel_app.panel_grid.active_container() else {
             return (screen_x, screen_y);
         };
+        self.screen_to_data_coords_for_window(
+            screen_x, screen_y, pane_id, extended, chart_x, chart_y, chart_h, window,
+        )
+    }
+
+    /// Convert raw screen coordinates to data coordinates (bar, price) using
+    /// an EXPLICITLY given target window instead of always the active
+    /// container.
+    ///
+    /// Same math as [`Self::screen_to_data_coords`] (which delegates here
+    /// with the active container) — used by the Ctrl+V cursor-paste path
+    /// (`ChartApp::paste_primitive_at_cursor`) to convert against the pane
+    /// under the mouse, which may not be the active leaf in split mode.
+    pub(crate) fn screen_to_data_coords_for_window(
+        &self,
+        screen_x: f64,
+        screen_y: f64,
+        pane_id: Option<u64>,
+        extended: &ExtendedFrameLayout,
+        chart_x: f64,
+        chart_y: f64,
+        chart_h: f64,
+        window: &crate::chart_container::ChartContainer,
+    ) -> (f64, f64) {
+        // X-axis is shared across all panes — always convert using main chart origin.
+        let local_x = screen_x - chart_x;
+
         // Snap to bar center (matching crosshair coordinate system).
         let bar = if let Some(idx) = window.viewport().x_to_bar(local_x) {
             idx as f64

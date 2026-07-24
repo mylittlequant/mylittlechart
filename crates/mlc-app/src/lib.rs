@@ -112,6 +112,7 @@ use mlc_app_layout::layout::{
     ChartModalLayout, ChartModalRenderResult,
     ChartRenderConfig,
     ContextMenuResult,
+    render_chart_crosshair_layer,
 };
 use mlc_app_layout::panel_app::ChartPanelLayout;
 use mlc_app_layout::layout::modals::context_menu::render_context_menu;
@@ -4116,13 +4117,19 @@ impl ChartApp {
         self.apply_render_output(output);
     }
 
-    /// Render only the cursor-dependent overlay for every visible chart leaf.
+    /// Render the cursor-dependent overlay that must stay ABOVE toolbar/modal
+    /// chrome, for every visible chart leaf: in-progress drawing previews and
+    /// the near-cursor tooltip.
     ///
-    /// This emits crosshair lines, scale cursor labels, drawing previews,
-    /// tooltips, and OHLC legends on top of the already-rendered static chart.
+    /// Crosshair lines + scale cursor labels are NOT drawn here (2026-07-25
+    /// split) — they are the lowest overlay layer and are drawn earlier,
+    /// inside [`render_to_scene`], immediately after each leaf's static chart
+    /// content and before the toolbar/dropdown pass. Drawing them here (after
+    /// `render()` returns, i.e. after toolbars/dropdowns already painted)
+    /// used to make the crosshair bleed on top of open dropdowns.
     ///
     /// Call AFTER [`render`] (or [`render_to_scene`] + [`apply_render_output`])
-    /// so that overlay elements appear on top of all chart content.
+    /// so preview/tooltip appear on top of all chart content and toolbar chrome.
     ///
     /// The cached [`ExtendedFrameLayout`] built during [`prepare_frame`] is used
     /// directly — no geometry is recomputed here.
@@ -4223,22 +4230,18 @@ impl ChartApp {
                     }
                     render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(overlay_chart_type);
                     render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, overlay_chart_type);
-                    let crosshair_config = mlc_core::chart::CrosshairConfig::default();
-                    let render_config = ChartRenderConfig {
-                        scale_theme: self.panel_app.scale_theme_for_render(),
-                        chart_type: overlay_chart_type,
-                        crosshair_config,
-                        ..ChartRenderConfig::default()
-                    };
 
+                    // Crosshair + axis labels are drawn earlier, inside
+                    // `render_to_scene`, ahead of the toolbar/dropdown pass
+                    // (see `render_chart_crosshair_layer`) — this call now
+                    // only paints the drawing preview + tooltip, which stay
+                    // above toolbar chrome exactly as before.
                     let overlay_drawings_guard = self.core.drawings();
                     let overlay_view = overlay_drawings_guard.with_bubble(window.current_tag_id);
                     render_chart_overlay(
                         ctx,
                         &render_state,
                         layout,
-                        &render_config,
-                        None, // sub_pane_ranges not cached here; callers needing accurate labels cache from RenderOutput
                         Some(&overlay_view as &dyn mlc_core::drawing::DrawingRenderView),
                         Some(&overlay_panel.tooltip),
                         Some(overlay_symbol.as_str()),
@@ -4335,22 +4338,18 @@ impl ChartApp {
                 }
                 render_state.hide_time_grid = crate::active_series::chart_type_hides_time_grid(single_chart_type);
                 render_state.cvd_paint_deltas = self.cvd_paint_deltas_for(window.current_tag_id, single_chart_type);
-                let crosshair_config = mlc_core::chart::CrosshairConfig::default();
-                let render_config = ChartRenderConfig {
-                    scale_theme: self.panel_app.scale_theme_for_render(),
-                    chart_type: single_chart_type,
-                    crosshair_config,
-                    ..ChartRenderConfig::default()
-                };
 
+                // Crosshair + axis labels are drawn earlier, inside
+                // `render_to_scene`, ahead of the toolbar/dropdown pass (see
+                // `render_chart_crosshair_layer`) — this call now only paints
+                // the drawing preview + tooltip, which stay above toolbar
+                // chrome exactly as before.
                 let single_drawings_guard = self.core.drawings();
                 let single_view = single_drawings_guard.with_bubble(window.current_tag_id);
                 render_chart_overlay(
                     ctx,
                     &render_state,
                     layout,
-                    &render_config,
-                    None,
                     Some(&single_view as &dyn mlc_core::drawing::DrawingRenderView),
                     Some(&single_panel.tooltip),
                     Some(single_overlay_symbol.as_str()),
@@ -4720,6 +4719,30 @@ impl ChartApp {
                 overlay_writebacks.push((leaf_id, render_result.sub_pane_overlays));
                 if let Some(geom) = render_result.loading_spinner {
                     out_loading_spinners.push((leaf_id, geom));
+                }
+
+                // Crosshair + its price/time axis cursor labels — the LOWEST
+                // cursor-dependent overlay layer. Painted right here, above
+                // this leaf's static content and BELOW the toolbar/dropdown
+                // draw further down, so an open dropdown (e.g. the chart-type
+                // selector) always paints above it (owner-reported bug, fixed
+                // 2026-07-25 — it used to bleed through because the crosshair
+                // was only drawn later, in the separate cursor-overlay pass
+                // that ran after the toolbar). See `render_chart_crosshair_layer`.
+                if let Some(crosshair_layout) = self.frame_layouts.get(&leaf_id) {
+                    let crosshair_render_config = ChartRenderConfig {
+                        scale_theme: self.panel_app.scale_theme_for_render(),
+                        chart_type: split_chart_type,
+                        crosshair_config: mlc_core::chart::CrosshairConfig::default(),
+                        ..ChartRenderConfig::default()
+                    };
+                    render_chart_crosshair_layer(
+                        ctx,
+                        &render_state,
+                        crosshair_layout,
+                        &crosshair_render_config,
+                        None, // sub_pane_ranges — unset, matching the pre-split behavior
+                    );
                 }
 
                 // Post-render: draw bell icons for alerts bound to drawing
@@ -5308,6 +5331,28 @@ impl ChartApp {
                 single_sub_pane_overlays = render_result.sub_pane_overlays;
                 single_loading_spinner = render_result.loading_spinner;
                 let corner_zones_ret = render_result.corner_zones;
+
+                // Crosshair + its price/time axis cursor labels — the LOWEST
+                // cursor-dependent overlay layer. Painted right here, above
+                // the static content and BELOW the toolbar/dropdown draw
+                // further down, so an open dropdown (e.g. the chart-type
+                // selector) always paints above it (owner-reported bug, fixed
+                // 2026-07-25). See `render_chart_crosshair_layer`.
+                if let Some(crosshair_layout) = self.active_frame_layout.as_ref() {
+                    let crosshair_render_config = ChartRenderConfig {
+                        scale_theme: self.panel_app.scale_theme_for_render(),
+                        chart_type: single_window_chart_type,
+                        crosshair_config: mlc_core::chart::CrosshairConfig::default(),
+                        ..ChartRenderConfig::default()
+                    };
+                    render_chart_crosshair_layer(
+                        ctx,
+                        &render_state,
+                        crosshair_layout,
+                        &crosshair_render_config,
+                        None, // sub_pane_ranges — unset, matching the pre-split behavior
+                    );
+                }
 
                 // Post-render: draw bell icons for alerts bound to this window's
                 // drawing primitives and overlay indicators.

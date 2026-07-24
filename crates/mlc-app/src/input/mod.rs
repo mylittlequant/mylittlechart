@@ -88,6 +88,9 @@ pub enum KeyPress {
     /// Paste the in-RAM primitive clipboard into the active bubble (Ctrl+V
     /// fallback when no text field/PTY consumed the key first).
     PastePrimitive,
+    /// Cut the selected drawing primitive: copy to the in-RAM clipboard then
+    /// delete it (Ctrl+X fallback when there was no text selection to cut).
+    CutPrimitive,
 }
 
 use crate::{ChartApp, sglog};
@@ -142,7 +145,7 @@ pub(crate) fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
         KeyPress::Undo        => Some(UK::Undo),
         KeyPress::Redo        => Some(UK::Redo),
         // Not text-field concepts — never forwarded to TextFieldStore.
-        KeyPress::CopyPrimitive | KeyPress::PastePrimitive => None,
+        KeyPress::CopyPrimitive | KeyPress::PastePrimitive | KeyPress::CutPrimitive => None,
     }
 }
 
@@ -4553,17 +4556,31 @@ impl ChartApp {
                 None
             };
         {
-            // Z-order suppressor: hide the crosshair when a UI widget ABOVE the
-            // chart layer sits under the cursor (modal, settings panel, etc.).
-            // The geometry hit-test below only knows the chart layout — it has
-            // no idea a modal is painted on top, so over a modal it reports
-            // "on canvas" and the crosshair bleeds THROUGH the modal. is_over_ui_now
-            // is the authoritative z-order + modal-aware check (false over the
-            // chart's BlackboxPanel canvas, true over any real UI widget), so it
-            // catches exactly the layers geometry cannot see. Drawing bypass
-            // still wins below (a click-tool preview anchor must survive a
-            // cursor drift), so this only fires when not actively drawing.
-            let over_ui_above_chart = self.input_coordinator.borrow().is_over_ui_now(x, y);
+            // Whole-screen UI suppressor — REMOVED 2026-07-25 (crosshair
+            // z-order split follow-up). This used to hide the crosshair
+            // globally whenever `is_over_ui_now(x, y)` reported ANY
+            // registered popup/modal widget under the cursor. That check is
+            // POSITIONAL against the widget's registered rect, not its
+            // visually-painted extent — a tall popup (e.g. the chart-type
+            // grid dropdown, 2 columns × many rows) registers a hit rect
+            // spanning most of the chart height, so hovering anywhere inside
+            // that box — including areas the popup never actually paints —
+            // set `crosshair.visible = false` for the WHOLE chart, killing
+            // every segment, not just the part genuinely covered by the
+            // popup (owner repro 2026-07-25: dropdown open + cursor on a
+            // free area far from the visible menu still went dark).
+            //
+            // The 2026-07-25 split already guarantees every popup/dropdown/
+            // modal is painted AFTER `render_chart_crosshair_layer` in the
+            // same frame (`render_to_scene` draws the crosshair mid-loop,
+            // toolbar+dropdown after; `render_overlay`/`render_modal_layer`
+            // run later still) — so natural z-order now occludes the
+            // crosshair correctly wherever a popup actually paints over it,
+            // with no need for a state-level kill switch. The narrower,
+            // POSITIONAL suppressors below (`on_canvas`'s stale-hover-widget
+            // check, and `over_subpane_widget`) still apply and are
+            // sufficient — they only fire where a widget genuinely sits
+            // under the cursor, not across an oversized registered rect.
 
             // Drawing bypass: keep crosshair visible while the hovered leaf's
             // drawing manager reports an in-progress primitive.  In split mode
@@ -4650,18 +4667,6 @@ impl ChartApp {
                     .unwrap_or(false);
                 (geometry_says_canvas && !explicit_non_chart, over_subpane_widget)
             };
-
-            // A UI widget above the chart (modal/panel) suppresses the
-            // crosshair regardless of what the chart-layout geometry thinks —
-            // unless a drawing is in progress (preview anchor must survive).
-            if over_ui_above_chart && !is_drawing {
-                if self.panel_app.panel_grid.is_split() {
-                    self.hide_all_split_crosshairs();
-                } else {
-                    self.hide_crosshair();
-                }
-                return;
-            }
 
             if !on_canvas && !is_drawing && !over_subpane_widget {
                 if self.panel_app.panel_grid.is_split() {
@@ -6108,8 +6113,8 @@ impl ChartApp {
         }
 
         // ── Drawing-primitive hotkeys ─────────────────────────────────────────
-        // Delete falls through unchanged (to trading-panel routing below) when
-        // no primitive is selected in the active bubble.
+        // Delete / Backspace fall through unchanged (to trading-panel routing
+        // below) when no primitive is selected in the active bubble.
         match key {
             KeyPress::Delete => {
                 let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
@@ -6119,12 +6124,32 @@ impl ChartApp {
                     return;
                 }
             }
+            KeyPress::Backspace => {
+                // Backspace-deletes-selected-primitive (owner spec 2026-07-25).
+                // The shell always sends this alongside the char-based
+                // '\x08' backspace, so guard the same way as the Ctrl+C/
+                // Ctrl+V primitive hotkeys (no text focus, no blocking
+                // modal) — text editing itself is handled by the parallel
+                // `on_char_input('\x08')` call and is unaffected here.
+                if !self.primitive_hotkeys_blocked() {
+                    let active_bid_bksp = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                    let selected = active_bid_bksp.and_then(|bid| self.core.drawings().selected(bid).map(|id| (bid, id)));
+                    if let Some((bid, prim_id)) = selected {
+                        self.delete_primitive_with_undo(bid, prim_id);
+                        return;
+                    }
+                }
+            }
             KeyPress::CopyPrimitive => {
                 self.copy_selected_primitive_to_clipboard();
                 return;
             }
             KeyPress::PastePrimitive => {
-                self.paste_primitive_from_clipboard();
+                self.paste_primitive_at_cursor();
+                return;
+            }
+            KeyPress::CutPrimitive => {
+                self.cut_selected_primitive();
                 return;
             }
             _ => {}

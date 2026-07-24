@@ -3557,19 +3557,18 @@ pub fn render_full_chart_panel(
 // Overlay (Cursor-Dependent) Rendering
 // =============================================================================
 
-/// Render the cursor-dependent overlay for a single chart panel.
+/// Draw the crosshair (dashed price/time lines) and its price/time axis
+/// cursor labels for a single chart panel.
 ///
-/// This emits ONLY the elements that change with the cursor position:
-/// - Vertical and horizontal crosshair lines (main chart)
-/// - Per-sub-pane horizontal crosshair line + price label
-/// - Price-scale cursor label
-/// - Time-scale cursor label
-/// - In-progress drawing preview (main chart + sub-panes), when `drawing_manager` is provided
-/// - Tooltip (near cursor), when `tooltip` is provided
-/// - OHLC-at-cursor legend, when `symbol` / `timeframe` are provided
-///
-/// Call this AFTER the static [`render_full_chart_panel`] pass so that overlay
-/// elements appear on top of the chart content.
+/// This is the LOWEST cursor-dependent overlay layer: drawn immediately
+/// above the static chart content and BELOW every popup surface (toolbar
+/// dropdowns, modals, context menu, inline settings bars, tooltip). Callers
+/// MUST draw this before any popup chrome paints in the same frame —
+/// `ChartApp::render_to_scene` (mlc-app) calls it right after each leaf's
+/// [`render_full_chart_panel`] pass, ahead of the toolbar/dropdown draw
+/// (owner-reported bug, fixed 2026-07-25: the crosshair used to bleed on
+/// top of the chart-type dropdown because it was only painted later, via
+/// the separate cursor-overlay pass that ran after the toolbar).
 ///
 /// # Parameters
 /// - `ctx`              – Render context
@@ -3582,20 +3581,12 @@ pub fn render_full_chart_panel(
 ///                        accurate price labels on the sub-pane Y-axis at the crosshair
 ///                        position.  When `None` or when a pane index is not found, the
 ///                        label is omitted to avoid showing an incorrect value.
-/// - `drawing_manager`  – Optional drawing manager (for in-progress preview)
-/// - `tooltip`          – Optional tooltip to render near the cursor
-/// - `symbol`           – Optional symbol name (enables OHLC legend)
-/// - `timeframe`        – Timeframe label (e.g. `"1H"`) for the OHLC legend
-pub fn render_chart_overlay(
+pub fn render_chart_crosshair_layer(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
     layout: &crate::layout::ExtendedFrameLayout,
     config: &ChartRenderConfig,
     sub_pane_ranges: Option<&[(usize, f64, f64)]>,
-    drawing_manager: Option<&dyn DrawingRenderView>,
-    tooltip: Option<&mlc_core::chart::Tooltip>,
-    symbol: Option<&str>,
-    timeframe: &str,
 ) {
     // Skip if crosshair is not enabled at all
     if !state.crosshair.enabled {
@@ -3767,6 +3758,101 @@ pub fn render_chart_overlay(
             label_y,
         );
     }
+}
+
+/// Render the remaining cursor-dependent overlay for a single chart panel:
+/// in-progress drawing preview and the near-cursor tooltip.
+///
+/// These paint ABOVE the crosshair (see [`render_chart_crosshair_layer`])
+/// but the relative order versus toolbar/dropdown chrome is unchanged from
+/// before the 2026-07-25 split — `ChartApp::render_overlay` still calls this
+/// after the toolbar/dropdown pass, so preview + tooltip keep painting on
+/// top of them exactly as they did previously.
+///
+/// # Parameters
+/// - `ctx`              – Render context
+/// - `state`            – Chart render state (same one used for the static pass)
+/// - `layout`           – Pre-computed `ExtendedFrameLayout` for this panel
+///                        (the geometry is passed in — do NOT recompute it here)
+/// - `drawing_manager`  – Optional drawing manager (for in-progress preview)
+/// - `tooltip`          – Optional tooltip to render near the cursor
+/// - `symbol`           – Optional symbol name (enables OHLC legend)
+/// - `timeframe`        – Timeframe label (e.g. `"1H"`) for the OHLC legend
+pub fn render_chart_overlay(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    layout: &crate::layout::ExtendedFrameLayout,
+    drawing_manager: Option<&dyn DrawingRenderView>,
+    tooltip: Option<&mlc_core::chart::Tooltip>,
+    symbol: Option<&str>,
+    timeframe: &str,
+) {
+    // Skip if crosshair is not enabled at all — same master gate as the
+    // crosshair layer, preserved so tooltip/preview never outlive it.
+    if !state.crosshair.enabled {
+        return;
+    }
+
+    let main_chart = &layout.main_chart;
+
+    // Build corrected viewport and chart_rect matching what render_full_chart_panel used.
+    let mut corrected_viewport = state.viewport.clone();
+    corrected_viewport.chart_width = main_chart.chart.width;
+    corrected_viewport.chart_height = main_chart.chart.height;
+
+    let corrected_chart_rect = ChartRect {
+        x: main_chart.chart.x,
+        y: main_chart.chart.y,
+        width: main_chart.chart.width,
+        height: main_chart.chart.height,
+    };
+
+    let corrected_state = ChartRenderState {
+        viewport: &corrected_viewport,
+        chart_rect: corrected_chart_rect,
+        price_scale: state.price_scale,
+        time_scale: state.time_scale,
+        bars: state.bars,
+        grid: state.grid,
+        crosshair: state.crosshair,
+        legend: state.legend,
+        theme: state.theme,
+        time_ticks: state.time_ticks,
+        current_timeframe: state.current_timeframe,
+        disable_clip: state.disable_clip,
+        time_format_settings: state.time_format_settings,
+        timeframe_interval_ms: state.timeframe_interval_ms,
+        scale_settings: state.scale_settings,
+        body_enabled: state.body_enabled,
+        border_enabled: state.border_enabled,
+        wick_enabled: state.wick_enabled,
+        use_prev_close: state.use_prev_close,
+        footprint_bars: state.footprint_bars,
+        footprint_display: state.footprint_display,
+        tick_intensity: state.tick_intensity,
+        renko_bars: state.renko_bars,
+        three_line_break: state.three_line_break,
+        pnf_columns: state.pnf_columns,
+        kagi_segments: state.kagi_segments,
+        tpo_sessions: state.tpo_sessions,
+        tpo_display: state.tpo_display,
+        line_family_display: state.line_family_display,
+        ha_cache: state.ha_cache,
+        vp_overlay: state.vp_overlay,
+        tpo_profile_overlay: state.tpo_profile_overlay,
+        oi_delta_ref: state.oi_delta_ref,
+        funding_rate_ref: state.funding_rate_ref,
+        dom_heatmap_ref: state.dom_heatmap_ref,
+        dom_trade_dots_ref: state.dom_trade_dots_ref,
+        liq_heatmap_ref: state.liq_heatmap_ref,
+        liq_dots_ref: state.liq_dots_ref,
+        non_temporal_axis: state.non_temporal_axis,
+        hide_time_grid: state.hide_time_grid,
+        history_depth: state.history_depth,
+        cvd_paint_deltas: state.cvd_paint_deltas.clone(),
+        trade_archive_available: state.trade_archive_available,
+        bars_trade_built: state.bars_trade_built,
+    };
 
     // 5. In-progress drawing preview — main chart
     if let Some(dm) = drawing_manager {

@@ -2095,9 +2095,11 @@ impl ChartApp {
     }
 
     /// True while a text field is focused or a blocking modal is open —
-    /// guards the Ctrl+C/Ctrl+V primitive clipboard hotkeys so they never
-    /// fire while the user is typing or a settings modal is in front.
-    fn primitive_hotkeys_blocked(&self) -> bool {
+    /// guards the Ctrl+C/Ctrl+V/Ctrl+X primitive clipboard hotkeys and the
+    /// Backspace-deletes-primitive hotkey so they never fire while the user
+    /// is typing or a settings modal is in front. `pub(super)` so
+    /// `input::mod::on_key_press` can gate the Backspace arm the same way.
+    pub(super) fn primitive_hotkeys_blocked(&self) -> bool {
         self.input_coordinator.borrow().text_fields().focused().is_some()
             || self.any_blocking_modal_open()
     }
@@ -2262,5 +2264,136 @@ impl ChartApp {
         eprintln!("[ChartApp] Pasted primitive -> #{}", new_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
+    }
+
+    /// Resolve the pane currently under the mouse cursor (`self.last_mouse_pos`)
+    /// to its owning bubble plus the cursor's `(ts_ms, price)` in THAT pane's
+    /// own coordinate space — used by the Ctrl+V cursor-paste path.
+    ///
+    /// Returns `None` when the cursor is not over a chart canvas (over a
+    /// scale, separator, toolbar, or off-window), or the hovered leaf has no
+    /// window/layout yet. Reuses the exact screen→data conversion the
+    /// drawing tools use to place points
+    /// (`ChartApp::screen_to_data_coords_for_window`), resolved against the
+    /// HOVERED leaf's window rather than always the active container — the
+    /// pane under the cursor is not necessarily the active leaf in split mode.
+    fn cursor_pane_position(&self) -> Option<(mlc_core::BubbleId, i64, f64)> {
+        let (x, y) = self.last_mouse_pos;
+        let leaf_id = match self.panel_app.panel_grid.resolve_input(
+            x, y, self.content_rect.x, self.content_rect.y,
+        ) {
+            crate::panel_grid::ChartInputTarget::Chart { leaf_id } => leaf_id,
+            _ => return None,
+        };
+        let window = self.panel_app.panel_grid.container_for_leaf(leaf_id)?;
+        let bid = window.current_tag_id;
+
+        let extended = self.frame_layouts.get(&leaf_id)
+            .cloned()
+            .or_else(|| self.get_leaf_absolute_rect(leaf_id)
+                .and_then(|r| self.build_extended_layout_for_leaf(leaf_id, &r)))?;
+
+        let chart_x = extended.main_chart.chart.x;
+        let chart_y = extended.main_chart.chart.y;
+        let chart_h = extended.main_chart.chart.height;
+        let pane_id = self.core.drawings().current_pane(bid);
+
+        let (bar, price) = self.screen_to_data_coords_for_window(
+            x, y, pane_id, &extended, chart_x, chart_y, chart_h, window,
+        );
+
+        let bars = self.bars_for_leaf(leaf_id);
+        let ts_ms = mlc_core::bar_f64_to_timestamp_ms(&bars[..], bar);
+        Some((bid, ts_ms, price))
+    }
+
+    /// Ctrl+V primary path (owner spec 2026-07-25): paste the in-RAM
+    /// primitive clipboard positioned at the mouse cursor — translates the
+    /// whole copied shape rigidly so its bounding-box center lands at the
+    /// cursor's `(ts, price)` in the pane under the cursor (target bubble =
+    /// that pane's [`mlc_core::BubbleId`], restamped like the offset path).
+    /// No `paste_count` stacking — this places exactly at the cursor every
+    /// time.
+    ///
+    /// Falls back to [`Self::paste_primitive_from_clipboard`] (the
+    /// +20px/-20px offset-stacking behavior) when the cursor is not over a
+    /// chart pane or its position cannot be resolved. Silent no-op when the
+    /// clipboard is empty, a text field is focused, or a blocking modal is
+    /// open (same guard as the offset path).
+    pub(super) fn paste_primitive_at_cursor(&mut self) {
+        if self.primitive_hotkeys_blocked() {
+            return;
+        }
+        let Some((target_bid, cursor_ts, cursor_price)) = self.cursor_pane_position() else {
+            self.paste_primitive_from_clipboard();
+            return;
+        };
+
+        let Some((type_id, base_points, mut data)) = self.primitive_clipboard.as_ref().map(|c| {
+            (c.type_id.clone(), c.points.clone(), c.data.clone())
+        }) else { return };
+
+        if base_points.is_empty() {
+            return;
+        }
+
+        // Bounding-box center of the copied shape — the rigid-translation anchor.
+        let (min_ts, max_ts) = base_points.iter().fold(
+            (i64::MAX, i64::MIN),
+            |(lo, hi), &(ts, _)| (lo.min(ts), hi.max(ts)),
+        );
+        let (min_price, max_price) = base_points.iter().fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(lo, hi), &(_, p)| (lo.min(p), hi.max(p)),
+        );
+        let center_ts = (min_ts + max_ts) / 2;
+        let center_price = (min_price + max_price) / 2.0;
+        let ts_delta = cursor_ts - center_ts;
+        let price_delta = cursor_price - center_price;
+
+        let shifted_points: Vec<(i64, f64)> = base_points.iter()
+            .map(|&(ts, price)| (ts + ts_delta, price + price_delta))
+            .collect();
+
+        let new_id = mlc_core::drawing::alloc_primitive_id();
+        data.id = new_id;
+        data.origin_id = None;
+        data.pane_id = self.core.drawings().current_pane(target_bid);
+        data.window_id = None;
+        data.symbol = self.core.bubbles().symbol(target_bid).map(String::from).unwrap_or_default();
+        data.exchange = self.core.bubbles().exchange(target_bid).map(String::from).unwrap_or_default();
+        data.account_type = self.core.bubbles().account_type(target_bid).map(String::from).unwrap_or_default();
+
+        let insert_pos = self.core.drawings().count(target_bid);
+        if self.core.drawings_mut().insert_at(target_bid, insert_pos, &type_id, &shifted_points, &data).is_none() {
+            return;
+        }
+        self.core.drawings_mut().select(target_bid, new_id);
+        self.push_undo_command(mlc_core::Command::CreatePrimitive {
+            prim_id: new_id,
+            type_id,
+            points: shifted_points,
+            data,
+        });
+        eprintln!("[ChartApp] Pasted primitive at cursor -> #{}", new_id);
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
+    }
+
+    /// Ctrl+X fallback (owner spec 2026-07-25): cut the selected primitive —
+    /// copy it to the in-RAM clipboard (same guards as
+    /// [`Self::copy_selected_primitive_to_clipboard`]: silent no-op when
+    /// nothing is selected, a text field is focused, or a blocking modal is
+    /// open) then delete it through the same undo-correct path as the
+    /// Delete hotkey. A single undo entry (`DeletePrimitive`, pushed by
+    /// `delete_primitive_with_undo`) restores it.
+    pub(super) fn cut_selected_primitive(&mut self) {
+        if self.primitive_hotkeys_blocked() {
+            return;
+        }
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
+        let Some(prim_id) = self.core.drawings().selected(bid) else { return };
+        self.copy_selected_primitive_to_clipboard();
+        self.delete_primitive_with_undo(bid, prim_id);
     }
 }

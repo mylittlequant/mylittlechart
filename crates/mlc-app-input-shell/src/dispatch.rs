@@ -695,11 +695,21 @@ pub fn process_event(
                         // Backspace KeyPress variant — see uzor store.rs:762),
                         // so we route through `on_char_input`, not
                         // `on_key_press(Backspace)`.
+                        //
+                        // Mirrors the KeyC fallback above (owner spec
+                        // 2026-07-25): when there was no text selection to
+                        // cut, fall back to cutting the selected drawing
+                        // primitive instead.
+                        let mut cut_text = false;
                         if let Some(text) = chart.on_copy_selection() {
                             if !text.is_empty() {
                                 platform.clipboard_write(&text);
                                 chart.on_char_input('\x08');
+                                cut_text = true;
                             }
+                        }
+                        if !cut_text {
+                            chart.on_key_press(mlc_app::KeyPress::CutPrimitive);
                         }
                         return;
                     }
@@ -758,6 +768,15 @@ pub fn process_event(
                 }
                 LogicalKey::Backspace => {
                     chart.on_char_input('\x08');
+                    // Primitive-delete fallback (owner spec 2026-07-25):
+                    // independent of the char path above. ChartApp-side
+                    // guards (text focus / blocking modal) make this a
+                    // no-op whenever a text field is actually focused —
+                    // uzor's TextFieldStore treats the Backspace KeyPress
+                    // variant as a no-op for regular fields (real deletion
+                    // happens via the '\x08' char above), so sending both
+                    // never double-deletes a character.
+                    chart.on_key_press(mlc_app::KeyPress::Backspace);
                 }
                 LogicalKey::Enter => {
                     chart.on_char_input('\n');
