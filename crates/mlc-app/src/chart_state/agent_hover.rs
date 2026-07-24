@@ -41,7 +41,14 @@ impl ChartApp {
                 .map(|d| d.mode == gate4agent::InstanceMode::Pty)
                 .unwrap_or(false);
             if inside && is_pty_leaf {
+                // Text focus and primitive selection are mutually exclusive —
+                // only deselect on the actual focus transition.
+                let pty_wid = uzor::WidgetId::from(text_input::AGENT_PTY);
+                let already_focused = self.input_coordinator.borrow().text_fields().is_focused(&pty_wid);
                 self.input_coordinator.borrow_mut().text_fields_mut().focus(text_input::AGENT_PTY);
+                if !already_focused {
+                    self.deselect_all_primitives();
+                }
             }
             // Do NOT blur on cursor-leave — blur only on click outside. Otherwise
             // any tiny mouse movement during typing steals PTY focus mid-keystroke.

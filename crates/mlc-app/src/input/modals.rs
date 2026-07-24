@@ -14,6 +14,7 @@ use mlc_core::{
 use mlc_app_layout::layout::ExtendedLayoutHitTester;
 use mlc_app_layout::ui::context_menu::ContextMenuTarget;
 use mlc_core::state::modal_state::{OpenModal, IndicatorCategoryFilter};
+use uzor::WidgetId;
 
 impl ChartApp {
     /// Handle a click on an inline primitive toolbar action.
@@ -1619,6 +1620,7 @@ impl ChartApp {
                             }
                         }
                         if let Some(bid) = active_bid_hit {
+                            self.blur_agent_focus_for_primitive_select();
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, None);
                             guard.select(bid, hit_prim_id);
@@ -1671,6 +1673,7 @@ impl ChartApp {
                             }
                         }
                         if let Some(bid) = active_bid_hit {
+                            self.blur_agent_focus_for_primitive_select();
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, Some(instance_id));
                             guard.select(bid, hit_prim_id);
@@ -1937,72 +1940,17 @@ impl ChartApp {
                         eprintln!("[ChartApp] Opened primitive settings for #{}", prim_id);
                     }
                     "delete" => {
-                        // Capture state BEFORE deletion so undo can recreate.
-                        let snapshot = active_bid_ctx
-                            .and_then(|bid| {
-                                let guard = self.core.drawings();
-                                let type_id = guard.get_type_id(bid, prim_id)?;
-                                let points = guard.get_points(bid, prim_id)?;
-                                let data = guard.get_data(bid, prim_id)?;
-                                Some((type_id, points, data))
-                            });
-                        if let Some((type_id, points, data)) = snapshot {
-                            self.push_undo_command(mlc_core::Command::DeletePrimitive {
-                                prim_id,
-                                type_id,
-                                points,
-                                data,
-                            });
-                            eprintln!("[ChartApp] Recorded DeletePrimitive {}", prim_id);
-                            if let Some(bid) = active_bid_ctx {
-                                self.core.drawings_mut().delete(bid, prim_id);
-                                eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
-                            }
-                            {
-                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
-                                for alert_snapshot in removed {
-                                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
-                                }
-                            }
-                            self.sync_drawing_back_to_group();
-                            self.autosave_snapshot();
-                        } else {
-                            // No undo snapshot — still remove and clean up alerts.
-                            if let Some(bid) = active_bid_ctx {
-                                self.core.drawings_mut().delete(bid, prim_id);
-                                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
-                            }
-                            {
-                                let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
-                                for alert_snapshot in removed {
-                                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
-                                }
-                            }
-                            self.sync_drawing_back_to_group();
-                            self.autosave_snapshot();
+                        if let Some(bid) = active_bid_ctx {
+                            self.delete_primitive_with_undo(bid, prim_id);
                         }
                     }
                     "clone" => {
                         let cloned_id = active_bid_ctx
                             .and_then(|bid| self.core.drawings_mut().clone_primitive(bid, prim_id));
                         if let Some(new_id) = cloned_id {
-                            // Apply +20px right, -20px up offset to the cloned primitive.
-                            // Convert screen pixels to bar/price coordinates using the viewport.
-                            let clone_bars: Vec<mlc_core::Bar> = self.active_chart_bars();
-                            if let Some(w) = self.panel_app.panel_grid.active_container() {
-                                let bar_spacing = w.viewport().bar_spacing;
-                                let chart_height = w.viewport().chart_height;
-                                let price_range = w.price_scale().price_max - w.price_scale().price_min;
-                                // 20px right = 20 / bar_spacing bars → convert to ms
-                                let bars_delta = 20.0 / bar_spacing.max(0.001);
-                                let bar_interval_ms = mlc_core::bar_interval_seconds(&clone_bars[..]) * 1000;
-                                let ts_delta_ms = (bars_delta * bar_interval_ms as f64).round() as i64;
-                                // 20px up = 20 / chart_height * price_range (up = positive price)
-                                let price_delta = if chart_height > 0.0 && price_range > 0.0 {
-                                    20.0 / chart_height * price_range
-                                } else {
-                                    0.0
-                                };
+                            // Apply the shared +20px right, -20px up offset to the
+                            // cloned primitive (same delta the paste hotkey uses).
+                            if let Some((ts_delta_ms, price_delta)) = self.primitive_offset_delta() {
                                 if let Some(bid) = active_bid_ctx {
                                     let mut guard = self.core.drawings_mut();
                                     guard.translate(bid, new_id, ts_delta_ms, price_delta);
@@ -2128,5 +2076,191 @@ impl ChartApp {
                 eprintln!("[ChartApp] Context menu action on unknown target: {}", action);
             }
         }
+    }
+
+    /// Blur AGENT_PTY / AGENT_CHAT text focus when a chart primitive is
+    /// about to be selected — text-field focus and primitive selection are
+    /// mutually exclusive.
+    pub(super) fn blur_agent_focus_for_primitive_select(&mut self) {
+        let pty_wid = WidgetId::from(crate::text_input::AGENT_PTY);
+        let chat_wid = WidgetId::from(crate::text_input::AGENT_CHAT);
+        let should_blur = {
+            let coord = self.input_coordinator.borrow();
+            let tf = coord.text_fields();
+            tf.is_focused(&pty_wid) || tf.is_focused(&chat_wid)
+        };
+        if should_blur {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        }
+    }
+
+    /// True while a text field is focused or a blocking modal is open —
+    /// guards the Ctrl+C/Ctrl+V primitive clipboard hotkeys so they never
+    /// fire while the user is typing or a settings modal is in front.
+    fn primitive_hotkeys_blocked(&self) -> bool {
+        self.input_coordinator.borrow().text_fields().focused().is_some()
+            || self.any_blocking_modal_open()
+    }
+
+    /// Compute the shared +20px right / -20px up screen-space offset (in
+    /// bar-timestamp-ms / price data-space units) used by both the
+    /// right-click "clone" action and the Ctrl+V paste hotkey. `None` when
+    /// there is no active container to size the offset against.
+    fn primitive_offset_delta(&self) -> Option<(i64, f64)> {
+        let bars: Vec<mlc_core::Bar> = self.active_chart_bars();
+        let w = self.panel_app.panel_grid.active_container()?;
+        let bar_spacing = w.viewport().bar_spacing;
+        let chart_height = w.viewport().chart_height;
+        let price_range = w.price_scale().price_max - w.price_scale().price_min;
+        // 20px right = 20 / bar_spacing bars → convert to ms
+        let bars_delta = 20.0 / bar_spacing.max(0.001);
+        let bar_interval_ms = mlc_core::bar_interval_seconds(&bars[..]) * 1000;
+        let ts_delta_ms = (bars_delta * bar_interval_ms as f64).round() as i64;
+        // 20px up = 20 / chart_height * price_range (up = positive price)
+        let price_delta = if chart_height > 0.0 && price_range > 0.0 {
+            20.0 / chart_height * price_range
+        } else {
+            0.0
+        };
+        Some((ts_delta_ms, price_delta))
+    }
+
+    /// Delete a primitive by stable id, recording undo state first — shared
+    /// by the right-click "delete" action, the Delete hotkey, and the
+    /// toolbar "Delete selected" dropdown item.
+    pub(super) fn delete_primitive_with_undo(&mut self, bid: mlc_core::BubbleId, prim_id: u64) {
+        let snapshot = {
+            let guard = self.core.drawings();
+            let type_id = guard.get_type_id(bid, prim_id);
+            let points = guard.get_points(bid, prim_id);
+            let data = guard.get_data(bid, prim_id);
+            match (type_id, points, data) {
+                (Some(type_id), Some(points), Some(data)) => Some((type_id, points, data)),
+                _ => None,
+            }
+        };
+        if let Some((type_id, points, data)) = snapshot {
+            self.push_undo_command(mlc_core::Command::DeletePrimitive { prim_id, type_id, points, data });
+            eprintln!("[ChartApp] Recorded DeletePrimitive {}", prim_id);
+            self.core.drawings_mut().delete(bid, prim_id);
+            eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
+        } else {
+            self.core.drawings_mut().delete(bid, prim_id);
+            eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
+        }
+        {
+            let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
+            for alert_snapshot in removed {
+                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
+            }
+        }
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
+    }
+
+    /// Delete every primitive in `bid` as one undoable group
+    /// (`Command::DeleteAllPrimitives` / its inverse `RestoreAllPrimitives`)
+    /// so a single Ctrl+Z restores the whole set — used by the toolbar
+    /// "Delete all" dropdown item.
+    pub(super) fn delete_all_primitives_with_undo(&mut self, bid: mlc_core::BubbleId) {
+        let primitives: Vec<(String, Vec<(i64, f64)>, mlc_core::drawing::PrimitiveData)> = {
+            let guard = self.core.drawings();
+            guard.primitive_list(bid).into_iter()
+                .filter_map(|item| {
+                    let type_id = guard.get_type_id(bid, item.id)?;
+                    let points = guard.get_points(bid, item.id)?;
+                    let data = guard.get_data(bid, item.id)?;
+                    Some((type_id, points, data))
+                })
+                .collect()
+        };
+        if primitives.is_empty() {
+            return;
+        }
+        self.push_undo_command(mlc_core::Command::DeleteAllPrimitives { primitives: primitives.clone() });
+        eprintln!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
+        self.core.drawings_mut().delete_all(bid);
+        for (_, _, data) in &primitives {
+            let removed = self.core.alerts_mut().clear_for_drawing(data.id);
+            for alert_snapshot in removed {
+                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
+            }
+        }
+        eprintln!("[ChartApp] Deleted all primitives (bid={:?})", bid);
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
+    }
+
+    /// Ctrl+C fallback: copy the selected primitive in the active bubble to
+    /// the in-RAM clipboard. Silent no-op when nothing is selected, a text
+    /// field is focused, or a blocking modal is open.
+    pub(super) fn copy_selected_primitive_to_clipboard(&mut self) {
+        if self.primitive_hotkeys_blocked() {
+            return;
+        }
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
+        let Some(prim_id) = self.core.drawings().selected(bid) else { return };
+        let snapshot = {
+            let guard = self.core.drawings();
+            let type_id = guard.get_type_id(bid, prim_id);
+            let points = guard.get_points(bid, prim_id);
+            let data = guard.get_data(bid, prim_id);
+            match (type_id, points, data) {
+                (Some(type_id), Some(points), Some(data)) => Some((type_id, points, data)),
+                _ => None,
+            }
+        };
+        if let Some((type_id, points, data)) = snapshot {
+            self.primitive_clipboard = Some(crate::PrimitiveClipboard { type_id, points, data, paste_count: 0 });
+            eprintln!("[ChartApp] Copied primitive #{} to clipboard", prim_id);
+        }
+    }
+
+    /// Ctrl+V fallback: paste the in-RAM primitive clipboard into the
+    /// active bubble, offset by the shared +20px/-20px delta (stacked per
+    /// repeated paste via `paste_count`). Silent no-op when the clipboard
+    /// is empty, a text field is focused, or a blocking modal is open.
+    pub(super) fn paste_primitive_from_clipboard(&mut self) {
+        if self.primitive_hotkeys_blocked() {
+            return;
+        }
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
+        let Some((ts_delta_ms, price_delta)) = self.primitive_offset_delta() else { return };
+
+        let Some((type_id, base_points, mut data, multiplier)) = self.primitive_clipboard.as_mut().map(|c| {
+            c.paste_count += 1;
+            (c.type_id.clone(), c.points.clone(), c.data.clone(), c.paste_count as f64)
+        }) else { return };
+
+        let shifted_points: Vec<(i64, f64)> = base_points.iter()
+            .map(|&(ts, price)| (
+                ts + (ts_delta_ms as f64 * multiplier).round() as i64,
+                price + price_delta * multiplier,
+            ))
+            .collect();
+
+        let new_id = mlc_core::drawing::alloc_primitive_id();
+        data.id = new_id;
+        data.origin_id = None;
+        data.pane_id = self.core.drawings().current_pane(bid);
+        data.window_id = None;
+        data.symbol = self.core.bubbles().symbol(bid).map(String::from).unwrap_or_default();
+        data.exchange = self.core.bubbles().exchange(bid).map(String::from).unwrap_or_default();
+        data.account_type = self.core.bubbles().account_type(bid).map(String::from).unwrap_or_default();
+
+        let insert_pos = self.core.drawings().count(bid);
+        if self.core.drawings_mut().insert_at(bid, insert_pos, &type_id, &shifted_points, &data).is_none() {
+            return;
+        }
+        self.core.drawings_mut().select(bid, new_id);
+        self.push_undo_command(mlc_core::Command::CreatePrimitive {
+            prim_id: new_id,
+            type_id,
+            points: shifted_points,
+            data,
+        });
+        eprintln!("[ChartApp] Pasted primitive -> #{}", new_id);
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
     }
 }

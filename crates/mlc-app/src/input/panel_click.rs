@@ -2941,6 +2941,31 @@ impl ChartApp {
                     return;
                 }
 
+                // Delete actions — routed here (instead of the generic
+                // `handle_dropdown_select_with_chart` fallback below) so both
+                // items record undo state via `Command::DeletePrimitive` /
+                // `Command::DeleteAllPrimitives` instead of the toolbar-state
+                // `delete_selected`/`delete_all` calls, which mutate the
+                // drawing manager directly with no undo history.
+                if dropdown_id == "delete_tools" {
+                    let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                    if let Some(bid) = active_bid_del {
+                        match item_id {
+                            "delete_selected" => {
+                                let selected = self.core.drawings().selected(bid);
+                                if let Some(prim_id) = selected {
+                                    self.delete_primitive_with_undo(bid, prim_id);
+                                }
+                            }
+                            "delete_all" => {
+                                self.delete_all_primitives_with_undo(bid);
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+
                 // symbol_selector inline fast-search dropdown rows
                 // (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner
                 // spec 2026-07-16). Checked BEFORE the granularity_edit

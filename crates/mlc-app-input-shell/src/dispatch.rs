@@ -661,16 +661,30 @@ pub fn process_event(
                         }
                         if let Some(text) = chart.on_copy_selection() {
                             platform.clipboard_write(&text);
+                        } else {
+                            // Nothing text-selectable consumed the key — fall
+                            // back to copying the selected drawing primitive.
+                            chart.on_key_press(mlc_app::KeyPress::CopyPrimitive);
                         }
                         return;
                     }
                     PhysicalKey::KeyV => {
+                        let mut consumed_by_pty = false;
                         if let Some(text) = platform.clipboard_read() {
                             if chart.is_agent_pty_focused() {
                                 chart.paste_to_pty(&text);
+                                consumed_by_pty = true;
                             } else {
                                 chart.on_key_press(mlc_app::KeyPress::Paste(text));
                             }
+                        }
+                        if !consumed_by_pty {
+                            // Primitive paste is independent of the OS
+                            // clipboard (in-RAM chart clipboard) — attempt it
+                            // whenever the key wasn't consumed by the PTY.
+                            // ChartApp-side guards make this a no-op when a
+                            // text field is focused or nothing was copied.
+                            chart.on_key_press(mlc_app::KeyPress::PastePrimitive);
                         }
                         return;
                     }

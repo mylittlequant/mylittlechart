@@ -82,6 +82,12 @@ pub enum KeyPress {
     Undo,
     /// Redo last undone action (Ctrl+Y / Ctrl+Shift+Z)
     Redo,
+    /// Copy the selected drawing primitive to the in-RAM clipboard (Ctrl+C
+    /// fallback when nothing text-selectable consumed the key first).
+    CopyPrimitive,
+    /// Paste the in-RAM primitive clipboard into the active bubble (Ctrl+V
+    /// fallback when no text field/PTY consumed the key first).
+    PastePrimitive,
 }
 
 use crate::{ChartApp, sglog};
@@ -111,31 +117,33 @@ use uzor::WidgetId;
 /// else becomes `None` and the caller skips forwarding to the store.
 pub(crate) fn to_uzor_key(key: &KeyPress) -> Option<uzor::input::KeyPress> {
     use uzor::input::KeyPress as UK;
-    Some(match key {
-        KeyPress::Delete      => UK::Delete,
-        KeyPress::ArrowLeft   => UK::ArrowLeft,
-        KeyPress::ArrowRight  => UK::ArrowRight,
-        KeyPress::ArrowUp     => UK::ArrowUp,
-        KeyPress::ArrowDown   => UK::ArrowDown,
-        KeyPress::Enter       => UK::Enter,
-        KeyPress::Escape      => UK::Escape,
-        KeyPress::Tab         => UK::Tab,
-        KeyPress::Backspace   => UK::Backspace,
-        KeyPress::CtrlC       => UK::CtrlC,
-        KeyPress::PageUp      => UK::PageUp,
-        KeyPress::PageDown    => UK::PageDown,
-        KeyPress::Home        => UK::Home,
-        KeyPress::End         => UK::End,
-        KeyPress::SelectAll   => UK::SelectAll,
-        KeyPress::ShiftLeft   => UK::ShiftLeft,
-        KeyPress::ShiftRight  => UK::ShiftRight,
-        KeyPress::ShiftHome   => UK::ShiftHome,
-        KeyPress::ShiftEnd    => UK::ShiftEnd,
-        KeyPress::Copy        => UK::Copy,
-        KeyPress::Paste(s)    => UK::Paste(s.clone()),
-        KeyPress::Undo        => UK::Undo,
-        KeyPress::Redo        => UK::Redo,
-    })
+    match key {
+        KeyPress::Delete      => Some(UK::Delete),
+        KeyPress::ArrowLeft   => Some(UK::ArrowLeft),
+        KeyPress::ArrowRight  => Some(UK::ArrowRight),
+        KeyPress::ArrowUp     => Some(UK::ArrowUp),
+        KeyPress::ArrowDown   => Some(UK::ArrowDown),
+        KeyPress::Enter       => Some(UK::Enter),
+        KeyPress::Escape      => Some(UK::Escape),
+        KeyPress::Tab         => Some(UK::Tab),
+        KeyPress::Backspace   => Some(UK::Backspace),
+        KeyPress::CtrlC       => Some(UK::CtrlC),
+        KeyPress::PageUp      => Some(UK::PageUp),
+        KeyPress::PageDown    => Some(UK::PageDown),
+        KeyPress::Home        => Some(UK::Home),
+        KeyPress::End         => Some(UK::End),
+        KeyPress::SelectAll   => Some(UK::SelectAll),
+        KeyPress::ShiftLeft   => Some(UK::ShiftLeft),
+        KeyPress::ShiftRight  => Some(UK::ShiftRight),
+        KeyPress::ShiftHome   => Some(UK::ShiftHome),
+        KeyPress::ShiftEnd    => Some(UK::ShiftEnd),
+        KeyPress::Copy        => Some(UK::Copy),
+        KeyPress::Paste(s)    => Some(UK::Paste(s.clone())),
+        KeyPress::Undo        => Some(UK::Undo),
+        KeyPress::Redo        => Some(UK::Redo),
+        // Not text-field concepts — never forwarded to TextFieldStore.
+        KeyPress::CopyPrimitive | KeyPress::PastePrimitive => None,
+    }
 }
 
 // =============================================================================
@@ -470,14 +478,23 @@ impl ChartApp {
         self.handle_canvas_click(x, y);
     }
 
-    /// Handle a right-click at screen coordinates `(x, y)`.
+    /// Deselect the drawing-primitive selection across every bubble.
     ///
-    /// Opens a context menu: primitive menu if clicking on a primitive,
-    /// chart background menu otherwise.
-    pub fn on_right_click(&mut self, x: f64, y: f64) {
-        // Suppress context menu when any modal is open — right-clicks inside
-        // modals must not bleed through to the chart background.
-        if self.modal_state.is_open()
+    /// Called on the agent-panel text-focus TRANSITION (PTY/chat gaining
+    /// focus) so text-field focus and chart primitive selection stay
+    /// mutually exclusive — mirrors the deselect-all pattern used when a
+    /// canvas click misses every primitive.
+    pub(crate) fn deselect_all_primitives(&mut self) {
+        let all_bids: Vec<_> = self.core.bubbles().bubble_ids().collect();
+        for bid in all_bids {
+            self.core.drawings_mut().deselect(bid);
+        }
+    }
+
+    /// True while any modal is open that should suppress chart-level
+    /// right-click / primitive-copy-paste hotkeys from bleeding through.
+    pub(crate) fn any_blocking_modal_open(&self) -> bool {
+        self.modal_state.is_open()
             || self.standalone_panels.watchlist_modal.is_open()
             || self.standalone_panels.wl_group_name_input.is_open()
             || self.panel_app.primitive_settings_state.is_open()
@@ -489,7 +506,16 @@ impl ChartApp {
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
-        {
+    }
+
+    /// Handle a right-click at screen coordinates `(x, y)`.
+    ///
+    /// Opens a context menu: primitive menu if clicking on a primitive,
+    /// chart background menu otherwise.
+    pub fn on_right_click(&mut self, x: f64, y: f64) {
+        // Suppress context menu when any modal is open — right-clicks inside
+        // modals must not bleed through to the chart background.
+        if self.any_blocking_modal_open() {
             return;
         }
 
@@ -617,8 +643,10 @@ impl ChartApp {
 
                 let items = build_primitive_context_menu(&display_name, is_locked, is_visible);
 
-                // Select the primitive so it highlights.
+                // Select the primitive so it highlights. Text focus and
+                // primitive selection are mutually exclusive.
                 if let Some(bid) = active_bid_rc {
+                    self.blur_agent_focus_for_primitive_select();
                     self.core.drawings_mut().select(bid, prim_id);
                 }
 
@@ -703,7 +731,12 @@ impl ChartApp {
                             .map(|d| d.mode == gate4agent::InstanceMode::Chat)
                             .unwrap_or(false);
                         if is_chat {
+                            let chat_wid = uzor::WidgetId::from(crate::text_input::AGENT_CHAT);
+                            let chat_already_focused = self.input_coordinator.borrow().text_fields().is_focused(&chat_wid);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
+                            if !chat_already_focused {
+                                self.deselect_all_primitives();
+                            }
                             self.sidebar_data_dirty = true;
                         }
                     }
@@ -985,7 +1018,14 @@ impl ChartApp {
                     }
                     self.agent_pty_drag_active = true;
                     // Also focus PTY so keyboard events still route to it.
+                    // Text focus and primitive selection are mutually exclusive —
+                    // only deselect on the actual focus transition, not every drag.
+                    let pty_wid = uzor::WidgetId::from(crate::text_input::AGENT_PTY);
+                    let pty_already_focused = self.input_coordinator.borrow().text_fields().is_focused(&pty_wid);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
+                    if !pty_already_focused {
+                        self.deselect_all_primitives();
+                    }
                     self.sidebar_data_dirty = true;
                     // Return false — NOT dismissed. We want subsequent drag_move
                     // events and the eventual drag_end. Returning true tells the
@@ -1027,7 +1067,14 @@ impl ChartApp {
                     .unwrap_or(false);
                 if in_content {
                     // Focus chat input immediately on mousedown (like PTY does).
+                    // Text focus and primitive selection are mutually exclusive —
+                    // only deselect on the actual focus transition.
+                    let chat_wid = uzor::WidgetId::from(crate::text_input::AGENT_CHAT);
+                    let chat_already_focused = self.input_coordinator.borrow().text_fields().is_focused(&chat_wid);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
+                    if !chat_already_focused {
+                        self.deselect_all_primitives();
+                    }
                     self.sidebar_data_dirty = true;
 
                     if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
@@ -6058,6 +6105,29 @@ impl ChartApp {
         // preset name, template names, settings sub-fields, search overlay.
         if self.dispatch_text_key_late(&key) {
             return;
+        }
+
+        // ── Drawing-primitive hotkeys ─────────────────────────────────────────
+        // Delete falls through unchanged (to trading-panel routing below) when
+        // no primitive is selected in the active bubble.
+        match key {
+            KeyPress::Delete => {
+                let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                let selected = active_bid_del.and_then(|bid| self.core.drawings().selected(bid).map(|id| (bid, id)));
+                if let Some((bid, prim_id)) = selected {
+                    self.delete_primitive_with_undo(bid, prim_id);
+                    return;
+                }
+            }
+            KeyPress::CopyPrimitive => {
+                self.copy_selected_primitive_to_clipboard();
+                return;
+            }
+            KeyPress::PastePrimitive => {
+                self.paste_primitive_from_clipboard();
+                return;
+            }
+            _ => {}
         }
 
         // ── Trading panel keyboard routing ───────────────────────────────────

@@ -888,6 +888,11 @@ pub struct ChartApp {
     /// created on dropdown open with an empty query, cleared on dropdown
     /// close / Escape / apply.
     pub(crate) symbol_quick_edit: Option<SymbolQuickEdit>,
+
+    /// In-RAM clipboard for Ctrl+C/Ctrl+V on a selected drawing primitive.
+    /// `None` when nothing has been copied — never persisted, never synced
+    /// across windows (process-local, cleared on restart).
+    pub(crate) primitive_clipboard: Option<PrimitiveClipboard>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -1096,6 +1101,19 @@ pub struct SymbolQuickEdit {
     pub cursor: usize,
     /// Selection range (start, end) — `None` when nothing selected.
     pub selection: Option<(usize, usize)>,
+}
+
+/// In-RAM clipboard payload for a single copied drawing primitive
+/// (Ctrl+C / Ctrl+V hotkeys). `paste_count` tracks how many times this
+/// entry has been pasted so repeated Ctrl+V stacks the same +20px offset
+/// used by the right-click "clone" action instead of pasting every copy
+/// on top of the last.
+#[derive(Debug, Clone)]
+pub(crate) struct PrimitiveClipboard {
+    pub type_id: String,
+    pub points: Vec<(i64, f64)>,
+    pub data: mlc_core::drawing::PrimitiveData,
+    pub paste_count: u32,
 }
 
 /// Pending granularity row drag — set on mousedown over a reorderable row,
@@ -2061,6 +2079,7 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            primitive_clipboard: None,
         };
 
         if let Some(tm) = app.core.trading() {
@@ -2451,6 +2470,7 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            primitive_clipboard: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -2987,6 +3007,7 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            primitive_clipboard: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
