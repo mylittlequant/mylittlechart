@@ -276,6 +276,17 @@ impl ChartApp {
                         );
                     }
                 }
+                // TradingContainer-hosted DOM (v1 center region) — same match,
+                // same update.
+                for state in self.panels_store.trading_container.values_mut() {
+                    if &state.dom.symbol == symbol && &state.dom.exchange == ex_str && &state.dom.account_type == at_str {
+                        state.dom.apply_ob_update(
+                            &bulk_bids,
+                            &bulk_asks,
+                            entry.force_rebuild,
+                        );
+                    }
+                }
                 self.last_dom_panel_us += dom_t0.elapsed().as_micros() as u64;
 
                 // ── L2 Tape: per-event calls with original wire ts ─────────────
@@ -314,19 +325,33 @@ impl ChartApp {
             self.last_orderbook_panel_us += ob_panel_start.elapsed().as_micros() as u64;
         }
 
-        if !trading_updates.is_empty() {
-            if let Some(mut tm) = self.core.trading_mut() {
-                tm.tick(&trading_updates);
-            }
-            for state in self.panels_store.order_entry.values_mut() {
-                state.sync_from_snapshot();
-            }
-            for state in self.panels_store.position_manager.values_mut() {
-                state.sync_from_snapshot();
-            }
-            for state in self.panels_store.trade_log.values_mut() {
-                state.sync_from_snapshot();
-            }
+        // Trading tick runs every frame, NOT gated on `trading_updates` being
+        // non-empty: a pure paper-trading session never emits a bridge
+        // `LiveUpdate` (no real exchange account websocket involved), so
+        // gating this on live trading events meant `TradingManager::tick`
+        // (which ticks paper engines AND republishes every session's
+        // `TradingSnapshot`, including the config-seeded starting balance)
+        // could go forever without running — panels stayed to their
+        // constructor defaults (`available_balance = 0.0`) even though the
+        // paper engine itself was correctly seeded. `trading_updates` (when
+        // non-empty) is still forwarded so real-exchange sessions get their
+        // event-driven fields applied.
+        if let Some(mut tm) = self.core.trading_mut() {
+            tm.tick(&trading_updates);
+        }
+        for state in self.panels_store.order_entry.values_mut() {
+            state.sync_from_snapshot();
+        }
+        for state in self.panels_store.position_manager.values_mut() {
+            state.sync_from_snapshot();
+        }
+        for state in self.panels_store.trade_log.values_mut() {
+            state.sync_from_snapshot();
+        }
+        for state in self.panels_store.trading_container.values_mut() {
+            state.order_entry.sync_from_snapshot();
+            state.position_manager.sync_from_snapshot();
+            state.trade_log.sync_from_snapshot();
         }
 
         // ── Watchlist refresh trigger ─────────────────────────────────────────

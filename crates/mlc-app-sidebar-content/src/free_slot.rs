@@ -85,8 +85,11 @@ impl SlotKind {
 
     /// The `Panel` kind strings (as used by `render_slot_spawn_dropdown` /
     /// `panel_click.rs`'s `slot:{idx}:spawn:{kind_str}` dispatch) this slot
-    /// kind accepts. `SlotDom` accepts two kinds (Dom + MultiDom); every
-    /// other slot accepts exactly one.
+    /// kind accepts. `SlotDom` accepts two kinds (Dom + MultiDom); `SlotTrading`
+    /// accepts exactly one — `trading_container` — since OrderEntry /
+    /// PositionManager / TradeLog / RiskCalculator live INSIDE the container
+    /// as its hosted sub-panels, not as independently spawnable slot leaves
+    /// (owner spec 2026-07-25). Every other slot accepts exactly one kind.
     pub fn allowed_panel_kinds(self) -> &'static [&'static str] {
         match self {
             SlotKind::Trading   => &["trading_container"],
@@ -192,7 +195,10 @@ mod slot_kind_tests {
     /// (Dom + MultiDom); every other slot accepts exactly 1.
     #[test]
     fn allowed_panel_kinds_table() {
-        assert_eq!(SlotKind::Trading.allowed_panel_kinds(), &["trading_container"]);
+        assert_eq!(
+            SlotKind::Trading.allowed_panel_kinds(),
+            &["trading_container"],
+        );
         assert_eq!(SlotKind::Dom.allowed_panel_kinds(), &["dom", "multi_dom"]);
         assert_eq!(SlotKind::Tape.allowed_panel_kinds(), &["trade_tape"]);
         assert_eq!(SlotKind::L2.allowed_panel_kinds(), &["l2_tape"]);

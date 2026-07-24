@@ -83,6 +83,17 @@ pub struct OrderEntryState {
 
     /// Shared snapshot from TradingManager
     pub snapshot: Option<SharedTradingSnapshot>,
+
+    /// True while `self.errors` currently displays `snapshot.last_error`
+    /// (the async/live-order session error channel) rather than a
+    /// submit-time error pushed directly by `ChartApp::submit_order_entry_target`.
+    /// `sync_from_snapshot` uses this to clear ONLY its own message when the
+    /// session error resolves, instead of unconditionally wiping `errors` on
+    /// every tick — the paper-trading path never populates
+    /// `TradingSnapshot::last_error` (only the live async order-result
+    /// handling in `TradingManager::tick` does), so an unconditional clear
+    /// erased every paper submit error before it was ever rendered.
+    pub snapshot_error_shown: bool,
 }
 
 impl OrderEntryState {
@@ -114,6 +125,7 @@ impl OrderEntryState {
             editing_blink_time: 0,
             scroll_offset: 0.0,
             snapshot: None,
+            snapshot_error_shown: false,
         }
     }
 
@@ -186,6 +198,9 @@ impl OrderEntryState {
     /// Validate order and populate errors vector
     pub fn validate(&mut self) {
         self.errors.clear();
+        // Fresh validation pass supersedes whatever was shown before —
+        // any leftover snapshot-error display state is stale now.
+        self.snapshot_error_shown = false;
 
         if self.quantity <= 0.0 {
             self.errors.push("Quantity must be greater than 0".to_string());
@@ -256,14 +271,28 @@ impl OrderEntryState {
             self.submitting = false;
         }
 
-        // Show last error from trading manager
-        if let Some(err) = &snap.last_error {
-            if self.errors.is_empty() || self.errors.last().map(|e| e != err).unwrap_or(true) {
-                self.errors.clear();
-                self.errors.push(err.clone());
+        // Show last error from the trading manager's session-level channel
+        // (`TradingSnapshot::last_error` — populated only by the async
+        // live-order result handling in `TradingManager::tick`; the
+        // synchronous paper-engine path never touches it). Track whether the
+        // CURRENTLY shown error came from here via `snapshot_error_shown` so
+        // clearing it on resolution never clobbers a submit-time error
+        // pushed directly by `ChartApp::submit_order_entry_target` on a
+        // paper `place_order` failure.
+        match &snap.last_error {
+            Some(err) => {
+                if self.errors.is_empty() || self.errors.last().map(|e| e != err).unwrap_or(true) {
+                    self.errors.clear();
+                    self.errors.push(err.clone());
+                }
+                self.snapshot_error_shown = true;
             }
-        } else {
-            self.errors.clear();
+            None => {
+                if self.snapshot_error_shown {
+                    self.errors.clear();
+                    self.snapshot_error_shown = false;
+                }
+            }
         }
 
         // Recalculate post_order_balance
@@ -277,6 +306,113 @@ impl OrderEntryState {
         (elapsed / 500) % 2 == 0
     }
 
+    /// True while a field is actively being edited.
+    pub fn is_editing(&self) -> bool {
+        self.editing_field.is_some()
+    }
+
+    /// Insert a character at the cursor of the field currently being edited.
+    /// Only digits and a single '.' are accepted; anything else is silently
+    /// dropped (still consumed — there is no other valid input for a
+    /// numeric field). Returns `false` (not consumed) when no field is
+    /// being edited.
+    pub fn handle_edit_char(&mut self, ch: char) -> bool {
+        if self.editing_field.is_none() {
+            return false;
+        }
+        if ch.is_ascii_digit() {
+            self.editing_text.insert(self.editing_cursor, ch);
+            self.editing_cursor += 1;
+        } else if ch == '.' && !self.editing_text.contains('.') {
+            self.editing_text.insert(self.editing_cursor, ch);
+            self.editing_cursor += 1;
+        }
+        true
+    }
+
+    /// Handle a named key while a field is being edited: Backspace/Delete,
+    /// cursor movement, Enter (commit), Escape (cancel). Returns `false`
+    /// (not consumed) when no field is being edited or the key has no
+    /// editing meaning.
+    pub fn handle_edit_key(&mut self, key: mlc_core::input::KeyCode) -> bool {
+        use mlc_core::input::KeyCode;
+        if self.editing_field.is_none() {
+            return false;
+        }
+        match key {
+            KeyCode::Backspace => {
+                if self.editing_cursor > 0 {
+                    self.editing_cursor -= 1;
+                    self.editing_text.remove(self.editing_cursor);
+                }
+                true
+            }
+            KeyCode::Delete => {
+                if self.editing_cursor < self.editing_text.len() {
+                    self.editing_text.remove(self.editing_cursor);
+                }
+                true
+            }
+            KeyCode::ArrowLeft => {
+                self.editing_cursor = self.editing_cursor.saturating_sub(1);
+                true
+            }
+            KeyCode::ArrowRight => {
+                self.editing_cursor = (self.editing_cursor + 1).min(self.editing_text.len());
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_editing();
+                true
+            }
+            KeyCode::Escape => {
+                self.cancel_editing();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Commit the currently-edited field: parse `editing_text` as f64 and
+    /// write it into price/stop_price/quantity per `editing_field`. On
+    /// parse failure the field stays in edit mode (no partial commit).
+    /// On success, clears `editing_field` and re-validates. Public so the
+    /// app layer can call it on blur (clicking away from the field).
+    pub fn commit_editing(&mut self) {
+        let Some(field) = self.editing_field else { return };
+        let Ok(value) = self.editing_text.parse::<f64>() else { return };
+        match field {
+            OrderEntryElement::PriceInput => self.price = Some(value),
+            OrderEntryElement::StopPriceInput => self.stop_price = Some(value),
+            OrderEntryElement::QuantityInput => self.quantity = value,
+            _ => {}
+        }
+        self.editing_field = None;
+        self.editing_text.clear();
+        self.editing_cursor = 0;
+        self.validate();
+    }
+
+    /// Cancel the currently-edited field, discarding the typed text.
+    pub fn cancel_editing(&mut self) {
+        self.editing_field = None;
+        self.editing_text.clear();
+        self.editing_cursor = 0;
+    }
+
+    /// Render-time display string for whichever field is being edited:
+    /// the raw `editing_text` with a blinking text cursor spliced in at
+    /// `editing_cursor` (visible half of the 500ms blink cycle).
+    fn display_editing_text(&self, now_ms: u64) -> String {
+        if self.is_cursor_visible(now_ms) {
+            let mut s = self.editing_text.clone();
+            let at = self.editing_cursor.min(s.len());
+            s.insert(at, '|');
+            s
+        } else {
+            self.editing_text.clone()
+        }
+    }
 }
 
 fn format_currency(value: f64) -> String {
@@ -461,10 +597,19 @@ impl TradingPanel for OrderEntryState {
             ctx.fill_text(value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
         };
 
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
         if matches!(self.order_type, OrderType::Limit | OrderType::StopLimit) {
-            let price_str = self.price
-                .map(|p| format!("{:.4}", p))
-                .unwrap_or_else(|| "\u{2014}".to_string());
+            let price_str = if self.editing_field == Some(OrderEntryElement::PriceInput) {
+                self.display_editing_text(now_ms)
+            } else {
+                self.price
+                    .map(|p| format!("{:.4}", p))
+                    .unwrap_or_else(|| "\u{2014}".to_string())
+            };
             draw_field(ctx, cursor_y, "Price:", &price_str);
             coordinator.register(
                 format!("{}:oe:price", slot_prefix).as_str(),
@@ -475,9 +620,13 @@ impl TradingPanel for OrderEntryState {
         }
 
         if matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) {
-            let stop_str = self.stop_price
-                .map(|p| format!("{:.4}", p))
-                .unwrap_or_else(|| "\u{2014}".to_string());
+            let stop_str = if self.editing_field == Some(OrderEntryElement::StopPriceInput) {
+                self.display_editing_text(now_ms)
+            } else {
+                self.stop_price
+                    .map(|p| format!("{:.4}", p))
+                    .unwrap_or_else(|| "\u{2014}".to_string())
+            };
             draw_field(ctx, cursor_y, "Stop:", &stop_str);
             coordinator.register(
                 format!("{}:oe:stop_price", slot_prefix).as_str(),
@@ -487,7 +636,12 @@ impl TradingPanel for OrderEntryState {
             cursor_y += OE_FIELD_HEIGHT;
         }
 
-        draw_field(ctx, cursor_y, "Quantity:", &self.format_quantity());
+        let qty_str = if self.editing_field == Some(OrderEntryElement::QuantityInput) {
+            self.display_editing_text(now_ms)
+        } else {
+            self.format_quantity()
+        };
+        draw_field(ctx, cursor_y, "Quantity:", &qty_str);
         coordinator.register(
             format!("{}:oe:qty", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
@@ -595,20 +749,26 @@ impl TradingPanel for OrderEntryState {
                 true
             }
             "oe:price" => {
+                self.commit_editing();
                 self.editing_field = Some(OrderEntryElement::PriceInput);
                 self.editing_text = self.price.map(|p| format!("{:.4}", p)).unwrap_or_default();
                 self.editing_cursor = self.editing_text.len();
                 true
             }
             "oe:stop_price" => {
+                self.commit_editing();
                 self.editing_field = Some(OrderEntryElement::StopPriceInput);
                 self.editing_text = self.stop_price.map(|p| format!("{:.4}", p)).unwrap_or_default();
                 self.editing_cursor = self.editing_text.len();
                 true
             }
             "oe:qty" => {
+                self.commit_editing();
                 self.editing_field = Some(OrderEntryElement::QuantityInput);
-                self.editing_text = self.format_quantity();
+                // Plain parseable form — `format_quantity()` abbreviates with
+                // K-suffixes / variable precision for DISPLAY, which is not
+                // valid f64 input for the editor.
+                self.editing_text = if self.quantity > 0.0 { format!("{}", self.quantity) } else { String::new() };
                 self.editing_cursor = self.editing_text.len();
                 true
             }

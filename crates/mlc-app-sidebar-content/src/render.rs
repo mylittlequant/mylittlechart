@@ -289,7 +289,13 @@ pub fn render_right_sidebar(
     let _content_padding = 12.0;
 
     // Dynamic header height: slot panels and Agents go 2-row (68 px) when too narrow.
-    let header_height = if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
+    // SlotTrading is the exception — it never renders a toolbar (owner spec
+    // 2026-07-25: zero slot control-plane for Trading), so its header is
+    // always the plain single-row 40 px band that hosts only the `[x]`
+    // sidebar-collapse button.
+    let header_height = if panel == RightSidebarPanel::SlotTrading {
+        40.0
+    } else if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
         // Available width = full width - left pad (8) - close X reservation (20).
         // Mirrors `inner_w` inside render_slot_toolbar_in_header / render_agents_toolbar_in_header.
         // Threshold = sum of all single-row buttons at minimum 28 px each
@@ -536,7 +542,10 @@ pub fn render_right_sidebar(
     }
 
     // Slot toolbar — rendered in the header row BEFORE scrollable clip so it's visible.
-    if let Some(idx) = panel.slot_index() {
+    // SlotTrading never gets one — owner spec 2026-07-25 removes the entire
+    // slot control-plane ([+]/[T/U]/[H/V/R]/[⊞]/[↻]) for the Trading tab; the
+    // sole close affordance is the always-present `right_sidebar_close` [x].
+    if let Some(idx) = panel.slot_index().filter(|_| panel != RightSidebarPanel::SlotTrading) {
         render_slot_toolbar_in_header(
             ctx,
             rect,
@@ -925,8 +934,9 @@ const ALL_SLOT_SPAWN_ITEMS: &[(&str, &str)] = &[
 
 /// Spawn-dropdown item list for one typed slot — filtered to the kinds that
 /// slot's [`crate::free_slot::SlotKind`] accepts (owner spec: type-locked
-/// slots).  `SlotDom` offers 2 items (Dom + MultiDom); every other slot
-/// offers exactly 1.
+/// slots).  `SlotDom` offers 2 items (Dom + MultiDom); `SlotTrading` offers 5
+/// (Trading container + Order Entry + Positions + Trade Log + Risk
+/// Calculator); every other slot offers exactly 1.
 pub fn slot_spawn_items(kind: crate::free_slot::SlotKind) -> Vec<(&'static str, &'static str)> {
     let allowed = kind.allowed_panel_kinds();
     ALL_SLOT_SPAWN_ITEMS
@@ -3940,6 +3950,14 @@ fn render_slot_toolbar_in_header(
         cur_x + btn_w
     };
 
+    // Hide the [+] spawn button when this slot's allowlist has exactly one
+    // kind AND an instance already exists — spawning would only ever offer
+    // that same one kind again, which the Trading slot (trading_container)
+    // never wants a second of in v1 (owner spec 2026-07-25).
+    let hide_new_btn = crate::free_slot::SlotKind::from_index(slot_idx)
+        .map(|k| k.allowed_panel_kinds().len() == 1 && leaf_count > 0)
+        .unwrap_or(false);
+
     if single_row {
         // ── Single row: [+][A][P][L][H][V][R][⊞][↺]  [×] ────────────
         // The control plane is ONE contiguous block from the left edge —
@@ -3947,7 +3965,7 @@ fn render_slot_toolbar_in_header(
         // the right edge of the sidebar.
         let row_y  = toolbar_y + (header_height - btn_h) / 2.0;
         let start_x = rect.x + 8.0;
-        let cur_x = draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result);
+        let cur_x = if hide_new_btn { start_x } else { draw_new_btn(start_x, row_y, ctx, state, input_coordinator, result) };
         let cur_x = draw_apl_btns(cur_x, row_y, ctx, state, input_coordinator, result);
         let _end_x = draw_hvr_btns(row_y, cur_x, /* pin_right */ false, ctx, state, input_coordinator, result);
     } else {
@@ -3958,7 +3976,7 @@ fn render_slot_toolbar_in_header(
         let row2_y  = row1_y + btn_h + gap;
 
         let start_x = rect.x + 8.0;
-        let cur_x = draw_new_btn(start_x, row1_y, ctx, state, input_coordinator, result);
+        let cur_x = if hide_new_btn { start_x } else { draw_new_btn(start_x, row1_y, ctx, state, input_coordinator, result) };
         let _cur_x = draw_apl_btns(cur_x, row1_y, ctx, state, input_coordinator, result);
 
         // Row 2: HVR group also left-aligned, mirroring row 1.
@@ -4051,7 +4069,29 @@ fn render_slot_panel(
 
     let focused_free_leaf = state.focused_free_leaf;
 
+    // SlotTrading renders zero per-leaf chrome — no control strip, no
+    // overlay tab, no leaf-close `[x]` (owner spec 2026-07-25: the trading
+    // container fills the whole tab; the only close affordance left is the
+    // sidebar-level `right_sidebar_close` `[x]`). The leaf/docking plumbing
+    // underneath is unchanged — only the drawn chrome disappears.
+    let is_trading_slot = crate::free_slot::SlotKind::from_index(slot_idx)
+        == Some(crate::free_slot::SlotKind::Trading);
+
     for (leaf_id, item, r) in leaves {
+        if is_trading_slot {
+            ctx.set_fill_color(&theme.background);
+            ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
+
+            let focus_content_id = format!("slot:{}:leaf:{}:focus_content", slot_idx, leaf_id.0);
+            let focus_content_rect = WidgetRect::new(r.x as f64, r.y as f64, r.width as f64, r.height as f64);
+            input_coordinator.register(focus_content_id.as_str(), focus_content_rect, uzor::input::Sense::CLICK | uzor::input::Sense::DOUBLE_CLICK);
+            result.item_rects.push((focus_content_id, focus_content_rect));
+
+            let slot_prefix = format!("slot:{}:leaf:{}", slot_idx, leaf_id.0);
+            free_item_renderer(&item, (r.x, r.y, r.width, r.height), ctx, input_coordinator, &slot_prefix);
+            continue;
+        }
+
         // Draw border/background frame for the leaf.
         ctx.set_fill_color(&theme.background);
         ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, r.height as f64);

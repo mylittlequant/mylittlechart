@@ -28,10 +28,12 @@ impl<'a> Trading<'a> {
         Self { mgr }
     }
 
-    /// Shared handle to the published trading snapshot (orders, positions,
-    /// balances, PnL). Readers hold this independently of the manager lock.
-    pub fn snapshot(&self) -> SharedTradingSnapshot {
-        self.mgr.snapshot()
+    /// Every currently known per-session snapshot (enumeration only — does
+    /// not create new slots). Used by consumers that must list every
+    /// active `(exchange_id, account_type)` session, e.g. the daemon's
+    /// connectors listing.
+    pub fn all_snapshots(&self) -> Vec<(ExchangeId, AccountType, SharedTradingSnapshot)> {
+        self.mgr.all_snapshots()
     }
 
     /// Data directory used for trading config persistence.
@@ -50,9 +52,12 @@ impl<'a> TradingMut<'a> {
         Self { mgr }
     }
 
-    /// Shared handle to the published trading snapshot.
-    pub fn snapshot(&self) -> SharedTradingSnapshot {
-        self.mgr.snapshot()
+    /// Shared handle to the `(exchange_id, account_type)` session's
+    /// snapshot, lazily creating an empty one if this session hasn't
+    /// published yet. Callers that spawn a panel bound to a specific
+    /// session use this to get that panel's own `Arc`.
+    pub fn snapshot_for(&mut self, exchange_id: ExchangeId, account_type: AccountType) -> SharedTradingSnapshot {
+        self.mgr.snapshot_for(exchange_id, account_type)
     }
 
     /// Place an order (routes to paper engine or live exchange API

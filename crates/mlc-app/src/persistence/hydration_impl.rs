@@ -1224,12 +1224,82 @@ impl ChartApp {
                                 }
                                 PersistedFreeItemKind::TradingContainer { source, tick_size, market_price } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
-                                        let symbol = match source {
-                                            mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
-                                            mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        let converted_source = convert_source(source);
+
+                                        // Resolve (symbol, exchange, account_type) the same way
+                                        // `spawn_panel_in_slot` (panel_click.rs) resolves a live
+                                        // spawn — via `SymbolSource::resolve` against the active
+                                        // chart / bound leaf — instead of gating on `Fixed` only.
+                                        // Chart windows are restored by Steps 1-4 above (before
+                                        // this Step 8b), so `panel_grid` is already populated and
+                                        // `HyperFocus`/`BoundToChart` sources (the default "Tagged"
+                                        // mode — most containers are NOT `Fixed`) resolve correctly
+                                        // right here; no post-hydration deferral needed. Without
+                                        // this, a container persisted in the default Tagged mode
+                                        // hydrated with an empty exchange forever — dead DOM ladder,
+                                        // $0.00 Available — because nothing else ever re-mirrors
+                                        // these fields onto the container's children afterward.
+                                        let hydrate_active_cid = self.panel_app.panel_grid.active_container_id();
+                                        let active_resolved = hydrate_active_cid.map(|cid| mlc_app_panels::trading::ResolvedSymbol {
+                                            symbol: self.symbol_for_chart(cid).map(String::from).unwrap_or_default(),
+                                            exchange: self.exchange_for_chart(cid).map(String::from).unwrap_or_default(),
+                                            account_type: self.account_type_for_chart(cid).map(|at| at.to_string()).unwrap_or_default(),
+                                        });
+                                        let resolve_leaf = |lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> {
+                                            let leaf_cid = self.panel_app.panel_grid.container_id_for_leaf(mlc_core::LeafId(lid))?;
+                                            Some(mlc_app_panels::trading::ResolvedSymbol {
+                                                symbol: self.symbol_for_chart(leaf_cid).map(String::from).unwrap_or_default(),
+                                                exchange: self.exchange_for_chart(leaf_cid).map(String::from).unwrap_or_default(),
+                                                account_type: self.account_type_for_chart(leaf_cid).map(|at| at.to_string()).unwrap_or_default(),
+                                            })
                                         };
-                                        let mut s = mlc_app_panels::trading::trading::trading_container::TradingContainerState::new(symbol, *tick_size, *market_price);
-                                        s.source = convert_source(source);
+                                        let resolved = converted_source.resolve(active_resolved.as_ref(), &resolve_leaf);
+                                        let resolved_symbol = resolved.as_ref().map(|r| r.symbol.clone()).unwrap_or_default();
+                                        let resolved_exchange = resolved.as_ref().map(|r| r.exchange.clone())
+                                            .unwrap_or_else(|| self.active_exchange.as_str().to_string());
+                                        let resolved_account_type = resolved.as_ref().map(|r| r.account_type.clone())
+                                            .unwrap_or_else(|| digdigdig3::AccountType::Spot.short_label().to_string());
+
+                                        let mut s = mlc_app_panels::trading::trading::trading_container::TradingContainerState::new(
+                                            resolved_symbol, *tick_size, *market_price,
+                                        );
+                                        s.source = converted_source;
+                                        // Mirror (exchange, account_type) onto the container AND its
+                                        // hosted dom/order_entry children — same post-construction
+                                        // wiring as the "trading_container" arm of
+                                        // `spawn_panel_in_slot`. Every page reload hydrates via THIS
+                                        // path, not that one.
+                                        s.exchange = resolved_exchange.clone();
+                                        s.account_type = resolved_account_type.clone();
+                                        s.dom.exchange = resolved_exchange;
+                                        s.dom.account_type = resolved_account_type.clone();
+                                        s.order_entry.exchange = s.exchange.clone();
+                                        s.order_entry.account_type = resolved_account_type;
+
+                                        // Subscribe the hosted DOM to live orderbook/trade feeds if
+                                        // we have a concrete symbol — same pattern as the "Dom" arm
+                                        // above.
+                                        if !s.symbol.is_empty() {
+                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
+                                                let at = crate::account_type_from_label(&s.account_type);
+                                                s.dom.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
+                                                s.dom.last_seen_update_id = None;
+                                                s.dom.level_qty_bid.clear();
+                                                s.dom.level_qty_ask.clear();
+                                                s.dom.shared_trades = self.core.subscribe_trades(eid, &s.symbol, at);
+
+                                                // Bind the hosted OrderEntry / PositionManager /
+                                                // TradeLog to the (exchange, account_type) trading
+                                                // snapshot — same as the "trading_container" spawn
+                                                // arm (creation-time-only binding).
+                                                if let Some(mut tm) = self.core.trading_mut() {
+                                                    let snap = tm.snapshot_for(eid, at);
+                                                    s.order_entry.set_snapshot(snap.clone());
+                                                    s.position_manager.set_snapshot(snap.clone());
+                                                    s.trade_log.set_snapshot(snap);
+                                                }
+                                            }
+                                        }
                                         self.panels_store.trading_container.insert(pid, s);
                                     }
                                 }

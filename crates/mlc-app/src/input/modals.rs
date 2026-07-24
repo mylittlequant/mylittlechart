@@ -2099,9 +2099,14 @@ impl ChartApp {
     /// Backspace-deletes-primitive hotkey so they never fire while the user
     /// is typing or a settings modal is in front. `pub(super)` so
     /// `input::mod::on_key_press` can gate the Backspace arm the same way.
+    ///
+    /// Also true while any OrderEntry numeric field is mid-edit —
+    /// `OrderEntryState`'s `editing_field` is panel-local state, not a
+    /// TextFieldStore registration, so it needs its own explicit check here.
     pub(super) fn primitive_hotkeys_blocked(&self) -> bool {
         self.input_coordinator.borrow().text_fields().focused().is_some()
             || self.any_blocking_modal_open()
+            || self.any_order_entry_editing()
     }
 
     /// Compute the shared +20px right / -20px up screen-space offset (in

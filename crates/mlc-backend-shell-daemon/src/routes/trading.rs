@@ -23,22 +23,21 @@ async fn list_connectors(State(s): State<AppState>) -> impl IntoResponse {
     let connectors = match s.core.trading() {
         None => Vec::new(),
         Some(guard) => {
-            // TradingManager.snapshot() returns Arc<RwLock<TradingSnapshot>>.
-            // TradingSnapshot.session is a single Option<SessionInfo>.
-            // Return it as a single-element list (or empty if no session).
-            let snap = guard.snapshot();
-            let read = snap.read();
-            match read {
-                Err(_) => Vec::new(),
-                Ok(g) => match &g.session {
-                    None => Vec::new(),
-                    Some(si) => vec![ConnectorEntry {
+            // One TradingSnapshot per (exchange_id, account_type) session now
+            // — list every session that has a published SessionInfo.
+            guard
+                .all_snapshots()
+                .into_iter()
+                .filter_map(|(_, _, snap)| {
+                    let read = snap.read().ok()?;
+                    let si = read.session.as_ref()?;
+                    Some(ConnectorEntry {
                         exchange_id: si.exchange_id.as_str().to_string(),
                         account_type: si.account_type.short_label().to_string(),
                         is_paper: si.is_paper,
-                    }],
-                },
-            }
+                    })
+                })
+                .collect()
         }
     };
     Json(ConnectorsOut { connectors })

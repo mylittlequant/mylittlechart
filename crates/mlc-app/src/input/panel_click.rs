@@ -5,9 +5,17 @@
 use crate::agent as gate4agent;
 
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use uzor::WidgetId;
 use mlc_core::localize_primitive_name;
+
+/// Which store an `OrderEntryState` lives in — see
+/// [`ChartApp::submit_order_entry_target`].
+#[derive(Copy, Clone)]
+enum OrderEntryTarget {
+    Standalone(mlc_core::state::PanelId),
+    Container(mlc_core::state::PanelId),
+}
 
 impl ChartApp {
     /// Dispatch a click that landed on a registered widget.
@@ -2089,6 +2097,9 @@ impl ChartApp {
                         // "{slot_prefix}:oe:{local}" where slot_prefix = "slot:{idx}:leaf:{leaf_id}".
                         // Split leaf_rest on the first ':' to get (leaf_id_str, local_id).
                         // local_id will be e.g. "oe:buy", "oe:tab:0", "oe:submit", etc.
+                        // A TradingContainer's hosted OrderEntry namespaces itself the exact
+                        // same way (the container forwards its own slot_prefix unchanged), so
+                        // it matches this same widget-id shape — only the target store differs.
                         if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
                             if local_id.starts_with("oe:") {
                                 if let Ok(raw) = leaf_id_str.parse::<u64>() {
@@ -2098,13 +2109,31 @@ impl ChartApp {
                                         .tree()
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
-                                    if let Some(mlc_core::state::Panel::OrderEntry(pid)) = item_opt {
-                                        use mlc_app_panels::panel_trait::TradingPanel;
-                                        if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
-                                            if state.handle_click(local_id, x, y) {
+                                    use mlc_app_panels::panel_trait::TradingPanel;
+                                    match item_opt {
+                                        Some(mlc_core::state::Panel::OrderEntry(pid)) => {
+                                            let handled = self.panels_store.order_entry.get_mut(&pid)
+                                                .map(|state| state.handle_click(local_id, x, y))
+                                                .unwrap_or(false);
+                                            if handled {
                                                 self.sidebar_data_dirty = true;
+                                                if local_id == "oe:submit" {
+                                                    self.submit_order_entry(pid);
+                                                }
                                             }
                                         }
+                                        Some(mlc_core::state::Panel::TradingContainer(pid)) => {
+                                            let handled = self.panels_store.trading_container.get_mut(&pid)
+                                                .map(|state| state.handle_click(local_id, x, y))
+                                                .unwrap_or(false);
+                                            if handled {
+                                                self.sidebar_data_dirty = true;
+                                                if local_id == "oe:submit" {
+                                                    self.submit_order_entry_in_container(pid);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
                                 return;
@@ -4971,14 +5000,43 @@ impl ChartApp {
                     state.exchange = exchange_str.clone();
                     state.account_type = account_type_str.clone();
                 }
+                // Bind this panel's own (exchange, account_type) trading
+                // snapshot — creation-time only, no rebind path if the
+                // panel's symbol source changes later.
+                let eid = digdigdig3::ExchangeId::from_str(&exchange_str).unwrap_or(self.active_exchange);
+                let at = crate::account_type_from_label(&account_type_str);
+                if let Some(mut tm) = self.core.trading_mut() {
+                    let snap = tm.snapshot_for(eid, at);
+                    if let Some(state) = self.panels_store.order_entry.get_mut(&pid) {
+                        state.set_snapshot(snap);
+                    }
+                }
                 Some(mlc_core::state::Panel::OrderEntry(pid))
             }
             "position_manager" => {
                 let pid = self.panels_store.create_position_manager();
+                // Same creation-time-only snapshot binding as "order_entry".
+                let eid = digdigdig3::ExchangeId::from_str(&exchange_str).unwrap_or(self.active_exchange);
+                let at = crate::account_type_from_label(&account_type_str);
+                if let Some(mut tm) = self.core.trading_mut() {
+                    let snap = tm.snapshot_for(eid, at);
+                    if let Some(state) = self.panels_store.position_manager.get_mut(&pid) {
+                        state.set_snapshot(snap);
+                    }
+                }
                 Some(mlc_core::state::Panel::PositionManager(pid))
             }
             "trade_log" => {
                 let pid = self.panels_store.create_trade_log();
+                // Same creation-time-only snapshot binding as "order_entry".
+                let eid = digdigdig3::ExchangeId::from_str(&exchange_str).unwrap_or(self.active_exchange);
+                let at = crate::account_type_from_label(&account_type_str);
+                if let Some(mut tm) = self.core.trading_mut() {
+                    let snap = tm.snapshot_for(eid, at);
+                    if let Some(state) = self.panels_store.trade_log.get_mut(&pid) {
+                        state.set_snapshot(snap);
+                    }
+                }
                 Some(mlc_core::state::Panel::TradeLog(pid))
             }
             "risk_calculator" => {
@@ -4991,6 +5049,43 @@ impl ChartApp {
                     state.source = source.clone();
                     state.exchange = exchange_str.clone();
                     state.account_type = account_type_str.clone();
+                    state.dom.exchange = exchange_str.clone();
+                    state.dom.account_type = account_type_str.clone();
+                    state.order_entry.exchange = exchange_str.clone();
+                    state.order_entry.account_type = account_type_str.clone();
+                }
+                // Subscribe the container's hosted DOM to live orderbook/trade
+                // feeds — same pattern as the standalone "dom" spawn arm above.
+                if !symbol.is_empty() {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    let trade_handle = self.core.subscribe_trades(eid, &symbol, at);
+                    let ob_handle = self.core.subscribe_orderbook(eid, &symbol, at);
+                    if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                        state.dom.shared_orderbook = ob_handle;
+                        state.dom.last_seen_update_id = None;
+                        state.dom.level_qty_bid.clear();
+                        state.dom.level_qty_ask.clear();
+                        state.dom.shared_trades = trade_handle;
+                    }
+                }
+                // Bind the container's OrderEntry / PositionManager / TradeLog
+                // to the same (exchange, account_type) trading snapshot as
+                // their standalone counterparts (creation-time-only binding —
+                // see the "order_entry" arm above).
+                {
+                    let eid = digdigdig3::ExchangeId::from_str(&exchange_str)
+                        .unwrap_or(self.active_exchange);
+                    let at = crate::account_type_from_label(&account_type_str);
+                    if let Some(mut tm) = self.core.trading_mut() {
+                        let snap = tm.snapshot_for(eid, at);
+                        if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                            state.order_entry.set_snapshot(snap.clone());
+                            state.position_manager.set_snapshot(snap.clone());
+                            state.trade_log.set_snapshot(snap);
+                        }
+                    }
                 }
                 Some(mlc_core::state::Panel::TradingContainer(pid))
             }
@@ -5152,6 +5247,150 @@ impl ChartApp {
             self.sidebar_state.slot_spawn_dropdown = None;
             self.sidebar_data_dirty = true;
             self.autosave_snapshot();
+        }
+    }
+
+    /// Which store an `OrderEntryState` lives in — the standalone
+    /// `panels_store.order_entry` map, or hosted inside a
+    /// `panels_store.trading_container[pid].order_entry` child. Both paths
+    /// share the same submit flow (see [`Self::submit_order_entry_target`]).
+    fn order_entry_mut(
+        &mut self,
+        target: OrderEntryTarget,
+    ) -> Option<&mut mlc_app_panels::trading::trading::order_entry::OrderEntryState> {
+        match target {
+            OrderEntryTarget::Standalone(pid) => self.panels_store.order_entry.get_mut(&pid),
+            OrderEntryTarget::Container(pid) => self.panels_store.trading_container.get_mut(&pid)
+                .map(|c| &mut c.order_entry),
+        }
+    }
+
+    /// Validate and submit a standalone Order Entry panel's current order.
+    fn submit_order_entry(&mut self, pid: mlc_core::state::PanelId) {
+        self.submit_order_entry_target(OrderEntryTarget::Standalone(pid));
+    }
+
+    /// Validate and submit a TradingContainer-hosted Order Entry's current order.
+    fn submit_order_entry_in_container(&mut self, pid: mlc_core::state::PanelId) {
+        self.submit_order_entry_target(OrderEntryTarget::Container(pid));
+    }
+
+    /// Validate and submit the Order Entry panel's current order.
+    ///
+    /// Called right after `OrderEntryState::handle_click` consumes an
+    /// `"oe:submit"` click (which unconditionally flips `submitting = true`
+    /// — this is where validation + the actual `TradingMut::place_order`
+    /// call happen). Builds a dig3 `OrderRequest` from the panel's own
+    /// (exchange, account_type) binding and current field values. Shared by
+    /// both the standalone OrderEntry panel and a TradingContainer-hosted one.
+    ///
+    /// Every branch logs via `sglog!` (reaches the browser DevTools console
+    /// on wasm, `eprintln!` on native) — a plain `eprintln!` here is
+    /// invisible in the browser, which made every failure of this path
+    /// silent during the container e2e bug hunt.
+    fn submit_order_entry_target(&mut self, target: OrderEntryTarget) {
+        use mlc_app_panels::trading::trading::order_entry::{
+            OrderSide as PanelSide, OrderType as PanelOrderType, TimeInForce as PanelTif,
+        };
+
+        let Some(state) = self.order_entry_mut(target) else { return };
+        // Commit any in-flight numeric edit (price/stop/qty) before
+        // validating — the submit button itself does not commit (only
+        // switching to a different field or pressing Enter does), so a
+        // click straight from a still-being-typed field must not submit a
+        // stale value.
+        state.commit_editing();
+        state.validate();
+        if !state.is_valid() {
+            sglog!("[trading] submit rejected: {:?}", state.errors);
+            state.submitting = false;
+            return;
+        }
+
+        let exchange_str = state.exchange.clone();
+        let account_type_str = state.account_type.clone();
+        let raw_symbol = state.symbol.clone();
+        let side = state.side;
+        let order_type = state.order_type;
+        let price = state.price;
+        let stop_price = state.stop_price;
+        let quantity = state.quantity;
+        let time_in_force = state.time_in_force;
+
+        sglog!(
+            "[trading] submit {:?} {:?} {} qty={} exchange={} account_type={}",
+            side, order_type, raw_symbol, quantity, exchange_str, account_type_str
+        );
+
+        let Some(mut tm) = self.core.trading_mut() else {
+            sglog!("[trading] submit failed: trading unavailable");
+            if let Some(state) = self.order_entry_mut(target) {
+                state.submitting = false;
+                state.errors.clear();
+                state.errors.push("trading unavailable".to_string());
+            }
+            return;
+        };
+
+        let eid = digdigdig3::ExchangeId::from_str(&exchange_str).unwrap_or(self.active_exchange);
+        let at = crate::account_type_from_label(&account_type_str);
+        let symbol = digdigdig3::core::utils::SymbolNormalizer::from_exchange(eid, &raw_symbol, at)
+            .unwrap_or_else(|_| digdigdig3::Symbol::with_raw("", "", raw_symbol.clone()));
+
+        let dig3_side = match side {
+            PanelSide::Buy => digdigdig3::OrderSide::Buy,
+            PanelSide::Sell => digdigdig3::OrderSide::Sell,
+        };
+        let dig3_order_type = match order_type {
+            PanelOrderType::Market => digdigdig3::OrderType::Market,
+            PanelOrderType::Limit => digdigdig3::OrderType::Limit { price: price.unwrap_or(0.0) },
+            PanelOrderType::StopMarket => digdigdig3::OrderType::StopMarket { stop_price: stop_price.unwrap_or(0.0) },
+            PanelOrderType::StopLimit => digdigdig3::OrderType::StopLimit {
+                stop_price: stop_price.unwrap_or(0.0),
+                limit_price: price.unwrap_or(0.0),
+            },
+        };
+        let dig3_tif = match time_in_force {
+            PanelTif::GTC => mlc_backend_trading_engine::TimeInForce::Gtc,
+            PanelTif::IOC => mlc_backend_trading_engine::TimeInForce::Ioc,
+            PanelTif::FOK => mlc_backend_trading_engine::TimeInForce::Fok,
+        };
+
+        let req = mlc_backend_trading_engine::OrderRequest {
+            symbol,
+            side: dig3_side,
+            order_type: dig3_order_type,
+            quantity,
+            time_in_force: dig3_tif,
+            account_type: at,
+            client_order_id: None,
+            reduce_only: false,
+        };
+
+        let result = tm.place_order(eid, at, req);
+        drop(tm);
+
+        match &result {
+            Ok(()) => {
+                sglog!("[trading] submit OK {:?} {} qty={} exchange={} account_type={}", side, raw_symbol, quantity, exchange_str, account_type_str);
+            }
+            Err(e) => {
+                sglog!("[trading] submit FAILED: {}", e);
+            }
+        }
+
+        if let Some(state) = self.order_entry_mut(target) {
+            match result {
+                Ok(()) => {
+                    state.submitting = false;
+                    state.errors.clear();
+                }
+                Err(e) => {
+                    state.submitting = false;
+                    state.errors.clear();
+                    state.errors.push(e.to_string());
+                }
+            }
         }
     }
 

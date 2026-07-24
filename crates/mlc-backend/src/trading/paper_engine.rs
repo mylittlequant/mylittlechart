@@ -33,7 +33,14 @@ pub struct PaperEngine {
     balances: HashMap<String, f64>,
     orders: OrderManager,
     positions: PositionTracker,
-    fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
+    /// Carries this engine's own `(exchange_id, account_type)` key alongside
+    /// each fill — `TradingManager::tick` has one shared channel fed by
+    /// every paper engine (one per key), so the key is required to route a
+    /// fill into the correct `recent_fills[key]` bucket instead of guessing
+    /// (previously `paper_keys.first()` — nondeterministic `HashMap` order
+    /// with 2+ paper sessions live, e.g. Binance/Bybit/OKX all auto-created
+    /// by `on_connector_ready`).
+    fill_tx: tokio::sync::mpsc::UnboundedSender<((ExchangeId, AccountType), Fill)>,
     next_order_id: u64,
 }
 
@@ -43,7 +50,7 @@ impl PaperEngine {
         account_type: AccountType,
         bridge: Arc<DataBridge>,
         initial_balances: HashMap<String, f64>,
-        fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
+        fill_tx: tokio::sync::mpsc::UnboundedSender<((ExchangeId, AccountType), Fill)>,
     ) -> Self {
         Self {
             exchange_id,
@@ -105,7 +112,7 @@ impl PaperEngine {
                     timestamp: now,
                     is_paper: true,
                 };
-                let _ = self.fill_tx.send(fill.clone());
+                let _ = self.fill_tx.send(((self.exchange_id, self.account_type), fill.clone()));
                 self.positions.apply_fill(&fill);
 
                 let order = Order {
@@ -318,7 +325,7 @@ impl PaperEngine {
                 timestamp: now,
                 is_paper: true,
             };
-            let _ = self.fill_tx.send(fill.clone());
+            let _ = self.fill_tx.send(((self.exchange_id, self.account_type), fill.clone()));
             self.positions.apply_fill(&fill);
 
             let mut order = pending.order;

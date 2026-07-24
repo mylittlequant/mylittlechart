@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mlc_core::state::{PanelId, Panel};
-use mlc_backend_trading_engine::SharedTradingSnapshot;
 use mlc_core::state::ChartPanelId;
 use crate::chart_panel_state::ChartPanelState;
 
@@ -41,7 +40,6 @@ use mlc_app_panels::trading::trading::{
 /// to prevent collisions with persisted ids.
 pub struct TradingPanelsStore {
     next_id: AtomicU64,
-    trading_snapshot: Option<SharedTradingSnapshot>,
     pub dom: HashMap<PanelId, DomState>,
     pub footprint: HashMap<PanelId, FootprintState>,
     pub volume_profile: HashMap<PanelId, VolumeProfileState>,
@@ -73,7 +71,6 @@ impl TradingPanelsStore {
     pub fn new() -> Self {
         Self {
             next_id: AtomicU64::new(1),
-            trading_snapshot: None,
             dom: HashMap::new(),
             footprint: HashMap::new(),
             volume_profile: HashMap::new(),
@@ -94,19 +91,6 @@ impl TradingPanelsStore {
 
     fn alloc_id(&self) -> PanelId {
         PanelId(self.next_id.fetch_add(1, Ordering::Relaxed))
-    }
-
-    pub fn set_trading_snapshot(&mut self, snap: SharedTradingSnapshot) {
-        for state in self.order_entry.values_mut() {
-            state.set_snapshot(snap.clone());
-        }
-        for state in self.position_manager.values_mut() {
-            state.set_snapshot(snap.clone());
-        }
-        for state in self.trade_log.values_mut() {
-            state.set_snapshot(snap.clone());
-        }
-        self.trading_snapshot = Some(snap);
     }
 
     // -------------------------------------------------------------------------
@@ -189,35 +173,30 @@ impl TradingPanelsStore {
     }
 
     /// Allocate a new Order Entry panel.
+    ///
+    /// The panel starts with no trading snapshot bound — `panels_store` has
+    /// no access to `BackendCore`. The app layer (`panel_click.rs`'s
+    /// `spawn_panel_in_slot`) binds this panel's own `(exchange, account_type)`
+    /// snapshot via `OrderEntryState::set_snapshot` right after creation.
     pub fn create_order_entry(&mut self, symbol: String) -> PanelId {
         let id = self.alloc_id();
-        let mut state = OrderEntryState::new(symbol);
-        if let Some(snap) = &self.trading_snapshot {
-            state.set_snapshot(snap.clone());
-        }
-        self.order_entry.insert(id, state);
+        self.order_entry.insert(id, OrderEntryState::new(symbol));
         id
     }
 
-    /// Allocate a new Position Manager panel.
+    /// Allocate a new Position Manager panel. See [`Self::create_order_entry`]
+    /// — snapshot binding happens in the app layer, not here.
     pub fn create_position_manager(&mut self) -> PanelId {
         let id = self.alloc_id();
-        let mut state = PositionManagerState::new();
-        if let Some(snap) = &self.trading_snapshot {
-            state.set_snapshot(snap.clone());
-        }
-        self.position_manager.insert(id, state);
+        self.position_manager.insert(id, PositionManagerState::new());
         id
     }
 
-    /// Allocate a new Trade Log panel.
+    /// Allocate a new Trade Log panel. See [`Self::create_order_entry`] —
+    /// snapshot binding happens in the app layer, not here.
     pub fn create_trade_log(&mut self) -> PanelId {
         let id = self.alloc_id();
-        let mut state = TradeLogState::new();
-        if let Some(snap) = &self.trading_snapshot {
-            state.set_snapshot(snap.clone());
-        }
-        self.trade_log.insert(id, state);
+        self.trade_log.insert(id, TradeLogState::new());
         id
     }
 
@@ -362,32 +341,24 @@ impl TradingPanelsStore {
                 self.trade_tape.insert(pid, TradeTapeState::new());
                 Some(Panel::TradeTape(pid))
             }
+            // No core access here — split-cloned OrderEntry/PositionManager/
+            // TradeLog panels start with no trading snapshot bound (same
+            // creation-time-only binding as `create_*`; there is no rebind
+            // path from panels_store for these three kinds).
             Panel::OrderEntry(id) => {
                 let s = self.order_entry.get(id)?;
                 let pid = self.alloc_id();
-                let mut state = OrderEntryState::new(s.symbol.clone());
-                if let Some(snap) = &self.trading_snapshot {
-                    state.set_snapshot(snap.clone());
-                }
-                self.order_entry.insert(pid, state);
+                self.order_entry.insert(pid, OrderEntryState::new(s.symbol.clone()));
                 Some(Panel::OrderEntry(pid))
             }
             Panel::PositionManager(_) => {
                 let pid = self.alloc_id();
-                let mut state = PositionManagerState::new();
-                if let Some(snap) = &self.trading_snapshot {
-                    state.set_snapshot(snap.clone());
-                }
-                self.position_manager.insert(pid, state);
+                self.position_manager.insert(pid, PositionManagerState::new());
                 Some(Panel::PositionManager(pid))
             }
             Panel::TradeLog(_) => {
                 let pid = self.alloc_id();
-                let mut state = TradeLogState::new();
-                if let Some(snap) = &self.trading_snapshot {
-                    state.set_snapshot(snap.clone());
-                }
-                self.trade_log.insert(pid, state);
+                self.trade_log.insert(pid, TradeLogState::new());
                 Some(Panel::TradeLog(pid))
             }
             Panel::RiskCalculator(_) => {

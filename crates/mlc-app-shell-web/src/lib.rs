@@ -161,7 +161,15 @@ async fn run() -> Result<(), JsValue> {
     // watchlists.json straight from `global_storage()`) — no manual
     // pre-seeding needed here, same division of labour as the native shell's
     // `App::new` → `mlc_app::ChartApp::new_window` call.
-    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    // Paper-only trading manager (TradingConfig::is_paper defaults true, and
+    // there is no way to enter real API credentials from this shell). Wasm
+    // arm of TradingManager::new has no runtime_handle param — spawn_task
+    // uses wasm_bindgen_futures::spawn_local instead of tokio::Handle::spawn.
+    let trading = mlc_backend::trading::TradingManager::new(
+        bridge.clone(),
+        std::path::PathBuf::from("."),
+    ).ok();
+    let core = mlc_backend::BackendCore::new(bridge.clone(), trading);
     let profile = profile_manager.profile.clone();
     // Restore = this shell's saved WindowState — the native shell passes
     // profile.windows[i] per OS window; the per-window state (active

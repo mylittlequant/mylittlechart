@@ -2083,9 +2083,9 @@ impl ChartApp {
             primitive_clipboard: None,
         };
 
-        if let Some(tm) = app.core.trading() {
-            app.panels_store.set_trading_snapshot(tm.snapshot());
-        }
+        // Trading snapshots are per-panel now (`(exchange, account_type)`
+        // keyed) — panels bind their own snapshot at spawn time in
+        // `panel_click.rs`'s `spawn_panel_in_slot`, not here.
 
         // Load persisted user state (templates, presets, profile) from disk.
         // Must happen before toolbar_config override so that the active_preset_id

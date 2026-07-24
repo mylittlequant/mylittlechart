@@ -58,7 +58,7 @@ pub struct TradingManager {
     sessions: HashMap<(ExchangeId, AccountType), SessionInfo>,
     capabilities: HashMap<(ExchangeId, AccountType), TradingCapabilities>,
     account_caps: HashMap<(ExchangeId, AccountType), AccountCapabilities>,
-    snapshot: SharedTradingSnapshot,
+    snapshots: HashMap<(ExchangeId, AccountType), SharedTradingSnapshot>,
     config: TradingConfig,
     /// Native: tokio runtime handle for spawning trading API calls.
     /// Wasm: unused — spawns go through `wasm_bindgen_futures::spawn_local`.
@@ -66,8 +66,12 @@ pub struct TradingManager {
     runtime_handle: tokio::runtime::Handle,
     result_tx: std::sync::mpsc::SyncSender<TradingTaskResult>,
     result_rx: std::sync::mpsc::Receiver<TradingTaskResult>,
-    paper_fill_tx: tokio::sync::mpsc::UnboundedSender<Fill>,
-    paper_fill_rx: tokio::sync::mpsc::UnboundedReceiver<Fill>,
+    /// Fed by every live `PaperEngine` (one per `(exchange_id, account_type)`
+    /// key); each fill carries its origin key so the drain in `tick()` can
+    /// route it into the exact `recent_fills[key]` bucket instead of
+    /// guessing.
+    paper_fill_tx: tokio::sync::mpsc::UnboundedSender<((ExchangeId, AccountType), Fill)>,
+    paper_fill_rx: tokio::sync::mpsc::UnboundedReceiver<((ExchangeId, AccountType), Fill)>,
     data_dir: PathBuf,
     cached_balances: HashMap<(ExchangeId, AccountType), Vec<Balance>>,
     recent_fills: HashMap<(ExchangeId, AccountType), VecDeque<Fill>>,
@@ -82,7 +86,6 @@ impl TradingManager {
         #[cfg(not(target_arch = "wasm32"))] runtime_handle: tokio::runtime::Handle,
     ) -> TradingResult<Self> {
         let config = TradingConfig::load(&data_dir.join("trading_config.json"))?;
-        let snapshot = TradingSnapshot::new_shared();
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(256);
         let (paper_fill_tx, paper_fill_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -94,7 +97,7 @@ impl TradingManager {
             sessions: HashMap::new(),
             capabilities: HashMap::new(),
             account_caps: HashMap::new(),
-            snapshot,
+            snapshots: HashMap::new(),
             config,
             #[cfg(not(target_arch = "wasm32"))]
             runtime_handle,
@@ -110,8 +113,23 @@ impl TradingManager {
         })
     }
 
-    pub fn snapshot(&self) -> SharedTradingSnapshot {
-        Arc::clone(&self.snapshot)
+    /// Shared handle to the `(exchange_id, account_type)` session's snapshot,
+    /// lazily creating an empty one the first time this key is requested.
+    pub fn snapshot_for(&mut self, exchange_id: ExchangeId, account_type: AccountType) -> SharedTradingSnapshot {
+        Arc::clone(
+            self.snapshots
+                .entry((exchange_id, account_type))
+                .or_insert_with(TradingSnapshot::new_shared),
+        )
+    }
+
+    /// Every currently known session snapshot, keyed by `(exchange_id,
+    /// account_type)`. Enumeration only — does not create new slots.
+    pub fn all_snapshots(&self) -> Vec<(ExchangeId, AccountType, SharedTradingSnapshot)> {
+        self.snapshots
+            .iter()
+            .map(|(&(exchange_id, account_type), snap)| (exchange_id, account_type, Arc::clone(snap)))
+            .collect()
     }
 
     /// Spawn a fire-and-forget trading API call.
@@ -147,9 +165,16 @@ impl TradingManager {
         }
 
         if self.config.is_paper(exchange_id, account_type) {
-            if let Some(engine) = self.paper_engines.get_mut(&key) {
-                let _order = engine.place_order_sync(req)?;
-            }
+            // No silent no-op: a missing paper engine (exchange connector not
+            // yet ready, or `on_connector_ready` never ran for this pair —
+            // e.g. the connector toggle is disabled) previously fell through
+            // this `if let` and returned `Ok(())` regardless, so the order
+            // vanished with a false success and no way for the caller to
+            // surface anything to the user.
+            let Some(engine) = self.paper_engines.get_mut(&key) else {
+                return Err(TradingError::NoSession { exchange: exchange_id, account_type });
+            };
+            let _order = engine.place_order_sync(req)?;
             return Ok(());
         }
 
@@ -359,17 +384,22 @@ impl TradingManager {
             engine.tick();
         }
 
-        // Drain paper fills into recent_fills for the first paper session found.
-        // PaperEngine applies fills to positions internally; here we record them
-        // so snapshots can show recent activity.
-        let paper_keys: Vec<_> = self.paper_engines.keys().copied().collect();
-        while let Ok(fill) = self.paper_fill_rx.try_recv() {
-            if let Some(&key) = paper_keys.first() {
-                let fills = self.recent_fills.entry(key).or_insert_with(VecDeque::new);
-                fills.push_back(fill);
-                if fills.len() > 100 {
-                    fills.pop_front();
-                }
+        // Drain paper fills into recent_fills, keyed by the exact
+        // (exchange_id, account_type) each fill's origin `PaperEngine` sent
+        // alongside it — NOT a "first paper session found" guess. With 2+
+        // paper sessions live at once (e.g. Binance/Bybit/OKX all
+        // auto-created by `on_connector_ready` for market data), routing
+        // every fill to `paper_keys.first()` (nondeterministic `HashMap`
+        // order) meant a fill almost never landed in the `recent_fills`
+        // bucket its own snapshot reads from, so `TradeLog` stayed empty
+        // even after a successful paper fill. PaperEngine applies fills to
+        // positions internally; here we only record them so snapshots can
+        // show recent activity.
+        while let Ok((key, fill)) = self.paper_fill_rx.try_recv() {
+            let fills = self.recent_fills.entry(key).or_insert_with(VecDeque::new);
+            fills.push_back(fill);
+            if fills.len() > 100 {
+                fills.pop_front();
             }
         }
 
@@ -419,9 +449,10 @@ impl TradingManager {
             last_error: self.last_error.get(&key).cloned(),
             order_in_flight: self.orders_in_flight.contains(&key),
         };
-        if let Ok(mut snap) = self.snapshot.write() {
+        let slot = self.snapshot_for(key.0, key.1);
+        if let Ok(mut snap) = slot.write() {
             *snap = new_snap;
-        }
+        };
     }
 
     pub fn on_connector_ready(&mut self, exchange_id: ExchangeId) {
