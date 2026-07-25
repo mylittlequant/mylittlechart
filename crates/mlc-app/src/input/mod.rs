@@ -25,6 +25,7 @@ mod sync_group;
 mod modals;
 mod settings;
 pub(crate) mod drawing_session;
+mod trading_container_bind;
 
 // =============================================================================
 // KeyPress — named key events forwarded from the platform runner
@@ -1398,6 +1399,11 @@ impl ChartApp {
         // Detect drag on `slot:{idx}:leaf:{leaf_id}:dom:body` (DOM BlackboxPanel)
         // or `slot:{idx}:leaf:{leaf_id}:focus_content` (other panel types).
         // DOM is now registered as a BlackboxPanel widget with id `slot:N:leaf:M:dom:body`.
+        // A TradingContainer-hosted DOM emits this SAME widget-id shape (the
+        // container forwards its own `slot_prefix` unchanged — see
+        // `TradingContainerState::render`) — matched alongside `Panel::Dom`
+        // below so the ladder recenter-drag works identically nested inside
+        // the container (W1, 2026-07-25).
         if self.active_drag_panel.is_none() {
             let hovered_wid = live_hover.clone();
             if let Some(ref wid) = hovered_wid {
@@ -1416,7 +1422,7 @@ impl ChartApp {
                                             .leaf(leaf_id)
                                             .and_then(|l| l.active_panel().cloned());
                                         use mlc_core::state::Panel;
-                                        if let Some(item @ Panel::Dom(_)) = item_opt {
+                                        if let Some(item @ (Panel::Dom(_) | Panel::TradingContainer(_))) = item_opt {
                                             if let Some(panel) = self.panels_store.get_panel_mut(&item) {
                                                 if panel.handle_drag_start("dom:body", x, y) {
                                                     self.active_drag_panel = Some((item, "dom:body".to_string(), x, y));
@@ -1465,6 +1471,48 @@ impl ChartApp {
                                                 return false;
                                             }
                                             _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── TradingContainer separator drag initiation ────────────────────────
+        // Detect drag on `slot:{idx}:leaf:{leaf_id}:sep:{name}` — one of the 4
+        // v1 region separators (`TradingSeparator::wire_id`). Separate block
+        // from the DOM/focus_content one above because these are plain
+        // registered widgets (not BlackboxPanel composites), so a direct
+        // `live_hover` suffix match is enough — no coordinator z-order
+        // subtlety to route around.
+        if self.active_drag_panel.is_none() {
+            if let Some(ref wid) = live_hover {
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((slot_str, after_slot)) = rest.split_once(":leaf:") {
+                        if let Ok(slot_idx) = slot_str.parse::<usize>() {
+                            if slot_idx < 4 {
+                                if let Some((leaf_id_str, local_id)) = after_slot.split_once(':') {
+                                    if mlc_app_panels::trading::trading::trading_container::TradingSeparator::from_wire_id(local_id).is_some() {
+                                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                            let leaf_id = uzor::panels::LeafId(raw);
+                                            let item_opt = self.sidebar_state.slot_dockings[slot_idx]
+                                                .inner()
+                                                .tree()
+                                                .leaf(leaf_id)
+                                                .and_then(|l| l.active_panel().cloned());
+                                            use mlc_core::state::Panel;
+                                            if let Some(item @ Panel::TradingContainer(_)) = item_opt {
+                                                if let Some(panel) = self.panels_store.get_panel_mut(&item) {
+                                                    if panel.handle_drag_start(local_id, x, y) {
+                                                        self.active_drag_panel = Some((item, local_id.to_string(), x, y));
+                                                        self.ui_drag_active = true;
+                                                        return false;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -5037,6 +5085,19 @@ impl ChartApp {
             };
         }
 
+        // ── Active TradingContainer separator drag: show resize cursor for
+        // entire drag duration (mirrors the agent/slot separator checks
+        // above) — W1, 2026-07-25.
+        if let Some((mlc_core::state::Panel::TradingContainer(_), ref local_id, _, _)) = self.active_drag_panel {
+            use mlc_app_panels::trading::trading::trading_container::TradingSeparator;
+            if let Some(sep) = TradingSeparator::from_wire_id(local_id) {
+                return match sep {
+                    TradingSeparator::DomRightCol | TradingSeparator::PmTradeLog => CursorStyle::EwResize,
+                    TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
+                };
+            }
+        }
+
         // Sidebar separator: show EwResize cursor when hovering over or dragging the separator.
         // LIVE hit-test at (x, y) — not the stale end_frame hover snapshot.
         let on_sidebar_separator = self.sidebar_separator_drag_active
@@ -5081,6 +5142,26 @@ impl ChartApp {
                             Some(SeparatorOrientation::Vertical) => CursorStyle::EwResize,
                             _ => CursorStyle::NsResize,
                         };
+                    }
+                }
+
+                // slot:{idx}:leaf:{leaf_id}:sep:{name} — a TradingContainer's
+                // v1 region separators (W1, 2026-07-25). Checked before the
+                // slot:{slot_idx}:sep:{sep_idx} shape below since it wouldn't
+                // match this one anyway (its `sep_str.parse::<usize>()` fails
+                // on a leaf-qualified id) but keeps the two shapes visually
+                // grouped.
+                if let Some(rest) = wid.strip_prefix("slot:") {
+                    if let Some((_slot_str, after_slot)) = rest.split_once(":leaf:") {
+                        if let Some((_leaf_id_str, local_id)) = after_slot.split_once(':') {
+                            use mlc_app_panels::trading::trading::trading_container::TradingSeparator;
+                            if let Some(sep) = TradingSeparator::from_wire_id(local_id) {
+                                return match sep {
+                                    TradingSeparator::DomRightCol | TradingSeparator::PmTradeLog => CursorStyle::EwResize,
+                                    TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
+                                };
+                            }
+                        }
                     }
                 }
 
@@ -5767,47 +5848,77 @@ impl ChartApp {
                             use mlc_core::state::Panel;
                             let scroll_step = dy;
 
-                            // First: check if coordinator scroll target is a DOM BlackboxPanel.
-                            // Sense-aware process_scroll(x, y) finds dom:body even if non-scroll
-                            // widgets (overlays/buttons) are stacked above.
+                            // First: check if coordinator scroll target is a DOM BlackboxPanel
+                            // (standalone Dom slot) OR a TradingContainer-hosted dom/
+                            // position_manager/trade_log widget — same nested widget-id
+                            // shape one level under the container's own leaf, since
+                            // `TradingContainerState::render` forwards its `slot_prefix`
+                            // unchanged to every hosted child (W1, 2026-07-25).
+                            // Sense-aware process_scroll(x, y) finds these even if
+                            // non-scroll widgets (overlays/buttons) are stacked above.
                             let dom_leaf_opt = {
                                 let hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                                 hovered.and_then(|wid| {
                                     let rest = wid.strip_prefix("slot:")?;
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
-                                    let leaf_id_str = after_slot.strip_suffix(":dom:body")?;
                                     let panel_idx: usize = idx_str.parse().ok()?;
                                     if panel_idx != slot_idx { return None; }
-                                    let raw: u64 = leaf_id_str.parse().ok()?;
-                                    Some(uzor::panels::LeafId(raw))
+                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body"] {
+                                        if let Some(leaf_id_str) = after_slot.strip_suffix(suffix) {
+                                            let raw: u64 = leaf_id_str.parse().ok()?;
+                                            return Some((uzor::panels::LeafId(raw), &suffix[1..]));
+                                        }
+                                    }
+                                    None
                                 })
                             };
 
-                            if let Some(dom_leaf_id) = dom_leaf_opt {
+                            if let Some((dom_leaf_id, local_id)) = dom_leaf_opt {
                                 let item_opt = self.sidebar_state.slot_dockings[slot_idx]
                                     .inner()
                                     .tree()
                                     .leaf(dom_leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
-                                if let Some(Panel::Dom(pid)) = item_opt {
-                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        if ctrl {
-                                            // Ctrl+scroll: zoom tick_size (depth aggregation).
-                                            let new_tick = if scroll_step > 0.0 {
-                                                (state.tick_size * 10.0).clamp(0.0001, 100.0)
-                                            } else if scroll_step < 0.0 {
-                                                (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                match item_opt {
+                                    Some(Panel::Dom(pid)) => {
+                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                            if ctrl {
+                                                // Ctrl+scroll: zoom tick_size (depth aggregation).
+                                                let new_tick = if scroll_step > 0.0 {
+                                                    (state.tick_size * 10.0).clamp(0.0001, 100.0)
+                                                } else if scroll_step < 0.0 {
+                                                    (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                                } else {
+                                                    state.tick_size
+                                                };
+                                                state.set_tick_size(new_tick);
                                             } else {
-                                                state.tick_size
-                                            };
-                                            state.set_tick_size(new_tick);
-                                        } else {
-                                            use mlc_app_panels::BlackboxEvent;
-                                            use mlc_app_panels::panel_trait::TradingPanel;
-                                            state.handle_blackbox_event(0.0, 0.0, BlackboxEvent::Scroll { dy: scroll_step as f32 });
+                                                use mlc_app_panels::BlackboxEvent;
+                                                use mlc_app_panels::panel_trait::TradingPanel;
+                                                state.handle_blackbox_event(0.0, 0.0, BlackboxEvent::Scroll { dy: scroll_step as f32 });
+                                            }
+                                            self.sidebar_data_dirty = true;
                                         }
-                                        self.sidebar_data_dirty = true;
                                     }
+                                    Some(Panel::TradingContainer(pid)) => {
+                                        if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                                            if local_id == "dom:body" && ctrl {
+                                                let new_tick = if scroll_step > 0.0 {
+                                                    (state.dom.tick_size * 10.0).clamp(0.0001, 100.0)
+                                                } else if scroll_step < 0.0 {
+                                                    (state.dom.tick_size / 10.0).clamp(0.0001, 100.0)
+                                                } else {
+                                                    state.dom.tick_size
+                                                };
+                                                state.dom.set_tick_size(new_tick);
+                                            } else {
+                                                use mlc_app_panels::panel_trait::TradingPanel;
+                                                state.handle_scroll(local_id, 0.0, scroll_step);
+                                            }
+                                            self.sidebar_data_dirty = true;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 return;
                             }
@@ -7684,6 +7795,10 @@ impl ChartApp {
                                 source,
                                 tick_size: state.tick_size,
                                 market_price: state.market_price,
+                                right_ratio: state.right_ratio,
+                                bottom_ratio: state.bottom_ratio,
+                                right_split: state.right_split,
+                                bottom_split: state.bottom_split,
                             }
                         }
                         Panel::IndicatorPanel(id) => {

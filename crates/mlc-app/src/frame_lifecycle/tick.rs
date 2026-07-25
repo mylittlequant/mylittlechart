@@ -353,6 +353,11 @@ impl ChartApp {
             state.position_manager.sync_from_snapshot();
             state.trade_log.sync_from_snapshot();
         }
+        // HyperFocus follow (W2, 2026-07-25): rebind any `HyperFocus`
+        // container whose resolved instrument no longer matches the active
+        // chart's. See `trading_container_bind.rs` doc comment for why this
+        // is a per-tick compare instead of an `ActiveChartChanged` reaction.
+        self.poll_trading_container_hyperfocus_follow();
 
         // ── Watchlist refresh trigger ─────────────────────────────────────────
         // mini_ticker writes are passthrough at the BackendCore layer (DashMap,

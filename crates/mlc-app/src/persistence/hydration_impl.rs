@@ -1222,7 +1222,10 @@ impl ChartApp {
                                         self.panels_store.risk_calculator.insert(pid, mlc_app_panels::trading::trading::risk_calculator::RiskCalculatorState::new());
                                     }
                                 }
-                                PersistedFreeItemKind::TradingContainer { source, tick_size, market_price } => {
+                                PersistedFreeItemKind::TradingContainer {
+                                    source, tick_size, market_price,
+                                    right_ratio, bottom_ratio, right_split, bottom_split,
+                                } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
                                         let converted_source = convert_source(source);
 
@@ -1264,6 +1267,10 @@ impl ChartApp {
                                             resolved_symbol, *tick_size, *market_price,
                                         );
                                         s.source = converted_source;
+                                        s.right_ratio = *right_ratio;
+                                        s.bottom_ratio = *bottom_ratio;
+                                        s.right_split = *right_split;
+                                        s.bottom_split = *bottom_split;
                                         // Mirror (exchange, account_type) onto the container AND its
                                         // hosted dom/order_entry children — same post-construction
                                         // wiring as the "trading_container" arm of

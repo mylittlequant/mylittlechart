@@ -4,14 +4,27 @@
 //!
 //! v1 is a STATIC layout (no inner docking tree yet):
 //! - center = DOM ladder
-//! - right column (fixed width) = OrderEntry on top, RiskCalculator below
-//! - bottom strip (fixed height, spans center + right column) =
+//! - right column (live-resizable width) = OrderEntry on top, RiskCalculator below
+//! - bottom strip (live-resizable height, spans center + right column) =
 //!   PositionManager (left half), TradeLog (right half)
 //!
 //! The legacy `left_panel`/`right_panel`/`bottom_panel` `SubPanelSlot`
 //! machinery (Footprint / VolumeProfile / BigTrades / L2Tape) predates this
 //! topology and is kept for backwards compatibility, but it now only ever
 //! carves space out of the DOM column — the new fixed regions always win.
+//!
+//! ## Region model (W1, quality arc 2026-07-25)
+//!
+//! [`TradingContainerState::regions`] is the single geometry source every
+//! input router (click / hover / scroll / drag) ultimately agrees with:
+//! child rects come straight from [`TradingContainerState::v1_layout_rects`]
+//! (the same rects passed to each child's `render()`), and the 4 draggable
+//! separators are computed alongside them. `render()` uses `regions()` to
+//! draw + register the separators; children still register their own
+//! precise per-widget rects (DOM's `dom:body` BlackboxPanel, OrderEntry's
+//! `oe:*` buttons, ...) — `regions()` does not re-litigate those, it is the
+//! authority for the NEW separator geometry and a documented single source
+//! of truth for where each child's outer rect sits.
 
 use serde::{Serialize, Deserialize};
 use crate::render::RenderContext;
@@ -26,14 +39,31 @@ use super::position_manager::PositionManagerState;
 use super::trade_log::TradeLogState;
 use super::risk_calculator::RiskCalculatorState;
 
-/// Fixed width of the right column (OrderEntry + RiskCalculator), in px.
-const TC_RIGHT_COL_W: f64 = 260.0;
-/// Fixed height of the bottom strip (PositionManager + TradeLog), in px.
-const TC_BOTTOM_H: f64 = 180.0;
-/// Fraction of the right column's height given to OrderEntry (rest goes
-/// to RiskCalculator). No owner spec for the exact split — chosen so
+/// Minimum right-column width (px) below which the DOM|right-column
+/// separator refuses to shrink it further — keeps OrderEntry's field
+/// stack usable. Clamped against `w * 0.6` so it never inverts on a
+/// narrow container.
+const TC_RIGHT_COL_MIN_PX: f64 = 180.0;
+/// Minimum bottom-strip height (px) below which the bottom-strip
+/// separator refuses to shrink it further.
+const TC_BOTTOM_MIN_PX: f64 = 100.0;
+/// Hit-region padding (px, each side of the visual boundary) for the 4
+/// draggable separators — mirrors the docking system's own separator hit
+/// width (`sep_hit_w` in `mlc-app-sidebar-content::render`).
+const TC_SEP_HIT_PX: f64 = 4.0;
+/// Default fraction of the right column's height given to OrderEntry (rest
+/// goes to RiskCalculator). No owner spec for the exact split — chosen so
 /// OrderEntry's Limit/Stop-Limit field stack fits comfortably.
-const TC_OE_HEIGHT_RATIO: f64 = 0.55;
+const TC_RIGHT_SPLIT_DEFAULT: f64 = 0.55;
+/// Default fraction of the bottom strip's width given to PositionManager
+/// (rest goes to TradeLog) — 50/50, matching the v1 fixed layout it
+/// replaces.
+const TC_BOTTOM_SPLIT_DEFAULT: f64 = 0.5;
+/// Min/max clamp for the two INNER splits (OrderEntry|RiskCalculator and
+/// PositionManager|TradeLog) — no owner spec; generous enough that neither
+/// pane collapses to nothing.
+const TC_INNER_SPLIT_MIN: f64 = 0.2;
+const TC_INNER_SPLIT_MAX: f64 = 0.8;
 
 /// Trading Container panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,6 +94,76 @@ pub enum SubPanelSlot {
     VolumeProfile,
     BigTrades,
     L2Tape,
+}
+
+/// Which hosted child a v1 [`TradingRegion`] belongs to.
+///
+/// PositionManager and TradeLog are kept as separate variants (rather than
+/// one combined "BottomStrip" region) because they already scroll
+/// independently — this partition matches the routing granularity
+/// `handle_scroll`/`handle_click` actually use, not just the visual strip.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TradingChild {
+    Dom,
+    OrderEntry,
+    RiskCalculator,
+    PositionManager,
+    TradeLog,
+}
+
+/// A draggable separator between two v1 regions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TradingSeparator {
+    /// DOM | right column (OrderEntry/RiskCalculator) — drags `right_ratio`.
+    DomRightCol,
+    /// OrderEntry | RiskCalculator, inside the right column — drags `right_split`.
+    OeRiskCalc,
+    /// Main area | bottom strip — drags `bottom_ratio`.
+    BottomStrip,
+    /// PositionManager | TradeLog, inside the bottom strip — drags `bottom_split`.
+    PmTradeLog,
+}
+
+impl TradingSeparator {
+    /// Local widget-id suffix this separator registers as during render —
+    /// `"{slot_prefix}:{wire_id}"` — and the exact string the app-layer
+    /// drag-start dispatcher matches to identify a separator drag.
+    pub fn wire_id(self) -> &'static str {
+        match self {
+            Self::DomRightCol => "sep:dom_right",
+            Self::OeRiskCalc  => "sep:oe_rc",
+            Self::BottomStrip => "sep:bottom",
+            Self::PmTradeLog  => "sep:pm_tl",
+        }
+    }
+
+    /// Parse a local id (already stripped of the `slot_prefix`) back into a
+    /// separator, if it matches one of the 4 wire ids exactly.
+    pub fn from_wire_id(id: &str) -> Option<Self> {
+        match id {
+            "sep:dom_right" => Some(Self::DomRightCol),
+            "sep:oe_rc"     => Some(Self::OeRiskCalc),
+            "sep:bottom"    => Some(Self::BottomStrip),
+            "sep:pm_tl"     => Some(Self::PmTradeLog),
+            _ => None,
+        }
+    }
+}
+
+/// Which region kind a computed [`TradingRegion`] describes.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum TradingRegionKind {
+    Child(TradingChild),
+    Separator(TradingSeparator),
+}
+
+/// One computed v1 region — child content or a draggable separator — with
+/// its absolute screen rect. See [`TradingContainerState::regions`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct TradingRegion {
+    pub kind: TradingRegionKind,
+    /// Absolute screen rect `(x, y, w, h)`.
+    pub rect: (f64, f64, f64, f64),
 }
 
 /// Trading Container state (heavy data)
@@ -101,10 +201,27 @@ pub struct TradingContainerState {
     /// Bottom sub-panel type
     pub bottom_panel: SubPanelSlot,
 
-    /// Split ratios (0.0..1.0) — how much space each section gets
-    pub left_ratio: f64,    // left panel width ratio (default 0.3)
-    pub right_ratio: f64,   // right panel width ratio (default 0.3)
-    pub bottom_ratio: f64,  // bottom panel height ratio (default 0.25)
+    /// Split ratios (0.0..1.0) — how much space each section gets.
+    /// `left_ratio` is legacy-only (see [`Self::layout_rects`]). `right_ratio`
+    /// and `bottom_ratio` are LIVE, drag-updated v1 knobs (W1, 2026-07-25):
+    /// right column width fraction / bottom strip height fraction.
+    pub left_ratio: f64,    // legacy left panel width ratio (default 0.3)
+    pub right_ratio: f64,   // v1 right-column width ratio (default 0.3)
+    pub bottom_ratio: f64,  // v1 bottom-strip height ratio (default 0.25)
+    /// OrderEntry's height fraction of the right column (rest goes to
+    /// RiskCalculator). New W1 field — drag-updated via the OE|RiskCalc
+    /// separator.
+    pub right_split: f64,
+    /// PositionManager's width fraction of the bottom strip (rest goes to
+    /// TradeLog). New W1 field — drag-updated via the PM|TradeLog separator.
+    pub bottom_split: f64,
+
+    /// Last rendered container size `(w, h)`, cached by `render()` (which
+    /// only takes `&self`, hence the `Cell`). Separator drags only receive
+    /// incremental pixel deltas (see `TradingPanel::handle_drag_move`), not
+    /// the container rect, so this is how they convert pixels back to
+    /// ratios. Not persisted — always repopulated by the next render.
+    pub last_size: std::cell::Cell<(f64, f64)>,
 
     /// DOM state (always present — base element, v1 center region)
     pub dom: DomState,
@@ -147,6 +264,9 @@ impl TradingContainerState {
             left_ratio: 0.3,
             right_ratio: 0.3,
             bottom_ratio: 0.25,
+            right_split: TC_RIGHT_SPLIT_DEFAULT,
+            bottom_split: TC_BOTTOM_SPLIT_DEFAULT,
+            last_size: std::cell::Cell::new((0.0, 0.0)),
             dom,
             order_entry: OrderEntryState::new(symbol),
             position_manager: PositionManagerState::new(),
@@ -182,28 +302,53 @@ impl TradingContainerState {
         }
     }
 
-    /// v1 fixed-region layout for the whole container: DOM center, fixed
-    /// right column (OrderEntry / RiskCalculator), fixed bottom strip
+    /// Clamp a pixel size (`total * ratio`) to `[min(px_min, total*0.6),
+    /// total*0.6]`, then convert back to a ratio — the min-size guard for
+    /// the two "outer" v1 separators (DOM|right-column, main|bottom-strip).
+    /// `total <= 0.0` returns `ratio` unchanged (defensive — never divides
+    /// by zero).
+    fn clamp_outer_ratio(total: f64, ratio: f64, px_min: f64) -> f64 {
+        if total <= 0.0 {
+            return ratio;
+        }
+        let max_px = total * 0.6;
+        let min_px = px_min.min(max_px);
+        (total * ratio).clamp(min_px, max_px) / total
+    }
+
+    /// Clamp an inner split ratio (OrderEntry|RiskCalculator or
+    /// PositionManager|TradeLog) to `[TC_INNER_SPLIT_MIN, TC_INNER_SPLIT_MAX]`.
+    fn clamp_inner_split(split: f64) -> f64 {
+        split.clamp(TC_INNER_SPLIT_MIN, TC_INNER_SPLIT_MAX)
+    }
+
+    /// v1 fixed-region layout for the whole container: DOM center, live
+    /// right column (OrderEntry / RiskCalculator), live bottom strip
     /// (PositionManager / TradeLog). The legacy left/right/bottom
     /// `SubPanelSlot` rects (when configured) carve INTO the DOM column
     /// only — the new fixed regions always win the right column / bottom
     /// strip real estate.
     pub fn v1_layout_rects(&self, x: f64, y: f64, w: f64, h: f64) -> TradingContainerV1Rects {
-        let right_w = TC_RIGHT_COL_W.min(w * 0.5);
-        let bottom_h = TC_BOTTOM_H.min(h * 0.5);
+        let right_ratio = Self::clamp_outer_ratio(w, self.right_ratio, TC_RIGHT_COL_MIN_PX);
+        let right_w = w * right_ratio;
+        let bottom_ratio = Self::clamp_outer_ratio(h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
+        let bottom_h = h * bottom_ratio;
         let main_h = (h - bottom_h).max(0.0);
         let dom_col_w = (w - right_w).max(0.0);
 
         let legacy = self.layout_rects(x, y, dom_col_w, main_h);
 
         let right_col_x = x + dom_col_w;
-        let oe_h = main_h * TC_OE_HEIGHT_RATIO;
+        let right_split = Self::clamp_inner_split(self.right_split);
+        let oe_h = main_h * right_split;
         let rc_h = (main_h - oe_h).max(0.0);
 
         let bottom_y = y + main_h;
-        let pm_w = w * 0.5;
+        let bottom_split = Self::clamp_inner_split(self.bottom_split);
+        let pm_w = w * bottom_split;
         let tl_w = (w - pm_w).max(0.0);
 
+        let sep_hit = TC_SEP_HIT_PX;
         TradingContainerV1Rects {
             dom: legacy.dom,
             legacy_left: legacy.left,
@@ -213,7 +358,30 @@ impl TradingContainerState {
             risk_calculator: (right_col_x, y + oe_h, right_w, rc_h),
             position_manager: (x, bottom_y, pm_w, bottom_h),
             trade_log: (x + pm_w, bottom_y, tl_w, bottom_h),
+            sep_dom_right: (right_col_x - sep_hit, y, sep_hit * 2.0, main_h),
+            sep_oe_rc: (right_col_x, y + oe_h - sep_hit, right_w, sep_hit * 2.0),
+            sep_bottom: (x, bottom_y - sep_hit, w, sep_hit * 2.0),
+            sep_pm_tl: (x + pm_w - sep_hit, bottom_y, sep_hit * 2.0, bottom_h),
         }
+    }
+
+    /// All v1 regions (children + separators) as absolute screen rects —
+    /// the single per-frame geometry source `render()` draws separators
+    /// from and the app-layer drag-start dispatcher's widgets are
+    /// registered against. See the module-level "Region model" doc.
+    pub fn regions(&self, x: f64, y: f64, w: f64, h: f64) -> Vec<TradingRegion> {
+        let r = self.v1_layout_rects(x, y, w, h);
+        vec![
+            TradingRegion { kind: TradingRegionKind::Child(TradingChild::Dom), rect: r.dom },
+            TradingRegion { kind: TradingRegionKind::Child(TradingChild::OrderEntry), rect: r.order_entry },
+            TradingRegion { kind: TradingRegionKind::Child(TradingChild::RiskCalculator), rect: r.risk_calculator },
+            TradingRegion { kind: TradingRegionKind::Child(TradingChild::PositionManager), rect: r.position_manager },
+            TradingRegion { kind: TradingRegionKind::Child(TradingChild::TradeLog), rect: r.trade_log },
+            TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::DomRightCol), rect: r.sep_dom_right },
+            TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::OeRiskCalc), rect: r.sep_oe_rc },
+            TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::BottomStrip), rect: r.sep_bottom },
+            TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::PmTradeLog), rect: r.sep_pm_tl },
+        ]
     }
 }
 
@@ -227,7 +395,8 @@ pub struct TradingLayoutRects {
 }
 
 /// Calculated v1 fixed-region rects (x, y, w, h) — see
-/// [`TradingContainerState::v1_layout_rects`].
+/// [`TradingContainerState::v1_layout_rects`]. `sep_*` fields are
+/// hit-padded (see `TC_SEP_HIT_PX`), centered on the visual boundary.
 #[derive(Clone, Debug)]
 pub struct TradingContainerV1Rects {
     pub dom: (f64, f64, f64, f64),
@@ -238,6 +407,10 @@ pub struct TradingContainerV1Rects {
     pub risk_calculator: (f64, f64, f64, f64),
     pub position_manager: (f64, f64, f64, f64),
     pub trade_log: (f64, f64, f64, f64),
+    pub sep_dom_right: (f64, f64, f64, f64),
+    pub sep_oe_rc: (f64, f64, f64, f64),
+    pub sep_bottom: (f64, f64, f64, f64),
+    pub sep_pm_tl: (f64, f64, f64, f64),
 }
 
 // ---------------------------------------------------------------------------
@@ -259,11 +432,14 @@ impl TradingPanel for TradingContainerState {
         coordinator: &mut uzor::InputCoordinator,
         slot_prefix: &str,
     ) {
+        // Cache this frame's size for separator drags (see `last_size` doc).
+        self.last_size.set((w as f64, h as f64));
+
         // Background
         ctx.set_fill_color(&theme.tc_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        // v1 fixed-region layout: center DOM, fixed right column, fixed
+        // v1 fixed-region layout: center DOM, live right column, live
         // bottom strip. Children namespace their own widget ids off
         // `slot_prefix` (unchanged) — e.g. OrderEntry emits
         // "{slot_prefix}:oe:*" — so the outer click router can address them
@@ -298,14 +474,9 @@ impl TradingPanel for TradingContainerState {
         // --- Right column: OrderEntry (top), RiskCalculator (bottom) ---
         let (ox, oy, ow, oh) = rects.order_entry;
         self.order_entry.render(ctx, ox as f32, oy as f32, ow as f32, oh as f32, theme, coordinator, slot_prefix);
-        ctx.set_fill_color(&theme.tc_separator);
-        ctx.fill_rect(ox, oy + oh - 1.0, ow, 1.0);
 
         let (rcx, rcy, rcw, rch) = rects.risk_calculator;
         self.risk_calculator.render(ctx, rcx as f32, rcy as f32, rcw as f32, rch as f32, theme, coordinator, slot_prefix);
-
-        ctx.set_fill_color(&theme.tc_separator);
-        ctx.fill_rect(ox - 1.0, y as f64, 1.0, h as f64);
 
         // --- Bottom strip: PositionManager (left), TradeLog (right) ---
         let (pmx, pmy, pmw, pmh) = rects.position_manager;
@@ -314,9 +485,34 @@ impl TradingPanel for TradingContainerState {
         let (tlx, tly, tlw, tlh) = rects.trade_log;
         self.trade_log.render(ctx, tlx as f32, tly as f32, tlw as f32, tlh as f32, theme, coordinator, slot_prefix);
 
-        ctx.set_fill_color(&theme.tc_separator);
-        ctx.fill_rect(x as f64, pmy, w as f64, 1.0);
-        ctx.fill_rect(tlx, tly, 1.0, tlh);
+        // --- Separators: single region-driven pass (draw + register drag
+        // widgets) — the region model's whole reason to exist: one loop
+        // instead of 4 hand-copied draw+register blocks. ---
+        {
+            use uzor::input::Sense;
+            let regions = self.regions(x as f64, y as f64, w as f64, h as f64);
+            for region in &regions {
+                let TradingRegionKind::Separator(sep) = region.kind else { continue };
+                let (rx, ry, rw, rh) = region.rect;
+                // Visual line: thin bar centered in the (hit-padded) rect.
+                ctx.set_fill_color(&theme.tc_separator);
+                if rw >= rh {
+                    // Horizontal separator (bottom-strip height, OE|RC split).
+                    let line_y = ry + rh / 2.0 - 0.5;
+                    ctx.fill_rect(rx, line_y, rw, 1.0);
+                } else {
+                    // Vertical separator (DOM|right-column, PM|TL split).
+                    let line_x = rx + rw / 2.0 - 0.5;
+                    ctx.fill_rect(line_x, ry, 1.0, rh);
+                }
+                let wid = format!("{}:{}", slot_prefix, sep.wire_id());
+                coordinator.register(
+                    wid.as_str(),
+                    uzor::Rect::new(rx, ry, rw, rh),
+                    Sense::DRAG | Sense::HOVER,
+                );
+            }
+        }
     }
 
     fn handle_click(&mut self, local_id: &str, x: f64, y: f64) -> bool {
@@ -332,6 +528,89 @@ impl TradingPanel for TradingContainerState {
             self.risk_calculator.handle_click(local_id, x, y)
         } else {
             false
+        }
+    }
+
+    fn handle_hover(&mut self, local_id: &str) -> bool {
+        if local_id.starts_with("oe:") {
+            self.order_entry.handle_hover(local_id)
+        } else if local_id.starts_with("dom:") {
+            self.dom.handle_hover(local_id)
+        } else if local_id.starts_with("position_manager:") {
+            self.position_manager.handle_hover(local_id)
+        } else if local_id.starts_with("trade_log:") {
+            self.trade_log.handle_hover(local_id)
+        } else if local_id.starts_with("risk_calculator:") {
+            self.risk_calculator.handle_hover(local_id)
+        } else {
+            false
+        }
+    }
+
+    fn handle_scroll(&mut self, local_id: &str, dx: f64, dy: f64) -> bool {
+        if local_id.starts_with("dom:") {
+            // DOM's own wheel handling lives in its `BlackboxEvent::Scroll`
+            // arm (the ctrl+scroll tick-size zoom stays an app-layer-only
+            // concern — mirrors the standalone Dom slot's scroll dispatch).
+            use crate::panel_trait::BlackboxEvent;
+            self.dom.handle_blackbox_event(0.0, 0.0, BlackboxEvent::Scroll { dy: dy as f32 })
+        } else if local_id.starts_with("position_manager:") {
+            self.position_manager.handle_scroll(local_id, dx, dy)
+        } else if local_id.starts_with("trade_log:") {
+            self.trade_log.handle_scroll(local_id, dx, dy)
+        } else {
+            false
+        }
+    }
+
+    fn handle_drag_start(&mut self, local_id: &str, x: f64, y: f64) -> bool {
+        if local_id.starts_with("dom:") {
+            self.dom.handle_drag_start(local_id, x, y)
+        } else {
+            // Separator drags are stateless per-frame ratio nudges (see
+            // `handle_drag_move`) — drag-start just needs to claim the
+            // gesture so the app layer starts forwarding `handle_drag_move`.
+            TradingSeparator::from_wire_id(local_id).is_some()
+        }
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, dy: f64) -> bool {
+        if local_id.starts_with("dom:") {
+            return self.dom.handle_drag_move(local_id, dx, dy);
+        }
+        let Some(sep) = TradingSeparator::from_wire_id(local_id) else { return false };
+        let (w, h) = self.last_size.get();
+        if w <= 0.0 || h <= 0.0 {
+            return true;
+        }
+        match sep {
+            TradingSeparator::DomRightCol => {
+                // Dragging right shrinks the right column (grows DOM).
+                let right_w = (w * self.right_ratio - dx).max(0.0);
+                self.right_ratio = Self::clamp_outer_ratio(w, right_w / w, TC_RIGHT_COL_MIN_PX);
+            }
+            TradingSeparator::OeRiskCalc => {
+                let bottom_ratio = Self::clamp_outer_ratio(h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
+                let main_h = (h - h * bottom_ratio).max(1.0);
+                self.right_split = Self::clamp_inner_split(self.right_split + dy / main_h);
+            }
+            TradingSeparator::BottomStrip => {
+                // Dragging down shrinks the bottom strip (grows the main area).
+                let bottom_h = (h * self.bottom_ratio - dy).max(0.0);
+                self.bottom_ratio = Self::clamp_outer_ratio(h, bottom_h / h, TC_BOTTOM_MIN_PX);
+            }
+            TradingSeparator::PmTradeLog => {
+                self.bottom_split = Self::clamp_inner_split(self.bottom_split + dx / w);
+            }
+        }
+        true
+    }
+
+    fn handle_drag_end(&mut self, local_id: &str) -> bool {
+        if local_id.starts_with("dom:") {
+            self.dom.handle_drag_end(local_id)
+        } else {
+            TradingSeparator::from_wire_id(local_id).is_some()
         }
     }
 }

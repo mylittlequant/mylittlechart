@@ -190,6 +190,20 @@ pub enum PersistedFreeItemKind {
         source: PersistedSymbolSource,
         tick_size: f64,
         market_price: f64,
+        /// v1 region ratios (quality arc W1, 2026-07-25) — right column
+        /// width fraction, bottom strip height fraction, OrderEntry|
+        /// RiskCalculator split, PositionManager|TradeLog split. All
+        /// `#[serde(default)]` so presets saved before this field existed
+        /// still restore (falling back to the same defaults
+        /// `TradingContainerState::new` uses).
+        #[serde(default = "default_tc_right_ratio")]
+        right_ratio: f64,
+        #[serde(default = "default_tc_bottom_ratio")]
+        bottom_ratio: f64,
+        #[serde(default = "default_tc_right_split")]
+        right_split: f64,
+        #[serde(default = "default_tc_bottom_split")]
+        bottom_split: f64,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled
@@ -226,6 +240,14 @@ fn default_bar_spacing() -> f64 { 8.0 }
 fn default_height_ratio() -> f32 { 1.0 }
 fn default_multi_dom_grid_size() -> f64 { 0.5 }
 fn default_multi_dom_depth() -> usize { 25 }
+// TradingContainer v1 region-ratio defaults — mirror
+// `TradingContainerState::new()` / its `TC_*_DEFAULT` constants so a preset
+// missing these fields (saved before W1) restores identically to a
+// freshly-constructed container.
+fn default_tc_right_ratio() -> f64 { 0.3 }
+fn default_tc_bottom_ratio() -> f64 { 0.25 }
+fn default_tc_right_split() -> f64 { 0.55 }
+fn default_tc_bottom_split() -> f64 { 0.5 }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.

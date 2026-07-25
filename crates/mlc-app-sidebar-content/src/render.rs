@@ -692,7 +692,7 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
                 free_item_renderer,
-                panel_source_label_fn,  // kept for API compat; currently unused in slot rendering
+                panel_source_label_fn,  // source-mode badge ("Auto"/"Pinned") — Trading slot only
                 panel_dom_info_fn,
                 panel_color_tag_fn,
                 panel_sync_flags_fn,    // kept for API compat; currently unused in slot rendering
@@ -4003,7 +4003,11 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    _panel_source_label_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
+    // Source-mode badge label ("Auto" / "Pinned" / "Linked") for the
+    // Trading slot's restored overlay tab (W2, 2026-07-25) — the only
+    // consumer; every other slot kind ignores it (market-data panels sync
+    // via TagManager, not `SymbolSource`).
+    panel_source_mode_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     _panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
@@ -4089,6 +4093,61 @@ fn render_slot_panel(
 
             let slot_prefix = format!("slot:{}:leaf:{}", slot_idx, leaf_id.0);
             free_item_renderer(&item, (r.x, r.y, r.width, r.height), ctx, input_coordinator, &slot_prefix);
+
+            // ── Floating overlay source tab — the ONLY chrome the Trading
+            // tab keeps (owner spec 2026-07-25 W2): the SAME `render_leaf_tab`
+            // widget every other slot panel gets (symbol · exchange ·
+            // account_type + color tag + gear), positioned top-left,
+            // floating over the container's own content — there is no
+            // reserved control-strip row above it (v1 has no slot header at
+            // all). A small source-mode badge ("Auto"/"Pinned") is appended
+            // beside it — the per-leaf analogue of the stripped-for-Trading
+            // slot `[T]`/`[U]` rail toggle; click routes to `source_badge`.
+            let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
+            let overlay_hover_zone = state
+                .free_leaf_overlay_hover
+                .get(&(slot_idx, leaf_id))
+                .copied()
+                .unwrap_or(LeafTabHoverZone::None);
+            let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
+                .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+            let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
+            let hit_zones = render_leaf_tab(
+                ctx,
+                r.x as f64,
+                r.y as f64,
+                r.width as f64,
+                &symbol,
+                "",
+                &exchange,
+                &account_type,
+                is_focused,
+                overlay_hover_zone,
+                color_tag,
+                theme,
+            );
+            result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones.clone()));
+
+            if let Some(label) = panel_source_mode_fn(&item) {
+                let badge_x = hit_zones.tab_rect[0] + hit_zones.tab_rect[2] + 4.0;
+                let badge_y = hit_zones.tab_rect[1];
+                let badge_h = hit_zones.tab_rect[3];
+                let badge_w = 44.0_f64;
+                let badge_id = format!("slot:{}:leaf:{}:source_badge", slot_idx, leaf_id.0);
+                let badge_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(badge_id.as_str()));
+                let is_pinned = label != "Auto";
+                ctx.set_fill_color(if is_pinned { &theme.accent } else if badge_hov { &theme.item_bg_hover } else { &theme.background });
+                ctx.fill_rounded_rect(badge_x, badge_y, badge_w, badge_h, 3.0);
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_fill_color(if is_pinned { &theme.item_text_active } else { &theme.item_text_muted });
+                ctx.fill_text(&label, badge_x + badge_w / 2.0, badge_y + badge_h / 2.0);
+                let badge_rect = WidgetRect::new(badge_x, badge_y, badge_w, badge_h);
+                input_coordinator.register(badge_id.as_str(), badge_rect, uzor::input::Sense::CLICK);
+                result.item_rects.push((badge_id, badge_rect));
+            }
+
             continue;
         }
 

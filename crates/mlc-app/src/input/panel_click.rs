@@ -2101,6 +2101,53 @@ impl ChartApp {
                         // same way (the container forwards its own slot_prefix unchanged), so
                         // it matches this same widget-id shape — only the target store differs.
                         if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
+                            // --- slot:{idx}:leaf:{leaf_id}:source_badge — TradingContainer
+                            // source toggle (HyperFocus <-> Fixed-to-current-active-chart),
+                            // the per-leaf analogue of the stripped-for-Trading slot [T]/[U]
+                            // rail toggle (owner spec 2026-07-25 W2). A full rebind follows
+                            // immediately — no creation-time-only binding left for this path.
+                            if local_id == "source_badge" {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    if let Some(mlc_core::state::Panel::TradingContainer(pid)) = item_opt {
+                                        use mlc_app_panels::trading::SymbolSource;
+                                        let badge_cid = self.panel_app.panel_grid.active_container_id();
+                                        let currently_hyper = self.panels_store.trading_container.get(&pid)
+                                            .map(|s| s.source.is_hyper_focus())
+                                            .unwrap_or(true);
+                                        let new_source = if currently_hyper {
+                                            SymbolSource::Fixed {
+                                                symbol: badge_cid.and_then(|cid| self.symbol_for_chart(cid)).unwrap_or_default(),
+                                                exchange: badge_cid.and_then(|cid| self.exchange_for_chart(cid)).unwrap_or_default(),
+                                                account_type: badge_cid.and_then(|cid| self.account_type_for_chart(cid)).map(|at| at.to_string()).unwrap_or_default(),
+                                            }
+                                        } else {
+                                            SymbolSource::HyperFocus
+                                        };
+                                        if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                                            state.source = new_source.clone();
+                                        }
+                                        let active_resolved = badge_cid.map(|cid| mlc_app_panels::trading::ResolvedSymbol {
+                                            symbol: self.symbol_for_chart(cid).unwrap_or_default(),
+                                            exchange: self.exchange_for_chart(cid).unwrap_or_default(),
+                                            account_type: self.account_type_for_chart(cid).map(|at| at.to_string()).unwrap_or_default(),
+                                        });
+                                        let resolve_leaf = |_lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> { None };
+                                        if let Some(resolved) = new_source.resolve(active_resolved.as_ref(), &resolve_leaf) {
+                                            self.rebind_trading_container(pid, resolved);
+                                        }
+                                        self.sidebar_data_dirty = true;
+                                        self.autosave_snapshot();
+                                    }
+                                }
+                                return;
+                            }
+
                             if local_id.starts_with("oe:") {
                                 if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                     let leaf_id = uzor::panels::LeafId(raw);
