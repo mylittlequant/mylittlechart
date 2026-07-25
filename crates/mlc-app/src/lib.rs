@@ -6392,6 +6392,49 @@ impl ChartApp {
             // the same ids/rects on the same frame is idempotent.
             self.register_panel_overlay_zones(&sidebar_result);
 
+            // Embedded center chart (chart-in-container arc, 2026-07-26):
+            // when the trading container's center shows Chart, draw the aux
+            // `ChartContainer` over the container's center region. Rect =
+            // the container body (`slot:N:leaf:M:focus_content` row pushed
+            // by `render_slot_panel`) run through the container's own
+            // `v1_layout_rects().dom`. Cached into `trading_center_rect`
+            // for the next tick's `resize_geometry` (viewport geometry —
+            // same contract as prepare.rs's per-leaf resize).
+            {
+                use mlc_app_panels::trading::trading::trading_container::CenterKind;
+                let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> =
+                    if self.sidebar_state.right_panel
+                        == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
+                    {
+                        self.panels_store.trading_container.iter().next().and_then(|(pid, tc)| {
+                            if tc.center_kind != CenterKind::Chart {
+                                return None;
+                            }
+                            sidebar_result
+                                .item_rects
+                                .iter()
+                                .find(|(id, _)| {
+                                    id.starts_with("slot:") && id.ends_with(":focus_content")
+                                })
+                                .map(|(_, r)| {
+                                    let rects =
+                                        tc.v1_layout_rects(r.x, r.y, r.width, r.height);
+                                    let (dx, dy, dw, dh) = rects.dom;
+                                    (*pid, LayoutRect::new(dx, dy, dw, dh))
+                                })
+                        })
+                    } else {
+                        None
+                    };
+                self.trading_center_rect = tc_center;
+                self.trading_center_corner_zones = match tc_center {
+                    Some((tc_pid_c, center_rect)) => {
+                        self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect)
+                    }
+                    None => None,
+                };
+            }
+
             // Trading container EMBEDDED header toolbar (owner spec
             // 2026-07-25): the container header IS an alternative top
             // toolbar — same composer, separate ChartToolbarState, item ids
@@ -6413,6 +6456,10 @@ impl ChartApp {
                     let th_tf_native = self.timeframe_native_map();
                     let th_sq_render = trading_symbol_edit_render.as_ref().map(|(_, r)| r);
                     let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                    // Embedded chart's type drives the chart_type_selector icon.
+                    let th_active_ct: Option<&'static str> = self.trading_center_charts
+                        .get(tc_pid)
+                        .and_then(|&cid| self.chart_type_for_chart(cid));
                     let th_result = self.panel_app.render_trading_header_toolbar(
                         &self.trading_header_tb,
                         ctx,
@@ -6430,6 +6477,7 @@ impl ChartApp {
                         th_tf_native.as_ref(),
                         tc.center_kind.label(),
                         matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
+                        th_active_ct,
                     );
 
                     // Color-sync tag square over the blank `tc_color_tag`
@@ -6503,49 +6551,6 @@ impl ChartApp {
 
                     out_trading_header_result = Some(th_result);
                 }
-            }
-
-            // Embedded center chart (chart-in-container arc, 2026-07-26):
-            // when the trading container's center shows Chart, draw the aux
-            // `ChartContainer` over the container's center region. Rect =
-            // the container body (`slot:N:leaf:M:focus_content` row pushed
-            // by `render_slot_panel`) run through the container's own
-            // `v1_layout_rects().dom`. Cached into `trading_center_rect`
-            // for the next tick's `resize_geometry` (viewport geometry —
-            // same contract as prepare.rs's per-leaf resize).
-            {
-                use mlc_app_panels::trading::trading::trading_container::CenterKind;
-                let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> =
-                    if self.sidebar_state.right_panel
-                        == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
-                    {
-                        self.panels_store.trading_container.iter().next().and_then(|(pid, tc)| {
-                            if tc.center_kind != CenterKind::Chart {
-                                return None;
-                            }
-                            sidebar_result
-                                .item_rects
-                                .iter()
-                                .find(|(id, _)| {
-                                    id.starts_with("slot:") && id.ends_with(":focus_content")
-                                })
-                                .map(|(_, r)| {
-                                    let rects =
-                                        tc.v1_layout_rects(r.x, r.y, r.width, r.height);
-                                    let (dx, dy, dw, dh) = rects.dom;
-                                    (*pid, LayoutRect::new(dx, dy, dw, dh))
-                                })
-                        })
-                    } else {
-                        None
-                    };
-                self.trading_center_rect = tc_center;
-                self.trading_center_corner_zones = match tc_center {
-                    Some((tc_pid_c, center_rect)) => {
-                        self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect)
-                    }
-                    None => None,
-                };
             }
 
             Some(sidebar_result)
@@ -7174,41 +7179,6 @@ impl ChartApp {
         // pixels, so the header toolbar must be drawn into THIS scene too
         // (draw-only; hit zones already registered by `render_to_scene`).
         if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading {
-            if let Some(tc) = self.panels_store.trading_container.values().next() {
-                let close_w = 36.0;
-                let header_rect = LayoutRect::new(
-                    sidebar_rect.x,
-                    sidebar_rect.y,
-                    (sidebar_rect.width - close_w).max(0.0),
-                    40.0,
-                );
-                let th_gran_favs = self.core.user().profile().domain.granularity_favorites.clone();
-                let th_pin_favs = self.core.user().profile().ui.pin_granularity_favorites;
-                let th_gran_edit = self.granularity_edit_render();
-                let th_gran_drag = self.granularity_drag_render();
-                let th_tf_native = self.timeframe_native_map();
-                let th_sq_render = trading_symbol_edit_render_main.as_ref().map(|(_, r)| r);
-                let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
-                let _ = self.panel_app.render_trading_header_toolbar(
-                    &self.trading_header_tb,
-                    ctx,
-                    &header_rect,
-                    &tc.symbol,
-                    &tc.timeframe,
-                    &tc.exchange,
-                    &tc.account_type,
-                    &th_gran_favs,
-                    th_gran_edit.as_ref(),
-                    th_pin_favs,
-                    th_gran_drag.as_ref(),
-                    th_sq_render,
-                    th_sqs_on,
-                    th_tf_native.as_ref(),
-                    tc.center_kind.label(),
-                    matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
-                );
-            }
-
             // Embedded center chart — draw-only vello copy (the dirty-scene
             // cache composites this sidebar scene OVER `render_to_scene`'s
             // pixels; without this copy the chart vanishes on the native
@@ -7241,6 +7211,48 @@ impl ChartApp {
                     let _ = self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
                 }
             }
+
+            if let Some(tc) = self.panels_store.trading_container.values().next() {
+                let close_w = 36.0;
+                let header_rect = LayoutRect::new(
+                    sidebar_rect.x,
+                    sidebar_rect.y,
+                    (sidebar_rect.width - close_w).max(0.0),
+                    40.0,
+                );
+                let th_gran_favs = self.core.user().profile().domain.granularity_favorites.clone();
+                let th_pin_favs = self.core.user().profile().ui.pin_granularity_favorites;
+                let th_gran_edit = self.granularity_edit_render();
+                let th_gran_drag = self.granularity_drag_render();
+                let th_tf_native = self.timeframe_native_map();
+                let th_sq_render = trading_symbol_edit_render_main.as_ref().map(|(_, r)| r);
+                let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                let th_active_ct_main: Option<&'static str> = self.panels_store.trading_container
+                    .keys().next().copied()
+                    .and_then(|pid| self.trading_center_charts.get(&pid).copied())
+                    .and_then(|cid| self.chart_type_for_chart(cid));
+                let _ = self.panel_app.render_trading_header_toolbar(
+                    &self.trading_header_tb,
+                    ctx,
+                    &header_rect,
+                    &tc.symbol,
+                    &tc.timeframe,
+                    &tc.exchange,
+                    &tc.account_type,
+                    &th_gran_favs,
+                    th_gran_edit.as_ref(),
+                    th_pin_favs,
+                    th_gran_drag.as_ref(),
+                    th_sq_render,
+                    th_sqs_on,
+                    th_tf_native.as_ref(),
+                    tc.center_kind.label(),
+                    matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
+                    th_active_ct_main,
+                );
+            }
+
+
         }
 
         self.last_sidebar_result = Some(sidebar_result);

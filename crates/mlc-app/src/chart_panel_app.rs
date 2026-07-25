@@ -464,12 +464,13 @@ impl ChartPanelApp {
         symbol_quick_search: bool,
         timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
         center_label: &str,
-        show_tf: bool,
+        chart_mode: bool,
+        active_chart_type: Option<&str>,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         let cfg = ToolbarConfig::custom()
-            .with_top(Some(mlc_core::toolbar::trading_header_toolbar(center_label, show_tf)));
+            .with_top(Some(mlc_core::toolbar::trading_header_toolbar(center_label, chart_mode)));
         let layout = ChartPanelLayout::compute(header_rect, &cfg);
         chart_toolbar_render_toolbars(
             tb, ctx, &layout, &cfg,
@@ -488,7 +489,8 @@ impl ChartPanelApp {
             Some(active_timeframe),
             0.0,                       // sidebar_w (modal math n/a here)
             None,                      // allowed_timeframes (all)
-            None,                      // active_chart_type
+            active_chart_type,         // embedded chart's type — drives the
+                                       // chart_type_selector button icon
             None,                      // active_chart_type_param
             None,                      // chart_type_data_modes
             timeframe_native_map,

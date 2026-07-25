@@ -102,26 +102,20 @@ impl ChartApp {
             }
 
             // Viewport geometry from the render-cached center rect (chart
-            // area only — scales subtracted the same way the render pass
-            // computes them, so zoom/pan math matches what's drawn).
+            // area only — scales/sub-panes subtracted the same way the
+            // render pass computes them, so zoom/pan math matches what's
+            // drawn).
             if let Some((rpid, rect)) = self.trading_center_rect {
                 if rpid == pid {
-                    if let Some(window) =
-                        self.panel_app.panel_grid.containers_mut().get_mut(&cid)
-                    {
-                        let extended = mlc_core::ExtendedFrameLayout::from_proportions(
-                            &rect,
-                            &[],
-                            &[],
-                            None,
-                            &window.scale_settings,
-                            1.0,
-                            &window.sub_pane_above_main,
-                        );
-                        window.resize_geometry(
-                            extended.main_chart.chart.width,
-                            extended.main_chart.chart.height,
-                        );
+                    let dims = self
+                        .trading_center_layout(cid, &rect)
+                        .map(|e| (e.main_chart.chart.width, e.main_chart.chart.height));
+                    if let Some((w, h)) = dims {
+                        if let Some(window) =
+                            self.panel_app.panel_grid.containers_mut().get_mut(&cid)
+                        {
+                            window.resize_geometry(w, h);
+                        }
                     }
                 }
             }
@@ -197,7 +191,7 @@ impl ChartApp {
         }
         let Some(bid) = self.core.tags().tag_for_chart(cid) else { return };
 
-        let (old_symbol, old_exchange, old_at, old_tf) = {
+        let (old_symbol, old_exchange, old_at, old_tf, ct) = {
             let bubbles = self.core.bubbles();
             (
                 bubbles.symbol(bid).map(String::from).unwrap_or_default(),
@@ -207,27 +201,42 @@ impl ChartApp {
                     .map(|at| at.to_string())
                     .unwrap_or_default(),
                 bubbles.timeframe(bid).cloned(),
+                bubbles.chart_type(bid).unwrap_or("candles"),
             )
         };
         let old_tf_name = old_tf.as_ref().map(|tf| tf.name.clone()).unwrap_or_default();
 
-        if old_symbol == symbol
-            && old_exchange == exchange
-            && old_at == account_type
-            && old_tf_name == tf_name
-        {
+        // footprint/tpo OWN the bubble timeframe (bucket interval / 1D
+        // invariant, flipped by the chart-type switch itself) — the header
+        // TF must not fight them. Every other type follows the container TF.
+        let ct_owns_tf = matches!(ct, "footprint" | "tpo");
+        let instrument_moved =
+            old_symbol != symbol || old_exchange != exchange || old_at != account_type;
+        let tf_moved = !ct_owns_tf && old_tf_name != tf_name;
+        if !instrument_moved && !tf_moved {
             return;
         }
 
         let Some(new_eid) = digdigdig3::ExchangeId::from_str(exchange) else { return };
-        let new_tf = Timeframe::parse(tf_name).unwrap_or_else(Timeframe::h1);
+        let new_tf = if ct_owns_tf {
+            old_tf.unwrap_or_else(Timeframe::h1)
+        } else {
+            Timeframe::parse(tf_name).unwrap_or_else(Timeframe::h1)
+        };
 
-        // Drop the OLD kline forwarder before re-keying.
-        if !old_symbol.is_empty() && !old_tf_name.is_empty() {
+        // Drop the OLD subscriptions at the OLD instrument coordinates —
+        // both the kline forwarder and any derived/fold stream (the
+        // chart-type re-subscribe below only knows the NEW coordinates).
+        if !old_symbol.is_empty() {
             if let Some(old_eid) = digdigdig3::ExchangeId::from_str(&old_exchange) {
                 let old_at3 = crate::account_type_from_label(&old_at);
+                if !old_tf_name.is_empty() {
+                    self.core
+                        .abort_kline_bars(old_eid, &old_symbol, old_at3, &old_tf_name);
+                }
                 self.core
-                    .abort_kline_bars(old_eid, &old_symbol, old_at3, &old_tf_name);
+                    .bridge_handle()
+                    .abort_derived_chart(old_eid, &old_symbol, old_at3);
             }
         }
 
@@ -244,14 +253,23 @@ impl ChartApp {
             window.needs_snap_after_backfill = true;
         }
 
-        let at3 = crate::account_type_from_label(account_type);
-        let bar_count = self.core.user().profile().domain.bar_count as usize;
-        self.core
-            .request_kline(new_eid, symbol, &new_tf, at3, None, Some(bar_count), true);
+        // Kline-family types: plain fetch at the new key. Derived types
+        // (renko/footprint/range_bar/...): re-run the full chart-type
+        // switch pipeline against the aux chart — it clears derived slots
+        // and re-subscribes the fold/trade-fold/station stream at the NEW
+        // instrument+TF (same machinery the active chart uses).
+        if !crate::active_series::chart_type_is_derived_seed(ct) {
+            let at3 = crate::account_type_from_label(account_type);
+            let bar_count = self.core.user().profile().domain.bar_count as usize;
+            self.core
+                .request_kline(new_eid, symbol, &new_tf, at3, None, Some(bar_count), true);
+        } else {
+            let _ = self.apply_chart_type_switch(Some(cid), ct);
+        }
         eprintln!(
-            "[TradingCenter] rekeyed aux chart {:?}: {}·{}·{}·{} -> {}·{}·{}·{}",
-            cid, old_symbol, old_exchange, old_at, old_tf_name,
-            symbol, exchange, account_type, tf_name,
+            "[TradingCenter] rekeyed aux chart {:?} (ct={}): {}·{}·{}·{} -> {}·{}·{}·{}",
+            cid, ct, old_symbol, old_exchange, old_at, old_tf_name,
+            symbol, exchange, account_type, new_tf.name,
         );
     }
 
@@ -367,6 +385,14 @@ impl ChartApp {
         let empty_alerts: Vec<AlertRenderData> = Vec::new();
         let symbol_owned = self.symbol_for_chart(cid);
 
+        // Clip everything the chart draws to the center rect — grid lines,
+        // series and the crosshair layer otherwise bleed into the header /
+        // right column / bottom strip (owner report 2026-07-26; grid draws
+        // full-height rows and relies on neighbors overdrawing in the main
+        // grid, which never happens here because the chart paints LAST).
+        ctx.save();
+        ctx.clip_rect(center_rect.x, center_rect.y, center_rect.width, center_rect.height);
+
         let panel_data = ChartPanelRenderData {
             state: &render_state,
             config: &render_config,
@@ -395,23 +421,37 @@ impl ChartApp {
         let render_result = render_full_chart_panel(ctx, center_rect, &panel_data);
 
         // Crosshair layer on top (same layer split leaves draw after the
-        // panel body). Layout built inline from the center rect — the aux
-        // chart has no cached `frame_layouts` entry (leaf-keyed).
-        let crosshair_layout = mlc_core::ExtendedFrameLayout::from_proportions(
-            center_rect,
-            &[],
-            &[],
-            None,
-            &window.scale_settings,
-            1.0,
-            &window.sub_pane_above_main,
-        );
+        // panel body). Layout via the shared aux-layout builder so
+        // sub-pane geometry matches the drawn panel.
+        let crosshair_layout = self.trading_center_layout(cid, center_rect)?;
         render_chart_crosshair_layer(
             ctx,
             &render_state,
             &crosshair_layout,
             &render_config,
             None,
+        );
+
+        ctx.restore();
+
+        // Region separators on the chart's right/bottom edges — the
+        // container's own separator pass painted them BEFORE this chart
+        // (which fills its rect to the last pixel), so re-stroke the two
+        // boundary lines the DOM center keeps visible (owner report).
+        let panel_theme =
+            crate::panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
+        ctx.set_fill_color(&panel_theme.tc_separator);
+        ctx.fill_rect(
+            center_rect.x + center_rect.width - 1.0,
+            center_rect.y,
+            1.0,
+            center_rect.height,
+        );
+        ctx.fill_rect(
+            center_rect.x,
+            center_rect.y + center_rect.height - 1.0,
+            center_rect.width,
+            1.0,
         );
 
         Some(render_result.corner_zones)
@@ -450,19 +490,38 @@ impl ChartApp {
     }
 
     /// The aux chart's `ExtendedFrameLayout`, built inline from the center
-    /// rect (no leaf-keyed `frame_layouts` entry exists). No sub-panes
-    /// until the indicators arc.
+    /// rect (no leaf-keyed `frame_layouts` entry exists). Sub-panes:
+    /// visible bubble-owned indicator instances filtered against the
+    /// window's `inner_docking` — the same derivation the split render
+    /// loop uses, so input/crosshair/resize geometry always matches what
+    /// `render_full_chart_panel` draws.
     fn trading_center_layout(
         &self,
         cid: mlc_core::state::ChartId,
         rect: &mlc_core::LayoutRect,
     ) -> Option<mlc_core::ExtendedFrameLayout> {
         let window = self.panel_app.panel_grid.containers().get(&cid)?;
+        let visible_set: std::collections::HashSet<u64> = self
+            .core
+            .indicators()
+            .instances_for_bubble(window.current_tag_id)
+            .into_iter()
+            .filter(|i| i.visible && i.pane > 0)
+            .map(|i| i.id)
+            .collect();
+        let all_ids = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
+        let all_props = crate::chart_container::collect_inner_proportions(&window.inner_docking);
+        let (sub_pane_ids, sub_proportions): (Vec<u64>, Vec<f64>) = all_ids
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| visible_set.contains(id))
+            .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
+            .unzip();
         Some(mlc_core::ExtendedFrameLayout::from_proportions(
             rect,
-            &[],
-            &[],
-            None,
+            &sub_pane_ids,
+            &sub_proportions,
+            all_props.first().copied().filter(|_| all_props.len() > 1),
             &window.scale_settings,
             1.0,
             &window.sub_pane_above_main,
@@ -653,16 +712,8 @@ impl ChartApp {
     ) {
         let Some(bid) = self.core.tags().tag_for_chart(cid) else { return };
         let bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(bid).to_vec();
+        let Some(layout) = self.trading_center_layout(cid, rect) else { return };
         if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-            let layout = mlc_core::ExtendedFrameLayout::from_proportions(
-                rect,
-                &[],
-                &[],
-                None,
-                &window.scale_settings,
-                1.0,
-                &window.sub_pane_above_main,
-            );
             let drag_pane = if dragging { Some(None) } else { None };
             window.update_crosshair_from_global(x, y, &layout, drag_pane, &bars_vec);
         }

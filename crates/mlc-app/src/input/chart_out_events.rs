@@ -398,571 +398,12 @@ impl ChartApp {
 
             ChartOutEvent::ChangeChartType { chart_type } => {
                 eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
-                // Map the incoming String to a &'static str used by ChartContainer.
-                let static_type: Option<&'static str> = match chart_type.as_str() {
-                    "candles"       => Some("candles"),
-                    "hollow_candles" => Some("hollow_candles"),
-                    "heikin_ashi"   => Some("heikin_ashi"),
-                    "bars"          => Some("bars"),
-                    "line"          => Some("line"),
-                    "step_line"     => Some("step_line"),
-                    "line_markers"  => Some("line_markers"),
-                    "area"          => Some("area"),
-                    "hlc_area"      => Some("hlc_area"),
-                    "baseline"      => Some("baseline"),
-                    // "histogram" removed 2026-07-05 — it drew VOLUME, not
-                    // price (lightweight-charts series type mis-ported as a
-                    // chart style); legacy saves fall through to "candles".
-                    // "columns" fully deleted 2026-07-06 (chart-type registry
-                    // arc Step 13) — falls into the `_` arm below and is
-                    // rejected like any other unknown chart_type id. Legacy
-                    // preset restore still resolves it to "candles" via
-                    // `hydration_impl.rs::static_ct`'s `by_id(...).unwrap_or`.
-                    // Phase 2C: derived bar streams from dig3-station — own
-                    // subscription, no per-frame folding. Bars arrive via
-                    // LiveUpdate::BarUpdate from the station's
-                    // TradeToRangeBarDerived / TradeToVolumeBarDerived /
-                    // TradeToFootprintDerived forwarders.
-                    "range_bar"     => Some("range_bar"),
-                    "volume_bar"    => Some("volume_bar"),
-                    "tick_bar"      => Some("tick_bar"),
-                    "footprint"     => Some("footprint"),
-                    "renko"         => Some("renko"),
-                    "pnf"           => Some("pnf"),
-                    "kagi"          => Some("kagi"),
-                    // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a
-                    // real compute-catalog indicator instance (type_id
-                    // "cvd"), not a chart_type routed through ChangeChartType.
-                    "tpo"           => Some("tpo"),
-                    "three_line_break" => Some("three_line_break"),
-                    // ── López de Prado quant bars (C9) ────────────────────────
-                    "dollar_bar"           => Some("dollar_bar"),
-                    "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
-                    "volume_imbalance_bar" => Some("volume_imbalance_bar"),
-                    "run_bar"              => Some("run_bar"),
-                    // "dom_heatmap"/"liquidation_heatmap" REMOVED (chart-type →
-                    // overlay migration) — both are now builtin overlay
-                    // indicators (ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay
-                    // above), not chart_type switch targets. Legacy preset ids
-                    // fall into the `_` arm below and hydrate to "candles" via
-                    // `hydration_impl.rs`'s `by_id(...).unwrap_or("candles")`.
-                    _ => {
-                        eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
-                        None
-                    }
-                };
-                if let Some(ct) = static_type {
-                    let active_cid = self.panel_app.panel_grid.active_container_id();
-                    let bid = active_cid.and_then(|cid| self.bubble_for_chart(cid));
-                    // Captured BEFORE the mutation below so the D9 kline-forwarder
-                    // refcount logic knows what family the window is LEAVING.
-                    let previous_ct: Option<&'static str> = bid
-                        .and_then(|bid| self.core.bubbles().chart_type(bid));
-                    // Last bar close of the OUTGOING series, captured BEFORE
-                    // any clear runs below (`clear_slot_trade_agg_bars` wipes
-                    // `bubble.bars` a few steps down) — the instrument-
-                    // relative default resolver (granularity arc, кусок 2)
-                    // needs this as its live-price input; a price read AFTER
-                    // the clear would always see an empty array.
-                    let pre_switch_last_price: Option<f64> = bid
-                        .and_then(|bid| self.core.bubbles().bars(bid).last().map(|b| b.close))
-                        .filter(|p| *p > 0.0);
-                    // Box-size mode carried by the OUTGOING chart_type,
-                    // captured BEFORE `set_chart_type` resets it to `Fixed`
-                    // below (granularity arc, кусок 2) — lets a switch back
-                    // INTO renko/kagi on a bubble that was last in ATR(14)
-                    // mode on this SAME type recompute instead of silently
-                    // reverting to Fixed (e.g. renko[Atr14] -> candles ->
-                    // renko again). A genuine cross-family switch (candles ->
-                    // renko for the first time) reads `Fixed` here, same as
-                    // today.
-                    let pre_switch_param_mode: Option<mlc_core::chart_type::ParamMode> = bid
-                        .and_then(|bid| self.core.bubbles().chart_type_param_mode(bid));
-                    // Render-only switch (both previous and target are plain
-                    // render styles over the same kline bars) — computed here,
-                    // early, so the min-spacing enforcement right below does
-                    // NOT depend on the symbol/account-type/timeframe/connector
-                    // guard chain further down (that chain gates subscription/
-                    // abort bookkeeping, which spacing has nothing to do with —
-                    // see the 2026-07-11 owner report: a live switch left
-                    // bar_spacing at the inherited 8px because ONE of those
-                    // unrelated guards — e.g. `connector_enabled` false, or the
-                    // window's account_type/timeframe not yet resolved — failed
-                    // and silently skipped the nested `ensure_min_bar_spacing`
-                    // call along with it).
-                    let is_render_family = |t: Option<&'static str>| matches!(
-                        t,
-                        Some("candles") | Some("bars") | Some("hollow_candles")
-                        | Some("heikin_ashi") | Some("line") | Some("step_line")
-                        | Some("line_markers") | Some("area") | Some("hlc_area")
-                        | Some("baseline")
-                    );
-                    let render_only_switch = is_render_family(previous_ct) && is_render_family(Some(ct));
-                    let (mut chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
-                        let previous_type = previous_ct.unwrap_or("candles").to_string();
-                        self.core.bubbles_mut().set_chart_type(bid, ct);
-                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            window.command_history.push(mlc_core::state::Command::ChangeChartType {
-                                previous_type,
-                                new_type: ct.to_string(),
-                            });
-                            // F6 (viewport doctrine audit 2026-07-07) intent
-                            // preserved — skip on a pure render-only switch so
-                            // `view_start` never moves for candles↔line. Fixed
-                            // 2026-07-11: applied HERE, unconditional on
-                            // symbol/account_type/timeframe/connector state
-                            // (previously nested three guards deep below,
-                            // where any one of those failing silently dropped
-                            // the clamp — see comment above).
-                            if !render_only_switch {
-                                if let Some(min_spacing) = min_usable_bar_spacing(ct) {
-                                    window.ensure_min_bar_spacing(min_spacing);
-                                }
-                            }
-                        }
-                        let bubbles = self.core.bubbles();
-                        (bubbles.chart_type_param(bid).unwrap_or(0.0), bubbles.chart_type_interval(bid).unwrap_or("1m"))
-                    } else {
-                        (0.0, "1m")
-                    };
-
-                    // ── Layer 1 (derived-bars audit 2026-06-17): clean state ──
-                    //
-                    // Every chart_type switch must:
-                    //   1. abort the previous derived subscription (kline-OR-
-                    //      derived → any). If we don't, switching range_bar →
-                    //      volume_bar leaves the range_bar forwarder running,
-                    //      which keeps pushing BarUpdate (range timestamps)
-                    //      into a window that just became volume_bar.
-                    //   2. clear `window.bars` — the old timestamp grid is
-                    //      semantically incompatible with the new stream
-                    //      (kline 1H ts every 3600s vs range bars ts at
-                    //      crossing trade ms; mixing both = the "crossing
-                    //      timestamps" visual owner described).
-                    //   3. flip viewport axis mode to match: derived bar
-                    //      streams are non-uniform in time → time_axis.
-                    //      Time-uniform candles (kline) → index axis.
-                    //   4. reset view_start so the next batch of bars
-                    //      doesn't land off-screen.
-                    //   5. set `pending_symbol_load = true` so renderer
-                    //      shows the loading skeleton until the first new
-                    //      bar arrives.
-                    let is_derived_target = crate::active_series::chart_type_is_derived_seed(ct);
-                    if let Some(active_leaf) = self.panel_app.panel_grid.active_container() {
-                        let cid = active_leaf.id;
-                        let symbol_opt = self.symbol_for_chart(cid);
-                        let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                        let tf_opt = self.timeframe_for_chart(cid);
-                        if let (Some(symbol), Some(at), Some(tf)) = (symbol_opt, at_opt, tf_opt) {
-                            if !symbol.is_empty() {
-                                // Per-container venue, NOT the app-global
-                                // `active_exchange` (2026-07-15 wrong-venue
-                                // bug: on a container whose exchange differs
-                                // from the global, every subscribe below went
-                                // to the wrong venue → data landed in a layer
-                                // no bubble reads → empty chart forever).
-                                let chart_eid = self.exchange_id_for_chart(cid);
-                                let eid_str = chart_eid.as_str();
-                                let connector_enabled = self.sidebar_state.connector_enabled
-                                    .get(eid_str).copied().unwrap_or(true);
-                                if connector_enabled {
-                                    let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-
-                                    // Audit D9 step 2: release the outgoing kline
-                                    // forwarder when leaving kline-family for a
-                                    // derived type that doesn't need the kline
-                                    // backdrop (footprint's cluster overlay reads
-                                    // live kline data — never abort under it).
-                                    // CVD used to be listed here too (its ts-domain
-                                    // also reads live kline data) but it is no
-                                    // longer a chart_type reachable via
-                                    // ChangeChartType (2026-07-04 taxonomy fix —
-                                    // demoted to a subpane overlay whose kline
-                                    // dependency is now implicit: it only ever
-                                    // renders alongside whatever kline-family
-                                    // chart_type the window is already on). Only
-                                    // if NO OTHER container in THIS ChartApp still
-                                    // displays (exchange,symbol,tf,account) as
-                                    // kline-family or footprint — a sibling
-                                    // window/leaf sharing the same instrument must
-                                    // not go dark.
-                                    //
-                                    // Scope note: this only enumerates containers
-                                    // within the current ChartApp/process. Whether
-                                    // another OS window (a second ChartApp
-                                    // instance / daemon-mode session) displays the
-                                    // same instrument as kline-family is NOT
-                                    // reachable from here — `BackendCore::sessions`
-                                    // is pure connection metadata (app_id/label/
-                                    // heartbeat), it does not enumerate a peer
-                                    // session's live containers. If that
-                                    // cross-session case matters in practice, it
-                                    // needs its own arc (a shared kline-forwarder
-                                    // refcount on BackendCore, not per-ChartApp
-                                    // enumeration).
-                                    let was_kline_family = previous_ct.map_or(true, |ct| {
-                                        !crate::active_series::chart_type_is_derived_seed(ct)
-                                    });
-                                    // NOTE: footprint used to be exempted here via a
-                                    // `target_needs_kline_backdrop` flag — stale since
-                                    // 441d623d dropped the kline backdrop (footprint IS
-                                    // its own OHLC series). It now releases the shared
-                                    // kline forwarder like every other derived type.
-                                    if was_kline_family && is_derived_target {
-                                        let still_needed = self.panel_app.panel_grid.containers().iter()
-                                            .any(|(other_cid, _)| {
-                                                if *other_cid == cid { return false; }
-                                                let same_instrument = self.symbol_for_chart(*other_cid).as_deref() == Some(symbol.as_str())
-                                                    && self.exchange_for_chart(*other_cid).as_deref() == Some(eid_str)
-                                                    && self.account_type_for_chart(*other_cid) == Some(
-                                                        self.account_type_for_chart(cid).unwrap_or_default(),
-                                                    )
-                                                    && self.timeframe_for_chart(*other_cid).map(|t| t.name.clone()) == Some(tf.name.clone());
-                                                if !same_instrument { return false; }
-                                                let other_ct = self.chart_type_for_chart(*other_cid).unwrap_or("candles");
-                                                !crate::active_series::chart_type_is_derived_seed(other_ct)
-                                            });
-                                        if !still_needed {
-                                            self.core.abort_kline_bars(chart_eid, &symbol, at, &tf.name);
-                                        }
-                                    }
-
-                                    // Render-only switch (both previous and target are
-                                    // plain render styles over the same kline bars):
-                                    // preserve the viewport. `begin_fresh_load` /
-                                    // `needs_snap_after_backfill` / `request_bars(force)`
-                                    // are ONLY needed when the underlying series changes
-                                    // (kline↔derived, or between two derived families).
-                                    // For candles→line the bars are identical, just
-                                    // rendered differently — resetting `view_start=0` +
-                                    // snap-to-end throws the user out of any scroll-back
-                                    // position they were holding. Owner report 2026-07-06.
-                                    // `render_only_switch` itself is computed earlier now
-                                    // (see the min-spacing fix above) — reused here as-is.
-
-                                    // Step 1: always abort any derived
-                                    // subscription. The bridge.abort_* call is
-                                    // idempotent when nothing's live.
-                                    if !render_only_switch {
-                                        self.core.bridge_handle().abort_derived_chart(
-                                            chart_eid, &symbol, at,
-                                        );
-                                    }
-
-                                    // Steps 2-5: mutate the active window.
-                                    // X axis is always index-packed (see
-                                    // chart-types-xaxis-audit-2026-07-03.md).
-                                    // Skipped for render-only switches (see above).
-                                    if !render_only_switch {
-                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                            window.begin_fresh_load();
-                                            // Mark "snap to end on first data" so
-                                            // the new stream lands at the right
-                                            // edge of the viewport.
-                                            window.needs_snap_after_backfill = true;
-                                            // `ensure_min_bar_spacing` now applied
-                                            // unconditionally right after
-                                            // `set_chart_type` above (2026-07-11
-                                            // fix) — not re-applied here, this
-                                            // block is gated behind
-                                            // symbol/account_type/timeframe/
-                                            // connector state that has nothing to
-                                            // do with spacing.
-                                        }
-                                    }
-                                    // Audit D9 (extended 2026-07-06 — owner
-                                    // report: chart-type switch jumps the
-                                    // viewport 50-500 bars into history):
-                                    // clear EVERY derived slot, including the
-                                    // TARGET type's own — `ChangeChartType`
-                                    // always performs a full fresh
-                                    // re-subscribe below (`begin_fresh_load`
-                                    // + `needs_snap_after_backfill`), so a
-                                    // "keep the target slot" exemption is
-                                    // never correct here. Re-entering a
-                                    // previously-visited derived type on the
-                                    // same bubble (e.g. renko -> pnf -> renko)
-                                    // used to keep the OLD renko_bars Vec
-                                    // (`clear_derived_slots(Some(ct))` skipped
-                                    // it) and the re-seed then pushed the
-                                    // fresh replay bricks AFTER the stale
-                                    // ones — `reconcile_derived_series`'s
-                                    // prepend binary-search assumes ascending
-                                    // timestamps, so the resulting
-                                    // stale-then-fresh array broke that
-                                    // invariant and stranded `view_start`
-                                    // mid-history instead of at the right
-                                    // edge. `UpdateChartTypeParam` (same-type
-                                    // param refresh) already calls
-                                    // `clear_derived_slots(None)` — this call
-                                    // site now matches it.
-                                    // Full wipe of every derived slot (defensive —
-                                    // we're switching AWAY from a possibly-unknown
-                                    // previous derived type) followed by the
-                                    // registry's own type-specific clear (stamps
-                                    // `bars_source` + owns footprint's
-                                    // clear_bars/mark_footprint_pending). Some
-                                    // slots get cleared twice; harmless.
-                                    //
-                                    // Footprint hybrid (hybrid-data-modes-plan-
-                                    // 2026-07-08, Step 3): resolved once here —
-                                    // reused below both to bypass the generic
-                                    // `ops.clear_slot` table entry (its
-                                    // fn-pointer type carries no capability
-                                    // info, so only a call site with
-                                    // `(exchange_id, account_type)` in scope can
-                                    // resolve it) and to decide the backdrop-TF
-                                    // realignment after the TF flip.
-                                    let fp_hybrid_backdrop = ct == "footprint"
-                                        && mlc_backend::chart_type::is_footprint_hybrid(
-                                            self.core.bridge_handle(), chart_eid, at,
-                                        );
-                                    if !render_only_switch {
-                                        if let Some(bid) = self.bubble_for_chart(cid) {
-                                            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                                bubble.clear_derived_slots(None);
-                                                if ct == "footprint" {
-                                                    mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
-                                                } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
-                                                    (ops.clear_slot)(bubble);
-                                                }
-                                            });
-                                        }
-                                    }
-                                    let _ = is_derived_target; // axis flip done in prepare_frame
-
-                                    // Step 6 (chart-type registry arc, Step 10):
-                                    // fire the appropriate subscription for the
-                                    // new mode through the `SubscribeOps` engine
-                                    // (Step 8). Footprint's TF flip (bucket
-                                    // interval → bubble timeframe) still needs
-                                    // its own bespoke handling here — the engine's
-                                    // `subscribe_footprint` only touches
-                                    // `DataBridge`, not the bubble's `Timeframe`.
-                                    if ct == "footprint" {
-                                        let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
-                                        // Full TF flip for the footprint bucket
-                                        // interval (2026-07-05 owner report:
-                                        // switching to footprint on a 1H chart
-                                        // left the toolbar showing "1H" while
-                                        // clusters were bucketed at 1m; naively
-                                        // updating just the bubble label left
-                                        // stale 1H bars mixed with the incoming
-                                        // 1m fetch — timelines couldn't align,
-                                        // pane rendered empty).
-                                        let iv_ms = match iv {
-                                            "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
-                                            "15m" => 900_000, "30m" => 1_800_000,
-                                            "1h" => 3_600_000, _ => 60_000,
-                                        };
-                                        let footprint_tf = mlc_core::state::Timeframe::new(iv, iv_ms);
-                                        if let Some(active_bid) = self.panel_app.panel_grid.active_container()
-                                            .map(|w| w.current_tag_id)
-                                        {
-                                            self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf.clone());
-                                        }
-                                        // Hybrid backdrop TF alignment (Step 3,
-                                        // plan risk note): the kline sub left
-                                        // running by `clear_slot_footprint_hybrid_aware`
-                                        // is whatever the PREVIOUS chart_type was
-                                        // subscribed at (`tf`, e.g. "1h") — that
-                                        // can differ from the footprint bucket
-                                        // interval (`footprint_tf`, e.g. "1m").
-                                        // A mismatched backdrop TF desyncs the
-                                        // index axis between `bubble.bars` (kline
-                                        // backdrop) and `footprint_bars` (bucket
-                                        // grid). Simplest fix per the plan:
-                                        // backdrop TF == footprint interval,
-                                        // ALWAYS, in hybrid mode — abort the old-TF
-                                        // kline sub and re-request kline bars
-                                        // fresh at the bucket interval before
-                                        // `subscribe_footprint` fires below.
-                                        if fp_hybrid_backdrop && tf.name != iv {
-                                            self.core.bridge_handle().abort_kline_bars(
-                                                chart_eid, &symbol, at, &tf.name,
-                                            );
-                                            let bar_count = self.core.user().profile().domain.bar_count as usize;
-                                            self.core.bridge_handle().request_bars(
-                                                chart_eid, &symbol, &footprint_tf, at,
-                                                None, Some(bar_count), true,
-                                            );
-                                        }
-                                    }
-                                    if ct == "tpo" {
-                                        // TPO sessions are UTC-daily by
-                                        // construction — the display TF is the
-                                        // 1D INVARIANT (registry tf_whitelist
-                                        // is ["tf_1d"]); flip the bubble label
-                                        // so the toolbar clock reads 1D, not
-                                        // the previous chart's leftover TF.
-                                        let daily = mlc_core::state::Timeframe::new("1D", 86_400_000);
-                                        if let Some(active_bid) = self.panel_app.panel_grid.active_container()
-                                            .map(|w| w.current_tag_id)
-                                        {
-                                            self.core.bubbles_mut().set_timeframe(active_bid, daily);
-                                        }
-                                    }
-                                    if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
-                                        // Render-family (candles/bars/line/...) shares
-                                        // `subscribe_kline_bars` with the legacy `_`
-                                        // fallback arm below, which only fired when
-                                        // NOT a render-only switch (bars already
-                                        // loaded — re-requesting would trigger the
-                                        // fresh-load viewport jump this arc is
-                                        // fixing). Every other (derived) chart_type
-                                        // always fires, matching the per-arm
-                                        // behavior this table replaces.
-                                        let skip = is_render_family(Some(ct)) && render_only_switch;
-                                        if !skip {
-                                            let bar_count = self.core.user().profile().domain.bar_count as usize;
-                                            let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
-                                            // Instrument-relative default resolution (granularity
-                                            // arc, кусок 2): the sentinel (`chart_param <= 0.0`,
-                                            // i.e. the user hasn't picked a value on THIS bubble
-                                            // yet) resolves through the live resolver first —
-                                            // range_bar/volume_bar get an instrument-relative
-                                            // value instead of the registry's static fallback.
-                                            // Written back via `set_chart_type_param` BEFORE
-                                            // `build_subscribe_params` runs, so the toolbar button
-                                            // and settings modal show the REAL resolved number
-                                            // (e.g. "500R") and it persists like any user pick.
-                                            if chart_param <= 0.0 {
-                                                if let Some(def) = mlc_core::chart_type::by_id(ct) {
-                                                    // `pre_switch_last_price` was captured before
-                                                    // this fn's own clear_slot ran, above; fall back
-                                                    // to mini_ticker if the outgoing series had no
-                                                    // bars yet (cold subscribe on this bubble).
-                                                    let last_price = pre_switch_last_price.or_else(|| {
-                                                        self.resolve_last_price(eid_str, &symbol, at.short_label(), None)
-                                                    });
-                                                    if let Some(resolved) = mlc_core::chart_type::resolve_instrument_relative_default(
-                                                        def, tick_size, last_price.unwrap_or(0.0),
-                                                    ) {
-                                                        chart_param = resolved;
-                                                        if let Some(bid) = bid {
-                                                            self.core.bubbles_mut().set_chart_type_param(bid, resolved);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // ATR(14) recompute-on-switch (granularity arc,
-                                            // кусок 2): a switch INTO renko/kagi whose
-                                            // bubble carried `Atr14` mode BEFORE
-                                            // `set_chart_type` reset it (captured as
-                                            // `pre_switch_param_mode` at the top of this
-                                            // handler — e.g. renko[Atr14] -> candles ->
-                                            // renko again) recomputes the box from the
-                                            // CURRENT instrument instead of reverting to
-                                            // Fixed silently. Re-applies the mode too (the
-                                            // reset above flipped it to Fixed).
-                                            if matches!(ct, "renko" | "kagi")
-                                                && pre_switch_param_mode == Some(mlc_core::chart_type::ParamMode::Atr14)
-                                            {
-                                                if let Some(bid) = bid {
-                                                    if let Some(ticks) = self.core.atr14_box_ticks(bid, tick_size) {
-                                                        chart_param = ticks;
-                                                        self.core.bubbles_mut().set_chart_type_param(bid, ticks);
-                                                    }
-                                                    self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
-                                                }
-                                            }
-                                            let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count, tick_size);
-                                            // Unified-data-plane Э3: the 7 kline-sufficient
-                                            // fold types install/reseed a client-side
-                                            // `FoldRuntime` INSTEAD of `ops.subscribe`
-                                            // opening a station-side derived sub — that
-                                            // fn-pointer slot is a documented no-op for
-                                            // these 7 (see `subscribe_fold_noop`).
-                                            if mlc_backend::chart_type::is_fold_chart_type(ct) {
-                                                if let (Some(bid), Some(fold_params)) = (
-                                                    self.bubble_for_chart(cid),
-                                                    mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
-                                                ) {
-                                                    let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
-                                                    if let Some(ev) = self.core.subscribe_fold_chart_type(
-                                                        bid, ct, fold_params, chart_eid, &symbol, at, Some(derived_target),
-                                                    ) {
-                                                        self.react_to_bubble_event(&ev, now_ms());
-                                                    }
-                                                }
-                                            } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
-                                                // Unified-data-plane Э4: the 6 trade-fed
-                                                // chart types install/reseed a client-side
-                                                // `TradeFoldRuntime` over the bubble's own
-                                                // trade layer INSTEAD of `ops.subscribe`
-                                                // opening a station-side derived sub —
-                                                // mirrors the Э3 branch above one layer
-                                                // over (trades, not "1m" klines). Footprint's
-                                                // `bars_source` was already stamped by
-                                                // `clear_slot_footprint_hybrid_aware` above
-                                                // (or `ops.clear_slot` for every other trade-
-                                                // fold type) BEFORE this fires — the fold
-                                                // reseed reads it to decide the OHLC mirror.
-                                                if let (Some(bid), Some(mut fold_params)) = (
-                                                    self.bubble_for_chart(cid),
-                                                    mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
-                                                ) {
-                                                    // Footprint row-grouping preset (canon-fix
-                                                    // wave 2, item 5) — persisted per-panel, not
-                                                    // carried by `SubscribeParams`; apply it here
-                                                    // so switching TO footprint on a panel with a
-                                                    // saved grouping preset seeds grouped from the
-                                                    // first fold, same as `ignite_derived_windows`'s
-                                                    // cold-restore path and the live-toggle path
-                                                    // (`apply_footprint_group_ticks`).
-                                                    if ct == "footprint" {
-                                                        let group_ticks = self.panel_app.panel_grid.containers().get(&cid)
-                                                            .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
-                                                            .map(|p| p.footprint_display.group_ticks)
-                                                            .unwrap_or(0);
-                                                        if group_ticks > 0 {
-                                                            fold_params.group_step = group_ticks as f64 * tick_size;
-                                                        }
-                                                    }
-                                                    let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
-                                                    if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
-                                                        bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
-                                                        chart_eid, &symbol, at, Some(derived_target),
-                                                    ) {
-                                                        self.react_to_bubble_event(&ev, now_ms());
-                                                    }
-                                                }
-                                            } else if let Some(subscribe) = ops.subscribe {
-                                                subscribe(self.core.bridge_handle(), chart_eid, &symbol, at, &tf, params);
-                                            }
-                                        }
-                                        // The CVD sub-pane companion for footprint
-                                        // is handled uniformly by
-                                        // `sync_default_indicators_for_chart_type`
-                                        // below (adds the real mli `CVD` indicator
-                                        // to the chart's bubble, computed off the
-                                        // bar stream like MACD/RSI — no bespoke
-                                        // sub, no bespoke render path).
-                                    } else {
-                                        // Unknown chart_type (legacy preset) — fall
-                                        // through to plain kline.
-                                        if !render_only_switch {
-                                            self.core.request_kline(
-                                                chart_eid, &symbol, &tf, at,
-                                                None,
-                                                Some(self.core.user().profile().domain.bar_count as usize),
-                                                true,
-                                            );
-                                        }
-                                    }
-                                    // Owner rule 2026-07-05: each chart_type
-                                    // has a canonical companion indicator that
-                                    // opens automatically alongside the base
-                                    // series (footprint → CVD). Uses the real
-                                    // mli catalog id (`CVD`), so the sub-pane
-                                    // is populated by the same trubopipeline
-                                    // that drives MACD/RSI — no bespoke
-                                    // sub-scription, no bespoke render path.
-                                    self.sync_default_indicators_for_chart_type(cid, ct);
-                                }
-                            }
-                        }
-                    }
+                // Full pipeline extracted to `apply_chart_type_switch`
+                // (target-aware — also drives the trading container's
+                // embedded center chart). Active chart here, verbatim
+                // pre-extraction behavior.
+                let target = self.panel_app.panel_grid.active_container_id();
+                if self.apply_chart_type_switch(target, &chart_type) {
                     state_mutated = true;
                 }
             }
@@ -4503,5 +3944,591 @@ mod subscribe_params_regression_tests {
             store.chart_type_param(bid), Some(250_000.0),
             "re-selecting the SAME chart_type must not reset the user's dialed-in param",
         );
+    }
+}
+
+impl crate::ChartApp {
+    /// Full chart-type switch pipeline, parameterized by TARGET chart —
+    /// extracted verbatim from the `ChartOutEvent::ChangeChartType` arm
+    /// (2026-07-26, chart-in-container arc) so the trading container's
+    /// embedded center chart can run the SAME machinery (render-family
+    /// fast path, derived-slot clears, fold/trade-fold/station subscribe,
+    /// footprint/tpo TF flips, companion indicators) without being the
+    /// active grid chart. `target_cid = active_container_id()` reproduces
+    /// the old behavior bit-for-bit. Returns `true` when a switch ran.
+    pub(crate) fn apply_chart_type_switch(
+        &mut self,
+        target_cid: Option<mlc_core::state::ChartId>,
+        chart_type: &str,
+    ) -> bool {
+        let mut switched = false;
+        eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
+        // Map the incoming String to a &'static str used by ChartContainer.
+        let static_type: Option<&'static str> = match chart_type {
+            "candles"       => Some("candles"),
+            "hollow_candles" => Some("hollow_candles"),
+            "heikin_ashi"   => Some("heikin_ashi"),
+            "bars"          => Some("bars"),
+            "line"          => Some("line"),
+            "step_line"     => Some("step_line"),
+            "line_markers"  => Some("line_markers"),
+            "area"          => Some("area"),
+            "hlc_area"      => Some("hlc_area"),
+            "baseline"      => Some("baseline"),
+            // "histogram" removed 2026-07-05 — it drew VOLUME, not
+            // price (lightweight-charts series type mis-ported as a
+            // chart style); legacy saves fall through to "candles".
+            // "columns" fully deleted 2026-07-06 (chart-type registry
+            // arc Step 13) — falls into the `_` arm below and is
+            // rejected like any other unknown chart_type id. Legacy
+            // preset restore still resolves it to "candles" via
+            // `hydration_impl.rs::static_ct`'s `by_id(...).unwrap_or`.
+            // Phase 2C: derived bar streams from dig3-station — own
+            // subscription, no per-frame folding. Bars arrive via
+            // LiveUpdate::BarUpdate from the station's
+            // TradeToRangeBarDerived / TradeToVolumeBarDerived /
+            // TradeToFootprintDerived forwarders.
+            "range_bar"     => Some("range_bar"),
+            "volume_bar"    => Some("volume_bar"),
+            "tick_bar"      => Some("tick_bar"),
+            "footprint"     => Some("footprint"),
+            "renko"         => Some("renko"),
+            "pnf"           => Some("pnf"),
+            "kagi"          => Some("kagi"),
+            // "cvd" removed (2026-07-04 taxonomy fix) — CVD is now a
+            // real compute-catalog indicator instance (type_id
+            // "cvd"), not a chart_type routed through ChangeChartType.
+            "tpo"           => Some("tpo"),
+            "three_line_break" => Some("three_line_break"),
+            // ── López de Prado quant bars (C9) ────────────────────────
+            "dollar_bar"           => Some("dollar_bar"),
+            "tick_imbalance_bar"   => Some("tick_imbalance_bar"),
+            "volume_imbalance_bar" => Some("volume_imbalance_bar"),
+            "run_bar"              => Some("run_bar"),
+            // "dom_heatmap"/"liquidation_heatmap" REMOVED (chart-type →
+            // overlay migration) — both are now builtin overlay
+            // indicators (ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay
+            // above), not chart_type switch targets. Legacy preset ids
+            // fall into the `_` arm below and hydrate to "candles" via
+            // `hydration_impl.rs`'s `by_id(...).unwrap_or("candles")`.
+            _ => {
+                eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
+                None
+            }
+        };
+        if let Some(ct) = static_type {
+            let active_cid = target_cid;
+            let bid = active_cid.and_then(|cid| self.bubble_for_chart(cid));
+            // Captured BEFORE the mutation below so the D9 kline-forwarder
+            // refcount logic knows what family the window is LEAVING.
+            let previous_ct: Option<&'static str> = bid
+                .and_then(|bid| self.core.bubbles().chart_type(bid));
+            // Last bar close of the OUTGOING series, captured BEFORE
+            // any clear runs below (`clear_slot_trade_agg_bars` wipes
+            // `bubble.bars` a few steps down) — the instrument-
+            // relative default resolver (granularity arc, кусок 2)
+            // needs this as its live-price input; a price read AFTER
+            // the clear would always see an empty array.
+            let pre_switch_last_price: Option<f64> = bid
+                .and_then(|bid| self.core.bubbles().bars(bid).last().map(|b| b.close))
+                .filter(|p| *p > 0.0);
+            // Box-size mode carried by the OUTGOING chart_type,
+            // captured BEFORE `set_chart_type` resets it to `Fixed`
+            // below (granularity arc, кусок 2) — lets a switch back
+            // INTO renko/kagi on a bubble that was last in ATR(14)
+            // mode on this SAME type recompute instead of silently
+            // reverting to Fixed (e.g. renko[Atr14] -> candles ->
+            // renko again). A genuine cross-family switch (candles ->
+            // renko for the first time) reads `Fixed` here, same as
+            // today.
+            let pre_switch_param_mode: Option<mlc_core::chart_type::ParamMode> = bid
+                .and_then(|bid| self.core.bubbles().chart_type_param_mode(bid));
+            // Render-only switch (both previous and target are plain
+            // render styles over the same kline bars) — computed here,
+            // early, so the min-spacing enforcement right below does
+            // NOT depend on the symbol/account-type/timeframe/connector
+            // guard chain further down (that chain gates subscription/
+            // abort bookkeeping, which spacing has nothing to do with —
+            // see the 2026-07-11 owner report: a live switch left
+            // bar_spacing at the inherited 8px because ONE of those
+            // unrelated guards — e.g. `connector_enabled` false, or the
+            // window's account_type/timeframe not yet resolved — failed
+            // and silently skipped the nested `ensure_min_bar_spacing`
+            // call along with it).
+            let is_render_family = |t: Option<&'static str>| matches!(
+                t,
+                Some("candles") | Some("bars") | Some("hollow_candles")
+                | Some("heikin_ashi") | Some("line") | Some("step_line")
+                | Some("line_markers") | Some("area") | Some("hlc_area")
+                | Some("baseline")
+            );
+            let render_only_switch = is_render_family(previous_ct) && is_render_family(Some(ct));
+            let (mut chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
+                let previous_type = previous_ct.unwrap_or("candles").to_string();
+                self.core.bubbles_mut().set_chart_type(bid, ct);
+                if let Some(window) = active_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                    window.command_history.push(mlc_core::state::Command::ChangeChartType {
+                        previous_type,
+                        new_type: ct.to_string(),
+                    });
+                    // F6 (viewport doctrine audit 2026-07-07) intent
+                    // preserved — skip on a pure render-only switch so
+                    // `view_start` never moves for candles↔line. Fixed
+                    // 2026-07-11: applied HERE, unconditional on
+                    // symbol/account_type/timeframe/connector state
+                    // (previously nested three guards deep below,
+                    // where any one of those failing silently dropped
+                    // the clamp — see comment above).
+                    if !render_only_switch {
+                        if let Some(min_spacing) = min_usable_bar_spacing(ct) {
+                            window.ensure_min_bar_spacing(min_spacing);
+                        }
+                    }
+                }
+                let bubbles = self.core.bubbles();
+                (bubbles.chart_type_param(bid).unwrap_or(0.0), bubbles.chart_type_interval(bid).unwrap_or("1m"))
+            } else {
+                (0.0, "1m")
+            };
+
+            // ── Layer 1 (derived-bars audit 2026-06-17): clean state ──
+            //
+            // Every chart_type switch must:
+            //   1. abort the previous derived subscription (kline-OR-
+            //      derived → any). If we don't, switching range_bar →
+            //      volume_bar leaves the range_bar forwarder running,
+            //      which keeps pushing BarUpdate (range timestamps)
+            //      into a window that just became volume_bar.
+            //   2. clear `window.bars` — the old timestamp grid is
+            //      semantically incompatible with the new stream
+            //      (kline 1H ts every 3600s vs range bars ts at
+            //      crossing trade ms; mixing both = the "crossing
+            //      timestamps" visual owner described).
+            //   3. flip viewport axis mode to match: derived bar
+            //      streams are non-uniform in time → time_axis.
+            //      Time-uniform candles (kline) → index axis.
+            //   4. reset view_start so the next batch of bars
+            //      doesn't land off-screen.
+            //   5. set `pending_symbol_load = true` so renderer
+            //      shows the loading skeleton until the first new
+            //      bar arrives.
+            let is_derived_target = crate::active_series::chart_type_is_derived_seed(ct);
+            if let Some(cid) = active_cid {
+                let symbol_opt = self.symbol_for_chart(cid);
+                let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
+                let tf_opt = self.timeframe_for_chart(cid);
+                if let (Some(symbol), Some(at), Some(tf)) = (symbol_opt, at_opt, tf_opt) {
+                    if !symbol.is_empty() {
+                        // Per-container venue, NOT the app-global
+                        // `active_exchange` (2026-07-15 wrong-venue
+                        // bug: on a container whose exchange differs
+                        // from the global, every subscribe below went
+                        // to the wrong venue → data landed in a layer
+                        // no bubble reads → empty chart forever).
+                        let chart_eid = self.exchange_id_for_chart(cid);
+                        let eid_str = chart_eid.as_str();
+                        let connector_enabled = self.sidebar_state.connector_enabled
+                            .get(eid_str).copied().unwrap_or(true);
+                        if connector_enabled {
+                            let at = mlc_backend_data_bridge::account_type_to_dig3(at);
+
+                            // Audit D9 step 2: release the outgoing kline
+                            // forwarder when leaving kline-family for a
+                            // derived type that doesn't need the kline
+                            // backdrop (footprint's cluster overlay reads
+                            // live kline data — never abort under it).
+                            // CVD used to be listed here too (its ts-domain
+                            // also reads live kline data) but it is no
+                            // longer a chart_type reachable via
+                            // ChangeChartType (2026-07-04 taxonomy fix —
+                            // demoted to a subpane overlay whose kline
+                            // dependency is now implicit: it only ever
+                            // renders alongside whatever kline-family
+                            // chart_type the window is already on). Only
+                            // if NO OTHER container in THIS ChartApp still
+                            // displays (exchange,symbol,tf,account) as
+                            // kline-family or footprint — a sibling
+                            // window/leaf sharing the same instrument must
+                            // not go dark.
+                            //
+                            // Scope note: this only enumerates containers
+                            // within the current ChartApp/process. Whether
+                            // another OS window (a second ChartApp
+                            // instance / daemon-mode session) displays the
+                            // same instrument as kline-family is NOT
+                            // reachable from here — `BackendCore::sessions`
+                            // is pure connection metadata (app_id/label/
+                            // heartbeat), it does not enumerate a peer
+                            // session's live containers. If that
+                            // cross-session case matters in practice, it
+                            // needs its own arc (a shared kline-forwarder
+                            // refcount on BackendCore, not per-ChartApp
+                            // enumeration).
+                            let was_kline_family = previous_ct.map_or(true, |ct| {
+                                !crate::active_series::chart_type_is_derived_seed(ct)
+                            });
+                            // NOTE: footprint used to be exempted here via a
+                            // `target_needs_kline_backdrop` flag — stale since
+                            // 441d623d dropped the kline backdrop (footprint IS
+                            // its own OHLC series). It now releases the shared
+                            // kline forwarder like every other derived type.
+                            if was_kline_family && is_derived_target {
+                                let still_needed = self.panel_app.panel_grid.containers().iter()
+                                    .any(|(other_cid, _)| {
+                                        if *other_cid == cid { return false; }
+                                        let same_instrument = self.symbol_for_chart(*other_cid).as_deref() == Some(symbol.as_str())
+                                            && self.exchange_for_chart(*other_cid).as_deref() == Some(eid_str)
+                                            && self.account_type_for_chart(*other_cid) == Some(
+                                                self.account_type_for_chart(cid).unwrap_or_default(),
+                                            )
+                                            && self.timeframe_for_chart(*other_cid).map(|t| t.name.clone()) == Some(tf.name.clone());
+                                        if !same_instrument { return false; }
+                                        let other_ct = self.chart_type_for_chart(*other_cid).unwrap_or("candles");
+                                        !crate::active_series::chart_type_is_derived_seed(other_ct)
+                                    });
+                                if !still_needed {
+                                    self.core.abort_kline_bars(chart_eid, &symbol, at, &tf.name);
+                                }
+                            }
+
+                            // Render-only switch (both previous and target are
+                            // plain render styles over the same kline bars):
+                            // preserve the viewport. `begin_fresh_load` /
+                            // `needs_snap_after_backfill` / `request_bars(force)`
+                            // are ONLY needed when the underlying series changes
+                            // (kline↔derived, or between two derived families).
+                            // For candles→line the bars are identical, just
+                            // rendered differently — resetting `view_start=0` +
+                            // snap-to-end throws the user out of any scroll-back
+                            // position they were holding. Owner report 2026-07-06.
+                            // `render_only_switch` itself is computed earlier now
+                            // (see the min-spacing fix above) — reused here as-is.
+
+                            // Step 1: always abort any derived
+                            // subscription. The bridge.abort_* call is
+                            // idempotent when nothing's live.
+                            if !render_only_switch {
+                                self.core.bridge_handle().abort_derived_chart(
+                                    chart_eid, &symbol, at,
+                                );
+                            }
+
+                            // Steps 2-5: mutate the active window.
+                            // X axis is always index-packed (see
+                            // chart-types-xaxis-audit-2026-07-03.md).
+                            // Skipped for render-only switches (see above).
+                            if !render_only_switch {
+                                if let Some(window) = active_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                    window.begin_fresh_load();
+                                    // Mark "snap to end on first data" so
+                                    // the new stream lands at the right
+                                    // edge of the viewport.
+                                    window.needs_snap_after_backfill = true;
+                                    // `ensure_min_bar_spacing` now applied
+                                    // unconditionally right after
+                                    // `set_chart_type` above (2026-07-11
+                                    // fix) — not re-applied here, this
+                                    // block is gated behind
+                                    // symbol/account_type/timeframe/
+                                    // connector state that has nothing to
+                                    // do with spacing.
+                                }
+                            }
+                            // Audit D9 (extended 2026-07-06 — owner
+                            // report: chart-type switch jumps the
+                            // viewport 50-500 bars into history):
+                            // clear EVERY derived slot, including the
+                            // TARGET type's own — `ChangeChartType`
+                            // always performs a full fresh
+                            // re-subscribe below (`begin_fresh_load`
+                            // + `needs_snap_after_backfill`), so a
+                            // "keep the target slot" exemption is
+                            // never correct here. Re-entering a
+                            // previously-visited derived type on the
+                            // same bubble (e.g. renko -> pnf -> renko)
+                            // used to keep the OLD renko_bars Vec
+                            // (`clear_derived_slots(Some(ct))` skipped
+                            // it) and the re-seed then pushed the
+                            // fresh replay bricks AFTER the stale
+                            // ones — `reconcile_derived_series`'s
+                            // prepend binary-search assumes ascending
+                            // timestamps, so the resulting
+                            // stale-then-fresh array broke that
+                            // invariant and stranded `view_start`
+                            // mid-history instead of at the right
+                            // edge. `UpdateChartTypeParam` (same-type
+                            // param refresh) already calls
+                            // `clear_derived_slots(None)` — this call
+                            // site now matches it.
+                            // Full wipe of every derived slot (defensive —
+                            // we're switching AWAY from a possibly-unknown
+                            // previous derived type) followed by the
+                            // registry's own type-specific clear (stamps
+                            // `bars_source` + owns footprint's
+                            // clear_bars/mark_footprint_pending). Some
+                            // slots get cleared twice; harmless.
+                            //
+                            // Footprint hybrid (hybrid-data-modes-plan-
+                            // 2026-07-08, Step 3): resolved once here —
+                            // reused below both to bypass the generic
+                            // `ops.clear_slot` table entry (its
+                            // fn-pointer type carries no capability
+                            // info, so only a call site with
+                            // `(exchange_id, account_type)` in scope can
+                            // resolve it) and to decide the backdrop-TF
+                            // realignment after the TF flip.
+                            let fp_hybrid_backdrop = ct == "footprint"
+                                && mlc_backend::chart_type::is_footprint_hybrid(
+                                    self.core.bridge_handle(), chart_eid, at,
+                                );
+                            if !render_only_switch {
+                                if let Some(bid) = self.bubble_for_chart(cid) {
+                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                                        bubble.clear_derived_slots(None);
+                                        if ct == "footprint" {
+                                            mlc_backend::chart_type::clear_slot_footprint_hybrid_aware(bubble, fp_hybrid_backdrop);
+                                        } else if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                                            (ops.clear_slot)(bubble);
+                                        }
+                                    });
+                                }
+                            }
+                            let _ = is_derived_target; // axis flip done in prepare_frame
+
+                            // Step 6 (chart-type registry arc, Step 10):
+                            // fire the appropriate subscription for the
+                            // new mode through the `SubscribeOps` engine
+                            // (Step 8). Footprint's TF flip (bucket
+                            // interval → bubble timeframe) still needs
+                            // its own bespoke handling here — the engine's
+                            // `subscribe_footprint` only touches
+                            // `DataBridge`, not the bubble's `Timeframe`.
+                            if ct == "footprint" {
+                                let iv = if !chart_interval.is_empty() { chart_interval } else { "1m" };
+                                // Full TF flip for the footprint bucket
+                                // interval (2026-07-05 owner report:
+                                // switching to footprint on a 1H chart
+                                // left the toolbar showing "1H" while
+                                // clusters were bucketed at 1m; naively
+                                // updating just the bubble label left
+                                // stale 1H bars mixed with the incoming
+                                // 1m fetch — timelines couldn't align,
+                                // pane rendered empty).
+                                let iv_ms = match iv {
+                                    "1m" => 60_000, "3m" => 180_000, "5m" => 300_000,
+                                    "15m" => 900_000, "30m" => 1_800_000,
+                                    "1h" => 3_600_000, _ => 60_000,
+                                };
+                                let footprint_tf = mlc_core::state::Timeframe::new(iv, iv_ms);
+                                if let Some(active_bid) = self.panel_app.panel_grid.containers()
+                                    .get(&cid).map(|w| w.current_tag_id)
+                                {
+                                    self.core.bubbles_mut().set_timeframe(active_bid, footprint_tf.clone());
+                                }
+                                // Hybrid backdrop TF alignment (Step 3,
+                                // plan risk note): the kline sub left
+                                // running by `clear_slot_footprint_hybrid_aware`
+                                // is whatever the PREVIOUS chart_type was
+                                // subscribed at (`tf`, e.g. "1h") — that
+                                // can differ from the footprint bucket
+                                // interval (`footprint_tf`, e.g. "1m").
+                                // A mismatched backdrop TF desyncs the
+                                // index axis between `bubble.bars` (kline
+                                // backdrop) and `footprint_bars` (bucket
+                                // grid). Simplest fix per the plan:
+                                // backdrop TF == footprint interval,
+                                // ALWAYS, in hybrid mode — abort the old-TF
+                                // kline sub and re-request kline bars
+                                // fresh at the bucket interval before
+                                // `subscribe_footprint` fires below.
+                                if fp_hybrid_backdrop && tf.name != iv {
+                                    self.core.bridge_handle().abort_kline_bars(
+                                        chart_eid, &symbol, at, &tf.name,
+                                    );
+                                    let bar_count = self.core.user().profile().domain.bar_count as usize;
+                                    self.core.bridge_handle().request_bars(
+                                        chart_eid, &symbol, &footprint_tf, at,
+                                        None, Some(bar_count), true,
+                                    );
+                                }
+                            }
+                            if ct == "tpo" {
+                                // TPO sessions are UTC-daily by
+                                // construction — the display TF is the
+                                // 1D INVARIANT (registry tf_whitelist
+                                // is ["tf_1d"]); flip the bubble label
+                                // so the toolbar clock reads 1D, not
+                                // the previous chart's leftover TF.
+                                let daily = mlc_core::state::Timeframe::new("1D", 86_400_000);
+                                if let Some(active_bid) = self.panel_app.panel_grid.containers()
+                                    .get(&cid).map(|w| w.current_tag_id)
+                                {
+                                    self.core.bubbles_mut().set_timeframe(active_bid, daily);
+                                }
+                            }
+                            if let Some(ops) = mlc_backend::chart_type::ops_by_id(ct) {
+                                // Render-family (candles/bars/line/...) shares
+                                // `subscribe_kline_bars` with the legacy `_`
+                                // fallback arm below, which only fired when
+                                // NOT a render-only switch (bars already
+                                // loaded — re-requesting would trigger the
+                                // fresh-load viewport jump this arc is
+                                // fixing). Every other (derived) chart_type
+                                // always fires, matching the per-arm
+                                // behavior this table replaces.
+                                let skip = is_render_family(Some(ct)) && render_only_switch;
+                                if !skip {
+                                    let bar_count = self.core.user().profile().domain.bar_count as usize;
+                                    let tick_size = self.resolve_tick_size(eid_str, &symbol, bid);
+                                    // Instrument-relative default resolution (granularity
+                                    // arc, кусок 2): the sentinel (`chart_param <= 0.0`,
+                                    // i.e. the user hasn't picked a value on THIS bubble
+                                    // yet) resolves through the live resolver first —
+                                    // range_bar/volume_bar get an instrument-relative
+                                    // value instead of the registry's static fallback.
+                                    // Written back via `set_chart_type_param` BEFORE
+                                    // `build_subscribe_params` runs, so the toolbar button
+                                    // and settings modal show the REAL resolved number
+                                    // (e.g. "500R") and it persists like any user pick.
+                                    if chart_param <= 0.0 {
+                                        if let Some(def) = mlc_core::chart_type::by_id(ct) {
+                                            // `pre_switch_last_price` was captured before
+                                            // this fn's own clear_slot ran, above; fall back
+                                            // to mini_ticker if the outgoing series had no
+                                            // bars yet (cold subscribe on this bubble).
+                                            let last_price = pre_switch_last_price.or_else(|| {
+                                                self.resolve_last_price(eid_str, &symbol, at.short_label(), None)
+                                            });
+                                            if let Some(resolved) = mlc_core::chart_type::resolve_instrument_relative_default(
+                                                def, tick_size, last_price.unwrap_or(0.0),
+                                            ) {
+                                                chart_param = resolved;
+                                                if let Some(bid) = bid {
+                                                    self.core.bubbles_mut().set_chart_type_param(bid, resolved);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // ATR(14) recompute-on-switch (granularity arc,
+                                    // кусок 2): a switch INTO renko/kagi whose
+                                    // bubble carried `Atr14` mode BEFORE
+                                    // `set_chart_type` reset it (captured as
+                                    // `pre_switch_param_mode` at the top of this
+                                    // handler — e.g. renko[Atr14] -> candles ->
+                                    // renko again) recomputes the box from the
+                                    // CURRENT instrument instead of reverting to
+                                    // Fixed silently. Re-applies the mode too (the
+                                    // reset above flipped it to Fixed).
+                                    if matches!(ct, "renko" | "kagi")
+                                        && pre_switch_param_mode == Some(mlc_core::chart_type::ParamMode::Atr14)
+                                    {
+                                        if let Some(bid) = bid {
+                                            if let Some(ticks) = self.core.atr14_box_ticks(bid, tick_size) {
+                                                chart_param = ticks;
+                                                self.core.bubbles_mut().set_chart_type_param(bid, ticks);
+                                            }
+                                            self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
+                                        }
+                                    }
+                                    let params = build_subscribe_params(ct, chart_param, chart_interval, bar_count, tick_size);
+                                    // Unified-data-plane Э3: the 7 kline-sufficient
+                                    // fold types install/reseed a client-side
+                                    // `FoldRuntime` INSTEAD of `ops.subscribe`
+                                    // opening a station-side derived sub — that
+                                    // fn-pointer slot is a documented no-op for
+                                    // these 7 (see `subscribe_fold_noop`).
+                                    if mlc_backend::chart_type::is_fold_chart_type(ct) {
+                                        if let (Some(bid), Some(fold_params)) = (
+                                            self.bubble_for_chart(cid),
+                                            mlc_backend::chart_type::fold_params_from_subscribe_params(ct, params),
+                                        ) {
+                                            let derived_target = self.core.user().profile().domain.data_load.derived_kline_target;
+                                            if let Some(ev) = self.core.subscribe_fold_chart_type(
+                                                bid, ct, fold_params, chart_eid, &symbol, at, Some(derived_target),
+                                            ) {
+                                                self.react_to_bubble_event(&ev, now_ms());
+                                            }
+                                        }
+                                    } else if mlc_backend::chart_type::is_trade_fold_chart_type(ct) {
+                                        // Unified-data-plane Э4: the 6 trade-fed
+                                        // chart types install/reseed a client-side
+                                        // `TradeFoldRuntime` over the bubble's own
+                                        // trade layer INSTEAD of `ops.subscribe`
+                                        // opening a station-side derived sub —
+                                        // mirrors the Э3 branch above one layer
+                                        // over (trades, not "1m" klines). Footprint's
+                                        // `bars_source` was already stamped by
+                                        // `clear_slot_footprint_hybrid_aware` above
+                                        // (or `ops.clear_slot` for every other trade-
+                                        // fold type) BEFORE this fires — the fold
+                                        // reseed reads it to decide the OHLC mirror.
+                                        if let (Some(bid), Some(mut fold_params)) = (
+                                            self.bubble_for_chart(cid),
+                                            mlc_backend::chart_type::trade_fold_params_from_subscribe_params(ct, params),
+                                        ) {
+                                            // Footprint row-grouping preset (canon-fix
+                                            // wave 2, item 5) — persisted per-panel, not
+                                            // carried by `SubscribeParams`; apply it here
+                                            // so switching TO footprint on a panel with a
+                                            // saved grouping preset seeds grouped from the
+                                            // first fold, same as `ignite_derived_windows`'s
+                                            // cold-restore path and the live-toggle path
+                                            // (`apply_footprint_group_ticks`).
+                                            if ct == "footprint" {
+                                                let group_ticks = self.panel_app.panel_grid.containers().get(&cid)
+                                                    .and_then(|w| self.panels_store.chart_panel.get(&w.chart_panel_id))
+                                                    .map(|p| p.footprint_display.group_ticks)
+                                                    .unwrap_or(0);
+                                                if group_ticks > 0 {
+                                                    fold_params.group_step = group_ticks as f64 * tick_size;
+                                                }
+                                            }
+                                            let derived_target = self.core.user().profile().domain.data_load.derived_trade_target;
+                                            if let Some(ev) = self.core.subscribe_trade_fold_chart_type(
+                                                bid, ct, fold_params, mlc_backend::chart_type::DEFAULT_TPO_SOURCE,
+                                                chart_eid, &symbol, at, Some(derived_target),
+                                            ) {
+                                                self.react_to_bubble_event(&ev, now_ms());
+                                            }
+                                        }
+                                    } else if let Some(subscribe) = ops.subscribe {
+                                        subscribe(self.core.bridge_handle(), chart_eid, &symbol, at, &tf, params);
+                                    }
+                                }
+                                // The CVD sub-pane companion for footprint
+                                // is handled uniformly by
+                                // `sync_default_indicators_for_chart_type`
+                                // below (adds the real mli `CVD` indicator
+                                // to the chart's bubble, computed off the
+                                // bar stream like MACD/RSI — no bespoke
+                                // sub, no bespoke render path).
+                            } else {
+                                // Unknown chart_type (legacy preset) — fall
+                                // through to plain kline.
+                                if !render_only_switch {
+                                    self.core.request_kline(
+                                        chart_eid, &symbol, &tf, at,
+                                        None,
+                                        Some(self.core.user().profile().domain.bar_count as usize),
+                                        true,
+                                    );
+                                }
+                            }
+                            // Owner rule 2026-07-05: each chart_type
+                            // has a canonical companion indicator that
+                            // opens automatically alongside the base
+                            // series (footprint → CVD). Uses the real
+                            // mli catalog id (`CVD`), so the sub-pane
+                            // is populated by the same trubopipeline
+                            // that drives MACD/RSI — no bespoke
+                            // sub-scription, no bespoke render path.
+                            self.sync_default_indicators_for_chart_type(cid, ct);
+                        }
+                    }
+                }
+            }
+            switched = true;
+        }
+        switched
     }
 }

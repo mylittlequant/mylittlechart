@@ -296,7 +296,7 @@ pub fn timeframe_selector_item(default_text: &str) -> ToolbarItemDef {
 /// overlay tab — the symbol system replaces it; color sync stays via the
 /// `tc_color_tag` square. The sidebar close button stays the last control
 /// in the header row (rendered by the sidebar chrome, not this def).
-pub fn trading_header_toolbar(center_label: &str, show_tf: bool) -> PanelToolbarDef {
+pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelToolbarDef {
     let mut sections = vec![
         // 1. Symbol search system (identical to main topbar's).
         ToolbarSectionDef::new(vec![
@@ -313,14 +313,28 @@ pub fn trading_header_toolbar(center_label: &str, show_tf: bool) -> PanelToolbar
                 .with_tooltip(t_toolbar(TK::Settings)),
         ]).with_separator(),
     ];
-    // 3. Timeframe system (identical to main topbar's) — ONLY when the
-    // center shows the chart (owner spec 2026-07-26: the DOM ladder is
-    // tick-by-tick, a TF button next to it is noise). Chart-mode-only
-    // controls (chart_type, indicators) will join this conditional block.
-    if show_tf {
+    // 3. Chart-mode controls — ONLY when the center shows the chart
+    // (owner spec 2026-07-26: the DOM ladder is tick-by-tick, TF/chart-type/
+    // indicator buttons next to it are noise). All three are the SAME
+    // systems the main topbar runs (shared item ids → shared dropdown/
+    // favorites/modal machinery), dispatched at the embedded chart.
+    if chart_mode {
         sections.push(
             ToolbarSectionDef::new(vec![
                 timeframe_selector_item("1m"),
+            ]).with_separator(),
+        );
+        sections.push(
+            ToolbarSectionDef::new(vec![
+                ToolbarItemDef::dropdown("chart_type_selector", chart_type_items())
+                    .with_icon(ToolbarIconId::new("Candlestick"))
+                    .with_tooltip(t_toolbar(TK::ChartType)),
+            ]).with_separator(),
+        );
+        sections.push(
+            ToolbarSectionDef::new(vec![
+                ToolbarItemDef::icon_button("indicators", ToolbarIconId::new("Indicators"))
+                    .with_tooltip(t_toolbar(TK::Indicators)),
             ]).with_separator(),
         );
     }

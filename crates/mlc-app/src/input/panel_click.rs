@@ -3025,6 +3025,28 @@ impl ChartApp {
                         }
                         return;
                     }
+                    "chart_type_selector" => {
+                        // Chart-mode control (embedded center chart) — same
+                        // toggle-open contract as timeframe_selector above.
+                        if self.trading_header_tb.open_dropdown_id.as_deref() == Some("chart_type_selector") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                        } else {
+                            self.trading_header_tb.open_dropdown_id = Some("chart_type_selector".to_string());
+                        }
+                        return;
+                    }
+                    "indicators" => {
+                        // Focus the trading panel FIRST — the indicator
+                        // search modal's commit path routes by
+                        // `workspace_focus`, so the picked indicator lands
+                        // on the embedded chart's bubble.
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if let Some(pid) = tc_pid {
+                            self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
+                        }
+                        self.process_chart_out_event(mlc_core::events::ChartOutEvent::ToggleIndicators);
+                        return;
+                    }
                     "tc_gear" => {
                         self.trading_header_tb.open_dropdown_id = None;
                         self.panel_app.open_tags_tabs_without_preselect();
@@ -3277,6 +3299,20 @@ impl ChartApp {
                                     self.autosave_snapshot();
                                 }
                             }
+                        }
+                        self.trading_header_tb.open_dropdown_id = None;
+                        return;
+                    } else if dropdown_id == "chart_type_selector" {
+                        // Chart-mode control: run the FULL chart-type switch
+                        // pipeline against the embedded center chart (the
+                        // exact machinery `ChangeChartType` runs for the
+                        // active grid chart — extracted as
+                        // `apply_chart_type_switch`, 2026-07-26).
+                        let aux_cid = self.panels_store.trading_container.keys().next().copied()
+                            .and_then(|pid| self.trading_center_charts.get(&pid).copied());
+                        if let Some(cid) = aux_cid {
+                            self.apply_chart_type_switch(Some(cid), item_id);
+                            self.sidebar_data_dirty = true;
                         }
                         self.trading_header_tb.open_dropdown_id = None;
                         return;

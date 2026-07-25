@@ -821,6 +821,52 @@ impl ChartApp {
                             self.modal_state.close();
                             return;
                         }
+                        // Trading-panel focus (chart-in-container arc,
+                        // 2026-07-26): the picked indicator lands on the
+                        // embedded center chart's bubble, not the active
+                        // grid chart — same focus-routing contract the
+                        // symbol search commit uses. The aux chart lives on
+                        // its own auto-bubble (never group-synced), so this
+                        // is the sync-off branch of the flow below, reduced.
+                        if let crate::focus::WorkspaceFocus::TradingPanel(tpid) = self.workspace_focus {
+                            if let Some(&aux_cid) = self.trading_center_charts.get(&tpid) {
+                                let aux_bid = self.panel_app.panel_grid.containers()
+                                    .get(&aux_cid)
+                                    .map(|w| w.current_tag_id);
+                                if let Some(bid) = aux_bid {
+                                    let auto_color: Option<String> =
+                                        self.core.indicators_mut().pick_overlay_color(item_id, bid);
+                                    let new_id_opt = self.core.indicators_mut().add(Some(bid), item_id);
+                                    if let Some(new_id) = new_id_opt {
+                                        if let Some(ref color) = auto_color {
+                                            self.core.indicators_mut().set_all_output_colors(new_id, color.clone());
+                                        }
+                                        // Record on the aux auto-bubble so desync
+                                        // logic never treats it as group-owned.
+                                        self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
+                                            auto_bub.pre_tag_indicator_ids.push(new_id);
+                                        });
+                                        let bars_opt: Option<Vec<mlc_core::Bar>> =
+                                            self.with_bubble(bid, |bub| bub.bars.clone());
+                                        if let Some(bars) = bars_opt {
+                                            self.core.indicators_mut().recalc_bubble(bid, &bars);
+                                        }
+                                        if item_id.eq_ignore_ascii_case("cvd") {
+                                            self.subscribe_cvd_line_for_indicator_add(Some(aux_cid));
+                                        }
+                                        self.sync_sub_panes_from_manager();
+                                        self.sidebar_data_dirty = true;
+                                        eprintln!(
+                                            "[TradingCenter] created indicator '{}' (id={}) on aux chart {:?} bubble {:?}",
+                                            item_id, new_id, aux_cid, bid
+                                        );
+                                    }
+                                    self.modal_state.close();
+                                    return;
+                                }
+                            }
+                        }
+
                         // Create indicator instance from catalog — bound to the active
                         // window, NOT to the symbol it currently displays.
                         let type_id_str = item_id.to_string();
