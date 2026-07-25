@@ -1032,6 +1032,256 @@ impl ChartApp {
         }
     }
 
+    /// Sub-pane overlay button action, parameterized by TARGET chart —
+    /// extracted verbatim from `handle_canvas_click`'s overlay-button
+    /// branch (chart-in-container arc, 2026-07-26) so the trading
+    /// container's embedded center chart shares the SAME hide/delete/
+    /// move/maximize/left-button machinery. `target_cid =
+    /// active_container_id()` reproduces the old behavior bit-for-bit.
+    pub(crate) fn apply_sub_pane_overlay_button(
+        &mut self,
+        target_cid: Option<mlc_core::state::ChartId>,
+        instance_id: u64,
+        real_index: Option<usize>,
+        button: mlc_core::state::modal_data::SubPaneButton,
+    ) {
+        use mlc_core::state::modal_data::SubPaneButton;
+        match button {
+            SubPaneButton::Delete => {
+                self.delete_indicator_instance(instance_id);
+            }
+            SubPaneButton::Hide => {
+                // Single source of truth: instance.visible controls
+                // both overlay and sub-pane indicator visibility.
+                // sub_pane.hidden is not used — render filters by instance.visible.
+                self.core.indicators_mut().toggle_visibility(instance_id);
+                self.sidebar_data_dirty = true;
+                self.autosave_snapshot();
+            }
+            SubPaneButton::MoveUp => {
+                // Move this sub-pane up by one visual position.
+                //
+                // Three cases:
+                //   A. Pane is BELOW main and is the topmost below-pane
+                //      -> promote to above-main (insert at the BOTTOM of the
+                //         above group, i.e. closest to the main chart).
+                //   B. Pane is already ABOVE main (not the topmost above-pane)
+                //      -> swap within the inner_docking tree so it renders
+                //         higher in the above group.
+                //   C. Pane is the topmost above-pane -> no-op (already at top).
+                //
+                // The inner_docking tree stores ALL panes in below order and
+                // drives proportions/identity. above_main is a presentation
+                // overlay on the geometry side; no tree reorder is needed for
+                // promotion — only for intra-above visual ordering.
+                if let Some(tree_idx) = real_index {
+                    let is_above = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                        .map(|w| w.sub_pane_above_main.contains(&instance_id))
+                        .unwrap_or(false);
+
+                    if is_above {
+                        // Case B/C: already above. Swap in tree so the pane
+                        // moves to a lower tree_idx (= visually higher since
+                        // above panes are rendered from tree order top-to-bottom).
+                        let from = tree_idx + 1;
+                        if from > 1 {
+                            let to = from - 1;
+                            let all_ids = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                .unwrap_or_default();
+                            let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
+                            if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                let root_id = window.inner_docking.tree().root().id;
+                                window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                            }
+                            if let (Some(nbr_id), Some(bid)) = (neighbor_id, target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c)).map(|w| w.current_tag_id)) {
+                                self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
+                            }
+                        }
+                    } else {
+                        // Case A: below main. Check if this is the topmost below pane.
+                        // "Topmost below" means no other below pane has a lower tree_idx.
+                        let is_topmost_below = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                            .map(|w| {
+                                let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                // tree_idx is the index of this pane in all_ids.
+                                // It is the topmost below pane if all panes with
+                                // lower tree_idx are already above main.
+                                all_ids.iter().take(tree_idx).all(|id| w.sub_pane_above_main.contains(id))
+                            })
+                            .unwrap_or(false);
+
+                        if is_topmost_below {
+                            // Promote: add to above_main set.
+                            if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                window.sub_pane_above_main.insert(instance_id);
+                            }
+                            // No tree reorder needed — above-main is presentation only.
+                        } else {
+                            // Normal within-below swap.
+                            let from = tree_idx + 1;
+                            if from > 1 {
+                                let to = from - 1;
+                                let all_ids = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                                    .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                    .unwrap_or_default();
+                                let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
+                                if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                    let root_id = window.inner_docking.tree().root().id;
+                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                                if let (Some(nbr_id), Some(bid)) = (neighbor_id, target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c)).map(|w| w.current_tag_id)) {
+                                    self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.autosave_snapshot();
+            }
+            SubPaneButton::MoveDown => {
+                // Move this sub-pane down by one visual position. Mirrors MoveUp.
+                //
+                // Three cases:
+                //   A. Pane is ABOVE main and is the bottommost above-pane
+                //      -> demote back to below-main (top of the below group).
+                //   B. Pane is ABOVE main and not the bottommost
+                //      -> swap in tree to move it visually lower (higher tree_idx).
+                //   C. Pane is BELOW main -> normal swap within below group.
+                if let Some(tree_idx) = real_index {
+                    let is_above = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                        .map(|w| w.sub_pane_above_main.contains(&instance_id))
+                        .unwrap_or(false);
+
+                    if is_above {
+                        // Check if this is the bottommost above-pane (all panes
+                        // after tree_idx are below-main or there are none).
+                        let is_bottommost_above = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                            .map(|w| {
+                                let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
+                                all_ids.iter().skip(tree_idx + 1).all(|id| !w.sub_pane_above_main.contains(id))
+                            })
+                            .unwrap_or(false);
+
+                        if is_bottommost_above {
+                            // Demote: remove from above_main set.
+                            if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                window.sub_pane_above_main.remove(&instance_id);
+                            }
+                        } else {
+                            // Swap within above group (move to higher tree_idx = lower on screen).
+                            let from = tree_idx + 1;
+                            let total = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                                .map(|w| w.inner_docking.tree().root().children.len())
+                                .unwrap_or(0);
+                            let to = from + 1;
+                            if to < total {
+                                let all_ids = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                                    .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                    .unwrap_or_default();
+                                let neighbor_id = all_ids.get(tree_idx + 1).copied();
+                                if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                    let root_id = window.inner_docking.tree().root().id;
+                                    window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                                }
+                                if let (Some(nbr_id), Some(bid)) = (neighbor_id, target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c)).map(|w| w.current_tag_id)) {
+                                    self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
+                                }
+                            }
+                        }
+                    } else {
+                        // Normal within-below swap.
+                        let from = tree_idx + 1;
+                        let total = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                            .map(|w| w.inner_docking.tree().root().children.len())
+                            .unwrap_or(0);
+                        let to = from + 1;
+                        if to < total {
+                            let all_ids = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
+                                .unwrap_or_default();
+                            let neighbor_id = all_ids.get(tree_idx + 1).copied();
+                            if let Some(window) = target_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
+                                let root_id = window.inner_docking.tree().root().id;
+                                window.inner_docking.tree_mut().reorder_children(root_id, from, to);
+                            }
+                            if let (Some(nbr_id), Some(bid)) = (neighbor_id, target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c)).map(|w| w.current_tag_id)) {
+                                self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
+                            }
+                        }
+                    }
+                }
+                self.autosave_snapshot();
+            }
+            SubPaneButton::Expand => {
+                // Maximize this sub-pane so it fills the ENTIRE container area
+                // (main chart and other sub-panes hidden).
+                //
+                // The layout override happens in render_full_chart_panel and
+                // build_extended_layout[_for_leaf] when maximized_sub_panes
+                // contains the entry — no tree proportion manipulation needed.
+                // We save the current tree proportions here so Restore can
+                // put them back exactly.
+                if let Some(cid) = target_cid {
+                    let sub_count = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                        .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
+                        .unwrap_or(0);
+                    if sub_count > 0 {
+                        let pre_props = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                            .map(|w| w.inner_docking.tree().root().proportions.clone())
+                            .unwrap_or_default();
+                        self.maximized_sub_panes.insert(cid.0, (instance_id, pre_props));
+                    }
+                }
+                self.autosave_snapshot();
+            }
+            SubPaneButton::Restore => {
+                // Remove the maximized entry — layout reverts to normal tree
+                // proportions on the next frame automatically.
+                if let Some(cid) = target_cid {
+                    self.maximized_sub_panes.remove(&cid.0);
+                }
+                self.autosave_snapshot();
+            }
+            SubPaneButton::IndicatorEye => {
+                self.core.indicators_mut().toggle_visibility(instance_id);
+                self.sidebar_data_dirty = true;
+                self.autosave_snapshot();
+            }
+            SubPaneButton::IndicatorAlert => {
+                // Open the alert creation modal for this indicator instance.
+                // Uses AlertSource::Indicator with output_index=0 (first output line).
+                // The indicator's display name is used as the alert label.
+                let alert_symbol: String = target_cid
+                    .and_then(|cid| self.symbol_for_chart(cid))
+                    .map(String::from)
+                    .unwrap_or_default();
+                let price_fallback = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
+                    .and_then(|_w| None::<&mlc_core::Bar>)
+                    .map(|b| b.close)
+                    .unwrap_or(0.0);
+                let label = self.core.indicators()
+                    .name_of(instance_id)
+                    .unwrap_or_else(|| format!("Indicator #{}", instance_id));
+                let source = mlc_core::alert::AlertSource::Indicator {
+                    indicator_id: instance_id,
+                    output_index: 0,
+                    label,
+                };
+                self.panel_app.alert_settings_state.open_new(source, &alert_symbol, price_fallback);
+                self.panel_app.alert_settings_state.pin_initial_position(
+                    self.content_rect.width, self.content_rect.height,
+                );
+            }
+            SubPaneButton::IndicatorSettings => {
+                self.panel_app.indicator_settings_state.open(instance_id);
+            }
+            SubPaneButton::IndicatorDelete => {
+                self.delete_indicator_instance(instance_id);
+            }
+        }
+    }
+
     /// Handle a click that landed on the chart canvas (not a widget).
     pub(super) fn handle_canvas_click(&mut self, x: f64, y: f64) {
         // Any click that reaches the canvas returns workspace focus to the
@@ -1137,241 +1387,8 @@ impl ChartApp {
                             .position(|&iid| iid == instance_id)
                     });
 
-                use mlc_core::state::modal_data::SubPaneButton;
-                match button {
-                    SubPaneButton::Delete => {
-                        self.delete_indicator_instance(instance_id);
-                    }
-                    SubPaneButton::Hide => {
-                        // Single source of truth: instance.visible controls
-                        // both overlay and sub-pane indicator visibility.
-                        // sub_pane.hidden is not used — render filters by instance.visible.
-                        self.core.indicators_mut().toggle_visibility(instance_id);
-                        self.sidebar_data_dirty = true;
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::MoveUp => {
-                        // Move this sub-pane up by one visual position.
-                        //
-                        // Three cases:
-                        //   A. Pane is BELOW main and is the topmost below-pane
-                        //      -> promote to above-main (insert at the BOTTOM of the
-                        //         above group, i.e. closest to the main chart).
-                        //   B. Pane is already ABOVE main (not the topmost above-pane)
-                        //      -> swap within the inner_docking tree so it renders
-                        //         higher in the above group.
-                        //   C. Pane is the topmost above-pane -> no-op (already at top).
-                        //
-                        // The inner_docking tree stores ALL panes in below order and
-                        // drives proportions/identity. above_main is a presentation
-                        // overlay on the geometry side; no tree reorder is needed for
-                        // promotion — only for intra-above visual ordering.
-                        if let Some(tree_idx) = real_index {
-                            let is_above = self.panel_app.panel_grid.active_container()
-                                .map(|w| w.sub_pane_above_main.contains(&instance_id))
-                                .unwrap_or(false);
-
-                            if is_above {
-                                // Case B/C: already above. Swap in tree so the pane
-                                // moves to a lower tree_idx (= visually higher since
-                                // above panes are rendered from tree order top-to-bottom).
-                                let from = tree_idx + 1;
-                                if from > 1 {
-                                    let to = from - 1;
-                                    let all_ids = self.panel_app.panel_grid.active_container()
-                                        .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                        .unwrap_or_default();
-                                    let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        let root_id = window.inner_docking.tree().root().id;
-                                        window.inner_docking.tree_mut().reorder_children(root_id, from, to);
-                                    }
-                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
-                                        self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
-                                    }
-                                }
-                            } else {
-                                // Case A: below main. Check if this is the topmost below pane.
-                                // "Topmost below" means no other below pane has a lower tree_idx.
-                                let is_topmost_below = self.panel_app.panel_grid.active_container()
-                                    .map(|w| {
-                                        let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
-                                        // tree_idx is the index of this pane in all_ids.
-                                        // It is the topmost below pane if all panes with
-                                        // lower tree_idx are already above main.
-                                        all_ids.iter().take(tree_idx).all(|id| w.sub_pane_above_main.contains(id))
-                                    })
-                                    .unwrap_or(false);
-
-                                if is_topmost_below {
-                                    // Promote: add to above_main set.
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        window.sub_pane_above_main.insert(instance_id);
-                                    }
-                                    // No tree reorder needed — above-main is presentation only.
-                                } else {
-                                    // Normal within-below swap.
-                                    let from = tree_idx + 1;
-                                    if from > 1 {
-                                        let to = from - 1;
-                                        let all_ids = self.panel_app.panel_grid.active_container()
-                                            .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                            .unwrap_or_default();
-                                        let neighbor_id = all_ids.get(tree_idx.saturating_sub(1)).copied();
-                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                            let root_id = window.inner_docking.tree().root().id;
-                                            window.inner_docking.tree_mut().reorder_children(root_id, from, to);
-                                        }
-                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
-                                            self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::MoveDown => {
-                        // Move this sub-pane down by one visual position. Mirrors MoveUp.
-                        //
-                        // Three cases:
-                        //   A. Pane is ABOVE main and is the bottommost above-pane
-                        //      -> demote back to below-main (top of the below group).
-                        //   B. Pane is ABOVE main and not the bottommost
-                        //      -> swap in tree to move it visually lower (higher tree_idx).
-                        //   C. Pane is BELOW main -> normal swap within below group.
-                        if let Some(tree_idx) = real_index {
-                            let is_above = self.panel_app.panel_grid.active_container()
-                                .map(|w| w.sub_pane_above_main.contains(&instance_id))
-                                .unwrap_or(false);
-
-                            if is_above {
-                                // Check if this is the bottommost above-pane (all panes
-                                // after tree_idx are below-main or there are none).
-                                let is_bottommost_above = self.panel_app.panel_grid.active_container()
-                                    .map(|w| {
-                                        let all_ids = crate::chart_container::collect_inner_instance_ids(&w.inner_docking);
-                                        all_ids.iter().skip(tree_idx + 1).all(|id| !w.sub_pane_above_main.contains(id))
-                                    })
-                                    .unwrap_or(false);
-
-                                if is_bottommost_above {
-                                    // Demote: remove from above_main set.
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        window.sub_pane_above_main.remove(&instance_id);
-                                    }
-                                } else {
-                                    // Swap within above group (move to higher tree_idx = lower on screen).
-                                    let from = tree_idx + 1;
-                                    let total = self.panel_app.panel_grid.active_container()
-                                        .map(|w| w.inner_docking.tree().root().children.len())
-                                        .unwrap_or(0);
-                                    let to = from + 1;
-                                    if to < total {
-                                        let all_ids = self.panel_app.panel_grid.active_container()
-                                            .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                            .unwrap_or_default();
-                                        let neighbor_id = all_ids.get(tree_idx + 1).copied();
-                                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                            let root_id = window.inner_docking.tree().root().id;
-                                            window.inner_docking.tree_mut().reorder_children(root_id, from, to);
-                                        }
-                                        if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
-                                            self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Normal within-below swap.
-                                let from = tree_idx + 1;
-                                let total = self.panel_app.panel_grid.active_container()
-                                    .map(|w| w.inner_docking.tree().root().children.len())
-                                    .unwrap_or(0);
-                                let to = from + 1;
-                                if to < total {
-                                    let all_ids = self.panel_app.panel_grid.active_container()
-                                        .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                                        .unwrap_or_default();
-                                    let neighbor_id = all_ids.get(tree_idx + 1).copied();
-                                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                                        let root_id = window.inner_docking.tree().root().id;
-                                        window.inner_docking.tree_mut().reorder_children(root_id, from, to);
-                                    }
-                                    if let (Some(nbr_id), Some(bid)) = (neighbor_id, self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id)) {
-                                        self.core.indicators_mut().swap_pane_order(bid, instance_id, nbr_id);
-                                    }
-                                }
-                            }
-                        }
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::Expand => {
-                        // Maximize this sub-pane so it fills the ENTIRE container area
-                        // (main chart and other sub-panes hidden).
-                        //
-                        // The layout override happens in render_full_chart_panel and
-                        // build_extended_layout[_for_leaf] when maximized_sub_panes
-                        // contains the entry — no tree proportion manipulation needed.
-                        // We save the current tree proportions here so Restore can
-                        // put them back exactly.
-                        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
-                            let sub_count = self.panel_app.panel_grid.active_container()
-                                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
-                                .unwrap_or(0);
-                            if sub_count > 0 {
-                                let pre_props = self.panel_app.panel_grid.active_container()
-                                    .map(|w| w.inner_docking.tree().root().proportions.clone())
-                                    .unwrap_or_default();
-                                self.maximized_sub_panes.insert(cid.0, (instance_id, pre_props));
-                            }
-                        }
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::Restore => {
-                        // Remove the maximized entry — layout reverts to normal tree
-                        // proportions on the next frame automatically.
-                        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
-                            self.maximized_sub_panes.remove(&cid.0);
-                        }
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::IndicatorEye => {
-                        self.core.indicators_mut().toggle_visibility(instance_id);
-                        self.sidebar_data_dirty = true;
-                        self.autosave_snapshot();
-                    }
-                    SubPaneButton::IndicatorAlert => {
-                        // Open the alert creation modal for this indicator instance.
-                        // Uses AlertSource::Indicator with output_index=0 (first output line).
-                        // The indicator's display name is used as the alert label.
-                        let alert_symbol: String = self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let price_fallback = self.panel_app.panel_grid.active_container()
-                            .and_then(|_w| None::<&mlc_core::Bar>)
-                            .map(|b| b.close)
-                            .unwrap_or(0.0);
-                        let label = self.core.indicators()
-                            .name_of(instance_id)
-                            .unwrap_or_else(|| format!("Indicator #{}", instance_id));
-                        let source = mlc_core::alert::AlertSource::Indicator {
-                            indicator_id: instance_id,
-                            output_index: 0,
-                            label,
-                        };
-                        self.panel_app.alert_settings_state.open_new(source, &alert_symbol, price_fallback);
-                        self.panel_app.alert_settings_state.pin_initial_position(
-                            self.content_rect.width, self.content_rect.height,
-                        );
-                    }
-                    SubPaneButton::IndicatorSettings => {
-                        self.panel_app.indicator_settings_state.open(instance_id);
-                    }
-                    SubPaneButton::IndicatorDelete => {
-                        self.delete_indicator_instance(instance_id);
-                    }
-                }
+                let target = self.panel_app.panel_grid.active_container_id();
+                self.apply_sub_pane_overlay_button(target, instance_id, real_index, button);
                 return;
             }
         }

@@ -732,6 +732,14 @@ impl ChartApp {
     /// - `ind_overlay:leaf{leaf_id}:settings:{id}` — open indicator settings
     /// - `ind_overlay:leaf{leaf_id}:delete:{id}` — remove indicator instance
     pub(super) fn handle_indicator_overlay_click(&mut self, rest: &str) {
+        // Trading container's embedded center chart (chart-in-container
+        // arc, 2026-07-26): `tcc:{action}` — its overlay state lives on
+        // `trading_center_ind_overlay`, not the leaf-keyed map.
+        if let Some(action) = rest.strip_prefix("tcc:") {
+            self.handle_trading_center_ind_overlay_action(action);
+            return;
+        }
+
         // In split mode the widget ID has the form `leaf{leaf_id}:{action}`.
         // Detect that prefix and route to per-leaf state.
         if rest.starts_with("leaf") {
@@ -887,7 +895,7 @@ impl ChartApp {
     /// When the deleted indicator belongs to a tagged sync group, ALL instances
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
-    pub(super) fn delete_indicator_instance(&mut self, id: u64) {
+    pub(crate) fn delete_indicator_instance(&mut self, id: u64) {
         let type_id = match self.core.indicators().type_id_of(id) {
             Some(type_id) => type_id,
             None => return,

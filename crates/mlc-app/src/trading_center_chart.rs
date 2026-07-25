@@ -28,6 +28,17 @@ use mlc_app_layout::layout::{
     ChartPanelRenderData, ChartRenderConfig, render_chart_crosshair_layer,
     render_full_chart_panel,
 };
+
+/// Hit-test payload the center-chart render pass hands back to
+/// `render_to_scene`: scale-corner button zones, sub-pane overlay button
+/// rects (written back onto the aux window like the split loop's
+/// `overlay_writebacks`), and the indicator legend overlay's widget rects
+/// (registered under the `ind_overlay:tcc:` prefix).
+pub(crate) struct TradingCenterRenderOut {
+    pub corner_zones: mlc_core::ScaleCornerHitZones,
+    pub sub_pane_overlays: Vec<mlc_core::SubPaneOverlayResult>,
+    pub ind_overlay: Option<mlc_app_layout::layout::render_frame::IndicatorOverlayResult>,
+}
 use mlc_app_panels::trading::trading::trading_container::CenterKind;
 use mlc_core::indicator_source::{AlertRenderData, IndicatorSource};
 use mlc_core::state::Timeframe;
@@ -284,7 +295,7 @@ impl ChartApp {
         ctx: &mut dyn mlc_core::render::RenderContext,
         pid: mlc_core::state::PanelId,
         center_rect: &mlc_core::LayoutRect,
-    ) -> Option<mlc_core::ScaleCornerHitZones> {
+    ) -> Option<TradingCenterRenderOut> {
         let &cid = self.trading_center_charts.get(&pid)?;
         let window = self.panel_app.panel_grid.containers().get(&cid)?;
 
@@ -432,6 +443,51 @@ impl ChartApp {
             None,
         );
 
+        // Indicator legend overlay (chevron + per-instance rows with
+        // eye/settings/alert/delete) — the same widget every grid leaf
+        // shows top-left of its main chart. State lives on
+        // `trading_center_ind_overlay` (the leaf-keyed
+        // `indicator_overlay_states` map can never hold the leafless aux
+        // chart); visibility mirrors prepare_frame's rule (any instances
+        // on the bubble). No compare rows — the aux chart has no compare.
+        let ind_overlay = {
+            let indicators: Vec<mlc_app_layout::layout::render_ui::IndicatorOverlayInfo> = {
+                let im = self.core.indicators();
+                im.instances_for_bubble(window.current_tag_id)
+                    .iter()
+                    .map(|inst| mlc_app_layout::layout::render_ui::IndicatorOverlayInfo {
+                        id: inst.id,
+                        display_name: Self::format_indicator_display_name(&im, inst),
+                        visible: inst.visible,
+                        is_compare: false,
+                        symbol: None,
+                        color: None,
+                    })
+                    .collect()
+            };
+            let mut ov_state = self.trading_center_ind_overlay.clone();
+            ov_state.visible = !indicators.is_empty();
+            if !indicators.is_empty() && (ov_state.visible || ov_state.is_open) {
+                let toolbar_theme_for_overlay = self.panel_app.toolbar_theme_for_render();
+                let overlay_rect = uzor::types::Rect::new(
+                    center_rect.x,
+                    crosshair_layout.main_chart.chart.y,
+                    center_rect.width,
+                    center_rect.height,
+                );
+                Some(mlc_app_layout::layout::modals::indicator_overlay::render_indicator_overlay(
+                    ctx,
+                    &overlay_rect,
+                    &indicators,
+                    &ov_state,
+                    &frame_theme,
+                    &toolbar_theme_for_overlay,
+                ))
+            } else {
+                None
+            }
+        };
+
         ctx.restore();
 
         // Region separators on the chart's right/bottom edges — the
@@ -454,7 +510,11 @@ impl ChartApp {
             1.0,
         );
 
-        Some(render_result.corner_zones)
+        Some(TradingCenterRenderOut {
+            corner_zones: render_result.corner_zones,
+            sub_pane_overlays: render_result.sub_pane_overlays,
+            ind_overlay,
+        })
     }
 
     // =========================================================================
@@ -717,5 +777,240 @@ impl ChartApp {
             let drag_pane = if dragging { Some(None) } else { None };
             window.update_crosshair_from_global(x, y, &layout, drag_pane, &bars_vec);
         }
+    }
+
+    /// Sub-pane separator hit test on the aux chart — returns the pane's
+    /// `instance_id` when the cursor is on a separator strip.
+    pub(crate) fn trading_center_sep_hit(
+        &self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        x: f64,
+        y: f64,
+    ) -> Option<u64> {
+        let layout = self.trading_center_layout(cid, rect)?;
+        layout
+            .sub_panes
+            .iter()
+            .find(|p| p.separator.contains(x, y))
+            .map(|p| p.instance_id)
+    }
+
+    /// Apply a sub-pane separator drag delta on the aux chart — the same
+    /// `drag_sub_pane_separator` / `drag_above_pane_separator` routing the
+    /// main path runs in `on_drag_move` (with content dims rebuilt from
+    /// the live layout, not a frame cache).
+    pub(crate) fn trading_center_sep_drag_move(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        instance_id: u64,
+        dy: f64,
+    ) {
+        let Some(layout) = self.trading_center_layout(cid, rect) else { return };
+        let content_h = layout.main_chart.chart.height
+            + layout
+                .sub_panes
+                .iter()
+                .map(|p| p.content.height + p.separator.height)
+                .sum::<f64>();
+        let content_w = layout.main_chart.chart.width;
+        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+            let _ok = if window.sub_pane_above_main.contains(&instance_id) {
+                window.drag_above_pane_separator(instance_id, dy, content_h)
+            } else {
+                window.drag_sub_pane_separator(instance_id, dy, content_h, content_w)
+            };
+        }
+        self.sidebar_data_dirty = true;
+    }
+
+    /// Sub-pane overlay button click on the aux chart. Returns `true`
+    /// when a button consumed the click. Same resolve-then-apply shape as
+    /// `handle_canvas_click`'s overlay branch, targeted at the aux window
+    /// via the extracted `apply_sub_pane_overlay_button`.
+    pub(crate) fn trading_center_overlay_click(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        x: f64,
+        y: f64,
+    ) -> bool {
+        let overlay_results = match self.panel_app.panel_grid.containers().get(&cid) {
+            Some(w) => w.sub_pane_overlay_results.clone(),
+            None => return false,
+        };
+        if overlay_results.is_empty() {
+            return false;
+        }
+        let Some(layout) = self.trading_center_layout(cid, rect) else { return false };
+        let tester = mlc_app_layout::layout::ExtendedLayoutHitTester::new(&layout)
+            .with_overlays(&overlay_results);
+        use mlc_core::input::ChartHitTester;
+        if let mlc_core::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } =
+            tester.hit_test(x, y)
+        {
+            let instance_id = overlay_results
+                .get(pane_index)
+                .map(|o| o.instance_id)
+                .unwrap_or(0);
+            if instance_id == 0 {
+                return true; // consumed — button zone, unresolved pane
+            }
+            let real_index = self
+                .panel_app
+                .panel_grid
+                .containers()
+                .get(&cid)
+                .and_then(|w| {
+                    crate::chart_container::collect_inner_instance_ids(&w.inner_docking)
+                        .iter()
+                        .position(|&iid| iid == instance_id)
+                });
+            self.apply_sub_pane_overlay_button(Some(cid), instance_id, real_index, button);
+            self.sidebar_data_dirty = true;
+            return true;
+        }
+        false
+    }
+
+    /// Hover update for the aux chart's sub-pane overlay buttons — the
+    /// split-mode visibility/hovered-button logic reduced to one window.
+    /// `inside == false` clears everything (cursor left the center rect).
+    pub(crate) fn trading_center_overlay_hover(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        x: f64,
+        y: f64,
+        inside: bool,
+    ) {
+        let layout = if inside { self.trading_center_layout(cid, rect) } else { None };
+        let overlay_results = self
+            .panel_app
+            .panel_grid
+            .containers()
+            .get(&cid)
+            .map(|w| w.sub_pane_overlay_results.clone())
+            .unwrap_or_default();
+        let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) else {
+            return;
+        };
+        for state in window.sub_pane_overlay_states.iter_mut() {
+            state.visible = false;
+            state.hovered_button = None;
+            state.hovered_left_button = None;
+        }
+        let Some(layout) = layout else { return };
+        for (layout_idx, pane_layout) in layout.sub_panes.iter().enumerate() {
+            if pane_layout.content.contains(x, y) {
+                let real_idx = layout_idx;
+                while window.sub_pane_overlay_states.len() <= real_idx {
+                    window.sub_pane_overlay_states.push(Default::default());
+                }
+                window.sub_pane_overlay_states[real_idx].visible = true;
+                if layout_idx < overlay_results.len() {
+                    use mlc_core::state::modal_data::SubPaneButton;
+                    let overlay = &overlay_results[layout_idx];
+                    let hovered = if overlay.delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::Delete)
+                    } else if overlay.hide_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::Hide)
+                    } else if overlay.move_up_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::MoveUp)
+                    } else if overlay.move_down_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::MoveDown)
+                    } else if overlay.expand_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::Expand)
+                    } else if overlay.restore_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::Restore)
+                    } else {
+                        None
+                    };
+                    let hovered_left = if overlay.left_eye_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::IndicatorEye)
+                    } else if overlay.left_alert_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::IndicatorAlert)
+                    } else if overlay.left_settings_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::IndicatorSettings)
+                    } else if overlay.left_delete_rect.as_ref().is_some_and(|r| r.contains(x, y)) {
+                        Some(SubPaneButton::IndicatorDelete)
+                    } else {
+                        None
+                    };
+                    window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
+                    window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
+                }
+                break;
+            }
+        }
+    }
+
+    /// Indicator legend overlay actions for the aux chart
+    /// (`ind_overlay:tcc:{action}` widgets). Mirrors
+    /// `handle_indicator_overlay_action` with the open/close state living
+    /// on `trading_center_ind_overlay` and the alert symbol resolved from
+    /// the aux chart's bubble.
+    pub(crate) fn handle_trading_center_ind_overlay_action(&mut self, action: &str) {
+        match action {
+            "toggle" => {
+                self.trading_center_ind_overlay.toggle();
+            }
+            "close" => {
+                self.trading_center_ind_overlay.close();
+            }
+            _ if action.starts_with("vis:") => {
+                if let Ok(id) = action["vis:".len()..].parse::<u64>() {
+                    self.core.indicators_mut().toggle_visibility(id);
+                }
+            }
+            _ if action.starts_with("settings:") => {
+                if let Ok(id) = action["settings:".len()..].parse::<u64>() {
+                    self.panel_app.indicator_settings_state.open(id);
+                }
+            }
+            _ if action.starts_with("delete:") => {
+                if let Ok(id) = action["delete:".len()..].parse::<u64>() {
+                    self.delete_indicator_instance(id);
+                }
+            }
+            _ if action.starts_with("alert:") => {
+                if let Ok(id) = action["alert:".len()..].parse::<u64>() {
+                    let aux_cid = self
+                        .panels_store
+                        .trading_container
+                        .keys()
+                        .next()
+                        .copied()
+                        .and_then(|pid| self.trading_center_charts.get(&pid).copied());
+                    let symbol = aux_cid
+                        .and_then(|cid| self.symbol_for_chart(cid))
+                        .unwrap_or_default();
+                    let label = self
+                        .core
+                        .indicators()
+                        .name_of(id)
+                        .unwrap_or_else(|| format!("Indicator {}", id));
+                    let source = mlc_core::alert::AlertSource::Signal {
+                        indicator_id: id,
+                        label,
+                        direction_filter: mlc_core::alert::SignalDirection::Any,
+                        bar_state: mlc_core::alert::SignalBarState::Forming,
+                        kind_filter: None,
+                    };
+                    self.panel_app.alert_settings_state.open_new(source, &symbol, 0.0);
+                    self.panel_app.alert_settings_state.pin_initial_position(
+                        self.content_rect.width,
+                        self.content_rect.height,
+                    );
+                }
+            }
+            _ if action.starts_with("row:") => {
+                // Row body click — no-op (matches main overlay behavior:
+                // actions live on the trailing buttons).
+            }
+            _ => {}
+        }
+        self.sidebar_data_dirty = true;
     }
 }

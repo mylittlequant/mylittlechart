@@ -951,6 +951,12 @@ pub struct ChartApp {
     /// aux counterpart of `scale_corner_zones_by_leaf` (which is
     /// leaf-keyed and can never hold the leafless aux chart).
     pub(crate) trading_center_corner_zones: Option<ScaleCornerHitZones>,
+    /// Active sub-pane separator drag on the center chart: the pane's
+    /// indicator `instance_id` (aux counterpart of `sub_pane_sep_drag`).
+    pub(crate) trading_center_sep_drag: Option<u64>,
+    /// Indicator legend overlay open/closed state for the center chart —
+    /// aux counterpart of the leaf-keyed `indicator_overlay_states`.
+    pub(crate) trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2178,6 +2184,8 @@ impl ChartApp {
             trading_center_input: DefaultChartInputHandler::new(),
             trading_center_drag_active: false,
             trading_center_corner_zones: None,
+            trading_center_sep_drag: None,
+            trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2579,6 +2587,8 @@ impl ChartApp {
             trading_center_input: DefaultChartInputHandler::new(),
             trading_center_drag_active: false,
             trading_center_corner_zones: None,
+            trading_center_sep_drag: None,
+            trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3126,6 +3136,8 @@ impl ChartApp {
             trading_center_input: DefaultChartInputHandler::new(),
             trading_center_drag_active: false,
             trading_center_corner_zones: None,
+            trading_center_sep_drag: None,
+            trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -6427,12 +6439,79 @@ impl ChartApp {
                         None
                     };
                 self.trading_center_rect = tc_center;
-                self.trading_center_corner_zones = match tc_center {
+                let tc_out = match tc_center {
                     Some((tc_pid_c, center_rect)) => {
                         self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect)
                     }
                     None => None,
                 };
+                match tc_out {
+                    Some(out) => {
+                        self.trading_center_corner_zones = Some(out.corner_zones);
+                        // Sub-pane overlay writeback — aux counterpart of
+                        // the split loop's `overlay_writebacks` (button
+                        // rects for hover + click hit-testing next frame).
+                        if let Some((tc_pid_c, _)) = tc_center {
+                            if let Some(&aux_cid) = self.trading_center_charts.get(&tc_pid_c) {
+                                if let Some(w) =
+                                    self.panel_app.panel_grid.containers_mut().get_mut(&aux_cid)
+                                {
+                                    w.sub_pane_overlay_results = out.sub_pane_overlays;
+                                }
+                            }
+                        }
+                        // Indicator legend overlay hit zones
+                        // (`ind_overlay:tcc:{action}` — routed by
+                        // `handle_trading_center_ind_overlay_action`).
+                        if let Some(ref ov) = out.ind_overlay {
+                            use uzor::input::Sense;
+                            use mlc_app_layout::ui::z_order::ZLayer;
+                            let ov_layer = ZLayer::Toolbar.push_named(
+                                &mut self.input_coordinator.borrow_mut(),
+                                "ind_overlay_tcc",
+                            );
+                            let prefix = "ind_overlay:tcc:";
+                            let br = &ov.button_rect;
+                            if br.width > 0.0 {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("{}toggle", prefix),
+                                    uzor::Rect::new(br.x, br.y, br.width, br.height),
+                                    Sense::CLICK,
+                                    &ov_layer,
+                                );
+                            }
+                            if let Some(ref cr) = ov.close_button_rect {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("{}close", prefix),
+                                    uzor::Rect::new(cr.x, cr.y, cr.width, cr.height),
+                                    Sense::CLICK,
+                                    &ov_layer,
+                                );
+                            }
+                            for row in &ov.indicator_rows {
+                                let id = row.instance_id;
+                                for (suffix, r) in [
+                                    ("row", &row.row_rect),
+                                    ("alert", &row.alert_btn),
+                                    ("vis", &row.visibility_btn),
+                                    ("settings", &row.settings_btn),
+                                    ("delete", &row.delete_btn),
+                                ] {
+                                    self.input_coordinator.borrow_mut().register_on_layer(
+                                        format!("{}{}:{}", prefix, suffix, id),
+                                        uzor::Rect::new(r.x, r.y, r.width, r.height),
+                                        Sense::CLICK,
+                                        &ov_layer,
+                                    );
+                                }
+                            }
+                            self.input_coordinator.borrow_mut().pop_layer(&ov_layer);
+                        }
+                    }
+                    None => {
+                        self.trading_center_corner_zones = None;
+                    }
+                }
             }
 
             // Trading container EMBEDDED header toolbar (owner spec

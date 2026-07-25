@@ -337,8 +337,11 @@ impl ChartApp {
             // is already respected: process_click returned the body only
             // because nothing (dropdown/modal) sat above it.
             if id.starts_with("slot:") && id.ends_with(":focus_content") {
-                if let Some((_pid, cid, _rect)) = self.trading_center_hit(x, y) {
+                if let Some((_pid, cid, rect)) = self.trading_center_hit(x, y) {
                     if self.trading_center_corner_click(cid, x, y) {
+                        return;
+                    }
+                    if self.trading_center_overlay_click(cid, &rect, x, y) {
                         return;
                     }
                 }
@@ -1447,6 +1450,14 @@ impl ChartApp {
                 .unwrap_or(false);
             if over_body {
                 if let Some((pid, cid, rect)) = self.trading_center_hit(x, y) {
+                    // Sub-pane separator drag wins over the engine gesture
+                    // (same priority the main path gives it in
+                    // `handle_drag_start`'s SubPaneSeparator arm).
+                    if let Some(instance_id) = self.trading_center_sep_hit(cid, &rect, x, y) {
+                        self.trading_center_sep_drag = Some(instance_id);
+                        self.ui_drag_active = true;
+                        return false;
+                    }
                     self.trading_center_drag_active = true;
                     self.ui_drag_active = true;
                     self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
@@ -2851,6 +2862,16 @@ impl ChartApp {
             return;
         }
 
+        // ── Trading center chart sub-pane separator drag ────────────────────
+        if let Some(instance_id) = self.trading_center_sep_drag {
+            if let Some((pid, rect)) = self.trading_center_rect {
+                if let Some(&cid) = self.trading_center_charts.get(&pid) {
+                    self.trading_center_sep_drag_move(cid, &rect, instance_id, dy);
+                }
+            }
+            return;
+        }
+
         // ── Trading center chart drag (full engine mechanics) ───────────────
         if self.trading_center_drag_active {
             if let Some((pid, rect)) = self.trading_center_rect {
@@ -3815,6 +3836,12 @@ impl ChartApp {
             return;
         }
 
+        // ── End trading center chart sub-pane separator drag ────────────────
+        if self.trading_center_sep_drag.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // ── End trading center chart drag ────────────────────────────────────
         if self.trading_center_drag_active {
             self.trading_center_drag_active = false;
@@ -4426,7 +4453,7 @@ impl ChartApp {
         }
 
         // --- Trading center chart hover crosshair (chart-in-container arc) ---
-        if !self.trading_center_drag_active {
+        if !self.trading_center_drag_active && self.trading_center_sep_drag.is_none() {
             if let Some((pid, rect)) = self.trading_center_rect {
                 if let Some(&cid) = self.trading_center_charts.get(&pid) {
                     let inside = x >= rect.x
@@ -4444,6 +4471,9 @@ impl ChartApp {
                             self.sidebar_data_dirty = true;
                         }
                     }
+                    // Sub-pane overlay button visibility/hover (aux
+                    // counterpart of the split-mode overlay update).
+                    self.trading_center_overlay_hover(cid, &rect, x, y, inside);
                 }
             }
         }
