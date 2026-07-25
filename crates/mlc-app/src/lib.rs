@@ -39,6 +39,7 @@ pub mod scroll_dispatch;
 pub mod standalone_panel;
 pub mod tag_ui;
 pub mod text_input;
+pub mod trading_center_chart;
 pub mod ui_container;
 pub mod user_manager;
 use uzor::input::TextFieldConfig;
@@ -919,6 +920,24 @@ pub struct ChartApp {
     /// `None` when nothing has been copied — never persisted, never synced
     /// across windows (process-local, cleared on restart).
     pub(crate) primitive_clipboard: Option<PrimitiveClipboard>,
+
+    /// Embedded chart in the trading container's CENTER region
+    /// (chart-in-container arc, 2026-07-26): PanelId of the trading
+    /// container → ChartId of its aux `ChartContainer`. The aux container
+    /// lives IN `panel_grid.containers` (so every reactive sweep, park/
+    /// unpark, and BarsLoaded reconcile handles it for free) but has NO
+    /// docking leaf / `leaf_to_chart` entry — the grid never lays it out,
+    /// the preset snapshot never captures it. RAM-only: identity re-derives
+    /// from the container's symbol key; `replace_containers` (preset
+    /// cold-load) wipes the map, so entries here are valid ONLY while the
+    /// map still holds the id (see `ensure_trading_center_charts`).
+    pub(crate) trading_center_charts: std::collections::HashMap<mlc_core::state::PanelId, mlc_core::state::ChartId>,
+    /// Last rendered center-region rect per trading container — cached by
+    /// the render pass, consumed by the next tick's
+    /// `ensure_trading_center_charts` to `resize_geometry` the aux chart
+    /// (mirrors how the grid resizes per-leaf viewports in prepare).
+    /// `None` while the Trading sidebar is closed or center shows DOM.
+    pub(crate) trading_center_rect: Option<(mlc_core::state::PanelId, mlc_app_layout::layout::LayoutRect)>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2141,6 +2160,8 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            trading_center_charts: std::collections::HashMap::new(),
+            trading_center_rect: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2537,6 +2558,8 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            trading_center_charts: std::collections::HashMap::new(),
+            trading_center_rect: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3079,6 +3102,8 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            trading_center_charts: std::collections::HashMap::new(),
+            trading_center_rect: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -6457,6 +6482,46 @@ impl ChartApp {
                 }
             }
 
+            // Embedded center chart (chart-in-container arc, 2026-07-26):
+            // when the trading container's center shows Chart, draw the aux
+            // `ChartContainer` over the container's center region. Rect =
+            // the container body (`slot:N:leaf:M:focus_content` row pushed
+            // by `render_slot_panel`) run through the container's own
+            // `v1_layout_rects().dom`. Cached into `trading_center_rect`
+            // for the next tick's `resize_geometry` (viewport geometry —
+            // same contract as prepare.rs's per-leaf resize).
+            {
+                use mlc_app_panels::trading::trading::trading_container::CenterKind;
+                let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> =
+                    if self.sidebar_state.right_panel
+                        == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
+                    {
+                        self.panels_store.trading_container.iter().next().and_then(|(pid, tc)| {
+                            if tc.center_kind != CenterKind::Chart {
+                                return None;
+                            }
+                            sidebar_result
+                                .item_rects
+                                .iter()
+                                .find(|(id, _)| {
+                                    id.starts_with("slot:") && id.ends_with(":focus_content")
+                                })
+                                .map(|(_, r)| {
+                                    let rects =
+                                        tc.v1_layout_rects(r.x, r.y, r.width, r.height);
+                                    let (dx, dy, dw, dh) = rects.dom;
+                                    (*pid, LayoutRect::new(dx, dy, dw, dh))
+                                })
+                        })
+                    } else {
+                        None
+                    };
+                self.trading_center_rect = tc_center;
+                if let Some((tc_pid_c, center_rect)) = tc_center {
+                    self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
+                }
+            }
+
             Some(sidebar_result)
         } else {
             None
@@ -7115,6 +7180,39 @@ impl ChartApp {
                     th_tf_native.as_ref(),
                     tc.center_kind.label(),
                 );
+            }
+
+            // Embedded center chart — draw-only vello copy (the dirty-scene
+            // cache composites this sidebar scene OVER `render_to_scene`'s
+            // pixels; without this copy the chart vanishes on the native
+            // shell whenever only the sidebar scene is rebuilt). Hit zones /
+            // rect cache are owned by `render_to_scene`.
+            {
+                use mlc_app_panels::trading::trading::trading_container::CenterKind;
+                let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> = self
+                    .panels_store
+                    .trading_container
+                    .iter()
+                    .next()
+                    .and_then(|(pid, tc)| {
+                        if tc.center_kind != CenterKind::Chart {
+                            return None;
+                        }
+                        sidebar_result
+                            .item_rects
+                            .iter()
+                            .find(|(id, _)| {
+                                id.starts_with("slot:") && id.ends_with(":focus_content")
+                            })
+                            .map(|(_, r)| {
+                                let rects = tc.v1_layout_rects(r.x, r.y, r.width, r.height);
+                                let (dx, dy, dw, dh) = rects.dom;
+                                (*pid, LayoutRect::new(dx, dy, dw, dh))
+                            })
+                    });
+                if let Some((tc_pid_c, center_rect)) = tc_center {
+                    self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
+                }
             }
         }
 

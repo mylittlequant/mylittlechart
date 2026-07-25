@@ -374,6 +374,12 @@ impl ChartApp {
         // per-tick compare instead of an `ActiveChartChanged` reaction.
         self.poll_trading_container_group_follow();
 
+        // Embedded center chart lifecycle (chart-in-container arc,
+        // 2026-07-26): lazy birth / preset-wipe recovery / instrument-TF
+        // reconcile / viewport resize for the trading container's aux
+        // `ChartContainer`. See `trading_center_chart.rs` module doc.
+        self.ensure_trading_center_charts();
+
         // ── Watchlist refresh trigger ─────────────────────────────────────────
         // mini_ticker writes are passthrough at the BackendCore layer (DashMap,
         // lock-free) — the sidebar render path reads them on demand. But render
