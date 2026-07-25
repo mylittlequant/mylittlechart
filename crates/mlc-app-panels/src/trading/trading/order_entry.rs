@@ -78,15 +78,23 @@ pub struct OrderEntryState {
     /// Currently hovered element (for hover highlighting)
     pub hovered: Option<OrderEntryElement>,
 
-    /// Currently active/editing text field (None = no field being edited)
-    pub editing_field: Option<OrderEntryElement>,
-
-    /// Inline text editing state (synced from centralized text_input_state)
-    /// The renderer reads these directly for cursor/selection rendering
-    pub editing_text: String,
-    pub editing_cursor: usize,
-    pub editing_selection: Option<usize>,
-    pub editing_blink_time: u64,
+    /// Which numeric field is nominally in edit mode for this instance
+    /// (Price, StopPrice, or Quantity) — the discriminant for the ONE
+    /// shared per-instance `TextFieldStore` field id
+    /// (`"{slot_prefix}:oe_field"`, minted by `mlc-app`'s
+    /// `oe_field_widget_id`). Mirrors
+    /// `PrimitiveSettingsState::active_field_id`'s "one WidgetId covers all
+    /// inline sub-fields" pattern — actual text/cursor/selection state
+    /// lives in uzor's canonical `TextFieldStore`, reached through the
+    /// `coordinator` parameter `render()` already receives; this field only
+    /// records WHICH row currently owns it. `render()` additionally
+    /// cross-checks `coordinator.text_fields().is_focused(..)` before
+    /// treating a row as live, so silently losing focus elsewhere (e.g. an
+    /// unrelated global text field stealing it) never leaves a stale
+    /// phantom caret on screen. Set/cleared/committed entirely by the app
+    /// layer (`mlc-app::input::panel_click`) — this panel never touches the
+    /// coordinator itself (`handle_click` doesn't receive one).
+    pub active_field: Option<OrderEntryElement>,
 
     /// Scroll offset for when content exceeds panel height
     pub scroll_offset: f64,
@@ -130,11 +138,7 @@ impl OrderEntryState {
             errors: Vec::new(),
             submitting: false,
             hovered: None,
-            editing_field: None,
-            editing_text: String::new(),
-            editing_cursor: 0,
-            editing_selection: None,
-            editing_blink_time: 0,
+            active_field: None,
             scroll_offset: 0.0,
             snapshot: None,
             snapshot_error_shown: false,
@@ -363,120 +367,20 @@ impl OrderEntryState {
         self.recalc_estimated();
     }
 
-    /// Check if cursor should be visible (500ms blink cycle)
-    pub fn is_cursor_visible(&self, now_ms: u64) -> bool {
-        if self.editing_field.is_none() { return false; }
-        let elapsed = now_ms.wrapping_sub(self.editing_blink_time);
-        (elapsed / 500) % 2 == 0
-    }
+}
 
-    /// True while a field is actively being edited.
-    pub fn is_editing(&self) -> bool {
-        self.editing_field.is_some()
+/// Splice a blinking text-cursor character into `text` at char index
+/// `cursor`, when `visible` (mirrors the old `display_editing_text`'s
+/// splice — plain string surgery, no pixel-based caret math needed since
+/// the field is drawn as ordinary canvas text).
+fn splice_caret(text: &str, cursor: usize, visible: bool) -> String {
+    if !visible {
+        return text.to_string();
     }
-
-    /// Insert a character at the cursor of the field currently being edited.
-    /// Only digits and a single '.' are accepted; anything else is silently
-    /// dropped (still consumed — there is no other valid input for a
-    /// numeric field). Returns `false` (not consumed) when no field is
-    /// being edited.
-    pub fn handle_edit_char(&mut self, ch: char) -> bool {
-        if self.editing_field.is_none() {
-            return false;
-        }
-        if ch.is_ascii_digit() {
-            self.editing_text.insert(self.editing_cursor, ch);
-            self.editing_cursor += 1;
-        } else if ch == '.' && !self.editing_text.contains('.') {
-            self.editing_text.insert(self.editing_cursor, ch);
-            self.editing_cursor += 1;
-        }
-        true
-    }
-
-    /// Handle a named key while a field is being edited: Backspace/Delete,
-    /// cursor movement, Enter (commit), Escape (cancel). Returns `false`
-    /// (not consumed) when no field is being edited or the key has no
-    /// editing meaning.
-    pub fn handle_edit_key(&mut self, key: mlc_core::input::KeyCode) -> bool {
-        use mlc_core::input::KeyCode;
-        if self.editing_field.is_none() {
-            return false;
-        }
-        match key {
-            KeyCode::Backspace => {
-                if self.editing_cursor > 0 {
-                    self.editing_cursor -= 1;
-                    self.editing_text.remove(self.editing_cursor);
-                }
-                true
-            }
-            KeyCode::Delete => {
-                if self.editing_cursor < self.editing_text.len() {
-                    self.editing_text.remove(self.editing_cursor);
-                }
-                true
-            }
-            KeyCode::ArrowLeft => {
-                self.editing_cursor = self.editing_cursor.saturating_sub(1);
-                true
-            }
-            KeyCode::ArrowRight => {
-                self.editing_cursor = (self.editing_cursor + 1).min(self.editing_text.len());
-                true
-            }
-            KeyCode::Enter => {
-                self.commit_editing();
-                true
-            }
-            KeyCode::Escape => {
-                self.cancel_editing();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Commit the currently-edited field: parse `editing_text` as f64 and
-    /// write it into price/stop_price/quantity per `editing_field`. On
-    /// parse failure the field stays in edit mode (no partial commit).
-    /// On success, clears `editing_field` and re-validates. Public so the
-    /// app layer can call it on blur (clicking away from the field).
-    pub fn commit_editing(&mut self) {
-        let Some(field) = self.editing_field else { return };
-        let Ok(value) = self.editing_text.parse::<f64>() else { return };
-        match field {
-            OrderEntryElement::PriceInput => self.price = Some(value),
-            OrderEntryElement::StopPriceInput => self.stop_price = Some(value),
-            OrderEntryElement::QuantityInput => self.quantity = value,
-            _ => {}
-        }
-        self.editing_field = None;
-        self.editing_text.clear();
-        self.editing_cursor = 0;
-        self.validate();
-    }
-
-    /// Cancel the currently-edited field, discarding the typed text.
-    pub fn cancel_editing(&mut self) {
-        self.editing_field = None;
-        self.editing_text.clear();
-        self.editing_cursor = 0;
-    }
-
-    /// Render-time display string for whichever field is being edited:
-    /// the raw `editing_text` with a blinking text cursor spliced in at
-    /// `editing_cursor` (visible half of the 500ms blink cycle).
-    fn display_editing_text(&self, now_ms: u64) -> String {
-        if self.is_cursor_visible(now_ms) {
-            let mut s = self.editing_text.clone();
-            let at = self.editing_cursor.min(s.len());
-            s.insert(at, '|');
-            s
-        } else {
-            self.editing_text.clone()
-        }
-    }
+    let mut s = text.to_string();
+    let byte_at = s.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(s.len());
+    s.insert(byte_at, '|');
+    s
 }
 
 fn format_currency(value: f64) -> String {
@@ -668,9 +572,16 @@ impl TradingPanel for OrderEntryState {
             .unwrap_or_default()
             .as_millis() as u64;
 
+        // Single shared per-instance text-field id covering all 3 numeric
+        // rows (Price/Stop/Quantity) — see `active_field`'s doc comment.
+        let oe_field_wid = uzor::WidgetId::from(format!("{}:oe_field", slot_prefix));
+
         if matches!(self.order_type, OrderType::Limit | OrderType::StopLimit) {
-            let price_str = if self.editing_field == Some(OrderEntryElement::PriceInput) {
-                self.display_editing_text(now_ms)
+            let is_live = self.active_field == Some(OrderEntryElement::PriceInput)
+                && coordinator.text_fields().is_focused(&oe_field_wid);
+            let price_str = if is_live {
+                let store = coordinator.text_fields();
+                splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
             } else {
                 self.price
                     .map(|p| format!("{:.4}", p))
@@ -686,8 +597,11 @@ impl TradingPanel for OrderEntryState {
         }
 
         if matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) {
-            let stop_str = if self.editing_field == Some(OrderEntryElement::StopPriceInput) {
-                self.display_editing_text(now_ms)
+            let is_live = self.active_field == Some(OrderEntryElement::StopPriceInput)
+                && coordinator.text_fields().is_focused(&oe_field_wid);
+            let stop_str = if is_live {
+                let store = coordinator.text_fields();
+                splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
             } else {
                 self.stop_price
                     .map(|p| format!("{:.4}", p))
@@ -702,8 +616,11 @@ impl TradingPanel for OrderEntryState {
             cursor_y += OE_FIELD_HEIGHT;
         }
 
-        let qty_str = if self.editing_field == Some(OrderEntryElement::QuantityInput) {
-            self.display_editing_text(now_ms)
+        let qty_is_live = self.active_field == Some(OrderEntryElement::QuantityInput)
+            && coordinator.text_fields().is_focused(&oe_field_wid);
+        let qty_str = if qty_is_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
         } else {
             self.format_quantity()
         };
@@ -933,30 +850,12 @@ impl TradingPanel for OrderEntryState {
                 }
                 true
             }
-            "oe:price" => {
-                self.commit_editing();
-                self.editing_field = Some(OrderEntryElement::PriceInput);
-                self.editing_text = self.price.map(|p| format!("{:.4}", p)).unwrap_or_default();
-                self.editing_cursor = self.editing_text.len();
-                true
-            }
-            "oe:stop_price" => {
-                self.commit_editing();
-                self.editing_field = Some(OrderEntryElement::StopPriceInput);
-                self.editing_text = self.stop_price.map(|p| format!("{:.4}", p)).unwrap_or_default();
-                self.editing_cursor = self.editing_text.len();
-                true
-            }
-            "oe:qty" => {
-                self.commit_editing();
-                self.editing_field = Some(OrderEntryElement::QuantityInput);
-                // Plain parseable form — `format_quantity()` abbreviates with
-                // K-suffixes / variable precision for DISPLAY, which is not
-                // valid f64 input for the editor.
-                self.editing_text = if self.quantity > 0.0 { format!("{}", self.quantity) } else { String::new() };
-                self.editing_cursor = self.editing_text.len();
-                true
-            }
+            // Price/Stop/Quantity clicks — the actual focus/seed/commit
+            // dance against the shared `TextFieldStore` field happens in
+            // the app layer (`mlc-app::input::panel_click::start_oe_field_edit`),
+            // which has coordinator access this panel does not. This arm
+            // only marks the click consumed; see `active_field`'s doc.
+            "oe:price" | "oe:stop_price" | "oe:qty" => true,
             "oe:submit" => {
                 self.submitting = true;
                 true

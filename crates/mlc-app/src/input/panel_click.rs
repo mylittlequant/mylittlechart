@@ -7,12 +7,23 @@ use crate::agent as gate4agent;
 
 use crate::{ChartApp, sglog};
 use uzor::WidgetId;
+use uzor::input::TextFieldConfig;
 use mlc_core::localize_primitive_name;
 
 /// Which store an `OrderEntryState` lives in — see
-/// [`ChartApp::submit_order_entry_target`].
+/// [`ChartApp::submit_order_entry_target`]. `pub(crate)` so
+/// `text_input::dispatch`'s Enter/Escape handlers for the per-instance
+/// `oe_field`/`rc_field` TextFieldStore ids can flow it through
+/// `oe_target_for_slot_prefix`/`commit_oe_field` without naming variants.
 #[derive(Copy, Clone)]
-enum OrderEntryTarget {
+pub(crate) enum OrderEntryTarget {
+    Standalone(mlc_core::state::PanelId),
+    Container(mlc_core::state::PanelId),
+}
+
+/// Which store a `RiskCalculatorState` lives in — mirrors `OrderEntryTarget`.
+#[derive(Copy, Clone)]
+pub(crate) enum RiskCalculatorTarget {
     Standalone(mlc_core::state::PanelId),
     Container(mlc_core::state::PanelId),
 }
@@ -2157,6 +2168,7 @@ impl ChartApp {
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
                                     use mlc_app_panels::panel_trait::TradingPanel;
+                                    let slot_prefix = format!("slot:{}:leaf:{}", idx, raw);
                                     match item_opt {
                                         Some(mlc_core::state::Panel::OrderEntry(pid)) => {
                                             let handled = self.panels_store.order_entry.get_mut(&pid)
@@ -2164,8 +2176,11 @@ impl ChartApp {
                                                 .unwrap_or(false);
                                             if handled {
                                                 self.sidebar_data_dirty = true;
+                                                if let Some(field) = Self::oe_field_for_local_id(local_id) {
+                                                    self.start_oe_field_edit(OrderEntryTarget::Standalone(pid), &slot_prefix, field);
+                                                }
                                                 if local_id == "oe:submit" {
-                                                    self.submit_order_entry(pid);
+                                                    self.submit_order_entry(pid, &slot_prefix);
                                                 }
                                             }
                                         }
@@ -2175,8 +2190,11 @@ impl ChartApp {
                                                 .unwrap_or(false);
                                             if handled {
                                                 self.sidebar_data_dirty = true;
+                                                if let Some(field) = Self::oe_field_for_local_id(local_id) {
+                                                    self.start_oe_field_edit(OrderEntryTarget::Container(pid), &slot_prefix, field);
+                                                }
                                                 if local_id == "oe:submit" {
-                                                    self.submit_order_entry_in_container(pid);
+                                                    self.submit_order_entry_in_container(pid, &slot_prefix);
                                                 }
                                             }
                                         }
@@ -2253,6 +2271,7 @@ impl ChartApp {
                                         .leaf(leaf_id)
                                         .and_then(|l| l.active_panel().cloned());
                                     use mlc_app_panels::panel_trait::TradingPanel;
+                                    let slot_prefix = format!("slot:{}:leaf:{}", idx, raw);
                                     match item_opt {
                                         Some(mlc_core::state::Panel::RiskCalculator(pid)) => {
                                             let handled = self.panels_store.risk_calculator.get_mut(&pid)
@@ -2260,6 +2279,17 @@ impl ChartApp {
                                                 .unwrap_or(false);
                                             if handled {
                                                 self.sidebar_data_dirty = true;
+                                                if let Some(field) = Self::rc_field_for_local_id(local_id) {
+                                                    self.start_rc_field_edit(RiskCalculatorTarget::Standalone(pid), &slot_prefix, field);
+                                                } else if local_id == "risk_calculator:apply" {
+                                                    self.commit_rc_field(RiskCalculatorTarget::Standalone(pid), &Self::rc_field_widget_id(&slot_prefix));
+                                                    if let Some(state) = self.panels_store.risk_calculator.get_mut(&pid) {
+                                                        if state.inputs_ready() { state.apply_requested = true; }
+                                                    }
+                                                }
+                                                // Standalone has no OrderEntry sibling to apply
+                                                // into — Apply computes but has nowhere to write
+                                                // (pre-existing behavior, preserved verbatim).
                                                 if let Some(state) = self.panels_store.risk_calculator.get_mut(&pid) {
                                                     state.apply_requested = false;
                                                 }
@@ -2271,7 +2301,13 @@ impl ChartApp {
                                                 .unwrap_or(false);
                                             if handled {
                                                 self.sidebar_data_dirty = true;
-                                                if local_id == "risk_calculator:apply" {
+                                                if let Some(field) = Self::rc_field_for_local_id(local_id) {
+                                                    self.start_rc_field_edit(RiskCalculatorTarget::Container(pid), &slot_prefix, field);
+                                                } else if local_id == "risk_calculator:apply" {
+                                                    self.commit_rc_field(RiskCalculatorTarget::Container(pid), &Self::rc_field_widget_id(&slot_prefix));
+                                                    if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
+                                                        if state.risk_calculator.inputs_ready() { state.risk_calculator.apply_requested = true; }
+                                                    }
                                                     self.apply_risk_calculator_size_in_container(pid);
                                                 }
                                             }
@@ -5399,7 +5435,9 @@ impl ChartApp {
     /// `panels_store.order_entry` map, or hosted inside a
     /// `panels_store.trading_container[pid].order_entry` child. Both paths
     /// share the same submit flow (see [`Self::submit_order_entry_target`]).
-    fn order_entry_mut(
+    /// `pub(crate)` so `text_input::dispatch`'s per-instance `oe_field`
+    /// Enter/Escape handlers can reach the target panel too.
+    pub(crate) fn order_entry_mut(
         &mut self,
         target: OrderEntryTarget,
     ) -> Option<&mut mlc_app_panels::trading::trading::order_entry::OrderEntryState> {
@@ -5410,14 +5448,221 @@ impl ChartApp {
         }
     }
 
+    /// Which store a `RiskCalculatorState` lives in — mirrors `order_entry_mut`.
+    pub(crate) fn risk_calculator_mut(
+        &mut self,
+        target: RiskCalculatorTarget,
+    ) -> Option<&mut mlc_app_panels::trading::trading::risk_calculator::RiskCalculatorState> {
+        match target {
+            RiskCalculatorTarget::Standalone(pid) => self.panels_store.risk_calculator.get_mut(&pid),
+            RiskCalculatorTarget::Container(pid) => self.panels_store.trading_container.get_mut(&pid)
+                .map(|c| &mut c.risk_calculator),
+        }
+    }
+
+    /// Parse a `"slot:{idx}:leaf:{raw}"` slot_prefix (the exact string
+    /// `mlc-app-sidebar-content::render::free_item_renderer` mints for every
+    /// panel instance rendered in a free-slot sidebar) back into its
+    /// `(slot_idx, leaf_id)` components.
+    fn parse_slot_prefix(slot_prefix: &str) -> Option<(usize, u64)> {
+        let rest = slot_prefix.strip_prefix("slot:")?;
+        let (idx_str, leaf_str) = rest.split_once(":leaf:")?;
+        Some((idx_str.parse().ok()?, leaf_str.parse().ok()?))
+    }
+
+    /// Resolve the `OrderEntryTarget` a per-instance `"{slot_prefix}:oe_field"`
+    /// TextFieldStore id was minted for — reverses the slot_prefix lookup
+    /// already used by the `"oe:"` click block above.
+    pub(crate) fn oe_target_for_slot_prefix(&self, slot_prefix: &str) -> Option<OrderEntryTarget> {
+        let (idx, raw) = Self::parse_slot_prefix(slot_prefix)?;
+        let leaf_id = uzor::panels::LeafId(raw);
+        let item_opt = self.sidebar_state.slot_dockings.get(idx)?
+            .inner().tree().leaf(leaf_id).and_then(|l| l.active_panel().cloned());
+        match item_opt {
+            Some(mlc_core::state::Panel::OrderEntry(pid)) => Some(OrderEntryTarget::Standalone(pid)),
+            Some(mlc_core::state::Panel::TradingContainer(pid)) => Some(OrderEntryTarget::Container(pid)),
+            _ => None,
+        }
+    }
+
+    /// Same as `oe_target_for_slot_prefix` but for RiskCalculator instances.
+    pub(crate) fn rc_target_for_slot_prefix(&self, slot_prefix: &str) -> Option<RiskCalculatorTarget> {
+        let (idx, raw) = Self::parse_slot_prefix(slot_prefix)?;
+        let leaf_id = uzor::panels::LeafId(raw);
+        let item_opt = self.sidebar_state.slot_dockings.get(idx)?
+            .inner().tree().leaf(leaf_id).and_then(|l| l.active_panel().cloned());
+        match item_opt {
+            Some(mlc_core::state::Panel::RiskCalculator(pid)) => Some(RiskCalculatorTarget::Standalone(pid)),
+            Some(mlc_core::state::Panel::TradingContainer(pid)) => Some(RiskCalculatorTarget::Container(pid)),
+            _ => None,
+        }
+    }
+
+    /// Build the per-instance shared TextFieldStore id for OrderEntry's 3
+    /// numeric fields (Price/StopPrice/Quantity) — mirrors
+    /// `PRIMITIVE_SETTINGS_FIELD`'s "one WidgetId covers all inline
+    /// sub-fields" pattern, made per-instance via `slot_prefix` since
+    /// multiple OrderEntry instances can render simultaneously (standalone
+    /// map + per-container).
+    fn oe_field_widget_id(slot_prefix: &str) -> WidgetId {
+        WidgetId::from(format!("{}:oe_field", slot_prefix))
+    }
+
+    /// Same as `oe_field_widget_id` for RiskCalculator's 5 numeric fields.
+    fn rc_field_widget_id(slot_prefix: &str) -> WidgetId {
+        WidgetId::from(format!("{}:rc_field", slot_prefix))
+    }
+
+    /// Map an `"oe:*"` local_id to the `OrderEntryElement` it edits, if any.
+    fn oe_field_for_local_id(local_id: &str) -> Option<mlc_app_panels::trading::trading::order_entry::OrderEntryElement> {
+        use mlc_app_panels::trading::trading::order_entry::OrderEntryElement;
+        match local_id {
+            "oe:price" => Some(OrderEntryElement::PriceInput),
+            "oe:stop_price" => Some(OrderEntryElement::StopPriceInput),
+            "oe:qty" => Some(OrderEntryElement::QuantityInput),
+            _ => None,
+        }
+    }
+
+    /// Map a `"risk_calculator:*"` local_id to the `RiskCalcField` it edits, if any.
+    fn rc_field_for_local_id(local_id: &str) -> Option<mlc_app_panels::trading::trading::risk_calculator::RiskCalcField> {
+        use mlc_app_panels::trading::trading::risk_calculator::RiskCalcField;
+        match local_id {
+            "risk_calculator:account_size" => Some(RiskCalcField::AccountSize),
+            "risk_calculator:risk_percent" => Some(RiskCalcField::RiskPercent),
+            "risk_calculator:entry_price" => Some(RiskCalcField::EntryPrice),
+            "risk_calculator:stop_loss" => Some(RiskCalcField::StopLoss),
+            "risk_calculator:take_profit" => Some(RiskCalcField::TakeProfit),
+            _ => None,
+        }
+    }
+
+    /// Begin editing one of OrderEntry's numeric fields: auto-commits
+    /// whatever was previously active on this SAME instance (mirrors the
+    /// pre-migration `OrderEntryState::commit_editing()` call at the top of
+    /// each field-click arm), then seeds the shared per-instance
+    /// `TextFieldStore` field with the current committed value (plain
+    /// parseable form, NOT `format_quantity()`'s K-suffixed display form)
+    /// and focuses + select-alls it (numeric-field precedent — see
+    /// `start_prim_field_editing`'s `select_all` callers).
+    fn start_oe_field_edit(
+        &mut self,
+        target: OrderEntryTarget,
+        slot_prefix: &str,
+        field: mlc_app_panels::trading::trading::order_entry::OrderEntryElement,
+    ) {
+        use mlc_app_panels::trading::trading::order_entry::OrderEntryElement;
+        let wid = Self::oe_field_widget_id(slot_prefix);
+        self.commit_oe_field(target, &wid);
+        let Some(state) = self.order_entry_mut(target) else { return };
+        let seed = match field {
+            OrderEntryElement::PriceInput => state.price.map(|p| format!("{}", p)).unwrap_or_default(),
+            OrderEntryElement::StopPriceInput => state.stop_price.map(|p| format!("{}", p)).unwrap_or_default(),
+            OrderEntryElement::QuantityInput => if state.quantity > 0.0 { format!("{}", state.quantity) } else { String::new() },
+            _ => return,
+        };
+        state.active_field = Some(field);
+        let mut coord = self.input_coordinator.borrow_mut();
+        coord.text_fields_mut().register(wid.clone(), TextFieldConfig::text()
+            .with_filter(|c| c.is_ascii_digit() || c == '.'));
+        coord.text_fields_mut().set_text(&wid, &seed);
+        coord.text_fields_mut().focus(wid.clone());
+        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+            fs.selection_start = Some(0);
+        }
+    }
+
+    /// Commit whatever OrderEntry numeric field is currently active on
+    /// `target`: parses the shared field's live text as `f64` and writes it
+    /// back (Price/StopPrice/Quantity per `active_field`), then blurs.
+    /// Parse failure silently keeps the old value (same contract as the
+    /// primitive-settings numeric sub-fields — see
+    /// `commit_prim_editing_text`). `pub(crate)` so
+    /// `text_input::dispatch::text_action_oe_field` (Enter) and
+    /// `submit_order_entry_target` (blur-before-submit) can reuse it.
+    pub(crate) fn commit_oe_field(&mut self, target: OrderEntryTarget, wid: &WidgetId) {
+        use mlc_app_panels::trading::trading::order_entry::OrderEntryElement;
+        let Some(state) = self.order_entry_mut(target) else { return };
+        let Some(field) = state.active_field.take() else { return };
+        let text = self.input_coordinator.borrow().text_fields().text(wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        if let Ok(value) = text.trim().parse::<f64>() {
+            if let Some(state) = self.order_entry_mut(target) {
+                match field {
+                    OrderEntryElement::PriceInput => state.price = Some(value),
+                    OrderEntryElement::StopPriceInput => state.stop_price = Some(value),
+                    OrderEntryElement::QuantityInput => state.quantity = value,
+                    _ => {}
+                }
+                state.validate();
+            }
+        }
+    }
+
+    /// RiskCalculator analogue of `start_oe_field_edit`.
+    fn start_rc_field_edit(
+        &mut self,
+        target: RiskCalculatorTarget,
+        slot_prefix: &str,
+        field: mlc_app_panels::trading::trading::risk_calculator::RiskCalcField,
+    ) {
+        use mlc_app_panels::trading::trading::risk_calculator::RiskCalcField;
+        let wid = Self::rc_field_widget_id(slot_prefix);
+        self.commit_rc_field(target, &wid);
+        let Some(state) = self.risk_calculator_mut(target) else { return };
+        let seed = match field {
+            RiskCalcField::AccountSize => if state.account_size > 0.0 { format!("{}", state.account_size) } else { String::new() },
+            RiskCalcField::RiskPercent => if state.risk_percent > 0.0 { format!("{}", state.risk_percent) } else { String::new() },
+            RiskCalcField::EntryPrice => if state.entry_price > 0.0 { format!("{}", state.entry_price) } else { String::new() },
+            RiskCalcField::StopLoss => if state.stop_loss_price > 0.0 { format!("{}", state.stop_loss_price) } else { String::new() },
+            RiskCalcField::TakeProfit => state.take_profit_price.map(|p| format!("{}", p)).unwrap_or_default(),
+        };
+        state.active_field = Some(field);
+        let mut coord = self.input_coordinator.borrow_mut();
+        coord.text_fields_mut().register(wid.clone(), TextFieldConfig::text()
+            .with_filter(|c| c.is_ascii_digit() || c == '.'));
+        coord.text_fields_mut().set_text(&wid, &seed);
+        coord.text_fields_mut().focus(wid.clone());
+        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+            fs.selection_start = Some(0);
+        }
+    }
+
+    /// RiskCalculator analogue of `commit_oe_field`.
+    pub(crate) fn commit_rc_field(&mut self, target: RiskCalculatorTarget, wid: &WidgetId) {
+        use mlc_app_panels::trading::trading::risk_calculator::RiskCalcField;
+        let Some(state) = self.risk_calculator_mut(target) else { return };
+        let Some(field) = state.active_field.take() else { return };
+        let text = self.input_coordinator.borrow().text_fields().text(wid).to_string();
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        if let Ok(value) = text.trim().parse::<f64>() {
+            if let Some(state) = self.risk_calculator_mut(target) {
+                match field {
+                    RiskCalcField::AccountSize => {
+                        state.account_size = value;
+                        state.account_size_overridden = true;
+                    }
+                    RiskCalcField::RiskPercent => state.risk_percent = value,
+                    RiskCalcField::EntryPrice => {
+                        state.entry_price = value;
+                        state.entry_price_touched = true;
+                    }
+                    RiskCalcField::StopLoss => state.stop_loss_price = value,
+                    RiskCalcField::TakeProfit => state.take_profit_price = Some(value),
+                }
+                state.calculate();
+            }
+        }
+    }
+
     /// Validate and submit a standalone Order Entry panel's current order.
-    fn submit_order_entry(&mut self, pid: mlc_core::state::PanelId) {
-        self.submit_order_entry_target(OrderEntryTarget::Standalone(pid));
+    fn submit_order_entry(&mut self, pid: mlc_core::state::PanelId, slot_prefix: &str) {
+        self.submit_order_entry_target(OrderEntryTarget::Standalone(pid), slot_prefix);
     }
 
     /// Validate and submit a TradingContainer-hosted Order Entry's current order.
-    fn submit_order_entry_in_container(&mut self, pid: mlc_core::state::PanelId) {
-        self.submit_order_entry_target(OrderEntryTarget::Container(pid));
+    fn submit_order_entry_in_container(&mut self, pid: mlc_core::state::PanelId, slot_prefix: &str) {
+        self.submit_order_entry_target(OrderEntryTarget::Container(pid), slot_prefix);
     }
 
     /// Validate and submit the Order Entry panel's current order.
@@ -5433,18 +5678,19 @@ impl ChartApp {
     /// on wasm, `eprintln!` on native) — a plain `eprintln!` here is
     /// invisible in the browser, which made every failure of this path
     /// silent during the container e2e bug hunt.
-    fn submit_order_entry_target(&mut self, target: OrderEntryTarget) {
+    fn submit_order_entry_target(&mut self, target: OrderEntryTarget, slot_prefix: &str) {
         use mlc_app_panels::trading::trading::order_entry::{
             OrderSide as PanelSide, OrderType as PanelOrderType, TimeInForce as PanelTif,
         };
 
-        let Some(state) = self.order_entry_mut(target) else { return };
         // Commit any in-flight numeric edit (price/stop/qty) before
         // validating — the submit button itself does not commit (only
         // switching to a different field or pressing Enter does), so a
         // click straight from a still-being-typed field must not submit a
         // stale value.
-        state.commit_editing();
+        self.commit_oe_field(target, &Self::oe_field_widget_id(slot_prefix));
+
+        let Some(state) = self.order_entry_mut(target) else { return };
         state.validate();
         if !state.is_valid() {
             sglog!("[trading] submit rejected: {:?}", state.errors);

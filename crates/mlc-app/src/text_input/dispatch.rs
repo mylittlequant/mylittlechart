@@ -140,7 +140,8 @@ impl ChartApp {
     /// Returns true if the key was routed to a text field.
     ///
     /// Covers (in order): CHART_BROWSER_SEARCH, WATCHLIST_SEARCH, WATCHLIST_GROUP_NAME,
-    /// PRESET_NAME_INPUT, template name fields, settings sub-fields, search overlay.
+    /// PRESET_NAME_INPUT, template name fields, settings sub-fields, search overlay,
+    /// and the OrderEntry/RiskCalculator per-instance `oe_field`/`rc_field` ids.
     pub(crate) fn dispatch_text_key_late(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
 
@@ -151,7 +152,17 @@ impl ChartApp {
         };
         let Some(focused_id) = focused_id else { return false };
 
-        let is_late_field = matches!(
+        // OrderEntry/RiskCalculator fields are per-instance dynamic ids
+        // (`"{slot_prefix}:oe_field"` / `"{slot_prefix}:rc_field"`, minted by
+        // `mlc-app-panels`' `render()` off the same `slot_prefix` the
+        // sidebar assigns each panel instance) — not fixed consts like every
+        // other entry here, so they need a suffix-match arm rather than a
+        // `matches!` literal. First (and, as of this migration, only)
+        // prefix/suffix-match precedent in this dispatcher.
+        let is_dynamic_trading_field = focused_id.as_str().ends_with(":oe_field")
+            || focused_id.as_str().ends_with(":rc_field");
+
+        let is_late_field = is_dynamic_trading_field || matches!(
             focused_id.as_str(),
             CHART_BROWSER_SEARCH
                 | WATCHLIST_SEARCH
@@ -223,7 +234,47 @@ impl ChartApp {
             | INDICATOR_SETTINGS_TEMPLATE_NAME
             | CHART_SETTINGS_TEMPLATE_NAME
             | COMPARE_SETTINGS_TEMPLATE_NAME => self.text_action_template_name(id.as_str(), action),
+            s if s.ends_with(":oe_field") => self.text_action_oe_field(id, action),
+            s if s.ends_with(":rc_field") => self.text_action_rc_field(id, action),
             _ => {}
+        }
+    }
+
+    /// Enter/Escape handler for OrderEntry's per-instance shared numeric
+    /// field (`"{slot_prefix}:oe_field"`). Commit reuses
+    /// `panel_click::commit_oe_field` (the exact same helper the app-layer
+    /// click router uses for auto-commit-on-field-switch and
+    /// blur-before-submit); Cancel just clears `active_field` and blurs
+    /// (`TextFieldStore::on_char('\x1b')` already reverted the store's own
+    /// text to `original_text`, but the panel never reads it after Cancel).
+    fn text_action_oe_field(&mut self, id: &WidgetId, action: TextAction) {
+        let slot_prefix = id.as_str().strip_suffix(":oe_field").unwrap_or_default();
+        let Some(target) = self.oe_target_for_slot_prefix(slot_prefix) else { return };
+        match action {
+            TextAction::Commit(_) => self.commit_oe_field(target, id),
+            TextAction::Cancel => {
+                if let Some(state) = self.order_entry_mut(target) {
+                    state.active_field = None;
+                }
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// RiskCalculator analogue of `text_action_oe_field`.
+    fn text_action_rc_field(&mut self, id: &WidgetId, action: TextAction) {
+        let slot_prefix = id.as_str().strip_suffix(":rc_field").unwrap_or_default();
+        let Some(target) = self.rc_target_for_slot_prefix(slot_prefix) else { return };
+        match action {
+            TextAction::Commit(_) => self.commit_rc_field(target, id),
+            TextAction::Cancel => {
+                if let Some(state) = self.risk_calculator_mut(target) {
+                    state.active_field = None;
+                }
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
         }
     }
 

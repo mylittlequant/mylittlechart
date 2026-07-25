@@ -6170,68 +6170,11 @@ impl ChartApp {
         }
     }
 
-    /// Find whichever `OrderEntryState` (standalone or hosted inside a
-    /// `TradingContainer`) is currently mid-edit, if any. At most one is
-    /// expected to be editing at a time (clicking a different field
-    /// auto-commits the previous one via `OrderEntryState::commit_editing`).
-    fn editing_order_entry_mut(&mut self) -> Option<&mut mlc_app_panels::trading::trading::order_entry::OrderEntryState> {
-        if self.panels_store.order_entry.values().any(|s| s.is_editing()) {
-            return self.panels_store.order_entry.values_mut().find(|s| s.is_editing());
-        }
-        self.panels_store.trading_container.values_mut()
-            .map(|c| &mut c.order_entry)
-            .find(|s| s.is_editing())
-    }
-
-    /// True while any OrderEntry (standalone or TradingContainer-hosted) is
-    /// mid-edit — used to gate hotkeys that would otherwise steal Backspace/
-    /// Delete/Arrow/Enter/Escape away from the numeric text editor.
-    pub(super) fn any_order_entry_editing(&self) -> bool {
-        self.panels_store.order_entry.values().any(|s| s.is_editing())
-            || self.panels_store.trading_container.values().any(|c| c.order_entry.is_editing())
-    }
-
-    /// Find whichever `RiskCalculatorState` (standalone or hosted inside a
-    /// `TradingContainer`) is currently mid-edit, if any — the risk-calc
-    /// analogue of `editing_order_entry_mut` (W5, 2026-07-25).
-    fn editing_risk_calculator_mut(&mut self) -> Option<&mut mlc_app_panels::trading::trading::risk_calculator::RiskCalculatorState> {
-        if self.panels_store.risk_calculator.values().any(|s| s.is_editing()) {
-            return self.panels_store.risk_calculator.values_mut().find(|s| s.is_editing());
-        }
-        self.panels_store.trading_container.values_mut()
-            .map(|c| &mut c.risk_calculator)
-            .find(|s| s.is_editing())
-    }
-
-    /// True while any RiskCalculator (standalone or TradingContainer-hosted)
-    /// is mid-edit — same hotkey-stealing guard as `any_order_entry_editing`.
-    pub(super) fn any_risk_calculator_editing(&self) -> bool {
-        self.panels_store.risk_calculator.values().any(|s| s.is_editing())
-            || self.panels_store.trading_container.values().any(|c| c.risk_calculator.is_editing())
-    }
-
     /// Handle a printable character input event.
     ///
     /// Routes to active text editing state (primitive settings text_content).
     /// On Enter, commits the edited text back to the primitive.
     pub fn on_char_input(&mut self, ch: char) {
-        // OrderEntry numeric-field editing takes priority over every other
-        // text destination — it is panel-local state, not a TextFieldStore
-        // field, so it must be checked explicitly before falling through.
-        let consumed = self.editing_order_entry_mut()
-            .map(|state| state.handle_edit_char(ch))
-            .unwrap_or(false);
-        if consumed {
-            self.sidebar_data_dirty = true;
-            return;
-        }
-        let consumed_rc = self.editing_risk_calculator_mut()
-            .map(|state| state.handle_edit_char(ch))
-            .unwrap_or(false);
-        if consumed_rc {
-            self.sidebar_data_dirty = true;
-            return;
-        }
         self.dispatch_text_char(ch);
     }
 
@@ -6252,40 +6195,6 @@ impl ChartApp {
             && !self.panel_app.user_settings_state.confirm_passphrase_focused
         {
             return;
-        }
-
-        // OrderEntry numeric-field editing — BEFORE generic text-field
-        // dispatch and BEFORE the drawing-primitive hotkey block, so e.g.
-        // Backspace mid-edit never falls through to delete a selected
-        // drawing (owner spec: keyboard editing was fully panel-local and
-        // never wired — see `OrderEntryState::handle_edit_key`).
-        {
-            use mlc_core::input::KeyCode;
-            let mapped = match key {
-                KeyPress::Backspace  => Some(KeyCode::Backspace),
-                KeyPress::Delete     => Some(KeyCode::Delete),
-                KeyPress::ArrowLeft  => Some(KeyCode::ArrowLeft),
-                KeyPress::ArrowRight => Some(KeyCode::ArrowRight),
-                KeyPress::Enter      => Some(KeyCode::Enter),
-                KeyPress::Escape     => Some(KeyCode::Escape),
-                _ => None,
-            };
-            if let Some(mapped_key) = mapped {
-                let consumed = self.editing_order_entry_mut()
-                    .map(|state| state.handle_edit_key(mapped_key))
-                    .unwrap_or(false);
-                if consumed {
-                    self.sidebar_data_dirty = true;
-                    return;
-                }
-                let consumed_rc = self.editing_risk_calculator_mut()
-                    .map(|state| state.handle_edit_key(mapped_key))
-                    .unwrap_or(false);
-                if consumed_rc {
-                    self.sidebar_data_dirty = true;
-                    return;
-                }
-            }
         }
 
         // Early text dispatch: covers ALERT_TG_TOKEN, profile/passphrase fields,

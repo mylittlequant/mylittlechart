@@ -9,8 +9,11 @@ use mlc_core::i18n::{TradingKey, current_language};
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RiskCalculatorId(pub u64);
 
-/// Which editable field is currently being typed into (W5 quality arc,
-/// 2026-07-25 — same panel-edit pattern as `OrderEntryElement`).
+/// Which editable field is nominally in edit mode for this instance —
+/// the discriminant for the ONE shared per-instance `TextFieldStore` field
+/// id (`"{slot_prefix}:rc_field"`). Mirrors `OrderEntryElement`'s role on
+/// `OrderEntryState` (TextFieldStore migration, 2026-07-25) — see that
+/// type's doc comment for the full contract.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RiskCalcField {
     AccountSize,
@@ -50,12 +53,11 @@ pub struct RiskCalculatorState {
     /// Validation
     pub errors: Vec<String>,
 
-    /// Currently active/editing field (`None` = no field being edited).
-    pub editing_field: Option<RiskCalcField>,
-    /// Inline text editing state (mirrors `OrderEntryState`).
-    pub editing_text: String,
-    pub editing_cursor: usize,
-    pub editing_blink_time: u64,
+    /// Which field is nominally in edit mode for this instance — see
+    /// `RiskCalcField`'s doc comment. Set/cleared/committed entirely by the
+    /// app layer (`mlc-app::input::panel_click`); this panel never touches
+    /// the coordinator itself (`handle_click` doesn't receive one).
+    pub active_field: Option<RiskCalcField>,
 
     /// Shared snapshot from TradingManager — feeds the default Account Size
     /// (until overridden). Only ever set for the container-hosted instance;
@@ -91,10 +93,7 @@ impl RiskCalculatorState {
             leverage: None,
             margin_required: 0.0,
             errors: Vec::new(),
-            editing_field: None,
-            editing_text: String::new(),
-            editing_cursor: 0,
-            editing_blink_time: 0,
+            active_field: None,
             snapshot: None,
             reference_price: None,
             apply_requested: false,
@@ -250,129 +249,20 @@ impl RiskCalculatorState {
         }
     }
 
-    /// True while a field is actively being edited.
-    pub fn is_editing(&self) -> bool {
-        self.editing_field.is_some()
-    }
+}
 
-    /// Check if cursor should be visible (500ms blink cycle).
-    pub fn is_cursor_visible(&self, now_ms: u64) -> bool {
-        if self.editing_field.is_none() { return false; }
-        let elapsed = now_ms.wrapping_sub(self.editing_blink_time);
-        (elapsed / 500) % 2 == 0
+/// Splice a blinking text-cursor character into `text` at char index
+/// `cursor`, when `visible` (mirrors `order_entry::splice_caret` — plain
+/// string surgery, no pixel-based caret math needed since the field is
+/// drawn as ordinary canvas text).
+fn splice_caret(text: &str, cursor: usize, visible: bool) -> String {
+    if !visible {
+        return text.to_string();
     }
-
-    /// Insert a character at the cursor of the field currently being
-    /// edited. Only digits and a single '.' are accepted.
-    pub fn handle_edit_char(&mut self, ch: char) -> bool {
-        if self.editing_field.is_none() {
-            return false;
-        }
-        if ch.is_ascii_digit() {
-            self.editing_text.insert(self.editing_cursor, ch);
-            self.editing_cursor += 1;
-        } else if ch == '.' && !self.editing_text.contains('.') {
-            self.editing_text.insert(self.editing_cursor, ch);
-            self.editing_cursor += 1;
-        }
-        true
-    }
-
-    /// Handle a named key while a field is being edited.
-    pub fn handle_edit_key(&mut self, key: mlc_core::input::KeyCode) -> bool {
-        use mlc_core::input::KeyCode;
-        if self.editing_field.is_none() {
-            return false;
-        }
-        match key {
-            KeyCode::Backspace => {
-                if self.editing_cursor > 0 {
-                    self.editing_cursor -= 1;
-                    self.editing_text.remove(self.editing_cursor);
-                }
-                true
-            }
-            KeyCode::Delete => {
-                if self.editing_cursor < self.editing_text.len() {
-                    self.editing_text.remove(self.editing_cursor);
-                }
-                true
-            }
-            KeyCode::ArrowLeft => {
-                self.editing_cursor = self.editing_cursor.saturating_sub(1);
-                true
-            }
-            KeyCode::ArrowRight => {
-                self.editing_cursor = (self.editing_cursor + 1).min(self.editing_text.len());
-                true
-            }
-            KeyCode::Enter => {
-                self.commit_editing();
-                true
-            }
-            KeyCode::Escape => {
-                self.cancel_editing();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Commit the currently-edited field: parse `editing_text` as f64 and
-    /// write it into the matching field. On parse failure the field stays
-    /// in edit mode (no partial commit).
-    pub fn commit_editing(&mut self) {
-        let Some(field) = self.editing_field else { return };
-        let Ok(value) = self.editing_text.parse::<f64>() else { return };
-        match field {
-            RiskCalcField::AccountSize => {
-                self.account_size = value;
-                self.account_size_overridden = true;
-            }
-            RiskCalcField::RiskPercent => self.risk_percent = value,
-            RiskCalcField::EntryPrice => {
-                self.entry_price = value;
-                self.entry_price_touched = true;
-            }
-            RiskCalcField::StopLoss => self.stop_loss_price = value,
-            RiskCalcField::TakeProfit => self.take_profit_price = Some(value),
-        }
-        self.editing_field = None;
-        self.editing_text.clear();
-        self.editing_cursor = 0;
-        self.calculate();
-    }
-
-    /// Cancel the currently-edited field, discarding the typed text.
-    pub fn cancel_editing(&mut self) {
-        self.editing_field = None;
-        self.editing_text.clear();
-        self.editing_cursor = 0;
-    }
-
-    /// Begin editing `field`, auto-committing whatever was being edited
-    /// before (mirrors `OrderEntryState`'s per-field click handlers).
-    fn start_edit(&mut self, field: RiskCalcField, current: f64, now_ms: u64) {
-        self.commit_editing();
-        self.editing_field = Some(field);
-        self.editing_text = if current > 0.0 { format!("{}", current) } else { String::new() };
-        self.editing_cursor = self.editing_text.len();
-        self.editing_blink_time = now_ms;
-    }
-
-    /// Render-time display string for whichever field is being edited: the
-    /// raw `editing_text` with a blinking cursor spliced in (visible half
-    /// of the 500ms blink cycle).
-    fn display_editing_text(&self, now_ms: u64) -> String {
-        if self.is_cursor_visible(now_ms) {
-            let mut s = self.editing_text.clone();
-            let at = self.editing_cursor.min(s.len());
-            s.insert(at, '|');
-            s
-        } else {
-            self.editing_text.clone()
-        }
-    }
+    let mut s = text.to_string();
+    let byte_at = s.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(s.len());
+    s.insert(byte_at, '|');
+    s
 }
 
 impl Default for RiskCalculatorState {
@@ -440,12 +330,19 @@ impl TradingPanel for RiskCalculatorState {
         };
 
         // --- Editable input rows ---
-        let account_size_str = if self.editing_field == Some(RiskCalcField::AccountSize) {
-            self.display_editing_text(now_ms)
+        // Single shared per-instance text-field id covering all 5 numeric
+        // rows — see `RiskCalcField`/`active_field`'s doc comments.
+        let rc_field_wid = uzor::WidgetId::from(format!("{}:rc_field", slot_prefix));
+
+        let account_size_live = self.active_field == Some(RiskCalcField::AccountSize)
+            && coordinator.text_fields().is_focused(&rc_field_wid);
+        let account_size_str = if account_size_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
         } else {
             format!("${:.2}", self.account_size)
         };
-        draw_row(ctx, cursor_y, "Account Size:", &account_size_str, self.editing_field == Some(RiskCalcField::AccountSize));
+        draw_row(ctx, cursor_y, "Account Size:", &account_size_str, account_size_live);
         coordinator.register(
             format!("{}:risk_calculator:account_size", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -453,12 +350,15 @@ impl TradingPanel for RiskCalculatorState {
         );
         cursor_y += RC_ROW_HEIGHT;
 
-        let risk_percent_str = if self.editing_field == Some(RiskCalcField::RiskPercent) {
-            self.display_editing_text(now_ms)
+        let risk_percent_live = self.active_field == Some(RiskCalcField::RiskPercent)
+            && coordinator.text_fields().is_focused(&rc_field_wid);
+        let risk_percent_str = if risk_percent_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
         } else {
             format!("{:.1}%", self.risk_percent)
         };
-        draw_row(ctx, cursor_y, "Risk %:", &risk_percent_str, self.editing_field == Some(RiskCalcField::RiskPercent));
+        draw_row(ctx, cursor_y, "Risk %:", &risk_percent_str, risk_percent_live);
         coordinator.register(
             format!("{}:risk_calculator:risk_percent", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -466,12 +366,15 @@ impl TradingPanel for RiskCalculatorState {
         );
         cursor_y += RC_ROW_HEIGHT;
 
-        let entry_price_str = if self.editing_field == Some(RiskCalcField::EntryPrice) {
-            self.display_editing_text(now_ms)
+        let entry_price_live = self.active_field == Some(RiskCalcField::EntryPrice)
+            && coordinator.text_fields().is_focused(&rc_field_wid);
+        let entry_price_str = if entry_price_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
         } else {
             format!("{:.4}", self.entry_price)
         };
-        draw_row(ctx, cursor_y, "Entry Price:", &entry_price_str, self.editing_field == Some(RiskCalcField::EntryPrice));
+        draw_row(ctx, cursor_y, "Entry Price:", &entry_price_str, entry_price_live);
         coordinator.register(
             format!("{}:risk_calculator:entry_price", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -479,12 +382,15 @@ impl TradingPanel for RiskCalculatorState {
         );
         cursor_y += RC_ROW_HEIGHT;
 
-        let stop_loss_str = if self.editing_field == Some(RiskCalcField::StopLoss) {
-            self.display_editing_text(now_ms)
+        let stop_loss_live = self.active_field == Some(RiskCalcField::StopLoss)
+            && coordinator.text_fields().is_focused(&rc_field_wid);
+        let stop_loss_str = if stop_loss_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
         } else {
             format!("{:.4}", self.stop_loss_price)
         };
-        draw_row(ctx, cursor_y, "Stop Loss:", &stop_loss_str, self.editing_field == Some(RiskCalcField::StopLoss));
+        draw_row(ctx, cursor_y, "Stop Loss:", &stop_loss_str, stop_loss_live);
         coordinator.register(
             format!("{}:risk_calculator:stop_loss", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -492,12 +398,15 @@ impl TradingPanel for RiskCalculatorState {
         );
         cursor_y += RC_ROW_HEIGHT;
 
-        let take_profit_str = if self.editing_field == Some(RiskCalcField::TakeProfit) {
-            self.display_editing_text(now_ms)
+        let take_profit_live = self.active_field == Some(RiskCalcField::TakeProfit)
+            && coordinator.text_fields().is_focused(&rc_field_wid);
+        let take_profit_str = if take_profit_live {
+            let store = coordinator.text_fields();
+            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
         } else {
             self.take_profit_price.map(|tp| format!("{:.4}", tp)).unwrap_or_else(|| "\u{2014}".to_string())
         };
-        draw_row(ctx, cursor_y, "Take Profit:", &take_profit_str, self.editing_field == Some(RiskCalcField::TakeProfit));
+        draw_row(ctx, cursor_y, "Take Profit:", &take_profit_str, take_profit_live);
         coordinator.register(
             format!("{}:risk_calculator:take_profit", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -589,40 +498,21 @@ impl TradingPanel for RiskCalculatorState {
     }
 
     fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
-        let now_ms = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        match local_id {
-            "risk_calculator:account_size" => {
-                self.start_edit(RiskCalcField::AccountSize, self.account_size, now_ms);
-                true
-            }
-            "risk_calculator:risk_percent" => {
-                self.start_edit(RiskCalcField::RiskPercent, self.risk_percent, now_ms);
-                true
-            }
-            "risk_calculator:entry_price" => {
-                self.start_edit(RiskCalcField::EntryPrice, self.entry_price, now_ms);
-                true
-            }
-            "risk_calculator:stop_loss" => {
-                self.start_edit(RiskCalcField::StopLoss, self.stop_loss_price, now_ms);
-                true
-            }
-            "risk_calculator:take_profit" => {
-                self.start_edit(RiskCalcField::TakeProfit, self.take_profit_price.unwrap_or(0.0), now_ms);
-                true
-            }
-            "risk_calculator:apply" => {
-                self.commit_editing();
-                if self.inputs_ready() {
-                    self.apply_requested = true;
-                }
-                true
-            }
-            _ => false,
-        }
+        // The actual focus/seed/commit dance against the shared
+        // `TextFieldStore` field (and, for "apply", the pre-commit +
+        // `inputs_ready()` check) happens in the app layer
+        // (`mlc-app::input::panel_click`), which has coordinator access
+        // this panel does not. This just marks the click consumed; see
+        // `active_field`'s doc.
+        matches!(
+            local_id,
+            "risk_calculator:account_size"
+                | "risk_calculator:risk_percent"
+                | "risk_calculator:entry_price"
+                | "risk_calculator:stop_loss"
+                | "risk_calculator:take_profit"
+                | "risk_calculator:apply"
+        )
     }
 }
 
