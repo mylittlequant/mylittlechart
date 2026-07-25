@@ -875,23 +875,46 @@ impl ChartApp {
     fn text_action_symbol_quick_search(&mut self, action: TextAction) {
         match action {
             TextAction::Commit(_) => {
-                // Enter: apply the first result row exactly as if it had
-                // been clicked — same dispatch `handle_search_modal_click`'s
-                // Commit-via-first-result contract uses for the full-screen
-                // modal (`text_action_search_overlay`). Bug fix (Wave 4
-                // audit): the composite key must carry the full
-                // `SYMBOL_QUICK_ITEM_PREFIX` (`"sym_quick:item:"`), not a
-                // bare `"item:"` — `handle_symbol_quick_click` only strips
-                // the former, so Enter silently no-op'd before this fix.
-                let first_key = self.symbol_quick_search_render()
-                    .and_then(|r| r.results.first().map(|res| {
-                        format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type)
-                    }));
-                if let Some(key) = first_key {
-                    let rest = format!("{}{}", mlc_app_layout::panel_app::SYMBOL_QUICK_ITEM_PREFIX, key);
-                    self.handle_symbol_quick_click(&rest);
-                } else {
-                    self.close_symbol_quick_dropdown();
+                // Enter applies the first result row exactly as if it had
+                // been clicked. Which apply path fires depends on which
+                // surface opened the editor (trading-header-symbol-edit arc,
+                // 2026-07-25 — see `SymbolQuickEditTarget`).
+                let target = self.symbol_quick_edit.as_ref().map(|e| e.target);
+                match target {
+                    Some(crate::SymbolQuickEditTarget::TradingPanel(pid)) => {
+                        let first = self.symbol_quick_search_render()
+                            .and_then(|r| r.results.first().cloned());
+                        if let Some(res) = first {
+                            let resolved_exchange = self.core.exchange_symbols()
+                                .find_by_label(&res.exchange_id)
+                                .unwrap_or(self.active_exchange);
+                            self.commit_symbol_search_to_trading_panel(
+                                pid, &res.symbol, resolved_exchange.as_str(), &res.account_type,
+                            );
+                        }
+                        self.close_symbol_quick_dropdown();
+                    }
+                    // `TopbarChart` (or no live editor, defensive) — same
+                    // dispatch `handle_search_modal_click`'s
+                    // Commit-via-first-result contract uses for the
+                    // full-screen modal (`text_action_search_overlay`). Bug
+                    // fix (Wave 4 audit): the composite key must carry the
+                    // full `SYMBOL_QUICK_ITEM_PREFIX` (`"sym_quick:item:"`),
+                    // not a bare `"item:"` — `handle_symbol_quick_click` only
+                    // strips the former, so Enter silently no-op'd before
+                    // this fix.
+                    _ => {
+                        let first_key = self.symbol_quick_search_render()
+                            .and_then(|r| r.results.first().map(|res| {
+                                format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type)
+                            }));
+                        if let Some(key) = first_key {
+                            let rest = format!("{}{}", mlc_app_layout::panel_app::SYMBOL_QUICK_ITEM_PREFIX, key);
+                            self.handle_symbol_quick_click(&rest);
+                        } else {
+                            self.close_symbol_quick_dropdown();
+                        }
+                    }
                 }
             }
             TextAction::TextChanged(ref new_text) => {

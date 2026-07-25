@@ -121,6 +121,32 @@ impl ChartApp {
             }
         }
 
+        // === Trading header inline symbol editor — click-away-to-dismiss
+        // (trading-header-symbol-edit arc, 2026-07-25). Mirrors the column-
+        // config block above: does NOT `return` — an outside click both
+        // cancels the editor AND still reaches its real target (e.g. a
+        // click on the chart canvas focuses the chart AND closes the
+        // editor in the same click). Row/backdrop clicks on the editor's
+        // own live-search popup are "related" and left alone; their own
+        // handlers (below) commit or dismiss explicitly.
+        if let Some(edit) = self.symbol_quick_edit.as_ref() {
+            if let crate::SymbolQuickEditTarget::TradingPanel(pid) = edit.target {
+                // The search icon is also a "related" entry point (not just
+                // the tab body) — otherwise this block would close the
+                // editor a beat before `open_trading_symbol_quick_edit`'s
+                // own already-editing no-op guard gets to run, turning a
+                // re-click on the icon into a query-resetting reopen
+                // instead of a true no-op.
+                let _ = pid;
+                let related = widget_id == "tch:symbol_selector"
+                    || widget_id.starts_with("dropdown:symbol_selector:")
+                    || widget_id == "dropdown:__bg__";
+                if !related {
+                    self.close_symbol_quick_dropdown();
+                }
+            }
+        }
+
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
@@ -134,18 +160,6 @@ impl ChartApp {
             return;
         }
 
-        // === Trading tab header: OFF-mode symbol-search button (workspace-
-        // panel arc, Stage 4 — `render_right_sidebar`'s SlotTrading header
-        // block). Targets the container explicitly (rather than relying on
-        // whatever the last body click set) since the sidebar may have just
-        // opened with no prior body click yet.
-        if let Some(pid_str) = widget_id.strip_prefix("trading_header:symbol_search:") {
-            if let Ok(raw) = pid_str.parse::<u64>() {
-                self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(mlc_core::state::PanelId(raw));
-                self.open_symbol_search_modal_direct();
-            }
-            return;
-        }
 
         // === Watchlist panel header buttons ===
 
@@ -2940,7 +2954,7 @@ impl ChartApp {
         }
 
         // === Toolbar widgets ===
-        if widget_id.starts_with("toolbar:") || widget_id.starts_with("dtb:") || widget_id.starts_with("csb:") || widget_id.starts_with("btb:") || widget_id.starts_with("rtb:") || widget_id.starts_with("ilb:") {
+        if widget_id.starts_with("toolbar:") || widget_id.starts_with("dtb:") || widget_id.starts_with("csb:") || widget_id.starts_with("btb:") || widget_id.starts_with("rtb:") || widget_id.starts_with("ilb:") || widget_id.starts_with("tch:") {
             let item_id = widget_id
                 .strip_prefix("toolbar:")
                 .or_else(|| widget_id.strip_prefix("dtb:"))
@@ -2948,8 +2962,94 @@ impl ChartApp {
                 .or_else(|| widget_id.strip_prefix("btb:"))
                 .or_else(|| widget_id.strip_prefix("rtb:"))
                 .or_else(|| widget_id.strip_prefix("ilb:"))
+                .or_else(|| widget_id.strip_prefix("tch:"))
                 .unwrap_or(widget_id)
                 .to_string();
+
+            // ── Trading container embedded header toolbar (`tch:` instance,
+            // owner spec 2026-07-25). Same item ids as the main topbar,
+            // dispatch target = the container. Mutual dropdown exclusion:
+            // touching one instance closes the other's open dropdown.
+            let from_tch = widget_id.starts_with("tch:");
+            if from_tch {
+                self.panel_app.toolbar_state.open_dropdown_id = None;
+                let tc_pid = self.panels_store.trading_container.keys().next().copied();
+                match item_id.as_str() {
+                    "__chevron_left" | "__chevron_right" => {
+                        let forward = item_id == "__chevron_right";
+                        let ms = self.last_trading_header_result.as_ref()
+                            .map(|r| r.top_max_scroll)
+                            .unwrap_or(0.0);
+                        self.trading_header_tb.handle_chevron_click("top", forward, ms);
+                        return;
+                    }
+                    "symbol_selector" => {
+                        if let Some(pid) = tc_pid {
+                            self.open_trading_symbol_quick_edit(pid);
+                            // The results list is the composer's own
+                            // `symbol_selector` dropdown on THIS instance.
+                            self.trading_header_tb.open_dropdown_id = Some("symbol_selector".to_string());
+                        }
+                        return;
+                    }
+                    "timeframe_selector" => {
+                        if self.trading_header_tb.open_dropdown_id.as_deref() == Some("timeframe_selector") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                        } else {
+                            self.trading_header_tb.open_dropdown_id = Some("timeframe_selector".to_string());
+                        }
+                        return;
+                    }
+                    "tc_color_tag" => {
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if let Some(pid) = tc_pid {
+                            let anchor = self.last_trading_header_result.as_ref()
+                                .and_then(|r| r.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag").map(|(_, rect)| *rect));
+                            if let Some(rect) = anchor {
+                                self.panel_app.sync_color_grid.open_for_panel(
+                                    pid.0,
+                                    rect.x,
+                                    rect.y + rect.height,
+                                    self.width as f64,
+                                    self.height as f64,
+                                );
+                            }
+                        }
+                        return;
+                    }
+                    "tc_center" => {
+                        if self.trading_header_tb.open_dropdown_id.as_deref() == Some("tc_center") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                        } else {
+                            self.trading_header_tb.open_dropdown_id = Some("tc_center".to_string());
+                        }
+                        return;
+                    }
+                    "tc_gear" => {
+                        self.trading_header_tb.open_dropdown_id = None;
+                        self.panel_app.open_tags_tabs_without_preselect();
+                        return;
+                    }
+                    _ => {}
+                }
+                // Pinned-favorites quick-pick buttons on the header instance
+                // set the CONTAINER timeframe, never the active chart's.
+                if let Some(value_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_QUICK_PICK_PREFIX) {
+                    if let Some(target) = self.resolve_granularity_target(value_id) {
+                        if let (Some(pid), mlc_core::chart_type::GranularityTarget::Tf { name })
+                            | (Some(pid), mlc_core::chart_type::GranularityTarget::Interval { name }) = (tc_pid, target)
+                        {
+                            self.set_trading_container_timeframe(pid, &name);
+                        }
+                    }
+                    return;
+                }
+                // Anything else on the header instance is a no-op — never
+                // fall through to the chart-window toolbar handler below.
+                return;
+            }
+            // Main-toolbar interaction closes the header instance's dropdown.
+            self.trading_header_tb.open_dropdown_id = None;
 
             // Chevron scroll buttons — handle before generic toolbar dispatch.
             if item_id == "__chevron_left" || item_id == "__chevron_right" {
@@ -3100,7 +3200,22 @@ impl ChartApp {
 
         // === Dropdown items ===
         if let Some(rest) = widget_id.strip_prefix("dropdown:") {
+            // Which toolbar instance owns the currently open dropdown —
+            // the trading container's embedded header (`tch:`) or the main
+            // topbar. Only one can be open at a time (mutual exclusion is
+            // enforced at open time), so ownership is unambiguous.
+            let trading_owns_dropdown = self.trading_header_tb.open_dropdown_id.is_some();
+
             // Background click — close the dropdown without selecting any item.
+            if rest == "__bg__" && trading_owns_dropdown {
+                self.trading_header_tb.open_dropdown_id = None;
+                if self.granularity_edit.take().is_some() {
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
+                self.granularity_drag_pending = None;
+                self.granularity_drag = None;
+                return;
+            }
             if rest == "__bg__" {
                 self.panel_app.toolbar_state.open_dropdown_id = None;
                 self.panel_app.toolbar_state.open_dropdown_position = None;
@@ -3126,6 +3241,53 @@ impl ChartApp {
                 // so we just return — the dropdown stays open with no action fired.
                 if item_id.starts_with("__noop__:") {
                     return;
+                }
+
+                // Trading-header-owned dropdown: TF selection targets the
+                // CONTAINER, never the active chart. Favorites star rows fall
+                // through to the shared handler (they mutate the global
+                // favorites store — identical semantics for both instances);
+                // every other chart-coupled row is swallowed.
+                if trading_owns_dropdown {
+                    if dropdown_id == "timeframe_selector" {
+                        if let Some(tf_name) = item_id.strip_prefix("tf_") {
+                            let tc_pid = self.panels_store.trading_container.keys().next().copied();
+                            if let Some(pid) = tc_pid {
+                                let tf_name = tf_name.to_string();
+                                self.set_trading_container_timeframe(pid, &tf_name);
+                            }
+                            self.trading_header_tb.open_dropdown_id = None;
+                            return;
+                        }
+                        if !(item_id.starts_with("gran_star:") || item_id == "gran_pin:toggle") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                            return;
+                        }
+                        // gran_star:* / gran_pin:toggle fall through to the
+                        // shared favorites/pin handlers (global stores,
+                        // identical semantics for both toolbar instances).
+                    } else if dropdown_id == "tc_center" {
+                        if let Some(kind_id) = item_id.strip_prefix("center:") {
+                            if let Some(kind) = mlc_app_panels::trading::trading::trading_container::CenterKind::from_wire_id(kind_id) {
+                                let tc_pid = self.panels_store.trading_container.keys().next().copied();
+                                if let Some(pid) = tc_pid {
+                                    if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                                        tc.center_kind = kind;
+                                    }
+                                    self.autosave_snapshot();
+                                }
+                            }
+                        }
+                        self.trading_header_tb.open_dropdown_id = None;
+                        return;
+                    } else if dropdown_id == "symbol_selector" {
+                        // Quicksearch rows fall through to the shared
+                        // symbol_selector arm below — `handle_symbol_quick_click`
+                        // is target-aware and commits to the container.
+                    } else {
+                        self.trading_header_tb.open_dropdown_id = None;
+                        return;
+                    }
                 }
 
                 // Delete actions — routed here (instead of the generic
@@ -5216,11 +5378,24 @@ impl ChartApp {
                 Some(mlc_core::state::Panel::RiskCalculator(pid))
             }
             "trading_container" => {
-                let pid = self.panels_store.create_trading_container(symbol.clone(), 0.01, 0.0);
+                // `resolved_tick_size` (computed above, same as every other
+                // spawn arm) — was hardcoded `0.01` here, unlike "dom"/
+                // "footprint"/"volume_profile"/"liquidity_heatmap" which all
+                // already use it (found while investigating the OKX
+                // orderbook-tick-size bug, 2026-07-25).
+                let pid = self.panels_store.create_trading_container(symbol.clone(), resolved_tick_size, 0.0);
+                // Header-tab TF control default (trading-header-tf arc,
+                // 2026-07-25) — seeded from the active chart's live
+                // timeframe at spawn time, "1m" when none is known yet.
+                let seed_tf = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| self.timeframe_for_chart(cid))
+                    .map(|tf| tf.name.clone())
+                    .unwrap_or_else(|| "1m".to_string());
                 if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
                     state.source = source.clone();
                     state.exchange = exchange_str.clone();
                     state.account_type = account_type_str.clone();
+                    state.timeframe = seed_tf;
                     state.dom.exchange = exchange_str.clone();
                     state.dom.account_type = account_type_str.clone();
                     state.order_entry.exchange = exchange_str.clone();
@@ -6028,13 +6203,18 @@ impl ChartApp {
         }
     }
 
-    /// Close the `symbol_selector` inline fast-search dropdown and clear its
-    /// transient editor state (symbol-search-compare-inner arc, Wave 2,
-    /// кусок 4). Shared by every exit path: row apply, "Advanced search…",
-    /// Escape, background-click.
+    /// Close the live symbol-search inline editor and clear its transient
+    /// state (symbol-search-compare-inner arc, Wave 2, кусок 4). Shared by
+    /// every exit path — row apply, "Advanced search…", Escape,
+    /// background-click — and by BOTH surfaces (trading-header-symbol-edit
+    /// arc, 2026-07-25 generalized this past the topbar-only
+    /// `symbol_selector` dropdown): clearing `toolbar_state.open_dropdown_id`
+    /// is a no-op when the live edit targeted a `TradingPanel` (it was never
+    /// set for that target in the first place).
     pub(crate) fn close_symbol_quick_dropdown(&mut self) {
         self.panel_app.toolbar_state.open_dropdown_id = None;
         self.panel_app.toolbar_state.open_dropdown_position = None;
+        self.trading_header_tb.open_dropdown_id = None;
         self.symbol_quick_edit = None;
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
     }
@@ -6059,6 +6239,7 @@ impl ChartApp {
         let seed = self.symbol_quick_seed_text();
         let cursor = seed.chars().count();
         self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+            target: crate::SymbolQuickEditTarget::TopbarChart,
             text: seed.clone(),
             cursor,
             selection: None,
@@ -6157,22 +6338,6 @@ impl ChartApp {
     /// caller — same shape `handle_dropdown_select_with_chart` would
     /// otherwise receive.
     pub(crate) fn handle_symbol_quick_click(&mut self, item_id: &str) {
-        // Composite key format: "SYMBOL:exchange_id:account_type" — split
-        // from the right twice (symbols may contain ':') — same parse shape
-        // `handle_search_modal_click`'s "star:"/"item:" arms use
-        // (modals.rs).
-        fn parse_key(key: &str) -> (String, String, String) {
-            if let Some(at_pos) = key.rfind(':') {
-                let at_part = &key[at_pos + 1..];
-                let remainder = &key[..at_pos];
-                if let Some(ex_pos) = remainder.rfind(':') {
-                    return (remainder[..ex_pos].to_string(), remainder[ex_pos + 1..].to_string(), at_part.to_string());
-                }
-                return (remainder.to_string(), String::new(), at_part.to_string());
-            }
-            (key.to_string(), String::new(), "S".to_string())
-        }
-
         if item_id == "sym_quick:toggle_quick" {
             self.toggle_symbol_quick_search();
             return;
@@ -6191,19 +6356,28 @@ impl ChartApp {
             return;
         }
         if let Some(key) = item_id.strip_prefix("sym_quick_star:") {
-            let (symbol, exchange, account_type) = parse_key(key);
+            let (symbol, exchange, account_type) = parse_symbol_composite_key(key);
             self.watchlist_actions.push(crate::WatchlistAction::Toggle { symbol, exchange, account_type });
             self.watchlists_dirty = true;
             return;
         }
         if let Some(key) = item_id.strip_prefix("sym_quick_cmp:") {
-            let (symbol, exchange, account_type) = parse_key(key);
+            let (symbol, exchange, account_type) = parse_symbol_composite_key(key);
             self.add_compare_symbol(&symbol, &exchange, &account_type);
             self.close_symbol_quick_dropdown();
             return;
         }
         if let Some(key) = item_id.strip_prefix(mlc_app_layout::panel_app::SYMBOL_QUICK_ITEM_PREFIX) {
-            let (symbol, exchange_id, account_type) = parse_key(key);
+            let (symbol, exchange_id, account_type) = parse_symbol_composite_key(key);
+            // Target-aware commit: the quicksearch edit may be driven by the
+            // trading container's embedded header toolbar, not the topbar.
+            if let Some(crate::SymbolQuickEditTarget::TradingPanel(pid)) =
+                self.symbol_quick_edit.as_ref().map(|e| e.target)
+            {
+                self.commit_symbol_search_to_trading_panel(pid, &symbol, &exchange_id, &account_type);
+                self.close_symbol_quick_dropdown();
+                return;
+            }
             let resolved_exchange = self.core.exchange_symbols()
                 .find_by_label(&exchange_id)
                 .unwrap_or(self.active_exchange);
@@ -6215,6 +6389,25 @@ impl ChartApp {
         }
     }
 
+}
+
+/// Parse a `"SYMBOL:exchange_id:account_type"` composite key (symbols may
+/// themselves contain `':'`, hence splitting from the right twice) — shared
+/// by [`ChartApp::handle_symbol_quick_click`] (topbar dropdown rows) and the
+/// trading-header inline editor's live-search popup rows
+/// (`trading_symbol_popup:{pid}:item:{key}`, trading-header-symbol-edit arc,
+/// 2026-07-25). Same parse shape `handle_search_modal_click`'s "star:"/
+/// "item:" arms use (modals.rs).
+fn parse_symbol_composite_key(key: &str) -> (String, String, String) {
+    if let Some(at_pos) = key.rfind(':') {
+        let at_part = &key[at_pos + 1..];
+        let remainder = &key[..at_pos];
+        if let Some(ex_pos) = remainder.rfind(':') {
+            return (remainder[..ex_pos].to_string(), remainder[ex_pos + 1..].to_string(), at_part.to_string());
+        }
+        return (remainder.to_string(), String::new(), at_part.to_string());
+    }
+    (key.to_string(), String::new(), "S".to_string())
 }
 
 /// Trim a trailing `.0` (or more generally any trailing fractional zeros)

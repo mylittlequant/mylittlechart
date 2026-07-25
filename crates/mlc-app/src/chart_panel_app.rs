@@ -437,7 +437,73 @@ impl ChartPanelApp {
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false)
+    }
+
+    /// Render the trading container's EMBEDDED header toolbar (owner spec
+    /// 2026-07-25) — the same composer as the main top toolbar, driven by a
+    /// SEPARATE `ChartToolbarState` and the `trading_header_toolbar()` def,
+    /// with container-derived actives. Chart-only knobs are neutral: no
+    /// presets, no sync flags, no chart type, favorites/quicksearch shared
+    /// with the main toolbar so both systems behave identically.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_trading_header_toolbar(
+        &self,
+        tb: &ChartToolbarState,
+        ctx: &mut dyn RenderContext,
+        header_rect: &mlc_app_layout::layout::LayoutRect,
+        active_symbol: &str,
+        active_timeframe: &str,
+        active_exchange: &str,
+        active_account_type: &str,
+        granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+        granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
+        pin_granularity_favorites: bool,
+        granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
+        symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+        symbol_quick_search: bool,
+        timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
+        center_label: &str,
+    ) -> ChartToolbarRenderResult {
+        let toolbar_theme = self.toolbar_theme_for_render();
+        let dropdown_theme = self.dropdown_theme_for_render();
+        let cfg = ToolbarConfig::custom()
+            .with_top(Some(mlc_core::toolbar::trading_header_toolbar(center_label)));
+        let layout = ChartPanelLayout::compute(header_rect, &cfg);
+        chart_toolbar_render_toolbars(
+            tb, ctx, &layout, &cfg,
+            None,                      // selected_primitive
+            Some(&toolbar_theme),
+            Some(&dropdown_theme),
+            None,                      // clock_time
+            &[],                       // presets
+            "",                        // active_preset_id
+            false,                     // autosave_enabled
+            None,                      // sync_flags
+            false,                     // is_expanded
+            false,                     // split_without_group
+            false,                     // is_mono_group
+            Some(active_symbol),
+            Some(active_timeframe),
+            0.0,                       // sidebar_w (modal math n/a here)
+            None,                      // allowed_timeframes (all)
+            None,                      // active_chart_type
+            None,                      // active_chart_type_param
+            None,                      // chart_type_data_modes
+            timeframe_native_map,
+            false,                     // footprint_live_only
+            granularity_favorites,
+            granularity_edit_render,
+            pin_granularity_favorites,
+            granularity_drag_render,
+            false,                     // split_symbol_compare
+            symbol_quick_search_render,
+            symbol_quick_search,
+            Some(active_exchange),
+            Some(active_account_type),
+            false,                     // suppress_chart_controls
+            true,                      // quicksearch_minimal (results only)
+        )
     }
 
     /// Render all chart-owned modals in a single call.

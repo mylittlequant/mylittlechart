@@ -405,6 +405,11 @@ pub fn chart_toolbar_render_toolbars(
     // idiom `split_symbol_compare` already uses to drop `compare` below —
     // no parallel composer.
     suppress_chart_controls: bool,
+    // Trading-container embedded header instance (owner spec 2026-07-26):
+    // quicksearch dropdown shows RESULTS ONLY — no settings toggles (global
+    // topbar concerns that must not leak or be flipped from the container)
+    // and no compare "+" icons (compare is chart-only; one symbol key).
+    quicksearch_minimal: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -1157,7 +1162,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal)
         } else {
             None
         };
@@ -1399,6 +1404,7 @@ fn chart_toolbar_render_dropdown(
     symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
     symbol_quick_search_enabled: bool,
     split_symbol_compare: bool,
+    quicksearch_minimal: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1502,7 +1508,7 @@ fn chart_toolbar_render_dropdown(
         // `timeframe_selector` base list above rather than built in the
         // finder.
         if dropdown_id == "symbol_selector" {
-            items = symbol_quick_dropdown_items(symbol_quick_search_render);
+            items = symbol_quick_dropdown_items(symbol_quick_search_render, quicksearch_minimal);
         }
 
         // 3. Convert DropdownItemDef -> DropdownItem
@@ -1872,10 +1878,14 @@ fn chart_toolbar_render_dropdown(
                         if let Some(c) = star_color {
                             star = star.with_color(c);
                         }
-                        let plus = crate::ui::dropdown::TrailingIcon::new(
-                            format!("sym_quick_cmp:{}", key), IconId::new("Plus"),
-                        );
-                        *trailing_icons = vec![star, plus];
+                        if quicksearch_minimal {
+                            *trailing_icons = vec![star];
+                        } else {
+                            let plus = crate::ui::dropdown::TrailingIcon::new(
+                                format!("sym_quick_cmp:{}", key), IconId::new("Plus"),
+                            );
+                            *trailing_icons = vec![star, plus];
+                        }
                     } else if id == "sym_quick:toggle_quick" {
                         *toggle = Some(symbol_quick_search_enabled);
                     } else if id == "sym_quick:toggle_split" {
@@ -2363,6 +2373,7 @@ pub const SYMBOL_QUICK_ITEM_PREFIX: &str = "sym_quick:item:";
 /// uses for the `timeframe_selector` dropdown's star/edit/delete icons.
 fn symbol_quick_dropdown_items(
     render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+    minimal: bool,
 ) -> Vec<DropdownItemDef> {
     let mut items: Vec<DropdownItemDef> = Vec::new();
 
@@ -2383,14 +2394,16 @@ fn symbol_quick_dropdown_items(
         }
     }
 
-    items.push(DropdownItemDef::Separator);
-    items.push(DropdownItemDef::action("sym_quick:toggle_quick", "Quick search"));
-    items.push(DropdownItemDef::action("sym_quick:toggle_split", "Separate compare button"));
-    items.push(DropdownItemDef::Separator);
-    items.push(
-        DropdownItemDef::action("sym_quick:open_modal", "Advanced search\u{2026}")
-            .with_icon(ToolbarIconId::new("Search")),
-    );
+    if !minimal {
+        items.push(DropdownItemDef::Separator);
+        items.push(DropdownItemDef::action("sym_quick:toggle_quick", "Quick search"));
+        items.push(DropdownItemDef::action("sym_quick:toggle_split", "Separate compare button"));
+        items.push(DropdownItemDef::Separator);
+        items.push(
+            DropdownItemDef::action("sym_quick:open_modal", "Advanced search\u{2026}")
+                .with_icon(ToolbarIconId::new("Search")),
+        );
+    }
 
     items
 }

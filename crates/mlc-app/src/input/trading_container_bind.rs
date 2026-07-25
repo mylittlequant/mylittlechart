@@ -211,4 +211,65 @@ impl ChartApp {
             });
         }
     }
+
+    /// Open (or refocus) the Trading Container header-tab's inline symbol
+    /// editor for `pid` (trading-header-symbol-edit arc, 2026-07-25) — the
+    /// sidebar-hosted counterpart of `open_symbol_quick_dropdown` (topbar).
+    /// Seeds `SYMBOL_QUICK_SEARCH` with the container's own composite key
+    /// (`"SYMBOL:EXCH:AT"`, exchange UPPERCASE — same seed grammar
+    /// `symbol_quick_seed_text` uses) and SELECTS ALL of it (owner spec:
+    /// clicking the tab text opens an immediately-replaceable editable
+    /// field), unlike the topbar editor's cursor-at-end/no-selection seed.
+    ///
+    /// No-ops if `pid` is already the live edit target — a second click on
+    /// the tab or the search icon while typing must not reset the user's
+    /// in-progress query. Also sets this panel as the workspace focus,
+    /// mirroring every other click-to-focus gesture on the Trading tab.
+    pub(crate) fn open_trading_symbol_quick_edit(&mut self, pid: mlc_core::state::PanelId) {
+        if matches!(
+            self.symbol_quick_edit.as_ref().map(|e| e.target),
+            Some(crate::SymbolQuickEditTarget::TradingPanel(p)) if p == pid
+        ) {
+            return;
+        }
+        let Some(tc) = self.panels_store.trading_container.get(&pid) else { return };
+        let seed = if tc.exchange.is_empty() {
+            tc.symbol.clone()
+        } else {
+            format!("{}:{}:{}", tc.symbol, tc.exchange.to_uppercase(), tc.account_type)
+        };
+        let cursor = seed.chars().count();
+        self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
+        self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+            target: crate::SymbolQuickEditTarget::TradingPanel(pid),
+            text: seed.clone(),
+            cursor,
+            selection: Some((0, cursor)),
+        });
+        let q_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        tf.set_text(&q_id, &seed);
+        tf.begin_edit(&q_id);
+        tf.focus(crate::text_input::SYMBOL_QUICK_SEARCH);
+        // Select-all (owner spec) — `set_text`/`begin_edit` leave the store
+        // at cursor-at-end/no-selection; overwrite directly the same way
+        // uzor's own `KeyPress::SelectAll` handler does.
+        if let Some(fs) = tf.field_state_mut(&q_id) {
+            fs.selection_start = Some(0);
+            fs.cursor = cursor;
+        }
+    }
+
+    /// Set the trading container's timeframe (embedded header TF system).
+    /// Display-name grammar matches the topbar TF rows (`tf_{name}` →
+    /// `name`, e.g. "1m"/"1H"). Stored + persisted on the container; TF
+    /// consumers inside the container (footprint / embedded chart, future)
+    /// read it from there.
+    pub(crate) fn set_trading_container_timeframe(&mut self, pid: mlc_core::state::PanelId, name: &str) {
+        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+            tc.timeframe = name.to_string();
+        }
+        self.autosave_snapshot();
+    }
 }

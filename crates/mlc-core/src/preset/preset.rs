@@ -225,6 +225,16 @@ pub enum PersistedFreeItemKind {
         /// `Positions` tab.
         #[serde(default)]
         active_tab: PersistedBottomTab,
+        /// Header-tab TF control's value (trading-header-tf arc,
+        /// 2026-07-25). `#[serde(default = ...)]` so presets saved before
+        /// this field existed restore to the same `"1m"` fallback
+        /// `TradingContainerState::new` uses.
+        #[serde(default = "default_tc_timeframe")]
+        timeframe: String,
+        /// Center-slot content (owner spec 2026-07-26): "dom" | "chart".
+        /// `#[serde(default = ...)]` so older presets restore to DOM.
+        #[serde(default = "default_tc_center_kind")]
+        center_kind: String,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled
@@ -268,6 +278,8 @@ fn default_multi_dom_depth() -> usize { 25 }
 fn default_tc_right_ratio() -> f64 { 0.3 }
 fn default_tc_bottom_ratio() -> f64 { 0.25 }
 fn default_tc_right_split() -> f64 { 0.55 }
+fn default_tc_timeframe() -> String { "1m".to_string() }
+fn default_tc_center_kind() -> String { "dom".to_string() }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.

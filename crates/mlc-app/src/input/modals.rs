@@ -1926,6 +1926,9 @@ impl ChartApp {
     pub(super) fn close_transient_overlays(&mut self) {
         self.panel_app.toolbar_state.open_dropdown_id = None;
         self.panel_app.toolbar_state.hovered_dropdown_item = None;
+        self.trading_header_tb.open_dropdown_id = None;
+        self.trading_header_tb.hovered_dropdown_item = None;
+        self.trading_header_tb.hovered_top_toolbar_id = None;
         // Dropdown closing abandons any in-progress inline granularity edit
         // (user-granularity-templates-inner arc, кусок 2) — see the
         // `dropdown:__bg__` handler in `panel_click.rs` for the same rule on

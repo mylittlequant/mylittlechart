@@ -4331,6 +4331,8 @@ impl ChartApp {
         self.panel_app.toolbar_state.hovered_right_toolbar_id = None;
         self.panel_app.toolbar_state.hovered_bottom_toolbar_id = None;
         self.panel_app.toolbar_state.hovered_dropdown_item = None;
+        self.trading_header_tb.hovered_top_toolbar_id = None;
+        self.trading_header_tb.hovered_dropdown_item = None;
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.standalone_panels.watchlist_modal.hovered_widget = None;
@@ -4355,6 +4357,8 @@ impl ChartApp {
                 self.panel_app.toolbar_state.hovered_left_toolbar_id = Some(item_id.to_string());
             } else if let Some(item_id) = id_str.strip_prefix("csb:") {
                 self.panel_app.toolbar_state.hovered_top_toolbar_id = Some(item_id.to_string());
+            } else if let Some(item_id) = id_str.strip_prefix("tch:") {
+                self.trading_header_tb.hovered_top_toolbar_id = Some(item_id.to_string());
             } else if let Some(item_id) = id_str.strip_prefix("btb:") {
                 self.panel_app.toolbar_state.hovered_bottom_toolbar_id = Some(item_id.to_string());
             } else if let Some(item_id) = id_str.strip_prefix("rtb:") {
@@ -4372,8 +4376,14 @@ impl ChartApp {
                 }
             } else if id_str.starts_with("dropdown:") && id_str != "dropdown:__bg__" {
                 // "dropdown:{dropdown_id}:{item_id}" → store the item_id part
+                // on WHICHEVER toolbar instance owns the open dropdown (main
+                // topbar vs the trading container's embedded header).
                 let item_id = id_str.splitn(3, ':').nth(2).unwrap_or_default().to_string();
-                self.panel_app.toolbar_state.hovered_dropdown_item = Some(item_id);
+                if self.trading_header_tb.open_dropdown_id.is_some() {
+                    self.trading_header_tb.hovered_dropdown_item = Some(item_id);
+                } else {
+                    self.panel_app.toolbar_state.hovered_dropdown_item = Some(item_id);
+                }
             } else if let Some(rest) = id_str.strip_prefix("context_menu:item:") {
                 self.hovered_context_menu_item_id = Some(rest.to_string());
             } else if id_str == "context_menu:bg" {
@@ -6078,6 +6088,12 @@ impl ChartApp {
             return;
         }
 
+        // Trading container embedded header toolbar — Escape closes its
+        // open dropdown (TF picker etc.) without applying a selection.
+        if self.trading_header_tb.open_dropdown_id.take().is_some() {
+            return;
+        }
+
         // If chart browser modal is open, close it.
         if self.panel_app.chart_browser.is_open {
             self.panel_app.chart_browser.close();
@@ -7761,6 +7777,8 @@ impl ChartApp {
                                 bottom_ratio: state.bottom_ratio,
                                 right_split: state.right_split,
                                 active_tab,
+                                timeframe: state.timeframe.clone(),
+                                center_kind: state.center_kind.wire_id().to_string(),
                             }
                         }
                         Panel::IndicatorPanel(id) => {

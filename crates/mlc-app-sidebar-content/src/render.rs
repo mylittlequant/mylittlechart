@@ -19,7 +19,7 @@ use mlc_app_layout::ui::widgets::types::{WidgetState, WidgetTheme};
 use mlc_app_layout::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
 use mlc_app_layout::ui::toolbar_render::ToolbarTheme;
 use mlc_core::state::command::ObjectCategory;
-use mlc_app_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones, LEAF_TAB_HEIGHT};
+use mlc_app_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
 use mlc_core::i18n::{SidebarKey, current_language};
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
@@ -263,16 +263,13 @@ pub fn render_right_sidebar(
     panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
-    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
+    // 4th tuple element is the panel's timeframe label (e.g.
+    // `TradingContainerState::timeframe`, trading-header-tf arc,
+    // 2026-07-25) — empty string for panels with no TF concept.
+    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
     watchlist_column_config: &WatchlistColumnConfig,
     watchlist_color_flag_fn: &dyn Fn(&mlc_core::InstrumentAddress) -> Option<String>,
-    // Workspace-panel arc, Stage 4 (`ProfileUiSettings::trading_panel_
-    // topbar_takeover`). OFF (false, default): the Trading tab's header row
-    // draws its own symbol-search button (the "OFF mode" v1 control). ON:
-    // the topbar composition takes over instead (lib.rs `render_toolbar_
-    // only`), so the header button is redundant and suppressed here.
-    trading_panel_topbar_takeover: bool,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -434,92 +431,11 @@ pub fn render_right_sidebar(
         WidgetRect::new(close_x, close_y, close_size, close_size),
     ));
 
-    // Trading tab: the leaf-tab content (color-tag square + "SYMBOL ·
-    // exchange · account_type" + gear) lives IN THE HEADER ROW now — the
-    // header IS the tab, not a floating overlay drawn over the body (owner
-    // directive). Reuses the exact same `render_leaf_tab` widget and pushes
-    // into the exact same `panel_overlay_zones` bucket every other free-slot
-    // leaf uses, just positioned in the header band instead of floating over
-    // the body — `lib.rs`'s generic `panel_overlay:{pid}:color_tag|gear`
-    // routing and the mouse-move hover-zone derivation (both keyed off
-    // `panel_overlay_zones` rects, not off WHERE the rect happens to sit)
-    // are untouched. The Auto/Pinned source badge that used to sit beside
-    // the floating tab is gone — legacy, removed entirely.
-    if panel == RightSidebarPanel::SlotTrading {
-        if let Some(idx) = panel.slot_index() {
-            let idx = idx as usize;
-            let leaf_item = sidebar_state.slot_dockings[idx]
-                .inner()
-                .tree()
-                .leaves()
-                .into_iter()
-                .find_map(|leaf| leaf.panels.get(leaf.active_tab).cloned().map(|p| (leaf.id, p)));
-            if let Some((leaf_id, item)) = leaf_item {
-                let is_focused = sidebar_state.focused_free_leaf == Some((idx, leaf_id));
-                let overlay_hover_zone = sidebar_state
-                    .free_leaf_overlay_hover
-                    .get(&(idx, leaf_id))
-                    .copied()
-                    .unwrap_or(LeafTabHoverZone::None);
-                let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
-                    .unwrap_or_else(|| (String::new(), String::new(), String::new()));
-                let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
-                let tab_x = rect.x + 8.0;
-                let tab_y = rect.y + (header_height - LEAF_TAB_HEIGHT) / 2.0;
-
-                // OFF-mode v1 control (Stage 4): a symbol-search button next
-                // to the tab, reserved out of the tab's available width
-                // BEFORE it renders — the tab self-sizes to content anyway,
-                // but reserving the room up front keeps the button from
-                // ever overlapping a full-width tab. Suppressed when the
-                // topbar-takeover bool is on (ON mode composes the topbar
-                // instead — see `render_toolbar_only`).
-                let search_btn_size = 20.0;
-                let search_btn_gap = 4.0;
-                let search_reserved_w = if trading_panel_topbar_takeover {
-                    0.0
-                } else {
-                    search_btn_size + search_btn_gap
-                };
-                let tab_max_w = (close_x - close_pad - 8.0 - search_reserved_w - tab_x).max(0.0);
-                let hit_zones = render_leaf_tab(
-                    ctx,
-                    tab_x,
-                    tab_y,
-                    tab_max_w,
-                    &symbol,
-                    "",
-                    &exchange,
-                    &account_type,
-                    is_focused,
-                    overlay_hover_zone,
-                    color_tag,
-                    toolbar_theme,
-                );
-
-                if !trading_panel_topbar_takeover {
-                    let btn_x = hit_zones.tab_rect[0] + hit_zones.tab_rect[2] + search_btn_gap;
-                    let btn_y = tab_y + (LEAF_TAB_HEIGHT - search_btn_size) / 2.0;
-                    let btn_id = format!("trading_header:symbol_search:{}", item.panel_id().0);
-                    let btn_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn_id.as_str()));
-                    if btn_hovered {
-                        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                        ctx.fill_rounded_rect(btn_x, btn_y, search_btn_size, search_btn_size, 3.0);
-                    }
-                    draw_svg_icon(
-                        ctx, Icon::Search.svg(),
-                        btn_x + 3.0, btn_y + 3.0, search_btn_size - 6.0, search_btn_size - 6.0,
-                        if btn_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted },
-                    );
-                    let btn_rect = WidgetRect::new(btn_x, btn_y, search_btn_size, search_btn_size);
-                    input_coordinator.register(btn_id.as_str(), btn_rect, uzor::input::Sense::CLICK | uzor::input::Sense::HOVER);
-                    result.item_rects.push((btn_id, btn_rect));
-                }
-
-                result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones));
-            }
-        }
-    }
+    // Trading tab: the header row hosts the container's EMBEDDED toolbar
+    // (symbol-search system + color tag + gear + TF system), rendered by
+    // `ChartApp::render_trading_header_toolbar` in `lib.rs` AFTER this
+    // function returns (composer needs ChartApp-level state). Only the
+    // sidebar close [x] above belongs to this chrome.
 
     // Alerts panel: add (+) button to the left of the close button.
     if panel == RightSidebarPanel::Alerts {
@@ -4097,7 +4013,7 @@ fn render_slot_panel(
     panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     _panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
-    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String)>,
+    panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String, String)>,
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
 ) -> f64 {
     use uzor::panels::PanelRect as UzorPanelRect;
@@ -4395,8 +4311,8 @@ fn render_slot_panel(
             .unwrap_or(LeafTabHoverZone::None);
 
         // Resolve symbol/exchange/account_type from the structured overlay info closure.
-        let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
-            .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+        let (symbol, exchange, account_type, _timeframe) = panel_overlay_info_fn(&item)
+            .unwrap_or_else(|| (String::new(), String::new(), String::new(), String::new()));
 
         // Color tag from the tag-manager closure.
         let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
@@ -4414,6 +4330,7 @@ fn render_slot_panel(
             overlay_hover_zone,
             color_tag,
             theme,
+            None, // static text — inline editing is Trading-tab only
         );
 
         // Store hit zones for chart-app click dispatch.

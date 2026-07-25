@@ -897,6 +897,24 @@ pub struct ChartApp {
     /// close / Escape / apply.
     pub(crate) symbol_quick_edit: Option<SymbolQuickEdit>,
 
+    /// `Some(pid)` while the Trading Container header-tab's TF favorites
+    /// popup is open for that container (trading-header-tf arc, 2026-07-25)
+    /// — lists `GranularityFavorites::starred_tfs` (the SAME store the
+    /// topbar's `timeframe_selector` dropdown reads/writes) anchored under
+    /// the header's TF button. `None` when closed. Toggled by
+    /// `"trading_header:tf_button:{pid}"`, cleared on row pick / Escape /
+    /// click-away.
+ 
+    /// Toolbar UI state for the trading container's EMBEDDED header toolbar
+    /// (owner spec 2026-07-25: the container header is an alternative top
+    /// toolbar). Separate from `panel_app.toolbar_state` so its open
+    /// dropdown / hover never collide with the main topbar's; dispatch
+    /// enforces mutual exclusion between the two.
+    pub(crate) trading_header_tb: mlc_core::state::ChartToolbarState,
+    /// Last render result of the embedded header toolbar — item rects for
+    /// `tch:{id}` hit-zone registration and popup anchoring.
+    pub(crate) last_trading_header_result: Option<mlc_core::ChartToolbarRenderResult>,
+
     /// In-RAM clipboard for Ctrl+C/Ctrl+V on a selected drawing primitive.
     /// `None` when nothing has been copied — never persisted, never synced
     /// across windows (process-local, cleared on restart).
@@ -1093,16 +1111,44 @@ pub struct GranularityEdit {
     pub kind: GranularityEditKind,
 }
 
-/// Transient RAM-only state for the `symbol_selector` toolbar dropdown's
-/// inline fast-search editor (symbol-search-compare-inner arc, Wave 2, кусок
-/// 4). Mirrors `GranularityEdit`'s shape/lifecycle: created empty on
-/// dropdown open, live-updated on every keystroke (drives
-/// `ChartApp::build_symbol_search_results` each frame — no separate results
-/// cache field, same "recompute is cheap enough" contract
-/// `ModalState::symbol_search_results` already relies on for the full-screen
-/// modal), cleared on Escape / apply / dropdown close.
-#[derive(Debug, Clone, PartialEq, Default)]
+/// Which UI surface a live [`SymbolQuickEdit`] belongs to (trading-header-
+/// symbol-edit arc, 2026-07-25 — generalizes the 2026-07-17 topbar-only
+/// editor so the Trading Container's header-tab inline symbol editor can
+/// reuse the exact same state/matching machinery instead of a parallel
+/// copy). `SYMBOL_QUICK_SEARCH` stays the ONE `TextFieldStore` field either
+/// surface focuses — only one of them can be live at a time, so sharing the
+/// field id is safe and avoids minting a second one per trading panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolQuickEditTarget {
+    /// The topbar `symbol_selector` button-hosted editor — the original
+    /// 2026-07-17 surface, commits via `apply_symbol` against the active
+    /// chart.
+    TopbarChart,
+    /// A `TradingContainer`'s header-tab inline editor — commits via
+    /// `commit_symbol_search_to_trading_panel` (group-propagating rebind),
+    /// never `apply_symbol`.
+    TradingPanel(mlc_core::state::PanelId),
+}
+
+impl Default for SymbolQuickEditTarget {
+    fn default() -> Self { Self::TopbarChart }
+}
+
+/// Transient RAM-only state for a live symbol-search inline editor
+/// (symbol-search-compare-inner arc, Wave 2, кусок 4; generalized past the
+/// topbar-only `symbol_selector` surface by the trading-header-symbol-edit
+/// arc, 2026-07-25 — see [`SymbolQuickEditTarget`]). Mirrors
+/// `GranularityEdit`'s shape/lifecycle: created empty (or seeded) on open,
+/// live-updated on every keystroke (drives `ChartApp::
+/// build_symbol_search_results` each frame — no separate results cache
+/// field, same "recompute is cheap enough" contract `ModalState::
+/// symbol_search_results` already relies on for the full-screen modal),
+/// cleared on Escape / apply / close.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SymbolQuickEdit {
+    /// Which surface opened this editor — decides the commit path and
+    /// where the dropdown/results popup renders.
+    pub target: SymbolQuickEditTarget,
     /// Live typed query text.
     pub text: String,
     /// Cursor position (character index).
@@ -1176,6 +1222,8 @@ pub struct RenderOutput {
     pub context_menu_result: Option<ContextMenuResult>,
     /// Right-sidebar render result.
     pub last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult>,
+    /// Trading container's embedded header toolbar render result.
+    pub trading_header_result: Option<mlc_core::ChartToolbarRenderResult>,
     /// Watchlist-modal render result.
     pub last_watchlist_modal_result: Option<mlc_app_layout::layout::modals::watchlist_modal::WatchlistModalResult>,
     /// Watchlist group-name input result.
@@ -2090,6 +2138,8 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            trading_header_tb: mlc_core::state::ChartToolbarState::default(),
+            last_trading_header_result: None,
             primitive_clipboard: None,
         };
 
@@ -2484,6 +2534,8 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            trading_header_tb: mlc_core::state::ChartToolbarState::default(),
+            last_trading_header_result: None,
             primitive_clipboard: None,
         };
 
@@ -3024,6 +3076,8 @@ impl ChartApp {
             granularity_drag_pending: None,
             granularity_drag: None,
             symbol_quick_edit: None,
+            trading_header_tb: mlc_core::state::ChartToolbarState::default(),
+            last_trading_header_result: None,
             primitive_clipboard: None,
         };
 
@@ -4891,6 +4945,7 @@ impl ChartApp {
                     hover_zone,
                     color_tag,
                     &leaf_tab_toolbar_theme,
+                    None, // static text — inline editing is Trading-tab only
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
@@ -5551,6 +5606,7 @@ impl ChartApp {
                     hover_zone,
                     single_color_tag,
                     &leaf_tab_toolbar_theme,
+                    None, // static text — inline editing is Trading-tab only
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
@@ -5865,7 +5921,16 @@ impl ChartApp {
             let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
             let granularity_drag_render = self.granularity_drag_render();
             let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
-            let symbol_quick_search_render = self.symbol_quick_search_render();
+            // Target-gated (owner defect 2026-07-25): the topbar's
+            // `symbol_selector` button only hosts the inline editor when it
+            // is the ACTUAL edit target — a live TradingPanel edit must
+            // render EXCLUSIVELY in the Trading tab's header (render_right_
+            // sidebar's `trading_symbol_edit` param), never leak into both
+            // places at once.
+            let symbol_quick_search_render = match self.symbol_quick_edit.as_ref().map(|e| e.target) {
+                Some(SymbolQuickEditTarget::TopbarChart) => self.symbol_quick_search_render(),
+                _ => None,
+            };
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
@@ -6109,6 +6174,7 @@ impl ChartApp {
 
         let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
             || self.panel_app.user_settings_state.show_welcome_wizard;
+        let mut out_trading_header_result: Option<mlc_core::ChartToolbarRenderResult> = None;
         let out_last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
             let top_h = panel_layout.top_toolbar_rect.height;
             let bottom_h = panel_layout.bottom_toolbar_rect.height;
@@ -6158,6 +6224,16 @@ impl ChartApp {
                 .find(self.watchlist_ui.active_list_id)
                 .cloned();
 
+            // Trading-header-symbol-edit / trading-header-tf arcs
+            // (2026-07-25): read BEFORE `panels_store` borrows `self`
+            // immutably below.
+            let trading_symbol_edit_render = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
+                crate::SymbolQuickEditTarget::TradingPanel(pid) => {
+                    self.symbol_quick_search_render().map(|r| (pid.0, r))
+                }
+                crate::SymbolQuickEditTarget::TopbarChart => None,
+            });
+
             // Draw sidebar and register hit zones every frame.
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
@@ -6184,31 +6260,31 @@ impl ChartApp {
                 &|item: &mlc_core::state::Panel| -> Option<mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot> {
                     sidebar_panel_sync_flags_map.get(&item.panel_id().0).cloned()
                 },
-                &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
+                &|item: &mlc_core::state::Panel| -> Option<(String, String, String, String)> {
                     use mlc_core::state::Panel;
                     match item {
                         Panel::Dom(id) => panels_store.dom.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::MultiDom(id) => panels_store.multi_dom.get(id)
-                            .map(|s| (s.symbol.clone(), String::new(), String::new())),
+                            .map(|s| (s.symbol.clone(), String::new(), String::new(), String::new())),
                         Panel::Footprint(id) => panels_store.footprint.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::BigTrades(id) => panels_store.big_trades.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::L2Tape(id) => panels_store.l2_tape.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::TradeTape(id) => panels_store.trade_tape.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::OrderEntry(id) => panels_store.order_entry.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::TradingContainer(id) => panels_store.trading_container.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), s.timeframe.clone())),
                         Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
-                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::PositionManager(_)
                         | Panel::TradeLog(_)
                         | Panel::RiskCalculator(_)
@@ -6254,7 +6330,6 @@ impl ChartApp {
                         .and_then(|l| l.get_color_flag(address))
                         .map(|s| s.to_string())
                 },
-                self.core.user().profile().ui.trading_panel_topbar_takeover,
             );
 
             // Register panel overlay zones (color tag + gear) here — NOT only
@@ -6269,6 +6344,118 @@ impl ChartApp {
             // inside `render_sidebar_only()` for the vello path — re-registering
             // the same ids/rects on the same frame is idempotent.
             self.register_panel_overlay_zones(&sidebar_result);
+
+            // Trading container EMBEDDED header toolbar (owner spec
+            // 2026-07-25): the container header IS an alternative top
+            // toolbar — same composer, separate ChartToolbarState, item ids
+            // shared with the main topbar so the symbol-search / TF systems
+            // behave identically; hit zones registered as `tch:{id}`.
+            if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading {
+                if let Some((tc_pid, tc)) = self.panels_store.trading_container.iter().next() {
+                    let close_w = 36.0;
+                    let header_rect = LayoutRect::new(
+                        sidebar_rect.x,
+                        sidebar_rect.y,
+                        (sidebar_rect.width - close_w).max(0.0),
+                        40.0,
+                    );
+                    let th_gran_favs = self.core.user().profile().domain.granularity_favorites.clone();
+                    let th_pin_favs = self.core.user().profile().ui.pin_granularity_favorites;
+                    let th_gran_edit = self.granularity_edit_render();
+                    let th_gran_drag = self.granularity_drag_render();
+                    let th_tf_native = self.timeframe_native_map();
+                    let th_sq_render = trading_symbol_edit_render.as_ref().map(|(_, r)| r);
+                    let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                    let th_result = self.panel_app.render_trading_header_toolbar(
+                        &self.trading_header_tb,
+                        ctx,
+                        &header_rect,
+                        &tc.symbol,
+                        &tc.timeframe,
+                        &tc.exchange,
+                        &tc.account_type,
+                        &th_gran_favs,
+                        th_gran_edit.as_ref(),
+                        th_pin_favs,
+                        th_gran_drag.as_ref(),
+                        th_sq_render,
+                        th_sqs_on,
+                        th_tf_native.as_ref(),
+                        tc.center_kind.label(),
+                    );
+
+                    // Color-sync tag square over the blank `tc_color_tag`
+                    // button (composer items are icon/text-driven; the tag
+                    // color is per-panel dynamic state).
+                    if let Some((_, tag_rect)) = th_result.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag") {
+                        let tag_color = sidebar_panel_color_map.get(&tc_pid.0).copied();
+                        let css = match tag_color {
+                            Some(c) => format!(
+                                "rgba({},{},{},1.0)",
+                                (c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8
+                            ),
+                            None => "rgba(128,128,128,0.55)".to_string(),
+                        };
+                        let sq = 10.0;
+                        ctx.set_fill_color(&css);
+                        ctx.fill_rect(
+                            tag_rect.x + (tag_rect.width - sq) / 2.0,
+                            tag_rect.y + (tag_rect.height - sq) / 2.0,
+                            sq,
+                            sq,
+                        );
+                    }
+
+                    {
+                        use uzor::input::Sense;
+                        use mlc_app_layout::ui::z_order::ZLayer;
+                        let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                        for (id, rect) in &th_result.top_toolbar.item_rects {
+                            self.input_coordinator.borrow_mut().register_on_layer(
+                                format!("tch:{}", id),
+                                uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                Sense::CLICK,
+                                &tch_layer,
+                            );
+                        }
+                        for (suffix, chev) in [
+                            ("__chevron_left", th_result.top_left_chevron),
+                            ("__chevron_right", th_result.top_right_chevron),
+                        ] {
+                            if let Some(r) = chev {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("tch:{}", suffix),
+                                    uzor::Rect::new(r.x, r.y, r.width, r.height),
+                                    Sense::CLICK,
+                                    &tch_layer,
+                                );
+                            }
+                        }
+                        self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
+
+                        if let Some(ref dd) = th_result.dropdown_result {
+                            let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
+                            self.input_coordinator.borrow_mut().register_on_layer(
+                                "dropdown:__bg__",
+                                uzor::Rect::new(dd.menu_rect.x, dd.menu_rect.y, dd.menu_rect.width, dd.menu_rect.height),
+                                Sense::CLICK,
+                                &dd_layer,
+                            );
+                            for (item_id, rect) in &dd.item_rects {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("dropdown:{}:{}", dd.dropdown_id, item_id),
+                                    uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                    Sense::CLICK,
+                                    &dd_layer,
+                                );
+                            }
+                            self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
+                        }
+                    }
+
+                    out_trading_header_result = Some(th_result);
+                }
+            }
 
             Some(sidebar_result)
         } else {
@@ -6304,6 +6491,7 @@ impl ChartApp {
             search_modal_result: out_search_modal_result,
             context_menu_result: out_context_menu_result,
             last_sidebar_result: out_last_sidebar_result,
+            trading_header_result: out_trading_header_result,
             last_watchlist_modal_result: out_last_watchlist_modal_result,
             last_wl_group_name_result: out_last_wl_group_name_result,
             leaf_tab_hit_zones: out_leaf_tab_hit_zones,
@@ -6329,6 +6517,7 @@ impl ChartApp {
         self.search_modal_result = output.search_modal_result;
         self.context_menu_result = output.context_menu_result;
         self.last_sidebar_result = output.last_sidebar_result;
+        self.last_trading_header_result = output.trading_header_result;
 
         // Persist agent terminal rect on sidebar_state for hover-focus in CursorMoved.
         self.sidebar_state.agent_terminal_rect = self
@@ -6589,7 +6778,12 @@ impl ChartApp {
         let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
         let granularity_drag_render = self.granularity_drag_render();
         let split_symbol_compare = self.core.user().profile().ui.split_symbol_compare;
-        let symbol_quick_search_render = self.symbol_quick_search_render();
+        // Target-gated (owner defect 2026-07-25) — see the twin block in
+        // `render_to_scene` for the rationale.
+        let symbol_quick_search_render = match self.symbol_quick_edit.as_ref().map(|e| e.target) {
+            Some(SymbolQuickEditTarget::TopbarChart) => self.symbol_quick_search_render(),
+            _ => None,
+        };
         let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
@@ -6729,6 +6923,15 @@ impl ChartApp {
             .find(self.watchlist_ui.active_list_id)
             .cloned();
 
+        // Trading-header-symbol-edit / trading-header-tf arcs (2026-07-25):
+        // read BEFORE `panels_store` borrows `self` immutably below.
+        let trading_symbol_edit_render_main = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
+            crate::SymbolQuickEditTarget::TradingPanel(pid) => {
+                self.symbol_quick_search_render().map(|r| (pid.0, r))
+            }
+            crate::SymbolQuickEditTarget::TopbarChart => None,
+        });
+
         let panels_store = &self.panels_store;
         let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
             ctx,
@@ -6752,31 +6955,31 @@ impl ChartApp {
             &|item: &mlc_core::state::Panel| -> Option<mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot> {
                 panel_sync_flags_map_main.get(&item.panel_id().0).cloned()
             },
-            &|item: &mlc_core::state::Panel| -> Option<(String, String, String)> {
+            &|item: &mlc_core::state::Panel| -> Option<(String, String, String, String)> {
                 use mlc_core::state::Panel;
                 match item {
                     Panel::Dom(id) => panels_store.dom.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::MultiDom(id) => panels_store.multi_dom.get(id)
-                        .map(|s| (s.symbol.clone(), String::new(), String::new())),
+                        .map(|s| (s.symbol.clone(), String::new(), String::new(), String::new())),
                     Panel::Footprint(id) => panels_store.footprint.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::LiquidityHeatmap(id) => panels_store.liquidity_heatmap.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::BigTrades(id) => panels_store.big_trades.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::L2Tape(id) => panels_store.l2_tape.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::TradeTape(id) => panels_store.trade_tape.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::OrderEntry(id) => panels_store.order_entry.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::TradingContainer(id) => panels_store.trading_container.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), s.timeframe.clone())),
                     Panel::IndicatorPanel(id) => panels_store.indicator_panel.get(id)
-                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::PositionManager(_)
                     | Panel::TradeLog(_)
                     | Panel::RiskCalculator(_)
@@ -6821,7 +7024,6 @@ impl ChartApp {
                     .and_then(|l| l.get_color_flag(address))
                     .map(|s| s.to_string())
             },
-            self.core.user().profile().ui.trading_panel_topbar_takeover,
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -6876,6 +7078,46 @@ impl ChartApp {
         // for the vello dirty-scene-cache path is idempotent.
         self.register_panel_overlay_zones(&sidebar_result);
 
+        // Trading container embedded header toolbar — the vello dirty-scene
+        // cache composites this sidebar scene OVER `render_to_scene`'s
+        // pixels, so the header toolbar must be drawn into THIS scene too
+        // (draw-only; hit zones already registered by `render_to_scene`).
+        if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading {
+            if let Some(tc) = self.panels_store.trading_container.values().next() {
+                let close_w = 36.0;
+                let header_rect = LayoutRect::new(
+                    sidebar_rect.x,
+                    sidebar_rect.y,
+                    (sidebar_rect.width - close_w).max(0.0),
+                    40.0,
+                );
+                let th_gran_favs = self.core.user().profile().domain.granularity_favorites.clone();
+                let th_pin_favs = self.core.user().profile().ui.pin_granularity_favorites;
+                let th_gran_edit = self.granularity_edit_render();
+                let th_gran_drag = self.granularity_drag_render();
+                let th_tf_native = self.timeframe_native_map();
+                let th_sq_render = trading_symbol_edit_render_main.as_ref().map(|(_, r)| r);
+                let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                let _ = self.panel_app.render_trading_header_toolbar(
+                    &self.trading_header_tb,
+                    ctx,
+                    &header_rect,
+                    &tc.symbol,
+                    &tc.timeframe,
+                    &tc.exchange,
+                    &tc.account_type,
+                    &th_gran_favs,
+                    th_gran_edit.as_ref(),
+                    th_pin_favs,
+                    th_gran_drag.as_ref(),
+                    th_sq_render,
+                    th_sqs_on,
+                    th_tf_native.as_ref(),
+                    tc.center_kind.label(),
+                );
+            }
+        }
+
         self.last_sidebar_result = Some(sidebar_result);
     }
 
@@ -6922,7 +7164,11 @@ impl ChartApp {
     /// Lets the scene builder skip the per-frame `Scene::new()` + render + append
     /// when nothing is open (the common case).
     pub fn has_panel_overlay_popups(&self) -> bool {
-        self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel()
+        (self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel())
+            || matches!(
+                self.symbol_quick_edit.as_ref().map(|e| e.target),
+                Some(SymbolQuickEditTarget::TradingPanel(_))
+            )
     }
 
     pub fn render_panel_overlay_popups(&self, ctx: &mut dyn RenderContext) {
@@ -6964,7 +7210,9 @@ impl ChartApp {
             );
         }
 
-    }
+        // (Bespoke trading-header popups removed 2026-07-26 — the embedded
+        // header toolbar's composer dropdowns replaced them.)
+   }
 
     /// Warm up all enabled connectors exactly once, via the shared bridge.
     ///
@@ -7502,10 +7750,25 @@ impl ChartApp {
         // (click-outside, Escape, other dropdown) with edit state → clear +
         // blur (only when our field still holds focus, never someone else's).
         {
-            let quick_open = self.panel_app.toolbar_state.open_dropdown_id.as_deref()
-                == Some("symbol_selector");
+            // Scoped to the TOPBAR `symbol_selector` editor only (trading-
+            // header-symbol-edit arc, 2026-07-25): a live TradingContainer
+            // header-tab edit has its own open/close lifecycle
+            // (`open_trading_symbol_quick_edit` /
+            // `close_symbol_quick_dropdown` / Escape / click-away) and must
+            // never be touched here just because `open_dropdown_id` (a
+            // toolbar-only concept) isn't `"symbol_selector"` — without this
+            // guard the `!quick_open && is_some()` arm below would clear a
+            // freshly-opened trading edit on the very next frame.
+            let is_trading_edit = matches!(
+                self.symbol_quick_edit.as_ref().map(|e| e.target),
+                Some(crate::SymbolQuickEditTarget::TradingPanel(_))
+            );
+            let quick_open = !is_trading_edit
+                && self.panel_app.toolbar_state.open_dropdown_id.as_deref() == Some("symbol_selector");
             let quick_enabled = self.core.user().profile().ui.symbol_quick_search;
-            if quick_open && quick_enabled && self.symbol_quick_edit.is_none() {
+            if is_trading_edit {
+                // Owned elsewhere — see comment above.
+            } else if quick_open && quick_enabled && self.symbol_quick_edit.is_none() {
                 // Mode 3 "inline" seeds the active symbol (see
                 // `symbol_quick_seed_text`'s doc) — same seeding contract
                 // `open_symbol_quick_dropdown` uses; this reconcile is the
@@ -7515,6 +7778,7 @@ impl ChartApp {
                 let seed = self.symbol_quick_seed_text();
                 let cursor = seed.chars().count();
                 self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+                    target: crate::SymbolQuickEditTarget::TopbarChart,
                     text: seed.clone(),
                     cursor,
                     selection: None,
@@ -7720,6 +7984,30 @@ impl ChartApp {
                     (rect.x, rect.y, rect.width, rect.height),
                     positions.clone(),
                 );
+            }
+        }
+
+        // Trading header inline symbol editor geometry (trading-header-
+        // symbol-edit arc, 2026-07-25) — the SAME `SYMBOL_QUICK_SEARCH`
+        // field's rect/char-positions when it instead comes from the
+        // Trading Container header tab's own overlay
+        // (`render_leaf_tab`'s `text_edit` output, carried here via
+        // `last_sidebar_result.panel_overlay_zones`), mirroring
+        // `symbol_inline_input`'s role for the topbar surface above.
+        if let Some(edit) = self.symbol_quick_edit.as_ref() {
+            if let SymbolQuickEditTarget::TradingPanel(pid) = edit.target {
+                if let Some((rect, positions)) = self.last_sidebar_result.as_ref()
+                    .and_then(|sr| sr.panel_overlay_zones.iter()
+                        .find(|(p, _, _)| *p == pid.0)
+                        .and_then(|(_, _, zones)| zones.text_edit.clone()))
+                {
+                    let field_id = WidgetId::from(text_input::SYMBOL_QUICK_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &field_id,
+                        (rect[0], rect[1], rect[2], rect[3]),
+                        positions,
+                    );
+                }
             }
         }
     }

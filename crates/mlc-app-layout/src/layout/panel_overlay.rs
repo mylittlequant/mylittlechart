@@ -9,6 +9,7 @@
 //! exchange name, no connection status dot.
 
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
+use mlc_core::state::modal_state::SymbolQuickSearchRender;
 use crate::ui::icons::ICON_SETTINGS;
 use crate::ui::toolbar_render::ToolbarTheme;
 
@@ -69,6 +70,15 @@ pub struct LeafTabHitZones {
     pub color_tag_rect: [f64; 4],
     /// Gear-menu rect `[x, y, w, h]`.
     pub dots_rect: [f64; 4],
+    /// Editable text-input rect `[x, y, w, h]` + char-boundary x-positions —
+    /// populated ONLY when `render_leaf_tab`'s `editing` argument was
+    /// `Some(..)` this frame (the Trading Container header-tab's inline
+    /// symbol editor, trading-header-symbol-edit arc, 2026-07-25). `None` in
+    /// the normal static-text render path. Feeds `TextFieldStore::
+    /// update_field` for click-to-cursor / drag-select, mirroring
+    /// `ChartToolbarRenderResult::symbol_inline_input`'s role for the
+    /// topbar's own button-hosted editor.
+    pub text_edit: Option<([f64; 4], Vec<f64>)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,9 +107,17 @@ pub const LEAF_TAB_HEIGHT: f64 = 24.0;
 /// * `hovered_zone`  — Which interactive zone is currently hovered.
 /// * `color_tag`     — Optional RGBA color for the tag square.
 /// * `toolbar_theme` — Theme providing semantic colors for tabs.
+/// * `editing`       — `Some(render)` swaps the static `symbol`/`timeframe`/
+///                     `exchange`/`account_type` label for a live editable
+///                     text field (chromeless `draw_input` + caret),
+///                     sized/positioned in EXACTLY the same slot — the
+///                     Trading Container header-tab's inline symbol editor
+///                     (trading-header-symbol-edit arc, 2026-07-25). `None`
+///                     is the original static-text behavior, unchanged.
 ///
 /// # Returns
 /// [`LeafTabHitZones`] describing the clickable regions within the tab.
+#[allow(clippy::too_many_arguments)]
 pub fn render_leaf_tab(
     ctx: &mut dyn RenderContext,
     x: f64,
@@ -113,6 +131,7 @@ pub fn render_leaf_tab(
     hovered_zone: LeafTabHoverZone,
     color_tag: Option<[f32; 4]>,
     toolbar_theme: &ToolbarTheme,
+    editing: Option<&SymbolQuickSearchRender>,
 ) -> LeafTabHitZones {
     // ── Constants ────────────────────────────────────────────────────────────
     const TAB_HEIGHT: f64 = LEAF_TAB_HEIGHT;
@@ -144,19 +163,31 @@ pub fn render_leaf_tab(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
 
-    let display_text = {
-        let mut parts = vec![symbol.to_string()];
-        if !timeframe.is_empty() { parts.push(timeframe.to_string()); }
-        if !exchange.is_empty() { parts.push(exchange.to_string()); }
-        if !account_type.is_empty() { parts.push(account_type.to_string()); }
-        parts.join(" · ")
+    let display_text = match editing {
+        // While editing, the tab shows the LIVE typed text (raw composite
+        // key grammar, e.g. `"BTCUSDT:BINANCE:S"`) — same "show what you're
+        // typing, snap back to the pretty label on commit/cancel" contract
+        // the topbar's button-hosted editor uses.
+        Some(edit) => edit.text.clone(),
+        None => {
+            let mut parts = vec![symbol.to_string()];
+            if !timeframe.is_empty() { parts.push(timeframe.to_string()); }
+            if !exchange.is_empty() { parts.push(exchange.to_string()); }
+            if !account_type.is_empty() { parts.push(account_type.to_string()); }
+            parts.join(" · ")
+        }
     };
 
     // Available width for the text container.
     let max_text_w = (max_width - LEFT_PAD - TAG_GAP - TAG_CONTAINER_W - dots_w - RIGHT_PAD).max(0.0);
 
     let measured_w = ctx.measure_text(&display_text);
-    let text_container_w = measured_w.min(max_text_w);
+    // While editing, claim the FULL available width regardless of the live
+    // text's measured length — an input field that shrink-wraps to content
+    // would collapse to near-zero (and hit the early-out below, losing the
+    // color-tag/gear zones entirely) the moment the user backspaces
+    // everything mid-query.
+    let text_container_w = if editing.is_some() { max_text_w } else { measured_w.min(max_text_w) };
 
     // Total tab width.
     let tab_width = (LEFT_PAD + text_container_w + TAG_GAP + TAG_CONTAINER_W + dots_w + RIGHT_PAD).min(max_width);
@@ -205,21 +236,73 @@ pub fn render_leaf_tab(
     }
 
     // ── Text rendering ────────────────────────────────────────────────────────
-    // Truncate text if it overflows the container.
-    let final_text = if measured_w > text_container_w {
-        let mut t = display_text.clone();
-        // Binary-like truncation: pop chars until it fits (leave room for ellipsis).
-        while ctx.measure_text(&t) > text_container_w - 10.0 && t.len() > 1 {
-            t.pop();
-        }
-        format!("{}…", t)
-    } else {
-        display_text
-    };
+    let mut text_edit: Option<([f64; 4], Vec<f64>)> = None;
+    if let Some(edit) = editing {
+        // Chromeless input hosted directly on the tab's own paint — same
+        // `InputConfig::with_chrome(false)` contract the topbar's
+        // button-hosted `symbol_selector` editor uses (draw_input renders
+        // text/selection/caret only, no background/border of its own; the
+        // tab's already-drawn background underneath shows through).
+        use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+        use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 
-    let text_color = &toolbar_theme.item_text;
-    ctx.set_fill_color(text_color);
-    ctx.fill_text(&final_text, text_x, center_y);
+        let widget_theme = WidgetTheme {
+            bg_normal: toolbar_theme.background.clone(),
+            bg_hover: toolbar_theme.item_bg_hover.clone(),
+            bg_pressed: toolbar_theme.item_bg_hover.clone(),
+            bg_disabled: toolbar_theme.background.clone(),
+            text_normal: toolbar_theme.item_text.clone(),
+            text_hover: toolbar_theme.item_text_hover.clone(),
+            text_disabled: toolbar_theme.item_text_muted.clone(),
+            border_normal: toolbar_theme.separator.clone(),
+            border_hover: toolbar_theme.item_bg_hover.clone(),
+            border_focused: toolbar_theme.accent.clone(),
+            accent: toolbar_theme.accent.clone(),
+            accent_hover: toolbar_theme.accent_hover.clone(),
+            success: toolbar_theme.success.clone(),
+            warning: toolbar_theme.warning.clone(),
+            danger: toolbar_theme.danger.clone(),
+        };
+        // No placeholder — the field is always seeded on open
+        // (`open_trading_symbol_quick_edit`), never empty on first frame.
+        let input_config = InputConfig::new(&edit.text)
+            .with_focused(true)
+            .with_cursor(edit.cursor)
+            .with_selection(edit.selection.map(|(s, _)| s), edit.selection.map(|(_, e)| e))
+            .with_font_size(12.0)
+            .with_padding(0.0)
+            .with_chrome(false);
+        let input_rect = uzor::types::Rect::new(text_x, y, text_container_w, TAB_HEIGHT);
+        let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+        if edit.cursor_visible {
+            draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
+        }
+        let tr = input_result.text_rect;
+        text_edit = Some(([tr.x, tr.y, tr.width, tr.height], input_result.char_x_positions));
+
+        // Focus frame around the whole tab — the only focus signal (mirrors
+        // the topbar editor's button-outline treatment); the normal
+        // active-leaf accent bar above already gives the tab its base look.
+        ctx.set_stroke_color(&toolbar_theme.accent);
+        ctx.set_stroke_width(2.0);
+        ctx.stroke_rounded_rect(x + 1.0, y + 1.0, tab_width - 2.0, TAB_HEIGHT - 2.0, 2.0);
+    } else {
+        // Truncate text if it overflows the container.
+        let final_text = if measured_w > text_container_w {
+            let mut t = display_text.clone();
+            // Binary-like truncation: pop chars until it fits (leave room for ellipsis).
+            while ctx.measure_text(&t) > text_container_w - 10.0 && t.len() > 1 {
+                t.pop();
+            }
+            format!("{}…", t)
+        } else {
+            display_text
+        };
+
+        let text_color = &toolbar_theme.item_text;
+        ctx.set_fill_color(text_color);
+        ctx.fill_text(&final_text, text_x, center_y);
+    }
 
     // ── Color tag square (only when tagged; untagged → no marker) ─────────────
     let tag_x = tag_container_x;
@@ -243,5 +326,6 @@ pub fn render_leaf_tab(
         tab_rect: [x, y, tab_width, TAB_HEIGHT],
         color_tag_rect: [tag_container_x, y, TAG_CONTAINER_W, TAB_HEIGHT],
         dots_rect: [dots_container_x, y, DOTS_CONTAINER_W_EXPANDED, TAB_HEIGHT],
+        text_edit,
     }
 }

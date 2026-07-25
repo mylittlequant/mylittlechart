@@ -206,28 +206,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
         ]),
         // 3. Timeframe selector
         ToolbarSectionDef::new(vec![
-            ToolbarItemDef::dropdown("timeframe_selector", vec![
-                DropdownItemDef::action("tf_1s", "1s"),
-                DropdownItemDef::action("tf_5s", "5s"),
-                DropdownItemDef::action("tf_15s", "15s"),
-                DropdownItemDef::action("tf_30s", "30s"),
-                DropdownItemDef::action("tf_1m", "1m"),
-                DropdownItemDef::action("tf_3m", "3m"),
-                DropdownItemDef::action("tf_5m", "5m"),
-                DropdownItemDef::action("tf_15m", "15m"),
-                DropdownItemDef::action("tf_30m", "30m"),
-                DropdownItemDef::action("tf_1h", "1H"),
-                DropdownItemDef::action("tf_2h", "2H"),
-                DropdownItemDef::action("tf_4h", "4H"),
-                DropdownItemDef::action("tf_6h", "6H"),
-                DropdownItemDef::action("tf_12h", "12H"),
-                DropdownItemDef::action("tf_1d", "1D"),
-                DropdownItemDef::action("tf_1w", "1W"),
-                DropdownItemDef::action("tf_1M", "1M"),
-            ]).with_icon(ToolbarIconId::new("Clock"))
-              .with_text("1H")
-              .with_min_width(56.0)
-              .with_tooltip(t_toolbar(TK::TimeframeSelector)),
+            timeframe_selector_item("1H"),
         ]).with_separator(),
         // 4. Chart type selector — SAME source as the standalone toolbar
         // (`chart_type_items()`). This used to be a hardcoded 12-item copy
@@ -274,6 +253,79 @@ pub fn top_toolbar() -> PanelToolbarDef {
             ToolbarItemDef::icon_button("screenshot", ToolbarIconId::new("Camera"))
                 .with_tooltip(t_toolbar(TK::Screenshot)),
         ]),
+    ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
+}
+
+/// Timeframe selector dropdown item — the ONE builder shared by every
+/// toolbar that carries the TF system (main top toolbar and the trading
+/// container's embedded header toolbar), so the item id / row grammar /
+/// icon can never drift between instances.
+pub fn timeframe_selector_item(default_text: &str) -> ToolbarItemDef {
+    ToolbarItemDef::dropdown("timeframe_selector", vec![
+        DropdownItemDef::action("tf_1s", "1s"),
+        DropdownItemDef::action("tf_5s", "5s"),
+        DropdownItemDef::action("tf_15s", "15s"),
+        DropdownItemDef::action("tf_30s", "30s"),
+        DropdownItemDef::action("tf_1m", "1m"),
+        DropdownItemDef::action("tf_3m", "3m"),
+        DropdownItemDef::action("tf_5m", "5m"),
+        DropdownItemDef::action("tf_15m", "15m"),
+        DropdownItemDef::action("tf_30m", "30m"),
+        DropdownItemDef::action("tf_1h", "1H"),
+        DropdownItemDef::action("tf_2h", "2H"),
+        DropdownItemDef::action("tf_4h", "4H"),
+        DropdownItemDef::action("tf_6h", "6H"),
+        DropdownItemDef::action("tf_12h", "12H"),
+        DropdownItemDef::action("tf_1d", "1D"),
+        DropdownItemDef::action("tf_1w", "1W"),
+        DropdownItemDef::action("tf_1M", "1M"),
+    ]).with_icon(ToolbarIconId::new("Clock"))
+      .with_text(default_text)
+      .with_min_width(56.0)
+      .with_tooltip(t_toolbar(TK::TimeframeSelector))
+}
+
+/// Trading container's embedded header toolbar (owner spec 2026-07-25):
+/// the container header IS an alternative top toolbar — symbol-search
+/// system first, then color tag + gear, then the TF system, all IDENTICAL
+/// in behavior to the main top toolbar (`symbol_selector` /
+/// `timeframe_selector` reuse the exact same item ids so the shared
+/// dropdown / quicksearch / favorites machinery applies verbatim; only
+/// the dispatch target differs — the container, not the active chart).
+/// The container works on ONE symbol key, so there is no per-chart
+/// overlay tab — the symbol system replaces it; color sync stays via the
+/// `tc_color_tag` square. The sidebar close button stays the last control
+/// in the header row (rendered by the sidebar chrome, not this def).
+pub fn trading_header_toolbar(center_label: &str) -> PanelToolbarDef {
+    PanelToolbarDef::horizontal(vec![
+        // 1. Symbol search system (identical to main topbar's).
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::dropdown("symbol_selector", vec![])
+                .with_icon(ToolbarIconId::new("Search"))
+                .with_text("BTCUSD")
+                .with_min_width(150.0)
+                .with_tooltip(t_toolbar(TK::SymbolSelector)),
+        ]),
+        // 2. Color-sync tag + tags&tabs gear.
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::button("tc_color_tag").with_min_width(24.0),
+            ToolbarItemDef::icon_button("tc_gear", ToolbarIconId::new("Settings"))
+                .with_tooltip(t_toolbar(TK::Settings)),
+        ]).with_separator(),
+        // 3. Timeframe system (identical to main topbar's).
+        ToolbarSectionDef::new(vec![
+            timeframe_selector_item("1m"),
+        ]).with_separator(),
+        // 4. Center-slot switcher (owner spec 2026-07-26): what occupies
+        // the container's top-left region — DOM ladder or embedded chart.
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::dropdown("tc_center", vec![
+                DropdownItemDef::action("center:dom", "DOM"),
+                DropdownItemDef::action("center:chart", "Chart"),
+            ]).with_icon(ToolbarIconId::new("LayoutSingle"))
+              .with_text(center_label)
+              .with_min_width(64.0),
+        ]).with_separator(),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 

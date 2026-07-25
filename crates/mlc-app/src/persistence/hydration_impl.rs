@@ -1234,6 +1234,7 @@ impl ChartApp {
                                 PersistedFreeItemKind::TradingContainer {
                                     source, tick_size, market_price,
                                     right_ratio, bottom_ratio, right_split, active_tab,
+                                    timeframe, center_kind,
                                 } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
                                         let converted_source = convert_source(source);
@@ -1280,6 +1281,10 @@ impl ChartApp {
                                         s.bottom_ratio = *bottom_ratio;
                                         s.right_split = *right_split;
                                         s.active_tab = convert_bottom_tab(*active_tab);
+                                        s.timeframe = timeframe.clone();
+                                        if let Some(kind) = mlc_app_panels::trading::trading::trading_container::CenterKind::from_wire_id(center_kind) {
+                                            s.center_kind = kind;
+                                        }
                                         // Mirror (exchange, account_type) onto the container AND its
                                         // hosted dom/order_entry children — same post-construction
                                         // wiring as the "trading_container" arm of
