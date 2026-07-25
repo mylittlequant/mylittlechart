@@ -938,6 +938,10 @@ pub struct ChartApp {
     /// (mirrors how the grid resizes per-leaf viewports in prepare).
     /// `None` while the Trading sidebar is closed or center shows DOM.
     pub(crate) trading_center_rect: Option<(mlc_core::state::PanelId, mlc_app_layout::layout::LayoutRect)>,
+    /// Active pan drag on the embedded center chart: `(container PanelId,
+    /// last cursor x)`. Mirrors `slot_tradetape_drag`'s shape — deltas are
+    /// applied incrementally on each `on_drag_move`.
+    pub(crate) trading_center_pan: Option<(mlc_core::state::PanelId, f64)>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2162,6 +2166,7 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
+            trading_center_pan: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2560,6 +2565,7 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
+            trading_center_pan: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3104,6 +3110,7 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
+            trading_center_pan: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.

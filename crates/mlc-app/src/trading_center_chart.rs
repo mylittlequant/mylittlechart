@@ -417,4 +417,99 @@ impl ChartApp {
             None,
         );
     }
+
+    // =========================================================================
+    // Input v1 (wheel zoom / drag pan / hover crosshair) — routed by raw
+    // rect hit-test on the render-cached `trading_center_rect`, NOT through
+    // `active_container()` (the aux chart is never the active grid chart).
+    // =========================================================================
+
+    /// Hit-test the cached center rect against a cursor position. `Some`
+    /// only while the Trading sidebar shows the chart center AND the aux
+    /// chart is alive in the containers map.
+    pub(crate) fn trading_center_hit(
+        &self,
+        x: f64,
+        y: f64,
+    ) -> Option<(mlc_core::state::PanelId, mlc_core::state::ChartId, mlc_core::LayoutRect)>
+    {
+        let (pid, rect) = self.trading_center_rect?;
+        if x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height {
+            return None;
+        }
+        let cid = *self.trading_center_charts.get(&pid)?;
+        if !self.panel_app.panel_grid.containers().contains_key(&cid) {
+            return None;
+        }
+        Some((pid, cid, rect))
+    }
+
+    /// Wheel X-zoom around the cursor. Factor convention mirrors
+    /// `DefaultChartInputHandler::handle_scroll` (`scroll_zoom_factor`
+    /// default 0.05: dy > 0 zooms in), fit cap mirrors the main Zoom arm
+    /// in `process_output_actions`.
+    pub(crate) fn trading_center_zoom(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        x: f64,
+        dy: f64,
+    ) {
+        let factor = if dy > 0.0 { 1.05 } else { 0.95 };
+        let fit_cap: Option<u32> = self
+            .chart_type_for_chart(cid)
+            .and_then(mlc_core::chart_type::by_id)
+            .and_then(|d| d.viewport_fit_cap);
+        let series = self.active_series_for_chart(cid);
+        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+            window.zoom_horizontal_capped(
+                x - rect.x,
+                factor,
+                fit_cap,
+                series.as_active_series(),
+            );
+        }
+    }
+
+    /// Apply a horizontal pan pixel delta (content follows cursor) +
+    /// auto-Y refit — the Pan arm of `process_output_actions` reduced to
+    /// the main-chart / auto-Y case (no sub-panes, no manual-Y price shift
+    /// in v1).
+    pub(crate) fn trading_center_pan_move(&mut self, cid: mlc_core::state::ChartId, dx: f64) {
+        let series = self.active_series_for_chart(cid);
+        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+            window.pan(dx);
+            if window.price_scale().scale_mode.is_auto_y() {
+                window.calc_auto_scale(series.as_active_series());
+            }
+        }
+    }
+
+    /// Update the aux chart's crosshair from global cursor coords —
+    /// `update_crosshair_from_global` with a layout built inline from the
+    /// center rect (no leaf-keyed `frame_layouts` entry exists).
+    pub(crate) fn trading_center_crosshair(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+        x: f64,
+        y: f64,
+        dragging: bool,
+    ) {
+        let Some(bid) = self.core.tags().tag_for_chart(cid) else { return };
+        let bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(bid).to_vec();
+        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+            let layout = mlc_core::ExtendedFrameLayout::from_proportions(
+                rect,
+                &[],
+                &[],
+                None,
+                &window.scale_settings,
+                1.0,
+                &window.sub_pane_above_main,
+            );
+            let drag_pane = if dragging { Some(None) } else { None };
+            window.update_crosshair_from_global(x, y, &layout, drag_pane, &bars_vec);
+        }
+    }
 }

@@ -1409,6 +1409,26 @@ impl ChartApp {
             }
         }
 
+        // ── Trading center chart pan initiation ─────────────────────────────
+        // (chart-in-container arc, 2026-07-26). Raw rect hit-test on the
+        // render-cached center rect, gated on the live hover target being
+        // the container body (`focus_content`) so any dropdown/modal layered
+        // above the chart keeps winning the z-order.
+        if self.trading_center_pan.is_none() && self.active_drag_panel.is_none() {
+            let over_body = live_hover
+                .as_ref()
+                .map(|w| w.starts_with("slot:") && w.ends_with(":focus_content"))
+                .unwrap_or(false);
+            if over_body {
+                if let Some((pid, _cid, _rect)) = self.trading_center_hit(x, y) {
+                    self.trading_center_pan = Some((pid, x));
+                    self.ui_drag_active = true;
+                    self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
+                    return false;
+                }
+            }
+        }
+
         // ── Slot panel drag initiation ───────────────────────────────────────
         // Detect drag on `slot:{idx}:leaf:{leaf_id}:dom:body` (DOM BlackboxPanel)
         // or `slot:{idx}:leaf:{leaf_id}:focus_content` (other panel types).
@@ -2796,6 +2816,22 @@ impl ChartApp {
             return;
         }
 
+        // ── Trading center chart pan drag ────────────────────────────────────
+        if let Some((pid, last_x)) = self.trading_center_pan {
+            let dx = x - last_x;
+            self.trading_center_pan = Some((pid, x));
+            if dx.abs() > 0.0 {
+                if let Some(&cid) = self.trading_center_charts.get(&pid) {
+                    self.trading_center_pan_move(cid, dx);
+                    if let Some((_, rect)) = self.trading_center_rect {
+                        self.trading_center_crosshair(cid, &rect, x, y, true);
+                    }
+                    self.sidebar_data_dirty = true;
+                }
+            }
+            return;
+        }
+
         // ── Coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─────
         if let Some((ref item, ref local_id, ref mut last_x, ref mut last_y)) = self.active_drag_panel {
             let dx = x - *last_x;
@@ -3732,6 +3768,12 @@ impl ChartApp {
             return;
         }
 
+        // ── End trading center chart pan drag ────────────────────────────────
+        if self.trading_center_pan.take().is_some() {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
         // ── End coordinator-routed panel drag (DOM, L2Tape, Footprint, BigTrades, LiquidityHeatmap, VolumeProfile) ─
         if let Some((item, local_id, _, _)) = self.active_drag_panel.take() {
             if let Some(panel) = self.panels_store.get_panel_mut(&item) {
@@ -4320,6 +4362,29 @@ impl ChartApp {
                         .map(|(i, _)| i);
                     if let Some(slot_idx) = slot_idx_opt {
                         self.sidebar_state.free_leaf_overlay_hover.insert((slot_idx, *leaf_id), hover_zone);
+                    }
+                }
+            }
+        }
+
+        // --- Trading center chart hover crosshair (chart-in-container arc) ---
+        if self.trading_center_pan.is_none() {
+            if let Some((pid, rect)) = self.trading_center_rect {
+                if let Some(&cid) = self.trading_center_charts.get(&pid) {
+                    let inside = x >= rect.x
+                        && x < rect.x + rect.width
+                        && y >= rect.y
+                        && y < rect.y + rect.height;
+                    if inside {
+                        self.trading_center_crosshair(cid, &rect, x, y, false);
+                        self.sidebar_data_dirty = true;
+                    } else if let Some(window) =
+                        self.panel_app.panel_grid.containers_mut().get_mut(&cid)
+                    {
+                        if window.crosshair.visible && !window.crosshair.synced {
+                            window.hide_crosshair();
+                            self.sidebar_data_dirty = true;
+                        }
                     }
                 }
             }
@@ -5015,6 +5080,20 @@ impl ChartApp {
             // hide_crosshair is split-aware: clears all leaves in split mode and
             // propagates the hide to every sync-group's order-flow panels (F4).
             self.hide_crosshair();
+        }
+
+        // Trading center chart: cursor left the app window — hide its
+        // crosshair too (leaf-keyed hide_crosshair above never reaches the
+        // leafless aux chart).
+        if let Some((pid, _)) = self.trading_center_rect {
+            if let Some(&cid) = self.trading_center_charts.get(&pid) {
+                if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                    if window.crosshair.visible {
+                        window.hide_crosshair();
+                        self.sidebar_data_dirty = true;
+                    }
+                }
+            }
         }
     }
 
@@ -5871,6 +5950,16 @@ impl ChartApp {
                         if let Some(slot_idx) = slot_idx_opt {
                             use mlc_core::state::Panel;
                             let scroll_step = dy;
+
+                            // Trading center chart: wheel = horizontal zoom
+                            // around the cursor (chart-in-container arc,
+                            // 2026-07-26) — same convention as the main
+                            // chart's DefaultChartInputHandler wheel path.
+                            if let Some((_pid, cid, rect)) = self.trading_center_hit(x, y) {
+                                self.trading_center_zoom(cid, &rect, x, dy);
+                                self.sidebar_data_dirty = true;
+                                return;
+                            }
 
                             // First: check if coordinator scroll target is a DOM BlackboxPanel
                             // (standalone Dom slot) OR a TradingContainer-hosted dom/
