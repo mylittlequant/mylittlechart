@@ -1941,6 +1941,7 @@ pub fn render_primitive_settings_modal(
             font_size: 13.0,
             shadow_blur: 24.0,
             grid_columns: None,
+                            clamp_x: None,
         };
         let dropdown_theme = DropdownTheme {
             background: toolbar_theme.dropdown_bg.clone(),
@@ -1992,6 +1993,7 @@ pub fn render_primitive_settings_modal(
             font_size: 13.0,
             shadow_blur: 24.0,
             grid_columns: None,
+                            clamp_x: None,
         };
         let dropdown_theme = DropdownTheme {
             background: toolbar_theme.dropdown_bg.clone(),

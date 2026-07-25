@@ -1199,6 +1199,7 @@ pub fn render_indicator_settings_modal(
                             font_size: 13.0,
                             shadow_blur: 24.0,
                             grid_columns: None,
+                            clamp_x: None,
                         };
 
                         let dropdown_theme = DropdownTheme {

@@ -122,8 +122,14 @@
   </script>
   <script type="module">
     import init from './mlc_app_shell_web.js';
-    await init();
+    const mod = await init();
     // The #[wasm_bindgen(start)] fn is called automatically by init().
+    // Wasm linear-memory probe (leak hunt 2026-07-26): renderer RSS grew to
+    // 4+GB while the JS heap stayed ~25MB — wasm memory never shrinks, so
+    // its byteLength IS the high-water mark. Poll from dev-attach:
+    //   window.__MLC_WASM_MEM_MB()
+    window.__MLC_WASM = mod;
+    window.__MLC_WASM_MEM_MB = () => Math.round(mod.memory.buffer.byteLength / 1048576);
   </script>
 </body>
 </html>

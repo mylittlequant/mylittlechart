@@ -250,6 +250,12 @@ pub struct DropdownConfig {
     pub shadow_blur: f64,
     /// If Some(n), render as grid with n columns instead of vertical list
     pub grid_columns: Option<u8>,
+    /// Horizontal bounds `(min_x, max_right)` the menu must stay inside —
+    /// the origin is shifted left/right AFTER the content width is known.
+    /// Needed for narrow embedded toolbars (trading container header) whose
+    /// button-aligned dropdowns would otherwise escape the window; `None`
+    /// keeps the historical button-aligned position untouched.
+    pub clamp_x: Option<(f64, f64)>,
 }
 
 impl Default for DropdownConfig {
@@ -268,6 +274,7 @@ impl Default for DropdownConfig {
             font_size: 13.0,
             shadow_blur: 24.0,
             grid_columns: None,
+            clamp_x: None,
         }
     }
 }
@@ -480,6 +487,17 @@ where
         (content_width + config.padding * 2.0).min(config.max_width)
     } else {
         content_width + config.padding * 2.0
+    };
+
+    // Horizontal clamp (see `DropdownConfig::clamp_x`): shift the menu so
+    // it stays inside the caller's bounds now that the width is known.
+    // min_x wins over max_right when the menu is wider than the bounds.
+    let origin = match config.clamp_x {
+        Some((min_x, max_right)) => {
+            let x = origin.0.min(max_right - menu_width).max(min_x);
+            (x, origin.1)
+        }
+        None => origin,
     };
 
     // Layout pass — one rect per item, aligned by index with config.items.

@@ -8684,20 +8684,26 @@ impl ChartApp {
         use crate::chart_container_leaf::ChartContainerLeaf;
 
         // Step 1: collect window-level read-only data before taking mutable borrows.
-        let window_data: Vec<(mlc_core::LeafId, u64, usize, usize)> = self
+        // Iterates the containers MAP (not the leaf pairs) so the trading
+        // container's leafless embedded center chart reconciles its
+        // sub-pane docking exactly like grid charts (chart-in-container
+        // arc, 2026-07-26 — a leaf-paired walk silently skipped it and
+        // sub-pane indicators added to the aux bubble never materialized).
+        let window_data: Vec<(mlc_core::ChartId, u64, usize, usize)> = self
             .panel_app
             .panel_grid
-            .iter_containers()
-            .map(|(leaf_id, window)| {
+            .containers()
+            .iter()
+            .map(|(&cid, window)| {
                 // Indicators are scoped by bubble — pass current_tag_id.
                 let bubble_id_val = window.current_tag_id.0;
                 let (vs, ve) = window.viewport().visible_range();
-                (leaf_id, bubble_id_val, vs, ve)
+                (cid, bubble_id_val, vs, ve)
             })
             .collect();
 
         // Step 2: for each window, collect desired instance_ids from indicator_manager.
-        for (leaf_id, bubble_id_val, visible_start, visible_end) in &window_data {
+        for (cid, bubble_id_val, visible_start, visible_end) in &window_data {
             let pane_ids: Vec<u64> = self.core.indicators()
                 .instances_for_bubble(mlc_core::ids::BubbleId(*bubble_id_val))
                 .into_iter()
@@ -8724,7 +8730,7 @@ impl ChartApp {
                 })
                 .collect();
 
-            let window = match self.panel_app.panel_grid.container_for_leaf_mut(*leaf_id) {
+            let window = match self.panel_app.panel_grid.containers_mut().get_mut(cid) {
                 Some(w) => w,
                 None => continue,
             };

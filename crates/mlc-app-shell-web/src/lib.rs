@@ -643,6 +643,26 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"cmp_queued".into(), &(st.chart.compare_add_queued() as f64).into());
             }
 
+            // Wasm-leak differential (2026-07-26, renderer RSS 4+GB while
+            // JS heap stayed ~25MB): totals that grow WITH the data plane
+            // vs an allocator-side leak. Read alongside
+            // `window.__MLC_WASM_MEM_MB()` (index.html probe) — if memory
+            // climbs while these stay flat, the growth is retained garbage,
+            // not data.
+            {
+                let mut bubble_count = 0f64;
+                let mut total_bars = 0f64;
+                let bm = st.chart.core.bubbles();
+                bm.each_bubble(|b| {
+                    bubble_count += 1.0;
+                    total_bars += b.bars_len() as f64;
+                });
+                let _ = js_sys::Reflect::set(&dbg, &"bubble_count".into(), &bubble_count.into());
+                let _ = js_sys::Reflect::set(&dbg, &"total_bars".into(), &total_bars.into());
+                let containers = st.chart.panel_app.panel_grid.containers().len() as f64;
+                let _ = js_sys::Reflect::set(&dbg, &"containers".into(), &containers.into());
+            }
+
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
         }
 

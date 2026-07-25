@@ -784,13 +784,23 @@ pub fn chart_toolbar_render_toolbars(
                 layout.top_toolbar_rect.height,
             );
 
-            draw_toolbar_with_icons(
+            // Clip the row to its own rect: chevron-scrolled items draw at
+            // negative offsets and, on an embedded mid-screen instance (the
+            // trading container header), bled LEFT past the toolbar edge —
+            // the full-window main toolbar only hid this because offscreen
+            // pixels are invisible (owner defect 2026-07-26). Dropdowns are
+            // drawn by a later pass, outside this clip.
+            ctx.save();
+            ctx.clip_rect(control_rect.x, control_rect.y, control_rect.width, control_rect.height);
+            let clipped_result = draw_toolbar_with_icons(
                 ctx,
                 &control_config,
                 control_rect,
                 &theme,
                 tb.hovered_top_toolbar_id.as_deref(),
-            )
+            );
+            ctx.restore();
+            clipped_result
         } else {
             TcToolbarResult::default()
         };
@@ -1902,6 +1912,16 @@ fn chart_toolbar_render_dropdown(
         // 2 per row. Everything else keeps the classic vertical list.
         if dropdown_id == "chart_type_selector" {
             config.grid_columns = Some(2);
+        }
+        // Keep the menu inside the hosting toolbar's horizontal span — on
+        // the full-window main toolbar this is a no-op, on the embedded
+        // trading-header instance it stops button-aligned menus escaping
+        // past the window edge (owner defect 2026-07-26).
+        if _layout.top_toolbar_rect.width > 0.0 {
+            config.clamp_x = Some((
+                _layout.top_toolbar_rect.x,
+                _layout.top_toolbar_rect.x + _layout.top_toolbar_rect.width,
+            ));
         }
 
         let result = draw_dropdown(
