@@ -938,10 +938,19 @@ pub struct ChartApp {
     /// (mirrors how the grid resizes per-leaf viewports in prepare).
     /// `None` while the Trading sidebar is closed or center shows DOM.
     pub(crate) trading_center_rect: Option<(mlc_core::state::PanelId, mlc_app_layout::layout::LayoutRect)>,
-    /// Active pan drag on the embedded center chart: `(container PanelId,
-    /// last cursor x)`. Mirrors `slot_tradetape_drag`'s shape — deltas are
-    /// applied incrementally on each `on_drag_move`.
-    pub(crate) trading_center_pan: Option<(mlc_core::state::PanelId, f64)>,
+    /// Dedicated chart input handler for the embedded center chart —
+    /// SECOND `DefaultChartInputHandler` instance so the aux chart gets
+    /// the FULL engine mechanics (chart pan, price/time scale drags,
+    /// wheel zoom by hit zone, double-click resets) with its own drag
+    /// state, never colliding with the main grid's `input_handler`.
+    pub(crate) trading_center_input: DefaultChartInputHandler,
+    /// True while a drag gesture is owned by the embedded center chart
+    /// (any drag mode: chart pan, price scale, time scale).
+    pub(crate) trading_center_drag_active: bool,
+    /// Scale-corner button rects from the center chart's last render —
+    /// aux counterpart of `scale_corner_zones_by_leaf` (which is
+    /// leaf-keyed and can never hold the leafless aux chart).
+    pub(crate) trading_center_corner_zones: Option<ScaleCornerHitZones>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2166,7 +2175,9 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
-            trading_center_pan: None,
+            trading_center_input: DefaultChartInputHandler::new(),
+            trading_center_drag_active: false,
+            trading_center_corner_zones: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2565,7 +2576,9 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
-            trading_center_pan: None,
+            trading_center_input: DefaultChartInputHandler::new(),
+            trading_center_drag_active: false,
+            trading_center_corner_zones: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3110,7 +3123,9 @@ impl ChartApp {
             primitive_clipboard: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
-            trading_center_pan: None,
+            trading_center_input: DefaultChartInputHandler::new(),
+            trading_center_drag_active: false,
+            trading_center_corner_zones: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -6414,6 +6429,7 @@ impl ChartApp {
                         th_sqs_on,
                         th_tf_native.as_ref(),
                         tc.center_kind.label(),
+                        matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
                     );
 
                     // Color-sync tag square over the blank `tc_color_tag`
@@ -6524,9 +6540,12 @@ impl ChartApp {
                         None
                     };
                 self.trading_center_rect = tc_center;
-                if let Some((tc_pid_c, center_rect)) = tc_center {
-                    self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
-                }
+                self.trading_center_corner_zones = match tc_center {
+                    Some((tc_pid_c, center_rect)) => {
+                        self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect)
+                    }
+                    None => None,
+                };
             }
 
             Some(sidebar_result)
@@ -7186,6 +7205,7 @@ impl ChartApp {
                     th_sqs_on,
                     th_tf_native.as_ref(),
                     tc.center_kind.label(),
+                    matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
                 );
             }
 
@@ -7218,7 +7238,7 @@ impl ChartApp {
                             })
                     });
                 if let Some((tc_pid_c, center_rect)) = tc_center {
-                    self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
+                    let _ = self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
                 }
             }
         }

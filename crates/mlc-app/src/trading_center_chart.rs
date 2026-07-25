@@ -266,9 +266,9 @@ impl ChartApp {
         ctx: &mut dyn mlc_core::render::RenderContext,
         pid: mlc_core::state::PanelId,
         center_rect: &mlc_core::LayoutRect,
-    ) {
-        let Some(&cid) = self.trading_center_charts.get(&pid) else { return };
-        let Some(window) = self.panel_app.panel_grid.containers().get(&cid) else { return };
+    ) -> Option<mlc_core::ScaleCornerHitZones> {
+        let &cid = self.trading_center_charts.get(&pid)?;
+        let window = self.panel_app.panel_grid.containers().get(&cid)?;
 
         let chart_theme = self.panel_app.chart_theme_for_render();
         let frame_theme = self.panel_app.frame_theme_for_render();
@@ -329,7 +329,7 @@ impl ChartApp {
             center_rect.width,
             center_rect.height,
         );
-        let mut render_state = match bubble_mgr.render_state_for(
+        let mut render_state = bubble_mgr.render_state_for(
             window.current_tag_id,
             window_inputs,
             chart_rect,
@@ -339,10 +339,7 @@ impl ChartApp {
             tf_interval_ms,
             &panel.grid_options,
             &panel.legend,
-        ) {
-            Some(rs) => rs,
-            None => return, // not attached to a bubble yet — placeholder stays
-        };
+        )?; // not attached to a bubble yet — placeholder stays
         if let Some(shadow) = ts_shadow.as_deref() {
             render_state.bars = shadow;
             render_state.non_temporal_axis = true;
@@ -395,7 +392,7 @@ impl ChartApp {
             above_main_ids: Some(&window.sub_pane_above_main),
         };
 
-        let _ = render_full_chart_panel(ctx, center_rect, &panel_data);
+        let render_result = render_full_chart_panel(ctx, center_rect, &panel_data);
 
         // Crosshair layer on top (same layer split leaves draw after the
         // panel body). Layout built inline from the center rect — the aux
@@ -416,17 +413,25 @@ impl ChartApp {
             &render_config,
             None,
         );
+
+        Some(render_result.corner_zones)
     }
 
     // =========================================================================
-    // Input v1 (wheel zoom / drag pan / hover crosshair) — routed by raw
-    // rect hit-test on the render-cached `trading_center_rect`, NOT through
+    // Input — FULL chart mechanics through the aux chart's own
+    // `DefaultChartInputHandler` (`trading_center_input`): chart pan,
+    // price/time scale drags, hit-zone-aware wheel zoom, double-click
+    // resets, scale-corner buttons. Routed by raw rect hit-test on the
+    // render-cached `trading_center_rect`, NOT through
     // `active_container()` (the aux chart is never the active grid chart).
+    // Not wired (later arcs): drawings/primitives, sub-panes (arrive with
+    // indicators), context menu.
     // =========================================================================
 
     /// Hit-test the cached center rect against a cursor position. `Some`
     /// only while the Trading sidebar shows the chart center AND the aux
-    /// chart is alive in the containers map.
+    /// chart is alive in the containers map. The rect INCLUDES the price/
+    /// time scale strips — zone dispatch happens in the engine hit tester.
     pub(crate) fn trading_center_hit(
         &self,
         x: f64,
@@ -444,50 +449,200 @@ impl ChartApp {
         Some((pid, cid, rect))
     }
 
-    /// Wheel X-zoom around the cursor. Factor convention mirrors
-    /// `DefaultChartInputHandler::handle_scroll` (`scroll_zoom_factor`
-    /// default 0.05: dy > 0 zooms in), fit cap mirrors the main Zoom arm
-    /// in `process_output_actions`.
-    pub(crate) fn trading_center_zoom(
+    /// The aux chart's `ExtendedFrameLayout`, built inline from the center
+    /// rect (no leaf-keyed `frame_layouts` entry exists). No sub-panes
+    /// until the indicators arc.
+    fn trading_center_layout(
+        &self,
+        cid: mlc_core::state::ChartId,
+        rect: &mlc_core::LayoutRect,
+    ) -> Option<mlc_core::ExtendedFrameLayout> {
+        let window = self.panel_app.panel_grid.containers().get(&cid)?;
+        Some(mlc_core::ExtendedFrameLayout::from_proportions(
+            rect,
+            &[],
+            &[],
+            None,
+            &window.scale_settings,
+            1.0,
+            &window.sub_pane_above_main,
+        ))
+    }
+
+    /// Feed one engine input event for the aux chart: hit-test against the
+    /// aux layout, run it through `trading_center_input`, apply the
+    /// resulting actions to the aux window. Mirrors the main-chart tails
+    /// of `on_drag_start`/`on_drag_move`/`on_drag_end`/`on_scroll`/
+    /// `on_double_click` minus drawings.
+    pub(crate) fn trading_center_process(
         &mut self,
         cid: mlc_core::state::ChartId,
         rect: &mlc_core::LayoutRect,
-        x: f64,
-        dy: f64,
+        action: mlc_core::engine::input::ChartInputAction,
     ) {
-        let factor = if dy > 0.0 { 1.05 } else { 0.95 };
+        let Some(layout) = self.trading_center_layout(cid, rect) else { return };
+        let actions = {
+            let hit_tester = mlc_app_layout::layout::ExtendedLayoutHitTester::new(&layout);
+            self.trading_center_input.process_action(action, &hit_tester)
+        };
+        self.apply_trading_center_actions(cid, &layout, actions);
+    }
+
+    /// Target-aware reduction of `process_output_actions` for the aux
+    /// chart: Pan / Zoom (X capped + Y manual range) / scale resets /
+    /// price-scale mode toggle / crosshair hide. Sync-group propagation
+    /// and undo recording are deliberately absent — the aux chart is a
+    /// private single instance and undo/redo stays a main-toolbar,
+    /// active-chart affair (owner spec 2026-07-26). Kinetic / cursor /
+    /// repaint arms are ignored exactly like the main applier ignores
+    /// them. Drawing/primitive arms are out of scope until that arc.
+    fn apply_trading_center_actions(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        layout: &mlc_core::ExtendedFrameLayout,
+        actions: Vec<crate::ChartOutputAction>,
+    ) {
+        use crate::ChartOutputAction;
+        let chart_x = layout.main_chart.chart.x;
         let fit_cap: Option<u32> = self
             .chart_type_for_chart(cid)
             .and_then(mlc_core::chart_type::by_id)
             .and_then(|d| d.viewport_fit_cap);
         let series = self.active_series_for_chart(cid);
-        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-            window.zoom_horizontal_capped(
-                x - rect.x,
-                factor,
-                fit_cap,
-                series.as_active_series(),
-            );
-        }
-    }
 
-    /// Apply a horizontal pan pixel delta (content follows cursor) +
-    /// auto-Y refit — the Pan arm of `process_output_actions` reduced to
-    /// the main-chart / auto-Y case (no sub-panes, no manual-Y price shift
-    /// in v1).
-    pub(crate) fn trading_center_pan_move(&mut self, cid: mlc_core::state::ChartId, dx: f64) {
-        let series = self.active_series_for_chart(cid);
-        if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-            window.pan(dx);
-            if window.price_scale().scale_mode.is_auto_y() {
-                window.calc_auto_scale(series.as_active_series());
+        for action in actions {
+            let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid)
+            else { return };
+            match action {
+                ChartOutputAction::Pan { bar_delta, price_delta } => {
+                    window.pan(bar_delta);
+                    if window.price_scale().scale_mode.is_auto_y() {
+                        window.calc_auto_scale(series.as_active_series());
+                    } else {
+                        let price_range =
+                            window.price_scale().price_max - window.price_scale().price_min;
+                        let h = window.viewport().chart_height;
+                        if h > 0.0 {
+                            let scaled = price_delta * price_range / h;
+                            window.set_price_range(
+                                window.price_scale().price_min + scaled,
+                                window.price_scale().price_max + scaled,
+                            );
+                        }
+                    }
+                }
+                ChartOutputAction::Zoom { center_x, factor_x, factor_y, .. } => {
+                    if factor_x != 1.0 {
+                        window.zoom_horizontal_capped(
+                            center_x - chart_x,
+                            factor_x,
+                            fit_cap,
+                            series.as_active_series(),
+                        );
+                    }
+                    if factor_y != 1.0 {
+                        let center =
+                            (window.price_scale().price_min + window.price_scale().price_max) / 2.0;
+                        let half = (window.price_scale().price_max
+                            - window.price_scale().price_min)
+                            / 2.0
+                            * factor_y;
+                        window.set_price_range(center - half, center + half);
+                    }
+                }
+                ChartOutputAction::ResetPriceScale => {
+                    window.set_scale_mode(mlc_core::ScaleMode::Auto);
+                    window.calc_auto_scale(series.as_active_series());
+                }
+                ChartOutputAction::ResetTimeScale => {
+                    window.reset_time_scale();
+                    window.set_scale_mode(mlc_core::ScaleMode::Auto);
+                    window.calc_auto_scale(series.as_active_series());
+                }
+                ChartOutputAction::TogglePriceScaleMode => {
+                    window.toggle_price_scale_mode();
+                }
+                ChartOutputAction::HideCrosshair => {
+                    window.crosshair.visible = false;
+                }
+                // UpdateCrosshair is handled by `trading_center_crosshair`
+                // (sub-pane-aware coordinate space) — same split as the main
+                // applier. Everything else: ignored like the main applier
+                // (kinetic/cursor/repaint) or out of scope (drawings, undo).
+                _ => {}
             }
         }
+        self.sidebar_data_dirty = true;
+    }
+
+    /// Scale-corner button click on the aux chart (A/M cycle + lin/log/%
+    /// mode) — aux counterpart of `handle_canvas_click`'s corner branch,
+    /// minus sync-group propagation. Returns `true` when a button consumed
+    /// the click.
+    pub(crate) fn trading_center_corner_click(
+        &mut self,
+        cid: mlc_core::state::ChartId,
+        x: f64,
+        y: f64,
+    ) -> bool {
+        use mlc_core::ScaleCornerButton;
+        let Some(zones) = self.trading_center_corner_zones.as_ref() else { return false };
+        let button = zones.hit_test(x, y);
+        if button == ScaleCornerButton::None {
+            return false;
+        }
+        let series = self.active_series_for_chart(cid);
+        let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid)
+        else { return false };
+        match button {
+            ScaleCornerButton::AutoManual => {
+                let next = window.price_scale().scale_mode.next();
+                window.cycle_scale_mode(next, series.as_active_series());
+            }
+            ScaleCornerButton::Mode => {
+                window.toggle_price_scale_mode();
+            }
+            ScaleCornerButton::None => unreachable!(),
+        }
+        self.sidebar_data_dirty = true;
+        true
+    }
+
+    /// Cursor style over the aux chart — engine hit-zone cursors (resize
+    /// arrows over scales, crosshair-hidden under magnet snap). `None`
+    /// when the cursor is not the aux chart's business.
+    pub(crate) fn trading_center_cursor(&self, x: f64, y: f64) -> Option<mlc_core::CursorStyle> {
+        use mlc_core::engine::input::DragMode;
+        // Mid-drag: hold the drag mode's cursor for the whole gesture.
+        if self.trading_center_drag_active {
+            return Some(match self.trading_center_input.state.drag_mode {
+                DragMode::PriceScale => mlc_core::CursorStyle::NsResize,
+                DragMode::TimeScale => mlc_core::CursorStyle::EwResize,
+                _ => mlc_core::CursorStyle::Default,
+            });
+        }
+        let (_pid, cid, rect) = self.trading_center_hit(x, y)?;
+        // Magnet snap active on the aux chart → hide the system cursor
+        // (crosshair renders at the snapped position) — mirrors
+        // `is_magnet_snapped` for the active grid chart.
+        let snapped = self
+            .panel_app
+            .panel_grid
+            .containers()
+            .get(&cid)
+            .map(|w| w.crosshair.visible && w.crosshair.is_snapped())
+            .unwrap_or(false);
+        if snapped {
+            return Some(mlc_core::CursorStyle::None);
+        }
+        let layout = self.trading_center_layout(cid, &rect)?;
+        let tester = mlc_app_layout::layout::ExtendedLayoutHitTester::new(&layout);
+        use mlc_core::input::ChartHitTester;
+        Some(tester.hit_test(x, y).cursor())
     }
 
     /// Update the aux chart's crosshair from global cursor coords —
-    /// `update_crosshair_from_global` with a layout built inline from the
-    /// center rect (no leaf-keyed `frame_layouts` entry exists).
+    /// `update_crosshair_from_global` with the inline aux layout.
     pub(crate) fn trading_center_crosshair(
         &mut self,
         cid: mlc_core::state::ChartId,

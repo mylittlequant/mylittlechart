@@ -296,8 +296,8 @@ pub fn timeframe_selector_item(default_text: &str) -> ToolbarItemDef {
 /// overlay tab — the symbol system replaces it; color sync stays via the
 /// `tc_color_tag` square. The sidebar close button stays the last control
 /// in the header row (rendered by the sidebar chrome, not this def).
-pub fn trading_header_toolbar(center_label: &str) -> PanelToolbarDef {
-    PanelToolbarDef::horizontal(vec![
+pub fn trading_header_toolbar(center_label: &str, show_tf: bool) -> PanelToolbarDef {
+    let mut sections = vec![
         // 1. Symbol search system (identical to main topbar's).
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("symbol_selector", vec![])
@@ -312,12 +312,21 @@ pub fn trading_header_toolbar(center_label: &str) -> PanelToolbarDef {
             ToolbarItemDef::icon_button("tc_gear", ToolbarIconId::new("Settings"))
                 .with_tooltip(t_toolbar(TK::Settings)),
         ]).with_separator(),
-        // 3. Timeframe system (identical to main topbar's).
-        ToolbarSectionDef::new(vec![
-            timeframe_selector_item("1m"),
-        ]).with_separator(),
-        // 4. Center-slot switcher (owner spec 2026-07-26): what occupies
-        // the container's top-left region — DOM ladder or embedded chart.
+    ];
+    // 3. Timeframe system (identical to main topbar's) — ONLY when the
+    // center shows the chart (owner spec 2026-07-26: the DOM ladder is
+    // tick-by-tick, a TF button next to it is noise). Chart-mode-only
+    // controls (chart_type, indicators) will join this conditional block.
+    if show_tf {
+        sections.push(
+            ToolbarSectionDef::new(vec![
+                timeframe_selector_item("1m"),
+            ]).with_separator(),
+        );
+    }
+    // 4. Center-slot switcher (owner spec 2026-07-26): what occupies
+    // the container's top-left region — DOM ladder or embedded chart.
+    sections.push(
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("tc_center", vec![
                 DropdownItemDef::action("center:dom", "DOM"),
@@ -326,7 +335,8 @@ pub fn trading_header_toolbar(center_label: &str) -> PanelToolbarDef {
               .with_text(center_label)
               .with_min_width(64.0),
         ]).with_separator(),
-    ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
+    );
+    PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 
 /// Chart type dropdown items (localized).

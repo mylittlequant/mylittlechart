@@ -464,11 +464,12 @@ impl ChartPanelApp {
         symbol_quick_search: bool,
         timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
         center_label: &str,
+        show_tf: bool,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         let cfg = ToolbarConfig::custom()
-            .with_top(Some(mlc_core::toolbar::trading_header_toolbar(center_label)));
+            .with_top(Some(mlc_core::toolbar::trading_header_toolbar(center_label, show_tf)));
         let layout = ChartPanelLayout::compute(header_rect, &cfg);
         chart_toolbar_render_toolbars(
             tb, ctx, &layout, &cfg,

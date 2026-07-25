@@ -331,6 +331,18 @@ impl ChartApp {
         let clicked_widget_id = self.input_coordinator.borrow_mut().process_click(x, y)
             .map(|w| w.as_str().to_string());
         if let Some(id) = clicked_widget_id {
+            // Trading center chart scale-corner buttons (A/M cycle,
+            // lin/log/% mode) live INSIDE the container body widget —
+            // intercept before the generic focus_content dispatch. z-order
+            // is already respected: process_click returned the body only
+            // because nothing (dropdown/modal) sat above it.
+            if id.starts_with("slot:") && id.ends_with(":focus_content") {
+                if let Some((_pid, cid, _rect)) = self.trading_center_hit(x, y) {
+                    if self.trading_center_corner_click(cid, x, y) {
+                        return;
+                    }
+                }
+            }
             eprintln!("[ChartApp] click dispatched to: {}", id);
             self.dispatch_panel_click(&id, x, y);
             return;
@@ -730,6 +742,18 @@ impl ChartApp {
                 self.dispatch_panel_click(&id, x, y);
                 return;
             }
+        }
+
+        // Trading center chart: double-click through the aux engine handler —
+        // scale-strip double-clicks reset price/time scales with the exact
+        // main-chart semantics (chart-in-container arc, 2026-07-26).
+        if let Some((_pid, cid, rect)) = self.trading_center_hit(x, y) {
+            self.trading_center_process(
+                cid,
+                &rect,
+                mlc_core::engine::input::ChartInputAction::DoubleClick { x, y },
+            );
+            return;
         }
 
         let double_click_wid: Option<String> = self.input_coordinator.borrow_mut().process_double_click(x, y).map(|w| w.as_str().to_string());
@@ -1409,21 +1433,32 @@ impl ChartApp {
             }
         }
 
-        // ── Trading center chart pan initiation ─────────────────────────────
-        // (chart-in-container arc, 2026-07-26). Raw rect hit-test on the
-        // render-cached center rect, gated on the live hover target being
-        // the container body (`focus_content`) so any dropdown/modal layered
-        // above the chart keeps winning the z-order.
-        if self.trading_center_pan.is_none() && self.active_drag_panel.is_none() {
+        // ── Trading center chart drag initiation ────────────────────────────
+        // (chart-in-container arc, 2026-07-26). FULL engine mechanics: the
+        // aux handler's DragStart hit-tests the aux layout itself, so this
+        // one gesture covers chart pan AND price/time scale drags. Raw rect
+        // hit-test on the render-cached center rect, gated on the live
+        // hover target being the container body (`focus_content`) so any
+        // dropdown/modal layered above the chart keeps winning the z-order.
+        if !self.trading_center_drag_active && self.active_drag_panel.is_none() {
             let over_body = live_hover
                 .as_ref()
                 .map(|w| w.starts_with("slot:") && w.ends_with(":focus_content"))
                 .unwrap_or(false);
             if over_body {
-                if let Some((pid, _cid, _rect)) = self.trading_center_hit(x, y) {
-                    self.trading_center_pan = Some((pid, x));
+                if let Some((pid, cid, rect)) = self.trading_center_hit(x, y) {
+                    self.trading_center_drag_active = true;
                     self.ui_drag_active = true;
                     self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
+                    self.trading_center_process(
+                        cid,
+                        &rect,
+                        mlc_core::engine::input::ChartInputAction::DragStart {
+                            mode: mlc_core::engine::input::DragMode::None,
+                            x,
+                            y,
+                        },
+                    );
                     return false;
                 }
             }
@@ -2816,17 +2851,29 @@ impl ChartApp {
             return;
         }
 
-        // ── Trading center chart pan drag ────────────────────────────────────
-        if let Some((pid, last_x)) = self.trading_center_pan {
-            let dx = x - last_x;
-            self.trading_center_pan = Some((pid, x));
-            if dx.abs() > 0.0 {
+        // ── Trading center chart drag (full engine mechanics) ───────────────
+        if self.trading_center_drag_active {
+            if let Some((pid, rect)) = self.trading_center_rect {
                 if let Some(&cid) = self.trading_center_charts.get(&pid) {
-                    self.trading_center_pan_move(cid, dx);
-                    if let Some((_, rect)) = self.trading_center_rect {
+                    let mode = self.trading_center_input.state.drag_mode;
+                    self.trading_center_process(
+                        cid,
+                        &rect,
+                        mlc_core::engine::input::ChartInputAction::DragMove {
+                            mode,
+                            x,
+                            y,
+                            delta_x: dx,
+                            delta_y: dy,
+                        },
+                    );
+                    // Crosshair follows the cursor during a chart-area pan,
+                    // locked to the main-chart coordinate space (same as the
+                    // main path's drag-locked update). Scale drags keep the
+                    // crosshair where it was.
+                    if matches!(mode, mlc_core::engine::input::DragMode::Chart) {
                         self.trading_center_crosshair(cid, &rect, x, y, true);
                     }
-                    self.sidebar_data_dirty = true;
                 }
             }
             return;
@@ -3768,8 +3815,19 @@ impl ChartApp {
             return;
         }
 
-        // ── End trading center chart pan drag ────────────────────────────────
-        if self.trading_center_pan.take().is_some() {
+        // ── End trading center chart drag ────────────────────────────────────
+        if self.trading_center_drag_active {
+            self.trading_center_drag_active = false;
+            if let Some((pid, rect)) = self.trading_center_rect {
+                if let Some(&cid) = self.trading_center_charts.get(&pid) {
+                    let mode = self.trading_center_input.state.drag_mode;
+                    self.trading_center_process(
+                        cid,
+                        &rect,
+                        mlc_core::engine::input::ChartInputAction::DragEnd { mode, x, y },
+                    );
+                }
+            }
             self.sidebar_data_dirty = true;
             return;
         }
@@ -4368,7 +4426,7 @@ impl ChartApp {
         }
 
         // --- Trading center chart hover crosshair (chart-in-container arc) ---
-        if self.trading_center_pan.is_none() {
+        if !self.trading_center_drag_active {
             if let Some((pid, rect)) = self.trading_center_rect {
                 if let Some(&cid) = self.trading_center_charts.get(&pid) {
                     let inside = x >= rect.x
@@ -5288,6 +5346,32 @@ impl ChartApp {
             }
         }
 
+        // Trading center chart: engine hit-zone cursor (resize arrows over
+        // its scale strips, hidden cursor under magnet snap, drag-held
+        // cursor mid-gesture). MUST run before the universal is_over_ui
+        // check — the container body IS a registered widget, so the generic
+        // check would swallow the chart cursors with Default. z-order gated
+        // on the live hover target being the container body, so dropdowns/
+        // modals above the chart keep the default cursor.
+        if self.trading_center_drag_active {
+            if let Some(c) = self.trading_center_cursor(x, y) {
+                return c;
+            }
+        }
+        {
+            let over_tc_body = self.input_coordinator.borrow().hit_test_now(x, y)
+                .map(|h| {
+                    let s = h.as_str();
+                    s.starts_with("slot:") && s.ends_with(":focus_content")
+                })
+                .unwrap_or(false);
+            if over_tc_body {
+                if let Some(c) = self.trading_center_cursor(x, y) {
+                    return c;
+                }
+            }
+        }
+
         // Universal UI check: any registered widget hovered = default cursor.
         // Since the chart canvas is NOT a registered widget, is_over_ui_now()
         // returns true only when the pointer is over a toolbar, modal, context
@@ -5951,13 +6035,22 @@ impl ChartApp {
                             use mlc_core::state::Panel;
                             let scroll_step = dy;
 
-                            // Trading center chart: wheel = horizontal zoom
-                            // around the cursor (chart-in-container arc,
-                            // 2026-07-26) — same convention as the main
-                            // chart's DefaultChartInputHandler wheel path.
+                            // Trading center chart: wheel through the aux
+                            // engine handler — hit-zone aware (chart area =
+                            // X zoom around cursor, price scale strip =
+                            // Y range zoom), exactly the main chart's
+                            // wheel semantics (chart-in-container arc).
                             if let Some((_pid, cid, rect)) = self.trading_center_hit(x, y) {
-                                self.trading_center_zoom(cid, &rect, x, dy);
-                                self.sidebar_data_dirty = true;
+                                self.trading_center_process(
+                                    cid,
+                                    &rect,
+                                    mlc_core::engine::input::ChartInputAction::Scroll {
+                                        x,
+                                        y,
+                                        delta_x: dx,
+                                        delta_y: dy,
+                                    },
+                                );
                                 return;
                             }
 
