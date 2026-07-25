@@ -149,6 +149,14 @@ impl TradeStore {
         self.len(key) == 0
     }
 
+    /// Total stored trades across every instrument + instrument count —
+    /// memory diagnostics (wasm-leak differential, 2026-07-26).
+    pub fn totals(&self) -> (usize, usize) {
+        let guard = self.inner.read().expect("TradeStore poisoned (read)");
+        let total = guard.values().map(|e| e.layer.len()).sum();
+        (total, guard.len())
+    }
+
     /// Copy of every stored trade for `key` with `ts_from <= ts_ms < ts_to`,
     /// oldest-first. Used by seam-bucket refolds (small windows — a bounded
     /// linear scan over the ring is cheap at that scale).

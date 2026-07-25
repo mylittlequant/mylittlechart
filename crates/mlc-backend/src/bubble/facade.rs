@@ -57,6 +57,11 @@ impl<'a> BubbleView<'a> {
     pub fn bars_len(&self) -> usize {
         self.bubble.bars.len()
     }
+    /// Total points across every kline raw layer on this bubble — memory
+    /// diagnostics (wasm-leak differential, 2026-07-26).
+    pub fn kline_layer_points(&self) -> usize {
+        self.bubble.kline_layers.values().map(|l| l.len()).sum()
+    }
     pub fn bars(&self) -> &[mlc_core::Bar] {
         &self.bubble.bars
     }

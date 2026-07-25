@@ -709,13 +709,19 @@ fn run_render_loop(
             {
                 let mut bubble_count = 0f64;
                 let mut total_bars = 0f64;
+                let mut total_layer_bars = 0f64;
                 let bm = st.chart.core.bubbles();
                 bm.each_bubble(|b| {
                     bubble_count += 1.0;
                     total_bars += b.bars_len() as f64;
+                    total_layer_bars += b.kline_layer_points() as f64;
                 });
+                let (trade_total, trade_instruments) = st.chart.core.trade_store.totals();
                 let _ = js_sys::Reflect::set(&dbg, &"bubble_count".into(), &bubble_count.into());
                 let _ = js_sys::Reflect::set(&dbg, &"total_bars".into(), &total_bars.into());
+                let _ = js_sys::Reflect::set(&dbg, &"total_layer_bars".into(), &total_layer_bars.into());
+                let _ = js_sys::Reflect::set(&dbg, &"total_trades".into(), &(trade_total as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"trade_instruments".into(), &(trade_instruments as f64).into());
                 let containers = st.chart.panel_app.panel_grid.containers().len() as f64;
                 let _ = js_sys::Reflect::set(&dbg, &"containers".into(), &containers.into());
                 // Counting-allocator split (see `alloc_probe`): live bytes
