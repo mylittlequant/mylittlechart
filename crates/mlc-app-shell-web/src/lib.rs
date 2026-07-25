@@ -45,6 +45,63 @@ mod context;
 #[cfg(target_arch = "wasm32")]
 mod persistence;
 
+/// Counting global allocator (wasm-leak differential, 2026-07-26).
+///
+/// The renderer's RSS reached 3.8+GB while the native app sits at
+/// ~500-600MB for the same workload. Wasm linear memory can only GROW
+/// (no shrink in wasm32; Rust's dlmalloc never releases pages), so the
+/// question is what pushes the HIGH-WATER: real retention (live bytes
+/// climb with it) or dlmalloc fragmentation under per-frame churn (live
+/// bytes flat while `__MLC_WASM_MEM_MB()` climbs). These counters split
+/// the two — read them in `MLC_DEBUG.alloc_live_mb` / `alloc_peak_mb`
+/// next to the index.html probe. Overhead: two relaxed atomics per
+/// alloc/free — noise at this frame budget.
+#[cfg(target_arch = "wasm32")]
+mod alloc_probe {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    pub static LIVE: AtomicUsize = AtomicUsize::new(0);
+    pub static PEAK: AtomicUsize = AtomicUsize::new(0);
+    pub static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct CountingAlloc;
+
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            let p = System.alloc(l);
+            if !p.is_null() {
+                let live = LIVE.fetch_add(l.size(), Relaxed) + l.size();
+                PEAK.fetch_max(live, Relaxed);
+                ALLOCS.fetch_add(1, Relaxed);
+            }
+            p
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            System.dealloc(p, l);
+            LIVE.fetch_sub(l.size(), Relaxed);
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, new_size: usize) -> *mut u8 {
+            let np = System.realloc(p, l, new_size);
+            if !np.is_null() {
+                if new_size >= l.size() {
+                    let grow = new_size - l.size();
+                    let live = LIVE.fetch_add(grow, Relaxed) + grow;
+                    PEAK.fetch_max(live, Relaxed);
+                } else {
+                    LIVE.fetch_sub(l.size() - new_size, Relaxed);
+                }
+                ALLOCS.fetch_add(1, Relaxed);
+            }
+            np
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static GLOBAL_ALLOC_PROBE: alloc_probe::CountingAlloc = alloc_probe::CountingAlloc;
+
 #[cfg(target_arch = "wasm32")]
 use context::Canvas2dChartRenderContext;
 
@@ -661,6 +718,16 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"total_bars".into(), &total_bars.into());
                 let containers = st.chart.panel_app.panel_grid.containers().len() as f64;
                 let _ = js_sys::Reflect::set(&dbg, &"containers".into(), &containers.into());
+                // Counting-allocator split (see `alloc_probe`): live bytes
+                // flat + wasm memory climbing = dlmalloc fragmentation;
+                // both climbing = real retention.
+                use std::sync::atomic::Ordering::Relaxed;
+                let live_mb = crate::alloc_probe::LIVE.load(Relaxed) as f64 / 1048576.0;
+                let peak_mb = crate::alloc_probe::PEAK.load(Relaxed) as f64 / 1048576.0;
+                let allocs = crate::alloc_probe::ALLOCS.load(Relaxed) as f64;
+                let _ = js_sys::Reflect::set(&dbg, &"alloc_live_mb".into(), &live_mb.round().into());
+                let _ = js_sys::Reflect::set(&dbg, &"alloc_peak_mb".into(), &peak_mb.round().into());
+                let _ = js_sys::Reflect::set(&dbg, &"alloc_count".into(), &allocs.into());
             }
 
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
