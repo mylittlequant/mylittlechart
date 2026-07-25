@@ -369,18 +369,109 @@ impl OrderEntryState {
 
 }
 
-/// Splice a blinking text-cursor character into `text` at char index
-/// `cursor`, when `visible` (mirrors the old `display_editing_text`'s
-/// splice — plain string surgery, no pixel-based caret math needed since
-/// the field is drawn as ordinary canvas text).
-fn splice_caret(text: &str, cursor: usize, visible: bool) -> String {
-    if !visible {
-        return text.to_string();
+/// Compute cumulative glyph-boundary widths (0..=char_count, relative to
+/// the text's own left edge) for whatever font `ctx` currently has set —
+/// mirrors `mlc-app-layout::ui::widgets::input::draw_input`'s
+/// `char_x_positions` computation (measure_text-based, not a fixed
+/// per-char width), which is also what feeds `cursor_from_char_positions`/
+/// `TextFieldStore::on_drag_start`'s own click-to-cursor math. Caller must
+/// `ctx.set_font(..)` to the value font before calling this.
+fn measure_char_widths(ctx: &mut dyn RenderContext, text: &str) -> Vec<f64> {
+    let char_count = text.chars().count();
+    let mut widths = Vec::with_capacity(char_count + 1);
+    for i in 0..=char_count {
+        let slice: String = text.chars().take(i).collect();
+        widths.push(ctx.measure_text(&slice));
     }
-    let mut s = text.to_string();
-    let byte_at = s.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(s.len());
-    s.insert(byte_at, '|');
-    s
+    widths
+}
+
+/// Draw one numeric field row: background/border/label (unconditional),
+/// then either the static formatted value (`live` is `None`) or — when
+/// `live` is `Some(field_wid)` — the shared per-instance field's LIVE text
+/// read straight from `TextFieldStore`, with a measure_text-based
+/// selection highlight and a caret at the store's own cursor index (never
+/// a hand-spliced character). Also pushes fresh `(rect, char_x_positions)`
+/// geometry into the store via `update_field` every frame it is live, so
+/// the store's own generic `on_drag_start`/`on_drag_move` (wired
+/// unconditionally in `mlc-app::input::mod::on_drag_start`/`on_drag_move`
+/// for every registered+geometry-fresh field) can hit-test clicks and
+/// drag-selection against this row without any per-field pointer code
+/// here — this mirrors `mlc-app-layout::ui::widgets::input::draw_input` /
+/// `cursor_from_char_positions`'s division of labor (render pushes
+/// geometry, the generic store consumes it), adapted inline since this
+/// panel cannot depend on `mlc-app-layout` (dependency direction: engines
+/// stay peers, do not grow new edges between hybrid panel crates and the
+/// app-layout crate) — render() already gets `coordinator: &mut
+/// InputCoordinator` directly, so there is nothing to thread back up the
+/// way the lower `mlc-app-layout` modal renderers must.
+#[allow(clippy::too_many_arguments)]
+fn draw_oe_field_row(
+    ctx: &mut dyn RenderContext,
+    coordinator: &mut uzor::InputCoordinator,
+    theme: &crate::panel_theme::PanelTheme,
+    x: f32,
+    row_y: f32,
+    w: f32,
+    label: &str,
+    static_value: &str,
+    live: Option<&uzor::WidgetId>,
+    field_value_right: f32,
+    now_ms: u64,
+) {
+    ctx.set_fill_color(&theme.oe_input_bg);
+    ctx.fill_rect(x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+    ctx.set_fill_color(&theme.oe_input_border);
+    ctx.fill_rect(x as f64, (row_y + OE_FIELD_HEIGHT - 1.0) as f64, w as f64, 1.0);
+
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_font("10px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+
+    let Some(wid) = live else {
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(static_value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+        return;
+    };
+
+    let (text, cursor, selection, cursor_visible) = {
+        let store = coordinator.text_fields();
+        (store.text(wid).to_string(), store.cursor(wid), store.selection_range(wid), store.cursor_visible(now_ms))
+    };
+
+    ctx.set_font("10px monospace");
+    let widths = measure_char_widths(ctx, &text);
+    let total_width = widths.last().copied().unwrap_or(0.0);
+    let text_left_x = field_value_right as f64 - total_width;
+    let char_x_positions: Vec<f64> = widths.iter().map(|width| text_left_x + width).collect();
+
+    if let Some((lo, hi)) = selection {
+        let sel_x0 = char_x_positions.get(lo).copied().unwrap_or(text_left_x);
+        let sel_x1 = char_x_positions.get(hi).copied().unwrap_or(text_left_x + total_width);
+        ctx.set_fill_color(&theme.accent);
+        ctx.fill_rect(sel_x0, row_y as f64, (sel_x1 - sel_x0).max(0.0), OE_FIELD_HEIGHT as f64);
+    }
+
+    ctx.set_fill_color(&theme.text_primary);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&text, text_left_x, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+
+    if cursor_visible {
+        let caret_x = char_x_positions.get(cursor).copied().unwrap_or(text_left_x + total_width);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.fill_rect(caret_x, (row_y + 2.0) as f64, 1.5, (OE_FIELD_HEIGHT - 4.0) as f64);
+    }
+
+    coordinator.text_fields_mut().update_field(
+        wid,
+        (x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+        char_x_positions,
+    );
 }
 
 fn format_currency(value: f64) -> String {
@@ -579,15 +670,13 @@ impl TradingPanel for OrderEntryState {
         if matches!(self.order_type, OrderType::Limit | OrderType::StopLimit) {
             let is_live = self.active_field == Some(OrderEntryElement::PriceInput)
                 && coordinator.text_fields().is_focused(&oe_field_wid);
-            let price_str = if is_live {
-                let store = coordinator.text_fields();
-                splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
-            } else {
-                self.price
-                    .map(|p| format!("{:.4}", p))
-                    .unwrap_or_else(|| "\u{2014}".to_string())
-            };
-            draw_field(ctx, cursor_y, "Price:", &price_str);
+            let static_str = self.price
+                .map(|p| format!("{:.4}", p))
+                .unwrap_or_else(|| "\u{2014}".to_string());
+            draw_oe_field_row(
+                ctx, coordinator, theme, x, cursor_y, w, "Price:", &static_str,
+                is_live.then_some(&oe_field_wid), field_value_right, now_ms,
+            );
             coordinator.register(
                 format!("{}:oe:price", slot_prefix).as_str(),
                 uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
@@ -599,15 +688,13 @@ impl TradingPanel for OrderEntryState {
         if matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) {
             let is_live = self.active_field == Some(OrderEntryElement::StopPriceInput)
                 && coordinator.text_fields().is_focused(&oe_field_wid);
-            let stop_str = if is_live {
-                let store = coordinator.text_fields();
-                splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
-            } else {
-                self.stop_price
-                    .map(|p| format!("{:.4}", p))
-                    .unwrap_or_else(|| "\u{2014}".to_string())
-            };
-            draw_field(ctx, cursor_y, "Stop:", &stop_str);
+            let static_str = self.stop_price
+                .map(|p| format!("{:.4}", p))
+                .unwrap_or_else(|| "\u{2014}".to_string());
+            draw_oe_field_row(
+                ctx, coordinator, theme, x, cursor_y, w, "Stop:", &static_str,
+                is_live.then_some(&oe_field_wid), field_value_right, now_ms,
+            );
             coordinator.register(
                 format!("{}:oe:stop_price", slot_prefix).as_str(),
                 uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
@@ -618,13 +705,11 @@ impl TradingPanel for OrderEntryState {
 
         let qty_is_live = self.active_field == Some(OrderEntryElement::QuantityInput)
             && coordinator.text_fields().is_focused(&oe_field_wid);
-        let qty_str = if qty_is_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&oe_field_wid), store.cursor(&oe_field_wid), store.cursor_visible(now_ms))
-        } else {
-            self.format_quantity()
-        };
-        draw_field(ctx, cursor_y, "Quantity:", &qty_str);
+        let qty_static_str = self.format_quantity();
+        draw_oe_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Quantity:", &qty_static_str,
+            qty_is_live.then_some(&oe_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:oe:qty", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),

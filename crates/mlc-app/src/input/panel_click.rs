@@ -5545,6 +5545,17 @@ impl ChartApp {
     /// parseable form, NOT `format_quantity()`'s K-suffixed display form)
     /// and focuses + select-alls it (numeric-field precedent — see
     /// `start_prim_field_editing`'s `select_all` callers).
+    ///
+    /// No-ops when `field` is ALREADY `active_field` — clicking inside a
+    /// field that is already being edited must reposition the caret /
+    /// extend a drag-selection, NOT restart editing. That reposition is
+    /// handled generically by `TextFieldStore::on_drag_start`/`on_drag_move`
+    /// on the mousedown that precedes this click (wired unconditionally in
+    /// `input::mod::on_drag_start`/`on_drag_move` for every registered +
+    /// geometry-fresh field — see `order_entry::draw_oe_field_row`'s
+    /// `update_field` call); re-seeding here on every subsequent click would
+    /// silently discard it (owner-reported regression: caret always
+    /// snapping to text end, selection invisible).
     fn start_oe_field_edit(
         &mut self,
         target: OrderEntryTarget,
@@ -5552,6 +5563,9 @@ impl ChartApp {
         field: mlc_app_panels::trading::trading::order_entry::OrderEntryElement,
     ) {
         use mlc_app_panels::trading::trading::order_entry::OrderEntryElement;
+        if self.order_entry_mut(target).is_some_and(|s| s.active_field == Some(field)) {
+            return;
+        }
         let wid = Self::oe_field_widget_id(slot_prefix);
         self.commit_oe_field(target, &wid);
         let Some(state) = self.order_entry_mut(target) else { return };
@@ -5599,7 +5613,8 @@ impl ChartApp {
         }
     }
 
-    /// RiskCalculator analogue of `start_oe_field_edit`.
+    /// RiskCalculator analogue of `start_oe_field_edit` — same no-op-when-
+    /// already-active contract (see that method's doc).
     fn start_rc_field_edit(
         &mut self,
         target: RiskCalculatorTarget,
@@ -5607,6 +5622,9 @@ impl ChartApp {
         field: mlc_app_panels::trading::trading::risk_calculator::RiskCalcField,
     ) {
         use mlc_app_panels::trading::trading::risk_calculator::RiskCalcField;
+        if self.risk_calculator_mut(target).is_some_and(|s| s.active_field == Some(field)) {
+            return;
+        }
         let wid = Self::rc_field_widget_id(slot_prefix);
         self.commit_rc_field(target, &wid);
         let Some(state) = self.risk_calculator_mut(target) else { return };

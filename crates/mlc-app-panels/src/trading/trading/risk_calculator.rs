@@ -251,18 +251,101 @@ impl RiskCalculatorState {
 
 }
 
-/// Splice a blinking text-cursor character into `text` at char index
-/// `cursor`, when `visible` (mirrors `order_entry::splice_caret` — plain
-/// string surgery, no pixel-based caret math needed since the field is
-/// drawn as ordinary canvas text).
-fn splice_caret(text: &str, cursor: usize, visible: bool) -> String {
-    if !visible {
-        return text.to_string();
+/// Compute cumulative glyph-boundary widths (0..=char_count, relative to
+/// the text's own left edge) for whatever font `ctx` currently has set —
+/// mirrors `mlc-app-layout::ui::widgets::input::draw_input`'s
+/// `char_x_positions` computation (measure_text-based, not a fixed
+/// per-char width). See `order_entry::measure_char_widths`'s doc for the
+/// full rationale (identical helper, duplicated per-file rather than
+/// shared since these two panel files don't otherwise depend on each
+/// other and neither can depend on `mlc-app-layout`).
+fn measure_char_widths(ctx: &mut dyn RenderContext, text: &str) -> Vec<f64> {
+    let char_count = text.chars().count();
+    let mut widths = Vec::with_capacity(char_count + 1);
+    for i in 0..=char_count {
+        let slice: String = text.chars().take(i).collect();
+        widths.push(ctx.measure_text(&slice));
     }
-    let mut s = text.to_string();
-    let byte_at = s.char_indices().nth(cursor).map(|(b, _)| b).unwrap_or(s.len());
-    s.insert(byte_at, '|');
-    s
+    widths
+}
+
+/// Draw one numeric field row: background (highlighted only when
+/// `live.is_some()`, matching the pre-migration `editing` bool's visual
+/// contract) + border + label (unconditional), then either the static
+/// formatted value or — when `live` is `Some(field_wid)` — the shared
+/// per-instance field's LIVE text read straight from `TextFieldStore`,
+/// with a measure_text-based selection highlight and a caret at the
+/// store's own cursor index. Also pushes fresh `(rect, char_x_positions)`
+/// geometry into the store via `update_field` every frame it is live —
+/// see `order_entry::draw_oe_field_row`'s doc for the full division-of-
+/// labor rationale (identical pattern, mirrored per-file).
+#[allow(clippy::too_many_arguments)]
+fn draw_rc_field_row(
+    ctx: &mut dyn RenderContext,
+    coordinator: &mut uzor::InputCoordinator,
+    theme: &crate::panel_theme::PanelTheme,
+    x: f32,
+    row_y: f32,
+    w: f32,
+    label: &str,
+    static_value: &str,
+    live: Option<&uzor::WidgetId>,
+    field_value_right: f32,
+    now_ms: u64,
+) {
+    ctx.set_fill_color(if live.is_some() { &theme.rc_input_bg } else { &theme.panel_bg });
+    ctx.fill_rect(x as f64, row_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+    if live.is_some() {
+        ctx.set_fill_color(&theme.rc_input_border);
+        ctx.fill_rect(x as f64, (row_y + RC_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
+    }
+
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_font("10px monospace");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
+
+    let Some(wid) = live else {
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(static_value, field_value_right as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
+        return;
+    };
+
+    let (text, cursor, selection, cursor_visible) = {
+        let store = coordinator.text_fields();
+        (store.text(wid).to_string(), store.cursor(wid), store.selection_range(wid), store.cursor_visible(now_ms))
+    };
+
+    // Font is already "10px monospace" from the label draw above.
+    let widths = measure_char_widths(ctx, &text);
+    let total_width = widths.last().copied().unwrap_or(0.0);
+    let text_left_x = field_value_right as f64 - total_width;
+    let char_x_positions: Vec<f64> = widths.iter().map(|width| text_left_x + width).collect();
+
+    if let Some((lo, hi)) = selection {
+        let sel_x0 = char_x_positions.get(lo).copied().unwrap_or(text_left_x);
+        let sel_x1 = char_x_positions.get(hi).copied().unwrap_or(text_left_x + total_width);
+        ctx.set_fill_color(&theme.accent);
+        ctx.fill_rect(sel_x0, row_y as f64, (sel_x1 - sel_x0).max(0.0), RC_ROW_HEIGHT as f64);
+    }
+
+    ctx.set_fill_color(&theme.text_primary);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(&text, text_left_x, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
+
+    if cursor_visible {
+        let caret_x = char_x_positions.get(cursor).copied().unwrap_or(text_left_x + total_width);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.fill_rect(caret_x, (row_y + 2.0) as f64, 1.5, (RC_ROW_HEIGHT - 4.0) as f64);
+    }
+
+    coordinator.text_fields_mut().update_field(
+        wid,
+        (x as f64, row_y as f64, w as f64, RC_ROW_HEIGHT as f64),
+        char_x_positions,
+    );
 }
 
 impl Default for RiskCalculatorState {
@@ -312,22 +395,6 @@ impl TradingPanel for RiskCalculatorState {
             .as_millis() as u64;
 
         let field_value_right = x + w - RC_LEFT_PAD;
-        let draw_row = |ctx: &mut dyn RenderContext, row_y: f32, label: &str, value: &str, editing: bool| {
-            ctx.set_fill_color(if editing { &theme.rc_input_bg } else { &theme.panel_bg });
-            ctx.fill_rect(x as f64, row_y as f64, w as f64, RC_ROW_HEIGHT as f64);
-            if editing {
-                ctx.set_fill_color(&theme.rc_input_border);
-                ctx.fill_rect(x as f64, (row_y + RC_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
-            }
-            ctx.set_fill_color(&theme.text_muted);
-            ctx.set_font("10px monospace");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.set_text_align(TextAlign::Right);
-            ctx.fill_text(value, field_value_right as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
-        };
 
         // --- Editable input rows ---
         // Single shared per-instance text-field id covering all 5 numeric
@@ -336,13 +403,11 @@ impl TradingPanel for RiskCalculatorState {
 
         let account_size_live = self.active_field == Some(RiskCalcField::AccountSize)
             && coordinator.text_fields().is_focused(&rc_field_wid);
-        let account_size_str = if account_size_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
-        } else {
-            format!("${:.2}", self.account_size)
-        };
-        draw_row(ctx, cursor_y, "Account Size:", &account_size_str, account_size_live);
+        let account_size_str = format!("${:.2}", self.account_size);
+        draw_rc_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Account Size:", &account_size_str,
+            account_size_live.then_some(&rc_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:risk_calculator:account_size", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -352,13 +417,11 @@ impl TradingPanel for RiskCalculatorState {
 
         let risk_percent_live = self.active_field == Some(RiskCalcField::RiskPercent)
             && coordinator.text_fields().is_focused(&rc_field_wid);
-        let risk_percent_str = if risk_percent_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
-        } else {
-            format!("{:.1}%", self.risk_percent)
-        };
-        draw_row(ctx, cursor_y, "Risk %:", &risk_percent_str, risk_percent_live);
+        let risk_percent_str = format!("{:.1}%", self.risk_percent);
+        draw_rc_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Risk %:", &risk_percent_str,
+            risk_percent_live.then_some(&rc_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:risk_calculator:risk_percent", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -368,13 +431,11 @@ impl TradingPanel for RiskCalculatorState {
 
         let entry_price_live = self.active_field == Some(RiskCalcField::EntryPrice)
             && coordinator.text_fields().is_focused(&rc_field_wid);
-        let entry_price_str = if entry_price_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
-        } else {
-            format!("{:.4}", self.entry_price)
-        };
-        draw_row(ctx, cursor_y, "Entry Price:", &entry_price_str, entry_price_live);
+        let entry_price_str = format!("{:.4}", self.entry_price);
+        draw_rc_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Entry Price:", &entry_price_str,
+            entry_price_live.then_some(&rc_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:risk_calculator:entry_price", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -384,13 +445,11 @@ impl TradingPanel for RiskCalculatorState {
 
         let stop_loss_live = self.active_field == Some(RiskCalcField::StopLoss)
             && coordinator.text_fields().is_focused(&rc_field_wid);
-        let stop_loss_str = if stop_loss_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
-        } else {
-            format!("{:.4}", self.stop_loss_price)
-        };
-        draw_row(ctx, cursor_y, "Stop Loss:", &stop_loss_str, stop_loss_live);
+        let stop_loss_str = format!("{:.4}", self.stop_loss_price);
+        draw_rc_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Stop Loss:", &stop_loss_str,
+            stop_loss_live.then_some(&rc_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:risk_calculator:stop_loss", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
@@ -400,13 +459,11 @@ impl TradingPanel for RiskCalculatorState {
 
         let take_profit_live = self.active_field == Some(RiskCalcField::TakeProfit)
             && coordinator.text_fields().is_focused(&rc_field_wid);
-        let take_profit_str = if take_profit_live {
-            let store = coordinator.text_fields();
-            splice_caret(store.text(&rc_field_wid), store.cursor(&rc_field_wid), store.cursor_visible(now_ms))
-        } else {
-            self.take_profit_price.map(|tp| format!("{:.4}", tp)).unwrap_or_else(|| "\u{2014}".to_string())
-        };
-        draw_row(ctx, cursor_y, "Take Profit:", &take_profit_str, take_profit_live);
+        let take_profit_str = self.take_profit_price.map(|tp| format!("{:.4}", tp)).unwrap_or_else(|| "\u{2014}".to_string());
+        draw_rc_field_row(
+            ctx, coordinator, theme, x, cursor_y, w, "Take Profit:", &take_profit_str,
+            take_profit_live.then_some(&rc_field_wid), field_value_right, now_ms,
+        );
         coordinator.register(
             format!("{}:risk_calculator:take_profit", slot_prefix).as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
