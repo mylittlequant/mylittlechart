@@ -4460,7 +4460,29 @@ impl ChartApp {
                         && x < rect.x + rect.width
                         && y >= rect.y
                         && y < rect.y + rect.height;
-                    if inside {
+                    // Registered widgets layered over the chart (indicator
+                    // legend chevron/rows, dropdowns) suppress the
+                    // crosshair — same rule the main chart applies via its
+                    // over-UI gate. The container body itself is a
+                    // registered widget, so "over the chart" means the
+                    // live hit is exactly the body.
+                    let over_body = !inside
+                        || self
+                            .input_coordinator
+                            .borrow()
+                            .hit_test_now(x, y)
+                            .map(|h| {
+                                let s = h.as_str();
+                                s.starts_with("slot:") && s.ends_with(":focus_content")
+                            })
+                            .unwrap_or(true);
+                    // Sub-pane overlay button visibility/hover (aux
+                    // counterpart of the split-mode overlay update). True
+                    // while a button is under the cursor — crosshair hides
+                    // then, like `any_button_hovered_split`.
+                    let button_hovered =
+                        self.trading_center_overlay_hover(cid, &rect, x, y, inside);
+                    if inside && over_body && !button_hovered {
                         self.trading_center_crosshair(cid, &rect, x, y, false);
                         self.sidebar_data_dirty = true;
                     } else if let Some(window) =
@@ -4471,9 +4493,6 @@ impl ChartApp {
                             self.sidebar_data_dirty = true;
                         }
                     }
-                    // Sub-pane overlay button visibility/hover (aux
-                    // counterpart of the split-mode overlay update).
-                    self.trading_center_overlay_hover(cid, &rect, x, y, inside);
                 }
             }
         }

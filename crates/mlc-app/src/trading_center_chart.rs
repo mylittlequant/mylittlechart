@@ -891,6 +891,9 @@ impl ChartApp {
     /// Hover update for the aux chart's sub-pane overlay buttons — the
     /// split-mode visibility/hovered-button logic reduced to one window.
     /// `inside == false` clears everything (cursor left the center rect).
+    /// Returns `true` while any overlay button is under the cursor — the
+    /// caller hides the crosshair then, mirroring the split path's
+    /// `any_button_hovered_split` rule.
     pub(crate) fn trading_center_overlay_hover(
         &mut self,
         cid: mlc_core::state::ChartId,
@@ -898,7 +901,7 @@ impl ChartApp {
         x: f64,
         y: f64,
         inside: bool,
-    ) {
+    ) -> bool {
         let layout = if inside { self.trading_center_layout(cid, rect) } else { None };
         let overlay_results = self
             .panel_app
@@ -908,14 +911,15 @@ impl ChartApp {
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
         let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) else {
-            return;
+            return false;
         };
         for state in window.sub_pane_overlay_states.iter_mut() {
             state.visible = false;
             state.hovered_button = None;
             state.hovered_left_button = None;
         }
-        let Some(layout) = layout else { return };
+        let Some(layout) = layout else { return false };
+        let mut any_button_hovered = false;
         for (layout_idx, pane_layout) in layout.sub_panes.iter().enumerate() {
             if pane_layout.content.contains(x, y) {
                 let real_idx = layout_idx;
@@ -952,12 +956,14 @@ impl ChartApp {
                     } else {
                         None
                     };
+                    any_button_hovered = hovered.is_some() || hovered_left.is_some();
                     window.sub_pane_overlay_states[real_idx].hovered_button = hovered;
                     window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
                 }
                 break;
             }
         }
+        any_button_hovered
     }
 
     /// Indicator legend overlay actions for the aux chart
