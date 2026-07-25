@@ -395,6 +395,16 @@ pub fn chart_toolbar_render_toolbars(
     symbol_quick_search: bool,
     active_exchange: Option<&str>,
     active_account_type: Option<&str>,
+    // Workspace-panel arc, Stage 4 (ON mode — `ProfileUiSettings::
+    // trading_panel_topbar_takeover` on AND focus is the Trading tab's
+    // container): drop every chart-semantic control-strip button — the
+    // topbar no longer represents a chart. `symbol_selector` stays (its
+    // text/click-target already retarget to the container at the call
+    // site) along with every session-global button (`main_menu`,
+    // `settings_menu`, `undo`, `redo`, `screenshot`). Same `retain`-by-id
+    // idiom `split_symbol_compare` already uses to drop `compare` below —
+    // no parallel composer.
+    suppress_chart_controls: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -689,7 +699,7 @@ pub fn chart_toolbar_render_toolbars(
             // clip/scroll accounting) applies to it for free. `false`/no
             // applicable starred entries -> zero items inserted, zero layout
             // shift from today.
-            if pin_granularity_favorites {
+            if pin_granularity_favorites && !suppress_chart_controls {
                 let quick_pick_items = granularity_quick_pick_items(
                     ctx,
                     active_chart_type,
@@ -732,6 +742,22 @@ pub fn chart_toolbar_render_toolbars(
             if !split_symbol_compare {
                 for section in &mut control_sections {
                     section.items.retain(|item| item.id() != Some("compare"));
+                }
+            }
+
+            // Workspace-panel arc, Stage 4 ON mode: the topbar represents
+            // the Trading tab's container, not a chart — drop every
+            // chart-semantic control. `symbol_selector` stays (retargeted
+            // at the call site); every session-global button stays too.
+            if suppress_chart_controls {
+                const CHART_SEMANTIC_IDS: [&str; 6] = [
+                    "compare", "timeframe_selector", "chart_type_selector",
+                    "indicators", "layout_menu", "presets_menu",
+                ];
+                for section in &mut control_sections {
+                    section.items.retain(|item| {
+                        !matches!(item.id(), Some(id) if CHART_SEMANTIC_IDS.contains(&id))
+                    });
                 }
             }
 

@@ -19,7 +19,7 @@ use mlc_app_layout::ui::widgets::types::{WidgetState, WidgetTheme};
 use mlc_app_layout::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
 use mlc_app_layout::ui::toolbar_render::ToolbarTheme;
 use mlc_core::state::command::ObjectCategory;
-use mlc_app_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
+use mlc_app_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones, LEAF_TAB_HEIGHT};
 use mlc_core::i18n::{SidebarKey, current_language};
 use uzor::input::InputCoordinator;
 use uzor::panels::DockPanel;
@@ -260,7 +260,6 @@ pub fn render_right_sidebar(
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    panel_source_label_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
@@ -268,6 +267,12 @@ pub fn render_right_sidebar(
     panel_col_visibility_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<Vec<bool>>,
     watchlist_column_config: &WatchlistColumnConfig,
     watchlist_color_flag_fn: &dyn Fn(&mlc_core::InstrumentAddress) -> Option<String>,
+    // Workspace-panel arc, Stage 4 (`ProfileUiSettings::trading_panel_
+    // topbar_takeover`). OFF (false, default): the Trading tab's header row
+    // draws its own symbol-search button (the "OFF mode" v1 control). ON:
+    // the topbar composition takes over instead (lib.rs `render_toolbar_
+    // only`), so the header button is redundant and suppressed here.
+    trading_panel_topbar_takeover: bool,
 ) -> RightSidebarResult {
     let panel = sidebar_state.right_panel;
 
@@ -428,6 +433,93 @@ pub fn render_right_sidebar(
         "right_sidebar_close".to_string(),
         WidgetRect::new(close_x, close_y, close_size, close_size),
     ));
+
+    // Trading tab: the leaf-tab content (color-tag square + "SYMBOL ·
+    // exchange · account_type" + gear) lives IN THE HEADER ROW now — the
+    // header IS the tab, not a floating overlay drawn over the body (owner
+    // directive). Reuses the exact same `render_leaf_tab` widget and pushes
+    // into the exact same `panel_overlay_zones` bucket every other free-slot
+    // leaf uses, just positioned in the header band instead of floating over
+    // the body — `lib.rs`'s generic `panel_overlay:{pid}:color_tag|gear`
+    // routing and the mouse-move hover-zone derivation (both keyed off
+    // `panel_overlay_zones` rects, not off WHERE the rect happens to sit)
+    // are untouched. The Auto/Pinned source badge that used to sit beside
+    // the floating tab is gone — legacy, removed entirely.
+    if panel == RightSidebarPanel::SlotTrading {
+        if let Some(idx) = panel.slot_index() {
+            let idx = idx as usize;
+            let leaf_item = sidebar_state.slot_dockings[idx]
+                .inner()
+                .tree()
+                .leaves()
+                .into_iter()
+                .find_map(|leaf| leaf.panels.get(leaf.active_tab).cloned().map(|p| (leaf.id, p)));
+            if let Some((leaf_id, item)) = leaf_item {
+                let is_focused = sidebar_state.focused_free_leaf == Some((idx, leaf_id));
+                let overlay_hover_zone = sidebar_state
+                    .free_leaf_overlay_hover
+                    .get(&(idx, leaf_id))
+                    .copied()
+                    .unwrap_or(LeafTabHoverZone::None);
+                let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
+                    .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+                let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
+                let tab_x = rect.x + 8.0;
+                let tab_y = rect.y + (header_height - LEAF_TAB_HEIGHT) / 2.0;
+
+                // OFF-mode v1 control (Stage 4): a symbol-search button next
+                // to the tab, reserved out of the tab's available width
+                // BEFORE it renders — the tab self-sizes to content anyway,
+                // but reserving the room up front keeps the button from
+                // ever overlapping a full-width tab. Suppressed when the
+                // topbar-takeover bool is on (ON mode composes the topbar
+                // instead — see `render_toolbar_only`).
+                let search_btn_size = 20.0;
+                let search_btn_gap = 4.0;
+                let search_reserved_w = if trading_panel_topbar_takeover {
+                    0.0
+                } else {
+                    search_btn_size + search_btn_gap
+                };
+                let tab_max_w = (close_x - close_pad - 8.0 - search_reserved_w - tab_x).max(0.0);
+                let hit_zones = render_leaf_tab(
+                    ctx,
+                    tab_x,
+                    tab_y,
+                    tab_max_w,
+                    &symbol,
+                    "",
+                    &exchange,
+                    &account_type,
+                    is_focused,
+                    overlay_hover_zone,
+                    color_tag,
+                    toolbar_theme,
+                );
+
+                if !trading_panel_topbar_takeover {
+                    let btn_x = hit_zones.tab_rect[0] + hit_zones.tab_rect[2] + search_btn_gap;
+                    let btn_y = tab_y + (LEAF_TAB_HEIGHT - search_btn_size) / 2.0;
+                    let btn_id = format!("trading_header:symbol_search:{}", item.panel_id().0);
+                    let btn_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(btn_id.as_str()));
+                    if btn_hovered {
+                        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                        ctx.fill_rounded_rect(btn_x, btn_y, search_btn_size, search_btn_size, 3.0);
+                    }
+                    draw_svg_icon(
+                        ctx, Icon::Search.svg(),
+                        btn_x + 3.0, btn_y + 3.0, search_btn_size - 6.0, search_btn_size - 6.0,
+                        if btn_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted },
+                    );
+                    let btn_rect = WidgetRect::new(btn_x, btn_y, search_btn_size, search_btn_size);
+                    input_coordinator.register(btn_id.as_str(), btn_rect, uzor::input::Sense::CLICK | uzor::input::Sense::HOVER);
+                    result.item_rects.push((btn_id, btn_rect));
+                }
+
+                result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones));
+            }
+        }
+    }
 
     // Alerts panel: add (+) button to the left of the close button.
     if panel == RightSidebarPanel::Alerts {
@@ -692,7 +784,6 @@ pub fn render_right_sidebar(
                 &mut result,
                 input_coordinator,
                 free_item_renderer,
-                panel_source_label_fn,  // source-mode badge ("Auto"/"Pinned") — Trading slot only
                 panel_dom_info_fn,
                 panel_color_tag_fn,
                 panel_sync_flags_fn,    // kept for API compat; currently unused in slot rendering
@@ -4003,11 +4094,6 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    // Source-mode badge label ("Auto" / "Pinned" / "Linked") for the
-    // Trading slot's restored overlay tab (W2, 2026-07-25) — the only
-    // consumer; every other slot kind ignores it (market-data panels sync
-    // via TagManager, not `SymbolSource`).
-    panel_source_mode_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<String>,
     panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     _panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
@@ -4073,11 +4159,15 @@ fn render_slot_panel(
 
     let focused_free_leaf = state.focused_free_leaf;
 
-    // SlotTrading renders zero per-leaf chrome — no control strip, no
-    // overlay tab, no leaf-close `[x]` (owner spec 2026-07-25: the trading
-    // container fills the whole tab; the only close affordance left is the
-    // sidebar-level `right_sidebar_close` `[x]`). The leaf/docking plumbing
-    // underneath is unchanged — only the drawn chrome disappears.
+    // SlotTrading renders zero per-leaf chrome — no control strip, no leaf
+    // overlay tab, no leaf-close `[x]` (owner spec: the trading container
+    // fills the whole tab; its color-tag square + symbol · exchange ·
+    // account_type + gear live in the SIDEBAR HEADER row instead — see
+    // `render_right_sidebar`'s header block — and the only close affordance
+    // left is the sidebar-level `right_sidebar_close` `[x]`). The
+    // Auto/Pinned source badge is gone entirely — legacy, removed. The
+    // leaf/docking plumbing underneath is unchanged — only the drawn chrome
+    // disappears.
     let is_trading_slot = crate::free_slot::SlotKind::from_index(slot_idx)
         == Some(crate::free_slot::SlotKind::Trading);
 
@@ -4093,60 +4183,6 @@ fn render_slot_panel(
 
             let slot_prefix = format!("slot:{}:leaf:{}", slot_idx, leaf_id.0);
             free_item_renderer(&item, (r.x, r.y, r.width, r.height), ctx, input_coordinator, &slot_prefix);
-
-            // ── Floating overlay source tab — the ONLY chrome the Trading
-            // tab keeps (owner spec 2026-07-25 W2): the SAME `render_leaf_tab`
-            // widget every other slot panel gets (symbol · exchange ·
-            // account_type + color tag + gear), positioned top-left,
-            // floating over the container's own content — there is no
-            // reserved control-strip row above it (v1 has no slot header at
-            // all). A small source-mode badge ("Auto"/"Pinned") is appended
-            // beside it — the per-leaf analogue of the stripped-for-Trading
-            // slot `[T]`/`[U]` rail toggle; click routes to `source_badge`.
-            let is_focused = focused_free_leaf == Some((slot_idx, leaf_id));
-            let overlay_hover_zone = state
-                .free_leaf_overlay_hover
-                .get(&(slot_idx, leaf_id))
-                .copied()
-                .unwrap_or(LeafTabHoverZone::None);
-            let (symbol, exchange, account_type) = panel_overlay_info_fn(&item)
-                .unwrap_or_else(|| (String::new(), String::new(), String::new()));
-            let color_tag = panel_color_tag_fn(&item).map(|c| [c[0], c[1], c[2], 1.0_f32]);
-            let hit_zones = render_leaf_tab(
-                ctx,
-                r.x as f64,
-                r.y as f64,
-                r.width as f64,
-                &symbol,
-                "",
-                &exchange,
-                &account_type,
-                is_focused,
-                overlay_hover_zone,
-                color_tag,
-                theme,
-            );
-            result.panel_overlay_zones.push((item.panel_id().0, leaf_id, hit_zones.clone()));
-
-            if let Some(label) = panel_source_mode_fn(&item) {
-                let badge_x = hit_zones.tab_rect[0] + hit_zones.tab_rect[2] + 4.0;
-                let badge_y = hit_zones.tab_rect[1];
-                let badge_h = hit_zones.tab_rect[3];
-                let badge_w = 44.0_f64;
-                let badge_id = format!("slot:{}:leaf:{}:source_badge", slot_idx, leaf_id.0);
-                let badge_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(badge_id.as_str()));
-                let is_pinned = label != "Auto";
-                ctx.set_fill_color(if is_pinned { &theme.accent } else if badge_hov { &theme.item_bg_hover } else { &theme.background });
-                ctx.fill_rounded_rect(badge_x, badge_y, badge_w, badge_h, 3.0);
-                ctx.set_font("10px sans-serif");
-                ctx.set_text_align(TextAlign::Center);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.set_fill_color(if is_pinned { &theme.item_text_active } else { &theme.item_text_muted });
-                ctx.fill_text(&label, badge_x + badge_w / 2.0, badge_y + badge_h / 2.0);
-                let badge_rect = WidgetRect::new(badge_x, badge_y, badge_w, badge_h);
-                input_coordinator.register(badge_id.as_str(), badge_rect, uzor::input::Sense::CLICK);
-                result.item_rects.push((badge_id, badge_rect));
-            }
 
             continue;
         }

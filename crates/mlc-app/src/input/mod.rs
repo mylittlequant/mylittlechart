@@ -415,6 +415,12 @@ impl ChartApp {
                 }
                 ChartInputTarget::ScaleCorner { leaf_id, button } => {
                     self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                    // Returns early below (no fallthrough to `handle_canvas_click`,
+                    // which owns the general chart-canvas-click focus write) — set
+                    // workspace focus back to the chart here explicitly.
+                    if let Some(cid) = self.panel_app.panel_grid.container_id_for_leaf(leaf_id) {
+                        self.workspace_focus = crate::focus::WorkspaceFocus::Chart(cid);
+                    }
                     // Handle the scale corner click on the correct leaf's window.
                     use mlc_core::ScaleCornerButton;
                     match button {
@@ -556,6 +562,14 @@ impl ChartApp {
                 // changes active leaf here.)
                 self.active_frame_layout = None;
             }
+        }
+
+        // A right-click on the chart (split or single-window) returns
+        // workspace focus to the chart, same as the left-click path in
+        // `handle_canvas_click` — mirrors the "make the window under the
+        // cursor active" comment above: this IS a chart-activation gesture.
+        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+            self.workspace_focus = crate::focus::WorkspaceFocus::Chart(cid);
         }
 
         let w = self.width as f64;

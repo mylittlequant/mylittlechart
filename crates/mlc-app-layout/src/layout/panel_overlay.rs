@@ -125,12 +125,17 @@ pub fn render_leaf_tab(
     const DOTS_CONTAINER_W_EXPANDED: f64 = 20.0;
     const ACCENT_BAR_W: f64 = 2.0;
 
-    // Collapse the dots container when the tab is not hovered — saves visible space.
-    let dots_w = if hovered_zone != LeafTabHoverZone::None {
-        DOTS_CONTAINER_W_EXPANDED
-    } else {
-        0.0
-    };
+    // Reserve the dots container width unconditionally — geometry (tab_rect,
+    // color_tag_rect, dots_rect, and text truncation width) must be
+    // hover-INDEPENDENT so registered hit-zones never move between the
+    // hovered/unhovered frame a click can land in (owner defect 2026-07-25:
+    // a click's hit-test runs against whichever frame's zones were last
+    // registered, which is not guaranteed to match the frame the pointer
+    // was hovering in — collapsing this to 0 when unhovered made every
+    // zone after it in the tab shift by up to 20px depending on timing).
+    // The gear GLYPH still only DRAWS when hovered (below); only its
+    // reserved layout space is now stable.
+    let dots_w = DOTS_CONTAINER_W_EXPANDED;
 
     let center_y = (y + TAB_HEIGHT / 2.0).round();
 

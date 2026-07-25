@@ -73,6 +73,11 @@ impl ChartApp {
                 // `pin_granularity_favorites` above.
                 split_symbol_compare: existing.ui.split_symbol_compare,
                 symbol_quick_search: existing.ui.symbol_quick_search,
+                // Topbar-takeover toggle (workspace-panel arc, Stage 4):
+                // mutated in-place via `toggle_trading_panel_topbar_takeover`
+                // at toggle time, same preserve-live-value pattern as
+                // `split_symbol_compare` above.
+                trading_panel_topbar_takeover: existing.ui.trading_panel_topbar_takeover,
             },
         }
     }

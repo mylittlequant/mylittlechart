@@ -75,11 +75,6 @@ impl SymbolSource {
         }
     }
 
-    /// Returns `true` if this source is `HyperFocus`.
-    pub fn is_hyper_focus(&self) -> bool {
-        matches!(self, Self::HyperFocus)
-    }
-
     /// Returns `true` if this source is `Fixed`.
     pub fn is_fixed(&self) -> bool {
         matches!(self, Self::Fixed { .. })
@@ -88,16 +83,5 @@ impl SymbolSource {
     /// Returns `true` if this source is `BoundToChart`.
     pub fn is_bound_to_chart(&self) -> bool {
         matches!(self, Self::BoundToChart { .. })
-    }
-
-    /// Short label suitable for display in UI controls.
-    ///
-    /// Returns `"Auto"` for `HyperFocus`, `"Pinned"` for `Fixed`, and `"Linked"` for `BoundToChart`.
-    pub fn display_label(&self) -> &str {
-        match self {
-            Self::HyperFocus => "Auto",
-            Self::Fixed { .. } => "Pinned",
-            Self::BoundToChart { .. } => "Linked",
-        }
     }
 }

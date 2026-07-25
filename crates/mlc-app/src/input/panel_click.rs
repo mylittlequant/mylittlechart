@@ -134,6 +134,19 @@ impl ChartApp {
             return;
         }
 
+        // === Trading tab header: OFF-mode symbol-search button (workspace-
+        // panel arc, Stage 4 — `render_right_sidebar`'s SlotTrading header
+        // block). Targets the container explicitly (rather than relying on
+        // whatever the last body click set) since the sidebar may have just
+        // opened with no prior body click yet.
+        if let Some(pid_str) = widget_id.strip_prefix("trading_header:symbol_search:") {
+            if let Ok(raw) = pid_str.parse::<u64>() {
+                self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(mlc_core::state::PanelId(raw));
+                self.open_symbol_search_modal_direct();
+            }
+            return;
+        }
+
         // === Watchlist panel header buttons ===
 
         if widget_id == "watchlist_open_modal" {
@@ -2112,53 +2125,6 @@ impl ChartApp {
                         // same way (the container forwards its own slot_prefix unchanged), so
                         // it matches this same widget-id shape — only the target store differs.
                         if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
-                            // --- slot:{idx}:leaf:{leaf_id}:source_badge — TradingContainer
-                            // source toggle (HyperFocus <-> Fixed-to-current-active-chart),
-                            // the per-leaf analogue of the stripped-for-Trading slot [T]/[U]
-                            // rail toggle (owner spec 2026-07-25 W2). A full rebind follows
-                            // immediately — no creation-time-only binding left for this path.
-                            if local_id == "source_badge" {
-                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
-                                    let leaf_id = uzor::panels::LeafId(raw);
-                                    let item_opt = self.sidebar_state.slot_dockings[idx]
-                                        .inner()
-                                        .tree()
-                                        .leaf(leaf_id)
-                                        .and_then(|l| l.active_panel().cloned());
-                                    if let Some(mlc_core::state::Panel::TradingContainer(pid)) = item_opt {
-                                        use mlc_app_panels::trading::SymbolSource;
-                                        let badge_cid = self.panel_app.panel_grid.active_container_id();
-                                        let currently_hyper = self.panels_store.trading_container.get(&pid)
-                                            .map(|s| s.source.is_hyper_focus())
-                                            .unwrap_or(true);
-                                        let new_source = if currently_hyper {
-                                            SymbolSource::Fixed {
-                                                symbol: badge_cid.and_then(|cid| self.symbol_for_chart(cid)).unwrap_or_default(),
-                                                exchange: badge_cid.and_then(|cid| self.exchange_for_chart(cid)).unwrap_or_default(),
-                                                account_type: badge_cid.and_then(|cid| self.account_type_for_chart(cid)).map(|at| at.to_string()).unwrap_or_default(),
-                                            }
-                                        } else {
-                                            SymbolSource::HyperFocus
-                                        };
-                                        if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
-                                            state.source = new_source.clone();
-                                        }
-                                        let active_resolved = badge_cid.map(|cid| mlc_app_panels::trading::ResolvedSymbol {
-                                            symbol: self.symbol_for_chart(cid).unwrap_or_default(),
-                                            exchange: self.exchange_for_chart(cid).unwrap_or_default(),
-                                            account_type: self.account_type_for_chart(cid).map(|at| at.to_string()).unwrap_or_default(),
-                                        });
-                                        let resolve_leaf = |_lid: u64| -> Option<mlc_app_panels::trading::ResolvedSymbol> { None };
-                                        if let Some(resolved) = new_source.resolve(active_resolved.as_ref(), &resolve_leaf) {
-                                            self.rebind_trading_container(pid, resolved);
-                                        }
-                                        self.sidebar_data_dirty = true;
-                                        self.autosave_snapshot();
-                                    }
-                                }
-                                return;
-                            }
-
                             if local_id.starts_with("oe:") {
                                 if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                     let leaf_id = uzor::panels::LeafId(raw);
@@ -2384,6 +2350,19 @@ impl ChartApp {
                                     .tree()
                                     .leaf(leaf_id)
                                     .and_then(|l| l.active_panel().cloned());
+                                // Workspace focus (2026-07 workspace-panel arc, Stage 3): a
+                                // click landing inside the Trading tab's container body is
+                                // one of the two gestures that set `WorkspaceFocus`
+                                // explicitly (the other is a chart-canvas click,
+                                // `handle_canvas_click`). This is the ONLY reachable body
+                                // click path for the Trading slot — `is_trading_slot`
+                                // rendering never registers the sibling `:focus` (no
+                                // `_content`) widget, only this one. Every other slot kind
+                                // (Dom/footprint/tape/...) leaves workspace focus alone —
+                                // they have no workspace-panel concept of their own.
+                                if let Some(mlc_core::state::Panel::TradingContainer(pid)) = &item_opt {
+                                    self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(*pid);
+                                }
                                 if let Some(item) = item_opt {
                                     use mlc_app_panels::trading::SymbolSource;
                                     use mlc_core::state::Panel;
@@ -3982,6 +3961,9 @@ impl ChartApp {
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
+                "trading_panel_topbar_takeover" => {
+                    self.toggle_trading_panel_topbar_takeover();
+                }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
@@ -4850,7 +4832,18 @@ impl ChartApp {
                             }
                         }
                         "gear" => {
-                            self.panel_app.open_tags_tabs();
+                            // Workspace-panel arc (Stage 3): the Trading tab's
+                            // gear (its header-row leaf tab, not a main-grid
+                            // chart leaf) must not pre-select the stale
+                            // last-active chart leaf — see
+                            // `open_tags_tabs_without_preselect`'s doc comment.
+                            let is_trading_container = self.panels_store.trading_container
+                                .contains_key(&mlc_core::state::PanelId(panel_id));
+                            if is_trading_container {
+                                self.panel_app.open_tags_tabs_without_preselect();
+                            } else {
+                                self.panel_app.open_tags_tabs();
+                            }
                         }
                         _ => {}
                     }
@@ -6138,6 +6131,23 @@ impl ChartApp {
         ui.split_symbol_compare = !ui.split_symbol_compare;
         drop(user_mut);
         self.autosave_snapshot();
+    }
+
+    /// Flip `ProfileUiSettings::trading_panel_topbar_takeover` and autosave —
+    /// the User Settings modal's General-tab checkbox (workspace-panel arc,
+    /// Stage 4 — owner spec 2026-07-25). Immediately updates the render-layer
+    /// mirror on `user_settings_state` so the checkbox reflects the flip the
+    /// same frame (mirrors `"diagnostics_toggle"`'s dual-write).
+    pub(crate) fn toggle_trading_panel_topbar_takeover(&mut self) {
+        let now_on = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.trading_panel_topbar_takeover = !ui.trading_panel_topbar_takeover;
+            ui.trading_panel_topbar_takeover
+        };
+        self.panel_app.user_settings_state.trading_panel_topbar_takeover = now_on;
+        self.autosave_snapshot();
+        eprintln!("[ChartApp] trading_panel_topbar_takeover = {}", now_on);
     }
 
     /// Route a click inside the `symbol_selector` inline fast-search

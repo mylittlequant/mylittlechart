@@ -429,6 +429,7 @@ impl ChartPanelApp {
         symbol_quick_search: bool,
         active_exchange: Option<&str>,
         active_account_type: Option<&str>,
+        suppress_chart_controls: bool,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
@@ -436,7 +437,7 @@ impl ChartPanelApp {
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls)
     }
 
     /// Render all chart-owned modals in a single call.
@@ -1013,6 +1014,19 @@ impl ChartPanelApp {
         if let Some(leaf_id) = self.panel_grid.docking().active_leaf() {
             self.overlay_settings_state.selected_node_id = Some(leaf_id.0);
         }
+    }
+
+    /// Open the Tags & Tabs modal without pre-selecting any node.
+    ///
+    /// Used when the gesture that opened it did not originate from a
+    /// main-grid chart leaf — e.g. the Trading tab's header gear
+    /// (workspace-panel arc Stage 3). `selected_node_id` is compared
+    /// against main-grid `LeafId`s only (no panel-identity concept exists
+    /// in the tags&tabs modal), so pre-selecting the stale last-active
+    /// chart leaf would mis-highlight an unrelated node. Honest minimal
+    /// behavior: open with nothing pre-selected.
+    pub fn open_tags_tabs_without_preselect(&mut self) {
+        self.tags_tabs_state.open();
     }
 
     /// Open the Tags & Tabs modal for a specific leaf (TABS sidebar, leaf highlighted).

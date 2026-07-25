@@ -368,6 +368,57 @@ fn render_general_tab(
         }
     }
 
+    // ── Trading tab topbar takeover (workspace-panel arc, Stage 4) ──────────
+    // No section banner of its own — mirrors the "Show Welcome Wizard" button
+    // below (a bare row, no header) rather than adding another localized
+    // SECTION key for a single niche toggle.
+    {
+        let row_h = 24.0;
+        let cb_size = 16.0;
+        let cb_x = x;
+        let cb_y = cy + (row_h - cb_size) / 2.0;
+
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cb_x, cb_y, cb_size, cb_size, 2.0);
+
+        if state.trading_panel_topbar_takeover {
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
+            ctx.fill_rounded_rect(cb_x + 3.0, cb_y + 3.0, cb_size - 6.0, cb_size - 6.0, 1.0);
+        }
+
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            UserSettingsKey::TradingPanelTopbarTakeover.get(current_language()),
+            cb_x + cb_size + 10.0,
+            cy + row_h / 2.0,
+        );
+
+        let desc_y = cy + row_h + 2.0;
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(
+            "Symbol/exchange controls move to the topbar while the Trading tab is focused.",
+            cb_x + cb_size + 10.0,
+            desc_y,
+        );
+
+        let toggle_rect = WidgetRect::new(cb_x, cy, available_w, row_h);
+        result.content_items.push(("trading_panel_topbar_takeover".to_string(), toggle_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:trading_panel_topbar_takeover",
+            uzor::types::Rect::new(cb_x, cy, available_w, row_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+
+        cy = desc_y + 15.0 + 16.0;
+    }
+
     // ── Version info (always shown at bottom) ─────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     ctx.set_fill_color("rgba(244,205,99,0.7)");

@@ -775,16 +775,26 @@ impl ChartApp {
 
                 match self.modal_state.current {
                     OpenModal::SymbolSearch => {
-                        // Hard cutover (2026-07-13 symbol-switch fix): this
-                        // arm used to hand-roll a byte-for-byte copy of the
-                        // `ApplySymbol` handler (drawings swap, instrument
-                        // rebind, unsubscribe, kline request, undo, sync
-                        // group, recalc, autosave) — which silently missed
-                        // every later addition to the canonical path, most
-                        // recently the trade-plane re-ignite (footprint/CVD
-                        // stayed dead after a modal symbol pick until a full
-                        // reload). One dispatch, one code path.
-                        if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                        // Workspace-panel arc (Stage 3): when the Trading
+                        // tab's container is the current workspace focus,
+                        // the search commit targets IT instead of the
+                        // active chart — see `commit_symbol_search_to_
+                        // trading_panel`'s doc comment for the color-sync
+                        // group mirror.
+                        if let Some(pid) = self.workspace_focus().trading_panel() {
+                            self.commit_symbol_search_to_trading_panel(
+                                pid, symbol_part, resolved_exchange.as_str(), &item_at_label,
+                            );
+                        } else if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
+                            // Hard cutover (2026-07-13 symbol-switch fix): this
+                            // arm used to hand-roll a byte-for-byte copy of the
+                            // `ApplySymbol` handler (drawings swap, instrument
+                            // rebind, unsubscribe, kline request, undo, sync
+                            // group, recalc, autosave) — which silently missed
+                            // every later addition to the canonical path, most
+                            // recently the trade-plane re-ignite (footprint/CVD
+                            // stayed dead after a modal symbol pick until a full
+                            // reload). One dispatch, one code path.
                             self.apply_symbol(chart_id, symbol_part, resolved_exchange.as_str(), &item_at_label);
                         }
                         self.modal_state.close();
@@ -978,6 +988,19 @@ impl ChartApp {
 
     /// Handle a click that landed on the chart canvas (not a widget).
     pub(super) fn handle_canvas_click(&mut self, x: f64, y: f64) {
+        // Any click that reaches the canvas returns workspace focus to the
+        // chart — even while the Trading tab is still open in the sidebar
+        // (owner directive, 2026-07 workspace-panel arc: the two are equal
+        // workspace panels, so focus follows whichever the user clicked,
+        // not whichever the sidebar happens to display). Single-window mode
+        // never calls `set_active_leaf` before reaching here, so this is
+        // the one hook that covers it; split mode's `set_active_leaf`
+        // callers (`on_click`'s `ScaleCorner` branch, `on_right_click`) set
+        // it themselves since they return before reaching this function.
+        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+            self.workspace_focus = crate::focus::WorkspaceFocus::Chart(cid);
+        }
+
         // 1. Check scale corner buttons first.
         //
         // Walk per-leaf zones. In single-window mode the map has one entry

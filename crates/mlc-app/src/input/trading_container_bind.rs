@@ -1,54 +1,77 @@
-//! `TradingContainer` full symbol rebind (quality arc W2, 2026-07-25).
+//! `TradingContainer` full symbol rebind (quality arc W2, 2026-07-25;
+//! color-sync group follow, 2026-07-25 header rework).
 //!
 //! v1 bound a container's hosted DOM/OrderEntry/PositionManager/TradeLog to
 //! a (symbol, exchange, account_type) triple exactly once, at spawn or
-//! hydration time — switching the source afterward (or, for a `HyperFocus`
-//! container, switching the active chart) never re-subscribed the feeds or
-//! re-bound the trading snapshot. [`ChartApp::rebind_trading_container`] is
-//! the one place that now does the whole job; it is called from:
-//! (a) the overlay source-badge click (`panel_click.rs`), and
-//! (b) [`ChartApp::poll_trading_container_hyperfocus_follow`], run once per
-//!     tick — there is no `ActiveChartChanged` event anywhere in the
-//!     codebase to hook into (checked), so this is a cheap per-tick compare
-//!     instead of an event reaction.
+//! hydration time — switching the source afterward never re-subscribed the
+//! feeds or re-bound the trading snapshot. [`ChartApp::rebind_trading_container`]
+//! is the one place that now does the whole job; it is called from:
+//! (a) the color-picker swatch click when the container joins a color group
+//!     (`color_picker.rs`), (b) [`ChartApp::apply_key_to_panels_in_group`]
+//!     whenever any member chart of the container's group changes symbol,
+//!     and (c) [`ChartApp::poll_trading_container_group_follow`], run once
+//!     per tick as a safety net — there is no `ActiveChartChanged` event
+//!     anywhere in the codebase to hook into (checked), so this is a cheap
+//!     per-tick compare instead of an event reaction.
+//!
+//! Owner directive (2026-07-25): the Auto/Pinned `SymbolSource` toggle is
+//! LEGACY and gone from the Trading tab. Symbol sync works ONLY through
+//! color-sync groups now — a container that is a member of a real
+//! (non-`auto_created`) color-tag group follows THAT group's symbol; a
+//! container with no group (or only its own private auto-created group)
+//! is edited by hand and is never touched automatically.
 
 use crate::ChartApp;
 
 impl ChartApp {
-    /// Per-tick HyperFocus follow for every live `TradingContainer`: when a
-    /// container's source mode is `HyperFocus` (the default "follow the
-    /// active chart" mode) and this window's active-chart
-    /// (symbol, exchange, account_type) has moved since the container's
+    /// Per-tick color-group follow for every live `TradingContainer`: when a
+    /// container is a member of a real (non-`auto_created`) color-tag group
+    /// and that group's resolved instrument has moved since the container's
     /// last bind, this re-runs the full [`Self::rebind_trading_container`]
-    /// pipeline.
-    pub(crate) fn poll_trading_container_hyperfocus_follow(&mut self) {
+    /// pipeline. Containers with no group membership — or only their own
+    /// private auto-created group — are skipped entirely: no group means
+    /// manual symbol editing only.
+    pub(crate) fn poll_trading_container_group_follow(&mut self) {
         if self.panels_store.trading_container.is_empty() {
             return;
         }
 
-        let active_cid = self.panel_app.panel_grid.active_container_id();
-        let Some(cid) = active_cid else { return };
-        let active = mlc_app_panels::trading::ResolvedSymbol {
-            symbol: self.symbol_for_chart(cid).unwrap_or_default(),
-            exchange: self.exchange_for_chart(cid).unwrap_or_default(),
-            account_type: self.account_type_for_chart(cid).map(|at| at.to_string()).unwrap_or_default(),
+        use mlc_core::ids::SyncMemberId;
+
+        let due: Vec<(mlc_core::state::PanelId, mlc_app_panels::trading::ResolvedSymbol)> = {
+            let tags = self.core.tags();
+            let bubbles = self.core.bubbles();
+            self.panels_store.trading_container.iter()
+                .filter_map(|(pid, s)| {
+                    let gid = tags.tag_for_member(SyncMemberId::Panel(pid.0))?;
+                    let tag = tags.get(gid)?;
+                    if tag.auto_created {
+                        // Private/no group — manual editing only, never touched here.
+                        return None;
+                    }
+                    let instrument = bubbles.instrument(gid)?;
+                    let resolved = mlc_app_panels::trading::ResolvedSymbol {
+                        symbol: instrument.address.symbol,
+                        exchange: instrument.address.exchange,
+                        account_type: instrument.address.account_type.as_label().to_string(),
+                    };
+                    if resolved.symbol.is_empty() || resolved.exchange.is_empty() {
+                        return None;
+                    }
+                    if s.symbol != resolved.symbol
+                        || s.exchange != resolved.exchange
+                        || s.account_type != resolved.account_type
+                    {
+                        Some((*pid, resolved))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         };
-        if active.symbol.is_empty() || active.exchange.is_empty() {
-            return;
-        }
 
-        let due: Vec<mlc_core::state::PanelId> = self.panels_store.trading_container.iter()
-            .filter(|(_, s)| {
-                s.source.is_hyper_focus()
-                    && (s.symbol != active.symbol
-                        || s.exchange != active.exchange
-                        || s.account_type != active.account_type)
-            })
-            .map(|(pid, _)| *pid)
-            .collect();
-
-        for pid in due {
-            self.rebind_trading_container(pid, active.clone());
+        for (pid, resolved) in due {
+            self.rebind_trading_container(pid, resolved);
         }
     }
 
@@ -143,6 +166,49 @@ impl ChartApp {
             state.trade_log.set_snapshot(snap.clone());
             state.orders_log.set_snapshot(snap.clone());
             state.risk_calculator.set_snapshot(snap);
+        }
+    }
+
+    /// Commit a symbol-search pick to a `TradingContainer` (workspace-panel
+    /// arc, Stage 3): the search modal's commit handler routes here instead
+    /// of [`Self::apply_symbol`] whenever [`crate::focus::WorkspaceFocus`]
+    /// is `TradingPanel(pid)`.
+    ///
+    /// Mirrors what a manual chart symbol pick does
+    /// (`sync_group::propagate_symbol_to_sync_group`'s group-update tail):
+    /// if the container is a member of a real (non-`auto_created`) color
+    /// group, a manual pick is not a private edit — the WHOLE group's
+    /// canonical instrument moves and [`Self::apply_key_to_panels_in_group`]
+    /// re-derives every member (charts and sibling containers alike) from
+    /// it, exactly like it does when a grouped chart's symbol changes.
+    /// A container with no group — or only its own private auto-created
+    /// group — has nobody to keep in sync, so it is rebound directly.
+    pub(crate) fn commit_symbol_search_to_trading_panel(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+    ) {
+        use mlc_core::ids::SyncMemberId;
+
+        let real_group = {
+            let tags = self.core.tags();
+            tags.tag_for_member(SyncMemberId::Panel(pid.0))
+                .filter(|&gid| tags.get(gid).map(|t| !t.auto_created).unwrap_or(false))
+        };
+
+        if let Some(gid) = real_group {
+            self.core.bubbles_mut().set_instrument(
+                gid, symbol.to_string(), exchange.to_string(), account_type.to_string(),
+            );
+            self.apply_key_to_panels_in_group(gid);
+        } else {
+            self.rebind_trading_container(pid, mlc_app_panels::trading::ResolvedSymbol {
+                symbol: symbol.to_string(),
+                exchange: exchange.to_string(),
+                account_type: account_type.to_string(),
+            });
         }
     }
 }

@@ -1189,6 +1189,15 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             // equivalent compositing.
             st.chart.render_overlay(&mut ctx);
             st.chart.render_modal_layer(&mut ctx, now_ms);
+            // Panel overlay popups (sync color grid targeting a panel, e.g. the
+            // Trading tab's color picker) — composited after the modal layer so
+            // they are never covered by it, mirrors scene_builder.rs:284-300.
+            // Without this call the popup opens in state (sync_color_grid.is_open())
+            // but paints zero pixels on wasm — same class of bug as the missing
+            // render_overlay/log-bridge/cold-apply-drain wasm-parity gaps.
+            if st.chart.has_panel_overlay_popups() {
+                st.chart.render_panel_overlay_popups(&mut ctx);
+            }
         }
         ctx.restore();
     }

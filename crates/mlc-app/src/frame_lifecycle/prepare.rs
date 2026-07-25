@@ -140,6 +140,10 @@ impl ChartApp {
         };
         // Sync diagnostics flag so the checkbox reflects the current state.
         self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
+        // Sync the topbar-takeover bool (workspace-panel arc, Stage 4) so its
+        // checkbox reflects the persisted profile value.
+        self.panel_app.user_settings_state.trading_panel_topbar_takeover =
+            self.core.user().profile().ui.trading_panel_topbar_takeover;
         // Sync data_load settings into user_settings_state for the DATA & CACHE sliders.
         // Only update the cached values when the slider is not being dragged so the
         // handle does not snap back to the committed value on every frame during drag.

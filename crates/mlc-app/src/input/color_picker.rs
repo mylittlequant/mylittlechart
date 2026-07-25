@@ -570,6 +570,7 @@ impl ChartApp {
                         if !same_color {
                             self.disconnect_member(member);
                             let existing_tag = self.core.tags().find_tag_by_color(new_color);
+                            let is_new_tag = existing_tag.is_none();
                             let target_gid = match existing_tag {
                                 Some(gid) => gid,
                                 None => self.create_tagged_bubble(
@@ -584,6 +585,40 @@ impl ChartApp {
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]
                             );
+
+                            // TradingContainer: color-sync groups are now the ONLY
+                            // symbol-follow mechanism (Auto/Pinned source badge
+                            // removed). Joining a group must rebind immediately —
+                            // not wait for the next active-chart-change /
+                            // propagate_symbol tick to reach this group.
+                            let tc_pid = mlc_core::state::PanelId(panel_id);
+                            let tc_current: Option<(String, String, String)> = self.panels_store
+                                .trading_container
+                                .get(&tc_pid)
+                                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone()));
+                            if let Some((cur_symbol, cur_exchange, cur_account_type)) = tc_current {
+                                if is_new_tag && !cur_symbol.is_empty() {
+                                    // Brand-new tag: seed it from the joining container's
+                                    // own current instrument instead of leaving it blank —
+                                    // mirrors the chart-side new-group seed in
+                                    // `sync_join_color_group_inner`.
+                                    self.core.bubbles_mut().set_instrument(
+                                        target_gid, cur_symbol, cur_exchange, cur_account_type,
+                                    );
+                                }
+                                let resolved = self.core.bubbles().instrument(target_gid)
+                                    .map(|instrument| mlc_app_panels::trading::ResolvedSymbol {
+                                        symbol: instrument.address.symbol,
+                                        exchange: instrument.address.exchange,
+                                        account_type: instrument.address.account_type.as_label().to_string(),
+                                    });
+                                if let Some(resolved) = resolved {
+                                    if !resolved.symbol.is_empty() && !resolved.exchange.is_empty() {
+                                        self.rebind_trading_container(tc_pid, resolved);
+                                    }
+                                }
+                            }
+
                             self.sidebar_data_dirty = true;
                             self.autosave_snapshot();
                         }

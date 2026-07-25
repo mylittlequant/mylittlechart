@@ -563,6 +563,20 @@ pub struct ProfileUiSettings {
     /// toggle — no daemon/headless consumer reads this.
     #[serde(default = "default_true")]
     pub symbol_quick_search: bool,
+
+    /// When `true`, the top toolbar's composition swaps to the Trading
+    /// tab's container while it is the current workspace focus: a symbol
+    /// selector targeting the container, its exchange/account_type display,
+    /// and chart-semantic controls (timeframe picker, chart-type selector,
+    /// indicators button, ...) suppressed — global controls (settings,
+    /// undo/redo, screenshot, ...) stay. `false` (default) keeps today's
+    /// behavior: the topbar always derives from the active chart, and the
+    /// Trading tab's own header row carries its one control (a symbol-search
+    /// button) instead (workspace-panel arc, Stage 4 — owner spec
+    /// 2026-07-25). Purely a toolbar-layout presentation toggle — no
+    /// daemon/headless consumer reads this.
+    #[serde(default)]
+    pub trading_panel_topbar_takeover: bool,
 }
 
 fn default_true() -> bool {
@@ -590,6 +604,7 @@ impl ProfileUiSettings {
             pin_granularity_favorites: false,
             split_symbol_compare: false,
             symbol_quick_search: true,
+            trading_panel_topbar_takeover: false,
         }
     }
 }

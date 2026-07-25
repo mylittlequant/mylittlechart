@@ -3044,6 +3044,11 @@ pub struct UserSettingsState {
     /// Whether the periodic RecalcMode diagnostic log is enabled.
     /// Synced from ChartApp.diagnostics_enabled before each render.
     pub diagnostics_enabled: bool,
+    /// Whether the Trading tab's container takes over the topbar composition
+    /// while it is the current workspace focus (workspace-panel arc, Stage 4).
+    /// Synced from `ProfileUiSettings::trading_panel_topbar_takeover` before
+    /// each render.
+    pub trading_panel_topbar_takeover: bool,
     /// Whether the internal Agent API server is enabled.
     pub server_enabled: bool,
     /// Port the server listens on.
@@ -3199,6 +3204,7 @@ impl Default for UserSettingsState {
             recalc_mode_label: "Per Frame".to_string(),
             language: "en".to_string(),
             diagnostics_enabled: false,
+            trading_panel_topbar_takeover: false,
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),

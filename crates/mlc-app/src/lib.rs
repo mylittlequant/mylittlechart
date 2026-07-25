@@ -28,6 +28,7 @@ pub mod chart_container_leaf;
 pub mod chart_panel_bridge;
 pub mod chart_panel_state;
 pub mod chart_state;
+pub mod focus;
 pub mod frame_lifecycle;
 pub mod input;
 pub mod chart_panel_app;
@@ -413,6 +414,12 @@ pub struct ChartApp {
 
     /// Sidebar panel state — tracks which right-side panel is open and its content.
     pub sidebar_state: mlc_app_sidebar_content::state::SidebarState,
+
+    /// Raw stored workspace focus (chart canvas vs. the Trading tab's
+    /// container) — read via [`Self::workspace_focus`], never directly.
+    /// See `focus.rs` module docs for the write sites and the self-heal
+    /// read-time fallback.
+    pub(crate) workspace_focus: focus::WorkspaceFocus,
 
     /// Watchlist UI/presentation state — active list tab, column config,
     /// group color/collapsed, sort-order snapshot. Doctrine 1B split from
@@ -1982,6 +1989,9 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            // Corrected on first frame by `workspace_focus()`'s live
+            // `active_container_id()` fallback — see field doc.
+            workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
@@ -2370,6 +2380,9 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            // Corrected on first frame by `workspace_focus()`'s live
+            // `active_container_id()` fallback — see field doc.
+            workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
@@ -2913,6 +2926,9 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
+            // Corrected on first frame by `workspace_focus()`'s live
+            // `active_container_id()` fallback — see field doc.
+            workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
@@ -5785,7 +5801,7 @@ impl ChartApp {
         // The caller composites the previously-built toolbar scene on top.
         let out_last_toolbar_result: Option<mlc_core::ChartToolbarRenderResult> = if !skip_toolbar_draw {
             // S2.7.1: read active symbol/timeframe from branch_meta.
-            let (active_sym_str, active_tf_str, active_gid, active_exch_str, active_at_str) = {
+            let (mut active_sym_str, active_tf_str, active_gid, mut active_exch_str, mut active_at_str) = {
                 let cid = self.panel_app.panel_grid.active_container_id();
                 let sym = cid.and_then(|c| self.symbol_for_chart(c))
                     .map(String::from).unwrap_or_default();
@@ -5801,6 +5817,18 @@ impl ChartApp {
                     .map(|a| a.as_label().to_string()).unwrap_or_default();
                 (sym, tf, gid, exch, at)
             };
+            // Workspace-panel arc — same derivation swap + suppress-list
+            // as `render_toolbar_only`'s sibling block; see its comments.
+            let trading_focus_pid = self.workspace_focus().trading_panel();
+            if let Some(pid) = trading_focus_pid {
+                if let Some(tc) = self.panels_store.trading_container.get(&pid) {
+                    active_sym_str = tc.symbol.clone();
+                    active_exch_str = tc.exchange.clone();
+                    active_at_str = tc.account_type.clone();
+                }
+            }
+            let suppress_chart_controls = trading_focus_pid.is_some()
+                && self.core.user().profile().ui.trading_panel_topbar_takeover;
             let bubble_guard_tb = self.core.bubbles();
             let tags_guard_tb = self.core.tags();
             let presets_guard_tb = self.core.presets();
@@ -5866,6 +5894,7 @@ impl ChartApp {
                 symbol_quick_search,
                 Some(active_exch_str.as_str()),
                 Some(active_at_str.as_str()),
+                suppress_chart_controls,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -6142,26 +6171,6 @@ impl ChartApp {
                 &mut |item, rect, ctx, coord, slot_prefix| {
                     panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
                 },
-                &|item: &mlc_core::state::Panel| -> Option<String> {
-                    // Source-mode badge label ("Auto" / "Pinned" / "Linked")
-                    // — `SymbolSource::display_label()` verbatim. Only
-                    // consumer is the Trading slot's restored overlay-tab
-                    // badge (`render_slot_panel`'s `is_trading_slot` branch —
-                    // W2, 2026-07-25); every other slot kind's panels are
-                    // market-data panels synced via TagManager (no
-                    // `SymbolSource` field) and return `None` here. This
-                    // closure previously formatted a composite
-                    // "exchange:symbol:account" label that had zero
-                    // consumers anywhere in the codebase.
-                    use mlc_core::state::Panel;
-                    match item {
-                        Panel::OrderEntry(id) => panels_store.order_entry.get(id)
-                            .map(|s| s.source.display_label().to_string()),
-                        Panel::TradingContainer(id) => panels_store.trading_container.get(id)
-                            .map(|s| s.source.display_label().to_string()),
-                        _ => None,
-                    }
-                },
                 &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
                     use mlc_core::state::Panel;
                     match item {
@@ -6245,7 +6254,21 @@ impl ChartApp {
                         .and_then(|l| l.get_color_flag(address))
                         .map(|s| s.to_string())
                 },
+                self.core.user().profile().ui.trading_panel_topbar_takeover,
             );
+
+            // Register panel overlay zones (color tag + gear) here — NOT only
+            // in `render_sidebar_only()`. `render_sidebar_only()` is a
+            // vello-only dirty-scene-cache helper (called from
+            // `scene_builder.rs` AFTER this function, same open frame); the
+            // web/headless shells call `render()` (== this function +
+            // `apply_render_output`) and NEVER call `render_sidebar_only()` —
+            // registering only there left `panel_overlay:{pid}:color_tag|gear`
+            // completely unreachable on wasm (rects computed, widgets never
+            // registered, clicks silently swallowed). Safe to also run again
+            // inside `render_sidebar_only()` for the vello path — re-registering
+            // the same ids/rects on the same frame is idempotent.
+            self.register_panel_overlay_zones(&sidebar_result);
 
             Some(sidebar_result)
         } else {
@@ -6500,7 +6523,7 @@ impl ChartApp {
         };
 
         // S2.7.1: read active symbol/timeframe from branch_meta.
-        let (active_sym_str, active_tf_str, active_gid, active_exch_str, active_at_str) = {
+        let (mut active_sym_str, active_tf_str, active_gid, mut active_exch_str, mut active_at_str) = {
             let cid = self.panel_app.panel_grid.active_container_id();
             let sym = cid.and_then(|c| self.symbol_for_chart(c))
                 .map(String::from).unwrap_or_default();
@@ -6515,6 +6538,26 @@ impl ChartApp {
                 .map(|a| a.as_label().to_string()).unwrap_or_default();
             (sym, tf, gid, exch, at)
         };
+        // Workspace-panel arc: when focus is the Trading tab's container,
+        // the topbar's symbol/exchange/account_type button derives from the
+        // container instead of the active chart — opening symbol-search
+        // from it commits back to the container (reader 1,
+        // `commit_symbol_search_to_trading_panel`). Timeframe/chart-type/
+        // allowed-timeframes stay chart-derived regardless (Stage 4's
+        // suppress-list below hides those buttons entirely instead of
+        // re-deriving their content for a container that has neither).
+        let trading_focus_pid = self.workspace_focus().trading_panel();
+        if let Some(pid) = trading_focus_pid {
+            if let Some(tc) = self.panels_store.trading_container.get(&pid) {
+                active_sym_str = tc.symbol.clone();
+                active_exch_str = tc.exchange.clone();
+                active_at_str = tc.account_type.clone();
+            }
+        }
+        // Stage 4 ON mode: topbar-takeover bool AND focus on the Trading
+        // tab's container together suppress every chart-semantic button.
+        let suppress_chart_controls = trading_focus_pid.is_some()
+            && self.core.user().profile().ui.trading_panel_topbar_takeover;
 
         let bubble_guard_tb2 = self.core.bubbles();
         let tags_guard_tb2 = self.core.tags();
@@ -6575,6 +6618,7 @@ impl ChartApp {
             symbol_quick_search,
             Some(active_exch_str.as_str()),
             Some(active_at_str.as_str()),
+            suppress_chart_controls,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -6695,19 +6739,6 @@ impl ChartApp {
             &mut |item, rect, ctx, coord, slot_prefix| {
                 panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
             },
-            &|item: &mlc_core::state::Panel| -> Option<String> {
-                // Source-mode badge label — see the sibling closure in
-                // `render_to_scene` (same semantics, same sole consumer:
-                // the Trading slot's overlay-tab badge).
-                use mlc_core::state::Panel;
-                match item {
-                    Panel::OrderEntry(id) => panels_store.order_entry.get(id)
-                        .map(|s| s.source.display_label().to_string()),
-                    Panel::TradingContainer(id) => panels_store.trading_container.get(id)
-                        .map(|s| s.source.display_label().to_string()),
-                    _ => None,
-                }
-            },
             &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
                 use mlc_core::state::Panel;
                 match item {
@@ -6790,6 +6821,7 @@ impl ChartApp {
                     .and_then(|l| l.get_color_flag(address))
                     .map(|s| s.to_string())
             },
+            self.core.user().profile().ui.trading_panel_topbar_takeover,
         );
 
         // Persist agent terminal rect for hover-focus.
@@ -6839,6 +6871,22 @@ impl ChartApp {
 
         // Register panel overlay zones (color tag + gear) on InputCoordinator
         // so on_click routes through process_click → dispatch_panel_click.
+        // Also done in `render_to_scene` (the path every shell, incl. wasm,
+        // actually calls) — see that call site for why. Re-registering here
+        // for the vello dirty-scene-cache path is idempotent.
+        self.register_panel_overlay_zones(&sidebar_result);
+
+        self.last_sidebar_result = Some(sidebar_result);
+    }
+
+    /// Register the color-tag square + gear hit zones for every free-slot
+    /// leaf's overlay tab (`panel_overlay_zones`) on the InputCoordinator's
+    /// `"toolbar"` layer, so `on_click` → `process_click` →
+    /// `dispatch_panel_click`'s `panel_overlay:{pid}:color_tag|gear` branch
+    /// can reach them. Must run on every render path that produces a
+    /// `RightSidebarResult` — `render_to_scene` (used by every shell) and
+    /// `render_sidebar_only` (vello dirty-scene-cache path) both call this.
+    fn register_panel_overlay_zones(&mut self, sidebar_result: &mlc_app_sidebar_content::render::RightSidebarResult) {
         for (panel_id, _leaf_id, zones) in &sidebar_result.panel_overlay_zones {
             let [cx, cy, cw, ch] = zones.color_tag_rect;
             if cw > 0.0 && ch > 0.0 {
@@ -6859,8 +6907,6 @@ impl ChartApp {
                 );
             }
         }
-
-        self.last_sidebar_result = Some(sidebar_result);
     }
 
     /// Render panel-specific overlay popups that must appear above the sidebar.
@@ -6947,6 +6993,29 @@ impl ChartApp {
     // Modal layer (drawn ABOVE the crosshair overlay)
     // -------------------------------------------------------------------------
 
+    /// Right-sidebar width to reserve when computing the modal/search-overlay
+    /// world rect (`ChartModalLayout` / `ChartScreenArea`).
+    ///
+    /// Every other right-sidebar panel is a passive display panel, so modals
+    /// and the search overlay narrow their world by the sidebar's width to
+    /// avoid drawing under it. The Trading tab is different (owner directive,
+    /// 2026-07 workspace-panel arc): it is an equal interactive workspace
+    /// panel, not a passive sidebar tab, so modals/search may position over
+    /// it — treat the sidebar as closed for modal-layout purposes ONLY. The
+    /// sidebar itself keeps its real width; only this derived layout input
+    /// changes. Single source for both `render_modal_layer`'s
+    /// `ChartModalLayout` and the search overlay's `ChartScreenArea` — they
+    /// both consume `content_rect`/`modal_right_edge`, which are derived from
+    /// this one value, so there is nothing to fork per-modal.
+    fn effective_modal_sidebar_w(&self) -> f64 {
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
+        if self.sidebar_state.right_panel == RightSidebarPanel::SlotTrading {
+            0.0
+        } else {
+            self.sidebar_state.right_width()
+        }
+    }
+
     /// Draw all modal / popup / dialog layers into `ctx` and store their results
     /// directly into `self` (no `RenderOutput` — same contract as
     /// `render_toolbar_only` / `render_sidebar_only`).
@@ -6976,7 +7045,7 @@ impl ChartApp {
         {
             0.0
         } else {
-            self.sidebar_state.right_width()
+            self.effective_modal_sidebar_w()
         };
         let window_rect = LayoutRect::new(0.0, 0.0, w, h);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
@@ -7934,10 +8003,19 @@ impl ChartApp {
                 s.exchange = exchange.clone();
                 s.account_type = account_type.clone();
             }
-            if let Some(s) = self.panels_store.trading_container.get_mut(&panel_id) {
-                s.symbol = symbol.clone();
-                s.exchange = exchange.clone();
-                s.account_type = account_type.clone();
+            // TradingContainer: color-sync groups are the container's ONLY
+            // symbol-follow mechanism now (Auto/Pinned source badge removed).
+            // A naive field write here is not enough — the container's hosted
+            // DOM/OrderEntry/PositionManager/TradeLog need the FULL rebind
+            // (unsubscribe old feeds, clear DOM aggregation, resubscribe,
+            // refresh trading snapshot). `rebind_trading_container` already
+            // no-ops when `resolved` matches the container's current binding.
+            if self.panels_store.trading_container.contains_key(&panel_id) {
+                self.rebind_trading_container(panel_id, mlc_app_panels::trading::ResolvedSymbol {
+                    symbol: symbol.clone(),
+                    exchange: exchange.clone(),
+                    account_type: account_type.clone(),
+                });
             }
             // Multi-DOM symbol sync: unsubscribe all exchanges on old symbol,
             // re-subscribe on new symbol.  Exchange roster stays the same — only

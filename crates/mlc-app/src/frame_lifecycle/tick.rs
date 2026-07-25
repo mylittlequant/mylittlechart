@@ -368,11 +368,11 @@ impl ChartApp {
             state.orders_log.sync_from_snapshot();
             state.risk_calculator.sync_from_snapshot();
         }
-        // HyperFocus follow (W2, 2026-07-25): rebind any `HyperFocus`
-        // container whose resolved instrument no longer matches the active
-        // chart's. See `trading_container_bind.rs` doc comment for why this
-        // is a per-tick compare instead of an `ActiveChartChanged` reaction.
-        self.poll_trading_container_hyperfocus_follow();
+        // Color-sync group follow: rebind any `TradingContainer` whose color
+        // group's resolved instrument no longer matches its current binding.
+        // See `trading_container_bind.rs` doc comment for why this is a
+        // per-tick compare instead of an `ActiveChartChanged` reaction.
+        self.poll_trading_container_group_follow();
 
         // ── Watchlist refresh trigger ─────────────────────────────────────────
         // mini_ticker writes are passthrough at the BackendCore layer (DashMap,
