@@ -16,6 +16,13 @@ pub struct TradingSnapshot {
     pub recent_fills: VecDeque<Fill>,
     pub last_error: Option<String>,
     pub order_in_flight: bool,
+    /// Bounded (100) log of orders that reached a terminal state (Filled /
+    /// Canceled / Rejected / Expired), newest last — the orders-log "history"
+    /// tab (distinct from `recent_fills`, which is fill-level, not
+    /// order-level: one order can carry multiple fills, and a canceled order
+    /// never fills at all). Fed by `PaperEngine::history` for paper sessions,
+    /// by `TradingManager`'s own bucket for live sessions.
+    pub order_history: VecDeque<Order>,
 }
 
 impl Default for TradingSnapshot {
@@ -31,6 +38,7 @@ impl Default for TradingSnapshot {
             recent_fills: VecDeque::new(),
             last_error: None,
             order_in_flight: false,
+            order_history: VecDeque::new(),
         }
     }
 }

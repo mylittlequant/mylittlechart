@@ -140,7 +140,9 @@ impl ChartApp {
         if let Some(snap) = snapshot {
             state.order_entry.set_snapshot(snap.clone());
             state.position_manager.set_snapshot(snap.clone());
-            state.trade_log.set_snapshot(snap);
+            state.trade_log.set_snapshot(snap.clone());
+            state.orders_log.set_snapshot(snap.clone());
+            state.risk_calculator.set_snapshot(snap);
         }
     }
 }

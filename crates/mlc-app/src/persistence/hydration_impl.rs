@@ -1012,6 +1012,15 @@ impl ChartApp {
                         }
                     };
 
+                    // Helper: convert PersistedBottomTab -> BottomTab (W3, 2026-07-25).
+                    let convert_bottom_tab = |tab: mlc_core::preset::preset::PersistedBottomTab| -> mlc_app_panels::trading::trading::trading_container::BottomTab {
+                        match tab {
+                            mlc_core::preset::preset::PersistedBottomTab::Positions => mlc_app_panels::trading::trading::trading_container::BottomTab::Positions,
+                            mlc_core::preset::preset::PersistedBottomTab::Orders => mlc_app_panels::trading::trading::trading_container::BottomTab::Orders,
+                            mlc_core::preset::preset::PersistedBottomTab::Trades => mlc_app_panels::trading::trading::trading_container::BottomTab::Trades,
+                        }
+                    };
+
                     // Helper: convert PersistedSymbolSource  ->  SymbolSource.
                     let convert_source = |src: &mlc_core::preset::preset::PersistedSymbolSource| -> mlc_app_panels::trading::SymbolSource {
                         match src {
@@ -1224,7 +1233,7 @@ impl ChartApp {
                                 }
                                 PersistedFreeItemKind::TradingContainer {
                                     source, tick_size, market_price,
-                                    right_ratio, bottom_ratio, right_split, bottom_split,
+                                    right_ratio, bottom_ratio, right_split, active_tab,
                                 } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
                                         let converted_source = convert_source(source);
@@ -1270,7 +1279,7 @@ impl ChartApp {
                                         s.right_ratio = *right_ratio;
                                         s.bottom_ratio = *bottom_ratio;
                                         s.right_split = *right_split;
-                                        s.bottom_split = *bottom_split;
+                                        s.active_tab = convert_bottom_tab(*active_tab);
                                         // Mirror (exchange, account_type) onto the container AND its
                                         // hosted dom/order_entry children — same post-construction
                                         // wiring as the "trading_container" arm of
@@ -1303,7 +1312,9 @@ impl ChartApp {
                                                     let snap = tm.snapshot_for(eid, at);
                                                     s.order_entry.set_snapshot(snap.clone());
                                                     s.position_manager.set_snapshot(snap.clone());
-                                                    s.trade_log.set_snapshot(snap);
+                                                    s.trade_log.set_snapshot(snap.clone());
+                                                    s.orders_log.set_snapshot(snap.clone());
+                                                    s.risk_calculator.set_snapshot(snap);
                                                 }
                                             }
                                         }

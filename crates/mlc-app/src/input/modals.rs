@@ -2107,6 +2107,7 @@ impl ChartApp {
         self.input_coordinator.borrow().text_fields().focused().is_some()
             || self.any_blocking_modal_open()
             || self.any_order_entry_editing()
+            || self.any_risk_calculator_editing()
     }
 
     /// Compute the shared +20px right / -20px up screen-space offset (in

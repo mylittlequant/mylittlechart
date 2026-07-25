@@ -98,6 +98,7 @@ pub struct PanelTheme {
     pub rc_profit: String,
     pub rc_good_rr: String,
     pub rc_input_bg: String,
+    pub rc_input_border: String,
 
     // === Trading Container ===
     pub tc_bg: String,
@@ -185,6 +186,7 @@ impl PanelTheme {
             rc_profit:   "#2ea043ff".to_string(),
             rc_good_rr:  "#ffde00ff".to_string(),
             rc_input_bg: "#0d1117ff".to_string(),
+            rc_input_border: "#30363dff".to_string(),
 
             // Trading Container
             tc_bg:        "#0a0a0fff".to_string(),

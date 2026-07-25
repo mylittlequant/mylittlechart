@@ -120,6 +120,23 @@ impl Default for PersistedSymbolSource {
     }
 }
 
+/// Local mirror of `mlc_app_panels::trading::trading::trading_container::BottomTab`
+/// — kept here for the same reason as [`PersistedSymbolSource`]: the `chart`
+/// crate has no dependency on `zengeld-panels`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersistedBottomTab {
+    Positions,
+    Orders,
+    Trades,
+}
+
+impl Default for PersistedBottomTab {
+    fn default() -> Self {
+        Self::Positions
+    }
+}
+
 /// Mirror of `crate::state::Panel` kept in the preset module for JSON
 /// persistence — schema has no runtime dependency on `sidebar-content`.
 ///
@@ -192,18 +209,22 @@ pub enum PersistedFreeItemKind {
         market_price: f64,
         /// v1 region ratios (quality arc W1, 2026-07-25) — right column
         /// width fraction, bottom strip height fraction, OrderEntry|
-        /// RiskCalculator split, PositionManager|TradeLog split. All
-        /// `#[serde(default)]` so presets saved before this field existed
-        /// still restore (falling back to the same defaults
-        /// `TradingContainerState::new` uses).
+        /// RiskCalculator split. All `#[serde(default)]` so presets saved
+        /// before this field existed still restore (falling back to the
+        /// same defaults `TradingContainerState::new` uses).
         #[serde(default = "default_tc_right_ratio")]
         right_ratio: f64,
         #[serde(default = "default_tc_bottom_ratio")]
         bottom_ratio: f64,
         #[serde(default = "default_tc_right_split")]
         right_split: f64,
-        #[serde(default = "default_tc_bottom_split")]
-        bottom_split: f64,
+        /// Bottom-strip active tab (quality arc W3, 2026-07-25 — the
+        /// PositionManager|TradeLog fixed split was replaced by a
+        /// Positions|Orders|Trades tab strip). `#[serde(default)]` so
+        /// presets saved before this field existed restore on the
+        /// `Positions` tab.
+        #[serde(default)]
+        active_tab: PersistedBottomTab,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled
@@ -247,7 +268,6 @@ fn default_multi_dom_depth() -> usize { 25 }
 fn default_tc_right_ratio() -> f64 { 0.3 }
 fn default_tc_bottom_ratio() -> f64 { 0.25 }
 fn default_tc_right_split() -> f64 { 0.55 }
-fn default_tc_bottom_split() -> f64 { 0.5 }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.

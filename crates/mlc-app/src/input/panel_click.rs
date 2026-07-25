@@ -2186,6 +2186,102 @@ impl ChartApp {
                                 return;
                             }
 
+                            // --- bstrip: — bottom-strip tab switch (W3, 2026-07-25) ---
+                            // Fully local — TradingContainerState::handle_click already
+                            // does the whole job (flips `active_tab`), no app-layer
+                            // follow-up needed. Only ever hosted inside a container.
+                            if local_id.starts_with("bstrip:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use mlc_app_panels::panel_trait::TradingPanel;
+                                    if let Some(mlc_core::state::Panel::TradingContainer(pid)) = item_opt {
+                                        let handled = self.panels_store.trading_container.get_mut(&pid)
+                                            .map(|state| state.handle_click(local_id, x, y))
+                                            .unwrap_or(false);
+                                        if handled {
+                                            self.sidebar_data_dirty = true;
+                                        }
+                                    }
+                                }
+                                return;
+                            }
+
+                            // --- orders: — OrdersLog cancel / cancel-all clicks
+                            // (W3, 2026-07-25). Only ever hosted inside a container
+                            // (no standalone OrdersLog panel kind) — the click sets a
+                            // pending flag on `OrdersLogState`, then
+                            // `process_orders_log_pending_cancels` issues the actual
+                            // `TradingMut::cancel_order` call(s).
+                            if local_id.starts_with("orders:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use mlc_app_panels::panel_trait::TradingPanel;
+                                    if let Some(mlc_core::state::Panel::TradingContainer(pid)) = item_opt {
+                                        let handled = self.panels_store.trading_container.get_mut(&pid)
+                                            .map(|state| state.handle_click(local_id, x, y))
+                                            .unwrap_or(false);
+                                        if handled {
+                                            self.sidebar_data_dirty = true;
+                                            self.process_orders_log_pending_cancels(pid);
+                                        }
+                                    }
+                                }
+                                return;
+                            }
+
+                            // --- risk_calculator: — RiskCalculator editable-field
+                            // clicks + the "Apply Size" button (W5, 2026-07-25).
+                            // Standalone RiskCalculator panels have no OrderEntry
+                            // sibling to apply into — Apply computes but has nowhere
+                            // to write, matching this panel's pre-arc unwired state.
+                            if local_id.starts_with("risk_calculator:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use mlc_app_panels::panel_trait::TradingPanel;
+                                    match item_opt {
+                                        Some(mlc_core::state::Panel::RiskCalculator(pid)) => {
+                                            let handled = self.panels_store.risk_calculator.get_mut(&pid)
+                                                .map(|state| state.handle_click(local_id, x, y))
+                                                .unwrap_or(false);
+                                            if handled {
+                                                self.sidebar_data_dirty = true;
+                                                if let Some(state) = self.panels_store.risk_calculator.get_mut(&pid) {
+                                                    state.apply_requested = false;
+                                                }
+                                            }
+                                        }
+                                        Some(mlc_core::state::Panel::TradingContainer(pid)) => {
+                                            let handled = self.panels_store.trading_container.get_mut(&pid)
+                                                .map(|state| state.handle_click(local_id, x, y))
+                                                .unwrap_or(false);
+                                            if handled {
+                                                self.sidebar_data_dirty = true;
+                                                if local_id == "risk_calculator:apply" {
+                                                    self.apply_risk_calculator_size_in_container(pid);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                return;
+                            }
+
                             // --- Multi-DOM editor clicks ---
                             // local_id: "multi_dom:header" | "multi_dom:editor:*"
                             // These may trigger bridge subscribe/unsubscribe.
@@ -5130,7 +5226,9 @@ impl ChartApp {
                         if let Some(state) = self.panels_store.trading_container.get_mut(&pid) {
                             state.order_entry.set_snapshot(snap.clone());
                             state.position_manager.set_snapshot(snap.clone());
-                            state.trade_log.set_snapshot(snap);
+                            state.trade_log.set_snapshot(snap.clone());
+                            state.orders_log.set_snapshot(snap.clone());
+                            state.risk_calculator.set_snapshot(snap);
                         }
                     }
                 }
@@ -5439,6 +5537,94 @@ impl ChartApp {
                 }
             }
         }
+    }
+
+    /// Round a quantity to a sane precision (6 decimals) — used when writing
+    /// a computed value (risk-calc position size) into another panel's
+    /// field, so it never carries raw floating-point noise.
+    fn round_qty(q: f64) -> f64 {
+        (q * 1_000_000.0).round() / 1_000_000.0
+    }
+
+    /// Issue the actual `TradingMut::cancel_order` call(s) for whatever
+    /// `OrdersLogState::pending_cancel`/`pending_cancel_all` a container's
+    /// "orders:cancel*" click just set (see `OrdersLogState` module doc for
+    /// why this panel can't call `TradingMut` itself). Cancel-All loops a
+    /// single-order cancel over every currently open order — the paper
+    /// engine only ever implements `CancelScope::Single` (see
+    /// `TradingManager::cancel_order`), so there is no batched "cancel all"
+    /// to route to.
+    fn process_orders_log_pending_cancels(&mut self, pid: mlc_core::state::PanelId) {
+        let Some(state) = self.panels_store.trading_container.get_mut(&pid) else { return };
+        let cancel_all = state.orders_log.pending_cancel_all;
+        state.orders_log.pending_cancel_all = false;
+        let single = state.orders_log.pending_cancel.take();
+
+        let order_ids: Vec<String> = if cancel_all {
+            state.orders_log.open_orders.iter().map(|o| o.id.clone()).collect()
+        } else if let Some(id) = single {
+            vec![id]
+        } else {
+            Vec::new()
+        };
+        if order_ids.is_empty() {
+            return;
+        }
+
+        let exchange_str = state.exchange.clone();
+        let account_type_str = state.account_type.clone();
+        let raw_symbol = state.symbol.clone();
+
+        let eid = digdigdig3::ExchangeId::from_str(&exchange_str).unwrap_or(self.active_exchange);
+        let at = crate::account_type_from_label(&account_type_str);
+        let symbol = digdigdig3::core::utils::SymbolNormalizer::from_exchange(eid, &raw_symbol, at)
+            .unwrap_or_else(|_| digdigdig3::Symbol::with_raw("", "", raw_symbol.clone()));
+
+        let Some(mut tm) = self.core.trading_mut() else {
+            sglog!("[trading] cancel failed: trading unavailable");
+            return;
+        };
+        for order_id in &order_ids {
+            let req = mlc_backend_trading_engine::CancelRequest {
+                scope: mlc_backend_trading_engine::CancelScope::Single { order_id: order_id.clone() },
+                symbol: Some(symbol.clone()),
+                account_type: at,
+            };
+            let result = tm.cancel_order(eid, at, req);
+            match &result {
+                Ok(()) => sglog!("[trading] cancel OK {} exchange={} account_type={}", order_id, exchange_str, account_type_str),
+                Err(e) => sglog!("[trading] cancel FAILED {}: {}", order_id, e),
+            }
+        }
+    }
+
+    /// Apply a container's RiskCalculator computed position size (and, for
+    /// an empty Limit price, its entry price) into the sibling OrderEntry —
+    /// the "risk_calculator:apply" click's actual effect (the panel itself
+    /// only sets `apply_requested`, see `RiskCalculatorState` module doc).
+    fn apply_risk_calculator_size_in_container(&mut self, pid: mlc_core::state::PanelId) {
+        let Some(state) = self.panels_store.trading_container.get_mut(&pid) else { return };
+        if !state.risk_calculator.apply_requested {
+            return;
+        }
+        state.risk_calculator.apply_requested = false;
+        if !state.risk_calculator.inputs_ready() || state.risk_calculator.position_size <= 0.0 {
+            return;
+        }
+
+        let position_size = Self::round_qty(state.risk_calculator.position_size);
+        let entry_price = state.risk_calculator.entry_price;
+
+        state.order_entry.quantity = position_size;
+        if matches!(state.order_entry.order_type, mlc_app_panels::trading::trading::order_entry::OrderType::Limit)
+            && state.order_entry.price.is_none()
+            && entry_price > 0.0
+        {
+            state.order_entry.price = Some(entry_price);
+        }
+        state.order_entry.recalc_estimated();
+        state.order_entry.validate();
+        sglog!("[trading] risk-calc apply size={:.6} entry={:.4}", position_size, entry_price);
     }
 
     /// Resolve a `timeframe_selector` dropdown item id (stripped of its

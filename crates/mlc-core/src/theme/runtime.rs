@@ -219,6 +219,10 @@ pub struct RuntimeSeriesColors {
     pub hollow_down: String,
 }
 
+fn default_rc_input_border() -> String {
+    "#30363dff".to_string()
+}
+
 fn default_footprint_buy() -> String {
     "#26a69a".to_string()
 }
@@ -360,6 +364,8 @@ pub struct RuntimeTradingColors {
     pub rc_profit: String,
     pub rc_good_rr: String,
     pub rc_input_bg: String,
+    #[serde(default = "default_rc_input_border")]
+    pub rc_input_border: String,
 
     // Trading Container
     pub tc_bg: String,
@@ -431,6 +437,7 @@ impl Default for RuntimeTradingColors {
             rc_profit:   "#2ea043ff".to_string(),
             rc_good_rr:  "#ffde00ff".to_string(),
             rc_input_bg: "#0d1117ff".to_string(),
+            rc_input_border: default_rc_input_border(),
 
             // Trading Container
             tc_bg:        "#0a0a0fff".to_string(),

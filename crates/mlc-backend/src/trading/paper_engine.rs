@@ -7,7 +7,7 @@
 //! live orderbook mid/bbo pulled from the shared `DataBridge` — no real
 //! exchange order ever leaves the process.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use web_time::SystemTime;
 use web_time::UNIX_EPOCH;
 use mlc_backend_trading_engine::{
@@ -42,7 +42,15 @@ pub struct PaperEngine {
     /// by `on_connector_ready`).
     fill_tx: tokio::sync::mpsc::UnboundedSender<((ExchangeId, AccountType), Fill)>,
     next_order_id: u64,
+    /// Bounded (100) log of orders that reached a terminal state (Filled /
+    /// Canceled), newest last. Read by `TradingManager::publish_snapshot`
+    /// into `TradingSnapshot::order_history` — the orders-log "history" tab.
+    history: VecDeque<Order>,
 }
+
+/// Cap for [`PaperEngine::history`] — mirrors the 100-entry cap already used
+/// for `recent_fills` in `TradingManager`.
+const PAPER_ORDER_HISTORY_CAP: usize = 100;
 
 impl PaperEngine {
     pub fn new(
@@ -62,7 +70,22 @@ impl PaperEngine {
             positions: PositionTracker::new(true),
             fill_tx,
             next_order_id: 1,
+            history: VecDeque::new(),
         }
+    }
+
+    /// Push a terminal-state order into the bounded history log, evicting
+    /// the oldest entry past `PAPER_ORDER_HISTORY_CAP`.
+    fn push_history(&mut self, order: Order) {
+        self.history.push_back(order);
+        if self.history.len() > PAPER_ORDER_HISTORY_CAP {
+            self.history.pop_front();
+        }
+    }
+
+    /// Bounded terminal-order history (Filled / Canceled), newest last.
+    pub fn history(&self) -> &VecDeque<Order> {
+        &self.history
     }
 
     pub fn place_order_sync(&mut self, req: OrderRequest) -> TradingResult<Order> {
@@ -134,6 +157,7 @@ impl PaperEngine {
                     time_in_force: req.time_in_force,
                 };
                 self.orders.upsert(order.clone());
+                self.push_history(order.clone());
                 Ok(order)
             }
 
@@ -334,7 +358,8 @@ impl PaperEngine {
             order.average_price = Some(fill_price);
             order.commission = Some(fee);
             order.updated_at = Some(now);
-            self.orders.upsert(order);
+            self.orders.upsert(order.clone());
+            self.push_history(order);
         }
 
         for (sym, (best_bid, best_ask)) in &prices {
@@ -368,6 +393,7 @@ impl PaperEngine {
         order.status = OrderStatus::Canceled;
         order.updated_at = Some(now_ms());
         self.orders.upsert(order.clone());
+        self.push_history(order.clone());
         Ok(order)
     }
 

@@ -50,6 +50,16 @@ pub struct OrderEntryState {
 
     /// Account info for validation
     pub available_balance: f64,
+    /// Current position size for `self.symbol` (abs quantity), synced from
+    /// the snapshot's positions — SELL validates against this (spot: you
+    /// can't sell more base asset than you hold), not `available_balance`
+    /// (which is the quote-asset balance).
+    pub position_qty: f64,
+    /// Reference price for quick-qty math and Limit/Stop price prefill —
+    /// the container's DOM mid (best_bid+best_ask)/2, pushed in once per
+    /// tick via `sync_reference_price` (see `trading_container_bind.rs` /
+    /// `tick.rs` for the wiring choice). `None` until the DOM has a BBO.
+    pub reference_price: Option<f64>,
 
     /// Quick quantity buttons (% of balance or position)
     pub quick_qty_options: Vec<f32>, // e.g., [0.25, 0.5, 0.75, 1.0]
@@ -111,6 +121,8 @@ impl OrderEntryState {
             time_in_force: TimeInForce::GTC,
             leverage: None,
             available_balance: 0.0,
+            position_qty: 0.0,
+            reference_price: None,
             quick_qty_options: vec![0.25, 0.5, 0.75, 1.0],
             estimated_cost: 0.0,
             estimated_fee: 0.0,
@@ -146,9 +158,19 @@ impl OrderEntryState {
             return false;
         }
 
-        // Check balance
-        if self.estimated_cost > self.available_balance {
-            return false;
+        // Check balance/position — SELL spends the base asset (position),
+        // BUY spends the quote asset (available_balance).
+        match self.side {
+            OrderSide::Buy => {
+                if self.estimated_cost > self.available_balance {
+                    return false;
+                }
+            }
+            OrderSide::Sell => {
+                if self.quantity > self.position_qty {
+                    return false;
+                }
+            }
         }
 
         // No validation errors
@@ -179,24 +201,57 @@ impl OrderEntryState {
         format!("${:.2}", self.estimated_fee)
     }
 
-    /// Get quick quantity buttons with labels and values
+    /// Get quick quantity buttons with labels and values. BUY sizes off
+    /// `available_balance` (the effective price — the typed Limit price, or
+    /// `reference_price` for Market/when no price is typed yet); SELL sizes
+    /// off `position_qty` — the paper engine only ever lets you sell what
+    /// you hold (spot), so a % of position is the honest quick-qty for SELL.
     pub fn quick_qty_values(&self) -> Vec<(String, f64)> {
+        let effective_price = self.price.or(self.reference_price).unwrap_or(0.0);
         self.quick_qty_options
             .iter()
             .map(|pct| {
                 let label = format!("{}%", (pct * 100.0) as u32);
-                let qty = if let Some(price) = self.price {
-                    (self.available_balance * (*pct as f64)) / price
-                } else {
-                    0.0
+                let qty = match self.side {
+                    OrderSide::Buy => {
+                        if effective_price > 0.0 {
+                            (self.available_balance * (*pct as f64)) / effective_price
+                        } else {
+                            0.0
+                        }
+                    }
+                    OrderSide::Sell => self.position_qty * (*pct as f64),
                 };
                 (label, qty)
             })
             .collect()
     }
 
+    /// Recompute `estimated_cost` / `estimated_fee` / `post_order_balance`
+    /// from the current price/quantity/order_type/available_balance. Called
+    /// after every field commit and quick-qty/tab-switch click, plus once at
+    /// the top of `validate()` and `sync_from_snapshot()` as a safety net —
+    /// idempotent and cheap, so calling it more than strictly necessary is
+    /// harmless. Fee rate (0.1%) mirrors `PaperEngine`'s own fee constant.
+    pub fn recalc_estimated(&mut self) {
+        let effective_price = match self.order_type {
+            OrderType::Market | OrderType::StopMarket => self.reference_price.or(self.price).unwrap_or(0.0),
+            OrderType::Limit | OrderType::StopLimit => self.price.unwrap_or(0.0),
+        };
+        self.estimated_cost = effective_price * self.quantity;
+        self.estimated_fee = self.estimated_cost * 0.001;
+        self.post_order_balance = (self.available_balance - self.estimated_cost).max(0.0);
+    }
+
+    /// Push a fresh reference price (container DOM mid) in — see
+    /// `reference_price` doc.
+    pub fn sync_reference_price(&mut self, price: Option<f64>) {
+        self.reference_price = price;
+    }
+
     /// Validate order and populate errors vector
     pub fn validate(&mut self) {
+        self.recalc_estimated();
         self.errors.clear();
         // Fresh validation pass supersedes whatever was shown before —
         // any leftover snapshot-error display state is stale now.
@@ -214,23 +269,25 @@ impl OrderEntryState {
             self.errors.push("Stop orders require a stop price".to_string());
         }
 
-        if self.estimated_cost > self.available_balance {
-            self.errors.push(format!(
-                "Insufficient balance: need {} but have {}",
-                self.format_estimated_cost(),
-                format_currency(self.available_balance)
-            ));
+        match self.side {
+            OrderSide::Buy => {
+                if self.estimated_cost > self.available_balance {
+                    self.errors.push(format!(
+                        "Insufficient balance: need {} but have {}",
+                        self.format_estimated_cost(),
+                        format_currency(self.available_balance)
+                    ));
+                }
+            }
+            OrderSide::Sell => {
+                if self.quantity > self.position_qty {
+                    self.errors.push(format!(
+                        "Insufficient position: need {:.6} but have {:.6}",
+                        self.quantity, self.position_qty
+                    ));
+                }
+            }
         }
-    }
-
-    /// Calculate estimated cost for the order
-    pub fn estimated_cost(&self) -> f64 {
-        let price = match self.order_type {
-            OrderType::Market | OrderType::StopMarket => self.price.unwrap_or(0.0), // Would use market price
-            OrderType::Limit | OrderType::StopLimit => self.price.unwrap_or(0.0),
-        };
-
-        price * self.quantity
     }
 
     /// Format quantity with appropriate precision
@@ -266,6 +323,13 @@ impl OrderEntryState {
             .map(|b| b.free)
             .fold(0.0_f64, f64::max);
 
+        // Current position size for this symbol — what a SELL validates
+        // against (spot: you can only sell what you hold).
+        self.position_qty = snap.positions.iter()
+            .find(|p| p.symbol == self.symbol)
+            .map(|p| p.quantity.abs())
+            .unwrap_or(0.0);
+
         // Update submitting state from order_in_flight
         if !snap.order_in_flight && self.submitting {
             self.submitting = false;
@@ -295,8 +359,8 @@ impl OrderEntryState {
             }
         }
 
-        // Recalculate post_order_balance
-        self.post_order_balance = (self.available_balance - self.estimated_cost).max(0.0);
+        drop(snap);
+        self.recalc_estimated();
     }
 
     /// Check if cursor should be visible (500ms blink cycle)
@@ -450,6 +514,8 @@ const OE_TITLE_HEIGHT: f32 = 22.0;
 const OE_TOGGLE_HEIGHT: f32 = 28.0;
 const OE_TAB_HEIGHT: f32 = 22.0;
 const OE_FIELD_HEIGHT: f32 = 22.0;
+const OE_QQ_HEIGHT: f32 = 20.0;
+const OE_TIF_HEIGHT: f32 = 20.0;
 const OE_SUBMIT_HEIGHT: f32 = 30.0;
 const OE_PAD: f32 = 6.0;
 const OE_ERROR_HEIGHT: f32 = 16.0;
@@ -649,6 +715,66 @@ impl TradingPanel for OrderEntryState {
         );
         cursor_y += OE_FIELD_HEIGHT;
 
+        // Quick-qty % buttons — BUY sizes off available balance, SELL off
+        // current position (see `quick_qty_values` doc).
+        {
+            let qq_values = self.quick_qty_values();
+            let btn_w = w / qq_values.len().max(1) as f32;
+            for (i, (label, _qty)) in qq_values.iter().enumerate() {
+                let btn_x = x + i as f32 * btn_w;
+                ctx.set_fill_color(&theme.oe_tab_inactive);
+                ctx.fill_rect(btn_x as f64, cursor_y as f64, btn_w as f64, OE_QQ_HEIGHT as f64);
+                ctx.set_fill_color(&theme.text_muted);
+                ctx.set_font("9px sans-serif");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(label, (btn_x + btn_w / 2.0) as f64, (cursor_y + OE_QQ_HEIGHT / 2.0) as f64);
+                coordinator.register(
+                    format!("{}:oe:qq:{}", slot_prefix, i).as_str(),
+                    uzor::Rect::new(btn_x as f64, cursor_y as f64, btn_w as f64, OE_QQ_HEIGHT as f64),
+                    uzor::input::Sense::CLICK,
+                );
+                if i + 1 < qq_values.len() {
+                    ctx.set_fill_color(&theme.separator);
+                    ctx.fill_rect((btn_x + btn_w - 1.0) as f64, cursor_y as f64, 1.0, OE_QQ_HEIGHT as f64);
+                }
+            }
+        }
+        cursor_y += OE_QQ_HEIGHT;
+
+        // TIF selector — meaningless for Market (paper engine always fills
+        // Market immediately), so hidden there; GTC stays the default under
+        // the hood regardless.
+        if self.order_type != OrderType::Market {
+            let tifs: &[(&str, TimeInForce)] = &[
+                ("GTC", TimeInForce::GTC),
+                ("IOC", TimeInForce::IOC),
+                ("FOK", TimeInForce::FOK),
+            ];
+            let tif_w = w / tifs.len() as f32;
+            for (i, (label, tif)) in tifs.iter().enumerate() {
+                let btn_x = x + i as f32 * tif_w;
+                let is_active = self.time_in_force == *tif;
+                ctx.set_fill_color(if is_active { &theme.oe_tab_active } else { &theme.oe_tab_inactive });
+                ctx.fill_rect(btn_x as f64, cursor_y as f64, tif_w as f64, OE_TIF_HEIGHT as f64);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.set_font("9px sans-serif");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(label, (btn_x + tif_w / 2.0) as f64, (cursor_y + OE_TIF_HEIGHT / 2.0) as f64);
+                coordinator.register(
+                    format!("{}:oe:tif:{}", slot_prefix, i).as_str(),
+                    uzor::Rect::new(btn_x as f64, cursor_y as f64, tif_w as f64, OE_TIF_HEIGHT as f64),
+                    uzor::input::Sense::CLICK,
+                );
+                if i + 1 < tifs.len() {
+                    ctx.set_fill_color(&theme.separator);
+                    ctx.fill_rect((btn_x + tif_w - 1.0) as f64, cursor_y as f64, 1.0, OE_TIF_HEIGHT as f64);
+                }
+            }
+            cursor_y += OE_TIF_HEIGHT;
+        }
+
         if let Some(lev) = self.leverage {
             draw_field(ctx, cursor_y, "Leverage:", &format!("{}x", lev));
             cursor_y += OE_FIELD_HEIGHT;
@@ -668,17 +794,31 @@ impl TradingPanel for OrderEntryState {
         if self.estimated_cost > 0.0 {
             draw_field(ctx, cursor_y, "Est. Cost:", &self.format_estimated_cost());
             cursor_y += OE_FIELD_HEIGHT;
+
+            let post_bal_str = if self.post_order_balance >= 1_000_000.0 {
+                format!("${:.2}M", self.post_order_balance / 1_000_000.0)
+            } else if self.post_order_balance >= 1_000.0 {
+                format!("${:.2}K", self.post_order_balance / 1_000.0)
+            } else {
+                format!("${:.2}", self.post_order_balance)
+            };
+            draw_field(ctx, cursor_y, "Post-Order Bal:", &post_bal_str);
+            cursor_y += OE_FIELD_HEIGHT;
         }
 
-        let error_area_h = self.errors.len() as f32 * OE_ERROR_HEIGHT;
-        let remaining = y + h - cursor_y - error_area_h;
-
-        if remaining >= OE_SUBMIT_HEIGHT {
-            let submit_y = cursor_y + (remaining - OE_SUBMIT_HEIGHT).max(0.0);
-
-            let submit_color = match self.side {
-                OrderSide::Buy => &theme.oe_buy_button,
-                OrderSide::Sell => &theme.oe_sell_button,
+        // Submit button sits right after the fields with one padding gap —
+        // NOT bottom-pinned (the old `remaining`-fill placement wasted a
+        // large empty gap whenever fields/errors didn't fill the panel).
+        let submit_y = cursor_y + OE_PAD;
+        if submit_y + OE_SUBMIT_HEIGHT <= y + h {
+            let valid = self.is_valid();
+            let submit_color = if valid {
+                match self.side {
+                    OrderSide::Buy => &theme.oe_buy_button,
+                    OrderSide::Sell => &theme.oe_sell_button,
+                }
+            } else {
+                &theme.oe_tab_inactive
             };
 
             ctx.set_fill_color(submit_color);
@@ -698,9 +838,13 @@ impl TradingPanel for OrderEntryState {
                 }
             };
 
-            let submit_text_color = match self.side {
-                OrderSide::Buy => &theme.oe_buy_button_text,
-                OrderSide::Sell => &theme.oe_sell_button_text,
+            let submit_text_color = if valid {
+                match self.side {
+                    OrderSide::Buy => &theme.oe_buy_button_text,
+                    OrderSide::Sell => &theme.oe_sell_button_text,
+                }
+            } else {
+                &theme.text_muted
             };
             ctx.set_fill_color(submit_text_color);
             ctx.set_font("13px sans-serif");
@@ -711,15 +855,26 @@ impl TradingPanel for OrderEntryState {
             cursor_y = submit_y + OE_SUBMIT_HEIGHT;
         }
 
-        for error in &self.errors {
-            if cursor_y + OE_ERROR_HEIGHT > y + h {
-                break;
+        // Fixed-height status strip under submit — always reserves exactly
+        // one row (whether or not there is an error) so the submit button's
+        // position never jumps as the error count changes. Shows only the
+        // first/most-relevant error, truncated so it never wraps.
+        cursor_y += OE_PAD / 2.0;
+        if cursor_y + OE_ERROR_HEIGHT <= y + h {
+            if let Some(error) = self.errors.first() {
+                const MAX_ERROR_CHARS: usize = 56;
+                let truncated: String = if error.chars().count() > MAX_ERROR_CHARS {
+                    let head: String = error.chars().take(MAX_ERROR_CHARS).collect();
+                    format!("{}\u{2026}", head)
+                } else {
+                    error.clone()
+                };
+                ctx.set_fill_color(&theme.sell_bright);
+                ctx.set_font("9px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&truncated, (x + OE_PAD) as f64, (cursor_y + OE_ERROR_HEIGHT / 2.0) as f64);
             }
-            ctx.set_fill_color(&theme.sell_bright);
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(error, (x + OE_PAD) as f64, (cursor_y + OE_ERROR_HEIGHT / 2.0) as f64);
             cursor_y += OE_ERROR_HEIGHT;
         }
 
@@ -744,6 +899,36 @@ impl TradingPanel for OrderEntryState {
                         2 => OrderType::StopLimit,
                         3 => OrderType::StopMarket,
                         _ => self.order_type,
+                    };
+                }
+                // Price prefill: seed an empty Limit/Stop price field from
+                // the live BBO reference price the container pushes in each
+                // tick — never overwrites a price the user already typed.
+                if matches!(self.order_type, OrderType::Limit | OrderType::StopLimit) && self.price.is_none() {
+                    self.price = self.reference_price;
+                }
+                if matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) && self.stop_price.is_none() {
+                    self.stop_price = self.reference_price;
+                }
+                self.recalc_estimated();
+                true
+            }
+            s if s.starts_with("oe:qq:") => {
+                if let Ok(idx) = s["oe:qq:".len()..].parse::<usize>() {
+                    if let Some((_, qty)) = self.quick_qty_values().get(idx) {
+                        self.quantity = *qty;
+                        self.recalc_estimated();
+                    }
+                }
+                true
+            }
+            s if s.starts_with("oe:tif:") => {
+                if let Ok(idx) = s["oe:tif:".len()..].parse::<usize>() {
+                    self.time_in_force = match idx {
+                        0 => TimeInForce::GTC,
+                        1 => TimeInForce::IOC,
+                        2 => TimeInForce::FOK,
+                        _ => self.time_in_force,
                     };
                 }
                 true

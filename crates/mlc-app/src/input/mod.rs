@@ -5092,7 +5092,7 @@ impl ChartApp {
             use mlc_app_panels::trading::trading::trading_container::TradingSeparator;
             if let Some(sep) = TradingSeparator::from_wire_id(local_id) {
                 return match sep {
-                    TradingSeparator::DomRightCol | TradingSeparator::PmTradeLog => CursorStyle::EwResize,
+                    TradingSeparator::DomRightCol => CursorStyle::EwResize,
                     TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
                 };
             }
@@ -5157,7 +5157,7 @@ impl ChartApp {
                             use mlc_app_panels::trading::trading::trading_container::TradingSeparator;
                             if let Some(sep) = TradingSeparator::from_wire_id(local_id) {
                                 return match sep {
-                                    TradingSeparator::DomRightCol | TradingSeparator::PmTradeLog => CursorStyle::EwResize,
+                                    TradingSeparator::DomRightCol => CursorStyle::EwResize,
                                     TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
                                 };
                             }
@@ -5863,7 +5863,7 @@ impl ChartApp {
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
                                     let panel_idx: usize = idx_str.parse().ok()?;
                                     if panel_idx != slot_idx { return None; }
-                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body"] {
+                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body", ":orders:body"] {
                                         if let Some(leaf_id_str) = after_slot.strip_suffix(suffix) {
                                             let raw: u64 = leaf_id_str.parse().ok()?;
                                             return Some((uzor::panels::LeafId(raw), &suffix[1..]));
@@ -6191,6 +6191,25 @@ impl ChartApp {
             || self.panels_store.trading_container.values().any(|c| c.order_entry.is_editing())
     }
 
+    /// Find whichever `RiskCalculatorState` (standalone or hosted inside a
+    /// `TradingContainer`) is currently mid-edit, if any — the risk-calc
+    /// analogue of `editing_order_entry_mut` (W5, 2026-07-25).
+    fn editing_risk_calculator_mut(&mut self) -> Option<&mut mlc_app_panels::trading::trading::risk_calculator::RiskCalculatorState> {
+        if self.panels_store.risk_calculator.values().any(|s| s.is_editing()) {
+            return self.panels_store.risk_calculator.values_mut().find(|s| s.is_editing());
+        }
+        self.panels_store.trading_container.values_mut()
+            .map(|c| &mut c.risk_calculator)
+            .find(|s| s.is_editing())
+    }
+
+    /// True while any RiskCalculator (standalone or TradingContainer-hosted)
+    /// is mid-edit — same hotkey-stealing guard as `any_order_entry_editing`.
+    pub(super) fn any_risk_calculator_editing(&self) -> bool {
+        self.panels_store.risk_calculator.values().any(|s| s.is_editing())
+            || self.panels_store.trading_container.values().any(|c| c.risk_calculator.is_editing())
+    }
+
     /// Handle a printable character input event.
     ///
     /// Routes to active text editing state (primitive settings text_content).
@@ -6203,6 +6222,13 @@ impl ChartApp {
             .map(|state| state.handle_edit_char(ch))
             .unwrap_or(false);
         if consumed {
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        let consumed_rc = self.editing_risk_calculator_mut()
+            .map(|state| state.handle_edit_char(ch))
+            .unwrap_or(false);
+        if consumed_rc {
             self.sidebar_data_dirty = true;
             return;
         }
@@ -6249,6 +6275,13 @@ impl ChartApp {
                     .map(|state| state.handle_edit_key(mapped_key))
                     .unwrap_or(false);
                 if consumed {
+                    self.sidebar_data_dirty = true;
+                    return;
+                }
+                let consumed_rc = self.editing_risk_calculator_mut()
+                    .map(|state| state.handle_edit_key(mapped_key))
+                    .unwrap_or(false);
+                if consumed_rc {
                     self.sidebar_data_dirty = true;
                     return;
                 }
@@ -7791,6 +7824,12 @@ impl ChartApp {
                         Panel::TradingContainer(id) => {
                             let state = self.panels_store.trading_container.get(id)?;
                             let source = persist_source(&state.source);
+                            use mlc_app_panels::trading::trading::trading_container::BottomTab;
+                            let active_tab = match state.active_tab {
+                                BottomTab::Positions => mlc_core::preset::preset::PersistedBottomTab::Positions,
+                                BottomTab::Orders => mlc_core::preset::preset::PersistedBottomTab::Orders,
+                                BottomTab::Trades => mlc_core::preset::preset::PersistedBottomTab::Trades,
+                            };
                             PersistedFreeItemKind::TradingContainer {
                                 source,
                                 tick_size: state.tick_size,
@@ -7798,7 +7837,7 @@ impl ChartApp {
                                 right_ratio: state.right_ratio,
                                 bottom_ratio: state.bottom_ratio,
                                 right_split: state.right_split,
-                                bottom_split: state.bottom_split,
+                                active_tab,
                             }
                         }
                         Panel::IndicatorPanel(id) => {

@@ -225,6 +225,7 @@ pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_app_p
         rc_profit:   t.rc_profit.clone(),
         rc_good_rr:  t.rc_good_rr.clone(),
         rc_input_bg: t.rc_input_bg.clone(),
+        rc_input_border: t.rc_input_border.clone(),
 
         tc_bg:        t.tc_bg.clone(),
         tc_inner_bg:  t.tc_inner_bg.clone(),

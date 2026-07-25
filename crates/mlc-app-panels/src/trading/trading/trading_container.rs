@@ -5,8 +5,10 @@
 //! v1 is a STATIC layout (no inner docking tree yet):
 //! - center = DOM ladder
 //! - right column (live-resizable width) = OrderEntry on top, RiskCalculator below
-//! - bottom strip (live-resizable height, spans center + right column) =
-//!   PositionManager (left half), TradeLog (right half)
+//! - bottom strip (live-resizable height, spans center + right column) = a
+//!   tab row (`Positions (n) | Orders (n) | Trades (n)`, W3 2026-07-25) over
+//!   whichever one of PositionManager / OrdersLog / TradeLog is active,
+//!   full width — replaces the v1 PositionManager|TradeLog fixed split.
 //!
 //! The legacy `left_panel`/`right_panel`/`bottom_panel` `SubPanelSlot`
 //! machinery (Footprint / VolumeProfile / BigTrades / L2Tape) predates this
@@ -18,8 +20,10 @@
 //! [`TradingContainerState::regions`] is the single geometry source every
 //! input router (click / hover / scroll / drag) ultimately agrees with:
 //! child rects come straight from [`TradingContainerState::v1_layout_rects`]
-//! (the same rects passed to each child's `render()`), and the 4 draggable
-//! separators are computed alongside them. `render()` uses `regions()` to
+//! (the same rects passed to each child's `render()`), and the 3 draggable
+//! separators are computed alongside them (a 4th, PositionManager|TradeLog,
+//! was retired in W3 2026-07-25 when the bottom strip became a tab strip).
+//! `render()` uses `regions()` to
 //! draw + register the separators; children still register their own
 //! precise per-widget rects (DOM's `dom:body` BlackboxPanel, OrderEntry's
 //! `oe:*` buttons, ...) — `regions()` does not re-litigate those, it is the
@@ -27,7 +31,7 @@
 //! of truth for where each child's outer rect sits.
 
 use serde::{Serialize, Deserialize};
-use crate::render::RenderContext;
+use crate::render::{RenderContext, TextAlign, TextBaseline};
 use crate::panel_trait::TradingPanel;
 use crate::trading::order_flow::dom::DomState;
 use crate::trading::order_flow::footprint::FootprintState;
@@ -37,6 +41,7 @@ use crate::trading::order_flow::l2_tape::L2TapeState;
 use super::order_entry::OrderEntryState;
 use super::position_manager::PositionManagerState;
 use super::trade_log::TradeLogState;
+use super::orders_log::OrdersLogState;
 use super::risk_calculator::RiskCalculatorState;
 
 /// Minimum right-column width (px) below which the DOM|right-column
@@ -55,15 +60,13 @@ const TC_SEP_HIT_PX: f64 = 4.0;
 /// goes to RiskCalculator). No owner spec for the exact split — chosen so
 /// OrderEntry's Limit/Stop-Limit field stack fits comfortably.
 const TC_RIGHT_SPLIT_DEFAULT: f64 = 0.55;
-/// Default fraction of the bottom strip's width given to PositionManager
-/// (rest goes to TradeLog) — 50/50, matching the v1 fixed layout it
-/// replaces.
-const TC_BOTTOM_SPLIT_DEFAULT: f64 = 0.5;
-/// Min/max clamp for the two INNER splits (OrderEntry|RiskCalculator and
-/// PositionManager|TradeLog) — no owner spec; generous enough that neither
-/// pane collapses to nothing.
+/// Min/max clamp for the OrderEntry|RiskCalculator inner split — no owner
+/// spec; generous enough that neither pane collapses to nothing.
 const TC_INNER_SPLIT_MIN: f64 = 0.2;
 const TC_INNER_SPLIT_MAX: f64 = 0.8;
+/// Bottom-strip tab row height (px) — `Positions (n) | Orders (n) | Trades
+/// (n)`, W3 2026-07-25. Fixed, not live-resizable (unlike the 3 separators).
+const TC_BOTTOM_TAB_HEIGHT: f64 = 22.0;
 
 /// Trading Container panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -98,17 +101,43 @@ pub enum SubPanelSlot {
 
 /// Which hosted child a v1 [`TradingRegion`] belongs to.
 ///
-/// PositionManager and TradeLog are kept as separate variants (rather than
-/// one combined "BottomStrip" region) because they already scroll
-/// independently — this partition matches the routing granularity
-/// `handle_scroll`/`handle_click` actually use, not just the visual strip.
+/// `PositionManager` / `OrdersLog` / `TradeLog` share ONE region (the bottom
+/// strip's content area) — only whichever one [`BottomTab`] currently
+/// selects is ever returned by [`TradingContainerState::regions`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TradingChild {
     Dom,
     OrderEntry,
     RiskCalculator,
     PositionManager,
+    OrdersLog,
     TradeLog,
+}
+
+/// Which view the bottom strip's tab row currently shows (W3, 2026-07-25 —
+/// replaces the v1 PositionManager|TradeLog fixed split).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BottomTab {
+    Positions,
+    Orders,
+    Trades,
+}
+
+impl Default for BottomTab {
+    fn default() -> Self { Self::Positions }
+}
+
+impl BottomTab {
+    /// Local widget-id this tab registers as during render —
+    /// `"{slot_prefix}:{wire_id}"` — and the exact string
+    /// [`TradingContainerState::handle_click`] matches to switch tabs.
+    fn wire_id(self) -> &'static str {
+        match self {
+            Self::Positions => "bstrip:positions",
+            Self::Orders    => "bstrip:orders",
+            Self::Trades    => "bstrip:trades",
+        }
+    }
 }
 
 /// A draggable separator between two v1 regions.
@@ -120,8 +149,6 @@ pub enum TradingSeparator {
     OeRiskCalc,
     /// Main area | bottom strip — drags `bottom_ratio`.
     BottomStrip,
-    /// PositionManager | TradeLog, inside the bottom strip — drags `bottom_split`.
-    PmTradeLog,
 }
 
 impl TradingSeparator {
@@ -133,18 +160,16 @@ impl TradingSeparator {
             Self::DomRightCol => "sep:dom_right",
             Self::OeRiskCalc  => "sep:oe_rc",
             Self::BottomStrip => "sep:bottom",
-            Self::PmTradeLog  => "sep:pm_tl",
         }
     }
 
     /// Parse a local id (already stripped of the `slot_prefix`) back into a
-    /// separator, if it matches one of the 4 wire ids exactly.
+    /// separator, if it matches one of the 3 wire ids exactly.
     pub fn from_wire_id(id: &str) -> Option<Self> {
         match id {
             "sep:dom_right" => Some(Self::DomRightCol),
             "sep:oe_rc"     => Some(Self::OeRiskCalc),
             "sep:bottom"    => Some(Self::BottomStrip),
-            "sep:pm_tl"     => Some(Self::PmTradeLog),
             _ => None,
         }
     }
@@ -212,9 +237,10 @@ pub struct TradingContainerState {
     /// RiskCalculator). New W1 field — drag-updated via the OE|RiskCalc
     /// separator.
     pub right_split: f64,
-    /// PositionManager's width fraction of the bottom strip (rest goes to
-    /// TradeLog). New W1 field — drag-updated via the PM|TradeLog separator.
-    pub bottom_split: f64,
+    /// Which view the bottom strip's tab row currently shows (W3,
+    /// 2026-07-25). Replaces the v1 `bottom_split` fixed PositionManager|
+    /// TradeLog split — only one view is ever visible now, full width.
+    pub active_tab: BottomTab,
 
     /// Last rendered container size `(w, h)`, cached by `render()` (which
     /// only takes `&self`, hence the `Cell`). Separator drags only receive
@@ -230,8 +256,13 @@ pub struct TradingContainerState {
     pub order_entry: OrderEntryState,
     /// Position manager — always-present hosted sub-panel (v1 bottom-left)
     pub position_manager: PositionManagerState,
-    /// Trade log — always-present hosted sub-panel (v1 bottom-right)
+    /// Trade log — always-present hosted sub-panel (v1 bottom strip, "Trades" tab)
     pub trade_log: TradeLogState,
+    /// Orders log — always-present hosted sub-panel (v1 bottom strip,
+    /// "Orders" tab, W3 2026-07-25). The missing orders log — open orders
+    /// with per-row cancel + terminal-order history — distinct from
+    /// `trade_log`'s fills.
+    pub orders_log: OrdersLogState,
     /// Risk calculator — always-present hosted sub-panel (v1 right column, bottom)
     pub risk_calculator: RiskCalculatorState,
 
@@ -265,12 +296,13 @@ impl TradingContainerState {
             right_ratio: 0.3,
             bottom_ratio: 0.25,
             right_split: TC_RIGHT_SPLIT_DEFAULT,
-            bottom_split: TC_BOTTOM_SPLIT_DEFAULT,
+            active_tab: BottomTab::default(),
             last_size: std::cell::Cell::new((0.0, 0.0)),
             dom,
             order_entry: OrderEntryState::new(symbol),
             position_manager: PositionManagerState::new(),
             trade_log: TradeLogState::new(),
+            orders_log: OrdersLogState::new(),
             risk_calculator: RiskCalculatorState::new(),
             footprint: None,
             volume_profile: None,
@@ -344,9 +376,8 @@ impl TradingContainerState {
         let rc_h = (main_h - oe_h).max(0.0);
 
         let bottom_y = y + main_h;
-        let bottom_split = Self::clamp_inner_split(self.bottom_split);
-        let pm_w = w * bottom_split;
-        let tl_w = (w - pm_w).max(0.0);
+        let tab_bar_h = TC_BOTTOM_TAB_HEIGHT.min(bottom_h);
+        let content_h = (bottom_h - tab_bar_h).max(0.0);
 
         let sep_hit = TC_SEP_HIT_PX;
         TradingContainerV1Rects {
@@ -356,12 +387,11 @@ impl TradingContainerState {
             legacy_bottom: legacy.bottom,
             order_entry: (right_col_x, y, right_w, oe_h),
             risk_calculator: (right_col_x, y + oe_h, right_w, rc_h),
-            position_manager: (x, bottom_y, pm_w, bottom_h),
-            trade_log: (x + pm_w, bottom_y, tl_w, bottom_h),
+            bottom_tab_bar: (x, bottom_y, w, tab_bar_h),
+            bottom_content: (x, bottom_y + tab_bar_h, w, content_h),
             sep_dom_right: (right_col_x - sep_hit, y, sep_hit * 2.0, main_h),
             sep_oe_rc: (right_col_x, y + oe_h - sep_hit, right_w, sep_hit * 2.0),
             sep_bottom: (x, bottom_y - sep_hit, w, sep_hit * 2.0),
-            sep_pm_tl: (x + pm_w - sep_hit, bottom_y, sep_hit * 2.0, bottom_h),
         }
     }
 
@@ -369,18 +399,26 @@ impl TradingContainerState {
     /// the single per-frame geometry source `render()` draws separators
     /// from and the app-layer drag-start dispatcher's widgets are
     /// registered against. See the module-level "Region model" doc.
+    ///
+    /// The bottom strip's content area yields exactly ONE `Child` region —
+    /// whichever of PositionManager/OrdersLog/TradeLog `self.active_tab`
+    /// currently selects (W3, 2026-07-25) — mirroring how the legacy
+    /// left/right/bottom sub-panel rects are already `Option`-gated.
     pub fn regions(&self, x: f64, y: f64, w: f64, h: f64) -> Vec<TradingRegion> {
         let r = self.v1_layout_rects(x, y, w, h);
+        let bottom_child = match self.active_tab {
+            BottomTab::Positions => TradingChild::PositionManager,
+            BottomTab::Orders => TradingChild::OrdersLog,
+            BottomTab::Trades => TradingChild::TradeLog,
+        };
         vec![
             TradingRegion { kind: TradingRegionKind::Child(TradingChild::Dom), rect: r.dom },
             TradingRegion { kind: TradingRegionKind::Child(TradingChild::OrderEntry), rect: r.order_entry },
             TradingRegion { kind: TradingRegionKind::Child(TradingChild::RiskCalculator), rect: r.risk_calculator },
-            TradingRegion { kind: TradingRegionKind::Child(TradingChild::PositionManager), rect: r.position_manager },
-            TradingRegion { kind: TradingRegionKind::Child(TradingChild::TradeLog), rect: r.trade_log },
+            TradingRegion { kind: TradingRegionKind::Child(bottom_child), rect: r.bottom_content },
             TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::DomRightCol), rect: r.sep_dom_right },
             TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::OeRiskCalc), rect: r.sep_oe_rc },
             TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::BottomStrip), rect: r.sep_bottom },
-            TradingRegion { kind: TradingRegionKind::Separator(TradingSeparator::PmTradeLog), rect: r.sep_pm_tl },
         ]
     }
 }
@@ -405,12 +443,15 @@ pub struct TradingContainerV1Rects {
     pub legacy_bottom: Option<(f64, f64, f64, f64)>,
     pub order_entry: (f64, f64, f64, f64),
     pub risk_calculator: (f64, f64, f64, f64),
-    pub position_manager: (f64, f64, f64, f64),
-    pub trade_log: (f64, f64, f64, f64),
+    /// Bottom-strip tab row (`Positions (n) | Orders (n) | Trades (n)`).
+    pub bottom_tab_bar: (f64, f64, f64, f64),
+    /// Bottom-strip active-view content area (full width, below the tab row) —
+    /// shared by PositionManager / OrdersLog / TradeLog; only one renders
+    /// per frame, per `active_tab`.
+    pub bottom_content: (f64, f64, f64, f64),
     pub sep_dom_right: (f64, f64, f64, f64),
     pub sep_oe_rc: (f64, f64, f64, f64),
     pub sep_bottom: (f64, f64, f64, f64),
-    pub sep_pm_tl: (f64, f64, f64, f64),
 }
 
 // ---------------------------------------------------------------------------
@@ -478,12 +519,16 @@ impl TradingPanel for TradingContainerState {
         let (rcx, rcy, rcw, rch) = rects.risk_calculator;
         self.risk_calculator.render(ctx, rcx as f32, rcy as f32, rcw as f32, rch as f32, theme, coordinator, slot_prefix);
 
-        // --- Bottom strip: PositionManager (left), TradeLog (right) ---
-        let (pmx, pmy, pmw, pmh) = rects.position_manager;
-        self.position_manager.render(ctx, pmx as f32, pmy as f32, pmw as f32, pmh as f32, theme, coordinator, slot_prefix);
+        // --- Bottom strip: tab row + active view, full width (W3, 2026-07-25) ---
+        let (tbx, tby, tbw, tbh) = rects.bottom_tab_bar;
+        self.render_bottom_tabs(ctx, tbx, tby, tbw, tbh, theme, coordinator, slot_prefix);
 
-        let (tlx, tly, tlw, tlh) = rects.trade_log;
-        self.trade_log.render(ctx, tlx as f32, tly as f32, tlw as f32, tlh as f32, theme, coordinator, slot_prefix);
+        let (bcx, bcy, bcw, bch) = rects.bottom_content;
+        match self.active_tab {
+            BottomTab::Positions => self.position_manager.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
+            BottomTab::Orders => self.orders_log.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
+            BottomTab::Trades => self.trade_log.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
+        }
 
         // --- Separators: single region-driven pass (draw + register drag
         // widgets) — the region model's whole reason to exist: one loop
@@ -524,8 +569,19 @@ impl TradingPanel for TradingContainerState {
             self.position_manager.handle_click(local_id, x, y)
         } else if local_id.starts_with("trade_log:") {
             self.trade_log.handle_click(local_id, x, y)
+        } else if local_id.starts_with("orders:") {
+            self.orders_log.handle_click(local_id, x, y)
         } else if local_id.starts_with("risk_calculator:") {
             self.risk_calculator.handle_click(local_id, x, y)
+        } else if local_id.starts_with("bstrip:") {
+            // Bottom-strip tab switch — fully local, no app-layer follow-up
+            // (unlike "oe:submit"/"orders:cancel*").
+            match local_id {
+                "bstrip:positions" => { self.active_tab = BottomTab::Positions; true }
+                "bstrip:orders" => { self.active_tab = BottomTab::Orders; true }
+                "bstrip:trades" => { self.active_tab = BottomTab::Trades; true }
+                _ => false,
+            }
         } else {
             false
         }
@@ -540,6 +596,8 @@ impl TradingPanel for TradingContainerState {
             self.position_manager.handle_hover(local_id)
         } else if local_id.starts_with("trade_log:") {
             self.trade_log.handle_hover(local_id)
+        } else if local_id.starts_with("orders:") {
+            self.orders_log.handle_hover(local_id)
         } else if local_id.starts_with("risk_calculator:") {
             self.risk_calculator.handle_hover(local_id)
         } else {
@@ -558,6 +616,8 @@ impl TradingPanel for TradingContainerState {
             self.position_manager.handle_scroll(local_id, dx, dy)
         } else if local_id.starts_with("trade_log:") {
             self.trade_log.handle_scroll(local_id, dx, dy)
+        } else if local_id.starts_with("orders:") {
+            self.orders_log.handle_scroll(local_id, dx, dy)
         } else {
             false
         }
@@ -598,9 +658,6 @@ impl TradingPanel for TradingContainerState {
                 // Dragging down shrinks the bottom strip (grows the main area).
                 let bottom_h = (h * self.bottom_ratio - dy).max(0.0);
                 self.bottom_ratio = Self::clamp_outer_ratio(h, bottom_h / h, TC_BOTTOM_MIN_PX);
-            }
-            TradingSeparator::PmTradeLog => {
-                self.bottom_split = Self::clamp_inner_split(self.bottom_split + dx / w);
             }
         }
         true
@@ -646,6 +703,60 @@ impl TradingContainerState {
                 if let Some(ref tape) = state.l2_tape {
                     tape.render(ctx, x as f32, y as f32, w as f32, h as f32, theme, coordinator, slot_prefix);
                 }
+            }
+        }
+    }
+
+    /// Draw + register the bottom-strip tab row — `Positions (n) | Orders
+    /// (n) | Trades (n)` — 3 equal-width click regions, counts read live off
+    /// each hosted child's already-synced state (W3, 2026-07-25).
+    #[allow(clippy::too_many_arguments)]
+    fn render_bottom_tabs(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f64, y: f64, w: f64, h: f64,
+        theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
+    ) {
+        use uzor::input::Sense;
+
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x, y, w, h);
+
+        let tabs = [
+            (BottomTab::Positions, format!("Positions ({})", self.position_manager.positions.len())),
+            (BottomTab::Orders, format!("Orders ({})", self.orders_log.open_orders.len())),
+            (BottomTab::Trades, format!("Trades ({})", self.trade_log.trades.len())),
+        ];
+        let tab_w = w / tabs.len() as f64;
+
+        for (i, (tab, label)) in tabs.iter().enumerate() {
+            let tab_x = x + i as f64 * tab_w;
+            let is_active = self.active_tab == *tab;
+
+            if is_active {
+                ctx.set_fill_color(&theme.panel_bg);
+                ctx.fill_rect(tab_x, y, tab_w, h);
+                ctx.set_fill_color(&theme.oe_tab_active);
+                ctx.fill_rect(tab_x, y + h - 2.0, tab_w, 2.0);
+            }
+
+            ctx.set_fill_color(if is_active { &theme.text_primary } else { &theme.text_muted });
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, tab_x + tab_w / 2.0, y + h / 2.0);
+
+            coordinator.register(
+                format!("{}:{}", slot_prefix, tab.wire_id()).as_str(),
+                uzor::Rect::new(tab_x, y, tab_w, h),
+                Sense::CLICK,
+            );
+
+            if i + 1 < tabs.len() {
+                ctx.set_fill_color(&theme.tc_separator);
+                ctx.fill_rect(tab_x + tab_w - 1.0, y, 1.0, h);
             }
         }
     }

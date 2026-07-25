@@ -348,10 +348,25 @@ impl ChartApp {
         for state in self.panels_store.trade_log.values_mut() {
             state.sync_from_snapshot();
         }
+        for state in self.panels_store.risk_calculator.values_mut() {
+            state.sync_from_snapshot();
+        }
         for state in self.panels_store.trading_container.values_mut() {
+            // Reference price (BBO mid) for OrderEntry/RiskCalculator price
+            // prefill + quick-qty — cheapest honest wiring is a per-tick
+            // push from the container's own hosted DOM, which already
+            // tracks best_bid_price/best_ask_price live (W4/W5, 2026-07-25).
+            let reference_price = match (state.dom.best_bid_price, state.dom.best_ask_price) {
+                (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
+                _ => None,
+            };
+            state.order_entry.sync_reference_price(reference_price);
+            state.risk_calculator.sync_reference_price(reference_price);
             state.order_entry.sync_from_snapshot();
             state.position_manager.sync_from_snapshot();
             state.trade_log.sync_from_snapshot();
+            state.orders_log.sync_from_snapshot();
+            state.risk_calculator.sync_from_snapshot();
         }
         // HyperFocus follow (W2, 2026-07-25): rebind any `HyperFocus`
         // container whose resolved instrument no longer matches the active

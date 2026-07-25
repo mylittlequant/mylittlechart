@@ -21,7 +21,7 @@ use mlc_backend_data_bridge::DataBridge;
 
 use mlc_backend_trading_engine::{
     ExchangeId, AccountType,
-    Order, Position, Balance, Fill, MarginType, TimeInForce,
+    Order, OrderStatus, Position, Balance, Fill, MarginType, TimeInForce,
     OrderRequest, CancelRequest, CancelScope, PlaceOrderResponse, PositionQuery,
     TradingCapabilities, AccountCapabilities, SessionInfo,
     TradingConfig, TradingError, TradingResult,
@@ -75,6 +75,12 @@ pub struct TradingManager {
     data_dir: PathBuf,
     cached_balances: HashMap<(ExchangeId, AccountType), Vec<Balance>>,
     recent_fills: HashMap<(ExchangeId, AccountType), VecDeque<Fill>>,
+    /// Bounded (100) terminal-order history for LIVE (non-paper) sessions —
+    /// mirrors `PaperEngine::history` for paper sessions. Fed from the
+    /// `LiveUpdate::OrderUpdate` branch of `tick()` when the resulting order
+    /// status is terminal, and from a successful `OrderCancelled` task
+    /// result.
+    order_history: HashMap<(ExchangeId, AccountType), VecDeque<Order>>,
     last_error: HashMap<(ExchangeId, AccountType), String>,
     orders_in_flight: HashSet<(ExchangeId, AccountType)>,
 }
@@ -108,6 +114,7 @@ impl TradingManager {
             data_dir,
             cached_balances: HashMap::new(),
             recent_fills: HashMap::new(),
+            order_history: HashMap::new(),
             last_error: HashMap::new(),
             orders_in_flight: HashSet::new(),
         })
@@ -267,6 +274,7 @@ impl TradingManager {
                             if let Some(om) = self.order_managers.get_mut(&key) {
                                 om.remove(&order.id);
                             }
+                            Self::push_order_history(&mut self.order_history, key, order);
                             self.last_error.remove(&key);
                         }
                         Err(e) => {
@@ -312,7 +320,13 @@ impl TradingManager {
                             updated_at: Some(event.timestamp),
                             time_in_force: TimeInForce::Gtc,
                         };
-                        om.upsert(order);
+                        om.upsert(order.clone());
+                        if matches!(
+                            order.status,
+                            OrderStatus::Filled | OrderStatus::Canceled | OrderStatus::Rejected | OrderStatus::Expired
+                        ) {
+                            Self::push_order_history(&mut self.order_history, key, order);
+                        }
 
                         if let (Some(fill_price), Some(fill_qty)) = (event.last_fill_price, event.last_fill_quantity) {
                             if fill_qty > 0.0 {
@@ -415,14 +429,15 @@ impl TradingManager {
     fn publish_snapshot(&mut self, key: (ExchangeId, AccountType)) {
         let is_paper = self.paper_engines.contains_key(&key);
 
-        let (open_orders, positions, pnl, balances) = if let Some(engine) = self.paper_engines.get(&key) {
+        let (open_orders, positions, pnl, balances, order_history) = if let Some(engine) = self.paper_engines.get(&key) {
             let oo: Vec<Order> = engine.orders().open_orders().cloned().collect();
             let pos: Vec<Position> = engine.positions().all_positions().values().cloned().collect();
             let p = engine.positions().all_pnl();
             let bal: Vec<Balance> = engine.balances().iter().map(|(asset, &amount)| {
                 Balance { asset: asset.clone(), free: amount, locked: 0.0, total: amount }
             }).collect();
-            (oo, pos, p, bal)
+            let hist = engine.history().clone();
+            (oo, pos, p, bal, hist)
         } else {
             let oo = self.order_managers.get(&key)
                 .map(|om| om.open_orders().cloned().collect())
@@ -434,7 +449,8 @@ impl TradingManager {
                 .map(|pt| pt.all_pnl())
                 .unwrap_or_default();
             let bal = self.cached_balances.get(&key).cloned().unwrap_or_default();
-            (oo, pos, p, bal)
+            let hist = self.order_history.get(&key).cloned().unwrap_or_default();
+            (oo, pos, p, bal, hist)
         };
 
         let new_snap = TradingSnapshot {
@@ -448,11 +464,28 @@ impl TradingManager {
             recent_fills: self.recent_fills.get(&key).cloned().unwrap_or_default(),
             last_error: self.last_error.get(&key).cloned(),
             order_in_flight: self.orders_in_flight.contains(&key),
+            order_history,
         };
         let slot = self.snapshot_for(key.0, key.1);
         if let Ok(mut snap) = slot.write() {
             *snap = new_snap;
         };
+    }
+
+    /// Push a terminal-state LIVE order into the bounded (100) per-key
+    /// history bucket, evicting the oldest entry past capacity. Free fn
+    /// (takes the map by `&mut` explicitly) so it can be called from inside
+    /// `tick()`'s `live_updates` loop without a second `&mut self` borrow.
+    fn push_order_history(
+        bucket: &mut HashMap<(ExchangeId, AccountType), VecDeque<Order>>,
+        key: (ExchangeId, AccountType),
+        order: Order,
+    ) {
+        let hist = bucket.entry(key).or_insert_with(VecDeque::new);
+        hist.push_back(order);
+        if hist.len() > 100 {
+            hist.pop_front();
+        }
     }
 
     pub fn on_connector_ready(&mut self, exchange_id: ExchangeId) {
