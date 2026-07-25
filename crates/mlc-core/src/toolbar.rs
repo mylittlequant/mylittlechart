@@ -306,11 +306,10 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelTool
                 .with_min_width(150.0)
                 .with_tooltip(t_toolbar(TK::SymbolSelector)),
         ]),
-        // 2. Color-sync tag + tags&tabs gear.
+        // 2. Color-sync tag. (The tags&tabs gear was here until 2026-07-26
+        // — owner: not needed on the container header.)
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::button("tc_color_tag").with_min_width(24.0),
-            ToolbarItemDef::icon_button("tc_gear", ToolbarIconId::new("Settings"))
-                .with_tooltip(t_toolbar(TK::Settings)),
         ]).with_separator(),
     ];
     // 3. Chart-mode controls — ONLY when the center shows the chart

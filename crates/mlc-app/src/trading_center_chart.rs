@@ -173,6 +173,13 @@ impl ChartApp {
         self.panel_app.panel_grid.containers_mut().insert(cid, window);
         self.attach_chart_to_tag(cid, auto_bid);
 
+        // Default-on Volume histogram — same seed every brand-new grid
+        // chart gets (owner spec 2026-07-26: the minichart is a regular
+        // chart, defaults included). Chart-type switches manage it from
+        // here on via `sync_default_indicators_for_chart_type`, exactly
+        // like the main chart.
+        self.core.indicators_mut().add(Some(auto_bid), "volume");
+
         let at3 = crate::account_type_from_label(account_type);
         let bar_count = self.core.user().profile().domain.bar_count as usize;
         self.core
@@ -469,9 +476,16 @@ impl ChartApp {
             ov_state.visible = !indicators.is_empty();
             if !indicators.is_empty() && (ov_state.visible || ov_state.is_open) {
                 let toolbar_theme_for_overlay = self.panel_app.toolbar_theme_for_render();
+                // The renderer positions the chevron BELOW a leaf tab
+                // (`chart_rect.y + 2 + LEAF_TAB_HEIGHT + 3`). The minichart
+                // has no tabs (owner spec 2026-07-26) — shift the rect up by
+                // the tab allowance so the chevron hugs the chart top, like
+                // a sub-pane's indicator label.
                 let overlay_rect = uzor::types::Rect::new(
                     center_rect.x,
-                    crosshair_layout.main_chart.chart.y,
+                    crosshair_layout.main_chart.chart.y
+                        - mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT
+                        - 1.0,
                     center_rect.width,
                     center_rect.height,
                 );

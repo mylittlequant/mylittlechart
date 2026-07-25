@@ -3047,11 +3047,6 @@ impl ChartApp {
                         self.process_chart_out_event(mlc_core::events::ChartOutEvent::ToggleIndicators);
                         return;
                     }
-                    "tc_gear" => {
-                        self.trading_header_tb.open_dropdown_id = None;
-                        self.panel_app.open_tags_tabs_without_preselect();
-                        return;
-                    }
                     _ => {}
                 }
                 // Pinned-favorites quick-pick buttons on the header instance
