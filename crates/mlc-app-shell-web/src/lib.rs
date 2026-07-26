@@ -734,6 +734,14 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_live_mb".into(), &live_mb.round().into());
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_peak_mb".into(), &peak_mb.round().into());
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_count".into(), &allocs.into());
+                // Sidebar state (two-clicks-after-reload defect hunt).
+                let sp = format!("{:?}", st.chart.sidebar_state.right_panel);
+                let _ = js_sys::Reflect::set(&dbg, &"sidebar_panel".into(), &sp.into());
+                let _ = js_sys::Reflect::set(
+                    &dbg,
+                    &"sidebar_open".into(),
+                    &st.chart.sidebar_state.is_right_open().into(),
+                );
             }
 
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);

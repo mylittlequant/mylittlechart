@@ -6118,7 +6118,7 @@ impl ChartApp {
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
                                     let panel_idx: usize = idx_str.parse().ok()?;
                                     if panel_idx != slot_idx { return None; }
-                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body", ":orders:body"] {
+                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body", ":orders:history", ":orders:body"] {
                                         if let Some(leaf_id_str) = after_slot.strip_suffix(suffix) {
                                             let raw: u64 = leaf_id_str.parse().ok()?;
                                             return Some((uzor::panels::LeafId(raw), &suffix[1..]));

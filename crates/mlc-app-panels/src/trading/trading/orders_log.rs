@@ -29,9 +29,12 @@ pub struct OrdersLogState {
     /// newest first.
     pub history: Vec<Order>,
     /// Scroll offset (rows scrolled down from top) — applies to the open
-    /// orders section; the history section below simply clips to whatever
-    /// fits.
+    /// orders section.
     pub scroll_offset: usize,
+    /// Scroll offset for the History section (rows scrolled down from the
+    /// newest entry) — the section scrolls independently of the open list
+    /// (owner defect 2026-07-26: history had no scroll of its own).
+    pub history_scroll_offset: usize,
     /// Shared trading snapshot (source of truth).
     pub snapshot: Option<SharedTradingSnapshot>,
     /// Order id awaiting a single-order cancel — set by `"orders:cancel:{id}"`,
@@ -50,6 +53,7 @@ impl OrdersLogState {
             open_orders: Vec::new(),
             history: Vec::new(),
             scroll_offset: 0,
+            history_scroll_offset: 0,
             snapshot: None,
             pending_cancel: None,
             pending_cancel_all: false,
@@ -74,6 +78,8 @@ impl OrdersLogState {
 
         let max_scroll = self.open_orders.len().saturating_sub(1);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
+        let max_hist_scroll = self.history.len().saturating_sub(1);
+        self.history_scroll_offset = self.history_scroll_offset.min(max_hist_scroll);
     }
 
     /// Get visible open orders for rendering.
@@ -297,7 +303,16 @@ impl TradingPanel for OrdersLogState {
         let rows_h = history_h - OL_SECTION_LABEL_HEIGHT;
         let max_hist_rows = (rows_h / OL_ROW_HEIGHT).floor().max(0.0) as usize;
 
-        for (row_idx, order) in self.history.iter().take(max_hist_rows).enumerate() {
+        // Own scroll zone for the History section — registered AFTER the
+        // whole-panel `orders:body` zone so it wins the hit-test inside
+        // its rect (same layering trick the container children use).
+        coordinator.register(
+            format!("{}:orders:history", slot_prefix).as_str(),
+            uzor::Rect::new(x as f64, history_y as f64, w as f64, history_h as f64),
+            uzor::input::Sense::SCROLL,
+        );
+
+        for (row_idx, order) in self.history.iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
             let row_y = history_y + OL_SECTION_LABEL_HEIGHT + (row_idx as f32 * OL_ROW_HEIGHT);
             let row_mid_y = (row_y + OL_ROW_HEIGHT / 2.0) as f64;
 
@@ -352,14 +367,21 @@ impl TradingPanel for OrdersLogState {
     }
 
     fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
-        if local_id == "orders:body" {
-            let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
-            let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
-            let max = self.open_orders.len().saturating_sub(1);
-            self.scroll_offset = new_offset.min(max);
-            true
-        } else {
-            false
+        let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
+        match local_id {
+            "orders:body" => {
+                let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
+                let max = self.open_orders.len().saturating_sub(1);
+                self.scroll_offset = new_offset.min(max);
+                true
+            }
+            "orders:history" => {
+                let new_offset = (self.history_scroll_offset as i64 + delta).max(0) as usize;
+                let max = self.history.len().saturating_sub(1);
+                self.history_scroll_offset = new_offset.min(max);
+                true
+            }
+            _ => false,
         }
     }
 }
