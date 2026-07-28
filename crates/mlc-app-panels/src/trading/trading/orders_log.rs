@@ -20,6 +20,8 @@ use mlc_backend_trading_engine::{Order, OrderSide, OrderStatus, OrderType, Share
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 
+use super::col_resize::{self, ColumnResize};
+
 /// OrdersLog panel state (heavy data).
 #[derive(Clone, Debug)]
 pub struct OrdersLogState {
@@ -45,6 +47,9 @@ pub struct OrdersLogState {
     /// currently open order — the paper engine has no native "cancel all"
     /// scope).
     pub pending_cancel_all: bool,
+    /// Draggable column widths (RAM-only, owner spec 2026-07-28) — shared
+    /// by the open-orders table and the History section (same columns).
+    pub cols: ColumnResize,
 }
 
 impl OrdersLogState {
@@ -57,7 +62,20 @@ impl OrdersLogState {
             snapshot: None,
             pending_cancel: None,
             pending_cancel_all: false,
+            cols: ColumnResize::default(),
         }
+    }
+
+    /// Default widths of the 5 resizable columns, computed from the table
+    /// width (panel minus the fixed Cancel column). Age takes the remainder.
+    fn col_defaults(table_w: f32) -> Vec<f32> {
+        vec![
+            (table_w * 0.10).max(38.0), // Side
+            (table_w * 0.16).max(56.0), // Type
+            (table_w * 0.24).max(80.0), // Stop/Price
+            (table_w * 0.16).max(52.0), // Qty
+            (table_w * 0.18).max(56.0), // Status
+        ]
     }
 
     pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
@@ -184,11 +202,8 @@ impl TradingPanel for OrdersLogState {
 
         let cancel_x = x + w - OL_CANCEL_W;
         let table_w = w - OL_CANCEL_W;
-        let side_w   = (table_w * 0.10).max(38.0);
-        let type_w   = (table_w * 0.16).max(56.0);
-        let price_w  = (table_w * 0.24).max(80.0);
-        let qty_w    = (table_w * 0.16).max(52.0);
-        let status_w = (table_w * 0.18).max(56.0);
+        let widths = self.cols.resolve(table_w, &Self::col_defaults(table_w));
+        let [side_w, type_w, price_w, qty_w, status_w] = widths[..] else { unreachable!() };
 
         let col_side_x   = x + OL_LEFT_PAD;
         let col_type_x   = col_side_x + side_w;
@@ -196,6 +211,9 @@ impl TradingPanel for OrdersLogState {
         let col_qty_x    = col_price_x + price_w;
         let col_status_x = col_qty_x + qty_w;
         let col_age_x    = col_status_x + status_w;
+        // Column boundaries = each following column's left edge (draggable).
+        let col_bounds = [col_type_x, col_price_x, col_qty_x, col_status_x, col_age_x]
+            .map(|cx| cx - 2.0);
 
         // --- Header + Cancel-All ---
         ctx.set_fill_color(&theme.header_bg);
@@ -308,6 +326,7 @@ impl TradingPanel for OrdersLogState {
         let history_y = y + OL_HEADER_HEIGHT + open_area_h;
         let history_h = (y + h - history_y).max(0.0);
         if history_h < OL_SECTION_LABEL_HEIGHT {
+            col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "orders", &col_bounds, y, h, theme);
             return;
         }
 
@@ -374,6 +393,23 @@ impl TradingPanel for OrdersLogState {
             ctx.set_fill_color(&theme.text_muted);
             ctx.fill_text(&format_timestamp(order.updated_at.unwrap_or(order.created_at)), col_age_x as f64, row_mid_y);
         }
+
+        col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "orders", &col_bounds, y, h, theme);
+    }
+
+    fn handle_drag_start(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        col_resize::colsep_index(local_id, "orders").is_some()
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, _dy: f64) -> bool {
+        let Some(idx) = col_resize::colsep_index(local_id, "orders") else { return false };
+        let avail = self.cols.last_avail.get();
+        self.cols.drag(idx, dx as f32, &Self::col_defaults(avail));
+        true
+    }
+
+    fn handle_drag_end(&mut self, local_id: &str) -> bool {
+        col_resize::colsep_index(local_id, "orders").is_some()
     }
 
     fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {

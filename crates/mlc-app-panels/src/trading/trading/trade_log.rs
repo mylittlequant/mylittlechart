@@ -5,6 +5,8 @@ use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{TradingKey, current_language};
 
+use super::col_resize::{self, ColumnResize};
+
 /// TradeLog panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TradeLogId(pub u64);
@@ -26,6 +28,8 @@ pub struct TradeLogState {
     pub snapshot: Option<SharedTradingSnapshot>,
     /// Scroll offset (rows scrolled down from top)
     pub scroll_offset: usize,
+    /// Draggable column widths (RAM-only, owner spec 2026-07-28).
+    pub cols: ColumnResize,
 }
 
 #[derive(Clone, Debug)]
@@ -75,7 +79,19 @@ impl TradeLogState {
             sort: (TradeLogColumn::Time, false),
             snapshot: None,
             scroll_offset: 0,
+            cols: ColumnResize::default(),
         }
+    }
+
+    /// Default widths of the 5 resizable columns (Fee takes the remainder).
+    fn col_defaults(w: f32) -> Vec<f32> {
+        vec![
+            (w * 0.20).max(64.0), // Time
+            (w * 0.20).max(58.0), // Symbol
+            (w * 0.11).max(34.0), // Side
+            (w * 0.20).max(60.0), // Price
+            (w * 0.16).max(48.0), // Qty
+        ]
     }
 
     pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
@@ -192,11 +208,8 @@ impl TradingPanel for TradeLogState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        let time_w   = (w * 0.20).max(64.0);
-        let symbol_w = (w * 0.20).max(58.0);
-        let side_w   = (w * 0.11).max(34.0);
-        let price_w  = (w * 0.20).max(60.0);
-        let qty_w    = (w * 0.16).max(48.0);
+        let widths = self.cols.resolve(w, &Self::col_defaults(w));
+        let [time_w, symbol_w, side_w, price_w, qty_w] = widths[..] else { unreachable!() };
 
         let col_time_x   = x + TL_LEFT_PAD;
         let col_symbol_x = col_time_x   + time_w;
@@ -204,6 +217,9 @@ impl TradingPanel for TradeLogState {
         let col_price_x  = col_side_x   + side_w;
         let col_qty_x    = col_price_x  + price_w;
         let col_fee_x    = col_qty_x    + qty_w;
+        // Column boundaries = each following column's left edge (draggable).
+        let col_bounds = [col_symbol_x, col_side_x, col_price_x, col_qty_x, col_fee_x]
+            .map(|cx| cx - 2.0);
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, TL_HEADER_HEIGHT as f64);
@@ -316,9 +332,26 @@ impl TradingPanel for TradeLogState {
         ctx.set_text_align(TextAlign::Right);
         let count_str = format!("Trades: {}", self.trades.len());
         ctx.fill_text(&count_str, (x + w - TL_LEFT_PAD) as f64, summary_text_y);
+
+        col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "trade_log", &col_bounds, y, h, theme);
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_drag_start(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        col_resize::colsep_index(local_id, "trade_log").is_some()
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, _dy: f64) -> bool {
+        let Some(idx) = col_resize::colsep_index(local_id, "trade_log") else { return false };
+        let avail = self.cols.last_avail.get();
+        self.cols.drag(idx, dx as f32, &Self::col_defaults(avail));
+        true
+    }
+
+    fn handle_drag_end(&mut self, local_id: &str) -> bool {
+        col_resize::colsep_index(local_id, "trade_log").is_some()
+    }
 
     fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
         if local_id == "trade_log:body" {

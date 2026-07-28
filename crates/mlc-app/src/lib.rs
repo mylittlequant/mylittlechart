@@ -236,6 +236,77 @@ fn parse_timeframe_name(name: &str) -> Option<mlc_core::state::Timeframe> {
     mlc_core::state::Timeframe::parse(name)
 }
 
+/// Flatten the trading container's live geometry into the Trading Container
+/// modal's MAP cards (owner spec 2026-07-28). Rects are container-local
+/// (`v1_layout_rects` at origin, sized by the last rendered container size);
+/// the bottom strip becomes 3 tab segments (tab bar + content merged) with
+/// the active one highlighted and clickable-to-switch.
+fn tc_modal_map_panels(
+    tc: &mlc_app_panels::trading::trading::trading_container::TradingContainerState,
+) -> (Vec<mlc_app_layout::layout::modals::TcMapPanel>, (f64, f64)) {
+    use mlc_app_layout::layout::modals::TcMapPanel;
+    use mlc_app_panels::trading::trading::trading_container::BottomTab;
+
+    let (mut w, mut h) = tc.last_size.get();
+    if w <= 0.0 || h <= 0.0 {
+        // Container not rendered yet this session (modal opened before the
+        // Trading tab painted) — a plausible default aspect.
+        w = 900.0;
+        h = 640.0;
+    }
+    let r = tc.v1_layout_rects(0.0, 0.0, w, h);
+
+    let mut panels = vec![
+        TcMapPanel {
+            id: "center".to_string(),
+            label: tc.center_kind.label().to_string(),
+            sub: tc.symbol.clone(),
+            rect: r.dom,
+            active: false,
+            clickable: true,
+        },
+        TcMapPanel {
+            id: "order_entry".to_string(),
+            label: "Order Entry".to_string(),
+            sub: String::new(),
+            rect: r.order_entry,
+            active: false,
+            clickable: false,
+        },
+        TcMapPanel {
+            id: "risk_calculator".to_string(),
+            label: "Risk Calc".to_string(),
+            sub: String::new(),
+            rect: r.risk_calculator,
+            active: false,
+            clickable: false,
+        },
+    ];
+
+    let (bx, by, bw, tab_h) = r.bottom_tab_bar;
+    let strip_h = tab_h + r.bottom_content.3;
+    let seg_w = bw / 3.0;
+    for (i, (tab, wire, label, count)) in [
+        (BottomTab::Positions, "positions", "Positions", tc.position_manager.positions.len()),
+        (BottomTab::Orders, "orders", "Orders", tc.orders_log.open_orders.len()),
+        (BottomTab::Trades, "trades", "Trades", tc.trade_log.trades.len()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        panels.push(TcMapPanel {
+            id: format!("tab:{}", wire),
+            label: format!("{} ({})", label, count),
+            sub: String::new(),
+            rect: (bx + i as f64 * seg_w, by, seg_w, strip_h),
+            active: tc.active_tab == tab,
+            clickable: true,
+        });
+    }
+
+    (panels, (w, h))
+}
+
 // =============================================================================
 // Cross-drag overlay rendering
 // =============================================================================
@@ -957,6 +1028,12 @@ pub struct ChartApp {
     /// Indicator legend overlay open/closed state for the center chart —
     /// aux counterpart of the leaf-keyed `indicator_overlay_states`.
     pub(crate) trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState,
+    /// Trading Container modal (gear on the container header, owner spec
+    /// 2026-07-28): card MAP of the hosted panels + setup section.
+    pub(crate) tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState,
+    /// Last rendered Trading Container modal geometry — header drag reads
+    /// the header rect off this between frames.
+    pub(crate) tc_modal_result: Option<mlc_app_layout::layout::modals::TcModalResult>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2186,6 +2263,8 @@ impl ChartApp {
             trading_center_corner_zones: None,
             trading_center_sep_drag: None,
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
+            tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            tc_modal_result: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2589,6 +2668,8 @@ impl ChartApp {
             trading_center_corner_zones: None,
             trading_center_sep_drag: None,
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
+            tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            tc_modal_result: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3138,6 +3219,8 @@ impl ChartApp {
             trading_center_corner_zones: None,
             trading_center_sep_drag: None,
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
+            tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            tc_modal_result: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -7917,6 +8000,30 @@ impl ChartApp {
                 &mut self.input_coordinator.borrow_mut(),
             );
         }
+
+        // 8e. Trading Container modal — gear on the container header (owner
+        // spec 2026-07-28: card MAP of the hosted panels + setup section).
+        // Rendered last so it sits above every other popup in this layer.
+        let tc_modal_result = if self.tc_modal.is_open {
+            self.panels_store.trading_container.iter().next().map(|(_pid, tc)| {
+                let (map_panels, csize) = tc_modal_map_panels(tc);
+                mlc_app_layout::layout::modals::render_trading_container_modal(
+                    ctx,
+                    &self.tc_modal,
+                    &frame_theme,
+                    &toolbar_theme,
+                    &map_panels,
+                    csize,
+                    tc.center_kind.label(),
+                    w,
+                    h,
+                    &mut self.input_coordinator.borrow_mut(),
+                )
+            })
+        } else {
+            None
+        };
+        self.tc_modal_result = tc_modal_result;
 
         // Store results directly into self — input handlers read these fields
         // between renders.  apply_render_output() may set them to None when the

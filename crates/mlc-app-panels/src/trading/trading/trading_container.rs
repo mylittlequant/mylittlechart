@@ -328,6 +328,18 @@ impl TradingContainerState {
         split.clamp(TC_INNER_SPLIT_MIN, TC_INNER_SPLIT_MAX)
     }
 
+    /// Restore the spawn-time geometry: the 3 separator ratios AND every
+    /// table's user-resized column widths (trading-container modal "Reset
+    /// layout", owner spec 2026-07-28).
+    pub fn reset_layout(&mut self) {
+        self.right_ratio = 0.3;
+        self.bottom_ratio = 0.25;
+        self.right_split = TC_RIGHT_SPLIT_DEFAULT;
+        self.position_manager.cols.reset();
+        self.trade_log.cols.reset();
+        self.orders_log.cols.reset();
+    }
+
     /// v1 fixed-region layout for the whole container: center (DOM or
     /// embedded chart), live right column (OrderEntry / RiskCalculator),
     /// live bottom strip (Positions / Orders / Trades tabs).
@@ -574,6 +586,15 @@ impl TradingPanel for TradingContainerState {
     fn handle_drag_start(&mut self, local_id: &str, x: f64, y: f64) -> bool {
         if local_id.starts_with("dom:") {
             self.dom.handle_drag_start(local_id, x, y)
+        } else if local_id.starts_with("position_manager:") {
+            // Table column-boundary drags (owner spec 2026-07-28) — the
+            // hosted table owns the gesture, same forwarding shape as
+            // handle_click.
+            self.position_manager.handle_drag_start(local_id, x, y)
+        } else if local_id.starts_with("trade_log:") {
+            self.trade_log.handle_drag_start(local_id, x, y)
+        } else if local_id.starts_with("orders:") {
+            self.orders_log.handle_drag_start(local_id, x, y)
         } else {
             // Separator drags are stateless per-frame ratio nudges (see
             // `handle_drag_move`) — drag-start just needs to claim the
@@ -585,6 +606,15 @@ impl TradingPanel for TradingContainerState {
     fn handle_drag_move(&mut self, local_id: &str, dx: f64, dy: f64) -> bool {
         if local_id.starts_with("dom:") {
             return self.dom.handle_drag_move(local_id, dx, dy);
+        }
+        if local_id.starts_with("position_manager:") {
+            return self.position_manager.handle_drag_move(local_id, dx, dy);
+        }
+        if local_id.starts_with("trade_log:") {
+            return self.trade_log.handle_drag_move(local_id, dx, dy);
+        }
+        if local_id.starts_with("orders:") {
+            return self.orders_log.handle_drag_move(local_id, dx, dy);
         }
         let Some(sep) = TradingSeparator::from_wire_id(local_id) else { return false };
         let (w, h) = self.last_size.get();
@@ -614,6 +644,12 @@ impl TradingPanel for TradingContainerState {
     fn handle_drag_end(&mut self, local_id: &str) -> bool {
         if local_id.starts_with("dom:") {
             self.dom.handle_drag_end(local_id)
+        } else if local_id.starts_with("position_manager:") {
+            self.position_manager.handle_drag_end(local_id)
+        } else if local_id.starts_with("trade_log:") {
+            self.trade_log.handle_drag_end(local_id)
+        } else if local_id.starts_with("orders:") {
+            self.orders_log.handle_drag_end(local_id)
         } else {
             TradingSeparator::from_wire_id(local_id).is_some()
         }

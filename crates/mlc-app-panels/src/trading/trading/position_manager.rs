@@ -5,6 +5,8 @@ use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{TradingKey, current_language};
 
+use super::col_resize::{self, ColumnResize};
+
 /// PositionManager panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PositionManagerId(pub u64);
@@ -24,6 +26,8 @@ pub struct PositionManagerState {
     pub snapshot: Option<SharedTradingSnapshot>,
     /// Scroll offset (rows scrolled down from top)
     pub scroll_offset: usize,
+    /// Draggable column widths (RAM-only, owner spec 2026-07-28).
+    pub cols: ColumnResize,
 }
 
 #[derive(Clone, Debug)]
@@ -60,7 +64,21 @@ impl PositionManagerState {
             total_unrealized_pnl: 0.0,
             snapshot: None,
             scroll_offset: 0,
+            cols: ColumnResize::default(),
         }
+    }
+
+    /// Default widths of the 7 resizable columns (Lev takes the remainder).
+    fn col_defaults(w: f32) -> Vec<f32> {
+        vec![
+            (w * 0.14).max(52.0), // Symbol
+            (w * 0.08).max(38.0), // Side
+            (w * 0.10).max(44.0), // Qty
+            (w * 0.14).max(56.0), // Entry
+            (w * 0.14).max(56.0), // Mark
+            (w * 0.14).max(52.0), // PnL
+            (w * 0.14).max(52.0), // Liq
+        ]
     }
 
     pub fn set_snapshot(&mut self, snap: SharedTradingSnapshot) {
@@ -212,13 +230,8 @@ impl TradingPanel for PositionManagerState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        let sym_w   = (w * 0.14).max(52.0);
-        let side_w  = (w * 0.08).max(38.0);
-        let qty_w   = (w * 0.10).max(44.0);
-        let entry_w = (w * 0.14).max(56.0);
-        let mark_w  = (w * 0.14).max(56.0);
-        let pnl_w   = (w * 0.14).max(52.0);
-        let liq_w   = (w * 0.14).max(52.0);
+        let widths = self.cols.resolve(w, &Self::col_defaults(w));
+        let [sym_w, side_w, qty_w, entry_w, mark_w, pnl_w, liq_w] = widths[..] else { unreachable!() };
 
         let col_sym_x   = x + PM_LEFT_PAD;
         let col_side_x  = col_sym_x  + sym_w;
@@ -228,6 +241,9 @@ impl TradingPanel for PositionManagerState {
         let col_pnl_x   = col_mark_x + mark_w;
         let col_liq_x   = col_pnl_x  + pnl_w;
         let col_lev_x   = col_liq_x  + liq_w;
+        // Column boundaries = each following column's left edge (draggable).
+        let col_bounds = [col_side_x, col_qty_x, col_entry_x, col_mark_x, col_pnl_x, col_liq_x, col_lev_x]
+            .map(|cx| cx - 2.0);
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, PM_HEADER_HEIGHT as f64);
@@ -254,6 +270,7 @@ impl TradingPanel for PositionManagerState {
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(&theme.text_header);
             ctx.fill_text(TradingKey::NoOpenPositions.get(current_language()), (x + w / 2.0) as f64, (y + h / 2.0) as f64);
+            col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "position_manager", &col_bounds, y, h, theme);
             return;
         }
 
@@ -347,9 +364,26 @@ impl TradingPanel for PositionManagerState {
         let total_str = format!("{:+.2}", total_pnl);
         ctx.set_fill_color(total_color);
         ctx.fill_text(&total_str, (x + PM_LEFT_PAD + 70.0) as f64, summary_mid_y);
+
+        col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "position_manager", &col_bounds, y, h, theme);
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+
+    fn handle_drag_start(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        col_resize::colsep_index(local_id, "position_manager").is_some()
+    }
+
+    fn handle_drag_move(&mut self, local_id: &str, dx: f64, _dy: f64) -> bool {
+        let Some(idx) = col_resize::colsep_index(local_id, "position_manager") else { return false };
+        let avail = self.cols.last_avail.get();
+        self.cols.drag(idx, dx as f32, &Self::col_defaults(avail));
+        true
+    }
+
+    fn handle_drag_end(&mut self, local_id: &str) -> bool {
+        col_resize::colsep_index(local_id, "position_manager").is_some()
+    }
 
     fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
         if local_id == "position_manager:body" {

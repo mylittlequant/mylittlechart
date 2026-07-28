@@ -18,6 +18,7 @@ pub mod overlay_settings;
 pub mod preset_name_input;
 pub mod chart_browser;
 pub mod tags_tabs_modal;
+pub mod trading_container_modal;
 pub mod watchlist_modal;
 pub mod clock_popup;
 pub use clock_popup::{render_clock_popup, ClockPopupResult};
@@ -55,6 +56,10 @@ pub use chart_settings::{
 };
 pub use overlay_settings::{render_overlay_settings_modal, OverlaySettingsResult};
 pub use tags_tabs_modal::{render_tags_tabs_modal, TagsTabsResult};
+pub use trading_container_modal::{
+    render_trading_container_modal, TcMapPanel, TcModalResult, TcModalSection,
+    TradingContainerModalState,
+};
 pub use watchlist_modal::{
     render_wl_group_name_input, WlGroupNameInputResult,
 };

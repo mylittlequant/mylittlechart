@@ -531,6 +531,7 @@ impl ChartApp {
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
+            || self.tc_modal.is_open
     }
 
     /// Handle a right-click at screen coordinates `(x, y)`.
@@ -1575,7 +1576,17 @@ impl ChartApp {
                         if let Ok(slot_idx) = slot_str.parse::<usize>() {
                             if slot_idx < 4 {
                                 if let Some((leaf_id_str, local_id)) = after_slot.split_once(':') {
-                                    if mlc_app_panels::trading::trading::trading_container::TradingSeparator::from_wire_id(local_id).is_some() {
+                                    // Region separators OR table column
+                                    // boundaries (`{table}:colsep:{i}`,
+                                    // owner spec 2026-07-28) — the latter
+                                    // also live on the STANDALONE Positions
+                                    // / Trade Log panels, so those panel
+                                    // kinds are accepted alongside the
+                                    // container.
+                                    let is_colsep = local_id.contains(":colsep:");
+                                    if mlc_app_panels::trading::trading::trading_container::TradingSeparator::from_wire_id(local_id).is_some()
+                                        || is_colsep
+                                    {
                                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                             let leaf_id = uzor::panels::LeafId(raw);
                                             let item_opt = self.sidebar_state.slot_dockings[slot_idx]
@@ -1584,7 +1595,10 @@ impl ChartApp {
                                                 .leaf(leaf_id)
                                                 .and_then(|l| l.active_panel().cloned());
                                             use mlc_core::state::Panel;
-                                            if let Some(item @ Panel::TradingContainer(_)) = item_opt {
+                                            if let Some(item @ (Panel::TradingContainer(_)
+                                                | Panel::PositionManager(_)
+                                                | Panel::TradeLog(_))) = item_opt
+                                            {
                                                 if let Some(panel) = self.panels_store.get_panel_mut(&item) {
                                                     if panel.handle_drag_start(local_id, x, y) {
                                                         self.active_drag_panel = Some((item, local_id.to_string(), x, y));
@@ -1659,6 +1673,12 @@ impl ChartApp {
                     "tags_tabs" => {
                         if let Some(ref tt) = self.frame_result.as_ref().and_then(|r| r.tags_tabs.as_ref()) {
                             self.panel_app.tags_tabs_state.start_drag(x, y, tt.header_rect.x, tt.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "tc_modal" => {
+                        if let Some(ref tm) = self.tc_modal_result {
+                            self.tc_modal.start_drag(x, y, tm.header_rect.x, tm.header_rect.y);
                             true
                         } else { false }
                     }
@@ -3275,6 +3295,9 @@ impl ChartApp {
             self.panel_app.overlay_settings_state.update_drag(x, y);
             return;
         }
+        if self.tc_modal.is_dragging {
+            self.tc_modal.update_drag(x, y);
+        }
         if self.panel_app.tags_tabs_state.is_dragging {
             self.panel_app.tags_tabs_state.update_drag(x, y);
             return;
@@ -4045,6 +4068,9 @@ impl ChartApp {
             self.panel_app.overlay_settings_state.end_drag();
             eprintln!("[ChartApp] overlay_settings modal drag ended");
             return;
+        }
+        if self.tc_modal.is_dragging {
+            self.tc_modal.end_drag();
         }
         if self.panel_app.tags_tabs_state.is_dragging {
             self.panel_app.tags_tabs_state.end_drag();
@@ -6337,6 +6363,13 @@ impl ChartApp {
         if self.panel_app.tags_tabs_state.is_open {
             self.panel_app.close_tags_tabs();
             eprintln!("[ChartApp] tags_tabs closed via Escape");
+            return;
+        }
+
+        // If the Trading Container modal is open, close it.
+        if self.tc_modal.is_open {
+            self.tc_modal.close();
+            eprintln!("[ChartApp] tc_modal closed via Escape");
             return;
         }
 

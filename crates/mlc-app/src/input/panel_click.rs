@@ -3025,6 +3025,13 @@ impl ChartApp {
                         }
                         return;
                     }
+                    "tc_gear" => {
+                        // Trading Container modal (owner spec 2026-07-28) —
+                        // card MAP of the hosted panels + setup section.
+                        self.trading_header_tb.open_dropdown_id = None;
+                        self.tc_modal.open();
+                        return;
+                    }
                     "chart_type_selector" => {
                         // Chart-mode control (embedded center chart) — same
                         // toggle-open contract as timeframe_selector above.
@@ -3630,6 +3637,75 @@ impl ChartApp {
                 }
                 _ => {
                     eprintln!("[ChartApp] unhandled overlay_settings click: {}", rest);
+                }
+            }
+            return;
+        }
+
+        // === Trading Container modal clicks (owner spec 2026-07-28) ===
+        if let Some(rest) = widget_id.strip_prefix("tc_modal:") {
+            use mlc_app_layout::layout::modals::TcModalSection;
+            use mlc_app_panels::trading::trading::trading_container::{BottomTab, CenterKind};
+            let tc_pid = self.panels_store.trading_container.keys().next().copied();
+            match rest {
+                "close" => {
+                    self.tc_modal.close();
+                }
+                "modal_bg" | "header" => {
+                    // Absorb click — prevent fall-through.
+                }
+                "sidebar:map" => {
+                    self.tc_modal.section = TcModalSection::Map;
+                }
+                "sidebar:setup" => {
+                    self.tc_modal.section = TcModalSection::Setup;
+                }
+                // SETUP center switcher — same action as the header's
+                // `tc_center` dropdown rows.
+                "center:dom" | "center:chart" => {
+                    let kind = if rest == "center:dom" { CenterKind::Dom } else { CenterKind::Chart };
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.center_kind = kind;
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                "reset_layout" => {
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.reset_layout();
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                // MAP cards: center card toggles DOM↔Chart, bottom-strip
+                // segments switch the active tab.
+                "map:center" => {
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.center_kind = match tc.center_kind {
+                                CenterKind::Dom => CenterKind::Chart,
+                                CenterKind::Chart => CenterKind::Dom,
+                            };
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                "map:tab:positions" | "map:tab:orders" | "map:tab:trades" => {
+                    let tab = match rest {
+                        "map:tab:positions" => BottomTab::Positions,
+                        "map:tab:orders" => BottomTab::Orders,
+                        _ => BottomTab::Trades,
+                    };
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.active_tab = tab;
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("[ChartApp] unhandled tc_modal click: {}", rest);
                 }
             }
             return;
