@@ -1,11 +1,12 @@
 use serde::{Serialize, Deserialize};
-use mlc_backend_trading_engine::SharedTradingSnapshot;
+use mlc_backend_trading_engine::{ClosedPosition, SharedTradingSnapshot};
 
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{TradingKey, current_language};
 
 use super::col_resize::{self, ColumnResize};
+use super::history::HistoryDepth;
 
 /// PositionManager panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,6 +29,15 @@ pub struct PositionManagerState {
     pub scroll_offset: usize,
     /// Draggable column widths (RAM-only, owner spec 2026-07-28).
     pub cols: ColumnResize,
+    /// Position-close events (newest first), synced from
+    /// `TradingSnapshot::position_history` — the "History" section.
+    pub history: Vec<ClosedPosition>,
+    /// Scroll offset for the History section (independent of the open list).
+    pub history_scroll_offset: usize,
+    /// How much close history to show (owner spec 2026-07-28) — `Off`
+    /// removes the History section (open positions take the full height).
+    /// Set via the trading container's gear modal.
+    pub history_depth: HistoryDepth,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +75,9 @@ impl PositionManagerState {
             snapshot: None,
             scroll_offset: 0,
             cols: ColumnResize::default(),
+            history: Vec::new(),
+            history_scroll_offset: 0,
+            history_depth: HistoryDepth::default(),
         }
     }
 
@@ -122,6 +135,11 @@ impl PositionManagerState {
         }
 
         self.total_unrealized_pnl = self.positions.iter().map(|p| p.unrealized_pnl).sum();
+
+        // Close-event history, newest first (snapshot stores newest last).
+        self.history = snap.position_history.iter().rev().cloned().collect();
+        let max_hist_scroll = self.history.len().saturating_sub(1);
+        self.history_scroll_offset = self.history_scroll_offset.min(max_hist_scroll);
     }
 
     /// Get visible positions for rendering
@@ -201,6 +219,7 @@ pub enum RiskLevel {
 const PM_HEADER_HEIGHT: f32 = 20.0;
 const PM_ROW_HEIGHT: f32 = 20.0;
 const PM_SUMMARY_HEIGHT: f32 = 20.0;
+const PM_SECTION_LABEL_HEIGHT: f32 = 18.0;
 const PM_LEFT_PAD: f32 = 6.0;
 
 impl TradingPanel for PositionManagerState {
@@ -264,18 +283,26 @@ impl TradingPanel for PositionManagerState {
         ctx.fill_text(TradingKey::Liq.get(lang),    col_liq_x   as f64, header_mid_y);
         ctx.fill_text(TradingKey::Lev.get(lang),    col_lev_x   as f64, header_mid_y);
 
+        // History section budget (owner spec 2026-07-28): open positions
+        // keep 55% of the content area when history is shown, everything
+        // when it is off — mirrors the OrdersLog split.
+        let show_history = self.history_depth != HistoryDepth::Off;
+        let content_h = h - PM_HEADER_HEIGHT - PM_SUMMARY_HEIGHT;
+        let open_area_h = if show_history {
+            (content_h * 0.55).max(PM_ROW_HEIGHT)
+        } else {
+            content_h.max(PM_ROW_HEIGHT)
+        };
+
         if self.positions.is_empty() {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(&theme.text_header);
-            ctx.fill_text(TradingKey::NoOpenPositions.get(current_language()), (x + w / 2.0) as f64, (y + h / 2.0) as f64);
-            col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "position_manager", &col_bounds, y, h, theme);
-            return;
+            ctx.fill_text(TradingKey::NoOpenPositions.get(current_language()), (x + w / 2.0) as f64, (y + PM_HEADER_HEIGHT + open_area_h / 2.0) as f64);
         }
 
-        let content_h = h - PM_HEADER_HEIGHT - PM_SUMMARY_HEIGHT;
-        let max_rows  = (content_h / PM_ROW_HEIGHT).floor() as usize;
+        let max_rows  = (open_area_h / PM_ROW_HEIGHT).floor() as usize;
         let visible   = self.visible_positions(self.scroll_offset, max_rows);
 
         for (row_idx, pos) in visible.iter().enumerate() {
@@ -343,6 +370,90 @@ impl TradingPanel for PositionManagerState {
             ctx.fill_rect(x as f64, (row_y + PM_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
         }
 
+        // --- History section (below open positions; own scroll zone). ---
+        if show_history {
+            let history_y = y + PM_HEADER_HEIGHT + open_area_h;
+            let history_h = (y + h - PM_SUMMARY_HEIGHT - history_y).max(0.0);
+            if history_h >= PM_SECTION_LABEL_HEIGHT {
+                ctx.set_fill_color(&theme.header_bg);
+                ctx.fill_rect(x as f64, history_y as f64, w as f64, PM_SECTION_LABEL_HEIGHT as f64);
+                ctx.set_fill_color(&theme.text_header);
+                ctx.set_font("10px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("History", (x + PM_LEFT_PAD) as f64, (history_y + PM_SECTION_LABEL_HEIGHT / 2.0) as f64);
+
+                let rows_h = history_h - PM_SECTION_LABEL_HEIGHT;
+                let max_hist_rows = (rows_h / PM_ROW_HEIGHT).floor().max(0.0) as usize;
+
+                // Own scroll zone — registered AFTER the whole-panel body
+                // zone so it wins the hit-test inside its rect.
+                coordinator.register(
+                    format!("{}:position_manager:history", slot_prefix).as_str(),
+                    uzor::Rect::new(x as f64, history_y as f64, w as f64, history_h as f64),
+                    uzor::input::Sense::SCROLL,
+                );
+
+                let now_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64;
+                let filtered: Vec<&ClosedPosition> = self.history.iter()
+                    .filter(|c| self.history_depth.passes(c.closed_at, now_ms))
+                    .collect();
+
+                for (row_idx, rec) in filtered.into_iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
+                    let row_y = history_y + PM_SECTION_LABEL_HEIGHT + (row_idx as f32 * PM_ROW_HEIGHT);
+                    let row_mid_y = (row_y + PM_ROW_HEIGHT / 2.0) as f64;
+
+                    let hist_row_id = format!("{}:position_manager:hist_row:{}", slot_prefix, row_idx);
+                    let hist_hov = coordinator.is_hovered(&uzor::WidgetId::from(hist_row_id.as_str()));
+                    coordinator.register(
+                        hist_row_id.as_str(),
+                        uzor::Rect::new(x as f64, row_y as f64, w as f64, PM_ROW_HEIGHT as f64),
+                        uzor::input::Sense::CLICK,
+                    );
+                    ctx.set_fill_color(if hist_hov { &theme.hover }
+                        else if row_idx % 2 == 0 { &theme.panel_bg }
+                        else { &theme.row_bg_alt });
+                    ctx.fill_rect(x as f64, row_y as f64, w as f64, PM_ROW_HEIGHT as f64);
+
+                    ctx.set_font("10px monospace");
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.fill_text(&rec.symbol, col_sym_x as f64, row_mid_y);
+
+                    let (side_text, side_color) = match rec.side {
+                        mlc_backend_trading_engine::PositionSide::Short => ("SHORT", &theme.pm_short),
+                        _ => ("LONG", &theme.pm_long),
+                    };
+                    ctx.set_fill_color(side_color);
+                    ctx.fill_text(side_text, col_side_x as f64, row_mid_y);
+
+                    ctx.set_fill_color(&theme.text_primary);
+                    ctx.fill_text(&format!("{:.4}", rec.quantity), col_qty_x as f64, row_mid_y);
+                    ctx.fill_text(&format!("{:.4}", rec.entry_price), col_entry_x as f64, row_mid_y);
+                    // Exit price lands in the Mark column (same columns as
+                    // the open table — the OrdersLog History does the same).
+                    ctx.fill_text(&format!("{:.4}", rec.exit_price), col_mark_x as f64, row_mid_y);
+
+                    let pnl_color = if rec.realized_pnl > 0.0 { &theme.pm_pnl_positive }
+                        else if rec.realized_pnl < 0.0 { &theme.pm_pnl_negative }
+                        else { &theme.pm_pnl_neutral };
+                    ctx.set_fill_color(pnl_color);
+                    ctx.fill_text(&format!("{:+.2}", rec.realized_pnl), col_pnl_x as f64, row_mid_y);
+
+                    // Close time lands in the Liq column.
+                    let secs = (rec.closed_at / 1000) % 86400;
+                    let time_str = format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
+                    ctx.set_fill_color(&theme.text_muted);
+                    ctx.fill_text(&time_str, col_liq_x as f64, row_mid_y);
+                }
+            }
+        }
+
         let summary_y = y + h - PM_SUMMARY_HEIGHT;
         ctx.set_fill_color(&theme.pm_summary_bg);
         ctx.fill_rect(x as f64, summary_y as f64, w as f64, PM_SUMMARY_HEIGHT as f64);
@@ -386,14 +497,21 @@ impl TradingPanel for PositionManagerState {
     }
 
     fn handle_scroll(&mut self, local_id: &str, _dx: f64, dy: f64) -> bool {
-        if local_id == "position_manager:body" {
-            let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
-            let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
-            let max = self.positions.len().saturating_sub(1);
-            self.scroll_offset = new_offset.min(max);
-            true
-        } else {
-            false
+        let delta = if dy < 0.0 { -1i64 } else if dy > 0.0 { 1i64 } else { 0 };
+        match local_id {
+            "position_manager:body" => {
+                let new_offset = (self.scroll_offset as i64 + delta).max(0) as usize;
+                let max = self.positions.len().saturating_sub(1);
+                self.scroll_offset = new_offset.min(max);
+                true
+            }
+            "position_manager:history" => {
+                let new_offset = (self.history_scroll_offset as i64 + delta).max(0) as usize;
+                let max = self.history.len().saturating_sub(1);
+                self.history_scroll_offset = new_offset.min(max);
+                true
+            }
+            _ => false,
         }
     }
 }

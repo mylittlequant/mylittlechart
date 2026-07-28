@@ -6,6 +6,7 @@ use crate::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{TradingKey, current_language};
 
 use super::col_resize::{self, ColumnResize};
+use super::history::HistoryDepth;
 
 /// TradeLog panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,6 +31,10 @@ pub struct TradeLogState {
     pub scroll_offset: usize,
     /// Draggable column widths (RAM-only, owner spec 2026-07-28).
     pub cols: ColumnResize,
+    /// How much of the fill log to show (owner spec 2026-07-28) — the
+    /// whole panel IS history, so the window applies to the full list;
+    /// `Off` empties it. Set via the trading container's gear modal.
+    pub history_depth: HistoryDepth,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +85,7 @@ impl TradeLogState {
             snapshot: None,
             scroll_offset: 0,
             cols: ColumnResize::default(),
+            history_depth: HistoryDepth::default(),
         }
     }
 
@@ -240,7 +246,19 @@ impl TradingPanel for TradeLogState {
 
         let content_h = h - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
         let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
-        let trades = self.visible_trades(self.scroll_offset, max_rows);
+        // Depth filter (owner spec 2026-07-28): fills older than the
+        // configured window drop out; Off empties the log.
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let filtered: Vec<&UserTrade> = self.trades.iter()
+            .filter(|t| self.history_depth.passes(t.timestamp, now_ms))
+            .collect();
+        let trades: Vec<&UserTrade> = filtered.into_iter()
+            .skip(self.scroll_offset.min(usize::MAX))
+            .take(max_rows)
+            .collect();
 
         if trades.is_empty() {
             ctx.set_font("11px sans-serif");

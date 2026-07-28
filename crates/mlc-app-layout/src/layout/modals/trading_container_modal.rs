@@ -133,7 +133,10 @@ const CLOSE_BTN_SIZE: f64 = 20.0;
 /// `panels` — the MAP cards (container-local rects); `container_size` — the
 /// container's last rendered `(w, h)` (aspect + scale source);
 /// `center_label` — current center-slot occupant ("DOM"/"Chart", drives the
-/// SETUP switcher's active state).
+/// SETUP switcher's active state); `hist_rows` — per-table history-depth
+/// rows `(display label, wire key, active option index)` — the option set
+/// itself is fixed (`HIST_OPTIONS`), the app layer maps indices back to its
+/// own depth type.
 #[allow(clippy::too_many_arguments)]
 pub fn render_trading_container_modal(
     ctx: &mut dyn RenderContext,
@@ -143,6 +146,7 @@ pub fn render_trading_container_modal(
     panels: &[TcMapPanel],
     container_size: (f64, f64),
     center_label: &str,
+    hist_rows: &[(String, String, usize)],
     screen_w: f64,
     screen_h: f64,
     input_coordinator: &mut uzor::input::InputCoordinator,
@@ -273,7 +277,7 @@ pub fn render_trading_container_modal(
             &layer_id, input_coordinator,
         ),
         TcModalSection::Setup => render_setup_section(
-            ctx, toolbar_theme, center_label,
+            ctx, toolbar_theme, center_label, hist_rows,
             content_x, content_y, content_w,
             &layer_id, input_coordinator,
         ),
@@ -404,11 +408,17 @@ fn render_map_section(
 // SETUP section — container-level knobs
 // =============================================================================
 
+/// The fixed history-depth option labels, in the same order the app layer's
+/// `HistoryDepth::OPTIONS` uses — `tc_modal:hist:{key}:{idx}` carries the
+/// index.
+const HIST_OPTIONS: [&str; 4] = ["Off", "7d", "30d", "All"];
+
 #[allow(clippy::too_many_arguments)]
 fn render_setup_section(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     center_label: &str,
+    hist_rows: &[(String, String, usize)],
     content_x: f64,
     content_y: f64,
     content_w: f64,
@@ -496,6 +506,55 @@ fn render_setup_section(
         left,
         row_y + 8.0,
     );
+    row_y += 24.0;
 
-    let _ = content_w;
+    // ── History depth per table (owner spec 2026-07-28) ─────────────────
+    // The common gear owns these knobs while the tables live inside the
+    // container (their per-panel mini-gears are suppressed here).
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("History", left, row_y + 10.0);
+    row_y += 24.0;
+
+    let opt_w = 44.0;
+    let opt_h = 20.0;
+    let opts_x = content_x + content_w - MODAL_PADDING - opt_w * HIST_OPTIONS.len() as f64 - 4.0 * (HIST_OPTIONS.len() as f64 - 1.0);
+    for (label, key, active_idx) in hist_rows {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, left, row_y + opt_h / 2.0);
+
+        for (i, opt) in HIST_OPTIONS.iter().enumerate() {
+            let bx = opts_x + i as f64 * (opt_w + 4.0);
+            let wid = format!("tc_modal:hist:{}:{}", key, i);
+            let is_active = *active_idx == i;
+            let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+            let bg = if is_active {
+                toolbar_theme.accent.clone()
+            } else if is_hovered {
+                toolbar_theme.item_bg_hover.clone()
+            } else {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+            };
+            ctx.set_fill_color(&bg);
+            ctx.fill_rounded_rect(bx, row_y, opt_w, opt_h, 3.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(opt, bx + opt_w / 2.0, row_y + opt_h / 2.0);
+
+            input_coordinator.register_on_layer(
+                wid.as_str(),
+                WidgetRect::new(bx, row_y, opt_w, opt_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+        row_y += opt_h + 6.0;
+    }
 }

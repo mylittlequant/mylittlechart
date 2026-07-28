@@ -5,12 +5,21 @@
 //! Builds positions from fills in paper mode; mirrors exchange-reported
 //! positions in live mode.
 
-use std::collections::HashMap;
-use mlc_backend_trading_engine::{Position, Fill, PositionPnl, PositionSide, OrderSide, MarginType};
+use std::collections::{HashMap, VecDeque};
+use mlc_backend_trading_engine::{Position, Fill, PositionPnl, PositionSide, OrderSide, MarginType, ClosedPosition};
+
+/// Cap for [`PositionTracker::closed`] — mirrors the 100-entry cap used for
+/// `order_history` / `recent_fills`.
+const CLOSED_POSITION_HISTORY_CAP: usize = 100;
 
 pub struct PositionTracker {
     positions: HashMap<String, Position>,
     realized_pnl: HashMap<String, f64>,
+    /// Bounded (100) log of position-close events, newest last — published
+    /// as `TradingSnapshot::position_history` (Positions "History" section,
+    /// owner spec 2026-07-28). Recorded in BOTH paper and live modes: every
+    /// fill that reduces an open position appends one record.
+    closed: VecDeque<ClosedPosition>,
     is_paper: bool,
 }
 
@@ -19,8 +28,20 @@ impl PositionTracker {
         Self {
             positions: HashMap::new(),
             realized_pnl: HashMap::new(),
+            closed: VecDeque::new(),
             is_paper,
         }
+    }
+
+    fn push_closed(&mut self, rec: ClosedPosition) {
+        self.closed.push_back(rec);
+        while self.closed.len() > CLOSED_POSITION_HISTORY_CAP {
+            self.closed.pop_front();
+        }
+    }
+
+    pub fn closed_history(&self) -> &VecDeque<ClosedPosition> {
+        &self.closed
     }
 
     pub fn apply_fill(&mut self, fill: &Fill) {
@@ -33,12 +54,22 @@ impl PositionTracker {
                 );
                 if closing {
                     let close_qty = fill.quantity.min(pos.quantity);
-                    let pnl = match pos.side {
-                        PositionSide::Long => close_qty * (fill.price - pos.entry_price),
-                        PositionSide::Short => close_qty * (pos.entry_price - fill.price),
+                    let (side, entry_price) = (pos.side, pos.entry_price);
+                    let pnl = match side {
+                        PositionSide::Long => close_qty * (fill.price - entry_price),
+                        PositionSide::Short => close_qty * (entry_price - fill.price),
                         PositionSide::Both => 0.0,
                     };
                     *self.realized_pnl.entry(fill.symbol.clone()).or_insert(0.0) += pnl;
+                    self.push_closed(ClosedPosition {
+                        symbol: fill.symbol.clone(),
+                        side,
+                        quantity: close_qty,
+                        entry_price,
+                        exit_price: fill.price,
+                        realized_pnl: pnl,
+                        closed_at: fill.timestamp,
+                    });
                 }
             }
             return;
@@ -87,6 +118,15 @@ impl PositionTracker {
                         PositionSide::Both => 0.0,
                     };
                     *self.realized_pnl.entry(fill.symbol.clone()).or_insert(0.0) += pnl;
+                    self.push_closed(ClosedPosition {
+                        symbol: fill.symbol.clone(),
+                        side: pos.side,
+                        quantity: close_qty,
+                        entry_price: pos.entry_price,
+                        exit_price: fill.price,
+                        realized_pnl: pnl,
+                        closed_at: fill.timestamp,
+                    });
 
                     let remaining = pos.quantity - close_qty;
                     if remaining == 0.0 {

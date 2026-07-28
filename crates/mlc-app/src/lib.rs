@@ -8007,6 +8007,11 @@ impl ChartApp {
         let tc_modal_result = if self.tc_modal.is_open {
             self.panels_store.trading_container.iter().next().map(|(_pid, tc)| {
                 let (map_panels, csize) = tc_modal_map_panels(tc);
+                let hist_rows: Vec<(String, String, usize)> = vec![
+                    ("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()),
+                    ("Orders".to_string(), "orders".to_string(), tc.orders_log.history_depth.option_index()),
+                    ("Trades".to_string(), "trades".to_string(), tc.trade_log.history_depth.option_index()),
+                ];
                 mlc_app_layout::layout::modals::render_trading_container_modal(
                     ctx,
                     &self.tc_modal,
@@ -8015,6 +8020,7 @@ impl ChartApp {
                     &map_panels,
                     csize,
                     tc.center_kind.label(),
+                    &hist_rows,
                     w,
                     h,
                     &mut self.input_coordinator.borrow_mut(),

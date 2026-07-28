@@ -429,7 +429,7 @@ impl TradingManager {
     fn publish_snapshot(&mut self, key: (ExchangeId, AccountType)) {
         let is_paper = self.paper_engines.contains_key(&key);
 
-        let (open_orders, positions, pnl, balances, order_history) = if let Some(engine) = self.paper_engines.get(&key) {
+        let (open_orders, positions, pnl, balances, order_history, position_history) = if let Some(engine) = self.paper_engines.get(&key) {
             let oo: Vec<Order> = engine.orders().open_orders().cloned().collect();
             let pos: Vec<Position> = engine.positions().all_positions().values().cloned().collect();
             let p = engine.positions().all_pnl();
@@ -437,7 +437,8 @@ impl TradingManager {
                 Balance { asset: asset.clone(), free: amount, locked: 0.0, total: amount }
             }).collect();
             let hist = engine.history().clone();
-            (oo, pos, p, bal, hist)
+            let pos_hist = engine.positions().closed_history().clone();
+            (oo, pos, p, bal, hist, pos_hist)
         } else {
             let oo = self.order_managers.get(&key)
                 .map(|om| om.open_orders().cloned().collect())
@@ -450,7 +451,10 @@ impl TradingManager {
                 .unwrap_or_default();
             let bal = self.cached_balances.get(&key).cloned().unwrap_or_default();
             let hist = self.order_history.get(&key).cloned().unwrap_or_default();
-            (oo, pos, p, bal, hist)
+            let pos_hist = self.position_trackers.get(&key)
+                .map(|pt| pt.closed_history().clone())
+                .unwrap_or_default();
+            (oo, pos, p, bal, hist, pos_hist)
         };
 
         let new_snap = TradingSnapshot {
@@ -465,6 +469,7 @@ impl TradingManager {
             last_error: self.last_error.get(&key).cloned(),
             order_in_flight: self.orders_in_flight.contains(&key),
             order_history,
+            position_history,
         };
         let slot = self.snapshot_for(key.0, key.1);
         if let Ok(mut snap) = slot.write() {

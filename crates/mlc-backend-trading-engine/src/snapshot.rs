@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::collections::{HashMap, VecDeque};
 use crate::types::{
     Order, Position, Balance, TradingCapabilities, Fill, PositionPnl, SessionInfo,
+    ClosedPosition,
 };
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,11 @@ pub struct TradingSnapshot {
     /// never fills at all). Fed by `PaperEngine::history` for paper sessions,
     /// by `TradingManager`'s own bucket for live sessions.
     pub order_history: VecDeque<Order>,
+    /// Bounded (100) log of position-close events (each partial or full
+    /// close is one record), newest last — the Positions tab's "History"
+    /// section. Fed by `PositionTracker::apply_fill` for both paper and
+    /// live sessions.
+    pub position_history: VecDeque<ClosedPosition>,
 }
 
 impl Default for TradingSnapshot {
@@ -39,6 +45,7 @@ impl Default for TradingSnapshot {
             last_error: None,
             order_in_flight: false,
             order_history: VecDeque::new(),
+            position_history: VecDeque::new(),
         }
     }
 }

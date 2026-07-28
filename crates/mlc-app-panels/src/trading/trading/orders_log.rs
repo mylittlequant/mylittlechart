@@ -21,6 +21,7 @@ use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 
 use super::col_resize::{self, ColumnResize};
+use super::history::HistoryDepth;
 
 /// OrdersLog panel state (heavy data).
 #[derive(Clone, Debug)]
@@ -50,6 +51,10 @@ pub struct OrdersLogState {
     /// Draggable column widths (RAM-only, owner spec 2026-07-28) — shared
     /// by the open-orders table and the History section (same columns).
     pub cols: ColumnResize,
+    /// How much order history to show (owner spec 2026-07-28) — `Off`
+    /// removes the History section entirely (open orders take the full
+    /// height). Set via the trading container's gear modal.
+    pub history_depth: HistoryDepth,
 }
 
 impl OrdersLogState {
@@ -63,6 +68,7 @@ impl OrdersLogState {
             pending_cancel: None,
             pending_cancel_all: false,
             cols: ColumnResize::default(),
+            history_depth: HistoryDepth::default(),
         }
     }
 
@@ -254,8 +260,15 @@ impl TradingPanel for OrdersLogState {
 
         // Reserve room for the "History" section label + at least a couple
         // of rows, same budget for both empty and non-empty open-order
-        // lists so the divider position doesn't jump around.
-        let open_area_h = ((h - OL_HEADER_HEIGHT) * 0.55).max(OL_ROW_HEIGHT);
+        // lists so the divider position doesn't jump around. With history
+        // off (depth setting, owner spec 2026-07-28) the open list takes
+        // the full height.
+        let show_history = self.history_depth != HistoryDepth::Off;
+        let open_area_h = if show_history {
+            ((h - OL_HEADER_HEIGHT) * 0.55).max(OL_ROW_HEIGHT)
+        } else {
+            (h - OL_HEADER_HEIGHT).max(OL_ROW_HEIGHT)
+        };
         let max_open_rows = (open_area_h / OL_ROW_HEIGHT).floor().max(1.0) as usize;
         let visible_open = self.visible_open(self.scroll_offset, max_open_rows);
 
@@ -321,11 +334,10 @@ impl TradingPanel for OrdersLogState {
             }
         }
 
-        // --- History section (below open orders, clipped — no scroll of
-        // its own; the open-orders list is the one that scrolls). ---
+        // --- History section (below open orders; own scroll zone). ---
         let history_y = y + OL_HEADER_HEIGHT + open_area_h;
         let history_h = (y + h - history_y).max(0.0);
-        if history_h < OL_SECTION_LABEL_HEIGHT {
+        if !show_history || history_h < OL_SECTION_LABEL_HEIGHT {
             col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "orders", &col_bounds, y, h, theme);
             return;
         }
@@ -350,7 +362,12 @@ impl TradingPanel for OrdersLogState {
             uzor::input::Sense::SCROLL,
         );
 
-        for (row_idx, order) in self.history.iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
+        // Depth filter (owner spec 2026-07-28): terminal orders older than
+        // the configured window drop out of the section.
+        let hist_filtered: Vec<&Order> = self.history.iter()
+            .filter(|o| self.history_depth.passes(o.updated_at.unwrap_or(o.created_at), now_ms))
+            .collect();
+        for (row_idx, order) in hist_filtered.into_iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
             let row_y = history_y + OL_SECTION_LABEL_HEIGHT + (row_idx as f32 * OL_ROW_HEIGHT);
             let row_mid_y = (row_y + OL_ROW_HEIGHT / 2.0) as f64;
 

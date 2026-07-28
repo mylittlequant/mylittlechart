@@ -1,4 +1,5 @@
 pub mod col_resize;
+pub mod history;
 pub mod trade_log;
 pub mod order_entry;
 pub mod orders_log;

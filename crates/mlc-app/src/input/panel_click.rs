@@ -3704,6 +3704,25 @@ impl ChartApp {
                         }
                     }
                 }
+                // History-depth option buttons — `hist:{table}:{idx}`, idx
+                // into `HistoryDepth::OPTIONS` (owner spec 2026-07-28).
+                r if r.starts_with("hist:") => {
+                    use mlc_app_panels::trading::trading::history::HistoryDepth;
+                    let mut parts = r["hist:".len()..].splitn(2, ':');
+                    let table = parts.next().unwrap_or_default();
+                    let idx: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(2);
+                    let depth = HistoryDepth::OPTIONS.get(idx).copied().unwrap_or_default();
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            match table {
+                                "positions" => tc.position_manager.history_depth = depth,
+                                "orders" => tc.orders_log.history_depth = depth,
+                                "trades" => tc.trade_log.history_depth = depth,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 _ => {
                     eprintln!("[ChartApp] unhandled tc_modal click: {}", rest);
                 }

@@ -40,6 +40,26 @@ pub struct PositionPnl {
     pub current_price: f64,
 }
 
+/// One position-close event — a fill reducing (or fully flattening) an
+/// open position. Partial closes each produce their own record, mirroring
+/// how exchanges report closed-position history. Feeds the Positions tab's
+/// "History" section (owner spec 2026-07-28) via
+/// [`crate::TradingSnapshot::position_history`].
+#[derive(Debug, Clone)]
+pub struct ClosedPosition {
+    pub symbol: String,
+    /// Side of the position that was reduced (not the closing order's side).
+    pub side: PositionSide,
+    /// Quantity closed by this event.
+    pub quantity: f64,
+    pub entry_price: f64,
+    /// The closing fill's price.
+    pub exit_price: f64,
+    pub realized_pnl: f64,
+    /// The closing fill's timestamp (ms).
+    pub closed_at: i64,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SizePreset {
     BalancePct(f32),
