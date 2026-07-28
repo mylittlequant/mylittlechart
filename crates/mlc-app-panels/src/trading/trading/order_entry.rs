@@ -554,24 +554,22 @@ impl TradingPanel for OrderEntryState {
             + self.leverage.is_some() as u32
             + 1
             + if self.estimated_cost > 0.0 { 2 } else { 0 }) as f32;
+        // OE_SUBMIT_HEIGHT participates so the button's share grows with
+        // the same factor as the rows; the button itself is drawn as a
+        // filler down to the panel bottom (see the submit block), so no
+        // gaps/error reserve belong in the fixed stack.
         let natural = OE_TOGGLE_HEIGHT
             + OE_TAB_HEIGHT
             + n_fields * OE_FIELD_HEIGHT
             + OE_QQ_HEIGHT
             + if self.order_type != OrderType::Market { OE_TIF_HEIGHT } else { 0.0 }
-            + OE_PAD
-            + OE_SUBMIT_HEIGHT
-            + OE_PAD / 2.0
-            + OE_ERROR_HEIGHT;
+            + OE_SUBMIT_HEIGHT;
         let k = ((h - OE_TITLE_HEIGHT) / natural).max(1.0);
         let toggle_h = OE_TOGGLE_HEIGHT * k;
         let tab_h = OE_TAB_HEIGHT * k;
         let field_h = OE_FIELD_HEIGHT * k;
         let qq_h = OE_QQ_HEIGHT * k;
         let tif_h = OE_TIF_HEIGHT * k;
-        let submit_h = OE_SUBMIT_HEIGHT * k;
-        let err_h = OE_ERROR_HEIGHT * k;
-        let vgap = OE_PAD * k;
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_TITLE_HEIGHT as f64);
@@ -882,13 +880,14 @@ impl TradingPanel for OrderEntryState {
             cursor_y += field_h;
         }
 
-        // Submit button sits right after the fields with one padding gap —
-        // NOT bottom-pinned (the old `remaining`-fill placement wasted a
-        // large empty gap whenever fields/errors didn't fill the panel).
-        let submit_y = cursor_y + vgap;
-        // Half-pixel slack: with the stretch the stack fills the panel
-        // exactly, and accumulated f32 rounding must not drop the button.
-        if submit_y + submit_h <= y + h + 0.5 {
+        // Submit button — flexible filler (owner spec 2026-07-28): no
+        // paddings on any side, full width, absorbs ALL remaining space
+        // down to the panel bottom. The error strip exists only while
+        // there is an error to show — no permanent reserve.
+        let err_reserve = if self.errors.is_empty() { 0.0 } else { OE_ERROR_HEIGHT };
+        let submit_y = cursor_y;
+        let submit_fill_h = (y + h - err_reserve - submit_y).max(0.0);
+        if submit_fill_h >= 12.0 {
             let valid = self.is_valid();
             let submit_color = if valid {
                 match self.side {
@@ -902,16 +901,16 @@ impl TradingPanel for OrderEntryState {
             let submit_id = format!("{}:oe:submit", slot_prefix);
             let submit_hov = coordinator.is_hovered(&uzor::WidgetId::from(submit_id.as_str()));
             ctx.set_fill_color(submit_color);
-            ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64);
+            ctx.fill_rect(x as f64, submit_y as f64, w as f64, submit_fill_h as f64);
             // Hover feedback only while the order is actually submittable —
             // a brightening disabled button would read as clickable.
             if submit_hov && valid {
                 ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64);
+                ctx.fill_rect(x as f64, submit_y as f64, w as f64, submit_fill_h as f64);
             }
             coordinator.register(
                 submit_id.as_str(),
-                uzor::Rect::new((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64),
+                uzor::Rect::new(x as f64, submit_y as f64, w as f64, submit_fill_h as f64),
                 uzor::input::Sense::CLICK,
             );
 
@@ -936,17 +935,13 @@ impl TradingPanel for OrderEntryState {
             ctx.set_font("13px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(submit_label, (x + w / 2.0) as f64, (submit_y + submit_h / 2.0) as f64);
-
-            cursor_y = submit_y + submit_h;
+            ctx.fill_text(submit_label, (x + w / 2.0) as f64, (submit_y + submit_fill_h / 2.0) as f64);
         }
 
-        // Fixed-height status strip under submit — always reserves exactly
-        // one row (whether or not there is an error) so the submit button's
-        // position never jumps as the error count changes. Shows only the
+        // Error strip — bottom-pinned, present only while an error exists
+        // (the submit filler above already shrank to make room). Shows the
         // first/most-relevant error, truncated so it never wraps.
-        cursor_y += vgap / 2.0;
-        if cursor_y + err_h <= y + h + 0.5 {
+        if err_reserve > 0.0 {
             if let Some(error) = self.errors.first() {
                 const MAX_ERROR_CHARS: usize = 56;
                 let truncated: String = if error.chars().count() > MAX_ERROR_CHARS {
@@ -959,12 +954,9 @@ impl TradingPanel for OrderEntryState {
                 ctx.set_font("9px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(&truncated, (x + OE_PAD) as f64, (cursor_y + err_h / 2.0) as f64);
+                ctx.fill_text(&truncated, (x + OE_PAD) as f64, (y + h - OE_ERROR_HEIGHT / 2.0) as f64);
             }
-            cursor_y += err_h;
         }
-
-        let _ = cursor_y;
     }
 
     fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
