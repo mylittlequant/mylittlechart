@@ -262,7 +262,10 @@ pub fn render_tags_tabs_modal(
     let content_width  = MODAL_WIDTH - SIDEBAR_WIDTH;
     let content_height = MODAL_HEIGHT - HEADER_HEIGHT;
 
-    // WidgetTheme used for scrollbar rendering in TABS and TAGS sections
+    // WidgetTheme used for scrollbar rendering in TABS and TAGS sections —
+    // every field from theme tokens (hardcoded semantic colors removed
+    // 2026-07-28: modal chrome must ride the theme).
+    let rt_root = theme_manager.current();
     let scroll_widget_theme = WidgetTheme {
         bg_normal:      toolbar_theme.item_bg_hover.clone(),
         bg_hover:       toolbar_theme.item_bg_hover.clone(),
@@ -276,9 +279,9 @@ pub fn render_tags_tabs_modal(
         border_focused: toolbar_theme.item_bg_active.clone(),
         accent:         toolbar_theme.accent.clone(),
         accent_hover:   toolbar_theme.accent.clone(),
-        success:        "#26a69a".to_string(),
-        warning:        "#ff9800".to_string(),
-        danger:         "#ef5350".to_string(),
+        success:        rt_root.colors.success.clone(),
+        warning:        rt_root.colors.warning.clone(),
+        danger:         rt_root.colors.danger.clone(),
     };
 
     match state.sidebar {
@@ -994,8 +997,11 @@ fn render_map_section(
                 let alpha = if is_selected || is_target { 0.9 } else { 0.6 };
                 format!("rgba({},{},{},{:.2})", (*r * 255.0) as u8, (*g * 255.0) as u8, (*b * 255.0) as u8, alpha)
             } else {
+                // Untagged leaf — neutral token-derived fill (hardcoded gray
+                // removed 2026-07-28; only tag-derived colors may be custom
+                // on the MAP).
                 let alpha = if is_selected || is_target { 0.7 } else { 0.3 };
-                format!("rgba(100,100,100,{:.2})", alpha)
+                mlc_core::apply_opacity(&toolbar_theme.item_text_muted, alpha)
             };
 
             ctx.set_fill_color(&leaf_color);
@@ -1048,7 +1054,14 @@ fn render_map_section(
                 tree.find_parent_of_leaf(LeafId(lid)).map(|b| b.id)
             });
 
-        let branch_colors: &[&str] = &["#60a5fa", "#a78bfa", "#34d399", "#fbbf24"];
+        // Branch-depth palette — theme tokens (hardcoded hues removed
+        // 2026-07-28: only tag-derived colors may be custom on the MAP).
+        let branch_colors: [&str; 4] = [
+            toolbar_theme.accent.as_str(),
+            colors.success.as_str(),
+            colors.warning.as_str(),
+            colors.danger.as_str(),
+        ];
 
         for (branch_id, rect, depth) in &branch_rects_data {
             let bx = minimap_x + rect.x as f64 * scale_x;
@@ -1064,7 +1077,7 @@ fn render_map_section(
                 ctx.set_stroke_color(color);
                 ctx.set_stroke_width(2.0);
             } else {
-                ctx.set_stroke_color(&format!("{}66", color));
+                ctx.set_stroke_color(&mlc_core::apply_opacity(color, 0.4));
                 ctx.set_stroke_width(1.0);
             }
             ctx.stroke_rounded_rect(bx - 1.0, by - 1.0, bw + 2.0, bh + 2.0, 3.0);
@@ -1074,7 +1087,7 @@ fn render_map_section(
                 let label_color = if is_active {
                     color.to_string()
                 } else {
-                    format!("{}99", color)
+                    mlc_core::apply_opacity(color, 0.6)
                 };
                 ctx.set_fill_color(&label_color);
                 ctx.set_text_align(TextAlign::Left);

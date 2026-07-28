@@ -4887,6 +4887,34 @@ impl ChartApp {
             // fresh frame_layouts/active_frame_layout, so we always run it and use
             // the widget-name check only as an ADDITIONAL suppressor (i.e. when a
             // known non-chart widget is explicitly hovered, trust that over geometry).
+            // Positional modal suppressor (2026-07-28): the Tags&Tabs and
+            // Trading Container modals register their widgets in
+            // render_modal_layer — AFTER render_to_scene's end_frame baked
+            // the hover snapshot — so the `explicit_non_chart` check below
+            // never sees them and the crosshair keeps tracking the cursor
+            // while it is INSIDE a modal (owner repro: crosshair bleeding
+            // around the tc_modal over the main chart). Unlike the removed
+            // whole-screen is_over_ui suppressor, a modal's frame rect IS
+            // its painted extent, so a rect check is exact — no
+            // oversized-hit-rect false positives.
+            let over_app_modal = (self.tc_modal.is_open
+                && self.tc_modal_result.as_ref()
+                    .map(|r| r.modal_rect.contains(x, y))
+                    .unwrap_or(false))
+                || (self.panel_app.tags_tabs_state.is_open
+                    && self.frame_result.as_ref()
+                        .and_then(|r| r.tags_tabs.as_ref())
+                        .map(|tt| tt.modal_rect.contains(x, y))
+                        .unwrap_or(false));
+            if over_app_modal && !is_drawing {
+                if self.panel_app.panel_grid.is_split() {
+                    self.hide_all_split_crosshairs();
+                } else {
+                    self.hide_crosshair();
+                }
+                return;
+            }
+
             let (on_canvas, over_subpane_widget) = {
                 use mlc_core::input::ChartHitTester;
                 use mlc_core::engine::input::HitResult;
