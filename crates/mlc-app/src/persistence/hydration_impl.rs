@@ -1319,6 +1319,7 @@ impl ChartApp {
                                                     s.position_manager.set_snapshot(snap.clone());
                                                     s.trade_log.set_snapshot(snap.clone());
                                                     s.orders_log.set_snapshot(snap.clone());
+                                                    s.metrics.set_snapshot(snap.clone());
                                                     s.risk_calculator.set_snapshot(snap);
                                                 }
                                             }

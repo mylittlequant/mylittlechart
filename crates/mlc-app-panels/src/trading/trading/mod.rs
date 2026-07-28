@@ -1,6 +1,8 @@
 pub mod col_resize;
 pub mod history;
+pub mod ticker_tape;
 pub mod trade_log;
+pub mod trading_metrics;
 pub mod order_entry;
 pub mod orders_log;
 pub mod position_manager;

@@ -39,6 +39,8 @@ use super::position_manager::PositionManagerState;
 use super::trade_log::TradeLogState;
 use super::orders_log::OrdersLogState;
 use super::risk_calculator::RiskCalculatorState;
+use super::trading_metrics::TradingMetricsState;
+use super::ticker_tape::TickerTapeState;
 
 /// Minimum right-column width (px) below which the DOM|right-column
 /// separator refuses to shrink it further — keeps OrderEntry's field
@@ -63,6 +65,12 @@ const TC_INNER_SPLIT_MAX: f64 = 0.8;
 /// Bottom-strip tab row height (px) — `Positions (n) | Orders (n) | Trades
 /// (n)`, W3 2026-07-25. Fixed, not live-resizable (unlike the 3 separators).
 const TC_BOTTOM_TAB_HEIGHT: f64 = 22.0;
+/// Trading-metrics strip height (px) — one-row fast-results widget under
+/// the bottom strip (owner spec 2026-07-28). Fixed.
+const TC_METRICS_HEIGHT: f64 = 22.0;
+/// Ticker-tape strip height (px) — one-row watchlist marquee, the
+/// container's bottom-most strip (owner spec 2026-07-28). Fixed.
+const TC_TAPE_HEIGHT: f64 = 22.0;
 
 /// Trading Container panel ID
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -269,7 +277,13 @@ pub struct TradingContainerState {
     pub orders_log: OrdersLogState,
     /// Risk calculator — always-present hosted sub-panel (v1 right column, bottom)
     pub risk_calculator: RiskCalculatorState,
-
+    /// Fast trading-results strip (owner spec 2026-07-28) — one row under
+    /// the bottom strip; the Total-PnL summaries extracted out of
+    /// PositionManager / TradeLog.
+    pub metrics: TradingMetricsState,
+    /// Watchlist ticker tape (owner spec 2026-07-28) — one-row marquee,
+    /// the container's bottom-most strip.
+    pub ticker_tape: TickerTapeState,
 }
 
 impl TradingContainerState {
@@ -303,6 +317,8 @@ impl TradingContainerState {
             trade_log: TradeLogState::new(),
             orders_log: OrdersLogState::new(),
             risk_calculator: RiskCalculatorState::new(),
+            metrics: TradingMetricsState::new(),
+            ticker_tape: TickerTapeState::new(),
         }
     }
 
@@ -344,11 +360,17 @@ impl TradingContainerState {
     /// embedded chart), live right column (OrderEntry / RiskCalculator),
     /// live bottom strip (Positions / Orders / Trades tabs).
     pub fn v1_layout_rects(&self, x: f64, y: f64, w: f64, h: f64) -> TradingContainerV1Rects {
+        // The two fixed one-row strips (metrics + ticker tape, owner spec
+        // 2026-07-28) come off the bottom first; every ratio applies to the
+        // remaining inner height.
+        let strips_h = (TC_METRICS_HEIGHT + TC_TAPE_HEIGHT).min(h);
+        let inner_h = (h - strips_h).max(0.0);
+
         let right_ratio = Self::clamp_outer_ratio(w, self.right_ratio, TC_RIGHT_COL_MIN_PX);
         let right_w = w * right_ratio;
-        let bottom_ratio = Self::clamp_outer_ratio(h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
-        let bottom_h = h * bottom_ratio;
-        let main_h = (h - bottom_h).max(0.0);
+        let bottom_ratio = Self::clamp_outer_ratio(inner_h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
+        let bottom_h = inner_h * bottom_ratio;
+        let main_h = (inner_h - bottom_h).max(0.0);
         let dom_col_w = (w - right_w).max(0.0);
 
         let right_col_x = x + dom_col_w;
@@ -360,6 +382,7 @@ impl TradingContainerState {
         let tab_bar_h = TC_BOTTOM_TAB_HEIGHT.min(bottom_h);
         let content_h = (bottom_h - tab_bar_h).max(0.0);
 
+        let metrics_y = y + inner_h;
         let sep_hit = TC_SEP_HIT_PX;
         TradingContainerV1Rects {
             dom: (x, y, dom_col_w, main_h),
@@ -367,6 +390,8 @@ impl TradingContainerState {
             risk_calculator: (right_col_x, y + oe_h, right_w, rc_h),
             bottom_tab_bar: (x, bottom_y, w, tab_bar_h),
             bottom_content: (x, bottom_y + tab_bar_h, w, content_h),
+            metrics: (x, metrics_y, w, TC_METRICS_HEIGHT.min(strips_h)),
+            ticker_tape: (x, metrics_y + TC_METRICS_HEIGHT.min(strips_h), w, (strips_h - TC_METRICS_HEIGHT).max(0.0)),
             sep_dom_right: (right_col_x - sep_hit, y, sep_hit * 2.0, main_h),
             sep_oe_rc: (right_col_x, y + oe_h - sep_hit, right_w, sep_hit * 2.0),
             sep_bottom: (x, bottom_y - sep_hit, w, sep_hit * 2.0),
@@ -415,6 +440,10 @@ pub struct TradingContainerV1Rects {
     /// shared by PositionManager / OrdersLog / TradeLog; only one renders
     /// per frame, per `active_tab`.
     pub bottom_content: (f64, f64, f64, f64),
+    /// Fast trading-results strip (one row, under the bottom strip).
+    pub metrics: (f64, f64, f64, f64),
+    /// Watchlist ticker tape (one row, bottom-most).
+    pub ticker_tape: (f64, f64, f64, f64),
     pub sep_dom_right: (f64, f64, f64, f64),
     pub sep_oe_rc: (f64, f64, f64, f64),
     pub sep_bottom: (f64, f64, f64, f64),
@@ -488,6 +517,21 @@ impl TradingPanel for TradingContainerState {
             BottomTab::Positions => self.position_manager.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
             BottomTab::Orders => self.orders_log.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
             BottomTab::Trades => self.trade_log.render(ctx, bcx as f32, bcy as f32, bcw as f32, bch as f32, theme, coordinator, slot_prefix),
+        }
+
+        // --- Fixed strips: metrics row + ticker tape (owner spec
+        // 2026-07-28), 1px separator above each. ---
+        let (mx, my, mw, mh) = rects.metrics;
+        if mh > 0.0 {
+            ctx.set_fill_color(&theme.tc_separator);
+            ctx.fill_rect(mx, my - 0.5, mw, 1.0);
+            self.metrics.render(ctx, mx as f32, my as f32, mw as f32, mh as f32, theme, coordinator, slot_prefix);
+        }
+        let (tx2, ty2, tw2, th2) = rects.ticker_tape;
+        if th2 > 0.0 {
+            ctx.set_fill_color(&theme.tc_separator);
+            ctx.fill_rect(tx2, ty2 - 0.5, tw2, 1.0);
+            self.ticker_tape.render(ctx, tx2 as f32, ty2 as f32, tw2 as f32, th2 as f32, theme, coordinator, slot_prefix);
         }
 
         // --- Separators: single region-driven pass (draw + register drag
@@ -621,6 +665,9 @@ impl TradingPanel for TradingContainerState {
         if w <= 0.0 || h <= 0.0 {
             return true;
         }
+        // Ratios apply to the inner height (total minus the two fixed
+        // strips) — mirrors `v1_layout_rects`.
+        let inner_h = (h - TC_METRICS_HEIGHT - TC_TAPE_HEIGHT).max(1.0);
         match sep {
             TradingSeparator::DomRightCol => {
                 // Dragging right shrinks the right column (grows DOM).
@@ -628,14 +675,14 @@ impl TradingPanel for TradingContainerState {
                 self.right_ratio = Self::clamp_outer_ratio(w, right_w / w, TC_RIGHT_COL_MIN_PX);
             }
             TradingSeparator::OeRiskCalc => {
-                let bottom_ratio = Self::clamp_outer_ratio(h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
-                let main_h = (h - h * bottom_ratio).max(1.0);
+                let bottom_ratio = Self::clamp_outer_ratio(inner_h, self.bottom_ratio, TC_BOTTOM_MIN_PX);
+                let main_h = (inner_h - inner_h * bottom_ratio).max(1.0);
                 self.right_split = Self::clamp_inner_split(self.right_split + dy / main_h);
             }
             TradingSeparator::BottomStrip => {
                 // Dragging down shrinks the bottom strip (grows the main area).
-                let bottom_h = (h * self.bottom_ratio - dy).max(0.0);
-                self.bottom_ratio = Self::clamp_outer_ratio(h, bottom_h / h, TC_BOTTOM_MIN_PX);
+                let bottom_h = (inner_h * self.bottom_ratio - dy).max(0.0);
+                self.bottom_ratio = Self::clamp_outer_ratio(inner_h, bottom_h / inner_h, TC_BOTTOM_MIN_PX);
             }
         }
         true

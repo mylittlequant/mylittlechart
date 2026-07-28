@@ -218,7 +218,6 @@ pub enum RiskLevel {
 
 const PM_HEADER_HEIGHT: f32 = 20.0;
 const PM_ROW_HEIGHT: f32 = 20.0;
-const PM_SUMMARY_HEIGHT: f32 = 20.0;
 const PM_LEFT_PAD: f32 = 6.0;
 
 impl TradingPanel for PositionManagerState {
@@ -286,7 +285,7 @@ impl TradingPanel for PositionManagerState {
         // keep 55% of the content area when history is shown, everything
         // when it is off — mirrors the OrdersLog split.
         let show_history = self.history_depth != HistoryDepth::Off;
-        let content_h = h - PM_HEADER_HEIGHT - PM_SUMMARY_HEIGHT;
+        let content_h = h - PM_HEADER_HEIGHT;
         let open_area_h = if show_history {
             (content_h * 0.55).max(PM_ROW_HEIGHT)
         } else {
@@ -372,7 +371,7 @@ impl TradingPanel for PositionManagerState {
         // --- History section (below open positions; own scroll zone). ---
         if show_history {
             let history_y = y + PM_HEADER_HEIGHT + open_area_h;
-            let history_h = (y + h - PM_SUMMARY_HEIGHT - history_y).max(0.0);
+            let history_h = (y + h - history_y).max(0.0);
             if history_h >= PM_ROW_HEIGHT {
                 // No labeled divider (owner 2026-07-28: visual noise) —
                 // history rows simply fill their window.
@@ -446,28 +445,9 @@ impl TradingPanel for PositionManagerState {
             }
         }
 
-        let summary_y = y + h - PM_SUMMARY_HEIGHT;
-        ctx.set_fill_color(&theme.pm_summary_bg);
-        ctx.fill_rect(x as f64, summary_y as f64, w as f64, PM_SUMMARY_HEIGHT as f64);
-
-        ctx.set_fill_color(&theme.separator);
-        ctx.fill_rect(x as f64, summary_y as f64, w as f64, 1.0);
-
-        let summary_mid_y = (summary_y + PM_SUMMARY_HEIGHT / 2.0) as f64;
-        ctx.set_font("10px monospace");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&theme.text_header);
-        ctx.fill_text(TradingKey::TotalPnl.get(current_language()), (x + PM_LEFT_PAD) as f64, summary_mid_y);
-
-        let total_pnl = self.total_unrealized_pnl;
-        let total_color = if total_pnl > 0.0 { &theme.pm_pnl_positive }
-            else if total_pnl < 0.0 { &theme.pm_pnl_negative }
-            else { &theme.pm_pnl_neutral };
-        let total_str = format!("{:+.2}", total_pnl);
-        ctx.set_fill_color(total_color);
-        ctx.fill_text(&total_str, (x + PM_LEFT_PAD + 70.0) as f64, summary_mid_y);
-
+        // Total-PnL summary strip EXTRACTED into the container's
+        // TradingMetrics widget (owner spec 2026-07-28) — this table shows
+        // rows only.
         col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "position_manager", &col_bounds, y, h, theme);
     }
 

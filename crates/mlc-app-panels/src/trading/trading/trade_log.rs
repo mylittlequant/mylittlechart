@@ -184,7 +184,6 @@ fn format_timestamp(ts: i64) -> String {
 
 const TL_HEADER_HEIGHT: f32 = 18.0;
 const TL_ROW_HEIGHT: f32 = 18.0;
-const TL_SUMMARY_HEIGHT: f32 = 20.0;
 const TL_LEFT_PAD: f32 = 6.0;
 
 impl TradingPanel for TradeLogState {
@@ -244,7 +243,7 @@ impl TradingPanel for TradeLogState {
         ctx.fill_text(TradingKey::Qty.get(lang),    col_qty_x    as f64, header_text_y);
         ctx.fill_text(TradingKey::Fee.get(lang),    col_fee_x    as f64, header_text_y);
 
-        let content_h = h - TL_HEADER_HEIGHT - TL_SUMMARY_HEIGHT;
+        let content_h = h - TL_HEADER_HEIGHT;
         let max_rows = (content_h / TL_ROW_HEIGHT).floor() as usize;
         // Depth filter (owner spec 2026-07-28): fills older than the
         // configured window drop out; Off empties the log.
@@ -326,31 +325,9 @@ impl TradingPanel for TradeLogState {
             }
         }
 
-        let summary_y = y + h - TL_SUMMARY_HEIGHT;
-        ctx.set_fill_color(&theme.separator);
-        ctx.fill_rect(x as f64, summary_y as f64, w as f64, 1.0);
-
-        ctx.set_fill_color(&theme.header_bg);
-        ctx.fill_rect(x as f64, (summary_y + 1.0) as f64, w as f64, (TL_SUMMARY_HEIGHT - 1.0) as f64);
-
-        ctx.set_font("10px monospace");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-
-        let summary_text_y = (summary_y + TL_SUMMARY_HEIGHT / 2.0) as f64;
-        ctx.set_fill_color(&theme.text_header);
-        ctx.fill_text(TradingKey::TotalPnlLog.get(current_language()), (x + TL_LEFT_PAD) as f64, summary_text_y);
-
-        let pnl_color = if self.total_pnl >= 0.0 { &theme.tl_profit } else { &theme.tl_loss };
-        ctx.set_fill_color(pnl_color);
-        let pnl_str = format!("{:+.2}", self.total_pnl);
-        ctx.fill_text(&pnl_str, (x + TL_LEFT_PAD + 68.0) as f64, summary_text_y);
-
-        ctx.set_fill_color(&theme.text_header);
-        ctx.set_text_align(TextAlign::Right);
-        let count_str = format!("Trades: {}", self.trades.len());
-        ctx.fill_text(&count_str, (x + w - TL_LEFT_PAD) as f64, summary_text_y);
-
+        // Total-PnL summary strip EXTRACTED into the container's
+        // TradingMetrics widget (owner spec 2026-07-28) — this table shows
+        // rows only.
         col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "trade_log", &col_bounds, y, h, theme);
     }
 

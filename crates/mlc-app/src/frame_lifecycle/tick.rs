@@ -351,6 +351,18 @@ impl ChartApp {
         for state in self.panels_store.risk_calculator.values_mut() {
             state.sync_from_snapshot();
         }
+        // Ticker-tape feed (owner spec 2026-07-28): live watchlist rows,
+        // projected once per tick and pushed into every container's tape.
+        let tape_items: Vec<mlc_app_panels::trading::trading::ticker_tape::TapeItem> = self
+            .sidebar_state
+            .watchlist_items
+            .iter()
+            .map(|it| mlc_app_panels::trading::trading::ticker_tape::TapeItem {
+                symbol: it.symbol.clone(),
+                price: it.last_price,
+                change_pct: it.change_percent,
+            })
+            .collect();
         for state in self.panels_store.trading_container.values_mut() {
             // Reference price (BBO mid) for OrderEntry/RiskCalculator price
             // prefill + quick-qty — cheapest honest wiring is a per-tick
@@ -367,6 +379,17 @@ impl ChartApp {
             state.trade_log.sync_from_snapshot();
             state.orders_log.sync_from_snapshot();
             state.risk_calculator.sync_from_snapshot();
+            state.metrics.sync_from_snapshot();
+            state.ticker_tape.set_items(tape_items.clone());
+        }
+        // The tape's marquee offset is wall-clock-derived inside render —
+        // repaint the sidebar every tick while the Trading tab shows it (the
+        // 250ms watchlist rate-limit below is too coarse for a smooth scroll).
+        if self.sidebar_state.right_panel
+            == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
+            && !tape_items.is_empty()
+        {
+            self.sidebar_data_dirty = true;
         }
         // Color-sync group follow: rebind any `TradingContainer` whose color
         // group's resolved instrument no longer matches its current binding.
