@@ -357,7 +357,7 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelTool
             ToolbarItemDef::dropdown("tc_center", vec![
                 DropdownItemDef::action("center:dom", "DOM"),
                 DropdownItemDef::action("center:chart", "Chart"),
-            ]).with_text(center_label),
+            ]).with_text(center_label).without_chevron(),
         ]).with_separator(),
     );
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)

@@ -363,11 +363,11 @@ fn item_natural_size(
         ToolbarItemDef::Button { min_width, icon, text, .. } => text_item_width(
             ctx, text.as_deref(), icon.is_some(), false, *min_width, item_size, is_vertical, icon_slot,
         ),
-        ToolbarItemDef::Dropdown { min_width, icon, text, quick_select, .. } => text_item_width(
+        ToolbarItemDef::Dropdown { min_width, icon, text, quick_select, show_chevron, .. } => text_item_width(
             ctx,
             text.as_deref(),
             icon.is_some(),
-            !*quick_select && text.is_some(),
+            *show_chevron && !*quick_select && text.is_some(),
             *min_width,
             item_size,
             is_vertical,
@@ -446,9 +446,9 @@ fn render_item(
             natural
         }
 
-        ToolbarItemDef::Dropdown { id, icon, text, quick_select, min_width, items, .. } => {
+        ToolbarItemDef::Dropdown { id, icon, text, quick_select, show_chevron, min_width, items, .. } => {
             let natural = text_item_width(
-                ctx, text.as_deref(), icon.is_some(), !*quick_select && text.is_some(),
+                ctx, text.as_deref(), icon.is_some(), *show_chevron && !*quick_select && text.is_some(),
                 *min_width, item_size,
                 is_vertical, label_icon_slot(is_vertical, rect, padding, item_size),
             );
@@ -487,7 +487,7 @@ fn render_item(
             }
 
             // Chevron indicator for regular (non-quick-select) dropdowns with text
-            if !quick_select && text.is_some() {
+            if *show_chevron && !quick_select && text.is_some() {
                 draw_chevron(ctx, &item_rect, is_vertical, color);
             }
 
