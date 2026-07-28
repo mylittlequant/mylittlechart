@@ -352,11 +352,12 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelTool
                 "tc_center_swap",
                 ToolbarIconId::new(if center_is_chart { "signal" } else { "slot_dom" }),
             ),
+            // No min_width — the box hugs the measured label ("DOM"/"Chart"
+            // barely differ in width, no jitter floor needed).
             ToolbarItemDef::dropdown("tc_center", vec![
                 DropdownItemDef::action("center:dom", "DOM"),
                 DropdownItemDef::action("center:chart", "Chart"),
-            ]).with_text(center_label)
-              .with_min_width(64.0),
+            ]).with_text(center_label),
         ]).with_separator(),
     );
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)

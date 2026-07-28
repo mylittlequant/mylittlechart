@@ -603,18 +603,16 @@ fn draw_label(
 ) {
     ctx.set_fill_color(color);
     ctx.set_font("11px sans-serif");
-    // Explicit alignment — the box now HUGS the label (2026-07-28), so an
-    // ambient align leaking in from a previous draw would visibly shift the
-    // text out of its own item.
+    // Explicit LEFT alignment — the box HUGS the label (2026-07-28), so the
+    // inset is a fixed LABEL_PAD / icon slot, never a centering leftover;
+    // an ambient align leaking from a previous draw must not shift it.
+    ctx.set_text_align(TextAlign::Left);
     let x = if has_icon {
-        ctx.set_text_align(TextAlign::Left);
         item_rect.x + item_rect.height + 2.0 // icon occupies item_height worth of space
     } else {
-        ctx.set_text_align(TextAlign::Center);
-        item_rect.center_x()
+        item_rect.x + LABEL_PAD
     };
     ctx.fill_text(text, x, item_rect.center_y() + 4.0);
-    ctx.set_text_align(TextAlign::Left);
 }
 
 /// Draw a small downward-pointing chevron to indicate a dropdown.
