@@ -341,15 +341,21 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelTool
             ]).with_separator(),
         );
     }
-    // 4. Center-slot switcher (owner spec 2026-07-26): what occupies
-    // the container's top-left region — DOM ladder or embedded chart.
+    // 4. Center-slot control — SPLIT behavior (owner spec 2026-07-28):
+    // the ICON button is a one-click fast swap (DOM<->Chart, icon shows
+    // the CURRENT occupant: DOM ladder / signals-chart zigzag), the
+    // labeled part opens the dropdown as before.
+    let center_is_chart = center_label.eq_ignore_ascii_case("chart");
     sections.push(
         ToolbarSectionDef::new(vec![
+            ToolbarItemDef::icon_button(
+                "tc_center_swap",
+                ToolbarIconId::new(if center_is_chart { "signal" } else { "slot_dom" }),
+            ),
             ToolbarItemDef::dropdown("tc_center", vec![
                 DropdownItemDef::action("center:dom", "DOM"),
                 DropdownItemDef::action("center:chart", "Chart"),
-            ]).with_icon(ToolbarIconId::new("LayoutSingle"))
-              .with_text(center_label)
+            ]).with_text(center_label)
               .with_min_width(64.0),
         ]).with_separator(),
     );

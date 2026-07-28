@@ -32,7 +32,9 @@ use mlc_core::render::{TextAlign, TextBaseline};
 // =============================================================================
 
 /// One card on the MAP section — a panel currently hosted inside the
-/// trading container, with its rect in CONTAINER-LOCAL coordinates.
+/// trading container, with its rect in VIRTUAL map coordinates (the app
+/// layer inflates the thin strips so their labels stay readable at map
+/// scale; the renderer scales against the panels' bounding box).
 #[derive(Clone, Debug)]
 pub struct TcMapPanel {
     /// Widget-id suffix (`tc_modal:map:{id}` is registered for it).
@@ -41,12 +43,28 @@ pub struct TcMapPanel {
     pub label: String,
     /// Secondary line under the headline (suppressed on small cards).
     pub sub: String,
-    /// Container-local rect `(x, y, w, h)`.
+    /// Virtual map rect `(x, y, w, h)`.
     pub rect: (f64, f64, f64, f64),
-    /// Accent highlight (active bottom tab).
+    /// Accent highlight.
     pub active: bool,
-    /// Whether clicking the card performs an action.
+    /// Whether clicking the card body performs an action.
     pub clickable: bool,
+    /// Segmented card (owner spec 2026-07-28): the bottom strip is ONE
+    /// card carrying N tab buttons `(wire_id, label, active)` — the whole
+    /// card is drawn once, each tab registered as
+    /// `tc_modal:map:{id}:tab:{wire_id}`. Empty for plain cards.
+    pub tabs: Vec<(String, String, bool)>,
+    /// Draw a fast-swap button on the card (owner spec 2026-07-28) —
+    /// registered as `tc_modal:map:{id}:swap`. Used by the center card
+    /// (DOM<->Chart).
+    pub swap: bool,
+}
+
+impl TcMapPanel {
+    /// Plain card constructor (no tabs, no swap).
+    pub fn plain(id: &str, label: String, sub: String, rect: (f64, f64, f64, f64), clickable: bool) -> Self {
+        Self { id: id.to_string(), label, sub, rect, active: false, clickable, tabs: Vec::new(), swap: false }
+    }
 }
 
 // =============================================================================
@@ -317,13 +335,21 @@ fn render_map_section(
     input_coordinator: &mut uzor::input::InputCoordinator,
 ) {
     let (cw, ch) = container_size;
-    if cw <= 0.0 || ch <= 0.0 {
+    if cw <= 0.0 || ch <= 0.0 || panels.is_empty() {
+        return;
+    }
+
+    // Scale against the panels' VIRTUAL bounding box (the app layer inflated
+    // the thin strips) — `container_size` is only the real px for the footer.
+    let vw = panels.iter().map(|p| p.rect.0 + p.rect.2).fold(0.0_f64, f64::max);
+    let vh = panels.iter().map(|p| p.rect.1 + p.rect.3).fold(0.0_f64, f64::max);
+    if vw <= 0.0 || vh <= 0.0 {
         return;
     }
 
     let map_max_w = content_w - MODAL_PADDING * 2.0;
     let map_max_h = content_h - MODAL_PADDING * 2.0 - 20.0;
-    let aspect = cw / ch;
+    let aspect = vw / vh;
     let (map_w, map_h) = if map_max_w / map_max_h > aspect {
         (map_max_h * aspect, map_max_h)
     } else {
@@ -331,8 +357,8 @@ fn render_map_section(
     };
     let map_x = content_x + (content_w - map_w) / 2.0;
     let map_y = content_y + MODAL_PADDING;
-    let sx = map_w / cw;
-    let sy = map_h / ch;
+    let sx = map_w / vw;
+    let sy = map_h / vh;
 
     // Map background
     ctx.set_fill_color(&frame_theme.toolbar_bg);
@@ -373,34 +399,96 @@ fn render_map_section(
         }
         ctx.stroke_rounded_rect(mx + 1.0, my + 1.0, (mw - 2.0).max(1.0), (mh - 2.0).max(1.0), 3.0);
 
-        // Labels — headline centered, sub line under it (size-gated like the
-        // Tags & Tabs minimap).
-        if mw > 34.0 && mh > 14.0 {
-            let has_sub = !panel.sub.is_empty() && mh > 34.0;
-            let label_y = if has_sub { my + mh / 2.0 - 7.0 } else { my + mh / 2.0 };
-            ctx.set_font("bold 10px sans-serif");
-            ctx.set_fill_color(
-                if panel.active { &toolbar_theme.item_text_active }
-                else if is_hovered { &toolbar_theme.item_text_active }
-                else { &toolbar_theme.item_text },
-            );
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&panel.label, mx + mw / 2.0, label_y);
-            if has_sub {
-                ctx.set_font("9px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text(&panel.sub, mx + mw / 2.0, label_y + 13.0);
+        // Segmented card (bottom strip): draw N tab buttons instead of a
+        // single label — the card IS one panel, the tabs just switch its
+        // active view (owner spec 2026-07-28).
+        if !panel.tabs.is_empty() {
+            let seg_w = mw / panel.tabs.len() as f64;
+            for (i, (wire, label, active)) in panel.tabs.iter().enumerate() {
+                let tx = mx + i as f64 * seg_w;
+                let twid = format!("tc_modal:map:{}:tab:{}", panel.id, wire);
+                let thov = input_coordinator.is_hovered(&uzor::WidgetId::from(twid.as_str()));
+                if *active {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, if thov { 0.5 } else { 0.35 }));
+                    ctx.fill_rounded_rect(tx + 1.5, my + 1.5, (seg_w - 3.0).max(1.0), (mh - 3.0).max(1.0), 2.0);
+                } else if thov {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12));
+                    ctx.fill_rounded_rect(tx + 1.5, my + 1.5, (seg_w - 3.0).max(1.0), (mh - 3.0).max(1.0), 2.0);
+                }
+                if i > 0 {
+                    ctx.set_stroke_color(&toolbar_theme.separator);
+                    ctx.set_stroke_width(1.0);
+                    ctx.begin_path();
+                    ctx.move_to(tx, my + 3.0);
+                    ctx.line_to(tx, my + mh - 3.0);
+                    ctx.stroke();
+                }
+                if seg_w > 30.0 {
+                    ctx.set_font("bold 9px sans-serif");
+                    ctx.set_fill_color(if *active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(label, tx + seg_w / 2.0, my + mh / 2.0);
+                }
+                input_coordinator.register_on_layer(
+                    twid.as_str(),
+                    WidgetRect::new(tx, my, seg_w, mh),
+                    Sense::CLICK | Sense::HOVER,
+                    layer_id,
+                );
             }
+        } else {
+            // Labels — headline centered, sub line under it (size-gated like
+            // the Tags & Tabs minimap). The swap button steals the top-right
+            // corner when present.
+            if mw > 34.0 && mh > 14.0 {
+                let has_sub = !panel.sub.is_empty() && mh > 34.0;
+                let label_y = if has_sub { my + mh / 2.0 - 7.0 } else { my + mh / 2.0 };
+                ctx.set_font("bold 10px sans-serif");
+                ctx.set_fill_color(
+                    if panel.active || is_hovered { &toolbar_theme.item_text_active }
+                    else { &toolbar_theme.item_text },
+                );
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&panel.label, mx + mw / 2.0, label_y);
+                if has_sub {
+                    ctx.set_font("9px sans-serif");
+                    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+                    ctx.fill_text(&panel.sub, mx + mw / 2.0, label_y + 13.0);
+                }
+            }
+            let sense = if panel.clickable { Sense::CLICK | Sense::HOVER } else { Sense::HOVER };
+            input_coordinator.register_on_layer(
+                wid.as_str(),
+                WidgetRect::new(mx, my, mw, mh),
+                sense,
+                layer_id,
+            );
         }
 
-        let sense = if panel.clickable { Sense::CLICK | Sense::HOVER } else { Sense::HOVER };
-        input_coordinator.register_on_layer(
-            wid.as_str(),
-            WidgetRect::new(mx, my, mw, mh),
-            sense,
-            layer_id,
-        );
+        // Fast-swap button (center card, owner spec 2026-07-28): a small
+        // top-right chip on the card — one click flips DOM<->Chart.
+        if panel.swap && mw > 40.0 && mh > 24.0 {
+            let sw = 20.0_f64.min(mw - 6.0);
+            let sx0 = mx + mw - sw - 3.0;
+            let sy0 = my + 3.0;
+            let swid = format!("tc_modal:map:{}:swap", panel.id);
+            let shov = input_coordinator.is_hovered(&uzor::WidgetId::from(swid.as_str()));
+            ctx.set_fill_color(if shov { &toolbar_theme.accent } else { &toolbar_theme.item_bg_hover });
+            ctx.fill_rounded_rect(sx0, sy0, sw, 14.0, 3.0);
+            ctx.set_font("9px sans-serif");
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("\u{21c4}", sx0 + sw / 2.0, sy0 + 7.0);
+            input_coordinator.register_on_layer(
+                swid.as_str(),
+                WidgetRect::new(sx0, sy0, sw, 14.0),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
     }
 
     // Footer: live container size

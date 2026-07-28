@@ -3091,6 +3091,23 @@ impl ChartApp {
                         }
                         return;
                     }
+                    "tc_center_swap" => {
+                        // Fast swap (owner spec 2026-07-28): the icon half
+                        // of the split control toggles DOM<->Chart in one
+                        // click; the labeled half keeps the dropdown.
+                        use mlc_app_panels::trading::trading::trading_container::CenterKind;
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if let Some(pid) = tc_pid {
+                            if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                                tc.center_kind = match tc.center_kind {
+                                    CenterKind::Dom => CenterKind::Chart,
+                                    CenterKind::Chart => CenterKind::Dom,
+                                };
+                            }
+                            self.autosave_snapshot();
+                        }
+                        return;
+                    }
                     "tc_gear" => {
                         // Trading Container modal (owner spec 2026-07-28) —
                         // card MAP of the hosted panels + setup section.
@@ -3745,9 +3762,9 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                 }
-                // MAP cards: center card toggles DOM↔Chart, bottom-strip
-                // segments switch the active tab.
-                "map:center" => {
+                // MAP center card: body click OR the dedicated fast-swap
+                // button both flip DOM↔Chart (owner spec 2026-07-28).
+                "map:center" | "map:center:swap" => {
                     if let Some(pid) = tc_pid {
                         if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
                             tc.center_kind = match tc.center_kind {
@@ -3758,10 +3775,12 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                 }
-                "map:tab:positions" | "map:tab:orders" | "map:tab:trades" => {
+                // MAP bottom strip — ONE card with 3 tab buttons switching
+                // its active view.
+                "map:bottom:tab:positions" | "map:bottom:tab:orders" | "map:bottom:tab:trades" => {
                     let tab = match rest {
-                        "map:tab:positions" => BottomTab::Positions,
-                        "map:tab:orders" => BottomTab::Orders,
+                        "map:bottom:tab:positions" => BottomTab::Positions,
+                        "map:bottom:tab:orders" => BottomTab::Orders,
                         _ => BottomTab::Trades,
                     };
                     if let Some(pid) = tc_pid {

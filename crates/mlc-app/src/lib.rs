@@ -256,72 +256,63 @@ fn tc_modal_map_panels(
     }
     let r = tc.v1_layout_rects(0.0, 0.0, w, h);
 
-    let mut panels = vec![
-        TcMapPanel {
-            id: "center".to_string(),
-            label: tc.center_kind.label().to_string(),
-            sub: tc.symbol.clone(),
-            rect: r.dom,
-            active: false,
-            clickable: true,
-        },
-        TcMapPanel {
-            id: "order_entry".to_string(),
-            label: "Order Entry".to_string(),
-            sub: String::new(),
-            rect: r.order_entry,
-            active: false,
-            clickable: false,
-        },
-        TcMapPanel {
-            id: "risk_calculator".to_string(),
-            label: "Risk Calc".to_string(),
-            sub: String::new(),
-            rect: r.risk_calculator,
-            active: false,
-            clickable: false,
-        },
-    ];
+    // VIRTUAL vertical remap (owner spec 2026-07-28): the real 22px strips
+    // are unreadable at map scale. Keep real horizontal proportions (x/w),
+    // but give the bottom strip + metrics + tape generous fixed virtual
+    // heights and compress the top region to whatever remains — so every
+    // card's label fits. Widths/x are taken straight from `r`.
+    const V_TOP: f64 = 260.0;
+    const V_BOTTOM: f64 = 74.0;
+    const V_STRIP: f64 = 34.0;
 
-    let (bx, by, bw, tab_h) = r.bottom_tab_bar;
-    let strip_h = tab_h + r.bottom_content.3;
-    let seg_w = bw / 3.0;
-    for (i, (tab, wire, label, count)) in [
+    let dom_col_w = r.dom.2;
+    let right_x = r.order_entry.0;
+    let right_w = r.order_entry.2;
+    let main_h = r.dom.3.max(1.0);
+    let oe_frac = (r.order_entry.3 / main_h).clamp(0.0, 1.0);
+    let oe_h = V_TOP * oe_frac;
+
+    let bottom_y = V_TOP;
+    let metrics_y = bottom_y + V_BOTTOM;
+    let tape_y = metrics_y + V_STRIP;
+
+    // Center card — DOM/Chart, carries the fast-swap button.
+    let mut center = TcMapPanel::plain(
+        "center",
+        tc.center_kind.label().to_string(),
+        tc.symbol.clone(),
+        (0.0, 0.0, dom_col_w, V_TOP),
+        true,
+    );
+    center.swap = true;
+
+    // Bottom strip — ONE card, three tab segments (active highlighted).
+    let mut bottom = TcMapPanel::plain(
+        "bottom",
+        String::new(),
+        String::new(),
+        (0.0, bottom_y, w, V_BOTTOM),
+        false,
+    );
+    bottom.tabs = [
         (BottomTab::Positions, "positions", "Positions", tc.position_manager.positions.len()),
         (BottomTab::Orders, "orders", "Orders", tc.orders_log.open_orders.len()),
         (BottomTab::Trades, "trades", "Trades", tc.trade_log.trades.len()),
     ]
     .into_iter()
-    .enumerate()
-    {
-        panels.push(TcMapPanel {
-            id: format!("tab:{}", wire),
-            label: format!("{} ({})", label, count),
-            sub: String::new(),
-            rect: (bx + i as f64 * seg_w, by, seg_w, strip_h),
-            active: tc.active_tab == tab,
-            clickable: true,
-        });
-    }
+    .map(|(tab, wire, label, count)| {
+        (wire.to_string(), format!("{} ({})", label, count), tc.active_tab == tab)
+    })
+    .collect();
 
-    // The two fixed one-row strips (owner spec 2026-07-28) — thin
-    // horizontal cards at the container bottom, hover-only.
-    panels.push(TcMapPanel {
-        id: "metrics".to_string(),
-        label: "Metrics".to_string(),
-        sub: String::new(),
-        rect: r.metrics,
-        active: false,
-        clickable: false,
-    });
-    panels.push(TcMapPanel {
-        id: "tape".to_string(),
-        label: "Tape".to_string(),
-        sub: String::new(),
-        rect: r.ticker_tape,
-        active: false,
-        clickable: false,
-    });
+    let panels = vec![
+        center,
+        TcMapPanel::plain("order_entry", "Order Entry".to_string(), String::new(), (right_x, 0.0, right_w, oe_h), false),
+        TcMapPanel::plain("risk_calculator", "Risk Calc".to_string(), String::new(), (right_x, oe_h, right_w, V_TOP - oe_h), false),
+        bottom,
+        TcMapPanel::plain("metrics", "Metrics".to_string(), String::new(), (0.0, metrics_y, w, V_STRIP), false),
+        TcMapPanel::plain("tape", "Tape".to_string(), String::new(), (0.0, tape_y, w, V_STRIP), false),
+    ];
 
     (panels, (w, h))
 }
