@@ -359,6 +359,8 @@ impl ChartApp {
             .iter()
             .map(|it| mlc_app_panels::trading::trading::ticker_tape::TapeItem {
                 symbol: it.symbol.clone(),
+                exchange: it.exchange.clone(),
+                account_type: it.account_type.clone(),
                 price: it.last_price,
                 change_pct: it.change_percent,
             })

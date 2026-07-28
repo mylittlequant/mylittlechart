@@ -1576,16 +1576,18 @@ impl ChartApp {
                         if let Ok(slot_idx) = slot_str.parse::<usize>() {
                             if slot_idx < 4 {
                                 if let Some((leaf_id_str, local_id)) = after_slot.split_once(':') {
-                                    // Region separators OR table column
-                                    // boundaries (`{table}:colsep:{i}`,
-                                    // owner spec 2026-07-28) — the latter
-                                    // also live on the STANDALONE Positions
-                                    // / Trade Log panels, so those panel
-                                    // kinds are accepted alongside the
-                                    // container.
+                                    // Region separators, table column
+                                    // boundaries (`{table}:colsep:{i}`) OR
+                                    // the ticker-tape hand-scroll
+                                    // (`tape:body`), owner spec 2026-07-28.
+                                    // Colseps also live on the STANDALONE
+                                    // Positions / Trade Log panels, so
+                                    // those panel kinds are accepted
+                                    // alongside the container.
                                     let is_colsep = local_id.contains(":colsep:");
                                     if mlc_app_panels::trading::trading::trading_container::TradingSeparator::from_wire_id(local_id).is_some()
                                         || is_colsep
+                                        || local_id == "tape:body"
                                     {
                                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                             let leaf_id = uzor::panels::LeafId(raw);

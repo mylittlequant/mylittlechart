@@ -639,6 +639,8 @@ impl TradingPanel for TradingContainerState {
             self.trade_log.handle_drag_start(local_id, x, y)
         } else if local_id.starts_with("orders:") {
             self.orders_log.handle_drag_start(local_id, x, y)
+        } else if local_id.starts_with("tape:") {
+            self.ticker_tape.handle_drag_start(local_id, x, y)
         } else {
             // Separator drags are stateless per-frame ratio nudges (see
             // `handle_drag_move`) — drag-start just needs to claim the
@@ -659,6 +661,9 @@ impl TradingPanel for TradingContainerState {
         }
         if local_id.starts_with("orders:") {
             return self.orders_log.handle_drag_move(local_id, dx, dy);
+        }
+        if local_id.starts_with("tape:") {
+            return self.ticker_tape.handle_drag_move(local_id, dx, dy);
         }
         let Some(sep) = TradingSeparator::from_wire_id(local_id) else { return false };
         let (w, h) = self.last_size.get();
@@ -697,6 +702,8 @@ impl TradingPanel for TradingContainerState {
             self.trade_log.handle_drag_end(local_id)
         } else if local_id.starts_with("orders:") {
             self.orders_log.handle_drag_end(local_id)
+        } else if local_id.starts_with("tape:") {
+            self.ticker_tape.handle_drag_end(local_id)
         } else {
             TradingSeparator::from_wire_id(local_id).is_some()
         }

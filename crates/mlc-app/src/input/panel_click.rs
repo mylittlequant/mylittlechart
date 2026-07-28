@@ -2237,6 +2237,16 @@ impl ChartApp {
                                 return;
                             }
 
+                            // --- Strip gears (owner spec 2026-07-28): the
+                            // tape / metrics hover-gear opens the container's
+                            // COMMON settings modal at SETUP.
+                            if local_id == "tape:gear" || local_id == "metrics:gear" {
+                                self.tc_modal.open();
+                                self.tc_modal.section =
+                                    mlc_app_layout::layout::modals::TcModalSection::Setup;
+                                return;
+                            }
+
                             // --- risk_calculator: — RiskCalculator editable-field
                             // clicks + the "Apply Size" button (W5, 2026-07-25).
                             // Standalone RiskCalculator panels have no OrderEntry
@@ -3701,6 +3711,34 @@ impl ChartApp {
                     if let Some(pid) = tc_pid {
                         if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
                             tc.active_tab = tab;
+                        }
+                    }
+                }
+                // Ticker-tape entry format (owner spec 2026-07-28).
+                "tapefmt:full" | "tapefmt:short" => {
+                    use mlc_app_panels::trading::trading::ticker_tape::TapeFormat;
+                    let fmt = if rest == "tapefmt:full" { TapeFormat::Full } else { TapeFormat::Short };
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.ticker_tape.format = fmt;
+                        }
+                    }
+                }
+                // Metrics-strip inclusion toggles (owner spec 2026-07-28).
+                r if r.starts_with("metric:") => {
+                    let key = &r["metric:".len()..];
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            let cfg = &mut tc.metrics.config;
+                            match key {
+                                "upnl" => cfg.upnl = !cfg.upnl,
+                                "rpnl" => cfg.rpnl = !cfg.rpnl,
+                                "balance" => cfg.balance = !cfg.balance,
+                                "positions" => cfg.positions = !cfg.positions,
+                                "orders" => cfg.orders = !cfg.orders,
+                                "trades" => cfg.trades = !cfg.trades,
+                                _ => {}
+                            }
                         }
                     }
                 }

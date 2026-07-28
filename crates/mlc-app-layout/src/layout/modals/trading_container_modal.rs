@@ -118,7 +118,7 @@ pub struct TcModalResult {
 // =============================================================================
 
 const MODAL_WIDTH: f64 = 480.0;
-const MODAL_HEIGHT: f64 = 400.0;
+const MODAL_HEIGHT: f64 = 480.0;
 const HEADER_HEIGHT: f64 = 36.0;
 const SIDEBAR_WIDTH: f64 = 80.0;
 const MODAL_PADDING: f64 = 12.0;
@@ -130,13 +130,25 @@ const CLOSE_BTN_SIZE: f64 = 20.0;
 
 /// Render the Trading Container modal.
 ///
+/// SETUP-section data, flattened by the app layer (this crate cannot see
+/// the panel state types).
+#[derive(Clone, Debug, Default)]
+pub struct TcSetupData {
+    /// Current center-slot occupant ("DOM"/"Chart") — drives the switcher.
+    pub center_label: String,
+    /// Per-table history-depth rows `(display label, wire key, active
+    /// option index into HIST_OPTIONS)`.
+    pub hist_rows: Vec<(String, String, usize)>,
+    /// Ticker-tape entry format: true = full `SYMBOL · EXCHANGE · AT`,
+    /// false = symbol only.
+    pub tape_full: bool,
+    /// Metrics-strip inclusion toggles `(display label, wire key, on)`.
+    pub metrics: Vec<(String, String, bool)>,
+}
+
 /// `panels` — the MAP cards (container-local rects); `container_size` — the
-/// container's last rendered `(w, h)` (aspect + scale source);
-/// `center_label` — current center-slot occupant ("DOM"/"Chart", drives the
-/// SETUP switcher's active state); `hist_rows` — per-table history-depth
-/// rows `(display label, wire key, active option index)` — the option set
-/// itself is fixed (`HIST_OPTIONS`), the app layer maps indices back to its
-/// own depth type.
+/// container's last rendered `(w, h)` (aspect + scale source); `setup` —
+/// the SETUP section's data (see [`TcSetupData`]).
 #[allow(clippy::too_many_arguments)]
 pub fn render_trading_container_modal(
     ctx: &mut dyn RenderContext,
@@ -145,8 +157,7 @@ pub fn render_trading_container_modal(
     toolbar_theme: &ToolbarTheme,
     panels: &[TcMapPanel],
     container_size: (f64, f64),
-    center_label: &str,
-    hist_rows: &[(String, String, usize)],
+    setup: &TcSetupData,
     screen_w: f64,
     screen_h: f64,
     input_coordinator: &mut uzor::input::InputCoordinator,
@@ -277,7 +288,7 @@ pub fn render_trading_container_modal(
             &layer_id, input_coordinator,
         ),
         TcModalSection::Setup => render_setup_section(
-            ctx, toolbar_theme, center_label, hist_rows,
+            ctx, toolbar_theme, setup,
             content_x, content_y, content_w,
             &layer_id, input_coordinator,
         ),
@@ -417,14 +428,15 @@ const HIST_OPTIONS: [&str; 4] = ["Off", "7d", "30d", "All"];
 fn render_setup_section(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
-    center_label: &str,
-    hist_rows: &[(String, String, usize)],
+    setup: &TcSetupData,
     content_x: f64,
     content_y: f64,
     content_w: f64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
 ) {
+    let center_label = setup.center_label.as_str();
+    let hist_rows = &setup.hist_rows;
     let left = content_x + MODAL_PADDING;
     let mut row_y = content_y + MODAL_PADDING;
 
@@ -556,5 +568,85 @@ fn render_setup_section(
             );
         }
         row_y += opt_h + 6.0;
+    }
+    row_y += 12.0;
+
+    // ── Ticker-tape entry format (owner spec 2026-07-28) ────────────────
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Tape format", left, row_y + 10.0);
+    row_y += 24.0;
+
+    for (i, (id, label)) in [("full", "Sym \u{00b7} Ex \u{00b7} AT"), ("short", "Symbol")].iter().enumerate() {
+        let fmt_w = 110.0;
+        let bx = left + i as f64 * (fmt_w + 8.0);
+        let wid = format!("tc_modal:tapefmt:{}", id);
+        let is_active = (*id == "full") == setup.tape_full;
+        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+        let bg = if is_active {
+            toolbar_theme.accent.clone()
+        } else if is_hovered {
+            toolbar_theme.item_bg_hover.clone()
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(bx, row_y, fmt_w, 22.0, 4.0);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, bx + fmt_w / 2.0, row_y + 11.0);
+        input_coordinator.register_on_layer(
+            wid.as_str(),
+            WidgetRect::new(bx, row_y, fmt_w, 22.0),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+    row_y += 22.0 + 12.0;
+
+    // ── Metrics-strip inclusion toggles (owner spec 2026-07-28) ─────────
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Metrics", left, row_y + 10.0);
+    row_y += 24.0;
+
+    let chip_h = 20.0;
+    let chip_gap = 6.0;
+    let mut chip_x = left;
+    for (label, key, on) in &setup.metrics {
+        ctx.set_font("10px sans-serif");
+        let chip_w = ctx.measure_text(label) + 18.0;
+        if chip_x + chip_w > content_x + content_w - MODAL_PADDING {
+            chip_x = left;
+            row_y += chip_h + chip_gap;
+        }
+        let wid = format!("tc_modal:metric:{}", key);
+        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+        let bg = if *on {
+            toolbar_theme.accent.clone()
+        } else if is_hovered {
+            toolbar_theme.item_bg_hover.clone()
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(chip_x, row_y, chip_w, chip_h, 10.0);
+        ctx.set_fill_color(if *on { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, chip_x + chip_w / 2.0, row_y + chip_h / 2.0);
+        input_coordinator.register_on_layer(
+            wid.as_str(),
+            WidgetRect::new(chip_x, row_y, chip_w, chip_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        chip_x += chip_w + chip_gap;
     }
 }

@@ -58,7 +58,7 @@ pub use overlay_settings::{render_overlay_settings_modal, OverlaySettingsResult}
 pub use tags_tabs_modal::{render_tags_tabs_modal, TagsTabsResult};
 pub use trading_container_modal::{
     render_trading_container_modal, TcMapPanel, TcModalResult, TcModalSection,
-    TradingContainerModalState,
+    TcSetupData, TradingContainerModalState,
 };
 pub use watchlist_modal::{
     render_wl_group_name_input, WlGroupNameInputResult,

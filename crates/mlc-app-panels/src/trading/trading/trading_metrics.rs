@@ -9,11 +9,31 @@ use mlc_backend_trading_engine::SharedTradingSnapshot;
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 
+/// Which segments the metrics strip shows (owner spec 2026-07-28) —
+/// toggled via the trading container's common gear modal.
+#[derive(Clone, Copy, Debug)]
+pub struct MetricsConfig {
+    pub upnl: bool,
+    pub rpnl: bool,
+    pub balance: bool,
+    pub positions: bool,
+    pub orders: bool,
+    pub trades: bool,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self { upnl: true, rpnl: true, balance: true, positions: true, orders: true, trades: true }
+    }
+}
+
 /// TradingMetrics panel state.
 #[derive(Clone, Debug, Default)]
 pub struct TradingMetricsState {
     /// Shared trading snapshot (source of truth).
     pub snapshot: Option<SharedTradingSnapshot>,
+    /// Segment inclusion toggles — common-gear-modal setting.
+    pub config: MetricsConfig,
     /// Best free balance across assets (same resolution RiskCalculator uses).
     pub balance: f64,
     /// Total unrealized PnL across open positions.
@@ -73,11 +93,23 @@ impl TradingPanel for TradingMetricsState {
         w: f32,
         h: f32,
         theme: &crate::panel_theme::PanelTheme,
-        _coordinator: &mut uzor::InputCoordinator,
-        _slot_prefix: &str,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
     ) {
+        use uzor::input::Sense;
+
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let body_id = format!("{}:metrics:body", slot_prefix);
+        let gear_id = format!("{}:metrics:gear", slot_prefix);
+        let hovered = coordinator.is_hovered(&uzor::WidgetId::from(body_id.as_str()))
+            || coordinator.is_hovered(&uzor::WidgetId::from(gear_id.as_str()));
+        coordinator.register(
+            body_id.as_str(),
+            uzor::Rect::new(x as f64, y as f64, w as f64, h as f64),
+            Sense::CLICK | Sense::HOVER,
+        );
 
         let mid_y = (y + h / 2.0) as f64;
         let pnl_color = |v: f64| -> &String {
@@ -86,16 +118,17 @@ impl TradingPanel for TradingMetricsState {
             else { &theme.pm_pnl_neutral }
         };
 
-        // (label, value, color) segments left-to-right; positions advance by
-        // measured text widths so the strip degrades gracefully when narrow
-        // (clipped by the panel bounds).
-        let segments: [(&str, String, &String); 6] = [
-            ("uPnL", format!("{:+.2}", self.unrealized), pnl_color(self.unrealized)),
-            ("rPnL", format!("{:+.2}", self.realized), pnl_color(self.realized)),
-            ("Bal", format_money(self.balance), &theme.text_primary),
-            ("Pos", format!("{}", self.positions), &theme.text_primary),
-            ("Ord", format!("{}", self.open_orders), &theme.text_primary),
-            ("Trades", format!("{}", self.trades), &theme.text_primary),
+        // (enabled, label, value, color) segments left-to-right; positions
+        // advance by measured text widths so the strip degrades gracefully
+        // when narrow (clipped by the panel bounds).
+        let cfg = &self.config;
+        let segments: [(bool, &str, String, &String); 6] = [
+            (cfg.upnl, "uPnL", format!("{:+.2}", self.unrealized), pnl_color(self.unrealized)),
+            (cfg.rpnl, "rPnL", format!("{:+.2}", self.realized), pnl_color(self.realized)),
+            (cfg.balance, "Bal", format_money(self.balance), &theme.text_primary),
+            (cfg.positions, "Pos", format!("{}", self.positions), &theme.text_primary),
+            (cfg.orders, "Ord", format!("{}", self.open_orders), &theme.text_primary),
+            (cfg.trades, "Trades", format!("{}", self.trades), &theme.text_primary),
         ];
 
         ctx.save();
@@ -103,7 +136,10 @@ impl TradingPanel for TradingMetricsState {
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         let mut cx = (x + 8.0) as f64;
-        for (label, value, color) in &segments {
+        for (enabled, label, value, color) in &segments {
+            if !enabled {
+                continue;
+            }
             ctx.set_font("9px sans-serif");
             ctx.set_fill_color(&theme.text_muted);
             ctx.fill_text(label, cx, mid_y);
@@ -115,6 +151,26 @@ impl TradingPanel for TradingMetricsState {
             cx += ctx.measure_text(value) + 14.0;
         }
         ctx.restore();
+
+        // Hover-revealed gear at the right edge — opens the container's
+        // common settings modal (routed in the app layer).
+        if hovered {
+            const GEAR_W: f64 = 22.0;
+            let gx = (x + w) as f64 - GEAR_W;
+            ctx.set_fill_color(&theme.header_bg);
+            ctx.fill_rect(gx, y as f64, GEAR_W, h as f64);
+            let gear_hov = coordinator.is_hovered(&uzor::WidgetId::from(gear_id.as_str()));
+            ctx.set_fill_color(if gear_hov { &theme.text_primary } else { &theme.text_muted });
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("\u{2699}", gx + GEAR_W / 2.0, mid_y);
+            coordinator.register(
+                gear_id.as_str(),
+                uzor::Rect::new(gx, y as f64, GEAR_W, h as f64),
+                Sense::CLICK | Sense::HOVER,
+            );
+        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }

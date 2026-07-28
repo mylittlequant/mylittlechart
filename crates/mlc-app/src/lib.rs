@@ -8007,11 +8007,25 @@ impl ChartApp {
         let tc_modal_result = if self.tc_modal.is_open {
             self.panels_store.trading_container.iter().next().map(|(_pid, tc)| {
                 let (map_panels, csize) = tc_modal_map_panels(tc);
-                let hist_rows: Vec<(String, String, usize)> = vec![
-                    ("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()),
-                    ("Orders".to_string(), "orders".to_string(), tc.orders_log.history_depth.option_index()),
-                    ("Trades".to_string(), "trades".to_string(), tc.trade_log.history_depth.option_index()),
-                ];
+                let mc = &tc.metrics.config;
+                let setup = mlc_app_layout::layout::modals::TcSetupData {
+                    center_label: tc.center_kind.label().to_string(),
+                    hist_rows: vec![
+                        ("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()),
+                        ("Orders".to_string(), "orders".to_string(), tc.orders_log.history_depth.option_index()),
+                        ("Trades".to_string(), "trades".to_string(), tc.trade_log.history_depth.option_index()),
+                    ],
+                    tape_full: tc.ticker_tape.format
+                        == mlc_app_panels::trading::trading::ticker_tape::TapeFormat::Full,
+                    metrics: vec![
+                        ("uPnL".to_string(), "upnl".to_string(), mc.upnl),
+                        ("rPnL".to_string(), "rpnl".to_string(), mc.rpnl),
+                        ("Balance".to_string(), "balance".to_string(), mc.balance),
+                        ("Positions".to_string(), "positions".to_string(), mc.positions),
+                        ("Orders".to_string(), "orders".to_string(), mc.orders),
+                        ("Trades".to_string(), "trades".to_string(), mc.trades),
+                    ],
+                };
                 mlc_app_layout::layout::modals::render_trading_container_modal(
                     ctx,
                     &self.tc_modal,
@@ -8019,8 +8033,7 @@ impl ChartApp {
                     &toolbar_theme,
                     &map_panels,
                     csize,
-                    tc.center_kind.label(),
-                    &hist_rows,
+                    &setup,
                     w,
                     h,
                     &mut self.input_coordinator.borrow_mut(),
