@@ -219,7 +219,6 @@ pub enum RiskLevel {
 const PM_HEADER_HEIGHT: f32 = 20.0;
 const PM_ROW_HEIGHT: f32 = 20.0;
 const PM_SUMMARY_HEIGHT: f32 = 20.0;
-const PM_SECTION_LABEL_HEIGHT: f32 = 18.0;
 const PM_LEFT_PAD: f32 = 6.0;
 
 impl TradingPanel for PositionManagerState {
@@ -374,17 +373,10 @@ impl TradingPanel for PositionManagerState {
         if show_history {
             let history_y = y + PM_HEADER_HEIGHT + open_area_h;
             let history_h = (y + h - PM_SUMMARY_HEIGHT - history_y).max(0.0);
-            if history_h >= PM_SECTION_LABEL_HEIGHT {
-                ctx.set_fill_color(&theme.header_bg);
-                ctx.fill_rect(x as f64, history_y as f64, w as f64, PM_SECTION_LABEL_HEIGHT as f64);
-                ctx.set_fill_color(&theme.text_header);
-                ctx.set_font("10px sans-serif");
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("History", (x + PM_LEFT_PAD) as f64, (history_y + PM_SECTION_LABEL_HEIGHT / 2.0) as f64);
-
-                let rows_h = history_h - PM_SECTION_LABEL_HEIGHT;
-                let max_hist_rows = (rows_h / PM_ROW_HEIGHT).floor().max(0.0) as usize;
+            if history_h >= PM_ROW_HEIGHT {
+                // No labeled divider (owner 2026-07-28: visual noise) —
+                // history rows simply fill their window.
+                let max_hist_rows = (history_h / PM_ROW_HEIGHT).floor().max(0.0) as usize;
 
                 // Own scroll zone — registered AFTER the whole-panel body
                 // zone so it wins the hit-test inside its rect.
@@ -403,7 +395,7 @@ impl TradingPanel for PositionManagerState {
                     .collect();
 
                 for (row_idx, rec) in filtered.into_iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
-                    let row_y = history_y + PM_SECTION_LABEL_HEIGHT + (row_idx as f32 * PM_ROW_HEIGHT);
+                    let row_y = history_y + (row_idx as f32 * PM_ROW_HEIGHT);
                     let row_mid_y = (row_y + PM_ROW_HEIGHT / 2.0) as f64;
 
                     let hist_row_id = format!("{}:position_manager:hist_row:{}", slot_prefix, row_idx);

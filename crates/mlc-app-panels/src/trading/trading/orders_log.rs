@@ -175,7 +175,6 @@ fn format_timestamp(ts: i64) -> String {
 
 const OL_HEADER_HEIGHT: f32 = 20.0;
 const OL_ROW_HEIGHT: f32 = 20.0;
-const OL_SECTION_LABEL_HEIGHT: f32 = 18.0;
 const OL_LEFT_PAD: f32 = 6.0;
 const OL_CANCEL_W: f32 = 22.0;
 
@@ -337,21 +336,15 @@ impl TradingPanel for OrdersLogState {
         // --- History section (below open orders; own scroll zone). ---
         let history_y = y + OL_HEADER_HEIGHT + open_area_h;
         let history_h = (y + h - history_y).max(0.0);
-        if !show_history || history_h < OL_SECTION_LABEL_HEIGHT {
+        if !show_history || history_h < OL_ROW_HEIGHT {
             col_resize::draw_col_separators(ctx, coordinator, slot_prefix, "orders", &col_bounds, y, h, theme);
             return;
         }
 
-        ctx.set_fill_color(&theme.header_bg);
-        ctx.fill_rect(x as f64, history_y as f64, w as f64, OL_SECTION_LABEL_HEIGHT as f64);
-        ctx.set_fill_color(&theme.text_header);
-        ctx.set_font("10px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("History", (x + OL_LEFT_PAD) as f64, (history_y + OL_SECTION_LABEL_HEIGHT / 2.0) as f64);
-
-        let rows_h = history_h - OL_SECTION_LABEL_HEIGHT;
-        let max_hist_rows = (rows_h / OL_ROW_HEIGHT).floor().max(0.0) as usize;
+        // No labeled divider (owner 2026-07-28: visual noise) — history
+        // rows simply fill their window; the zebra + muted styling reads
+        // as the section boundary.
+        let max_hist_rows = (history_h / OL_ROW_HEIGHT).floor().max(0.0) as usize;
 
         // Own scroll zone for the History section — registered AFTER the
         // whole-panel `orders:body` zone so it wins the hit-test inside
@@ -368,7 +361,7 @@ impl TradingPanel for OrdersLogState {
             .filter(|o| self.history_depth.passes(o.updated_at.unwrap_or(o.created_at), now_ms))
             .collect();
         for (row_idx, order) in hist_filtered.into_iter().skip(self.history_scroll_offset).take(max_hist_rows).enumerate() {
-            let row_y = history_y + OL_SECTION_LABEL_HEIGHT + (row_idx as f32 * OL_ROW_HEIGHT);
+            let row_y = history_y + (row_idx as f32 * OL_ROW_HEIGHT);
             let row_mid_y = (row_y + OL_ROW_HEIGHT / 2.0) as f64;
 
             let hist_row_id = format!("{}:orders:hist_row:{}", slot_prefix, row_idx);
