@@ -291,7 +291,7 @@ pub fn draw_sync_color_grid(
     ctx: &mut dyn RenderContext,
     state: &SyncColorGridState,
     current_color: Option<[f32; 4]>,
-    toolbar_theme: &crate::ui::toolbar_render::ToolbarTheme,
+    toolbar_theme: &crate::ui::toolbar_theme::ToolbarTheme,
 ) -> SyncColorGridDrawResult {
     if !state.open {
         return SyncColorGridDrawResult::default();

@@ -1,7 +1,7 @@
 //! Indicator overlay renderer.
 
 use mlc_core::engine::render::RenderContext;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
 use mlc_core::apply_opacity;
 use crate::layout::render_frame::IndicatorOverlayResult;

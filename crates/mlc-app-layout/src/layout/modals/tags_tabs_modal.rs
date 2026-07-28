@@ -18,7 +18,7 @@ use mlc_core::theme::ThemeManager;
 use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSidebar, TagsTabsTagsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
 use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::Icon;

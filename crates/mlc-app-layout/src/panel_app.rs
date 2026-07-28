@@ -20,9 +20,7 @@ use mlc_core::engine::render::RenderContext as ChartRenderContext;
 use crate::layout::LayoutRect;
 use crate::layout::ExtendedFrameLayout;
 use mlc_core::scale_settings::ScaleSettings;
-use crate::ui::toolbar_render::{
-    ToolbarRect, ToolbarRenderResult,
-};
+use mlc_core::state::toolbar_geometry::{ToolbarRect, ToolbarRenderResult};
 use crate::ui::dropdown::{DropdownItem, DropdownConfig, DropdownTheme, draw_dropdown, GridDropdownConfig, draw_grid_dropdown};
 use crate::ui::toolbar_core::{
     WidgetRect, IconId,
@@ -367,7 +365,7 @@ pub fn chart_toolbar_render_toolbars(
     layout: &ChartPanelLayout,
     toolbar_config: &ToolbarConfig,
     selected_primitive: Option<&SelectedPrimitiveConfig>,
-    toolbar_theme: Option<&crate::ui::toolbar_render::ToolbarTheme>,
+    toolbar_theme: Option<&crate::ui::toolbar_theme::ToolbarTheme>,
     dropdown_theme: Option<&crate::ui::dropdown::DropdownTheme>,
     clock_time: Option<&str>,
     presets: &[mlc_core::PresetSummary],

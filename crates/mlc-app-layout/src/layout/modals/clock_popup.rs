@@ -7,7 +7,7 @@ use mlc_core::engine::render::RenderContext;
 use mlc_core::i18n::{current_language, ClockKey};
 use crate::layout::render_chart::FrameTheme;
 use mlc_core::scale_settings::TimeFormatSettings;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::z_order::ZLayer;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;

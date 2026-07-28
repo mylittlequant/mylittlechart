@@ -1,7 +1,7 @@
 //! Search overlay modal renderer (symbol/indicator search).
 
 use mlc_core::engine::render::RenderContext;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
 use crate::layout::render_frame::ModalSearchResult;
 use crate::layout::render_chart::FrameTheme;

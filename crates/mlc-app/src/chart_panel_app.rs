@@ -361,9 +361,9 @@ impl ChartPanelApp {
     /// Build a `ToolbarTheme` (toolbar_render) from the current theme_manager state.
     ///
     /// Used by `render_toolbars_with_theme` so chart toolbars match the active theme.
-    pub fn toolbar_theme_for_render(&self) -> mlc_app_layout::ui::toolbar_render::ToolbarTheme {
+    pub fn toolbar_theme_for_render(&self) -> mlc_app_layout::ui::toolbar_theme::ToolbarTheme {
         let rt = self.theme_manager.current();
-        mlc_app_layout::ui::toolbar_render::ToolbarTheme {
+        mlc_app_layout::ui::toolbar_theme::ToolbarTheme {
             background: rt.colors.toolbar_bg.clone(),
             dropdown_bg: rt.colors.dropdown_bg.clone(),
             separator: rt.colors.toolbar_divider.clone(),
@@ -542,7 +542,7 @@ impl ChartPanelApp {
         chart_settings_data: Option<&ChartSettingsData>,
         theme_manager: Option<&mlc_core::theme::ThemeManager>,
         frame_theme: &mlc_app_layout::layout::FrameTheme,
-        toolbar_theme: &mlc_app_layout::ui::toolbar_render::ToolbarTheme,
+        toolbar_theme: &mlc_app_layout::ui::toolbar_theme::ToolbarTheme,
         toolbar_state: &mlc_app_layout::layout::toolbar_state::ToolbarState,
         current_time_ms: u64,
         input_coordinator: &mut uzor::input::InputCoordinator,
@@ -903,7 +903,7 @@ impl ChartPanelApp {
         &self,
         ctx: &mut dyn mlc_core::render::RenderContext,
         modal_layout: &ChartModalLayout,
-        toolbar_theme: &mlc_app_layout::ui::toolbar_render::ToolbarTheme,
+        toolbar_theme: &mlc_app_layout::ui::toolbar_theme::ToolbarTheme,
         input_coordinator: &mut uzor::input::InputCoordinator,
         // Pre-resolved color of sync_color_grid.target_panel's non-auto group
         // (caller does the bubble_store lookup so render stays bubble-free).

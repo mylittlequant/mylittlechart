@@ -12,7 +12,7 @@ use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::{render_single_slider, SliderConfig, SliderTrackInfo};

@@ -5,7 +5,7 @@
 //! - `ToolbarRenderResult` — from `ui/toolbar_render.rs`
 //! - `PRESET_COLORS`     — from `ui/sync_color_grid.rs`
 //!
-//! The render functions (`render_panel_toolbar`, etc.) remain in mlc-app-layout.
+//! The live composer (`toolbar_core::draw_toolbar_with_icons`) lives in mlc-app-layout.
 
 // =============================================================================
 // WidgetRect (from toolbar_core.rs)
@@ -108,7 +108,7 @@ impl ToolbarRect {
 // ToolbarRenderResult (from toolbar_render.rs)
 // =============================================================================
 
-/// Output of `render_panel_toolbar`.
+/// Output of a toolbar render pass.
 ///
 /// Contains hit zones that the caller can use to map pointer events back to
 /// toolbar items.

@@ -10,7 +10,7 @@ use mlc_core::engine::render::draw_svg_icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{WatchlistModalState, WatchlistModalTab, WatchlistGroupNameInputState, WatchlistGroupNameMode};
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::types::WidgetState;

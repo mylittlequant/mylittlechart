@@ -1,7 +1,7 @@
 //! Primitive settings modal renderer.
 
 use mlc_core::engine::render::RenderContext;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle, ActiveFieldRender};
 use mlc_core::drawing::LineStyle;

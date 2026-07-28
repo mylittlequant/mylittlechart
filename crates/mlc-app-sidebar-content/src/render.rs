@@ -17,7 +17,7 @@ use mlc_core::state::icons::Icon;
 use mlc_app_layout::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollbarConfig, ScrollbarState as SbState, draw_scrollbar};
 use mlc_app_layout::ui::widgets::types::{WidgetState, WidgetTheme};
 use mlc_app_layout::ui::widgets::input::{InputConfig, draw_input, draw_input_cursor};
-use mlc_app_layout::ui::toolbar_render::ToolbarTheme;
+use mlc_app_layout::ui::toolbar_theme::ToolbarTheme;
 use mlc_core::state::command::ObjectCategory;
 use mlc_app_layout::layout::panel_overlay::{render_leaf_tab, LeafTabHoverZone, LeafTabHitZones};
 use mlc_core::i18n::{SidebarKey, current_language};

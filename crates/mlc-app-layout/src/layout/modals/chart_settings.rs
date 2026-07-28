@@ -9,7 +9,7 @@ use mlc_core::i18n::{current_language, ClockKey, SettingsKey, t_settings};
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{ChartSettingsModalResult, SliderTrackInfo};
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::modal_settings::{ChartSettingsState, ChartSettingsTab};
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,

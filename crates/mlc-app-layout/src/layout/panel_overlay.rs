@@ -11,7 +11,7 @@
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};
 use mlc_core::state::modal_state::SymbolQuickSearchRender;
 use crate::ui::icons::ICON_SETTINGS;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 
 // ---------------------------------------------------------------------------
 // Helpers

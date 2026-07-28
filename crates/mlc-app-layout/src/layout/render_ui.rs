@@ -15,7 +15,7 @@
 //! `ZLayer`, etc.) and therefore live in `zengeld-terminal-core::layout::render_chart_modals`.
 //! Core re-exports those functions via `pub use`.
 
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::widgets::types::WidgetTheme;
 

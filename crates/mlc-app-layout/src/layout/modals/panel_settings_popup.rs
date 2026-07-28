@@ -13,7 +13,7 @@ use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
 
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;

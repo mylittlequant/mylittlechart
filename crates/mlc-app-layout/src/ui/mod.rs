@@ -1,7 +1,7 @@
 //! Chart UI rendering - self-contained toolbar and overlay rendering
 pub mod widgets;
 pub mod z_order;
-pub mod toolbar_render;
+pub mod toolbar_theme;
 pub mod icons;
 pub mod toolbar_core;
 pub mod dropdown;

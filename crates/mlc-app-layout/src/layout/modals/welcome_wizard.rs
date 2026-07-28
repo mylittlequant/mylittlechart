@@ -15,7 +15,7 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use crate::ui::modal_settings::UserSettingsState;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};

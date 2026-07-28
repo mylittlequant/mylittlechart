@@ -1,7 +1,7 @@
 //! Chart settings color picker popup renderer.
 
 use mlc_core::engine::render::RenderContext;
-use crate::ui::toolbar_render::ToolbarTheme;
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_frame::ColorPickerRenderResult;
 
 /// Render color picker popup for chart settings (L1 or L2 based on state)
