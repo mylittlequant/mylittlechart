@@ -126,32 +126,32 @@ impl RiskCalculatorState {
         self.potential_profit = None;
         self.risk_reward_ratio = None;
 
-        if self.account_size <= 0.0 {
+        // Unfilled inputs (still at their 0/default — closer to NaN than a
+        // typed value) are NOT errors: a fresh panel must not scream
+        // warnings (owner defect 2026-07-28). The render layer already
+        // shows dashes for the incomplete state via `inputs_ready()`;
+        // `errors` is reserved for genuinely invalid typed values.
+        if self.account_size < 0.0 {
             self.errors.push("Account size must be positive".to_string());
-            return;
         }
-        if self.risk_percent <= 0.0 || self.risk_percent > 100.0 {
+        if self.risk_percent < 0.0 || self.risk_percent > 100.0 {
             self.errors.push("Risk percent must be between 0 and 100".to_string());
-            return;
         }
-        if self.entry_price <= 0.0 {
+        if self.entry_price < 0.0 {
             self.errors.push("Entry price must be positive".to_string());
-            return;
         }
-        if self.stop_loss_price <= 0.0 {
+        if self.stop_loss_price < 0.0 {
             self.errors.push("Stop loss price must be positive".to_string());
+        }
+        if self.entry_price > 0.0 && self.entry_price == self.stop_loss_price {
+            self.errors.push("Entry and stop loss cannot be equal".to_string());
+        }
+        if !self.errors.is_empty() || !self.inputs_ready() {
             return;
         }
 
         self.risk_amount = self.account_size * (self.risk_percent / 100.0);
         self.risk_per_unit = (self.entry_price - self.stop_loss_price).abs();
-
-        if self.risk_per_unit == 0.0 {
-            self.errors.push("Entry and stop loss cannot be equal".to_string());
-            self.risk_amount = 0.0;
-            return;
-        }
-
         self.position_size = self.risk_amount / self.risk_per_unit;
 
         self.margin_required = match self.leverage {

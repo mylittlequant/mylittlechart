@@ -413,6 +413,7 @@ fn draw_oe_field_row(
     x: f32,
     row_y: f32,
     w: f32,
+    row_h: f32,
     label: &str,
     static_value: &str,
     live: Option<&uzor::WidgetId>,
@@ -420,21 +421,21 @@ fn draw_oe_field_row(
     now_ms: u64,
 ) {
     ctx.set_fill_color(&theme.oe_input_bg);
-    ctx.fill_rect(x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+    ctx.fill_rect(x as f64, row_y as f64, w as f64, row_h as f64);
     ctx.set_fill_color(&theme.oe_input_border);
-    ctx.fill_rect(x as f64, (row_y + OE_FIELD_HEIGHT - 1.0) as f64, w as f64, 1.0);
+    ctx.fill_rect(x as f64, (row_y + row_h - 1.0) as f64, w as f64, 1.0);
 
     ctx.set_fill_color(&theme.text_muted);
     ctx.set_font("10px sans-serif");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+    ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + row_h / 2.0) as f64);
 
     let Some(wid) = live else {
         ctx.set_fill_color(&theme.text_primary);
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Right);
-        ctx.fill_text(static_value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+        ctx.fill_text(static_value, field_value_right as f64, (row_y + row_h / 2.0) as f64);
         return;
     };
 
@@ -453,23 +454,23 @@ fn draw_oe_field_row(
         let sel_x0 = char_x_positions.get(lo).copied().unwrap_or(text_left_x);
         let sel_x1 = char_x_positions.get(hi).copied().unwrap_or(text_left_x + total_width);
         ctx.set_fill_color(&theme.accent);
-        ctx.fill_rect(sel_x0, row_y as f64, (sel_x1 - sel_x0).max(0.0), OE_FIELD_HEIGHT as f64);
+        ctx.fill_rect(sel_x0, row_y as f64, (sel_x1 - sel_x0).max(0.0), row_h as f64);
     }
 
     ctx.set_fill_color(&theme.text_primary);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&text, text_left_x, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+    ctx.fill_text(&text, text_left_x, (row_y + row_h / 2.0) as f64);
 
     if cursor_visible {
         let caret_x = char_x_positions.get(cursor).copied().unwrap_or(text_left_x + total_width);
         ctx.set_fill_color(&theme.text_primary);
-        ctx.fill_rect(caret_x, (row_y + 2.0) as f64, 1.5, (OE_FIELD_HEIGHT - 4.0) as f64);
+        ctx.fill_rect(caret_x, (row_y + 2.0) as f64, 1.5, (row_h - 4.0) as f64);
     }
 
     coordinator.text_fields_mut().update_field(
         wid,
-        (x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+        (x as f64, row_y as f64, w as f64, row_h as f64),
         char_x_positions,
     );
 }
@@ -542,6 +543,36 @@ impl TradingPanel for OrderEntryState {
 
         let mut cursor_y = y;
 
+        // Vertical stretch (owner spec 2026-07-28): the fixed-height stack
+        // left dead space at the bottom of a tall right column — scale
+        // every row proportionally so the content fills the panel. The
+        // title strip stays chrome-fixed; `k` never drops below 1 (a short
+        // panel keeps natural sizes and clips, as before).
+        let n_price = matches!(self.order_type, OrderType::Limit | OrderType::StopLimit) as u32;
+        let n_stop = matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) as u32;
+        let n_fields = (1 + n_price + n_stop
+            + self.leverage.is_some() as u32
+            + 1
+            + if self.estimated_cost > 0.0 { 2 } else { 0 }) as f32;
+        let natural = OE_TOGGLE_HEIGHT
+            + OE_TAB_HEIGHT
+            + n_fields * OE_FIELD_HEIGHT
+            + OE_QQ_HEIGHT
+            + if self.order_type != OrderType::Market { OE_TIF_HEIGHT } else { 0.0 }
+            + OE_PAD
+            + OE_SUBMIT_HEIGHT
+            + OE_PAD / 2.0
+            + OE_ERROR_HEIGHT;
+        let k = ((h - OE_TITLE_HEIGHT) / natural).max(1.0);
+        let toggle_h = OE_TOGGLE_HEIGHT * k;
+        let tab_h = OE_TAB_HEIGHT * k;
+        let field_h = OE_FIELD_HEIGHT * k;
+        let qq_h = OE_QQ_HEIGHT * k;
+        let tif_h = OE_TIF_HEIGHT * k;
+        let submit_h = OE_SUBMIT_HEIGHT * k;
+        let err_h = OE_ERROR_HEIGHT * k;
+        let vgap = OE_PAD * k;
+
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_TITLE_HEIGHT as f64);
 
@@ -569,14 +600,14 @@ impl TradingPanel for OrderEntryState {
         let buy_hov = coordinator.is_hovered(&uzor::WidgetId::from(buy_id.as_str()));
         let buy_bg = if self.side == OrderSide::Buy { &theme.oe_buy_button } else { &theme.oe_tab_inactive };
         ctx.set_fill_color(buy_bg);
-        ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+        ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, toggle_h as f64);
         if buy_hov {
             ctx.set_fill_color(&theme.hover_overlay);
-            ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+            ctx.fill_rect(x as f64, cursor_y as f64, half_w as f64, toggle_h as f64);
         }
         coordinator.register(
             buy_id.as_str(),
-            uzor::Rect::new(x as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64),
+            uzor::Rect::new(x as f64, cursor_y as f64, half_w as f64, toggle_h as f64),
             uzor::input::Sense::CLICK,
         );
 
@@ -584,28 +615,28 @@ impl TradingPanel for OrderEntryState {
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(TradingKey::Buy.get(current_language()), (x + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::Buy.get(current_language()), (x + half_w / 2.0) as f64, (cursor_y + toggle_h / 2.0) as f64);
 
         // SELL toggle button.
         let sell_id = format!("{}:oe:sell", slot_prefix);
         let sell_hov = coordinator.is_hovered(&uzor::WidgetId::from(sell_id.as_str()));
         let sell_bg = if self.side == OrderSide::Sell { &theme.oe_sell_button } else { &theme.oe_tab_inactive };
         ctx.set_fill_color(sell_bg);
-        ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+        ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, toggle_h as f64);
         if sell_hov {
             ctx.set_fill_color(&theme.hover_overlay);
-            ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64);
+            ctx.fill_rect((x + half_w) as f64, cursor_y as f64, half_w as f64, toggle_h as f64);
         }
         coordinator.register(
             sell_id.as_str(),
-            uzor::Rect::new((x + half_w) as f64, cursor_y as f64, half_w as f64, OE_TOGGLE_HEIGHT as f64),
+            uzor::Rect::new((x + half_w) as f64, cursor_y as f64, half_w as f64, toggle_h as f64),
             uzor::input::Sense::CLICK,
         );
 
         ctx.set_fill_color(&theme.oe_sell_button_text);
-        ctx.fill_text(TradingKey::Sell.get(current_language()), (x + half_w + half_w / 2.0) as f64, (cursor_y + OE_TOGGLE_HEIGHT / 2.0) as f64);
+        ctx.fill_text(TradingKey::Sell.get(current_language()), (x + half_w + half_w / 2.0) as f64, (cursor_y + toggle_h / 2.0) as f64);
 
-        cursor_y += OE_TOGGLE_HEIGHT;
+        cursor_y += toggle_h;
 
         let tabs: &[(&str, OrderType)] = &[
             ("Limit",   OrderType::Limit),
@@ -623,14 +654,14 @@ impl TradingPanel for OrderEntryState {
             let tab_hov = coordinator.is_hovered(&uzor::WidgetId::from(tab_id.as_str()));
             let tab_bg = if is_active { &theme.oe_tab_active } else { &theme.oe_tab_inactive };
             ctx.set_fill_color(tab_bg);
-            ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64);
+            ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, tab_h as f64);
             if tab_hov {
                 ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64);
+                ctx.fill_rect(tab_x as f64, cursor_y as f64, tab_w as f64, tab_h as f64);
             }
             coordinator.register(
                 tab_id.as_str(),
-                uzor::Rect::new(tab_x as f64, cursor_y as f64, tab_w as f64, OE_TAB_HEIGHT as f64),
+                uzor::Rect::new(tab_x as f64, cursor_y as f64, tab_w as f64, tab_h as f64),
                 uzor::input::Sense::CLICK,
             );
 
@@ -640,42 +671,42 @@ impl TradingPanel for OrderEntryState {
                     OrderSide::Sell => &theme.oe_sell_button,
                 };
                 ctx.set_fill_color(accent);
-                ctx.fill_rect(tab_x as f64, (cursor_y + OE_TAB_HEIGHT - 2.0) as f64, tab_w as f64, 2.0);
+                ctx.fill_rect(tab_x as f64, (cursor_y + tab_h - 2.0) as f64, tab_w as f64, 2.0);
             }
 
             ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, (tab_x + tab_w / 2.0) as f64, (cursor_y + OE_TAB_HEIGHT / 2.0) as f64);
+            ctx.fill_text(label, (tab_x + tab_w / 2.0) as f64, (cursor_y + tab_h / 2.0) as f64);
 
             if i + 1 < tabs.len() {
                 ctx.set_fill_color(&theme.separator);
-                ctx.fill_rect((tab_x + tab_w - 1.0) as f64, cursor_y as f64, 1.0, OE_TAB_HEIGHT as f64);
+                ctx.fill_rect((tab_x + tab_w - 1.0) as f64, cursor_y as f64, 1.0, tab_h as f64);
             }
         }
 
-        cursor_y += OE_TAB_HEIGHT;
+        cursor_y += tab_h;
 
         let field_value_right = x + w - OE_PAD;
 
         let draw_field = |ctx: &mut dyn RenderContext, row_y: f32, label: &str, value: &str| {
             ctx.set_fill_color(&theme.oe_input_bg);
-            ctx.fill_rect(x as f64, row_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+            ctx.fill_rect(x as f64, row_y as f64, w as f64, field_h as f64);
 
             ctx.set_fill_color(&theme.oe_input_border);
-            ctx.fill_rect(x as f64, (row_y + OE_FIELD_HEIGHT - 1.0) as f64, w as f64, 1.0);
+            ctx.fill_rect(x as f64, (row_y + field_h - 1.0) as f64, w as f64, 1.0);
 
             ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+            ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + field_h / 2.0) as f64);
 
             ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Right);
-            ctx.fill_text(value, field_value_right as f64, (row_y + OE_FIELD_HEIGHT / 2.0) as f64);
+            ctx.fill_text(value, field_value_right as f64, (row_y + field_h / 2.0) as f64);
         };
 
         let now_ms = web_time::SystemTime::now()
@@ -694,20 +725,20 @@ impl TradingPanel for OrderEntryState {
                 .map(|p| format!("{:.4}", p))
                 .unwrap_or_else(|| "\u{2014}".to_string());
             draw_oe_field_row(
-                ctx, coordinator, theme, x, cursor_y, w, "Price:", &static_str,
+                ctx, coordinator, theme, x, cursor_y, w, field_h, "Price:", &static_str,
                 is_live.then_some(&oe_field_wid), field_value_right, now_ms,
             );
             let price_id = format!("{}:oe:price", slot_prefix);
             if coordinator.is_hovered(&uzor::WidgetId::from(price_id.as_str())) {
                 ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+                ctx.fill_rect(x as f64, cursor_y as f64, w as f64, field_h as f64);
             }
             coordinator.register(
                 price_id.as_str(),
-                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, field_h as f64),
                 uzor::input::Sense::CLICK,
             );
-            cursor_y += OE_FIELD_HEIGHT;
+            cursor_y += field_h;
         }
 
         if matches!(self.order_type, OrderType::StopLimit | OrderType::StopMarket) {
@@ -717,40 +748,40 @@ impl TradingPanel for OrderEntryState {
                 .map(|p| format!("{:.4}", p))
                 .unwrap_or_else(|| "\u{2014}".to_string());
             draw_oe_field_row(
-                ctx, coordinator, theme, x, cursor_y, w, "Stop:", &static_str,
+                ctx, coordinator, theme, x, cursor_y, w, field_h, "Stop:", &static_str,
                 is_live.then_some(&oe_field_wid), field_value_right, now_ms,
             );
             let stop_id = format!("{}:oe:stop_price", slot_prefix);
             if coordinator.is_hovered(&uzor::WidgetId::from(stop_id.as_str())) {
                 ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+                ctx.fill_rect(x as f64, cursor_y as f64, w as f64, field_h as f64);
             }
             coordinator.register(
                 stop_id.as_str(),
-                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+                uzor::Rect::new(x as f64, cursor_y as f64, w as f64, field_h as f64),
                 uzor::input::Sense::CLICK,
             );
-            cursor_y += OE_FIELD_HEIGHT;
+            cursor_y += field_h;
         }
 
         let qty_is_live = self.active_field == Some(OrderEntryElement::QuantityInput)
             && coordinator.text_fields().is_focused(&oe_field_wid);
         let qty_static_str = self.format_quantity();
         draw_oe_field_row(
-            ctx, coordinator, theme, x, cursor_y, w, "Quantity:", &qty_static_str,
+            ctx, coordinator, theme, x, cursor_y, w, field_h, "Quantity:", &qty_static_str,
             qty_is_live.then_some(&oe_field_wid), field_value_right, now_ms,
         );
         let qty_id = format!("{}:oe:qty", slot_prefix);
         if coordinator.is_hovered(&uzor::WidgetId::from(qty_id.as_str())) {
             ctx.set_fill_color(&theme.hover_overlay);
-            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, field_h as f64);
         }
         coordinator.register(
             qty_id.as_str(),
-            uzor::Rect::new(x as f64, cursor_y as f64, w as f64, OE_FIELD_HEIGHT as f64),
+            uzor::Rect::new(x as f64, cursor_y as f64, w as f64, field_h as f64),
             uzor::input::Sense::CLICK,
         );
-        cursor_y += OE_FIELD_HEIGHT;
+        cursor_y += field_h;
 
         // Quick-qty % buttons — BUY sizes off available balance, SELL off
         // current position (see `quick_qty_values` doc).
@@ -762,24 +793,24 @@ impl TradingPanel for OrderEntryState {
                 let qq_id = format!("{}:oe:qq:{}", slot_prefix, i);
                 let qq_hov = coordinator.is_hovered(&uzor::WidgetId::from(qq_id.as_str()));
                 ctx.set_fill_color(if qq_hov { &theme.hover } else { &theme.oe_tab_inactive });
-                ctx.fill_rect(btn_x as f64, cursor_y as f64, btn_w as f64, OE_QQ_HEIGHT as f64);
+                ctx.fill_rect(btn_x as f64, cursor_y as f64, btn_w as f64, qq_h as f64);
                 ctx.set_fill_color(if qq_hov { &theme.text_primary } else { &theme.text_muted });
                 ctx.set_font("9px sans-serif");
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, (btn_x + btn_w / 2.0) as f64, (cursor_y + OE_QQ_HEIGHT / 2.0) as f64);
+                ctx.fill_text(label, (btn_x + btn_w / 2.0) as f64, (cursor_y + qq_h / 2.0) as f64);
                 coordinator.register(
                     qq_id.as_str(),
-                    uzor::Rect::new(btn_x as f64, cursor_y as f64, btn_w as f64, OE_QQ_HEIGHT as f64),
+                    uzor::Rect::new(btn_x as f64, cursor_y as f64, btn_w as f64, qq_h as f64),
                     uzor::input::Sense::CLICK,
                 );
                 if i + 1 < qq_values.len() {
                     ctx.set_fill_color(&theme.separator);
-                    ctx.fill_rect((btn_x + btn_w - 1.0) as f64, cursor_y as f64, 1.0, OE_QQ_HEIGHT as f64);
+                    ctx.fill_rect((btn_x + btn_w - 1.0) as f64, cursor_y as f64, 1.0, qq_h as f64);
                 }
             }
         }
-        cursor_y += OE_QQ_HEIGHT;
+        cursor_y += qq_h;
 
         // TIF selector — meaningless for Market (paper engine always fills
         // Market immediately), so hidden there; GTC stays the default under
@@ -797,32 +828,32 @@ impl TradingPanel for OrderEntryState {
                 let tif_id = format!("{}:oe:tif:{}", slot_prefix, i);
                 let tif_hov = coordinator.is_hovered(&uzor::WidgetId::from(tif_id.as_str()));
                 ctx.set_fill_color(if is_active { &theme.oe_tab_active } else { &theme.oe_tab_inactive });
-                ctx.fill_rect(btn_x as f64, cursor_y as f64, tif_w as f64, OE_TIF_HEIGHT as f64);
+                ctx.fill_rect(btn_x as f64, cursor_y as f64, tif_w as f64, tif_h as f64);
                 if tif_hov {
                     ctx.set_fill_color(&theme.hover_overlay);
-                    ctx.fill_rect(btn_x as f64, cursor_y as f64, tif_w as f64, OE_TIF_HEIGHT as f64);
+                    ctx.fill_rect(btn_x as f64, cursor_y as f64, tif_w as f64, tif_h as f64);
                 }
                 ctx.set_fill_color(&theme.text_primary);
                 ctx.set_font("9px sans-serif");
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, (btn_x + tif_w / 2.0) as f64, (cursor_y + OE_TIF_HEIGHT / 2.0) as f64);
+                ctx.fill_text(label, (btn_x + tif_w / 2.0) as f64, (cursor_y + tif_h / 2.0) as f64);
                 coordinator.register(
                     tif_id.as_str(),
-                    uzor::Rect::new(btn_x as f64, cursor_y as f64, tif_w as f64, OE_TIF_HEIGHT as f64),
+                    uzor::Rect::new(btn_x as f64, cursor_y as f64, tif_w as f64, tif_h as f64),
                     uzor::input::Sense::CLICK,
                 );
                 if i + 1 < tifs.len() {
                     ctx.set_fill_color(&theme.separator);
-                    ctx.fill_rect((btn_x + tif_w - 1.0) as f64, cursor_y as f64, 1.0, OE_TIF_HEIGHT as f64);
+                    ctx.fill_rect((btn_x + tif_w - 1.0) as f64, cursor_y as f64, 1.0, tif_h as f64);
                 }
             }
-            cursor_y += OE_TIF_HEIGHT;
+            cursor_y += tif_h;
         }
 
         if let Some(lev) = self.leverage {
             draw_field(ctx, cursor_y, "Leverage:", &format!("{}x", lev));
-            cursor_y += OE_FIELD_HEIGHT;
+            cursor_y += field_h;
         }
 
         let bal = self.available_balance;
@@ -834,11 +865,11 @@ impl TradingPanel for OrderEntryState {
             format!("${:.2}", bal)
         };
         draw_field(ctx, cursor_y, "Available:", &balance_str);
-        cursor_y += OE_FIELD_HEIGHT;
+        cursor_y += field_h;
 
         if self.estimated_cost > 0.0 {
             draw_field(ctx, cursor_y, "Est. Cost:", &self.format_estimated_cost());
-            cursor_y += OE_FIELD_HEIGHT;
+            cursor_y += field_h;
 
             let post_bal_str = if self.post_order_balance >= 1_000_000.0 {
                 format!("${:.2}M", self.post_order_balance / 1_000_000.0)
@@ -848,14 +879,16 @@ impl TradingPanel for OrderEntryState {
                 format!("${:.2}", self.post_order_balance)
             };
             draw_field(ctx, cursor_y, "Post-Order Bal:", &post_bal_str);
-            cursor_y += OE_FIELD_HEIGHT;
+            cursor_y += field_h;
         }
 
         // Submit button sits right after the fields with one padding gap —
         // NOT bottom-pinned (the old `remaining`-fill placement wasted a
         // large empty gap whenever fields/errors didn't fill the panel).
-        let submit_y = cursor_y + OE_PAD;
-        if submit_y + OE_SUBMIT_HEIGHT <= y + h {
+        let submit_y = cursor_y + vgap;
+        // Half-pixel slack: with the stretch the stack fills the panel
+        // exactly, and accumulated f32 rounding must not drop the button.
+        if submit_y + submit_h <= y + h + 0.5 {
             let valid = self.is_valid();
             let submit_color = if valid {
                 match self.side {
@@ -869,16 +902,16 @@ impl TradingPanel for OrderEntryState {
             let submit_id = format!("{}:oe:submit", slot_prefix);
             let submit_hov = coordinator.is_hovered(&uzor::WidgetId::from(submit_id.as_str()));
             ctx.set_fill_color(submit_color);
-            ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64);
+            ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64);
             // Hover feedback only while the order is actually submittable —
             // a brightening disabled button would read as clickable.
             if submit_hov && valid {
                 ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64);
+                ctx.fill_rect((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64);
             }
             coordinator.register(
                 submit_id.as_str(),
-                uzor::Rect::new((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, OE_SUBMIT_HEIGHT as f64),
+                uzor::Rect::new((x + OE_PAD) as f64, submit_y as f64, (w - OE_PAD * 2.0) as f64, submit_h as f64),
                 uzor::input::Sense::CLICK,
             );
 
@@ -903,17 +936,17 @@ impl TradingPanel for OrderEntryState {
             ctx.set_font("13px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(submit_label, (x + w / 2.0) as f64, (submit_y + OE_SUBMIT_HEIGHT / 2.0) as f64);
+            ctx.fill_text(submit_label, (x + w / 2.0) as f64, (submit_y + submit_h / 2.0) as f64);
 
-            cursor_y = submit_y + OE_SUBMIT_HEIGHT;
+            cursor_y = submit_y + submit_h;
         }
 
         // Fixed-height status strip under submit — always reserves exactly
         // one row (whether or not there is an error) so the submit button's
         // position never jumps as the error count changes. Shows only the
         // first/most-relevant error, truncated so it never wraps.
-        cursor_y += OE_PAD / 2.0;
-        if cursor_y + OE_ERROR_HEIGHT <= y + h {
+        cursor_y += vgap / 2.0;
+        if cursor_y + err_h <= y + h + 0.5 {
             if let Some(error) = self.errors.first() {
                 const MAX_ERROR_CHARS: usize = 56;
                 let truncated: String = if error.chars().count() > MAX_ERROR_CHARS {
@@ -926,9 +959,9 @@ impl TradingPanel for OrderEntryState {
                 ctx.set_font("9px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(&truncated, (x + OE_PAD) as f64, (cursor_y + OE_ERROR_HEIGHT / 2.0) as f64);
+                ctx.fill_text(&truncated, (x + OE_PAD) as f64, (cursor_y + err_h / 2.0) as f64);
             }
-            cursor_y += OE_ERROR_HEIGHT;
+            cursor_y += err_h;
         }
 
         let _ = cursor_y;
