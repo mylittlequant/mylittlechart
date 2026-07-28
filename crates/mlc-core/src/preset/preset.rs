@@ -235,6 +235,12 @@ pub enum PersistedFreeItemKind {
         /// `#[serde(default = ...)]` so older presets restore to DOM.
         #[serde(default = "default_tc_center_kind")]
         center_kind: String,
+        /// Interior layout mode (owner spec 2026-07-29): "fixed" | "free".
+        /// `#[serde(default = ...)]` so older presets restore Fixed. The
+        /// Free docking TREE is not persisted yet (later increment) — a
+        /// Free restore re-migrates from the v1 ratios above.
+        #[serde(default = "default_tc_layout_mode")]
+        layout_mode: String,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled
@@ -280,6 +286,7 @@ fn default_tc_bottom_ratio() -> f64 { 0.25 }
 fn default_tc_right_split() -> f64 { 0.55 }
 fn default_tc_timeframe() -> String { "1m".to_string() }
 fn default_tc_center_kind() -> String { "dom".to_string() }
+fn default_tc_layout_mode() -> String { "fixed".to_string() }
 
 impl ChartPreset {
     /// Create a new, empty preset with the given display name.

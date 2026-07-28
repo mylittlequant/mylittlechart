@@ -1234,7 +1234,7 @@ impl ChartApp {
                                 PersistedFreeItemKind::TradingContainer {
                                     source, tick_size, market_price,
                                     right_ratio, bottom_ratio, right_split, active_tab,
-                                    timeframe, center_kind,
+                                    timeframe, center_kind, layout_mode,
                                 } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
                                         let converted_source = convert_source(source);
@@ -1284,6 +1284,15 @@ impl ChartApp {
                                         s.timeframe = timeframe.clone();
                                         if let Some(kind) = mlc_app_panels::trading::trading::trading_container::CenterKind::from_wire_id(center_kind) {
                                             s.center_kind = kind;
+                                        }
+                                        // Interior layout mode (owner spec 2026-07-29). The Free
+                                        // docking TREE is not persisted yet — re-migrate from the
+                                        // v1 ratios restored above (identical geometry).
+                                        if let Some(mode) = mlc_app_panels::trading::trading::trading_container::TcLayoutMode::from_wire_id(layout_mode) {
+                                            s.layout_mode = mode;
+                                            if mode == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free {
+                                                s.free_dock = Some(s.build_free_dock());
+                                            }
                                         }
                                         // Mirror (exchange, account_type) onto the container AND its
                                         // hosted dom/order_entry children — same post-construction

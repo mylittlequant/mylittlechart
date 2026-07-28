@@ -6517,26 +6517,22 @@ impl ChartApp {
             // for the next tick's `resize_geometry` (viewport geometry —
             // same contract as prepare.rs's per-leaf resize).
             {
-                use mlc_app_panels::trading::trading::trading_container::CenterKind;
                 let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> =
                     if self.sidebar_state.right_panel
                         == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
                     {
                         self.panels_store.trading_container.iter().next().and_then(|(pid, tc)| {
-                            if tc.center_kind != CenterKind::Chart {
-                                return None;
-                            }
                             sidebar_result
                                 .item_rects
                                 .iter()
                                 .find(|(id, _)| {
                                     id.starts_with("slot:") && id.ends_with(":focus_content")
                                 })
-                                .map(|(_, r)| {
-                                    let rects =
-                                        tc.v1_layout_rects(r.x, r.y, r.width, r.height);
-                                    let (dx, dy, dw, dh) = rects.dom;
-                                    (*pid, LayoutRect::new(dx, dy, dw, dh))
+                                .and_then(|(_, r)| {
+                                    // Mode-dispatching rect (Fixed: center
+                                    // region when Chart; Free: Chart leaf).
+                                    tc.embedded_chart_rect(r.x, r.y, r.width, r.height)
+                                        .map(|(dx, dy, dw, dh)| (*pid, LayoutRect::new(dx, dy, dw, dh)))
                                 })
                         })
                     } else {
@@ -7368,26 +7364,21 @@ impl ChartApp {
             // shell whenever only the sidebar scene is rebuilt). Hit zones /
             // rect cache are owned by `render_to_scene`.
             {
-                use mlc_app_panels::trading::trading::trading_container::CenterKind;
                 let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> = self
                     .panels_store
                     .trading_container
                     .iter()
                     .next()
                     .and_then(|(pid, tc)| {
-                        if tc.center_kind != CenterKind::Chart {
-                            return None;
-                        }
                         sidebar_result
                             .item_rects
                             .iter()
                             .find(|(id, _)| {
                                 id.starts_with("slot:") && id.ends_with(":focus_content")
                             })
-                            .map(|(_, r)| {
-                                let rects = tc.v1_layout_rects(r.x, r.y, r.width, r.height);
-                                let (dx, dy, dw, dh) = rects.dom;
-                                (*pid, LayoutRect::new(dx, dy, dw, dh))
+                            .and_then(|(_, r)| {
+                                tc.embedded_chart_rect(r.x, r.y, r.width, r.height)
+                                    .map(|(dx, dy, dw, dh)| (*pid, LayoutRect::new(dx, dy, dw, dh)))
                             })
                     });
                 if let Some((tc_pid_c, center_rect)) = tc_center {
@@ -8030,6 +8021,8 @@ impl ChartApp {
                 let (map_panels, csize) = tc_modal_map_panels(tc);
                 let mc = &tc.metrics.config;
                 let setup = mlc_app_layout::layout::modals::TcSetupData {
+                    layout_free: tc.layout_mode
+                        == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free,
                     center_label: tc.center_kind.label().to_string(),
                     hist_rows: vec![
                         ("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()),

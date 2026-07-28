@@ -3743,6 +3743,24 @@ impl ChartApp {
                 "sidebar:setup" => {
                     self.tc_modal.section = TcModalSection::Setup;
                 }
+                // SETUP interior layout mode (owner spec 2026-07-29):
+                // Fixed v1 regions ↔ Free uzor-docking. First switch to
+                // Free migrates the live v1 geometry into a docking tree.
+                "layout:fixed" | "layout:free" => {
+                    use mlc_app_panels::trading::trading::trading_container::TcLayoutMode;
+                    let mode = if rest == "layout:free" { TcLayoutMode::Free } else { TcLayoutMode::Fixed };
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            if tc.layout_mode != mode {
+                                tc.layout_mode = mode;
+                                if mode == TcLayoutMode::Free && tc.free_dock.is_none() {
+                                    tc.free_dock = Some(tc.build_free_dock());
+                                }
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
                 // SETUP center switcher — same action as the header's
                 // `tc_center` dropdown rows.
                 "center:dom" | "center:chart" => {

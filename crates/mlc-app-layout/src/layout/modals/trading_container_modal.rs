@@ -136,7 +136,7 @@ pub struct TcModalResult {
 // =============================================================================
 
 const MODAL_WIDTH: f64 = 480.0;
-const MODAL_HEIGHT: f64 = 480.0;
+const MODAL_HEIGHT: f64 = 552.0;
 const HEADER_HEIGHT: f64 = 36.0;
 const SIDEBAR_WIDTH: f64 = 80.0;
 const MODAL_PADDING: f64 = 12.0;
@@ -152,6 +152,9 @@ const CLOSE_BTN_SIZE: f64 = 20.0;
 /// the panel state types).
 #[derive(Clone, Debug, Default)]
 pub struct TcSetupData {
+    /// Interior layout mode: true = Free docking, false = Fixed v1 regions
+    /// (owner spec 2026-07-29) — drives the "Layout mode" switcher.
+    pub layout_free: bool,
     /// Current center-slot occupant ("DOM"/"Chart") — drives the switcher.
     pub center_label: String,
     /// Per-table history-depth rows `(display label, wire key, active
@@ -528,6 +531,46 @@ fn render_setup_section(
     let left = content_x + MODAL_PADDING;
     let mut row_y = content_y + MODAL_PADDING;
 
+    let btn_w = 70.0;
+    let btn_h = 26.0;
+
+    // ── Interior layout mode (owner spec 2026-07-29) ─────────────────────
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Layout mode", left, row_y + 10.0);
+    row_y += 26.0;
+
+    for (i, (id, label)) in [("fixed", "Fixed"), ("free", "Free")].iter().enumerate() {
+        let bx = left + i as f64 * (btn_w + 8.0);
+        let wid = format!("tc_modal:layout:{}", id);
+        let is_active = setup.layout_free == (*id == "free");
+        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+        let bg = if is_active {
+            toolbar_theme.accent.clone()
+        } else if is_hovered {
+            toolbar_theme.item_bg_hover.clone()
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(bx, row_y, btn_w, btn_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, bx + btn_w / 2.0, row_y + btn_h / 2.0);
+
+        input_coordinator.register_on_layer(
+            wid.as_str(),
+            WidgetRect::new(bx, row_y, btn_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+    row_y += btn_h + 20.0;
+
     // ── Center-slot switcher ─────────────────────────────────────────────
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
@@ -535,9 +578,6 @@ fn render_setup_section(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("Center panel", left, row_y + 10.0);
     row_y += 26.0;
-
-    let btn_w = 70.0;
-    let btn_h = 26.0;
     for (i, (id, label)) in [("dom", "DOM"), ("chart", "Chart")].iter().enumerate() {
         let bx = left + i as f64 * (btn_w + 8.0);
         let wid = format!("tc_modal:center:{}", id);

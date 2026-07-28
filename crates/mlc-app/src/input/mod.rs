@@ -1604,6 +1604,7 @@ impl ChartApp {
                                     if mlc_app_panels::trading::trading::trading_container::TradingSeparator::from_wire_id(local_id).is_some()
                                         || is_colsep
                                         || local_id == "tape:body"
+                                        || local_id.starts_with("tcfree:sep:")
                                     {
                                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                             let leaf_id = uzor::panels::LeafId(raw);
@@ -5365,6 +5366,10 @@ impl ChartApp {
                     TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
                 };
             }
+            // Free-mode tree separators — orientation is encoded in the id.
+            if let Some(rest) = local_id.strip_prefix("tcfree:sep:") {
+                return if rest.starts_with("v:") { CursorStyle::EwResize } else { CursorStyle::NsResize };
+            }
         }
 
         // Sidebar separator: show EwResize cursor when hovering over or dragging the separator.
@@ -5429,6 +5434,10 @@ impl ChartApp {
                                     TradingSeparator::DomRightCol => CursorStyle::EwResize,
                                     TradingSeparator::OeRiskCalc | TradingSeparator::BottomStrip => CursorStyle::NsResize,
                                 };
+                            }
+                            // Free-mode tree separators (`tcfree:sep:{v|h}:{idx}`).
+                            if let Some(rest2) = local_id.strip_prefix("tcfree:sep:") {
+                                return if rest2.starts_with("v:") { CursorStyle::EwResize } else { CursorStyle::NsResize };
                             }
                         }
                     }
@@ -8083,6 +8092,7 @@ impl ChartApp {
                                 active_tab,
                                 timeframe: state.timeframe.clone(),
                                 center_kind: state.center_kind.wire_id().to_string(),
+                                layout_mode: state.layout_mode.wire_id().to_string(),
                             }
                         }
                         Panel::IndicatorPanel(id) => {

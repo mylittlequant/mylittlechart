@@ -101,6 +101,93 @@ impl CenterKind {
     }
 }
 
+/// Container interior layout mode (owner spec 2026-07-29): `Fixed` = the
+/// static v1 region layout; `Free` = assembled/disassemblable docking on
+/// the uzor engine (`DockState<TcLeaf>`) — the pilot for app-wide unified
+/// docking (see `docs/mlc/plans/tc-free-panels-docking-2026-07-29.md`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TcLayoutMode {
+    #[default]
+    Fixed,
+    Free,
+}
+
+impl TcLayoutMode {
+    pub fn wire_id(&self) -> &'static str {
+        match self { Self::Fixed => "fixed", Self::Free => "free" }
+    }
+    pub fn from_wire_id(id: &str) -> Option<Self> {
+        match id { "fixed" => Some(Self::Fixed), "free" => Some(Self::Free), _ => None }
+    }
+}
+
+/// A leaf panel of the Free-mode docking tree. Unlike [`TradingChild`]
+/// (v1 fixed regions), Chart and Dom are BOTH first-class leaves here (the
+/// exclusive `CenterKind` pair only governs Fixed mode), and the bottom
+/// tables keep their internal Positions/Orders/Trades tab row as ONE leaf
+/// (uzor-native Tabs adoption is a later increment).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TcLeaf {
+    Chart,
+    Dom,
+    OrderEntry,
+    RiskCalculator,
+    BottomTables,
+    Metrics,
+    Tape,
+}
+
+impl uzor::panels::DockPanel for TcLeaf {
+    fn title(&self) -> &str {
+        match self {
+            Self::Chart => "Chart",
+            Self::Dom => "DOM",
+            Self::OrderEntry => "Order Entry",
+            Self::RiskCalculator => "Risk Calculator",
+            Self::BottomTables => "Tables",
+            Self::Metrics => "Metrics",
+            Self::Tape => "Tape",
+        }
+    }
+    fn type_id(&self) -> &'static str {
+        match self {
+            Self::Chart => "tc_chart",
+            Self::Dom => "tc_dom",
+            Self::OrderEntry => "tc_order_entry",
+            Self::RiskCalculator => "tc_risk_calculator",
+            Self::BottomTables => "tc_bottom_tables",
+            Self::Metrics => "tc_metrics",
+            Self::Tape => "tc_tape",
+        }
+    }
+    fn min_size(&self) -> (f32, f32) {
+        match self {
+            Self::Chart => (160.0, 120.0),
+            Self::Dom => (120.0, 160.0),
+            Self::OrderEntry => (150.0, 120.0),
+            Self::RiskCalculator => (150.0, 100.0),
+            Self::BottomTables => (160.0, 60.0),
+            // One-row strips — must never be forced taller than their row.
+            Self::Metrics | Self::Tape => (80.0, 22.0),
+        }
+    }
+}
+
+/// Free-mode docking manager wrapper.
+///
+/// `RefCell` because `TradingPanel::render` takes `&self` while
+/// `DockState::layout` needs `&mut` (same reason `last_size` is a `Cell`);
+/// borrow discipline is strictly local — every borrow is dropped before
+/// child renders run. Manual `Debug` because `DockState` carries live
+/// drag/animation state that neither needs nor offers derives.
+pub struct TcFreeDock(pub std::cell::RefCell<uzor::layout::DockState<TcLeaf>>);
+
+impl std::fmt::Debug for TcFreeDock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TcFreeDock(..)")
+    }
+}
+
 /// Which hosted child a v1 [`TradingRegion`] belongs to.
 ///
 /// `PositionManager` / `OrdersLog` / `TradeLog` share ONE region (the bottom
@@ -198,7 +285,11 @@ pub struct TradingRegion {
 /// The container manages a DOM panel as its core, with optional
 /// sub-panels on left, right, and bottom. All sub-panels share
 /// the same symbol, price axis, and tick size.
-#[derive(Clone, Debug)]
+///
+/// NOT `Clone` since the Free-docking arc (2026-07-29): `free_dock` holds a
+/// live `DockState` (drag state, animations) with no meaningful clone; no
+/// call site ever cloned the whole container state.
+#[derive(Debug)]
 pub struct TradingContainerState {
     /// Symbol source binding (how to resolve which instrument to display)
     pub source: crate::trading::SymbolSource,
@@ -253,6 +344,14 @@ pub struct TradingContainerState {
     /// 2026-07-25). Replaces the v1 `bottom_split` fixed PositionManager|
     /// TradeLog split — only one view is ever visible now, full width.
     pub active_tab: BottomTab,
+
+    /// Interior layout mode (owner spec 2026-07-29): Fixed v1 regions or
+    /// Free uzor-docking. Persisted; switched via the tc_modal SETUP block.
+    pub layout_mode: TcLayoutMode,
+    /// Free-mode docking manager — built lazily on the first switch to
+    /// `Free` (or at hydration when the persisted mode is Free) by
+    /// [`Self::build_free_dock`]; `None` while in Fixed mode from spawn.
+    pub free_dock: Option<TcFreeDock>,
 
     /// Last rendered container size `(w, h)`, cached by `render()` (which
     /// only takes `&self`, hence the `Cell`). Separator drags only receive
@@ -310,6 +409,8 @@ impl TradingContainerState {
             bottom_ratio: 0.25,
             right_split: TC_RIGHT_SPLIT_DEFAULT,
             active_tab: BottomTab::default(),
+            layout_mode: TcLayoutMode::default(),
+            free_dock: None,
             last_size: std::cell::Cell::new((0.0, 0.0)),
             dom,
             order_entry: OrderEntryState::new(symbol),
@@ -346,7 +447,8 @@ impl TradingContainerState {
 
     /// Restore the spawn-time geometry: the 3 separator ratios AND every
     /// table's user-resized column widths (trading-container modal "Reset
-    /// layout", owner spec 2026-07-28).
+    /// layout", owner spec 2026-07-28). In Free mode the docking tree is
+    /// rebuilt from the (freshly reset) v1 geometry.
     pub fn reset_layout(&mut self) {
         self.right_ratio = 0.3;
         self.bottom_ratio = 0.25;
@@ -354,6 +456,114 @@ impl TradingContainerState {
         self.position_manager.cols.reset();
         self.trade_log.cols.reset();
         self.orders_log.cols.reset();
+        if self.layout_mode == TcLayoutMode::Free {
+            self.free_dock = Some(self.build_free_dock());
+        }
+    }
+
+    /// Build the Free-mode docking tree by migrating the CURRENT v1
+    /// geometry as-is (owner spec 2026-07-29): same regions, same
+    /// proportions — flipping the mode must not visibly rearrange anything.
+    ///
+    /// Tree shape: `V[ H[ center | V[OE; RC] ]; V[tables; V[metrics; tape]] ]`
+    /// — the center leaf is Dom or Chart per `center_kind`.
+    pub fn build_free_dock(&self) -> TcFreeDock {
+        use uzor::panels::{DockingTree, SplitKind, PanelRect};
+        use uzor::layout::DockState;
+
+        let (mut w, mut h) = self.last_size.get();
+        if w <= 0.0 || h <= 0.0 {
+            // Not rendered yet this session (hydration path) — a plausible
+            // default aspect; per-frame layout() re-fits the real rect.
+            w = 900.0;
+            h = 640.0;
+        }
+        let r = self.v1_layout_rects(0.0, 0.0, w, h);
+
+        let center_leaf = match self.center_kind {
+            CenterKind::Dom => TcLeaf::Dom,
+            CenterKind::Chart => TcLeaf::Chart,
+        };
+        let mut tree: DockingTree<TcLeaf> = DockingTree::with_single_leaf(center_leaf);
+        let center_id = tree.leaves()[0].id;
+        // Build order matters — each split nests a fresh binary branch:
+        //   V[C; B] → V[C; V[B; M]] → V[C; V[B; V[M; T]]]
+        //   → V[ H[C|OE]; ... ] → V[ H[C | V[OE;RC]]; ... ]
+        let tables_id = tree
+            .split_leaf(center_id, SplitKind::SplitBottom, TcLeaf::BottomTables)
+            .expect("split center|tables");
+        let metrics_id = tree
+            .split_leaf(tables_id, SplitKind::SplitBottom, TcLeaf::Metrics)
+            .expect("split tables|metrics");
+        let _tape_id = tree
+            .split_leaf(metrics_id, SplitKind::SplitBottom, TcLeaf::Tape)
+            .expect("split metrics|tape");
+        let oe_id = tree
+            .split_leaf(center_id, SplitKind::SplitRight, TcLeaf::OrderEntry)
+            .expect("split center|oe");
+        let _rc_id = tree
+            .split_leaf(oe_id, SplitKind::SplitBottom, TcLeaf::RiskCalculator)
+            .expect("split oe|rc");
+
+        // Proportions (weights normalized by sum at layout time) from the
+        // live pixel geometry. Each nested branch is binary.
+        let main_h = r.dom.3.max(1.0);
+        let tables_h = (r.bottom_tab_bar.3 + r.bottom_content.3).max(1.0);
+        let strips_h = (r.metrics.3 + r.ticker_tape.3).max(1.0);
+        let set_parent_props = |tree: &mut DockingTree<TcLeaf>, leaf, props: Vec<f64>| {
+            if let Some(bid) = tree.find_parent_of_leaf(leaf).map(|b| b.id) {
+                if let Some(b) = tree.find_branch_mut(bid) {
+                    b.proportions = props;
+                }
+            }
+        };
+        // H[C | V[OE;RC]]
+        set_parent_props(&mut tree, center_id, vec![r.dom.2.max(1.0), r.order_entry.2.max(1.0)]);
+        // V[OE; RC]
+        set_parent_props(&mut tree, oe_id, vec![r.order_entry.3.max(1.0), r.risk_calculator.3.max(1.0)]);
+        // V[tables; V[metrics; tape]]
+        set_parent_props(&mut tree, tables_id, vec![tables_h, strips_h]);
+        // V[metrics; tape]
+        set_parent_props(&mut tree, metrics_id, vec![r.metrics.3.max(1.0), r.ticker_tape.3.max(1.0)]);
+        // Root-level V[ H[..]; V[..] ] — the branch holding the main row is
+        // the root's single child's... walk: parent of the H-branch is the
+        // outermost V created by the FIRST split. Its two children are the
+        // (now nested) main row and the bottom stack.
+        if let Some(bid) = tree.root().children.first().and_then(|n| n.branch_id()) {
+            if let Some(b) = tree.find_branch_mut(bid) {
+                b.proportions = vec![main_h, tables_h + strips_h];
+            }
+        }
+
+        let mut ds = DockState::from_tree(tree);
+        ds.layout(PanelRect::new(0.0, 0.0, w as f32, h as f32));
+        TcFreeDock(std::cell::RefCell::new(ds))
+    }
+
+    /// Absolute screen rect of the embedded chart, if one is visible —
+    /// dispatches on the layout mode (Fixed: the center region when
+    /// `center_kind == Chart`; Free: the `TcLeaf::Chart` leaf's rect). The
+    /// app layer renders the real chart into this rect and routes its input.
+    pub fn embedded_chart_rect(&self, x: f64, y: f64, w: f64, h: f64) -> Option<(f64, f64, f64, f64)> {
+        match self.layout_mode {
+            TcLayoutMode::Fixed => {
+                (self.center_kind == CenterKind::Chart).then(|| self.v1_layout_rects(x, y, w, h).dom)
+            }
+            TcLayoutMode::Free => {
+                let dock = self.free_dock.as_ref()?;
+                let mut ds = dock.0.borrow_mut();
+                ds.layout(uzor::panels::PanelRect::new(x as f32, y as f32, w as f32, h as f32));
+                let leaf = ds
+                    .tree()
+                    .leaves()
+                    .iter()
+                    .find(|l| l.active_panel() == Some(&TcLeaf::Chart))
+                    .map(|l| l.id)?;
+                ds.panel_rects()
+                    .get(&leaf)
+                    .map(|r| (r.x as f64, r.y as f64, r.width as f64, r.height as f64))
+            }
+        }
     }
 
     /// v1 fixed-region layout for the whole container: center (DOM or
@@ -474,6 +684,17 @@ impl TradingPanel for TradingContainerState {
         // Background
         ctx.set_fill_color(&theme.tc_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        // Free-docking interior (owner spec 2026-07-29) — a wholly separate
+        // geometry path; Fixed v1 below stays untouched.
+        if self.layout_mode == TcLayoutMode::Free {
+            if let Some(dock) = &self.free_dock {
+                self.render_free(ctx, x, y, w, h, theme, coordinator, slot_prefix, dock);
+                return;
+            }
+            // Free selected but no dock built (defensive) — fall through to
+            // Fixed rather than render nothing.
+        }
 
         // v1 fixed-region layout: center DOM, live right column, live
         // bottom strip. Children namespace their own widget ids off
@@ -642,10 +863,11 @@ impl TradingPanel for TradingContainerState {
         } else if local_id.starts_with("tape:") {
             self.ticker_tape.handle_drag_start(local_id, x, y)
         } else {
-            // Separator drags are stateless per-frame ratio nudges (see
+            // Separator drags are stateless per-frame nudges (see
             // `handle_drag_move`) — drag-start just needs to claim the
             // gesture so the app layer starts forwarding `handle_drag_move`.
             TradingSeparator::from_wire_id(local_id).is_some()
+                || local_id.starts_with("tcfree:sep:")
         }
     }
 
@@ -664,6 +886,26 @@ impl TradingPanel for TradingContainerState {
         }
         if local_id.starts_with("tape:") {
             return self.ticker_tape.handle_drag_move(local_id, dx, dy);
+        }
+        // Free-mode tree separators: `tcfree:sep:{v|h}:{idx}` — axis picks
+        // the drag delta, idx addresses `DockState::separators()` (stable
+        // during a gesture: only proportions mutate, never the tree).
+        if let Some(rest) = local_id.strip_prefix("tcfree:sep:") {
+            let Some(dock) = &self.free_dock else { return false };
+            let mut parts = rest.splitn(2, ':');
+            let axis = parts.next().unwrap_or("");
+            let Some(idx) = parts.next().and_then(|s| s.parse::<usize>().ok()) else {
+                return false;
+            };
+            let delta = if axis == "v" { dx } else { dy };
+            let (w, h) = self.last_size.get();
+            if w <= 0.0 || h <= 0.0 {
+                return true;
+            }
+            dock.0
+                .borrow_mut()
+                .drag_separator(idx, delta as f32, w as f32, h as f32);
+            return true;
         }
         let Some(sep) = TradingSeparator::from_wire_id(local_id) else { return false };
         let (w, h) = self.last_size.get();
@@ -706,11 +948,127 @@ impl TradingPanel for TradingContainerState {
             self.ticker_tape.handle_drag_end(local_id)
         } else {
             TradingSeparator::from_wire_id(local_id).is_some()
+                || local_id.starts_with("tcfree:sep:")
         }
     }
 }
 
 impl TradingContainerState {
+
+    /// Free-mode interior render: per-frame uzor layout, then each leaf's
+    /// existing panel render into its computed rect, then tree separators
+    /// (drawn + registered as drag widgets). The dock borrow is dropped
+    /// BEFORE any child render runs — children re-enter the coordinator,
+    /// never the dock.
+    #[allow(clippy::too_many_arguments)]
+    fn render_free(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
+        dock: &TcFreeDock,
+    ) {
+        use uzor::input::Sense;
+        use uzor::panels::{PanelRect, SeparatorOrientation};
+
+        let (leaf_rects, seps) = {
+            let mut ds = dock.0.borrow_mut();
+            ds.layout(PanelRect::new(x, y, w, h));
+            let rects: Vec<(TcLeaf, (f64, f64, f64, f64))> = ds
+                .tree()
+                .leaves()
+                .iter()
+                .filter_map(|l| {
+                    let p = l.active_panel()?.clone();
+                    let r = ds.panel_rects().get(&l.id)?;
+                    Some((p, (r.x as f64, r.y as f64, r.width as f64, r.height as f64)))
+                })
+                .collect();
+            let seps: Vec<(usize, SeparatorOrientation, f64, f64, f64)> = ds
+                .separators()
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (i, s.orientation, s.position as f64, s.start as f64, s.length as f64))
+                .collect();
+            (rects, seps)
+        };
+
+        for (leaf, (lx, ly, lw, lh)) in &leaf_rects {
+            let (lx, ly, lw, lh) = (*lx, *ly, *lw, *lh);
+            if lw <= 1.0 || lh <= 1.0 {
+                continue;
+            }
+            let (fx, fy, fw, fh) = (lx as f32, ly as f32, lw as f32, lh as f32);
+            match leaf {
+                TcLeaf::Dom => {
+                    ctx.set_fill_color(&theme.tc_inner_bg);
+                    ctx.fill_rect(lx, ly, lw, lh);
+                    self.dom.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::Chart => {
+                    // The real chart is drawn by the app layer into
+                    // `embedded_chart_rect()` — same contract as the Fixed
+                    // center; this is just the honest backdrop.
+                    ctx.set_fill_color(&theme.tc_inner_bg);
+                    ctx.fill_rect(lx, ly, lw, lh);
+                }
+                TcLeaf::OrderEntry => {
+                    self.order_entry.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::RiskCalculator => {
+                    self.risk_calculator.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::BottomTables => {
+                    let tab_h = TC_BOTTOM_TAB_HEIGHT.min(lh);
+                    self.render_bottom_tabs(ctx, lx, ly, lw, tab_h, theme, coordinator, slot_prefix);
+                    let ch = (lh - tab_h).max(0.0);
+                    if ch > 1.0 {
+                        let (cy, cf) = (ly + tab_h, (ly + tab_h) as f32);
+                        let _ = cy;
+                        match self.active_tab {
+                            BottomTab::Positions => self.position_manager.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
+                            BottomTab::Orders => self.orders_log.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
+                            BottomTab::Trades => self.trade_log.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
+                        }
+                    }
+                }
+                TcLeaf::Metrics => {
+                    self.metrics.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::Tape => {
+                    self.ticker_tape.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+            }
+        }
+
+        // Tree separators: thin visual line + hit-padded drag widget. The
+        // orientation is encoded in the wire id (`v`/`h`) so the input
+        // layer picks the cursor and drag axis without reaching the dock.
+        for (i, orientation, position, start, length) in &seps {
+            ctx.set_fill_color(&theme.tc_separator);
+            let (rx, ry, rw, rh, axis) = match orientation {
+                SeparatorOrientation::Vertical => {
+                    ctx.fill_rect(position - 0.5, *start, 1.0, *length);
+                    (position - TC_SEP_HIT_PX, *start, TC_SEP_HIT_PX * 2.0, *length, "v")
+                }
+                SeparatorOrientation::Horizontal => {
+                    ctx.fill_rect(*start, position - 0.5, *length, 1.0);
+                    (*start, position - TC_SEP_HIT_PX, *length, TC_SEP_HIT_PX * 2.0, "h")
+                }
+            };
+            let wid = format!("{}:tcfree:sep:{}:{}", slot_prefix, axis, i);
+            coordinator.register(
+                wid.as_str(),
+                uzor::Rect::new(rx, ry, rw, rh),
+                Sense::DRAG | Sense::HOVER,
+            );
+        }
+    }
 
     /// Draw + register the bottom-strip tab row — `Positions (n) | Orders
     /// (n) | Trades (n)` — 3 equal-width click regions, counts read live off
