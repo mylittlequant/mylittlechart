@@ -10,6 +10,7 @@ use uzor::panel_api::{
     DropdownItemDef, PanelToolbarDef, SectionAlign, ToolbarItemDef, ToolbarOrientation,
 };
 use uzor::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
+use mlc_core::render::TextAlign;
 
 use super::icons::icon_svg;
 
@@ -227,9 +228,13 @@ pub fn render_panel_toolbar(
     let mut end_pos = if is_vertical { rect.bottom() - padding } else { rect.right() - padding };
 
     // Calculate total width of end sections first
-    let end_total = end_sections.iter().flat_map(|s| s.items.iter()).fold(0.0, |acc, item| {
-        acc + item_natural_size(item, item_size) + spacing
-    });
+    let icon_slot = label_icon_slot(is_vertical, &rect, padding, item_size);
+    let end_items: Vec<&ToolbarItemDef> =
+        end_sections.iter().flat_map(|s| s.items.iter()).collect();
+    let mut end_total = 0.0;
+    for item in end_items {
+        end_total += item_natural_size(ctx, item, item_size, is_vertical, icon_slot) + spacing;
+    }
     end_pos -= end_total;
     if end_pos < pos {
         end_pos = pos; // prevent overlap
@@ -294,14 +299,80 @@ fn draw_separator(
     ctx.stroke();
 }
 
+/// Gap between the icon slot and the label (mirrors [`draw_label`]).
+const LABEL_GAP: f64 = 2.0;
+/// Left inset of a label when the item carries no icon.
+const LABEL_PAD: f64 = 8.0;
+/// Room reserved on the right for a dropdown chevron (mirrors
+/// [`draw_chevron`], which draws from `right - 11` to `right - 5`).
+const CHEVRON_ROOM: f64 = 15.0;
+
+/// Primary-axis size a text-bearing button/dropdown wants.
+///
+/// The width HUGS the measured label (owner defect 2026-07-28: a hardcoded
+/// `min_width` left dead padding around short labels like "Chart" and
+/// clipped long ones). `min_width` is a FLOOR — it keeps a control from
+/// jittering as its label changes width (e.g. the timeframe selector
+/// cycling "1m" → "15m"), it no longer dictates the size.
+///
+/// Vertical toolbars keep the square item box: their labels are centred
+/// under the icon, so growing the item's HEIGHT by the text width would be
+/// nonsense.
+fn text_item_width(
+    ctx: &mut dyn RenderContext,
+    text: Option<&str>,
+    has_icon: bool,
+    is_dropdown: bool,
+    min_width: f64,
+    item_size: f64,
+    is_vertical: bool,
+    icon_slot: f64,
+) -> f64 {
+    if is_vertical {
+        return if min_width > 0.0 { min_width.max(item_size) } else { item_size };
+    }
+    let natural = match text {
+        Some(label) if !label.is_empty() => {
+            // Same font draw_label uses — measuring under any other font
+            // would size the box for the wrong glyphs.
+            ctx.set_font("11px sans-serif");
+            let text_w = ctx.measure_text(label);
+            let left = if has_icon { icon_slot + LABEL_GAP } else { LABEL_PAD };
+            let right = if is_dropdown { CHEVRON_ROOM } else { LABEL_PAD };
+            left + text_w + right
+        }
+        _ => item_size,
+    };
+    natural.max(min_width)
+}
+
 /// Return the primary-axis size of an item without rendering it.
-fn item_natural_size(item: &ToolbarItemDef, item_size: f64) -> f64 {
+///
+/// `icon_slot` — the width an item's icon occupies (see [`draw_label`]'s
+/// offset); `is_vertical` — the toolbar orientation.
+fn item_natural_size(
+    ctx: &mut dyn RenderContext,
+    item: &ToolbarItemDef,
+    item_size: f64,
+    is_vertical: bool,
+    icon_slot: f64,
+) -> f64 {
     match item {
         ToolbarItemDef::Separator => 6.0,
         ToolbarItemDef::Spacer => 8.0,
-        ToolbarItemDef::Button { min_width, .. } | ToolbarItemDef::Dropdown { min_width, .. } => {
-            if *min_width > 0.0 { *min_width } else { item_size }
-        }
+        ToolbarItemDef::Button { min_width, icon, text, .. } => text_item_width(
+            ctx, text.as_deref(), icon.is_some(), false, *min_width, item_size, is_vertical, icon_slot,
+        ),
+        ToolbarItemDef::Dropdown { min_width, icon, text, quick_select, .. } => text_item_width(
+            ctx,
+            text.as_deref(),
+            icon.is_some(),
+            !*quick_select && text.is_some(),
+            *min_width,
+            item_size,
+            is_vertical,
+            icon_slot,
+        ),
         ToolbarItemDef::IconButton { .. } => item_size,
     }
 }
@@ -348,7 +419,10 @@ fn render_item(
         }
 
         ToolbarItemDef::Button { id, icon, text, min_width, .. } => {
-            let natural = if *min_width > 0.0 { *min_width } else { item_size };
+            let natural = text_item_width(
+                ctx, text.as_deref(), icon.is_some(), false, *min_width, item_size,
+                is_vertical, label_icon_slot(is_vertical, rect, padding, item_size),
+            );
             let item_rect = make_item_rect(is_vertical, rect, pos, natural, padding);
             let is_hovered = hovered_id == Some(id);
             let is_active = active_tool_id == Some(id)
@@ -373,7 +447,11 @@ fn render_item(
         }
 
         ToolbarItemDef::Dropdown { id, icon, text, quick_select, min_width, items, .. } => {
-            let natural = if *min_width > 0.0 { *min_width } else { item_size };
+            let natural = text_item_width(
+                ctx, text.as_deref(), icon.is_some(), !*quick_select && text.is_some(),
+                *min_width, item_size,
+                is_vertical, label_icon_slot(is_vertical, rect, padding, item_size),
+            );
             let item_rect = make_item_rect(is_vertical, rect, pos, natural, padding);
             let is_hovered = hovered_id == Some(id);
 
@@ -416,6 +494,17 @@ fn render_item(
             hit_zones.push((id.to_string(), item_rect));
             natural
         }
+    }
+}
+
+/// Width an item's icon occupies before its label — mirrors [`draw_label`]'s
+/// `item_rect.x + item_rect.height` offset, which resolves to the item box's
+/// cross-axis size.
+fn label_icon_slot(is_vertical: bool, toolbar_rect: &ToolbarRect, padding: f64, item_size: f64) -> f64 {
+    if is_vertical {
+        item_size
+    } else {
+        toolbar_rect.height - padding
     }
 }
 
@@ -514,12 +603,18 @@ fn draw_label(
 ) {
     ctx.set_fill_color(color);
     ctx.set_font("11px sans-serif");
+    // Explicit alignment — the box now HUGS the label (2026-07-28), so an
+    // ambient align leaking in from a previous draw would visibly shift the
+    // text out of its own item.
     let x = if has_icon {
+        ctx.set_text_align(TextAlign::Left);
         item_rect.x + item_rect.height + 2.0 // icon occupies item_height worth of space
     } else {
+        ctx.set_text_align(TextAlign::Center);
         item_rect.center_x()
     };
     ctx.fill_text(text, x, item_rect.center_y() + 4.0);
+    ctx.set_text_align(TextAlign::Left);
 }
 
 /// Draw a small downward-pointing chevron to indicate a dropdown.
