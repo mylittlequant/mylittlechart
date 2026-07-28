@@ -1034,6 +1034,11 @@ pub struct ChartApp {
     /// Last rendered Trading Container modal geometry — header drag reads
     /// the header rect off this between frames.
     pub(crate) tc_modal_result: Option<mlc_app_layout::layout::modals::TcModalResult>,
+    /// Open standalone panel-settings surface (overlay gear, owner spec
+    /// 2026-07-28): the target panel + the dropdown anchor. `None` = closed.
+    pub(crate) panel_settings_open: Option<(mlc_core::state::Panel, (f64, f64))>,
+    /// Last rendered panel-settings surface geometry.
+    pub(crate) panel_settings_result: Option<mlc_app_layout::layout::modals::PanelSettingsPopupResult>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -2265,6 +2270,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            panel_settings_open: None,
+            panel_settings_result: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -2670,6 +2677,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            panel_settings_open: None,
+            panel_settings_result: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
@@ -3221,6 +3230,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            panel_settings_open: None,
+            panel_settings_result: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -8044,6 +8055,21 @@ impl ChartApp {
         };
         self.tc_modal_result = tc_modal_result;
 
+        // 8f. Standalone panel-settings surface (overlay gear, owner spec
+        // 2026-07-28) — rendered last, topmost.
+        let pset_result = self.build_panel_settings_view().map(|view| {
+            mlc_app_layout::layout::modals::render_panel_settings_popup(
+                ctx,
+                &view,
+                &frame_theme,
+                &toolbar_theme,
+                w,
+                h,
+                &mut self.input_coordinator.borrow_mut(),
+            )
+        });
+        self.panel_settings_result = pset_result;
+
         // Store results directly into self — input handlers read these fields
         // between renders.  apply_render_output() may set them to None when the
         // chart scene is rebuilt (chart_dirty), but render_modal_layer() always
@@ -8066,6 +8092,56 @@ impl ChartApp {
         // results from this frame).  apply_render_output runs BEFORE this
         // path on the same frame and would see stale Nones.
         self.update_text_field_geometry();
+    }
+
+    /// Build the standalone panel-settings surface view (overlay gear,
+    /// owner spec 2026-07-28) from the open panel's live state. `None`
+    /// while no surface is open. The universal "Open as" row is prepended
+    /// here; panel-specific rows follow per kind — panels with no real
+    /// settings yet surface just the universal row.
+    fn build_panel_settings_view(
+        &self,
+    ) -> Option<mlc_app_layout::layout::modals::PanelSettingsView> {
+        use mlc_app_layout::layout::modals::{PanelSettingRow, PanelSettingsView};
+        use mlc_app_panels::trading::trading::history::HistoryDepth;
+        use mlc_core::state::Panel;
+        use uzor::panels::DockPanel as _;
+
+        let (panel, anchor) = self.panel_settings_open.clone()?;
+        let as_modal = self.core.user().profile().ui.panel_gear_opens_modal;
+        let mut rows = vec![PanelSettingRow::Choice {
+            id: "open_as".to_string(),
+            label: "Open as".to_string(),
+            options: vec!["Dropdown".to_string(), "Modal".to_string()],
+            active: as_modal as usize,
+        }];
+
+        let hist_row = |d: HistoryDepth| PanelSettingRow::Choice {
+            id: "hist".to_string(),
+            label: "History".to_string(),
+            options: HistoryDepth::OPTIONS.iter().map(|o| o.label()).collect(),
+            active: d.option_index(),
+        };
+        match &panel {
+            Panel::PositionManager(pid) => {
+                if let Some(s) = self.panels_store.position_manager.get(pid) {
+                    rows.push(hist_row(s.history_depth));
+                }
+            }
+            Panel::TradeLog(pid) => {
+                if let Some(s) = self.panels_store.trade_log.get(pid) {
+                    rows.push(hist_row(s.history_depth));
+                }
+            }
+            _ => {}
+        }
+
+        Some(PanelSettingsView {
+            title: panel.title().to_string(),
+            rows,
+            as_modal,
+            anchor,
+        })
     }
 
     /// Feed fresh modal/sidebar geometry into uzor TextFieldStore so

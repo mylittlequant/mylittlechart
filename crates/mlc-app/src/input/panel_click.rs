@@ -75,6 +75,62 @@ impl ChartApp {
             }
         }
 
+        // Standalone panel-settings surface (overlay gear, 2026-07-28) is
+        // transient — any click outside it (and not on a gear that would
+        // reopen it) dismisses it; the click then proceeds normally.
+        if self.panel_settings_open.is_some()
+            && !widget_id.starts_with("pset:")
+            && !widget_id.ends_with(":gear")
+        {
+            self.panel_settings_open = None;
+        }
+
+        // === Panel-settings surface clicks ===
+        if let Some(rest) = widget_id.strip_prefix("pset:") {
+            match rest {
+                "close" => {
+                    self.panel_settings_open = None;
+                }
+                "bg" => {
+                    // Absorb click — prevent fall-through.
+                }
+                r if r.starts_with("opt:open_as:") => {
+                    // Universal "Open as" choice — persisted presentation
+                    // preference (Dropdown = 0, Modal = 1).
+                    let want_modal = r.ends_with(":1");
+                    {
+                        let mut user_mut = self.core.user_mut();
+                        user_mut.profile_mut().ui.panel_gear_opens_modal = want_modal;
+                    }
+                    self.autosave_snapshot();
+                }
+                r if r.starts_with("opt:hist:") => {
+                    use mlc_app_panels::trading::trading::history::HistoryDepth;
+                    let idx: usize = r["opt:hist:".len()..].parse().unwrap_or(2);
+                    let depth = HistoryDepth::OPTIONS.get(idx).copied().unwrap_or_default();
+                    if let Some((panel, _)) = self.panel_settings_open.clone() {
+                        match panel {
+                            mlc_core::state::Panel::PositionManager(pid) => {
+                                if let Some(s) = self.panels_store.position_manager.get_mut(&pid) {
+                                    s.history_depth = depth;
+                                }
+                            }
+                            mlc_core::state::Panel::TradeLog(pid) => {
+                                if let Some(s) = self.panels_store.trade_log.get_mut(&pid) {
+                                    s.history_depth = depth;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("[ChartApp] unhandled pset click: {}", rest);
+                }
+            }
+            return;
+        }
+
         // === Slot spawn dropdown — click-away-to-dismiss ===
         // If a slot spawn dropdown is open and the clicked widget is not a
         // spawn row or the [+] button for that slot, close it immediately.
@@ -5158,17 +5214,32 @@ impl ChartApp {
                             }
                         }
                         "gear" => {
-                            // Workspace-panel arc (Stage 3): the Trading tab's
-                            // gear (its header-row leaf tab, not a main-grid
-                            // chart leaf) must not pre-select the stale
-                            // last-active chart leaf — see
-                            // `open_tags_tabs_without_preselect`'s doc comment.
+                            // Overlay-gear doctrine (owner spec 2026-07-28):
+                            // the trading container's gear opens the single
+                            // COMMON modal; every other standalone panel's
+                            // gear opens ITS OWN settings surface (dropdown
+                            // or modal per the persisted preference).
                             let is_trading_container = self.panels_store.trading_container
                                 .contains_key(&mlc_core::state::PanelId(panel_id));
                             if is_trading_container {
-                                self.panel_app.open_tags_tabs_without_preselect();
-                            } else {
-                                self.panel_app.open_tags_tabs();
+                                self.tc_modal.open();
+                            } else if let Some((leaf_id, zones)) = self.last_sidebar_result.as_ref()
+                                .and_then(|sr| sr.panel_overlay_zones.iter().find(|(pid, _, _)| *pid == panel_id))
+                                .map(|(_, lid, z)| (*lid, z.clone()))
+                            {
+                                let panel = self.sidebar_state.slot_dockings.iter().find_map(|sd| {
+                                    sd.inner().tree().leaf(leaf_id).and_then(|l| l.active_panel().cloned())
+                                });
+                                if let Some(panel) = panel {
+                                    // Anchor: popup's right edge to the gear's
+                                    // right edge, just below it (renderer
+                                    // clamps to the screen).
+                                    let anchor = (
+                                        zones.dots_rect[0] + zones.dots_rect[2] - 240.0,
+                                        zones.dots_rect[1] + zones.dots_rect[3] + 2.0,
+                                    );
+                                    self.panel_settings_open = Some((panel, anchor));
+                                }
                             }
                         }
                         _ => {}

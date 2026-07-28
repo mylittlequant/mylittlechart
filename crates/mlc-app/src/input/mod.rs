@@ -6403,6 +6403,13 @@ impl ChartApp {
             return;
         }
 
+        // If a standalone panel-settings surface is open, close it.
+        if self.panel_settings_open.is_some() {
+            self.panel_settings_open = None;
+            eprintln!("[ChartApp] panel settings closed via Escape");
+            return;
+        }
+
         // If watchlist group name input is open, close it.
         if self.standalone_panels.wl_group_name_input.is_open() {
             self.standalone_panels.wl_group_name_input.close();

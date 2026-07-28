@@ -73,6 +73,10 @@ impl ChartApp {
                 // `pin_granularity_favorites` above.
                 split_symbol_compare: existing.ui.split_symbol_compare,
                 symbol_quick_search: existing.ui.symbol_quick_search,
+                // Panel-gear presentation preference (overlay-gear arc,
+                // 2026-07-28): mutated in-place at toggle time, same
+                // preserve-live-value pattern.
+                panel_gear_opens_modal: existing.ui.panel_gear_opens_modal,
                 // Topbar-takeover toggle (workspace-panel arc, Stage 4):
                 // mutated in-place via `toggle_trading_panel_topbar_takeover`
                 // at toggle time, same preserve-live-value pattern as

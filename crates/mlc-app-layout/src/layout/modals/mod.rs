@@ -18,7 +18,11 @@ pub mod overlay_settings;
 pub mod preset_name_input;
 pub mod chart_browser;
 pub mod tags_tabs_modal;
+pub mod panel_settings_popup;
 pub mod trading_container_modal;
+pub use panel_settings_popup::{
+    render_panel_settings_popup, PanelSettingRow, PanelSettingsPopupResult, PanelSettingsView,
+};
 pub mod watchlist_modal;
 pub mod clock_popup;
 pub use clock_popup::{render_clock_popup, ClockPopupResult};

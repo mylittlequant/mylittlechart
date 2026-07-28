@@ -564,6 +564,14 @@ pub struct ProfileUiSettings {
     #[serde(default = "default_true")]
     pub symbol_quick_search: bool,
 
+    /// How a standalone panel's overlay gear opens its settings surface
+    /// (owner spec 2026-07-28): `true` = small centered modal, `false` =
+    /// anchored dropdown. Toggled from inside the surface itself and
+    /// persisted — same presentation-preference class as
+    /// `symbol_quick_search`.
+    #[serde(default)]
+    pub panel_gear_opens_modal: bool,
+
     /// When `true`, the top toolbar's composition swaps to the Trading
     /// tab's container while it is the current workspace focus: a symbol
     /// selector targeting the container, its exchange/account_type display,
@@ -604,6 +612,7 @@ impl ProfileUiSettings {
             pin_granularity_favorites: false,
             split_symbol_compare: false,
             symbol_quick_search: true,
+            panel_gear_opens_modal: false,
             trading_panel_topbar_takeover: false,
         }
     }
