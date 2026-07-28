@@ -649,22 +649,30 @@ impl TradingContainerState {
         for (i, (tab, label)) in tabs.iter().enumerate() {
             let tab_x = x + i as f64 * tab_w;
             let is_active = self.active_tab == *tab;
+            let tab_id = format!("{}:{}", slot_prefix, tab.wire_id());
+            let tab_hov = coordinator.is_hovered(&uzor::WidgetId::from(tab_id.as_str()));
 
             if is_active {
                 ctx.set_fill_color(&theme.panel_bg);
                 ctx.fill_rect(tab_x, y, tab_w, h);
                 ctx.set_fill_color(&theme.oe_tab_active);
                 ctx.fill_rect(tab_x, y + h - 2.0, tab_w, 2.0);
+            } else if tab_hov {
+                // Interactivity pass (owner spec 2026-07-26): inactive tab
+                // brightens under the cursor; the active one already reads
+                // as pressed.
+                ctx.set_fill_color(&theme.hover);
+                ctx.fill_rect(tab_x, y, tab_w, h);
             }
 
-            ctx.set_fill_color(if is_active { &theme.text_primary } else { &theme.text_muted });
+            ctx.set_fill_color(if is_active || tab_hov { &theme.text_primary } else { &theme.text_muted });
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(label, tab_x + tab_w / 2.0, y + h / 2.0);
 
             coordinator.register(
-                format!("{}:{}", slot_prefix, tab.wire_id()).as_str(),
+                tab_id.as_str(),
                 uzor::Rect::new(tab_x, y, tab_w, h),
                 Sense::CLICK,
             );

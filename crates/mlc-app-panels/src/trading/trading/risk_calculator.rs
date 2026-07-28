@@ -408,8 +408,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx, coordinator, theme, x, cursor_y, w, "Account Size:", &account_size_str,
             account_size_live.then_some(&rc_field_wid), field_value_right, now_ms,
         );
+        let account_size_row_id = format!("{}:risk_calculator:account_size", slot_prefix);
+        if coordinator.is_hovered(&uzor::WidgetId::from(account_size_row_id.as_str())) {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+        }
         coordinator.register(
-            format!("{}:risk_calculator:account_size", slot_prefix).as_str(),
+            account_size_row_id.as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
             Sense::CLICK,
         );
@@ -422,8 +427,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx, coordinator, theme, x, cursor_y, w, "Risk %:", &risk_percent_str,
             risk_percent_live.then_some(&rc_field_wid), field_value_right, now_ms,
         );
+        let risk_percent_row_id = format!("{}:risk_calculator:risk_percent", slot_prefix);
+        if coordinator.is_hovered(&uzor::WidgetId::from(risk_percent_row_id.as_str())) {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+        }
         coordinator.register(
-            format!("{}:risk_calculator:risk_percent", slot_prefix).as_str(),
+            risk_percent_row_id.as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
             Sense::CLICK,
         );
@@ -436,8 +446,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx, coordinator, theme, x, cursor_y, w, "Entry Price:", &entry_price_str,
             entry_price_live.then_some(&rc_field_wid), field_value_right, now_ms,
         );
+        let entry_price_row_id = format!("{}:risk_calculator:entry_price", slot_prefix);
+        if coordinator.is_hovered(&uzor::WidgetId::from(entry_price_row_id.as_str())) {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+        }
         coordinator.register(
-            format!("{}:risk_calculator:entry_price", slot_prefix).as_str(),
+            entry_price_row_id.as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
             Sense::CLICK,
         );
@@ -450,8 +465,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx, coordinator, theme, x, cursor_y, w, "Stop Loss:", &stop_loss_str,
             stop_loss_live.then_some(&rc_field_wid), field_value_right, now_ms,
         );
+        let stop_loss_row_id = format!("{}:risk_calculator:stop_loss", slot_prefix);
+        if coordinator.is_hovered(&uzor::WidgetId::from(stop_loss_row_id.as_str())) {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+        }
         coordinator.register(
-            format!("{}:risk_calculator:stop_loss", slot_prefix).as_str(),
+            stop_loss_row_id.as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
             Sense::CLICK,
         );
@@ -464,8 +484,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx, coordinator, theme, x, cursor_y, w, "Take Profit:", &take_profit_str,
             take_profit_live.then_some(&rc_field_wid), field_value_right, now_ms,
         );
+        let take_profit_row_id = format!("{}:risk_calculator:take_profit", slot_prefix);
+        if coordinator.is_hovered(&uzor::WidgetId::from(take_profit_row_id.as_str())) {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+        }
         coordinator.register(
-            format!("{}:risk_calculator:take_profit", slot_prefix).as_str(),
+            take_profit_row_id.as_str(),
             uzor::Rect::new(x as f64, cursor_y as f64, w as f64, RC_ROW_HEIGHT as f64),
             Sense::CLICK,
         );
@@ -529,15 +554,22 @@ impl TradingPanel for RiskCalculatorState {
         let apply_y = (y + h - RC_APPLY_HEIGHT).max(cursor_y);
         if apply_y + RC_APPLY_HEIGHT <= y + h + 0.5 {
             let apply_bg = if ready { &theme.accent } else { &theme.oe_tab_inactive };
+            let apply_id = format!("{}:risk_calculator:apply", slot_prefix);
             ctx.set_fill_color(apply_bg);
             ctx.fill_rect((x + RC_LEFT_PAD) as f64, apply_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, (RC_APPLY_HEIGHT - 4.0) as f64);
+            // Hover feedback only while the inputs are complete — a
+            // brightening disabled button would read as clickable.
+            if ready && coordinator.is_hovered(&uzor::WidgetId::from(apply_id.as_str())) {
+                ctx.set_fill_color(&theme.hover_overlay);
+                ctx.fill_rect((x + RC_LEFT_PAD) as f64, apply_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, (RC_APPLY_HEIGHT - 4.0) as f64);
+            }
             ctx.set_fill_color(if ready { &theme.oe_buy_button_text } else { &theme.text_muted });
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Apply Size \u{2192} Order Entry", (x + w / 2.0) as f64, (apply_y + (RC_APPLY_HEIGHT - 4.0) / 2.0) as f64);
             coordinator.register(
-                format!("{}:risk_calculator:apply", slot_prefix).as_str(),
+                apply_id.as_str(),
                 uzor::Rect::new((x + RC_LEFT_PAD) as f64, apply_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, (RC_APPLY_HEIGHT - 4.0) as f64),
                 Sense::CLICK,
             );

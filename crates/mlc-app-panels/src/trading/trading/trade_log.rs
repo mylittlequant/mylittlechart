@@ -236,7 +236,18 @@ impl TradingPanel for TradeLogState {
             for (i, trade) in trades.iter().enumerate() {
                 let row_y = y + TL_HEADER_HEIGHT + (i as f32 * TL_ROW_HEIGHT);
 
-                let row_bg = if i % 2 == 0 { &theme.panel_bg } else { &theme.tl_row_bg_alt };
+                // Interactivity pass (owner spec 2026-07-26): rows react
+                // to the cursor.
+                let row_id = format!("{}:trade_log:row:{}", slot_prefix, i);
+                let row_hov = coordinator.is_hovered(&uzor::WidgetId::from(row_id.as_str()));
+                coordinator.register(
+                    row_id.as_str(),
+                    uzor::Rect::new(x as f64, row_y as f64, w as f64, TL_ROW_HEIGHT as f64),
+                    uzor::input::Sense::CLICK,
+                );
+                let row_bg = if row_hov { &theme.hover }
+                    else if i % 2 == 0 { &theme.panel_bg }
+                    else { &theme.tl_row_bg_alt };
                 ctx.set_fill_color(row_bg);
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, TL_ROW_HEIGHT as f64);
 

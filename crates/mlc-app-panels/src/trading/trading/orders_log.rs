@@ -214,11 +214,16 @@ impl TradingPanel for OrdersLogState {
         ctx.fill_text("Age", col_age_x as f64, header_mid_y);
 
         if !self.open_orders.is_empty() {
+            let ca_id = format!("{}:orders:cancel_all", slot_prefix);
+            if coordinator.is_hovered(&uzor::WidgetId::from(ca_id.as_str())) {
+                ctx.set_fill_color(&theme.hover);
+                ctx.fill_rect(cancel_x as f64, y as f64, OL_CANCEL_W as f64, OL_HEADER_HEIGHT as f64);
+            }
             ctx.set_fill_color(&theme.sell_bright);
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text("Cancel All", (cancel_x + OL_CANCEL_W / 2.0) as f64, header_mid_y);
             coordinator.register(
-                format!("{}:orders:cancel_all", slot_prefix).as_str(),
+                ca_id.as_str(),
                 uzor::Rect::new(cancel_x as f64, y as f64, OL_CANCEL_W as f64, OL_HEADER_HEIGHT as f64),
                 uzor::input::Sense::CLICK,
             );
@@ -247,7 +252,16 @@ impl TradingPanel for OrdersLogState {
                 let row_y = y + OL_HEADER_HEIGHT + (row_idx as f32 * OL_ROW_HEIGHT);
                 let row_mid_y = (row_y + OL_ROW_HEIGHT / 2.0) as f64;
 
-                ctx.set_fill_color(&theme.panel_bg);
+                // Interactivity pass (owner spec 2026-07-26): rows react to
+                // the cursor.
+                let row_id = format!("{}:orders:open_row:{}", slot_prefix, row_idx);
+                let row_hov = coordinator.is_hovered(&uzor::WidgetId::from(row_id.as_str()));
+                coordinator.register(
+                    row_id.as_str(),
+                    uzor::Rect::new(x as f64, row_y as f64, w as f64, OL_ROW_HEIGHT as f64),
+                    uzor::input::Sense::CLICK,
+                );
+                ctx.set_fill_color(if row_hov { &theme.hover } else { &theme.panel_bg });
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, OL_ROW_HEIGHT as f64);
 
                 ctx.set_font("10px monospace");
@@ -270,11 +284,16 @@ impl TradingPanel for OrdersLogState {
                 ctx.fill_text(format_status(order.status), col_status_x as f64, row_mid_y);
                 ctx.fill_text(&format_age(order.created_at, now_ms), col_age_x as f64, row_mid_y);
 
+                let cancel_id = format!("{}:orders:cancel:{}", slot_prefix, order.id);
+                if coordinator.is_hovered(&uzor::WidgetId::from(cancel_id.as_str())) {
+                    ctx.set_fill_color(&theme.hover);
+                    ctx.fill_rect(cancel_x as f64, row_y as f64, OL_CANCEL_W as f64, OL_ROW_HEIGHT as f64);
+                }
                 ctx.set_fill_color(&theme.sell_bright);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.fill_text("\u{2715}", (cancel_x + OL_CANCEL_W / 2.0) as f64, row_mid_y);
                 coordinator.register(
-                    format!("{}:orders:cancel:{}", slot_prefix, order.id).as_str(),
+                    cancel_id.as_str(),
                     uzor::Rect::new(cancel_x as f64, row_y as f64, OL_CANCEL_W as f64, OL_ROW_HEIGHT as f64),
                     uzor::input::Sense::CLICK,
                 );
@@ -316,7 +335,16 @@ impl TradingPanel for OrdersLogState {
             let row_y = history_y + OL_SECTION_LABEL_HEIGHT + (row_idx as f32 * OL_ROW_HEIGHT);
             let row_mid_y = (row_y + OL_ROW_HEIGHT / 2.0) as f64;
 
-            ctx.set_fill_color(if row_idx % 2 == 0 { &theme.panel_bg } else { &theme.row_bg_alt });
+            let hist_row_id = format!("{}:orders:hist_row:{}", slot_prefix, row_idx);
+            let hist_hov = coordinator.is_hovered(&uzor::WidgetId::from(hist_row_id.as_str()));
+            coordinator.register(
+                hist_row_id.as_str(),
+                uzor::Rect::new(x as f64, row_y as f64, w as f64, OL_ROW_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
+            ctx.set_fill_color(if hist_hov { &theme.hover }
+                else if row_idx % 2 == 0 { &theme.panel_bg }
+                else { &theme.row_bg_alt });
             ctx.fill_rect(x as f64, row_y as f64, w as f64, OL_ROW_HEIGHT as f64);
 
             ctx.set_font("10px monospace");

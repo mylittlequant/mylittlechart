@@ -266,7 +266,18 @@ impl TradingPanel for PositionManagerState {
             let row_mid_y = (row_y + PM_ROW_HEIGHT / 2.0) as f64;
 
             let is_selected = self.selected == Some(row_idx);
-            let row_bg = if is_selected { &theme.selected } else { &theme.panel_bg };
+            // Interactivity pass (owner spec 2026-07-26): rows react to the
+            // cursor. Selected wins over hover.
+            let row_id = format!("{}:position_manager:row:{}", slot_prefix, row_idx);
+            let row_hov = coordinator.is_hovered(&uzor::WidgetId::from(row_id.as_str()));
+            coordinator.register(
+                row_id.as_str(),
+                uzor::Rect::new(x as f64, row_y as f64, w as f64, PM_ROW_HEIGHT as f64),
+                uzor::input::Sense::CLICK,
+            );
+            let row_bg = if is_selected { &theme.selected }
+                else if row_hov { &theme.hover }
+                else { &theme.panel_bg };
             ctx.set_fill_color(row_bg);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, PM_ROW_HEIGHT as f64);
 

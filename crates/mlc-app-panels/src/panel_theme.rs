@@ -41,6 +41,11 @@ pub struct PanelTheme {
     pub current_price: String,
     /// Hover row highlight
     pub hover: String,
+    /// Translucent brighten overlay for hover on ALREADY-COLORED controls
+    /// (active BUY/SELL buttons, submit, colored tabs) — painted OVER the
+    /// base fill, unlike `hover` which REPLACES a neutral background
+    /// (trading-container interactivity pass, 2026-07-26).
+    pub hover_overlay: String,
     /// Selected row
     pub selected: String,
     /// Accent / blue
@@ -131,6 +136,7 @@ impl PanelTheme {
             // Highlights
             current_price: "#ffde00ff".to_string(),
             hover:         "#2a2f40ff".to_string(),
+            hover_overlay: "rgba(255,255,255,0.08)".to_string(),
             selected:      "#1e2538ff".to_string(),
             accent:        "#58a6ffff".to_string(),
 

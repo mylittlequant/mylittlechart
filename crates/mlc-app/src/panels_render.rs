@@ -177,6 +177,7 @@ pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_app_p
 
         current_price: rt.colors.warning.clone(),
         hover:         t.hover.clone(),
+        hover_overlay: "rgba(255,255,255,0.08)".to_string(),
         selected:      t.selected.clone(),
         accent:        rt.colors.accent.clone(),
 
