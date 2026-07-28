@@ -807,14 +807,9 @@ where
                     let text_opt = text.as_ref();
                     let is_hovered = hovered_id == Some(id.as_str());
 
-                    // Use min_width if set, otherwise auto-size
-                    let item_width = if *min_width > 0.0 {
-                        *min_width
-                    } else if text_opt.is_some() {
-                        config.item_size * 2.5
-                    } else {
-                        config.item_size
-                    };
+                    let item_width = button_layout_width(
+                        ctx, config, text.as_deref(), icon_opt.is_some(), *min_width,
+                    );
 
                     let item_rect = if is_horizontal {
                         WidgetRect::new(pos, rect.y + (rect.height - config.item_size) / 2.0, item_width, config.item_size)
@@ -929,14 +924,9 @@ where
                 ToolbarItem::Dropdown { id, icon, text, active, show_chevron, min_width } => {
                     let is_hovered = hovered_id == Some(id.as_str());
 
-                    // Use min_width if set, otherwise auto-size
-                    let item_width = if *min_width > 0.0 {
-                        *min_width
-                    } else if text.is_some() {
-                        config.item_size * 2.5
-                    } else {
-                        config.item_size
-                    };
+                    let item_width = dropdown_layout_width(
+                        ctx, config, text.as_deref(), icon.is_some(), *show_chevron, *min_width,
+                    );
 
                     let item_rect = if is_horizontal {
                         WidgetRect::new(pos, rect.y + (rect.height - config.item_size) / 2.0, item_width, config.item_size)
@@ -972,9 +962,10 @@ where
                         draw_icon(ctx, icon, icon_rect, icon_color);
                     }
 
-                    // Draw text
+                    // Draw text — icon slot only when an icon actually renders
                     if let Some(text) = text {
-                        let text_x = item_rect.x + config.icon_size + 8.0;
+                        let text_x = item_rect.x
+                            + if icon.is_some() { config.icon_size + 8.0 } else { 8.0 };
                         ctx.set_font("13px sans-serif");
                         ctx.set_fill_color(icon_color);
                         ctx.set_text_align(TextAlign::Left);
@@ -1060,6 +1051,70 @@ fn clock_width(ctx: &mut dyn RenderContext, time: &str) -> f64 {
     (ctx.measure_text(time) + 16.0).max(40.0)
 }
 
+/// Measured natural width of a text-bearing Button/Dropdown item.
+///
+/// The box HUGS the label (owner defect 2026-07-29: the `item_size * 2.5`
+/// hardcode left dead padding around "Chart"/"DOM"). `left_inset` /
+/// `right_pad` are supplied by the call site so they mirror the EXACT
+/// offsets its draw code uses (icon slot / chevron clearance / bare 8px).
+/// Font is pinned to the same `13px sans-serif` every Tc label draws with —
+/// measuring under an ambient font would size the box for the wrong glyphs.
+fn text_natural_width(
+    ctx: &mut dyn RenderContext,
+    text: &str,
+    left_inset: f64,
+    right_pad: f64,
+) -> f64 {
+    ctx.set_font("13px sans-serif");
+    left_inset + ctx.measure_text(text) + right_pad
+}
+
+/// Layout width of a Button item: `min_width` fixed when set, measured
+/// natural otherwise (icon slot `icon_size + 4` mirrors the Button draw
+/// arms; a no-icon label centers inside `8 + text + 8`).
+fn button_layout_width(
+    ctx: &mut dyn RenderContext,
+    config: &ToolbarConfig,
+    text: Option<&str>,
+    has_icon: bool,
+    min_width: f64,
+) -> f64 {
+    if min_width > 0.0 {
+        return min_width;
+    }
+    match text {
+        Some(t) => {
+            let left = if has_icon { config.icon_size + 4.0 } else { 8.0 };
+            text_natural_width(ctx, t, left, 8.0)
+        }
+        None => config.item_size,
+    }
+}
+
+/// Layout width of a Dropdown item: `min_width` fixed when set, measured
+/// natural otherwise (icon slot `icon_size + 8` mirrors the Dropdown draw
+/// arms' `text_x`; chevron clearance only when the chevron is shown).
+fn dropdown_layout_width(
+    ctx: &mut dyn RenderContext,
+    config: &ToolbarConfig,
+    text: Option<&str>,
+    has_icon: bool,
+    show_chevron: bool,
+    min_width: f64,
+) -> f64 {
+    if min_width > 0.0 {
+        return min_width;
+    }
+    match text {
+        Some(t) => {
+            let left = if has_icon { config.icon_size + 8.0 } else { 8.0 };
+            let right = if show_chevron { 14.0 } else { 8.0 };
+            text_natural_width(ctx, t, left, right)
+        }
+        None => config.item_size,
+    }
+}
+
 /// Calculate width of a section's items
 pub fn calculate_section_width(ctx: &mut dyn RenderContext, section: &ToolbarSection, config: &ToolbarConfig) -> f64 {
     let mut width = 0.0;
@@ -1071,15 +1126,10 @@ pub fn calculate_section_width(ctx: &mut dyn RenderContext, section: &ToolbarSec
             ToolbarItem::Spacer => {
                 width += config.item_size;
             }
-            ToolbarItem::Button { text, min_width, .. } => {
-                let item_width = if *min_width > 0.0 {
-                    *min_width
-                } else if text.is_some() {
-                    config.item_size * 2.5
-                } else {
-                    config.item_size
-                };
-                width += item_width + config.spacing;
+            ToolbarItem::Button { icon, text, min_width, .. } => {
+                width += button_layout_width(
+                    ctx, config, text.as_deref(), icon.is_some(), *min_width,
+                ) + config.spacing;
             }
             ToolbarItem::IconButton { min_width, .. } => {
                 let item_width = if *min_width > 0.0 {
@@ -1089,15 +1139,10 @@ pub fn calculate_section_width(ctx: &mut dyn RenderContext, section: &ToolbarSec
                 };
                 width += item_width + config.spacing;
             }
-            ToolbarItem::Dropdown { text, min_width, .. } => {
-                let item_width = if *min_width > 0.0 {
-                    *min_width
-                } else if text.is_some() {
-                    config.item_size * 2.5
-                } else {
-                    config.item_size
-                };
-                width += item_width + config.spacing;
+            ToolbarItem::Dropdown { icon, text, show_chevron, min_width, .. } => {
+                width += dropdown_layout_width(
+                    ctx, config, text.as_deref(), icon.is_some(), *show_chevron, *min_width,
+                ) + config.spacing;
             }
             ToolbarItem::Clock { time, .. } => {
                 width += clock_width(ctx, time) + config.spacing;
@@ -1293,13 +1338,9 @@ pub fn draw_toolbar_with_icons(
                 let text_opt = text.as_ref();
                 let is_hovered = hovered_id == Some(id.as_str());
 
-                let item_width = if *min_width > 0.0 {
-                    *min_width
-                } else if text_opt.is_some() {
-                    config.item_size * 2.5
-                } else {
-                    config.item_size
-                };
+                let item_width = button_layout_width(
+                    ctx, config, text.as_deref(), icon_opt.is_some(), *min_width,
+                );
 
                 let advance = (if is_horizontal { item_width } else { config.item_size }) + config.spacing;
                 let item_end = pos + if is_horizontal { item_width } else { config.item_size };
@@ -1427,13 +1468,9 @@ pub fn draw_toolbar_with_icons(
             ToolbarItem::Dropdown { id, icon, text, active, show_chevron, min_width } => {
                 let is_hovered = hovered_id == Some(id.as_str());
 
-                let item_width = if *min_width > 0.0 {
-                    *min_width
-                } else if text.is_some() {
-                    config.item_size * 2.5
-                } else {
-                    config.item_size
-                };
+                let item_width = dropdown_layout_width(
+                    ctx, config, text.as_deref(), icon.is_some(), *show_chevron, *min_width,
+                );
 
                 let advance = (if is_horizontal { item_width } else { config.item_size }) + config.spacing;
                 let item_end = pos + if is_horizontal { item_width } else { config.item_size };
@@ -1463,8 +1500,15 @@ pub fn draw_toolbar_with_icons(
                 // clearance `show_chevron` already reserves — grown
                 // RIGHTWARD only (left edge/position pinned), matching how
                 // the label itself overflows past `item_rect.right()`.
+                // Measure under the label's own font — an ambient font from a
+                // previous draw must not size the highlight.
+                ctx.set_font("13px sans-serif");
                 let text_w = text.as_deref().map(|t| ctx.measure_text(t)).unwrap_or(0.0);
-                let icon_reserve = if text.is_some() { config.icon_size + 8.0 } else { 4.0 + config.icon_size };
+                let icon_reserve = if text.is_some() {
+                    if icon.is_some() { config.icon_size + 8.0 } else { 8.0 }
+                } else {
+                    4.0 + config.icon_size
+                };
                 let right_pad = if *show_chevron { 14.0 } else { 8.0 };
                 let content_w = icon_reserve + text_w + right_pad;
                 let highlight_w = item_width.max(content_w);
@@ -1501,7 +1545,10 @@ pub fn draw_toolbar_with_icons(
                 }
 
                 if let Some(text) = text {
-                    let text_x = item_rect.x + config.icon_size + 8.0;
+                    // Icon slot only when an icon actually renders — a bare
+                    // text dropdown (tc_center "Chart"/"DOM") hugs at 8px.
+                    let text_x = item_rect.x
+                        + if icon.is_some() { config.icon_size + 8.0 } else { 8.0 };
                     ctx.set_font("13px sans-serif");
                     ctx.set_fill_color(icon_color);
                     ctx.set_text_align(TextAlign::Left);
