@@ -516,6 +516,22 @@ impl ChartApp {
         }
     }
 
+    /// THE single z-order occlusion gate (owner spec 2026-07-28): true when
+    /// the cursor is over any layer at or above the popup tier — dropdowns,
+    /// submenus, indicator overlays, modals, context menus, color pickers.
+    /// Live query (modal-barrier aware) over the last completed frame's
+    /// widget accumulation. Canvas-level cursor affordances (crosshair,
+    /// hover glow, overlay reveals) must consult THIS — never hand-check
+    /// individual popup rects.
+    pub(crate) fn cursor_over_popup(&self, x: f64, y: f64) -> bool {
+        self.input_coordinator
+            .borrow()
+            .topmost_layer_z_at(x, y)
+            .map_or(false, |z| {
+                z >= mlc_app_layout::ui::z_order::ZLayer::Dropdown.z_order()
+            })
+    }
+
     /// True while any modal is open that should suppress chart-level
     /// right-click / primitive-copy-paste hotkeys from bleeding through.
     pub(crate) fn any_blocking_modal_open(&self) -> bool {
@@ -4889,26 +4905,13 @@ impl ChartApp {
             // fresh frame_layouts/active_frame_layout, so we always run it and use
             // the widget-name check only as an ADDITIONAL suppressor (i.e. when a
             // known non-chart widget is explicitly hovered, trust that over geometry).
-            // Positional modal suppressor (2026-07-28): the Tags&Tabs and
-            // Trading Container modals register their widgets in
-            // render_modal_layer — AFTER render_to_scene's end_frame baked
-            // the hover snapshot — so the `explicit_non_chart` check below
-            // never sees them and the crosshair keeps tracking the cursor
-            // while it is INSIDE a modal (owner repro: crosshair bleeding
-            // around the tc_modal over the main chart). Unlike the removed
-            // whole-screen is_over_ui suppressor, a modal's frame rect IS
-            // its painted extent, so a rect check is exact — no
-            // oversized-hit-rect false positives.
-            let over_app_modal = (self.tc_modal.is_open
-                && self.tc_modal_result.as_ref()
-                    .map(|r| r.modal_rect.contains(x, y))
-                    .unwrap_or(false))
-                || (self.panel_app.tags_tabs_state.is_open
-                    && self.frame_result.as_ref()
-                        .and_then(|r| r.tags_tabs.as_ref())
-                        .map(|tt| tt.modal_rect.contains(x, y))
-                        .unwrap_or(false));
-            if over_app_modal && !is_drawing {
+            // CENTRAL z-order gate (owner spec 2026-07-28): one call decides
+            // whether the cursor sits over ANY popup-or-above layer
+            // (dropdown, submenu, indicator overlay, modal, context menu,
+            // color picker) — live over the last completed frame's layers,
+            // modal-barrier aware. Replaces the per-modal rect checks; every
+            // future popup that registers on a ZLayer is covered for free.
+            if self.cursor_over_popup(x, y) && !is_drawing {
                 if self.panel_app.panel_grid.is_split() {
                     self.hide_all_split_crosshairs();
                 } else {

@@ -304,6 +304,25 @@ fn tc_modal_map_panels(
         });
     }
 
+    // The two fixed one-row strips (owner spec 2026-07-28) — thin
+    // horizontal cards at the container bottom, hover-only.
+    panels.push(TcMapPanel {
+        id: "metrics".to_string(),
+        label: "Metrics".to_string(),
+        sub: String::new(),
+        rect: r.metrics,
+        active: false,
+        clickable: false,
+    });
+    panels.push(TcMapPanel {
+        id: "tape".to_string(),
+        label: "Tape".to_string(),
+        sub: String::new(),
+        rect: r.ticker_tape,
+        active: false,
+        clickable: false,
+    });
+
     (panels, (w, h))
 }
 
