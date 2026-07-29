@@ -1756,60 +1756,111 @@ impl TradingContainerState {
             return;
         };
 
-        // Container-edge drop bands — visible for the whole drag so the
-        // "dock against the container side" targets are discoverable;
-        // the armed band lights up.
-        if let Some(bands) = ds.window_edge_rects() {
-            let band_zones = [DropZone::Up, DropZone::Down, DropZone::Left, DropZone::Right];
-            for (i, b) in bands.iter().enumerate() {
-                let armed = drag.is_window_edge && drag.drop_zone == Some(band_zones[i]);
-                ctx.set_fill_color(&theme.hover_overlay);
-                ctx.fill_rect(b.x as f64, b.y as f64, b.width as f64, b.height as f64);
-                if armed {
-                    ctx.set_stroke_color(&theme.accent);
-                    ctx.set_stroke_width(1.5);
-                    ctx.set_line_dash(&[]);
-                    ctx.stroke_rect(
-                        b.x as f64 + 1.0,
-                        b.y as f64 + 1.0,
-                        (b.width as f64 - 2.0).max(0.0),
-                        (b.height as f64 - 2.0).max(0.0),
-                    );
+        // What travels — resolves availability below (drop-zone
+        // affordances must not advertise placements the policy vetoes:
+        // strips never dock on the side edges, full panels never enter a
+        // strip, etc).
+        let dragged_kind: Option<TcLeaf> = ds
+            .tree()
+            .leaves()
+            .iter()
+            .find(|l| l.id == drag.dragged_leaf_id)
+            .and_then(|l| match drag.payload {
+                uzor::panels::DragPayload::Leaf => l.active_panel().cloned(),
+                uzor::panels::DragPayload::Tab { tab_idx } => l.panels.get(tab_idx).cloned(),
+            });
+        // A zone is AVAILABLE when the policy maps its probe back onto
+        // itself (probe cursor sits inside that zone's own region).
+        let probe = |zone: DropZone| -> (f32, f32) {
+            match zone {
+                DropZone::Up => (0.5, 0.2),
+                DropZone::Down => (0.5, 0.8),
+                DropZone::Left => (0.2, 0.5),
+                DropZone::Right => (0.8, 0.5),
+                DropZone::Center => (0.5, 0.5),
+            }
+        };
+        let available = |target: Option<&TcLeaf>, zone: DropZone, is_edge: bool| -> bool {
+            dragged_kind
+                .as_ref()
+                .map(|d| ds.drop_policy_check(d, target, zone, is_edge, probe(zone)) == Some(zone))
+                .unwrap_or(false)
+        };
+
+        // Container-edge drop points (owner spec 2026-07-29): the same
+        // rib language as the panel mini-compass, sitting at the middle
+        // of each AVAILABLE container edge — no band floodfill.
+        {
+            let area = ds.layout_area();
+            let (ax, ay, aw, ah) = (area.x as f64, area.y as f64, area.width as f64, area.height as f64);
+            let (acx, acy) = (ax + aw / 2.0, ay + ah / 2.0);
+            let rib_l = 26.0;
+            let rib_t = 6.0;
+            let inset = 4.0;
+            let edge_ribs = [
+                (DropZone::Up, (acx - rib_l / 2.0, ay + inset, rib_l, rib_t)),
+                (DropZone::Down, (acx - rib_l / 2.0, ay + ah - inset - rib_t, rib_l, rib_t)),
+                (DropZone::Left, (ax + inset, acy - rib_l / 2.0, rib_t, rib_l)),
+                (DropZone::Right, (ax + aw - inset - rib_t, acy - rib_l / 2.0, rib_t, rib_l)),
+            ];
+            for (z, (zx, zy, zw, zh)) in edge_ribs {
+                if !available(None, z, true) {
+                    continue;
                 }
+                let armed = drag.is_window_edge && drag.drop_zone == Some(z);
+                ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
+                ctx.fill_rounded_rect(zx, zy, zw, zh, 2.0);
             }
         }
 
-        // Mini-compass on the hovered panel (tessera parity): four edge
-        // ribs + a center square, the armed one lit — the drop lands in
-        // THIS leaf, splitting it (or joining its stack on Center).
+        // Mini-compass on the hovered panel (tessera parity): edge ribs +
+        // a center square — ONLY the zones the policy allows for THIS
+        // (dragged, target) pair; the armed one lit. The drop lands in
+        // this leaf, splitting it (or joining its stack on Center).
         if let (Some(tid), false) = (drag.target_leaf_id, drag.is_window_edge) {
+            let target_kind = ds
+                .tree()
+                .leaves()
+                .iter()
+                .find(|l| l.id == tid)
+                .and_then(|l| l.active_panel().cloned());
             if let Some(r) = ds.panel_rects().get(&tid) {
                 let (rx, ry, rw, rh) = (r.x as f64, r.y as f64, r.width as f64, r.height as f64);
                 let (ccx, ccy) = (rx + rw / 2.0, ry + rh / 2.0);
-                let rib_l = 26.0_f64.min(rw * 0.3).min(rh * 0.3).max(6.0);
-                let rib_t = 6.0;
-                let inset = 8.0;
+                let rib_l = 26.0_f64.min(rw * 0.3).min(rh * 0.6).max(6.0);
+                let rib_t = 6.0_f64.min(rh * 0.28);
+                // Thin strips can't afford the 8px inset — hug the edge.
+                let inset_y = (rh * 0.12).clamp(2.0, 8.0);
+                let inset_x = (rw * 0.12).clamp(2.0, 8.0);
                 let ribs = [
-                    (DropZone::Up, (ccx - rib_l / 2.0, ry + inset, rib_l, rib_t)),
-                    (DropZone::Down, (ccx - rib_l / 2.0, ry + rh - inset - rib_t, rib_l, rib_t)),
-                    (DropZone::Left, (rx + inset, ccy - rib_l / 2.0, rib_t, rib_l)),
-                    (DropZone::Right, (rx + rw - inset - rib_t, ccy - rib_l / 2.0, rib_t, rib_l)),
+                    (DropZone::Up, (ccx - rib_l / 2.0, ry + inset_y, rib_l, rib_t)),
+                    (DropZone::Down, (ccx - rib_l / 2.0, ry + rh - inset_y - rib_t, rib_l, rib_t)),
+                    (DropZone::Left, (rx + inset_x, ccy - rib_l / 2.0, rib_t, rib_l)),
+                    (DropZone::Right, (rx + rw - inset_x - rib_t, ccy - rib_l / 2.0, rib_t, rib_l)),
                 ];
                 for (z, (zx, zy, zw, zh)) in ribs {
+                    if !available(target_kind.as_ref(), z, false) {
+                        continue;
+                    }
                     let armed = drag.drop_zone == Some(z);
                     ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
                     ctx.fill_rounded_rect(zx, zy, zw, zh, 2.0);
                 }
-                let cs = 16.0;
-                let armed = drag.drop_zone == Some(DropZone::Center);
-                ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
-                ctx.fill_rounded_rect(ccx - cs / 2.0, ccy - cs / 2.0, cs, cs, 3.0);
+                // Center square (tab join) — only where tabify is a real
+                // option (never on strips).
+                if available(target_kind.as_ref(), DropZone::Center, false) {
+                    let cs = 16.0_f64.min(rh * 0.6);
+                    let armed = drag.drop_zone == Some(DropZone::Center);
+                    ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
+                    ctx.fill_rounded_rect(ccx - cs / 2.0, ccy - cs / 2.0, cs, cs, 3.0);
+                }
             }
         }
 
         // Armed drop-zone preview: edge drop previews the root-split half
         // on the container area; a body drop previews the target-leaf half
-        // (Center → the whole leaf: the tab join).
+        // (Center → the whole leaf: the tab join). Accent-tinted, not the
+        // washed-out hover overlay.
         let preview = drag.target_leaf_id.zip(drag.drop_zone).and_then(|(tid, zone)| {
             let base = if drag.is_window_edge {
                 ds.layout_area()
@@ -1819,7 +1870,7 @@ impl TradingContainerState {
             Some(zone.preview_rect(base))
         });
         if let Some(p) = preview {
-            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.16));
             ctx.fill_rect(p.x as f64, p.y as f64, p.width as f64, p.height as f64);
             ctx.set_stroke_color(&theme.accent);
             ctx.set_stroke_width(1.5);
