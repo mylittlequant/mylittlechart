@@ -1014,14 +1014,41 @@ impl TradingPanel for DomState {
         let levels = self.visible_levels_for_height(body_h);
         let row_height = DOM_ROW_HEIGHT;
 
-        // Column layout — only visible columns get width
+        // Column layout — only visible columns get width. ADAPTIVE
+        // (owner spec 2026-07-29): the ladder reshapes to the panel it
+        // lives in instead of assuming the full sidebar — the price
+        // column is capped at 45% of the panel, and side columns exist
+        // only while they'd stay readable, shedding the trade pair
+        // first, then the order pair, down to a price-only ladder.
         let pad = 4.0_f32;
-        let price_col_w = DOM_PRICE_COL_WIDTH;
+        let price_col_w = DOM_PRICE_COL_WIDTH.min(w * 0.45);
+        const MIN_SIDE_COL: f32 = 26.0;
+        let mut cc = self.column_config.clone();
+        loop {
+            let n = (cc.show_bid_orders as u8
+                + cc.show_sell_trades as u8
+                + cc.show_buy_trades as u8
+                + cc.show_ask_orders as u8) as f32;
+            if n == 0.0 {
+                break;
+            }
+            let a = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
+            if a / n >= MIN_SIDE_COL {
+                break;
+            }
+            if cc.show_sell_trades || cc.show_buy_trades {
+                cc.show_sell_trades = false;
+                cc.show_buy_trades = false;
+            } else {
+                cc.show_bid_orders = false;
+                cc.show_ask_orders = false;
+            }
+        }
         let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
 
         // Count visible columns on each side (left = bid_orders + sell_trades, right = buy_trades + ask_orders)
-        let left_count = self.column_config.show_bid_orders as u8 + self.column_config.show_sell_trades as u8;
-        let right_count = self.column_config.show_buy_trades as u8 + self.column_config.show_ask_orders as u8;
+        let left_count = cc.show_bid_orders as u8 + cc.show_sell_trades as u8;
+        let right_count = cc.show_buy_trades as u8 + cc.show_ask_orders as u8;
         let total_side_cols = left_count + right_count;
 
         // Distribute available width proportionally
@@ -1036,9 +1063,9 @@ impl TradingPanel for DomState {
         let (bid_ord_col_w, sell_trade_col_w) = if left_count == 2 {
             let total = ORDER_COL_FRACTION + TRADE_COL_FRACTION;
             (left_avail * ORDER_COL_FRACTION / total, left_avail * TRADE_COL_FRACTION / total)
-        } else if self.column_config.show_bid_orders {
+        } else if cc.show_bid_orders {
             (left_avail, 0.0_f32)
-        } else if self.column_config.show_sell_trades {
+        } else if cc.show_sell_trades {
             (0.0_f32, left_avail)
         } else {
             (0.0_f32, 0.0_f32)
@@ -1047,9 +1074,9 @@ impl TradingPanel for DomState {
         let (ask_ord_col_w, buy_trade_col_w) = if right_count == 2 {
             let total = ORDER_COL_FRACTION + TRADE_COL_FRACTION;
             (right_avail * ORDER_COL_FRACTION / total, right_avail * TRADE_COL_FRACTION / total)
-        } else if self.column_config.show_ask_orders {
+        } else if cc.show_ask_orders {
             (right_avail, 0.0_f32)
-        } else if self.column_config.show_buy_trades {
+        } else if cc.show_buy_trades {
             (0.0_f32, right_avail)
         } else {
             (0.0_f32, 0.0_f32)
@@ -1058,16 +1085,16 @@ impl TradingPanel for DomState {
         // X positions
         let mut cur_x = x + DOM_LEFT_PAD;
         let bid_ord_col_x = cur_x;
-        if self.column_config.show_bid_orders { cur_x += bid_ord_col_w + pad; }
+        if cc.show_bid_orders { cur_x += bid_ord_col_w + pad; }
 
         let sell_trade_col_x = cur_x;
-        if self.column_config.show_sell_trades { cur_x += sell_trade_col_w + pad; }
+        if cc.show_sell_trades { cur_x += sell_trade_col_w + pad; }
 
         let price_col_x = cur_x;
         cur_x = price_col_x + price_col_w + pad;
 
         let buy_trade_col_x = cur_x;
-        if self.column_config.show_buy_trades { cur_x += buy_trade_col_w + pad; }
+        if cc.show_buy_trades { cur_x += buy_trade_col_w + pad; }
 
         let ask_ord_col_x = cur_x;
 
@@ -1078,21 +1105,21 @@ impl TradingPanel for DomState {
         ctx.set_fill_color(&theme.text_muted);
 
         let lang = current_language();
-        if self.column_config.show_bid_orders {
+        if cc.show_bid_orders {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Bid.get(lang), (bid_ord_col_x + bid_ord_col_w / 2.0) as f64, label_y);
         }
-        if self.column_config.show_sell_trades {
+        if cc.show_sell_trades {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Sell.get(lang), (sell_trade_col_x + sell_trade_col_w / 2.0) as f64, label_y);
         }
         ctx.set_text_align(TextAlign::Center);
         ctx.fill_text(TradingKey::Price.get(lang), (price_col_x + price_col_w / 2.0) as f64, label_y);
-        if self.column_config.show_buy_trades {
+        if cc.show_buy_trades {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Buy.get(lang), (buy_trade_col_x + buy_trade_col_w / 2.0) as f64, label_y);
         }
-        if self.column_config.show_ask_orders {
+        if cc.show_ask_orders {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Ask.get(lang), (ask_ord_col_x + ask_ord_col_w / 2.0) as f64, label_y);
         }
@@ -1189,7 +1216,7 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.2: Bid order volume bar (right-aligned, grows leftward) ---
-            if self.column_config.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
+            if cc.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
@@ -1228,7 +1255,7 @@ impl TradingPanel for DomState {
             if let Some(&(buy_qty, sell_qty)) = self.trade_volume_by_price.get(&price_tick) {
                 let text_y = row_y + row_height / 2.0;
 
-                if self.column_config.show_sell_trades && sell_qty > 0.0 && visible_max_trade > 0.0 {
+                if cc.show_sell_trades && sell_qty > 0.0 && visible_max_trade > 0.0 {
                     let bar_width = (sell_qty / visible_max_trade * sell_trade_col_w as f64) as f32;
                     let bar_x = sell_trade_col_x + sell_trade_col_w - bar_width;
                     let bar_y = row_y + 2.0;
@@ -1254,7 +1281,7 @@ impl TradingPanel for DomState {
                 }
 
                 // --- Step 4.4: Buy trade bar (left-aligned within buy trade col) ---
-                if self.column_config.show_buy_trades && buy_qty > 0.0 && visible_max_trade > 0.0 {
+                if cc.show_buy_trades && buy_qty > 0.0 && visible_max_trade > 0.0 {
                     let bar_width = (buy_qty / visible_max_trade * buy_trade_col_w as f64) as f32;
                     let bar_x = buy_trade_col_x;
                     let bar_y = row_y + 2.0;
@@ -1281,7 +1308,7 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.5: Ask order volume bar (left-aligned, grows rightward) ---
-            if self.column_config.show_ask_orders && level.ask_volume > 0.0 && !is_filtered {
+            if cc.show_ask_orders && level.ask_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
@@ -1573,7 +1600,10 @@ fn render_alt_skin(
     let price_col_w = (DOM_PRICE_COL_WIDTH as f64).min(body_w * 0.45);
     let price_col_x = body_x + (body_w - price_col_w) * 0.5;
 
-    let side_col_w_each = ((body_w - price_col_w) * 0.5 - 4.0).max(20.0);
+    // No hard floor — a floor pushes the column sum past body_w on a
+    // narrow panel; the columns honestly shrink with the panel instead
+    // (owner spec 2026-07-29: geometry adapts, clip is only a backstop).
+    let side_col_w_each = ((body_w - price_col_w) * 0.5 - 4.0).max(0.0);
     let left_col_x = body_x + 4.0;
     let left_col_w = side_col_w_each;
     let right_col_x = price_col_x + price_col_w + 4.0;

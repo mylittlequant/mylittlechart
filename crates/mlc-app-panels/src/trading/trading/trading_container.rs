@@ -767,6 +767,53 @@ impl TradingContainerState {
         self.free_leaf_for(&TcLeaf::Chart).is_some()
     }
 
+    /// Free-mode focus: the leaf the dock currently considers active
+    /// (accent-outlined by the overlay). Body clicks, tab switches and
+    /// the embedded-chart gesture move it. None outside Free mode, on an
+    /// empty tree, or when the stored id went stale.
+    pub fn focused_free_leaf(&self) -> Option<uzor::panels::LeafId> {
+        if self.layout_mode != TcLayoutMode::Free {
+            return None;
+        }
+        let dock = self.free_dock.as_ref()?;
+        let ds = dock.0.borrow();
+        let active = ds.active_leaf()?;
+        ds.tree().leaf(active).map(|_| active)
+    }
+
+    /// Which leaf kind a child-view widget id belongs to (focus routing).
+    fn child_prefix_kind(local_id: &str) -> Option<TcLeaf> {
+        if local_id.starts_with("oe:") {
+            Some(TcLeaf::OrderEntry)
+        } else if local_id.starts_with("dom:") {
+            Some(TcLeaf::Dom)
+        } else if local_id.starts_with("position_manager:") {
+            Some(TcLeaf::Positions)
+        } else if local_id.starts_with("trade_log:") {
+            Some(TcLeaf::Trades)
+        } else if local_id.starts_with("orders:") {
+            Some(TcLeaf::Orders)
+        } else if local_id.starts_with("risk_calculator:") {
+            Some(TcLeaf::RiskCalculator)
+        } else {
+            None
+        }
+    }
+
+    /// Focus the leaf hosting `kind` — focus follows the click (owner
+    /// spec 2026-07-29). Strips are not focusable content; no-op outside
+    /// Free mode or when `kind` isn't hosted.
+    pub fn focus_free_kind(&mut self, kind: &TcLeaf) {
+        if self.layout_mode != TcLayoutMode::Free || kind.is_strip() {
+            return;
+        }
+        if let Some((leaf, _)) = self.free_leaf_hosting(kind) {
+            if let Some(dock) = &self.free_dock {
+                dock.0.borrow_mut().set_active_leaf(leaf);
+            }
+        }
+    }
+
     /// Spawn a leaf of `kind` into the Free tree (owner spec 2026-07-29:
     /// the header's "+ Panel" dropdown). One instance per kind — spawning
     /// an existing kind just activates its leaf. A new leaf splits the
@@ -774,15 +821,26 @@ impl TradingContainerState {
     /// leaf as its first panel.
     pub fn spawn_free_leaf(&mut self, kind: TcLeaf) {
         use uzor::panels::{DropZone, SplitKind};
-        // Already hosted somewhere (possibly as an inactive tab) — just
-        // bring it forward.
+        // Already hosted somewhere (possibly as an inactive tab) — bring
+        // it forward. A strip can't be "activated" visibly (solo one-row
+        // leaf), so it re-homes to the canonical full-width bottom band
+        // instead — this is also the recovery path for a strip crushed or
+        // stranded by earlier tree surgery.
         if let Some((leaf, idx)) = self.free_leaf_hosting(&kind) {
             if let Some(dock) = &self.free_dock {
                 let mut ds = dock.0.borrow_mut();
-                if let Some(l) = ds.tree_mut().leaf_mut(leaf) {
-                    l.active_tab = idx;
+                if kind.is_strip() {
+                    ds.move_leaf_to_root_split_fixed(leaf, DropZone::Down);
+                    let (w, h) = self.last_size.get();
+                    if w > 0.0 && h > 0.0 {
+                        ds.layout(uzor::panels::PanelRect::new(0.0, 0.0, w as f32, h as f32));
+                    }
+                } else {
+                    if let Some(l) = ds.tree_mut().leaf_mut(leaf) {
+                        l.active_tab = idx;
+                    }
+                    ds.set_active_leaf(leaf);
                 }
-                ds.set_active_leaf(leaf);
             }
             return;
         }
@@ -1086,6 +1144,13 @@ impl TradingPanel for TradingContainerState {
     }
 
     fn handle_click(&mut self, local_id: &str, x: f64, y: f64) -> bool {
+        // Focus follows the click (owner spec 2026-07-29): a click routed
+        // into any child view focuses the leaf hosting that view. Chart
+        // focus is hooked at the engine-gesture site in mlc-app (the
+        // embedded chart bypasses widget routing).
+        if let Some(kind) = Self::child_prefix_kind(local_id) {
+            self.focus_free_kind(&kind);
+        }
         if local_id.starts_with("oe:") {
             self.order_entry.handle_click(local_id, x, y)
         } else if local_id.starts_with("dom:") {
@@ -1098,6 +1163,14 @@ impl TradingPanel for TradingContainerState {
             self.orders_log.handle_click(local_id, x, y)
         } else if local_id.starts_with("risk_calculator:") {
             self.risk_calculator.handle_click(local_id, x, y)
+        } else if let Some(wire) = local_id.strip_prefix("tcfree:body:") {
+            // Leaf-body catch-all (registered under the child content) —
+            // a click on empty leaf space still focuses the leaf.
+            if let Some(kind) = TcLeaf::from_wire_id(wire) {
+                self.focus_free_kind(&kind);
+                return true;
+            }
+            false
         } else if let Some(wire) = local_id.strip_prefix("tcfree:close:") {
             // Overlay ✕ chip — remove the leaf (owner spec 2026-07-29).
             if let Some(kind) = TcLeaf::from_wire_id(wire) {
@@ -1179,6 +1252,12 @@ impl TradingPanel for TradingContainerState {
     }
 
     fn handle_drag_start(&mut self, local_id: &str, x: f64, y: f64) -> bool {
+        // Focus follows the press too — a DOM mousedown arms the ladder
+        // recenter drag and the click never dispatches, so the click-side
+        // hook alone would miss the most-used panel.
+        if let Some(kind) = Self::child_prefix_kind(local_id) {
+            self.focus_free_kind(&kind);
+        }
         if local_id.starts_with("dom:") {
             self.dom.handle_drag_start(local_id, x, y)
         } else if local_id.starts_with("position_manager:") {
@@ -1428,6 +1507,20 @@ impl TradingContainerState {
                 );
             }
             let (fx, fy, fw, fh) = (lx as f32, ly as f32, lw as f32, lh as f32);
+            // Leaf-body catch-all UNDER the child content (focus follows
+            // the click): registered first so child widgets win where
+            // present; a click on empty leaf space still focuses the
+            // leaf. Chart is excluded — the embedded engine gesture is
+            // gated on the container-body hover and must keep receiving
+            // it. Strips aren't focusable.
+            if !matches!(leaf, TcLeaf::Chart) && !leaf.is_strip() {
+                let wid = format!("{}:tcfree:body:{}", slot_prefix, leaf.wire_id());
+                coordinator.register(
+                    wid.as_str(),
+                    uzor::Rect::new(lx, ly, lw, lh),
+                    Sense::CLICK,
+                );
+            }
             // HARD per-leaf clip (owner spec 2026-07-29): panel content
             // must never bleed past its cell (DOM price rows, table
             // columns, strips — nothing escapes the leaf or the sidebar).
@@ -1758,6 +1851,27 @@ impl TradingContainerState {
                         Sense::CLICK | Sense::HOVER
                     };
                     coordinator.register(wid.as_str(), uzor::Rect::new(cx, cy, CHIP, CHIP), sense);
+                }
+            }
+        }
+
+        // Focused-leaf outline (owner spec 2026-07-29): the one leaf that
+        // holds interaction focus wears a thin accent frame — the chip
+        // `is_active` styling only says what a STACK displays, never what
+        // is focused. Hidden while a drag is in flight (feedback owns the
+        // accent language) and pointless on a single-leaf tree.
+        if !drag_active && leaf_rects.len() > 1 {
+            if let Some(active) = ds.active_leaf() {
+                if let Some(r) = ds.panel_rects().get(&active) {
+                    ctx.set_stroke_color(&mlc_core::apply_opacity(&theme.accent, 0.7));
+                    ctx.set_stroke_width(1.5);
+                    ctx.set_line_dash(&[]);
+                    ctx.stroke_rect(
+                        r.x as f64 + 1.0,
+                        r.y as f64 + 1.0,
+                        (r.width as f64 - 2.0).max(0.0),
+                        (r.height as f64 - 2.0).max(0.0),
+                    );
                 }
             }
         }

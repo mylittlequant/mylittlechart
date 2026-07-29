@@ -112,23 +112,33 @@ impl ChartApp {
                 );
             }
 
-            // Viewport geometry from the render-cached center rect (chart
-            // area only — scales/sub-panes subtracted the same way the
-            // render pass computes them, so zoom/pan math matches what's
-            // drawn).
-            if let Some((rpid, rect)) = self.trading_center_rect {
-                if rpid == pid {
-                    let dims = self
-                        .trading_center_layout(cid, &rect)
-                        .map(|e| (e.main_chart.chart.width, e.main_chart.chart.height));
-                    if let Some((w, h)) = dims {
-                        if let Some(window) =
-                            self.panel_app.panel_grid.containers_mut().get_mut(&cid)
-                        {
-                            window.resize_geometry(w, h);
-                        }
-                    }
-                }
+            // Viewport geometry moved to render time
+            // (`resize_trading_center_geometry`, called right before the
+            // draw with THIS frame's rect). Feeding it here from
+            // `self.trading_center_rect` used last frame's rect — the
+            // viewport lagged the drawn rect by one frame for every frame
+            // of a live resize (Free separator drags, sibling spawns,
+            // window resize), breaking all scale modes mid-change.
+        }
+    }
+
+    /// Same-frame viewport geometry: the aux window adopts the freshly
+    /// computed center rect BEFORE `draw_trading_center_chart` reads
+    /// `window.viewport()`. One rect, computed once per frame, resized and
+    /// drawn in the same pass — the aux counterpart of the main grid's
+    /// synchronous per-leaf resize in `prepare_frame`.
+    pub(crate) fn resize_trading_center_geometry(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        center_rect: &mlc_core::LayoutRect,
+    ) {
+        let Some(&cid) = self.trading_center_charts.get(&pid) else { return };
+        let dims = self
+            .trading_center_layout(cid, center_rect)
+            .map(|e| (e.main_chart.chart.width, e.main_chart.chart.height));
+        if let Some((w, h)) = dims {
+            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
+                window.resize_geometry(w, h);
             }
         }
     }

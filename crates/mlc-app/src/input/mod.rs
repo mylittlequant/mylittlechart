@@ -1478,6 +1478,13 @@ impl ChartApp {
                     self.trading_center_drag_active = true;
                     self.ui_drag_active = true;
                     self.workspace_focus = crate::focus::WorkspaceFocus::TradingPanel(pid);
+                    // Focus follows the click into the embedded chart too
+                    // (the engine gesture bypasses widget routing, so the
+                    // container's click-focus hook never sees it).
+                    if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                        use mlc_app_panels::trading::trading::trading_container::TcLeaf;
+                        tc.focus_free_kind(&TcLeaf::Chart);
+                    }
                     self.trading_center_process(
                         cid,
                         &rect,

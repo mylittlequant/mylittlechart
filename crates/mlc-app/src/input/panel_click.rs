@@ -2292,8 +2292,11 @@ impl ChartApp {
                                         if handled {
                                             self.sidebar_data_dirty = true;
                                             // Close/tab clicks restructure the tree —
-                                            // persist the fresh snapshot.
-                                            self.autosave_snapshot();
+                                            // persist the fresh snapshot. Body-focus
+                                            // clicks are RAM-only — no write.
+                                            if !local_id.starts_with("tcfree:body:") {
+                                                self.autosave_snapshot();
+                                            }
                                         }
                                     }
                                 }

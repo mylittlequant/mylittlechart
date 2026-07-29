@@ -6568,8 +6568,8 @@ impl ChartApp {
             // the container body (`slot:N:leaf:M:focus_content` row pushed
             // by `render_slot_panel`) run through the container's own
             // `v1_layout_rects().dom`. Cached into `trading_center_rect`
-            // for the next tick's `resize_geometry` (viewport geometry —
-            // same contract as prepare.rs's per-leaf resize).
+            // for input hit-testing; viewport geometry is adopted
+            // same-frame via `resize_trading_center_geometry` below.
             {
                 let tc_center: Option<(mlc_core::state::PanelId, LayoutRect)> =
                     if self.sidebar_state.right_panel
@@ -6595,6 +6595,9 @@ impl ChartApp {
                 self.trading_center_rect = tc_center;
                 let tc_out = match tc_center {
                     Some((tc_pid_c, center_rect)) => {
+                        // Same-frame geometry: viewport adopts THIS rect
+                        // before the draw reads it (one-frame-lag fix).
+                        self.resize_trading_center_geometry(tc_pid_c, &center_rect);
                         self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect)
                     }
                     None => None,
@@ -7462,6 +7465,7 @@ impl ChartApp {
                             })
                     });
                 if let Some((tc_pid_c, center_rect)) = tc_center {
+                    self.resize_trading_center_geometry(tc_pid_c, &center_rect);
                     let _ = self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
                 }
 
