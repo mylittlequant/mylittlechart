@@ -4336,7 +4336,20 @@ impl ChartApp {
             .unwrap_or_else(|| self.build_extended_layout());
         let new_width = extended.main_chart.chart.width;
         let new_height = extended.main_chart.chart.height;
-        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+        // Aux trading-center windows live in the same containers map but are
+        // laid out by the trading container's own dock, NOT the main grid —
+        // stamping them with main-chart dims here fought the mini chart's
+        // own same-frame resize every single frame (447↔151 thrash, ±196
+        // bars of view_start per flip: the minichart scale-mode bug AND the
+        // main-thread churn behind the Lagged bar drops, owner defect
+        // 2026-07-30). They get exactly one writer:
+        // `resize_trading_center_geometry` at render time.
+        let aux: std::collections::HashSet<ChartId> =
+            self.trading_center_charts.values().copied().collect();
+        for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+            if aux.contains(cid) {
+                continue;
+            }
             // Pin right edge: shift view_start so the last visible bars stay
             // anchored when the window is resized, matching terminal behavior.
             // Skip bar_shift for windows still waiting for their initial snap

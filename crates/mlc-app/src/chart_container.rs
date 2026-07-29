@@ -2240,8 +2240,8 @@ impl ChartContainer {
         let bc1 = self.viewport.bar_count;
         if (vs1 - vs0).abs() > 100.0 || bc1.abs_diff(bc0) > 100 {
             log::warn!(
-                "[VPJUMP] {tag}: view_start {vs0:.1}->{vs1:.1} bar_count {bc0}->{bc1} cw={:.0} bs={:.2}",
-                self.viewport.chart_width, self.viewport.bar_spacing
+                "[VPJUMP] {tag}: panel={} view_start {vs0:.1}->{vs1:.1} bar_count {bc0}->{bc1} cw={:.0} bs={:.2}",
+                self.chart_panel_id.0, self.viewport.chart_width, self.viewport.bar_spacing
             );
         }
     }
