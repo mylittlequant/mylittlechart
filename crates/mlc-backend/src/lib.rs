@@ -1302,6 +1302,7 @@ impl BackendCore {
         }
 
         let mut rx = self.broadcast_rx.lock().expect("BackendCore.broadcast_rx poisoned");
+        let mut lagged = false;
 
         loop {
             let update = match rx.try_recv() {
@@ -1312,9 +1313,12 @@ impl BackendCore {
                     // (tokio repositions it), but make the drop visible
                     // instead of silent: dlog + mark every trade-fed fold
                     // bubble refold-owed so the next `stage_boundary`
-                    // sweep resynthesizes from the raw layers.
+                    // sweep resynthesizes from the raw layers — and flag
+                    // the kline self-heal below (raw BarUpdates have no
+                    // refold to resynthesize from; owner defect 2026-07-30).
                     mlc_backend_data_bridge::dlog!("[tick_writers] broadcast Lagged: {} updates dropped", n);
                     self.bubbles_mut().mark_all_refold_dirty();
+                    lagged = true;
                     continue;
                 }
                 Err(_) => break,
@@ -2220,6 +2224,42 @@ impl BackendCore {
                         }
                     }
                 }
+            }
+        }
+        drop(rx);
+
+        // Lagged kline self-heal (owner defect 2026-07-30): raw
+        // `BarUpdate`s dropped by the broadcast overflow have no refold to
+        // resynthesize from — the refold sweep above only heals trade-fed
+        // series. Re-request every (instrument, tf) holding a kline layer
+        // over REST; the resulting full-replace `BarsLoaded` rewrites the
+        // window the dropped updates would have built.
+        if lagged {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut wanted: Vec<(ExchangeId, AccountType, String, Timeframe)> = Vec::new();
+            {
+                let store = self.bubbles();
+                let bids: Vec<_> = store.bubble_ids().collect();
+                for bid in bids {
+                    store.with_bubble(bid, |b| {
+                        let Some(ex) = ExchangeId::from_str(&b.address.exchange) else { return };
+                        let at = mlc_backend_data_bridge::account_type_to_dig3(b.address.account_type);
+                        for tf_name in b.kline_layers.keys() {
+                            let Some(tf) = Timeframe::parse(tf_name) else { continue };
+                            let key = format!("{}:{:?}:{}:{}", ex.as_str(), at, b.address.symbol, tf.name);
+                            if seen.insert(key) {
+                                wanted.push((ex, at, b.address.symbol.clone(), tf));
+                            }
+                        }
+                    });
+                }
+            }
+            for (ex, at, sym, tf) in wanted {
+                mlc_backend_data_bridge::dlog!(
+                    "[tick_writers] lagged kline self-heal → re-request {}:{:?}:{} tf={}",
+                    ex.as_str(), at, sym, tf.name
+                );
+                self.request_kline(ex, &sym, &tf, at, None, None, true);
             }
         }
 
