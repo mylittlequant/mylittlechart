@@ -1571,14 +1571,17 @@ impl TradingContainerState {
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text("\u{2699}", bx_gear + TB / 2.0, by + TB / 2.0);
-                    // grip bars
-                    for k in 0..3 {
-                        let yy = by + 3.5 + k as f64 * 3.5;
-                        ctx.begin_path();
-                        ctx.move_to(bx_grip + 3.0, yy);
-                        ctx.line_to(bx_grip + TB - 3.0, yy);
-                        ctx.stroke();
-                    }
+                    // pan hand — the tear-out drag affordance (owner spec
+                    // 2026-07-29: a hand, not a burger).
+                    uzor::render::draw_svg_icon(
+                        ctx,
+                        mlc_core::state::icons::ICON_HAND,
+                        bx_grip,
+                        by,
+                        TB,
+                        TB,
+                        &theme.text_muted,
+                    );
                     // close cross
                     ctx.begin_path();
                     ctx.move_to(bx_close + 3.5, by + 3.5);
@@ -1643,14 +1646,17 @@ impl TradingContainerState {
                     ctx.set_line_dash(&[]);
                     match id_kind {
                         "grip" => {
-                            // Three horizontal bars.
-                            for k in 0..3 {
-                                let yy = cy + 4.5 + k as f64 * 3.5;
-                                ctx.begin_path();
-                                ctx.move_to(cx + 4.0, yy);
-                                ctx.line_to(cx + CHIP - 4.0, yy);
-                                ctx.stroke();
-                            }
+                            // Pan hand (owner spec 2026-07-29) — the drag
+                            // affordance is a hand, not a burger.
+                            uzor::render::draw_svg_icon(
+                                ctx,
+                                mlc_core::state::icons::ICON_HAND,
+                                cx + 1.0,
+                                cy + 1.0,
+                                CHIP - 2.0,
+                                CHIP - 2.0,
+                                if hovered { &theme.text_primary } else { &theme.text_muted },
+                            );
                         }
                         "gear" => {
                             // Same glyph as the strip gears — opens the
