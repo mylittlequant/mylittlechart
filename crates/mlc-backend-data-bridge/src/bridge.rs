@@ -734,7 +734,7 @@ impl DataBridge {
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
 
         // Build the Station. Persistence is on, warm-start = 5000 most-recent
-        // points per series, gap-heal default.
+        // points per series, kline gap-heal ON.
         // Storage lives under <APPDATA>/mylittlechart/dig3_storage/.
         // NOTE: the old %APPDATA%/mylittlechart/{bars,trades,orderbook}/
         // trees are dead — no code reads or writes them anymore (the legacy
@@ -754,6 +754,15 @@ impl DataBridge {
             .unsubscribe_grace(std::time::Duration::from_secs(30))
             .orderbook_rest_seed(true)
             .orderbook_seed_depth(1000)
+            // Kline disconnect-heal (owner defect 2026-07-30: holes in the
+            // bar series). The station's REST catch-up (gap_heal.rs:
+            // detect drop/silence → get_klines → upsert_by_ts rewrite of
+            // the outage window) is fully implemented but ships DISABLED
+            // by default — the enable step was missed in the Phase 2B
+            // bars→station migration, so every WS drop left a permanent
+            // hole (push_live has no continuity check). Limits: ≥300 bars
+            // per heal, capped at 1000 (env-tunable DIG3_HEAL_*_LIMIT).
+            .gap_heal(digdigdig3_station::GapHealConfig::on())
             .build()
             .await
             .expect("failed to build digdigdig3-station");
