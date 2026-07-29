@@ -733,17 +733,23 @@ impl DataBridge {
         let (tx, rx) = broadcast::channel(65536);
         let (connector_ready_tx, connector_ready_rx) = mpsc::unbounded_channel();
 
-        // Build the Station. Persistence is on, warm-start = 5000 most-recent
-        // points per series, kline gap-heal ON.
-        // Storage lives under <APPDATA>/mylittlechart/dig3_storage/.
+        // Build the Station. Persistence is OFF (owner decision 2026-07-30):
+        // the disk store gave MLC nothing — klines cold-load fresh over REST
+        // anyway (and the disk tail was the one channel reintroducing stale/
+        // holey data), real trade history comes from MLC's own backfill
+        // engine (paginated REST + zip archives), and the ~10min warm trade
+        // ring wasn't worth continuous per-tick disk/OPFS writes. Warm-start
+        // now always seeds from fresh REST (the station's disk-empty
+        // branch). Accumulation-for-research stays a standalone
+        // `dig3 watch`/Station concern with its own storage_root — not
+        // MLC's. kline gap-heal stays ON (startup + disconnect REST
+        // catch-up).
         // NOTE: the old %APPDATA%/mylittlechart/{bars,trades,orderbook}/
-        // trees are dead — no code reads or writes them anymore (the legacy
-        // store readers/writers were removed before Phase 2B); they are just
-        // leftover files safe to wipe on user machines.
+        // trees AND %APPDATA%/mylittlechart/dig3_storage/ are dead — no
+        // code reads or writes them anymore; leftover files safe to wipe.
         let storage_root = mlc_core::app_data_dir().join("dig3_storage");
         let station = digdigdig3_station::Station::builder()
             .storage_root(storage_root)
-            .persistence(digdigdig3_station::PersistenceConfig::on())
             // 5000 trade-ring depth so derived bars (range/volume/tick/
             // footprint) have enough historical trade data to seed at
             // least a few closed bars at typical parameters. Audit
