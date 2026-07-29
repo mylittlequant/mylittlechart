@@ -539,7 +539,13 @@ impl ChartApp {
                         .map(|s| s.as_active_series())
                         .unwrap_or(crate::active_series::ActiveSeries::Bars(new_bars));
                     window.reconcile_view_keep_anchor(new_bars, series, anchor);
-                    if window.needs_snap_after_backfill {
+                    // chart_width == 0 → window not laid out yet (e.g. TC aux
+                    // minichart with its tab closed): keep the flag armed, the
+                    // per-frame deferred snap fires once geometry exists.
+                    if window.needs_snap_after_backfill
+                        && !series.is_empty()
+                        && window.viewport().chart_width > 0.0
+                    {
                         window.consume_cold_snap(series);
                     } else if was_at_end && !series.is_empty() {
                         // EDGE-GLUE (owner ruling 2026-07-07): re-snap only

@@ -368,9 +368,13 @@ impl Viewport {
         const RIGHT_MARGIN_BARS: usize = 5;
         const TOTAL_VISIBLE_BARS: usize = VISIBLE_DATA_BARS + RIGHT_MARGIN_BARS;
 
-        // Calculate bar_spacing to fit TOTAL_VISIBLE_BARS in chart width
+        // Calculate bar_spacing to fit TOTAL_VISIBLE_BARS in chart width.
+        // Degenerate geometry (chart_width == 0 before first layout — e.g.
+        // an aux window whose owner tab hasn't rendered yet) makes
+        // max_bar_spacing() 0 < min_spacing; sanitize so a cosmetic fit can
+        // never panic the render loop.
         let new_spacing = self.chart_width / TOTAL_VISIBLE_BARS as f64;
-        self.bar_spacing = new_spacing.clamp(min_spacing, max_spacing);
+        self.bar_spacing = new_spacing.clamp(min_spacing, max_spacing.max(min_spacing));
 
         // Position view so last bar has RIGHT_MARGIN_BARS of space on right
         let last_bar_idx = self.bar_count.saturating_sub(1);
