@@ -1605,6 +1605,8 @@ impl ChartApp {
                                         || is_colsep
                                         || local_id == "tape:body"
                                         || local_id.starts_with("tcfree:sep:")
+                                        || local_id.starts_with("tcfree:grip:")
+                                        || local_id.starts_with("tcfree:tab:")
                                     {
                                         if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                             let leaf_id = uzor::panels::LeafId(raw);

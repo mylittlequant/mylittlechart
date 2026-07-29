@@ -2265,6 +2265,31 @@ impl ChartApp {
                                 return;
                             }
 
+                            // --- tcfree: — Free-mode docking chrome (owner spec
+                            // 2026-07-29): overlay ✕ chips, tab-chip activate and
+                            // tab-chip ✕. TradingContainerState::handle_click owns
+                            // the whole family; spawn lives on the header dropdown.
+                            if local_id.starts_with("tcfree:") {
+                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                                    let leaf_id = uzor::panels::LeafId(raw);
+                                    let item_opt = self.sidebar_state.slot_dockings[idx]
+                                        .inner()
+                                        .tree()
+                                        .leaf(leaf_id)
+                                        .and_then(|l| l.active_panel().cloned());
+                                    use mlc_app_panels::panel_trait::TradingPanel;
+                                    if let Some(mlc_core::state::Panel::TradingContainer(pid)) = item_opt {
+                                        let handled = self.panels_store.trading_container.get_mut(&pid)
+                                            .map(|state| state.handle_click(local_id, x, y))
+                                            .unwrap_or(false);
+                                        if handled {
+                                            self.sidebar_data_dirty = true;
+                                        }
+                                    }
+                                }
+                                return;
+                            }
+
                             // --- orders: — OrdersLog cancel / cancel-all clicks
                             // (W3, 2026-07-25). Only ever hosted inside a container
                             // (no standalone OrdersLog panel kind) — the click sets a
@@ -3091,6 +3116,17 @@ impl ChartApp {
                         }
                         return;
                     }
+                    "tc_spawn" => {
+                        // Free-mode "+ Panel" spawn dropdown — same
+                        // toggle-open contract as tc_center; the picked row
+                        // routes through the `dropdown_id == "tc_spawn"` arm.
+                        if self.trading_header_tb.open_dropdown_id.as_deref() == Some("tc_spawn") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                        } else {
+                            self.trading_header_tb.open_dropdown_id = Some("tc_spawn".to_string());
+                        }
+                        return;
+                    }
                     "tc_center_swap" => {
                         // Fast swap (owner spec 2026-07-28): the icon half
                         // of the split control toggles DOM<->Chart in one
@@ -3381,6 +3417,24 @@ impl ChartApp {
                                     if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
                                         tc.center_kind = kind;
                                     }
+                                    self.autosave_snapshot();
+                                }
+                            }
+                        }
+                        self.trading_header_tb.open_dropdown_id = None;
+                        return;
+                    } else if dropdown_id == "tc_spawn" {
+                        // Free-mode "+ Panel" spawn (owner spec 2026-07-29):
+                        // one leaf per kind — an existing kind is activated,
+                        // a new one splits the largest leaf.
+                        if let Some(wire) = item_id.strip_prefix("spawn:") {
+                            if let Some(kind) = mlc_app_panels::trading::trading::trading_container::TcLeaf::from_wire_id(wire) {
+                                let tc_pid = self.panels_store.trading_container.keys().next().copied();
+                                if let Some(pid) = tc_pid {
+                                    if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                                        tc.spawn_free_leaf(kind);
+                                    }
+                                    self.sidebar_data_dirty = true;
                                     self.autosave_snapshot();
                                 }
                             }

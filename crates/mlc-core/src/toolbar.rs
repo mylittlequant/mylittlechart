@@ -296,7 +296,7 @@ pub fn timeframe_selector_item(default_text: &str) -> ToolbarItemDef {
 /// overlay tab — the symbol system replaces it; color sync stays via the
 /// `tc_color_tag` square. The sidebar close button stays the last control
 /// in the header row (rendered by the sidebar chrome, not this def).
-pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelToolbarDef {
+pub fn trading_header_toolbar(center_label: &str, chart_mode: bool, free_mode: bool) -> PanelToolbarDef {
     let mut sections = vec![
         // 1. Symbol search system (identical to main topbar's).
         ToolbarSectionDef::new(vec![
@@ -341,25 +341,48 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool) -> PanelTool
             ]).with_separator(),
         );
     }
-    // 4. Center-slot control — SPLIT behavior (owner spec 2026-07-28):
-    // the ICON button is a one-click fast swap (DOM<->Chart, icon shows
-    // the CURRENT occupant: DOM ladder / signals-chart zigzag), the
-    // labeled part opens the dropdown as before.
-    let center_is_chart = center_label.eq_ignore_ascii_case("chart");
-    sections.push(
-        ToolbarSectionDef::new(vec![
-            ToolbarItemDef::icon_button(
-                "tc_center_swap",
-                ToolbarIconId::new(if center_is_chart { "signal" } else { "slot_dom" }),
-            ),
-            // No min_width — the box hugs the measured label ("DOM"/"Chart"
-            // barely differ in width, no jitter floor needed).
-            ToolbarItemDef::dropdown("tc_center", vec![
-                DropdownItemDef::action("center:dom", "DOM"),
-                DropdownItemDef::action("center:chart", "Chart"),
-            ]).with_text(center_label).without_chevron(),
-        ]).with_separator(),
-    );
+    // 4. Center-slot / spawn control.
+    // Fixed mode — SPLIT behavior (owner spec 2026-07-28): the ICON button
+    // is a one-click fast swap (DOM<->Chart, icon shows the CURRENT
+    // occupant), the labeled part opens the dropdown.
+    // Free mode (owner spec 2026-07-29) — the exclusive center pair is
+    // gone; the control becomes a "+ Panel" spawn dropdown listing every
+    // hostable leaf kind (`spawn:{wire}` item ids).
+    if free_mode {
+        sections.push(
+            ToolbarSectionDef::new(vec![
+                ToolbarItemDef::dropdown("tc_spawn", vec![
+                    DropdownItemDef::action("spawn:chart", "Chart"),
+                    DropdownItemDef::action("spawn:dom", "DOM"),
+                    DropdownItemDef::action("spawn:order_entry", "Order Entry"),
+                    DropdownItemDef::action("spawn:risk_calculator", "Risk Calculator"),
+                    // The three table views are separate panels in Free
+                    // mode (they migrate as one native tab stack).
+                    DropdownItemDef::action("spawn:positions", "Positions"),
+                    DropdownItemDef::action("spawn:orders", "Orders"),
+                    DropdownItemDef::action("spawn:trades", "Trades"),
+                    DropdownItemDef::action("spawn:metrics", "Metrics"),
+                    DropdownItemDef::action("spawn:tape", "Tape"),
+                ]).with_text("+ Panel").without_chevron(),
+            ]).with_separator(),
+        );
+    } else {
+        let center_is_chart = center_label.eq_ignore_ascii_case("chart");
+        sections.push(
+            ToolbarSectionDef::new(vec![
+                ToolbarItemDef::icon_button(
+                    "tc_center_swap",
+                    ToolbarIconId::new(if center_is_chart { "signal" } else { "slot_dom" }),
+                ),
+                // No min_width — the box hugs the measured label ("DOM"/"Chart"
+                // barely differ in width, no jitter floor needed).
+                ToolbarItemDef::dropdown("tc_center", vec![
+                    DropdownItemDef::action("center:dom", "DOM"),
+                    DropdownItemDef::action("center:chart", "Chart"),
+                ]).with_text(center_label).without_chevron(),
+            ]).with_separator(),
+        );
+    }
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 

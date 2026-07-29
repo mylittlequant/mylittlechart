@@ -54,6 +54,10 @@ const TC_BOTTOM_MIN_PX: f64 = 100.0;
 /// draggable separators — mirrors the docking system's own separator hit
 /// width (`sep_hit_w` in `mlc-app-sidebar-content::render`).
 const TC_SEP_HIT_PX: f64 = 4.0;
+
+/// Free mode: thickness of the container-edge drop bands (root-split
+/// targets during a panel drag — "dock against the container side").
+const TC_EDGE_BAND_PX: f32 = 20.0;
 /// Default fraction of the right column's height given to OrderEntry (rest
 /// goes to RiskCalculator). No owner spec for the exact split — chosen so
 /// OrderEntry's Limit/Stop-Limit field stack fits comfortably.
@@ -132,9 +136,65 @@ pub enum TcLeaf {
     Dom,
     OrderEntry,
     RiskCalculator,
-    BottomTables,
+    /// The three bottom-table views are SEPARATE panels in Free mode
+    /// (owner spec 2026-07-29): they migrate as one native tab stack —
+    /// no "Tables panel with its own sub-tab row" nesting.
+    Positions,
+    Orders,
+    Trades,
     Metrics,
     Tape,
+}
+
+impl TcLeaf {
+    /// Wire id used in spawn/close/grip widget ids and the header spawn
+    /// dropdown (`spawn:{wire_id}`). One leaf per kind (states are single
+    /// instances on the container), so the wire id addresses a leaf.
+    pub fn wire_id(&self) -> &'static str {
+        match self {
+            Self::Chart => "chart",
+            Self::Dom => "dom",
+            Self::OrderEntry => "order_entry",
+            Self::RiskCalculator => "risk_calculator",
+            Self::Positions => "positions",
+            Self::Orders => "orders",
+            Self::Trades => "trades",
+            Self::Metrics => "metrics",
+            Self::Tape => "tape",
+        }
+    }
+    pub fn from_wire_id(id: &str) -> Option<Self> {
+        match id {
+            "chart" => Some(Self::Chart),
+            "dom" => Some(Self::Dom),
+            "order_entry" => Some(Self::OrderEntry),
+            "risk_calculator" => Some(Self::RiskCalculator),
+            "positions" => Some(Self::Positions),
+            "orders" => Some(Self::Orders),
+            "trades" => Some(Self::Trades),
+            "metrics" => Some(Self::Metrics),
+            "tape" => Some(Self::Tape),
+        _ => None,
+        }
+    }
+    pub const ALL: [TcLeaf; 9] = [
+        TcLeaf::Chart,
+        TcLeaf::Dom,
+        TcLeaf::OrderEntry,
+        TcLeaf::RiskCalculator,
+        TcLeaf::Positions,
+        TcLeaf::Orders,
+        TcLeaf::Trades,
+        TcLeaf::Metrics,
+        TcLeaf::Tape,
+    ];
+
+    /// One-row strip panels (owner spec 2026-07-29): they dock ONLY as
+    /// horizontal bands of their own fixed height — never full-height
+    /// columns, never side slots, never tab stacks.
+    pub fn is_strip(&self) -> bool {
+        matches!(self, Self::Metrics | Self::Tape)
+    }
 }
 
 impl uzor::panels::DockPanel for TcLeaf {
@@ -144,7 +204,9 @@ impl uzor::panels::DockPanel for TcLeaf {
             Self::Dom => "DOM",
             Self::OrderEntry => "Order Entry",
             Self::RiskCalculator => "Risk Calculator",
-            Self::BottomTables => "Tables",
+            Self::Positions => "Positions",
+            Self::Orders => "Orders",
+            Self::Trades => "Trades",
             Self::Metrics => "Metrics",
             Self::Tape => "Tape",
         }
@@ -155,7 +217,9 @@ impl uzor::panels::DockPanel for TcLeaf {
             Self::Dom => "tc_dom",
             Self::OrderEntry => "tc_order_entry",
             Self::RiskCalculator => "tc_risk_calculator",
-            Self::BottomTables => "tc_bottom_tables",
+            Self::Positions => "tc_positions",
+            Self::Orders => "tc_orders",
+            Self::Trades => "tc_trades",
             Self::Metrics => "tc_metrics",
             Self::Tape => "tc_tape",
         }
@@ -166,10 +230,15 @@ impl uzor::panels::DockPanel for TcLeaf {
             Self::Dom => (120.0, 160.0),
             Self::OrderEntry => (150.0, 120.0),
             Self::RiskCalculator => (150.0, 100.0),
-            Self::BottomTables => (160.0, 60.0),
+            Self::Positions | Self::Orders | Self::Trades => (160.0, 60.0),
             // One-row strips — must never be forced taller than their row.
             Self::Metrics | Self::Tape => (80.0, 22.0),
         }
+    }
+    fn preferred_strip_height(&self) -> Option<f32> {
+        // One-row strips keep exactly their row height wherever they dock
+        // (the engine rewrites the fresh split's proportions from this).
+        self.is_strip().then_some(22.0)
     }
 }
 
@@ -359,6 +428,11 @@ pub struct TradingContainerState {
     /// the container rect, so this is how they convert pixels back to
     /// ratios. Not persisted — always repopulated by the next render.
     pub last_size: std::cell::Cell<(f64, f64)>,
+    /// Widget-id slot prefix of the last render, cached by `render_free`
+    /// for the app-layer overlay pass ([`Self::render_free_overlay`] runs
+    /// AFTER the embedded chart is painted, outside the panel render call,
+    /// and has no other prefix source). Not persisted.
+    pub last_slot_prefix: std::cell::RefCell<String>,
 
     /// DOM state (always present — base element, v1 center region)
     pub dom: DomState,
@@ -412,6 +486,7 @@ impl TradingContainerState {
             layout_mode: TcLayoutMode::default(),
             free_dock: None,
             last_size: std::cell::Cell::new((0.0, 0.0)),
+            last_slot_prefix: std::cell::RefCell::new(String::new()),
             dom,
             order_entry: OrderEntryState::new(symbol),
             position_manager: PositionManagerState::new(),
@@ -489,9 +564,21 @@ impl TradingContainerState {
         // Build order matters — each split nests a fresh binary branch:
         //   V[C; B] → V[C; V[B; M]] → V[C; V[B; V[M; T]]]
         //   → V[ H[C|OE]; ... ] → V[ H[C | V[OE;RC]]; ... ]
+        // The bottom tables migrate as ONE native tab stack
+        // Positions|Orders|Trades (owner spec 2026-07-29: the three views
+        // ARE the tabs — no nested sub-tab row).
         let tables_id = tree
-            .split_leaf(center_id, SplitKind::SplitBottom, TcLeaf::BottomTables)
+            .split_leaf(center_id, SplitKind::SplitBottom, TcLeaf::Positions)
             .expect("split center|tables");
+        tree.add_tab(tables_id, TcLeaf::Orders);
+        tree.add_tab(tables_id, TcLeaf::Trades);
+        if let Some(l) = tree.leaf_mut(tables_id) {
+            l.active_tab = match self.active_tab {
+                BottomTab::Positions => 0,
+                BottomTab::Orders => 1,
+                BottomTab::Trades => 2,
+            };
+        }
         let metrics_id = tree
             .split_leaf(tables_id, SplitKind::SplitBottom, TcLeaf::Metrics)
             .expect("split tables|metrics");
@@ -536,8 +623,133 @@ impl TradingContainerState {
         }
 
         let mut ds = DockState::from_tree(tree);
+        // Panel-type drop constraints (owner spec 2026-07-29):
+        // - one-row strips (metrics/tape) dock ONLY as horizontal bands —
+        //   any body zone maps to Up/Down by cursor half, edge drops only
+        //   top/bottom, never Center (no strip tabs), never full-height;
+        // - full panels can't subdivide a strip (no side splits of a 22px
+        //   band, no tabs on it);
+        // - full panel onto full panel: all 5 zones incl. Center = tabify.
+        ds.set_drop_policy(Box::new(|dragged: &TcLeaf, target, zone, is_edge, frac: (f32, f32)| {
+            use uzor::panels::DropZone;
+            let target_strip = target.map(TcLeaf::is_strip).unwrap_or(false);
+            if dragged.is_strip() {
+                if is_edge {
+                    return matches!(zone, DropZone::Up | DropZone::Down).then_some(zone);
+                }
+                return Some(if frac.1 < 0.5 { DropZone::Up } else { DropZone::Down });
+            }
+            if target_strip && !is_edge {
+                return None;
+            }
+            Some(zone)
+        }));
         ds.layout(PanelRect::new(0.0, 0.0, w as f32, h as f32));
         TcFreeDock(std::cell::RefCell::new(ds))
+    }
+
+    /// Resolve the Free-tree leaf holding `kind` (one leaf per kind — the
+    /// panel states are single instances on the container).
+    pub fn free_leaf_for(&self, kind: &TcLeaf) -> Option<uzor::panels::LeafId> {
+        let dock = self.free_dock.as_ref()?;
+        let ds = dock.0.borrow();
+        ds.tree()
+            .leaves()
+            .iter()
+            .find(|l| l.active_panel() == Some(kind))
+            .map(|l| l.id)
+    }
+
+    /// Parse the `{leaf_raw}:{tab_idx}` tail of a `tcfree:tab[x]:` widget id.
+    fn parse_tab_wire(rest: &str) -> Option<(uzor::panels::LeafId, usize)> {
+        let mut parts = rest.splitn(2, ':');
+        let leaf = parts.next()?.parse::<u64>().ok()?;
+        let idx = parts.next()?.parse::<usize>().ok()?;
+        Some((uzor::panels::LeafId(leaf), idx))
+    }
+
+    /// The leaf hosting `kind` in ANY tab (active or not) + the tab index —
+    /// the stack-aware lookup spawn/close need (one instance per kind).
+    pub fn free_leaf_hosting(&self, kind: &TcLeaf) -> Option<(uzor::panels::LeafId, usize)> {
+        let dock = self.free_dock.as_ref()?;
+        let ds = dock.0.borrow();
+        ds.tree().leaves().iter().find_map(|l| {
+            l.panels
+                .iter()
+                .position(|p| p == kind)
+                .map(|idx| (l.id, idx))
+        })
+    }
+
+    /// Whether the Free tree currently hosts a Chart leaf (drives the
+    /// header's chart-mode controls in Free).
+    pub fn has_free_chart_leaf(&self) -> bool {
+        self.free_leaf_for(&TcLeaf::Chart).is_some()
+    }
+
+    /// Spawn a leaf of `kind` into the Free tree (owner spec 2026-07-29:
+    /// the header's "+ Panel" dropdown). One instance per kind — spawning
+    /// an existing kind just activates its leaf. A new leaf splits the
+    /// LARGEST current leaf along its longer axis; an empty tree gets the
+    /// leaf as its first panel.
+    pub fn spawn_free_leaf(&mut self, kind: TcLeaf) {
+        use uzor::panels::{DropZone, SplitKind};
+        // Already hosted somewhere (possibly as an inactive tab) — just
+        // bring it forward.
+        if let Some((leaf, idx)) = self.free_leaf_hosting(&kind) {
+            if let Some(dock) = &self.free_dock {
+                let mut ds = dock.0.borrow_mut();
+                if let Some(l) = ds.tree_mut().leaf_mut(leaf) {
+                    l.active_tab = idx;
+                }
+                ds.set_active_leaf(leaf);
+            }
+            return;
+        }
+        let Some(dock) = &self.free_dock else { return };
+        let mut ds = dock.0.borrow_mut();
+        if kind.is_strip() {
+            // One-row strips spawn as a full-width band docked to the
+            // container bottom, at exactly their own height.
+            ds.spawn_leaf_root_split(kind, DropZone::Down);
+        } else if ds.tree().leaf_count() == 0 {
+            ds.tree_mut().add_leaf(kind);
+        } else {
+            // Largest leaf by area, split along its longer axis.
+            let largest = ds
+                .panel_rects()
+                .iter()
+                .max_by(|a, b| {
+                    (a.1.width * a.1.height)
+                        .partial_cmp(&(b.1.width * b.1.height))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(id, r)| (*id, r.width >= r.height));
+            if let Some((target, horizontal)) = largest {
+                let dir = if horizontal { SplitKind::SplitRight } else { SplitKind::SplitBottom };
+                ds.tree_mut().split_leaf(target, dir, kind);
+            } else {
+                ds.tree_mut().add_leaf(kind);
+            }
+        }
+        // Re-layout with the last known area so panel_rects are fresh for
+        // anything that reads them before the next render.
+        let (w, h) = self.last_size.get();
+        if w > 0.0 && h > 0.0 {
+            ds.layout(uzor::panels::PanelRect::new(0.0, 0.0, w as f32, h as f32));
+        }
+    }
+
+    /// Close `kind` — the overlay ✕ chip / a tab-chip ✕. Stack-aware: a
+    /// tab leaves its stack, a sole panel removes its leaf. Zero leaves is
+    /// a valid state (empty container + toolbar).
+    pub fn close_free_leaf(&mut self, kind: &TcLeaf) {
+        let Some((leaf, idx)) = self.free_leaf_hosting(kind) else { return };
+        if let Some(dock) = &self.free_dock {
+            // `remove_tab` handles both cases: the stack shrinks, and an
+            // emptied leaf is removed from the tree.
+            dock.0.borrow_mut().tree_mut().remove_tab(leaf, idx);
+        }
     }
 
     /// Absolute screen rect of the embedded chart, if one is visible —
@@ -553,15 +765,23 @@ impl TradingContainerState {
                 let dock = self.free_dock.as_ref()?;
                 let mut ds = dock.0.borrow_mut();
                 ds.layout(uzor::panels::PanelRect::new(x as f32, y as f32, w as f32, h as f32));
-                let leaf = ds
+                // The chart shows only while it is the ACTIVE tab of its
+                // leaf; a stacked leaf's content starts below the chip bar.
+                let (leaf, stacked) = ds
                     .tree()
                     .leaves()
                     .iter()
                     .find(|l| l.active_panel() == Some(&TcLeaf::Chart))
-                    .map(|l| l.id)?;
-                ds.panel_rects()
-                    .get(&leaf)
-                    .map(|r| (r.x as f64, r.y as f64, r.width as f64, r.height as f64))
+                    .map(|l| (l.id, l.tab_count() > 1))?;
+                let bar_h = if stacked { ds.tab_bar_height() as f64 } else { 0.0 };
+                ds.panel_rects().get(&leaf).map(|r| {
+                    (
+                        r.x as f64,
+                        r.y as f64 + bar_h,
+                        r.width as f64,
+                        (r.height as f64 - bar_h).max(0.0),
+                    )
+                })
             }
         }
     }
@@ -798,6 +1018,36 @@ impl TradingPanel for TradingContainerState {
             self.orders_log.handle_click(local_id, x, y)
         } else if local_id.starts_with("risk_calculator:") {
             self.risk_calculator.handle_click(local_id, x, y)
+        } else if let Some(wire) = local_id.strip_prefix("tcfree:close:") {
+            // Overlay ✕ chip — remove the leaf (owner spec 2026-07-29).
+            if let Some(kind) = TcLeaf::from_wire_id(wire) {
+                self.close_free_leaf(&kind);
+                return true;
+            }
+            false
+        } else if let Some(rest) = local_id.strip_prefix("tcfree:tabx:") {
+            // Tab-chip ✕ — the panel leaves the stack (an emptied leaf is
+            // removed by the tree).
+            let Some((leaf, idx)) = Self::parse_tab_wire(rest) else { return false };
+            if let Some(dock) = &self.free_dock {
+                dock.0.borrow_mut().tree_mut().remove_tab(leaf, idx);
+                return true;
+            }
+            false
+        } else if let Some(rest) = local_id.strip_prefix("tcfree:tab:") {
+            // Tab-chip click — activate that tab.
+            let Some((leaf, idx)) = Self::parse_tab_wire(rest) else { return false };
+            if let Some(dock) = &self.free_dock {
+                let mut ds = dock.0.borrow_mut();
+                if let Some(l) = ds.tree_mut().leaf_mut(leaf) {
+                    if idx < l.panels.len() {
+                        l.active_tab = idx;
+                    }
+                }
+                ds.set_active_leaf(leaf);
+                return true;
+            }
+            false
         } else if local_id.starts_with("bstrip:") {
             // Bottom-strip tab switch — fully local, no app-layer follow-up
             // (unlike "oe:submit"/"orders:cancel*").
@@ -862,6 +1112,27 @@ impl TradingPanel for TradingContainerState {
             self.orders_log.handle_drag_start(local_id, x, y)
         } else if local_id.starts_with("tape:") {
             self.ticker_tape.handle_drag_start(local_id, x, y)
+        } else if let Some(wire) = local_id.strip_prefix("tcfree:grip:") {
+            // Leaf move gesture (owner spec 2026-07-29): the grip chip
+            // starts a DockState panel drag — compass targeting runs in
+            // `handle_drag_move`, the drop lands in `handle_drag_end`.
+            let Some(kind) = TcLeaf::from_wire_id(wire) else { return false };
+            let Some(leaf) = self.free_leaf_for(&kind) else { return false };
+            if let Some(dock) = &self.free_dock {
+                dock.0.borrow_mut().start_panel_drag(leaf, x as f32, y as f32);
+                return true;
+            }
+            false
+        } else if let Some(rest) = local_id.strip_prefix("tcfree:tab:") {
+            // Tab tear-out (owner spec 2026-07-29, tessera parity): drag a
+            // chip out of its stack — same targeting as a leaf drag, the
+            // single panel leaves the stack on drop.
+            let Some((leaf, idx)) = Self::parse_tab_wire(rest) else { return false };
+            if let Some(dock) = &self.free_dock {
+                dock.0.borrow_mut().start_tab_drag(leaf, idx, x as f32, y as f32);
+                return true;
+            }
+            false
         } else {
             // Separator drags are stateless per-frame nudges (see
             // `handle_drag_move`) — drag-start just needs to claim the
@@ -886,6 +1157,20 @@ impl TradingPanel for TradingContainerState {
         }
         if local_id.starts_with("tape:") {
             return self.ticker_tape.handle_drag_move(local_id, dx, dy);
+        }
+        // Leaf/tab move: advance the DockState panel drag by the frame
+        // delta (drag-move only carries deltas; the drag state holds the
+        // absolute cursor).
+        if local_id.starts_with("tcfree:grip:") || local_id.starts_with("tcfree:tab:") {
+            if let Some(dock) = &self.free_dock {
+                let mut ds = dock.0.borrow_mut();
+                if let Some(d) = ds.panel_drag_state() {
+                    let (nx, ny) = (d.current_x + dx as f32, d.current_y + dy as f32);
+                    ds.update_panel_drag(nx, ny);
+                }
+                return true;
+            }
+            return false;
         }
         // Free-mode tree separators: `tcfree:sep:{v|h}:{idx}` — axis picks
         // the drag delta, idx addresses `DockState::separators()` (stable
@@ -946,6 +1231,24 @@ impl TradingPanel for TradingContainerState {
             self.orders_log.handle_drag_end(local_id)
         } else if local_id.starts_with("tape:") {
             self.ticker_tape.handle_drag_end(local_id)
+        } else if local_id.starts_with("tcfree:grip:") || local_id.starts_with("tcfree:tab:") {
+            // Drop the dragged leaf/tab. Sides split, Center tabifies
+            // (both already filtered by the dock's drop policy); a miss
+            // cancels — no floating windows in this increment.
+            if let Some(dock) = &self.free_dock {
+                let mut ds = dock.0.borrow_mut();
+                let droppable = matches!(
+                    ds.panel_drag_state(),
+                    Some(d) if d.target_leaf_id.is_some() && d.drop_zone.is_some()
+                );
+                if droppable {
+                    let (w, h) = self.last_size.get();
+                    ds.end_panel_drag(w as f32, h as f32);
+                } else {
+                    ds.cancel_panel_drag();
+                }
+            }
+            true
         } else {
             TradingSeparator::from_wire_id(local_id).is_some()
                 || local_id.starts_with("tcfree:sep:")
@@ -976,9 +1279,23 @@ impl TradingContainerState {
         use uzor::input::Sense;
         use uzor::panels::{PanelRect, SeparatorOrientation};
 
+        // Cache the widget-id namespace for the app-layer overlay pass
+        // (`render_free_overlay` — chips + drag feedback drawn AFTER the
+        // embedded chart, which would otherwise paint over them).
+        if *self.last_slot_prefix.borrow() != slot_prefix {
+            *self.last_slot_prefix.borrow_mut() = slot_prefix.to_string();
+        }
+
         let (leaf_rects, seps) = {
             let mut ds = dock.0.borrow_mut();
             ds.layout(PanelRect::new(x, y, w, h));
+            // Container-edge drop bands (root-split targets) — recomputed
+            // per layout so a drag can dock against the container sides.
+            ds.compute_window_edge_bands(TC_EDGE_BAND_PX);
+            // Content rect per leaf — a stacked leaf's ACTIVE panel renders
+            // below the tab-chip bar (the bar itself is drawn by
+            // `render_free_overlay`, above the embedded chart).
+            let bar_h = ds.tab_bar_height() as f64;
             let rects: Vec<(TcLeaf, (f64, f64, f64, f64))> = ds
                 .tree()
                 .leaves()
@@ -986,7 +1303,16 @@ impl TradingContainerState {
                 .filter_map(|l| {
                     let p = l.active_panel()?.clone();
                     let r = ds.panel_rects().get(&l.id)?;
-                    Some((p, (r.x as f64, r.y as f64, r.width as f64, r.height as f64)))
+                    let shift = if l.tab_count() > 1 { bar_h } else { 0.0 };
+                    Some((
+                        p,
+                        (
+                            r.x as f64,
+                            r.y as f64 + shift,
+                            r.width as f64,
+                            (r.height as f64 - shift).max(0.0),
+                        ),
+                    ))
                 })
                 .collect();
             let seps: Vec<(usize, SeparatorOrientation, f64, f64, f64)> = ds
@@ -1004,6 +1330,11 @@ impl TradingContainerState {
                 continue;
             }
             let (fx, fy, fw, fh) = (lx as f32, ly as f32, lw as f32, lh as f32);
+            // HARD per-leaf clip (owner spec 2026-07-29): panel content
+            // must never bleed past its cell (DOM price rows, table
+            // columns, strips — nothing escapes the leaf or the sidebar).
+            ctx.save();
+            ctx.clip_rect(lx, ly, lw, lh);
             match leaf {
                 TcLeaf::Dom => {
                     ctx.set_fill_color(&theme.tc_inner_bg);
@@ -1023,19 +1354,14 @@ impl TradingContainerState {
                 TcLeaf::RiskCalculator => {
                     self.risk_calculator.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
                 }
-                TcLeaf::BottomTables => {
-                    let tab_h = TC_BOTTOM_TAB_HEIGHT.min(lh);
-                    self.render_bottom_tabs(ctx, lx, ly, lw, tab_h, theme, coordinator, slot_prefix);
-                    let ch = (lh - tab_h).max(0.0);
-                    if ch > 1.0 {
-                        let (cy, cf) = (ly + tab_h, (ly + tab_h) as f32);
-                        let _ = cy;
-                        match self.active_tab {
-                            BottomTab::Positions => self.position_manager.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
-                            BottomTab::Orders => self.orders_log.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
-                            BottomTab::Trades => self.trade_log.render(ctx, fx, cf, fw, ch as f32, theme, coordinator, slot_prefix),
-                        }
-                    }
+                TcLeaf::Positions => {
+                    self.position_manager.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::Orders => {
+                    self.orders_log.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
+                }
+                TcLeaf::Trades => {
+                    self.trade_log.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
                 }
                 TcLeaf::Metrics => {
                     self.metrics.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
@@ -1044,6 +1370,7 @@ impl TradingContainerState {
                     self.ticker_tape.render(ctx, fx, fy, fw, fh, theme, coordinator, slot_prefix);
                 }
             }
+            ctx.restore();
         }
 
         // Tree separators: thin visual line + hit-padded drag widget. The
@@ -1068,6 +1395,316 @@ impl TradingContainerState {
                 Sense::DRAG | Sense::HOVER,
             );
         }
+
+        // NOTE: the per-leaf overlay chips and the drag feedback live in
+        // `render_free_overlay` — an app-layer pass that runs AFTER the
+        // embedded center chart is painted (the chart would paint over
+        // anything drawn here).
+
+        // Empty tree (all panels closed) — honest empty state + hint.
+        if leaf_rects.is_empty() {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "No panels — use “+ Panel” in the header",
+                x as f64 + w as f64 / 2.0,
+                y as f64 + h as f64 / 2.0,
+            );
+        }
+
+    }
+
+    /// Free-mode overlay pass — drawn by the APP layer after the embedded
+    /// center chart (which paints over the container body and would eat
+    /// anything drawn during the panel render — the reason this cannot live
+    /// inside `render_free`).
+    ///
+    /// Draws, per frame:
+    /// - the per-leaf chips `[grip ⠿ = move][✕ = close]` at the leaf's
+    ///   top-right — ONLY while the pointer is inside that leaf and no
+    ///   panel drag is active (owner spec 2026-07-29: hover-revealed, no
+    ///   new title bars);
+    /// - during a panel drag: the container-edge drop bands (root-split
+    ///   targets), the armed drop-zone preview and a title ghost at the
+    ///   cursor. Center (tabify) does not exist in this increment — the
+    ///   dock classifies body drops sides-only.
+    pub fn render_free_overlay(
+        &self,
+        ctx: &mut dyn RenderContext,
+        theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+    ) {
+        use uzor::input::Sense;
+        use uzor::panels::DropZone;
+
+        if self.layout_mode != TcLayoutMode::Free {
+            return;
+        }
+        let Some(dock) = &self.free_dock else { return };
+        let slot_prefix = self.last_slot_prefix.borrow().clone();
+        if slot_prefix.is_empty() {
+            return;
+        }
+
+        let ds = dock.0.borrow();
+        let leaf_rects: Vec<(TcLeaf, (f64, f64, f64, f64))> = ds
+            .tree()
+            .leaves()
+            .iter()
+            .filter_map(|l| {
+                let p = l.active_panel()?.clone();
+                let r = ds.panel_rects().get(&l.id)?;
+                Some((p, (r.x as f64, r.y as f64, r.width as f64, r.height as f64)))
+            })
+            .collect();
+        let drag_active = ds.panel_drag_state().is_some();
+        let pointer = coordinator.pointer_pos();
+
+        // The whole overlay clips to the container area — chrome must not
+        // bleed onto the sidebar rail or neighbouring panels.
+        let area = ds.layout_area();
+        ctx.save();
+        ctx.clip_rect(area.x as f64, area.y as f64, area.width as f64, area.height as f64);
+
+        // Tab-chip bars for stacked leaves — always visible (this IS the
+        // tab switcher; tessera parity). A chip click activates its tab,
+        // a chip drag tears the tab out, the chip ✕ closes it.
+        let bar_h = ds.tab_bar_height() as f64;
+        for bar in ds.tab_bars() {
+            let leaf_raw = bar.container_id.0;
+            if let Some(r) = ds.panel_rects().get(&bar.container_id) {
+                ctx.set_fill_color(&theme.header_bg);
+                ctx.fill_rect(r.x as f64, r.y as f64, r.width as f64, bar_h);
+            }
+            for (idx, tab) in bar.tabs.iter().enumerate() {
+                let (tx, ty, tw, th) = (
+                    tab.rect.x as f64,
+                    tab.rect.y as f64,
+                    tab.rect.width as f64,
+                    tab.rect.height as f64,
+                );
+                if tw <= 1.0 {
+                    continue;
+                }
+                let wid = format!("{}:tcfree:tab:{}:{}", slot_prefix, leaf_raw, idx);
+                let hovered = coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+                ctx.set_fill_color(if tab.is_active {
+                    &theme.tc_inner_bg
+                } else if hovered {
+                    &theme.hover
+                } else {
+                    &theme.header_bg
+                });
+                ctx.fill_rect(tx, ty, tw, th);
+                if tab.is_active {
+                    ctx.set_fill_color(&theme.accent);
+                    ctx.fill_rect(tx, ty + th - 2.0, tw, 2.0);
+                }
+                ctx.set_fill_color(if tab.is_active { &theme.text_primary } else { &theme.text_muted });
+                ctx.set_font("11px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&tab.title, tx + 8.0, ty + th / 2.0);
+                let (xx, xy, xs) = (
+                    tab.close_rect.x as f64,
+                    tab.close_rect.y as f64,
+                    tab.close_rect.width as f64,
+                );
+                ctx.set_stroke_color(&theme.text_muted);
+                ctx.set_stroke_width(1.0);
+                ctx.set_line_dash(&[]);
+                ctx.begin_path();
+                ctx.move_to(xx + 4.0, xy + 4.0);
+                ctx.line_to(xx + xs - 4.0, xy + xs - 4.0);
+                ctx.stroke();
+                ctx.begin_path();
+                ctx.move_to(xx + xs - 4.0, xy + 4.0);
+                ctx.line_to(xx + 4.0, xy + xs - 4.0);
+                ctx.stroke();
+                // Registration order matters: the ✕ is INSIDE the chip
+                // rect and must be registered after it (last wins the
+                // same-layer hit test).
+                coordinator.register(
+                    wid.as_str(),
+                    uzor::Rect::new(tx, ty, tw, th),
+                    Sense::CLICK | Sense::DRAG | Sense::HOVER,
+                );
+                let xid = format!("{}:tcfree:tabx:{}:{}", slot_prefix, leaf_raw, idx);
+                coordinator.register(
+                    xid.as_str(),
+                    uzor::Rect::new(xx, xy, xs, xs),
+                    Sense::CLICK | Sense::HOVER,
+                );
+            }
+        }
+
+        // Per-leaf overlay chips, hover-revealed.
+        const CHIP: f64 = 16.0;
+        const CHIP_GAP: f64 = 2.0;
+        const CHIP_INSET: f64 = 3.0;
+        if !drag_active {
+            for (leaf, (lx, ly, lw, lh)) in &leaf_rects {
+                let (lx, ly, lw, lh) = (*lx, *ly, *lw, *lh);
+                if lw < CHIP * 2.0 + CHIP_GAP + CHIP_INSET * 2.0 || lh < CHIP + CHIP_INSET {
+                    continue;
+                }
+                let inside = pointer
+                    .map(|(px, py)| px >= lx && px <= lx + lw && py >= ly && py <= ly + lh)
+                    .unwrap_or(false);
+                if !inside {
+                    continue;
+                }
+                let close_x = lx + lw - CHIP_INSET - CHIP;
+                let grip_x = close_x - CHIP_GAP - CHIP;
+                let cy = ly + CHIP_INSET.min((lh - CHIP).max(0.0) / 2.0);
+                let wire = leaf.wire_id();
+
+                for (cx, id_kind) in [(grip_x, "grip"), (close_x, "close")] {
+                    let wid = format!("{}:tcfree:{}:{}", slot_prefix, id_kind, wire);
+                    let hovered = coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+                    ctx.set_fill_color(if hovered { &theme.hover } else { &theme.header_bg });
+                    ctx.fill_rounded_rect(cx, cy, CHIP, CHIP, 3.0);
+                    ctx.set_stroke_color(if hovered { &theme.text_primary } else { &theme.text_muted });
+                    ctx.set_stroke_width(1.2);
+                    ctx.set_line_dash(&[]);
+                    if id_kind == "grip" {
+                        // Three horizontal bars.
+                        for k in 0..3 {
+                            let yy = cy + 4.5 + k as f64 * 3.5;
+                            ctx.begin_path();
+                            ctx.move_to(cx + 4.0, yy);
+                            ctx.line_to(cx + CHIP - 4.0, yy);
+                            ctx.stroke();
+                        }
+                    } else {
+                        // Diagonal cross.
+                        ctx.begin_path();
+                        ctx.move_to(cx + 4.5, cy + 4.5);
+                        ctx.line_to(cx + CHIP - 4.5, cy + CHIP - 4.5);
+                        ctx.stroke();
+                        ctx.begin_path();
+                        ctx.move_to(cx + CHIP - 4.5, cy + 4.5);
+                        ctx.line_to(cx + 4.5, cy + CHIP - 4.5);
+                        ctx.stroke();
+                    }
+                    let sense = if id_kind == "grip" {
+                        Sense::DRAG | Sense::HOVER
+                    } else {
+                        Sense::CLICK | Sense::HOVER
+                    };
+                    coordinator.register(wid.as_str(), uzor::Rect::new(cx, cy, CHIP, CHIP), sense);
+                }
+            }
+        }
+
+        // Live panel-drag feedback.
+        let Some(drag) = ds.panel_drag_state() else {
+            ctx.restore();
+            return;
+        };
+
+        // Container-edge drop bands — visible for the whole drag so the
+        // "dock against the container side" targets are discoverable;
+        // the armed band lights up.
+        if let Some(bands) = ds.window_edge_rects() {
+            let band_zones = [DropZone::Up, DropZone::Down, DropZone::Left, DropZone::Right];
+            for (i, b) in bands.iter().enumerate() {
+                let armed = drag.is_window_edge && drag.drop_zone == Some(band_zones[i]);
+                ctx.set_fill_color(&theme.hover_overlay);
+                ctx.fill_rect(b.x as f64, b.y as f64, b.width as f64, b.height as f64);
+                if armed {
+                    ctx.set_stroke_color(&theme.accent);
+                    ctx.set_stroke_width(1.5);
+                    ctx.set_line_dash(&[]);
+                    ctx.stroke_rect(
+                        b.x as f64 + 1.0,
+                        b.y as f64 + 1.0,
+                        (b.width as f64 - 2.0).max(0.0),
+                        (b.height as f64 - 2.0).max(0.0),
+                    );
+                }
+            }
+        }
+
+        // Mini-compass on the hovered panel (tessera parity): four edge
+        // ribs + a center square, the armed one lit — the drop lands in
+        // THIS leaf, splitting it (or joining its stack on Center).
+        if let (Some(tid), false) = (drag.target_leaf_id, drag.is_window_edge) {
+            if let Some(r) = ds.panel_rects().get(&tid) {
+                let (rx, ry, rw, rh) = (r.x as f64, r.y as f64, r.width as f64, r.height as f64);
+                let (ccx, ccy) = (rx + rw / 2.0, ry + rh / 2.0);
+                let rib_l = 26.0_f64.min(rw * 0.3).min(rh * 0.3).max(6.0);
+                let rib_t = 6.0;
+                let inset = 8.0;
+                let ribs = [
+                    (DropZone::Up, (ccx - rib_l / 2.0, ry + inset, rib_l, rib_t)),
+                    (DropZone::Down, (ccx - rib_l / 2.0, ry + rh - inset - rib_t, rib_l, rib_t)),
+                    (DropZone::Left, (rx + inset, ccy - rib_l / 2.0, rib_t, rib_l)),
+                    (DropZone::Right, (rx + rw - inset - rib_t, ccy - rib_l / 2.0, rib_t, rib_l)),
+                ];
+                for (z, (zx, zy, zw, zh)) in ribs {
+                    let armed = drag.drop_zone == Some(z);
+                    ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
+                    ctx.fill_rounded_rect(zx, zy, zw, zh, 2.0);
+                }
+                let cs = 16.0;
+                let armed = drag.drop_zone == Some(DropZone::Center);
+                ctx.set_fill_color(if armed { &theme.accent } else { &theme.text_muted });
+                ctx.fill_rounded_rect(ccx - cs / 2.0, ccy - cs / 2.0, cs, cs, 3.0);
+            }
+        }
+
+        // Armed drop-zone preview: edge drop previews the root-split half
+        // on the container area; a body drop previews the target-leaf half
+        // (Center → the whole leaf: the tab join).
+        let preview = drag.target_leaf_id.zip(drag.drop_zone).and_then(|(tid, zone)| {
+            let base = if drag.is_window_edge {
+                ds.layout_area()
+            } else {
+                *ds.panel_rects().get(&tid)?
+            };
+            Some(zone.preview_rect(base))
+        });
+        if let Some(p) = preview {
+            ctx.set_fill_color(&theme.hover_overlay);
+            ctx.fill_rect(p.x as f64, p.y as f64, p.width as f64, p.height as f64);
+            ctx.set_stroke_color(&theme.accent);
+            ctx.set_stroke_width(1.5);
+            ctx.set_line_dash(&[]);
+            ctx.stroke_rect(
+                p.x as f64 + 1.0,
+                p.y as f64 + 1.0,
+                (p.width as f64 - 2.0).max(0.0),
+                (p.height as f64 - 2.0).max(0.0),
+            );
+        }
+
+        // Cursor ghost with the dragged panel's title.
+        let title = ds
+            .tree()
+            .leaves()
+            .iter()
+            .find(|l| l.id == drag.dragged_leaf_id)
+            .and_then(|l| l.active_panel())
+            .map(|p| uzor::panels::DockPanel::title(p).to_string())
+            .unwrap_or_default();
+        let (cx, cy) = (drag.current_x as f64, drag.current_y as f64);
+        let gw = 110.0;
+        let gh = 22.0;
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rounded_rect(cx + 12.0, cy + 12.0, gw, gh, 4.0);
+        ctx.set_stroke_color(&theme.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rect(cx + 12.0, cy + 12.0, gw, gh);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&title, cx + 12.0 + gw / 2.0, cy + 12.0 + gh / 2.0);
+
+        ctx.restore();
     }
 
     /// Draw + register the bottom-strip tab row — `Positions (n) | Orders

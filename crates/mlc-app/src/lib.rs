@@ -6612,6 +6612,25 @@ impl ChartApp {
                         self.trading_center_corner_zones = None;
                     }
                 }
+
+                // Free-mode overlay pass (chips + drag feedback) — MUST run
+                // after `draw_trading_center_chart` above: the chart paints
+                // over the container body and would eat chips drawn during
+                // the panel render (the 2026-07-29 "no chips on chart/DOM"
+                // defect).
+                if self.sidebar_state.right_panel
+                    == mlc_app_sidebar_content::state::RightSidebarPanel::SlotTrading
+                {
+                    if let Some(tc) = self.panels_store.trading_container.values().next() {
+                        let overlay_theme =
+                            panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
+                        tc.render_free_overlay(
+                            ctx,
+                            &overlay_theme,
+                            &mut self.input_coordinator.borrow_mut(),
+                        );
+                    }
+                }
             }
 
             // Trading container EMBEDDED header toolbar (owner spec
@@ -6655,7 +6674,14 @@ impl ChartApp {
                         th_sqs_on,
                         th_tf_native.as_ref(),
                         tc.center_kind.label(),
-                        matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
+                        {
+                            use mlc_app_panels::trading::trading::trading_container::{CenterKind, TcLayoutMode};
+                            match tc.layout_mode {
+                                TcLayoutMode::Fixed => tc.center_kind == CenterKind::Chart,
+                                TcLayoutMode::Free => tc.has_free_chart_leaf(),
+                            }
+                        },
+                        tc.layout_mode == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free,
                         th_active_ct,
                     );
 
@@ -7384,6 +7410,19 @@ impl ChartApp {
                 if let Some((tc_pid_c, center_rect)) = tc_center {
                     let _ = self.draw_trading_center_chart(ctx, tc_pid_c, &center_rect);
                 }
+
+                // Free-mode overlay pass — draw-only vello copy (same
+                // ordering contract as `render_to_scene`: after the
+                // embedded chart; widget registration is idempotent).
+                if let Some(tc) = self.panels_store.trading_container.values().next() {
+                    let overlay_theme =
+                        panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
+                    tc.render_free_overlay(
+                        ctx,
+                        &overlay_theme,
+                        &mut self.input_coordinator.borrow_mut(),
+                    );
+                }
             }
 
             if let Some(tc) = self.panels_store.trading_container.values().next() {
@@ -7421,7 +7460,14 @@ impl ChartApp {
                     th_sqs_on,
                     th_tf_native.as_ref(),
                     tc.center_kind.label(),
-                    matches!(tc.center_kind, mlc_app_panels::trading::trading::trading_container::CenterKind::Chart),
+                    {
+                        use mlc_app_panels::trading::trading::trading_container::{CenterKind, TcLayoutMode};
+                        match tc.layout_mode {
+                            TcLayoutMode::Fixed => tc.center_kind == CenterKind::Chart,
+                            TcLayoutMode::Free => tc.has_free_chart_leaf(),
+                        }
+                    },
+                    tc.layout_mode == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free,
                     th_active_ct_main,
                 );
             }
