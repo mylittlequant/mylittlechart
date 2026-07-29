@@ -236,11 +236,15 @@ pub enum PersistedFreeItemKind {
         #[serde(default = "default_tc_center_kind")]
         center_kind: String,
         /// Interior layout mode (owner spec 2026-07-29): "fixed" | "free".
-        /// `#[serde(default = ...)]` so older presets restore Fixed. The
-        /// Free docking TREE is not persisted yet (later increment) — a
-        /// Free restore re-migrates from the v1 ratios above.
+        /// `#[serde(default = ...)]` so older presets restore Fixed.
         #[serde(default = "default_tc_layout_mode")]
         layout_mode: String,
+        /// Free docking tree snapshot as an OPAQUE JSON string (uzor
+        /// `LayoutSnapshot::to_json` — mlc-core must stay uzor-free, so
+        /// the engine type never appears here). Empty = no snapshot; a
+        /// Free restore then re-migrates from the v1 ratios above.
+        #[serde(default)]
+        free_tree: String,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled

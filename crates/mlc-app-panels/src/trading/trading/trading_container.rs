@@ -202,6 +202,23 @@ impl TcLeaf {
     pub fn needs_mini_header(&self) -> bool {
         matches!(self, Self::Positions | Self::Orders | Self::Trades)
     }
+
+    /// Inverse of [`uzor::panels::DockPanel::type_id`] — the
+    /// `LayoutSnapshot` restore factory (tree persist).
+    pub fn from_type_id(id: &str) -> Option<Self> {
+        match id {
+            "tc_chart" => Some(Self::Chart),
+            "tc_dom" => Some(Self::Dom),
+            "tc_order_entry" => Some(Self::OrderEntry),
+            "tc_risk_calculator" => Some(Self::RiskCalculator),
+            "tc_positions" => Some(Self::Positions),
+            "tc_orders" => Some(Self::Orders),
+            "tc_trades" => Some(Self::Trades),
+            "tc_metrics" => Some(Self::Metrics),
+            "tc_tape" => Some(Self::Tape),
+            _ => None,
+        }
+    }
 }
 
 impl uzor::panels::DockPanel for TcLeaf {
@@ -630,13 +647,22 @@ impl TradingContainerState {
         }
 
         let mut ds = DockState::from_tree(tree);
-        // Panel-type drop constraints (owner spec 2026-07-29):
-        // - one-row strips (metrics/tape) dock ONLY as horizontal bands —
-        //   any body zone maps to Up/Down by cursor half, edge drops only
-        //   top/bottom, never Center (no strip tabs), never full-height;
-        // - full panels can't subdivide a strip (no side splits of a 22px
-        //   band, no tabs on it);
-        // - full panel onto full panel: all 5 zones incl. Center = tabify.
+        Self::install_drop_policy(&mut ds);
+        ds.layout(PanelRect::new(0.0, 0.0, w as f32, h as f32));
+        TcFreeDock(std::cell::RefCell::new(ds))
+    }
+
+    /// Panel-type drop constraints (owner spec 2026-07-29):
+    /// - one-row strips (metrics/tape) dock ONLY as horizontal bands —
+    ///   any body zone maps to Up/Down by cursor half, edge drops only
+    ///   top/bottom, never Center (no strip tabs), never full-height;
+    /// - full panels can't subdivide a strip (no side splits of a 22px
+    ///   band, no tabs on it);
+    /// - full panel onto full panel: all 5 zones incl. Center = tabify.
+    ///
+    /// Installed by every dock constructor (migration AND persisted-tree
+    /// restore).
+    fn install_drop_policy(ds: &mut uzor::layout::DockState<TcLeaf>) {
         ds.set_drop_policy(Box::new(|dragged: &TcLeaf, target, zone, is_edge, frac: (f32, f32)| {
             use uzor::panels::DropZone;
             let target_strip = target.map(TcLeaf::is_strip).unwrap_or(false);
@@ -651,8 +677,43 @@ impl TradingContainerState {
             }
             Some(zone)
         }));
+    }
+
+    /// Serialize the LIVE Free tree as an opaque JSON string for the
+    /// preset persist channel (uzor `LayoutSnapshot`; empty when not in
+    /// Free mode / no dock — the restore then re-migrates from v1 ratios).
+    pub fn free_tree_json(&self) -> String {
+        if self.layout_mode != TcLayoutMode::Free {
+            return String::new();
+        }
+        let Some(dock) = &self.free_dock else { return String::new() };
+        let ds = dock.0.borrow();
+        uzor::panels::LayoutSnapshot::from_tree(ds.tree(), "tc")
+            .to_json()
+            .unwrap_or_default()
+    }
+
+    /// Rebuild the Free dock from a persisted tree snapshot. Returns
+    /// false (and leaves `free_dock` untouched) on any parse/restore
+    /// failure — the caller falls back to [`Self::build_free_dock`].
+    pub fn restore_free_dock_from_json(&mut self, json: &str) -> bool {
+        use uzor::layout::DockState;
+        use uzor::panels::{LayoutSnapshot, PanelRect};
+        if json.is_empty() {
+            return false;
+        }
+        let Ok(snap) = LayoutSnapshot::from_json(json) else { return false };
+        let Ok(tree) = snap.restore_tree(TcLeaf::from_type_id) else { return false };
+        let mut ds = DockState::from_tree(tree);
+        Self::install_drop_policy(&mut ds);
+        let (mut w, mut h) = self.last_size.get();
+        if w <= 0.0 || h <= 0.0 {
+            w = 900.0;
+            h = 640.0;
+        }
         ds.layout(PanelRect::new(0.0, 0.0, w as f32, h as f32));
-        TcFreeDock(std::cell::RefCell::new(ds))
+        self.free_dock = Some(TcFreeDock(std::cell::RefCell::new(ds)));
+        true
     }
 
     /// Resolve the Free-tree leaf holding `kind` (one leaf per kind — the

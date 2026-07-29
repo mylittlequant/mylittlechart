@@ -2291,6 +2291,9 @@ impl ChartApp {
                                             .unwrap_or(false);
                                         if handled {
                                             self.sidebar_data_dirty = true;
+                                            // Close/tab clicks restructure the tree —
+                                            // persist the fresh snapshot.
+                                            self.autosave_snapshot();
                                         }
                                     }
                                 }

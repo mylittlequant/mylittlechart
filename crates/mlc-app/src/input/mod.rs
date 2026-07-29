@@ -3908,6 +3908,15 @@ impl ChartApp {
             if let Some(panel) = self.panels_store.get_panel_mut(&item) {
                 panel.handle_drag_end(&local_id);
             }
+            // Free-docking gestures restructure the container's tree —
+            // persist the fresh snapshot right away (tree persist,
+            // owner spec 2026-07-29).
+            if local_id.starts_with("tcfree:grip:")
+                || local_id.starts_with("tcfree:tab:")
+                || local_id.starts_with("tcfree:sep:")
+            {
+                self.autosave_snapshot();
+            }
             self.sidebar_data_dirty = true;
             return;
         }
@@ -8095,6 +8104,7 @@ impl ChartApp {
                                 timeframe: state.timeframe.clone(),
                                 center_kind: state.center_kind.wire_id().to_string(),
                                 layout_mode: state.layout_mode.wire_id().to_string(),
+                                free_tree: state.free_tree_json(),
                             }
                         }
                         Panel::IndicatorPanel(id) => {
