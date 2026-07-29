@@ -672,6 +672,13 @@ impl TradingContainerState {
                 if is_edge {
                     return matches!(zone, DropZone::Up | DropZone::Down).then_some(zone);
                 }
+                // Strip onto strip — never a target (owner spec
+                // 2026-07-29): a horizontal band sticks to the top/bottom
+                // of the SPACE or of a NON-horizontal panel, it can't nest
+                // in another band (and bands never tab).
+                if target_strip {
+                    return None;
+                }
                 return Some(if frac.1 < 0.5 { DropZone::Up } else { DropZone::Down });
             }
             if is_edge && matches!(dragged, TcLeaf::Dom) {
