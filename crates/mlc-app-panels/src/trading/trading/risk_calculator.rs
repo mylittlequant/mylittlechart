@@ -269,6 +269,33 @@ fn measure_char_widths(ctx: &mut dyn RenderContext, text: &str) -> Vec<f64> {
     widths
 }
 
+/// Truncate `label` (trailing ellipsis) so it fits `max_w` px in the
+/// CURRENT ctx font. Adaptive-width contract (owner 2026-07-29): the
+/// VALUE always wins the row; the label yields — shortened, or gone
+/// entirely on the narrowest panels — text never overlaps.
+fn fit_label(ctx: &mut dyn RenderContext, label: &str, max_w: f64) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if ctx.measure_text(label) <= max_w {
+        return label.to_string();
+    }
+    let ell = "\u{2026}";
+    let mut out = String::new();
+    for ch in label.chars() {
+        let cand = format!("{}{}{}", out, ch, ell);
+        if ctx.measure_text(&cand) > max_w {
+            break;
+        }
+        out.push(ch);
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("{}{}", out, ell)
+    }
+}
+
 /// Draw one numeric field row: background (highlighted only when
 /// `live.is_some()`, matching the pre-migration `editing` bool's visual
 /// contract) + border + label (unconditional), then either the static
@@ -300,11 +327,22 @@ fn draw_rc_field_row(
         ctx.fill_rect(x as f64, (row_y + RC_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
     }
 
-    ctx.set_fill_color(&theme.text_muted);
+    // Value width first (static text, or the live store text) — the label
+    // only gets the space the value leaves over, never overlaps it.
     ctx.set_font("10px monospace");
-    ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
+    let value_w = match live {
+        Some(wid) => {
+            let text = coordinator.text_fields().text(wid).to_string();
+            ctx.measure_text(&text)
+        }
+        None => ctx.measure_text(static_value),
+    };
+    let label_max = (field_value_right as f64 - value_w - 6.0) - (x + RC_LEFT_PAD) as f64;
+    let fitted = fit_label(ctx, label, label_max);
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(&fitted, (x + RC_LEFT_PAD) as f64, (row_y + RC_ROW_HEIGHT / 2.0) as f64);
 
     let Some(wid) = live else {
         ctx.set_fill_color(&theme.text_primary);
@@ -521,11 +559,14 @@ impl TradingPanel for RiskCalculatorState {
                 break;
             }
             let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
-            ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
-            ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, (x + RC_LEFT_PAD) as f64, row_mid_y);
+            let value_w = ctx.measure_text(value);
+            let label_max = (w as f64 - RC_LEFT_PAD as f64 * 2.0) - value_w - 6.0;
+            let fitted = fit_label(ctx, label, label_max);
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&fitted, (x + RC_LEFT_PAD) as f64, row_mid_y);
 
             let value_color = match *color_key {
                 "risk"    => &theme.rc_risk,
@@ -541,9 +582,12 @@ impl TradingPanel for RiskCalculatorState {
         // Leverage row is a static display (no leverage editor in this arc).
         if cursor_y + RC_ROW_HEIGHT <= y + h - RC_APPLY_HEIGHT {
             let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
+            let value_w = ctx.measure_text(&leverage_str);
+            let label_max = (w as f64 - RC_LEFT_PAD as f64 * 2.0) - value_w - 6.0;
+            let fitted = fit_label(ctx, "Leverage:", label_max);
             ctx.set_fill_color(&theme.text_muted);
             ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text("Leverage:", (x + RC_LEFT_PAD) as f64, row_mid_y);
+            ctx.fill_text(&fitted, (x + RC_LEFT_PAD) as f64, row_mid_y);
             ctx.set_fill_color(&theme.text_primary);
             ctx.set_text_align(TextAlign::Right);
             ctx.fill_text(&leverage_str, (x + w - RC_LEFT_PAD) as f64, row_mid_y);
@@ -567,7 +611,15 @@ impl TradingPanel for RiskCalculatorState {
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("Apply Size \u{2192} Order Entry", (x + w / 2.0) as f64, (apply_y + (RC_APPLY_HEIGHT - 4.0) / 2.0) as f64);
+            // Caption cascade — pick the longest variant that fits the
+            // button instead of letting text spill past it.
+            let btn_w = (w - RC_LEFT_PAD * 2.0 - 8.0) as f64;
+            let caption = ["Apply Size \u{2192} Order Entry", "Apply \u{2192} OE", "Apply"]
+                .iter()
+                .find(|c| ctx.measure_text(c) <= btn_w)
+                .copied()
+                .unwrap_or("Apply");
+            ctx.fill_text(caption, (x + w / 2.0) as f64, (apply_y + (RC_APPLY_HEIGHT - 4.0) / 2.0) as f64);
             coordinator.register(
                 apply_id.as_str(),
                 uzor::Rect::new((x + RC_LEFT_PAD) as f64, apply_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, (RC_APPLY_HEIGHT - 4.0) as f64),

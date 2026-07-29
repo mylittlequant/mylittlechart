@@ -376,6 +376,33 @@ impl OrderEntryState {
 /// per-char width), which is also what feeds `cursor_from_char_positions`/
 /// `TextFieldStore::on_drag_start`'s own click-to-cursor math. Caller must
 /// `ctx.set_font(..)` to the value font before calling this.
+/// Truncate `label` (trailing ellipsis) so it fits `max_w` px in the
+/// CURRENT ctx font — the VALUE always wins a row, the label yields.
+/// Mirrored in `risk_calculator.rs` (same per-file duplication contract
+/// as `measure_char_widths` below).
+fn fit_label(ctx: &mut dyn RenderContext, label: &str, max_w: f64) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if ctx.measure_text(label) <= max_w {
+        return label.to_string();
+    }
+    let ell = "\u{2026}";
+    let mut out = String::new();
+    for ch in label.chars() {
+        let cand = format!("{}{}{}", out, ch, ell);
+        if ctx.measure_text(&cand) > max_w {
+            break;
+        }
+        out.push(ch);
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("{}{}", out, ell)
+    }
+}
+
 fn measure_char_widths(ctx: &mut dyn RenderContext, text: &str) -> Vec<f64> {
     let char_count = text.chars().count();
     let mut widths = Vec::with_capacity(char_count + 1);
@@ -425,11 +452,24 @@ fn draw_oe_field_row(
     ctx.set_fill_color(&theme.oe_input_border);
     ctx.fill_rect(x as f64, (row_y + row_h - 1.0) as f64, w as f64, 1.0);
 
-    ctx.set_fill_color(&theme.text_muted);
-    ctx.set_font("10px sans-serif");
-    ctx.set_text_align(TextAlign::Left);
+    // Value width first — the label only gets the space the value leaves
+    // over, truncating with an ellipsis instead of overlapping (owner
+    // 2026-07-29 adaptive-width contract).
+    ctx.set_font("10px monospace");
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + row_h / 2.0) as f64);
+    let value_w = match live {
+        Some(wid) => {
+            let text = coordinator.text_fields().text(wid).to_string();
+            ctx.measure_text(&text)
+        }
+        None => ctx.measure_text(static_value),
+    };
+    ctx.set_font("10px sans-serif");
+    let label_max = (field_value_right as f64 - value_w - 6.0) - (x + OE_PAD) as f64;
+    let fitted = fit_label(ctx, label, label_max);
+    ctx.set_fill_color(&theme.text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(&fitted, (x + OE_PAD) as f64, (row_y + row_h / 2.0) as f64);
 
     let Some(wid) = live else {
         ctx.set_fill_color(&theme.text_primary);
@@ -676,7 +716,12 @@ impl TradingPanel for OrderEntryState {
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
+            // Clip the caption to its own tab cell — crammed tabs must
+            // not paint into their neighbours (owner 2026-07-29).
+            ctx.save();
+            ctx.clip_rect(tab_x as f64 + 1.0, cursor_y as f64, tab_w as f64 - 2.0, tab_h as f64);
             ctx.fill_text(label, (tab_x + tab_w / 2.0) as f64, (cursor_y + tab_h / 2.0) as f64);
+            ctx.restore();
 
             if i + 1 < tabs.len() {
                 ctx.set_fill_color(&theme.separator);
@@ -695,11 +740,15 @@ impl TradingPanel for OrderEntryState {
             ctx.set_fill_color(&theme.oe_input_border);
             ctx.fill_rect(x as f64, (row_y + field_h - 1.0) as f64, w as f64, 1.0);
 
-            ctx.set_fill_color(&theme.text_muted);
-            ctx.set_font("10px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
+            ctx.set_font("10px monospace");
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(label, (x + OE_PAD) as f64, (row_y + field_h / 2.0) as f64);
+            let value_w = ctx.measure_text(value);
+            ctx.set_font("10px sans-serif");
+            let label_max = (field_value_right as f64 - value_w - 6.0) - (x + OE_PAD) as f64;
+            let fitted = fit_label(ctx, label, label_max);
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&fitted, (x + OE_PAD) as f64, (row_y + field_h / 2.0) as f64);
 
             ctx.set_fill_color(&theme.text_primary);
             ctx.set_font("10px monospace");

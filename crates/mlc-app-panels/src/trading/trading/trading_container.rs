@@ -252,8 +252,11 @@ impl uzor::panels::DockPanel for TcLeaf {
         match self {
             Self::Chart => (160.0, 120.0),
             Self::Dom => (120.0, 160.0),
-            Self::OrderEntry => (150.0, 120.0),
-            Self::RiskCalculator => (150.0, 100.0),
+            // Both render adaptively (labels truncate, values win) — the
+            // sidebar could already squeeze them below the old 150 min,
+            // so the separator floor matches reality (owner 2026-07-29).
+            Self::OrderEntry => (100.0, 120.0),
+            Self::RiskCalculator => (100.0, 100.0),
             Self::Positions | Self::Orders | Self::Trades => (160.0, 60.0),
             // One-row strips — must never be forced taller than their row.
             Self::Metrics | Self::Tape => (80.0, 22.0),
