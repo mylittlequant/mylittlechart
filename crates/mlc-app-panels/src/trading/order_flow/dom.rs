@@ -1015,15 +1015,17 @@ impl TradingPanel for DomState {
         let row_height = DOM_ROW_HEIGHT;
 
         // Column layout — only visible columns get width. ADAPTIVE
-        // (owner spec 2026-07-29): the ladder reshapes to the panel it
-        // lives in instead of assuming the full sidebar — the price
-        // column is capped at 45% of the panel, and side columns exist
-        // only while they'd stay readable, shedding the trade pair
-        // first, then the order pair, down to a price-only ladder.
+        // (owner spec 2026-07-29 v2): the ladder reshapes to the panel it
+        // lives in instead of assuming the full sidebar. Cascade: full
+        // columns (bars + digits) → shed the trade pair → HEATMAP — the
+        // price column re-centers as the spine and each side becomes one
+        // color-intensity cell per row (volume = opacity, no digits).
+        // Depth information is never dropped, only re-encoded.
         let pad = 4.0_f32;
         let price_col_w = DOM_PRICE_COL_WIDTH.min(w * 0.45);
-        const MIN_SIDE_COL: f32 = 26.0;
+        const MIN_SIDE_COL: f32 = 40.0; // digits below this are unreadable
         let mut cc = self.column_config.clone();
+        let mut heatmap_mode = false;
         loop {
             let n = (cc.show_bid_orders as u8
                 + cc.show_sell_trades as u8
@@ -1040,8 +1042,8 @@ impl TradingPanel for DomState {
                 cc.show_sell_trades = false;
                 cc.show_buy_trades = false;
             } else {
-                cc.show_bid_orders = false;
-                cc.show_ask_orders = false;
+                heatmap_mode = true;
+                break;
             }
         }
         let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
@@ -1082,7 +1084,9 @@ impl TradingPanel for DomState {
             (0.0_f32, 0.0_f32)
         };
 
-        // X positions
+        // X positions. Heatmap mode pins the price column dead-center —
+        // the sides are intensity cells over whatever width remains,
+        // never a ladder pressed against one edge.
         let mut cur_x = x + DOM_LEFT_PAD;
         let bid_ord_col_x = cur_x;
         if cc.show_bid_orders { cur_x += bid_ord_col_w + pad; }
@@ -1090,7 +1094,11 @@ impl TradingPanel for DomState {
         let sell_trade_col_x = cur_x;
         if cc.show_sell_trades { cur_x += sell_trade_col_w + pad; }
 
-        let price_col_x = cur_x;
+        let price_col_x = if heatmap_mode {
+            x + (w - price_col_w) * 0.5
+        } else {
+            cur_x
+        };
         cur_x = price_col_x + price_col_w + pad;
 
         let buy_trade_col_x = cur_x;
@@ -1105,21 +1113,21 @@ impl TradingPanel for DomState {
         ctx.set_fill_color(&theme.text_muted);
 
         let lang = current_language();
-        if cc.show_bid_orders {
+        if !heatmap_mode && cc.show_bid_orders {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Bid.get(lang), (bid_ord_col_x + bid_ord_col_w / 2.0) as f64, label_y);
         }
-        if cc.show_sell_trades {
+        if !heatmap_mode && cc.show_sell_trades {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Sell.get(lang), (sell_trade_col_x + sell_trade_col_w / 2.0) as f64, label_y);
         }
         ctx.set_text_align(TextAlign::Center);
         ctx.fill_text(TradingKey::Price.get(lang), (price_col_x + price_col_w / 2.0) as f64, label_y);
-        if cc.show_buy_trades {
+        if !heatmap_mode && cc.show_buy_trades {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Buy.get(lang), (buy_trade_col_x + buy_trade_col_w / 2.0) as f64, label_y);
         }
-        if cc.show_ask_orders {
+        if !heatmap_mode && cc.show_ask_orders {
             ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(TradingKey::Ask.get(lang), (ask_ord_col_x + ask_ord_col_w / 2.0) as f64, label_y);
         }
@@ -1215,8 +1223,50 @@ impl TradingPanel for DomState {
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
             }
 
+            // --- Heatmap sides (narrow mode): each side is ONE
+            // color-intensity cell per row — opacity carries the volume
+            // signal, digits are gone; 1px gaps keep the mosaic reading
+            // as cells (owner spec 2026-07-29).
+            if heatmap_mode && !is_filtered && visible_max_volume > 0.0 {
+                let left_w = (price_col_x - x - 2.0).max(0.0);
+                let right_x = price_col_x + price_col_w + 1.0;
+                let right_w = (x + w - right_x - 1.0).max(0.0);
+                if cc.show_bid_orders && level.bid_volume > 0.0 && left_w > 1.0 {
+                    let t = (level.bid_volume / visible_max_volume).sqrt().clamp(0.0, 1.0);
+                    let a = (0x1A as f64 + t * (0xE6 - 0x1A) as f64) as u8;
+                    let c = if theme.buy.len() >= 7 {
+                        format!("{}{:02X}", &theme.buy[..7], a)
+                    } else {
+                        theme.buy.clone()
+                    };
+                    ctx.set_fill_color(&c);
+                    ctx.fill_rect(
+                        (x + 1.0) as f64,
+                        (row_y + 1.0) as f64,
+                        left_w as f64,
+                        (row_height - 2.0) as f64,
+                    );
+                }
+                if cc.show_ask_orders && level.ask_volume > 0.0 && right_w > 1.0 {
+                    let t = (level.ask_volume / visible_max_volume).sqrt().clamp(0.0, 1.0);
+                    let a = (0x1A as f64 + t * (0xE6 - 0x1A) as f64) as u8;
+                    let c = if theme.sell.len() >= 7 {
+                        format!("{}{:02X}", &theme.sell[..7], a)
+                    } else {
+                        theme.sell.clone()
+                    };
+                    ctx.set_fill_color(&c);
+                    ctx.fill_rect(
+                        right_x as f64,
+                        (row_y + 1.0) as f64,
+                        right_w as f64,
+                        (row_height - 2.0) as f64,
+                    );
+                }
+            }
+
             // --- Step 4.2: Bid order volume bar (right-aligned, grows leftward) ---
-            if cc.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
+            if !heatmap_mode && cc.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
@@ -1308,7 +1358,7 @@ impl TradingPanel for DomState {
             }
 
             // --- Step 4.5: Ask order volume bar (left-aligned, grows rightward) ---
-            if cc.show_ask_orders && level.ask_volume > 0.0 && !is_filtered {
+            if !heatmap_mode && cc.show_ask_orders && level.ask_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
                     0.0_f32
                 } else {
