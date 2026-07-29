@@ -1862,17 +1862,34 @@ impl TradingContainerState {
             }
         }
 
-        // Armed drop-zone preview: edge drop previews the root-split half
-        // on the container area; a body drop previews the target-leaf half
-        // (Center → the whole leaf: the tab join). Accent-tinted, not the
-        // washed-out hover overlay.
+        // Armed drop-zone preview: edge drop previews the root split on
+        // the container area; a body drop previews the target-leaf split
+        // (Center → the whole leaf: the tab join). The projection matches
+        // what will ACTUALLY land — a fixed-height strip previews at its
+        // own 22px, never half the area. Accent-tinted, not the washed-out
+        // hover overlay.
         let preview = drag.target_leaf_id.zip(drag.drop_zone).and_then(|(tid, zone)| {
             let base = if drag.is_window_edge {
                 ds.layout_area()
             } else {
                 *ds.panel_rects().get(&tid)?
             };
-            Some(zone.preview_rect(base))
+            let mut p = zone.preview_rect(base);
+            if let Some(h) = dragged_kind
+                .as_ref()
+                .and_then(|d| uzor::panels::DockPanel::preferred_strip_height(d))
+            {
+                let h = h.min(base.height);
+                match zone {
+                    DropZone::Up => p.height = h,
+                    DropZone::Down => {
+                        p.y = base.y + base.height - h;
+                        p.height = h;
+                    }
+                    _ => {}
+                }
+            }
+            Some(p)
         });
         if let Some(p) = preview {
             ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.16));
