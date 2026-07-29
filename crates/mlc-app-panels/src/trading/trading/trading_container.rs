@@ -195,6 +195,13 @@ impl TcLeaf {
     pub fn is_strip(&self) -> bool {
         matches!(self, Self::Metrics | Self::Tape)
     }
+
+    /// Bare table views carry no chrome of their own — a torn-out SINGLE
+    /// leaf of these gets a thin mini-header (title strip; the hover
+    /// chips land on it). Stacked leaves already have the tab-chip bar.
+    pub fn needs_mini_header(&self) -> bool {
+        matches!(self, Self::Positions | Self::Orders | Self::Trades)
+    }
 }
 
 impl uzor::panels::DockPanel for TcLeaf {
@@ -1286,24 +1293,26 @@ impl TradingContainerState {
             *self.last_slot_prefix.borrow_mut() = slot_prefix.to_string();
         }
 
-        let (leaf_rects, seps) = {
+        let (leaf_rects, seps, bar_h) = {
             let mut ds = dock.0.borrow_mut();
             ds.layout(PanelRect::new(x, y, w, h));
             // Container-edge drop bands (root-split targets) — recomputed
             // per layout so a drag can dock against the container sides.
             ds.compute_window_edge_bands(TC_EDGE_BAND_PX);
             // Content rect per leaf — a stacked leaf's ACTIVE panel renders
-            // below the tab-chip bar (the bar itself is drawn by
-            // `render_free_overlay`, above the embedded chart).
+            // below the tab-chip bar (drawn by `render_free_overlay`, above
+            // the embedded chart); a bare single table view renders below
+            // its mini-header (drawn right here — never chart-occluded).
             let bar_h = ds.tab_bar_height() as f64;
-            let rects: Vec<(TcLeaf, (f64, f64, f64, f64))> = ds
+            let rects: Vec<(TcLeaf, (f64, f64, f64, f64), bool)> = ds
                 .tree()
                 .leaves()
                 .iter()
                 .filter_map(|l| {
                     let p = l.active_panel()?.clone();
                     let r = ds.panel_rects().get(&l.id)?;
-                    let shift = if l.tab_count() > 1 { bar_h } else { 0.0 };
+                    let mini = l.tab_count() <= 1 && p.needs_mini_header();
+                    let shift = if l.tab_count() > 1 || mini { bar_h } else { 0.0 };
                     Some((
                         p,
                         (
@@ -1312,6 +1321,7 @@ impl TradingContainerState {
                             r.width as f64,
                             (r.height as f64 - shift).max(0.0),
                         ),
+                        mini,
                     ))
                 })
                 .collect();
@@ -1321,13 +1331,28 @@ impl TradingContainerState {
                 .enumerate()
                 .map(|(i, s)| (i, s.orientation, s.position as f64, s.start as f64, s.length as f64))
                 .collect();
-            (rects, seps)
+            (rects, seps, bar_h)
         };
 
-        for (leaf, (lx, ly, lw, lh)) in &leaf_rects {
+        for (leaf, (lx, ly, lw, lh), mini) in &leaf_rects {
             let (lx, ly, lw, lh) = (*lx, *ly, *lw, *lh);
             if lw <= 1.0 || lh <= 1.0 {
                 continue;
+            }
+            // Mini-header for bare table views (owner spec 2026-07-29):
+            // thin strip with the panel title; the hover chips land on it.
+            if *mini {
+                ctx.set_fill_color(&theme.header_bg);
+                ctx.fill_rect(lx, ly - bar_h, lw, bar_h);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.set_font("11px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(
+                    uzor::panels::DockPanel::title(leaf),
+                    lx + 8.0,
+                    ly - bar_h / 2.0,
+                );
             }
             let (fx, fy, fw, fh) = (lx as f32, ly as f32, lw as f32, lh as f32);
             // HARD per-leaf clip (owner spec 2026-07-29): panel content
@@ -1547,7 +1572,7 @@ impl TradingContainerState {
         if !drag_active {
             for (leaf, (lx, ly, lw, lh)) in &leaf_rects {
                 let (lx, ly, lw, lh) = (*lx, *ly, *lw, *lh);
-                if lw < CHIP * 2.0 + CHIP_GAP + CHIP_INSET * 2.0 || lh < CHIP + CHIP_INSET {
+                if lw < CHIP * 3.0 + CHIP_GAP * 2.0 + CHIP_INSET * 2.0 || lh < CHIP + CHIP_INSET {
                     continue;
                 }
                 let inside = pointer
@@ -1558,10 +1583,11 @@ impl TradingContainerState {
                 }
                 let close_x = lx + lw - CHIP_INSET - CHIP;
                 let grip_x = close_x - CHIP_GAP - CHIP;
+                let gear_x = grip_x - CHIP_GAP - CHIP;
                 let cy = ly + CHIP_INSET.min((lh - CHIP).max(0.0) / 2.0);
                 let wire = leaf.wire_id();
 
-                for (cx, id_kind) in [(grip_x, "grip"), (close_x, "close")] {
+                for (cx, id_kind) in [(gear_x, "gear"), (grip_x, "grip"), (close_x, "close")] {
                     let wid = format!("{}:tcfree:{}:{}", slot_prefix, id_kind, wire);
                     let hovered = coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
                     ctx.set_fill_color(if hovered { &theme.hover } else { &theme.header_bg });
@@ -1569,25 +1595,37 @@ impl TradingContainerState {
                     ctx.set_stroke_color(if hovered { &theme.text_primary } else { &theme.text_muted });
                     ctx.set_stroke_width(1.2);
                     ctx.set_line_dash(&[]);
-                    if id_kind == "grip" {
-                        // Three horizontal bars.
-                        for k in 0..3 {
-                            let yy = cy + 4.5 + k as f64 * 3.5;
+                    match id_kind {
+                        "grip" => {
+                            // Three horizontal bars.
+                            for k in 0..3 {
+                                let yy = cy + 4.5 + k as f64 * 3.5;
+                                ctx.begin_path();
+                                ctx.move_to(cx + 4.0, yy);
+                                ctx.line_to(cx + CHIP - 4.0, yy);
+                                ctx.stroke();
+                            }
+                        }
+                        "gear" => {
+                            // Same glyph as the strip gears — opens the
+                            // container's common settings modal.
+                            ctx.set_fill_color(if hovered { &theme.text_primary } else { &theme.text_muted });
+                            ctx.set_font("11px sans-serif");
+                            ctx.set_text_align(TextAlign::Center);
+                            ctx.set_text_baseline(TextBaseline::Middle);
+                            ctx.fill_text("\u{2699}", cx + CHIP / 2.0, cy + CHIP / 2.0);
+                        }
+                        _ => {
+                            // Diagonal cross.
                             ctx.begin_path();
-                            ctx.move_to(cx + 4.0, yy);
-                            ctx.line_to(cx + CHIP - 4.0, yy);
+                            ctx.move_to(cx + 4.5, cy + 4.5);
+                            ctx.line_to(cx + CHIP - 4.5, cy + CHIP - 4.5);
+                            ctx.stroke();
+                            ctx.begin_path();
+                            ctx.move_to(cx + CHIP - 4.5, cy + 4.5);
+                            ctx.line_to(cx + 4.5, cy + CHIP - 4.5);
                             ctx.stroke();
                         }
-                    } else {
-                        // Diagonal cross.
-                        ctx.begin_path();
-                        ctx.move_to(cx + 4.5, cy + 4.5);
-                        ctx.line_to(cx + CHIP - 4.5, cy + CHIP - 4.5);
-                        ctx.stroke();
-                        ctx.begin_path();
-                        ctx.move_to(cx + CHIP - 4.5, cy + 4.5);
-                        ctx.line_to(cx + 4.5, cy + CHIP - 4.5);
-                        ctx.stroke();
                     }
                     let sense = if id_kind == "grip" {
                         Sense::DRAG | Sense::HOVER

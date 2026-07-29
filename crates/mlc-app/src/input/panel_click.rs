@@ -2270,6 +2270,13 @@ impl ChartApp {
                             // tab-chip ✕. TradingContainerState::handle_click owns
                             // the whole family; spawn lives on the header dropdown.
                             if local_id.starts_with("tcfree:") {
+                                // Per-panel gear chip — opens the container's
+                                // COMMON settings modal (same contract as the
+                                // tape/metrics strip gears).
+                                if local_id.starts_with("tcfree:gear:") {
+                                    self.tc_modal.open();
+                                    return;
+                                }
                                 if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                     let leaf_id = uzor::panels::LeafId(raw);
                                     let item_opt = self.sidebar_state.slot_dockings[idx]
