@@ -254,6 +254,60 @@ fn tc_modal_map_panels(
         w = 900.0;
         h = 640.0;
     }
+
+    // Free mode (owner spec 2026-07-29): the MAP reflects the LIVE docking
+    // tree — one card per leaf at its real rect; a tab stack becomes one
+    // segmented card whose tab buttons activate that stack's tabs.
+    if tc.layout_mode == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free {
+        use mlc_app_panels::trading::trading::trading_container::TcLeaf;
+        let mut panels: Vec<TcMapPanel> = Vec::new();
+        if let Some(dock) = &tc.free_dock {
+            let ds = dock.0.borrow();
+            let area = ds.layout_area();
+            let count_for = |p: &TcLeaf| match p {
+                TcLeaf::Positions => Some(tc.position_manager.positions.len()),
+                TcLeaf::Orders => Some(tc.orders_log.open_orders.len()),
+                TcLeaf::Trades => Some(tc.trade_log.trades.len()),
+                _ => None,
+            };
+            let label_for = |p: &TcLeaf| -> String {
+                let t = uzor::panels::DockPanel::title(p).to_string();
+                match count_for(p) {
+                    Some(n) => format!("{} ({})", t, n),
+                    None => t,
+                }
+            };
+            for l in ds.tree().leaves() {
+                let Some(r) = ds.panel_rects().get(&l.id) else { continue };
+                let rect = (
+                    (r.x - area.x) as f64,
+                    (r.y - area.y) as f64,
+                    r.width as f64,
+                    r.height as f64,
+                );
+                let id = format!("leaf{}", l.id.0);
+                if l.tab_count() > 1 {
+                    let mut card = TcMapPanel::plain(&id, String::new(), String::new(), rect, false);
+                    card.tabs = l
+                        .panels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (p.wire_id().to_string(), label_for(p), i == l.active_tab))
+                        .collect();
+                    panels.push(card);
+                } else if let Some(p) = l.active_panel() {
+                    let sub = if matches!(p, TcLeaf::Chart | TcLeaf::Dom) {
+                        tc.symbol.clone()
+                    } else {
+                        String::new()
+                    };
+                    panels.push(TcMapPanel::plain(&id, label_for(p), sub, rect, false));
+                }
+            }
+        }
+        return (panels, (w, h));
+    }
+
     let r = tc.v1_layout_rects(0.0, 0.0, w, h);
 
     // VIRTUAL vertical remap (owner spec 2026-07-28): the real 22px strips
@@ -8066,15 +8120,28 @@ impl ChartApp {
             self.panels_store.trading_container.iter().next().map(|(_pid, tc)| {
                 let (map_panels, csize) = tc_modal_map_panels(tc);
                 let mc = &tc.metrics.config;
+                let is_free = tc.layout_mode
+                    == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free;
+                // SETUP configures the LIVE blocks (owner spec 2026-07-29):
+                // in Free mode a disconnected panel's knobs are hidden.
+                let connected = |kind: mlc_app_panels::trading::trading::trading_container::TcLeaf| {
+                    !is_free || tc.free_leaf_hosting(&kind).is_some()
+                };
+                use mlc_app_panels::trading::trading::trading_container::TcLeaf;
+                let mut hist_rows = Vec::new();
+                if connected(TcLeaf::Positions) {
+                    hist_rows.push(("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()));
+                }
+                if connected(TcLeaf::Orders) {
+                    hist_rows.push(("Orders".to_string(), "orders".to_string(), tc.orders_log.history_depth.option_index()));
+                }
+                if connected(TcLeaf::Trades) {
+                    hist_rows.push(("Trades".to_string(), "trades".to_string(), tc.trade_log.history_depth.option_index()));
+                }
                 let setup = mlc_app_layout::layout::modals::TcSetupData {
-                    layout_free: tc.layout_mode
-                        == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free,
+                    layout_free: is_free,
                     center_label: tc.center_kind.label().to_string(),
-                    hist_rows: vec![
-                        ("Positions".to_string(), "positions".to_string(), tc.position_manager.history_depth.option_index()),
-                        ("Orders".to_string(), "orders".to_string(), tc.orders_log.history_depth.option_index()),
-                        ("Trades".to_string(), "trades".to_string(), tc.trade_log.history_depth.option_index()),
-                    ],
+                    hist_rows,
                     tape_full: tc.ticker_tape.format
                         == mlc_app_panels::trading::trading::ticker_tape::TapeFormat::Full,
                     metrics: vec![
@@ -8085,6 +8152,8 @@ impl ChartApp {
                         ("Orders".to_string(), "orders".to_string(), mc.orders),
                         ("Trades".to_string(), "trades".to_string(), mc.trades),
                     ],
+                    show_tape: connected(TcLeaf::Tape),
+                    show_metrics: connected(TcLeaf::Metrics),
                 };
                 mlc_app_layout::layout::modals::render_trading_container_modal(
                     ctx,

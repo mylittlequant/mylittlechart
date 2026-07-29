@@ -1955,6 +1955,11 @@ impl ChartApp {
                     self.standalone_panels.watchlist_modal.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
                 }
+                // Trading Container modal — close when user clicks outside it.
+                "tc_modal" => {
+                    self.tc_modal.close();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
+                }
                 _ => {
                     // Unknown layer — fall back to closing everything so the UI
                     // never gets stuck in an unrecoverable state.

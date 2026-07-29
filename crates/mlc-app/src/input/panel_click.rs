@@ -3854,6 +3854,32 @@ impl ChartApp {
                         self.autosave_snapshot();
                     }
                 }
+                // Free-mode MAP (owner spec 2026-07-29): the map mirrors the
+                // LIVE docking tree — `map:leaf{raw}:tab:{wire}` activates
+                // that tab in that stack.
+                r if r.starts_with("map:leaf") => {
+                    let tail = &r["map:leaf".len()..];
+                    if let Some((raw_s, wire)) = tail.split_once(":tab:") {
+                        if let (Ok(raw), Some(kind)) = (
+                            raw_s.parse::<u64>(),
+                            mlc_app_panels::trading::trading::trading_container::TcLeaf::from_wire_id(wire),
+                        ) {
+                            if let Some(pid) = tc_pid {
+                                if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                                    if let Some(dock) = &tc.free_dock {
+                                        let mut ds = dock.0.borrow_mut();
+                                        if let Some(l) = ds.tree_mut().leaf_mut(uzor::panels::LeafId(raw)) {
+                                            if let Some(i) = l.panels.iter().position(|p| p == &kind) {
+                                                l.active_tab = i;
+                                            }
+                                        }
+                                    }
+                                }
+                                self.sidebar_data_dirty = true;
+                            }
+                        }
+                    }
+                }
                 // MAP bottom strip — ONE card with 3 tab buttons switching
                 // its active view.
                 "map:bottom:tab:positions" | "map:bottom:tab:orders" | "map:bottom:tab:trades" => {

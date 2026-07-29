@@ -165,6 +165,11 @@ pub struct TcSetupData {
     pub tape_full: bool,
     /// Metrics-strip inclusion toggles `(display label, wire key, on)`.
     pub metrics: Vec<(String, String, bool)>,
+    /// Whether the tape / metrics strips are CONNECTED (owner spec
+    /// 2026-07-29: SETUP configures the live blocks — in Free mode a
+    /// disconnected strip's knobs are hidden). Fixed mode passes true.
+    pub show_tape: bool,
+    pub show_metrics: bool,
 }
 
 /// `panels` — the MAP cards (container-local rects); `container_size` — the
@@ -571,41 +576,44 @@ fn render_setup_section(
     }
     row_y += btn_h + 20.0;
 
-    // ── Center-slot switcher ─────────────────────────────────────────────
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Center panel", left, row_y + 10.0);
-    row_y += 26.0;
-    for (i, (id, label)) in [("dom", "DOM"), ("chart", "Chart")].iter().enumerate() {
-        let bx = left + i as f64 * (btn_w + 8.0);
-        let wid = format!("tc_modal:center:{}", id);
-        let is_active = center_label.eq_ignore_ascii_case(label);
-        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
-        let bg = if is_active {
-            toolbar_theme.accent.clone()
-        } else if is_hovered {
-            toolbar_theme.item_bg_hover.clone()
-        } else {
-            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
-        };
-        ctx.set_fill_color(&bg);
-        ctx.fill_rounded_rect(bx, row_y, btn_w, btn_h, 4.0);
+    // ── Center-slot switcher — Fixed-mode concept only (Free spawns
+    // panels from the header dropdown instead of swapping a center).
+    if !setup.layout_free {
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
-        ctx.set_text_align(TextAlign::Center);
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, bx + btn_w / 2.0, row_y + btn_h / 2.0);
+        ctx.fill_text("Center panel", left, row_y + 10.0);
+        row_y += 26.0;
+        for (i, (id, label)) in [("dom", "DOM"), ("chart", "Chart")].iter().enumerate() {
+            let bx = left + i as f64 * (btn_w + 8.0);
+            let wid = format!("tc_modal:center:{}", id);
+            let is_active = center_label.eq_ignore_ascii_case(label);
+            let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+            let bg = if is_active {
+                toolbar_theme.accent.clone()
+            } else if is_hovered {
+                toolbar_theme.item_bg_hover.clone()
+            } else {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+            };
+            ctx.set_fill_color(&bg);
+            ctx.fill_rounded_rect(bx, row_y, btn_w, btn_h, 4.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, bx + btn_w / 2.0, row_y + btn_h / 2.0);
 
-        input_coordinator.register_on_layer(
-            wid.as_str(),
-            WidgetRect::new(bx, row_y, btn_w, btn_h),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
+            input_coordinator.register_on_layer(
+                wid.as_str(),
+                WidgetRect::new(bx, row_y, btn_w, btn_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+        row_y += btn_h + 20.0;
     }
-    row_y += btn_h + 20.0;
 
     // ── Layout reset ─────────────────────────────────────────────────────
     ctx.set_font("11px sans-serif");
@@ -650,13 +658,17 @@ fn render_setup_section(
 
     // ── History depth per table (owner spec 2026-07-28) ─────────────────
     // The common gear owns these knobs while the tables live inside the
-    // container (their per-panel mini-gears are suppressed here).
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("History", left, row_y + 10.0);
-    row_y += 24.0;
+    // container (their per-panel mini-gears are suppressed here). Rows
+    // arrive pre-filtered to the CONNECTED tables — none connected, no
+    // block.
+    if !hist_rows.is_empty() {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("History", left, row_y + 10.0);
+        row_y += 24.0;
+    }
 
     let opt_w = 44.0;
     let opt_h = 20.0;
@@ -700,43 +712,48 @@ fn render_setup_section(
     row_y += 12.0;
 
     // ── Ticker-tape entry format (owner spec 2026-07-28) ────────────────
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Tape format", left, row_y + 10.0);
-    row_y += 24.0;
-
-    for (i, (id, label)) in [("full", "Sym \u{00b7} Ex \u{00b7} AT"), ("short", "Symbol")].iter().enumerate() {
-        let fmt_w = 110.0;
-        let bx = left + i as f64 * (fmt_w + 8.0);
-        let wid = format!("tc_modal:tapefmt:{}", id);
-        let is_active = (*id == "full") == setup.tape_full;
-        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
-        let bg = if is_active {
-            toolbar_theme.accent.clone()
-        } else if is_hovered {
-            toolbar_theme.item_bg_hover.clone()
-        } else {
-            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
-        };
-        ctx.set_fill_color(&bg);
-        ctx.fill_rounded_rect(bx, row_y, fmt_w, 22.0, 4.0);
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
-        ctx.set_text_align(TextAlign::Center);
+    if setup.show_tape {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, bx + fmt_w / 2.0, row_y + 11.0);
-        input_coordinator.register_on_layer(
-            wid.as_str(),
-            WidgetRect::new(bx, row_y, fmt_w, 22.0),
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
+        ctx.fill_text("Tape format", left, row_y + 10.0);
+        row_y += 24.0;
+
+        for (i, (id, label)) in [("full", "Sym \u{00b7} Ex \u{00b7} AT"), ("short", "Symbol")].iter().enumerate() {
+            let fmt_w = 110.0;
+            let bx = left + i as f64 * (fmt_w + 8.0);
+            let wid = format!("tc_modal:tapefmt:{}", id);
+            let is_active = (*id == "full") == setup.tape_full;
+            let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+            let bg = if is_active {
+                toolbar_theme.accent.clone()
+            } else if is_hovered {
+                toolbar_theme.item_bg_hover.clone()
+            } else {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+            };
+            ctx.set_fill_color(&bg);
+            ctx.fill_rounded_rect(bx, row_y, fmt_w, 22.0, 4.0);
+            ctx.set_font("10px sans-serif");
+            ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(label, bx + fmt_w / 2.0, row_y + 11.0);
+            input_coordinator.register_on_layer(
+                wid.as_str(),
+                WidgetRect::new(bx, row_y, fmt_w, 22.0),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+        row_y += 22.0 + 12.0;
     }
-    row_y += 22.0 + 12.0;
 
     // ── Metrics-strip inclusion toggles (owner spec 2026-07-28) ─────────
+    if !setup.show_metrics {
+        return;
+    }
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);

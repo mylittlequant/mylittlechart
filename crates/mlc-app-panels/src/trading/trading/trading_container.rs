@@ -1474,14 +1474,18 @@ impl TradingContainerState {
         }
 
         let ds = dock.0.borrow();
-        let leaf_rects: Vec<(TcLeaf, (f64, f64, f64, f64))> = ds
+        let leaf_rects: Vec<(TcLeaf, (f64, f64, f64, f64), bool)> = ds
             .tree()
             .leaves()
             .iter()
             .filter_map(|l| {
                 let p = l.active_panel()?.clone();
                 let r = ds.panel_rects().get(&l.id)?;
-                Some((p, (r.x as f64, r.y as f64, r.width as f64, r.height as f64)))
+                Some((
+                    p,
+                    (r.x as f64, r.y as f64, r.width as f64, r.height as f64),
+                    l.tab_count() > 1,
+                ))
             })
             .collect();
         let drag_active = ds.panel_drag_state().is_some();
@@ -1495,7 +1499,9 @@ impl TradingContainerState {
 
         // Tab-chip bars for stacked leaves — always visible (this IS the
         // tab switcher; tessera parity). A chip click activates its tab,
-        // a chip drag tears the tab out, the chip ✕ closes it.
+        // a chip drag tears the tab out. The overlay buttons
+        // [gear][grip][✕] appear on the HOVERED chip (owner spec
+        // 2026-07-29) — never parked on one corner of the leaf.
         let bar_h = ds.tab_bar_height() as f64;
         for bar in ds.tab_bars() {
             let leaf_raw = bar.container_id.0;
@@ -1514,10 +1520,12 @@ impl TradingContainerState {
                     continue;
                 }
                 let wid = format!("{}:tcfree:tab:{}:{}", slot_prefix, leaf_raw, idx);
-                let hovered = coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+                let chip_hover = pointer
+                    .map(|(px, py)| px >= tx && px <= tx + tw && py >= ty && py <= ty + th)
+                    .unwrap_or(false);
                 ctx.set_fill_color(if tab.is_active {
                     &theme.tc_inner_bg
-                } else if hovered {
+                } else if chip_hover {
                     &theme.hover
                 } else {
                     &theme.header_bg
@@ -1532,36 +1540,69 @@ impl TradingContainerState {
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(&tab.title, tx + 8.0, ty + th / 2.0);
-                let (xx, xy, xs) = (
-                    tab.close_rect.x as f64,
-                    tab.close_rect.y as f64,
-                    tab.close_rect.width as f64,
-                );
-                ctx.set_stroke_color(&theme.text_muted);
-                ctx.set_stroke_width(1.0);
-                ctx.set_line_dash(&[]);
-                ctx.begin_path();
-                ctx.move_to(xx + 4.0, xy + 4.0);
-                ctx.line_to(xx + xs - 4.0, xy + xs - 4.0);
-                ctx.stroke();
-                ctx.begin_path();
-                ctx.move_to(xx + xs - 4.0, xy + 4.0);
-                ctx.line_to(xx + 4.0, xy + xs - 4.0);
-                ctx.stroke();
-                // Registration order matters: the ✕ is INSIDE the chip
-                // rect and must be registered after it (last wins the
-                // same-layer hit test).
                 coordinator.register(
                     wid.as_str(),
                     uzor::Rect::new(tx, ty, tw, th),
                     Sense::CLICK | Sense::DRAG | Sense::HOVER,
                 );
-                let xid = format!("{}:tcfree:tabx:{}:{}", slot_prefix, leaf_raw, idx);
-                coordinator.register(
-                    xid.as_str(),
-                    uzor::Rect::new(xx, xy, xs, xs),
-                    Sense::CLICK | Sense::HOVER,
-                );
+                // Hover buttons on THIS chip: [⚙][⠿][✕], right-aligned.
+                // The grip glyph is a visual affordance only — the chip
+                // itself is the drag handle (tear-out). Registered AFTER
+                // the chip so they win the same-layer hit test.
+                if chip_hover && !drag_active {
+                    const TB: f64 = 14.0;
+                    const TB_GAP: f64 = 2.0;
+                    let by = ty + (th - TB) / 2.0;
+                    let bx_close = tx + tw - 3.0 - TB;
+                    let bx_grip = bx_close - TB_GAP - TB;
+                    let bx_gear = bx_grip - TB_GAP - TB;
+                    let tab_wire = ds
+                        .tree()
+                        .leaf(bar.container_id)
+                        .and_then(|l| l.panels.get(idx))
+                        .map(|p| p.wire_id())
+                        .unwrap_or("");
+                    ctx.set_stroke_color(&theme.text_muted);
+                    ctx.set_stroke_width(1.0);
+                    ctx.set_line_dash(&[]);
+                    // gear glyph
+                    ctx.set_fill_color(&theme.text_muted);
+                    ctx.set_font("10px sans-serif");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text("\u{2699}", bx_gear + TB / 2.0, by + TB / 2.0);
+                    // grip bars
+                    for k in 0..3 {
+                        let yy = by + 3.5 + k as f64 * 3.5;
+                        ctx.begin_path();
+                        ctx.move_to(bx_grip + 3.0, yy);
+                        ctx.line_to(bx_grip + TB - 3.0, yy);
+                        ctx.stroke();
+                    }
+                    // close cross
+                    ctx.begin_path();
+                    ctx.move_to(bx_close + 3.5, by + 3.5);
+                    ctx.line_to(bx_close + TB - 3.5, by + TB - 3.5);
+                    ctx.stroke();
+                    ctx.begin_path();
+                    ctx.move_to(bx_close + TB - 3.5, by + 3.5);
+                    ctx.line_to(bx_close + 3.5, by + TB - 3.5);
+                    ctx.stroke();
+                    if !tab_wire.is_empty() {
+                        let gid = format!("{}:tcfree:gear:{}", slot_prefix, tab_wire);
+                        coordinator.register(
+                            gid.as_str(),
+                            uzor::Rect::new(bx_gear, by, TB, TB),
+                            Sense::CLICK | Sense::HOVER,
+                        );
+                    }
+                    let xid = format!("{}:tcfree:tabx:{}:{}", slot_prefix, leaf_raw, idx);
+                    coordinator.register(
+                        xid.as_str(),
+                        uzor::Rect::new(bx_close, by, TB, TB),
+                        Sense::CLICK | Sense::HOVER,
+                    );
+                }
             }
         }
 
@@ -1570,7 +1611,12 @@ impl TradingContainerState {
         const CHIP_GAP: f64 = 2.0;
         const CHIP_INSET: f64 = 3.0;
         if !drag_active {
-            for (leaf, (lx, ly, lw, lh)) in &leaf_rects {
+            for (leaf, (lx, ly, lw, lh), stacked) in &leaf_rects {
+                // Stacked leaves get their buttons ON the hovered tab chip
+                // (drawn above) — no corner chip set.
+                if *stacked {
+                    continue;
+                }
                 let (lx, ly, lw, lh) = (*lx, *ly, *lw, *lh);
                 if lw < CHIP * 3.0 + CHIP_GAP * 2.0 + CHIP_INSET * 2.0 || lh < CHIP + CHIP_INSET {
                     continue;
