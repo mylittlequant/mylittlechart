@@ -186,7 +186,9 @@ impl ChartApp {
         // own live-search popup are "related" and left alone; their own
         // handlers (below) commit or dismiss explicitly.
         if let Some(edit) = self.symbol_quick_edit.as_ref() {
-            if let crate::SymbolQuickEditTarget::TradingPanel(pid) = edit.target {
+            if let crate::SymbolQuickEditTarget::TradingPanel(pid)
+            | crate::SymbolQuickEditTarget::SectionPanel(pid) = edit.target
+            {
                 // The search icon is also a "related" entry point (not just
                 // the tab body) — otherwise this block would close the
                 // editor a beat before `open_trading_symbol_quick_edit`'s
@@ -3087,7 +3089,87 @@ impl ChartApp {
             if from_tch {
                 self.panel_app.toolbar_state.open_dropdown_id = None;
                 let tc_pid = self.panels_store.trading_container.keys().next().copied();
+                // Data-section header (global-docking Stage B): same tch
+                // instance, dispatch target = the section's panel instead
+                // of the container.
+                let section_item = {
+                    use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+                    let rp = self.sidebar_state.right_panel;
+                    if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                        self.section_panel_for(rp)
+                    } else {
+                        None
+                    }
+                };
                 match item_id.as_str() {
+                    "sec_gear" => {
+                        // DOM section gear → the dom-settings modal (both
+                        // modes). Other sections get their modals later.
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if matches!(section_item, Some(mlc_core::state::Panel::Dom(_))) {
+                            self.dom_modal.open();
+                        }
+                        return;
+                    }
+                    "sec_mx" | "sec_am" | "sec_filter" | "sec_tick" => {
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if let Some(mlc_core::state::Panel::Dom(pid)) = section_item {
+                            match item_id.as_str() {
+                                "sec_mx" => {
+                                    let sub_info = self.panels_store.dom.get_mut(&pid).map(|state| {
+                                        state.set_multi_mode(!state.multi_mode);
+                                        (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
+                                    });
+                                    if let Some((on, sym, exchanges)) = sub_info {
+                                        if on && !sym.is_empty() {
+                                            let at = digdigdig3::AccountType::Spot;
+                                            for ex_label in &exchanges {
+                                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                                    let _ = self.core.subscribe_orderbook(eid, &sym, at);
+                                                }
+                                            }
+                                        }
+                                        self.autosave_snapshot();
+                                    }
+                                }
+                                "sec_am" => {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.auto_center = !state.auto_center;
+                                        if state.auto_center && state.market_price > 0.0 {
+                                            state.center_price = state.market_price;
+                                        }
+                                    }
+                                }
+                                "sec_filter" => {
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        state.min_volume_filter = match state.min_volume_filter {
+                                            v if v < 0.5 => 1.0,
+                                            v if v < 1.5 => 5.0,
+                                            v if v < 5.5 => 10.0,
+                                            v if v < 10.5 => 25.0,
+                                            v if v < 25.5 => 50.0,
+                                            _ => 0.0,
+                                        };
+                                    }
+                                }
+                                _ => {
+                                    // sec_tick — cycle tick size, drop stale buckets.
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
+                                        let cur = state.tick_size;
+                                        let next = TICKS.iter()
+                                            .find(|&&t| t > cur * 1.001)
+                                            .copied()
+                                            .unwrap_or(TICKS[0]);
+                                        state.tick_size = next;
+                                        state.volume_by_price.clear();
+                                    }
+                                }
+                            }
+                            self.sidebar_data_dirty = true;
+                        }
+                        return;
+                    }
                     "__chevron_left" | "__chevron_right" => {
                         let forward = item_id == "__chevron_right";
                         let ms = self.last_trading_header_result.as_ref()
@@ -3097,7 +3179,10 @@ impl ChartApp {
                         return;
                     }
                     "symbol_selector" => {
-                        if let Some(pid) = tc_pid {
+                        if let Some(item) = &section_item {
+                            self.open_section_symbol_quick_edit(item);
+                            self.trading_header_tb.open_dropdown_id = Some("symbol_selector".to_string());
+                        } else if let Some(pid) = tc_pid {
                             self.open_trading_symbol_quick_edit(pid);
                             // The results list is the composer's own
                             // `symbol_selector` dropdown on THIS instance.
@@ -3115,7 +3200,8 @@ impl ChartApp {
                     }
                     "tc_color_tag" => {
                         self.trading_header_tb.open_dropdown_id = None;
-                        if let Some(pid) = tc_pid {
+                        let target_pid = section_item.as_ref().map(|i| i.panel_id()).or(tc_pid);
+                        if let Some(pid) = target_pid {
                             let anchor = self.last_trading_header_result.as_ref()
                                 .and_then(|r| r.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag").map(|(_, rect)| *rect));
                             if let Some(rect) = anchor {
@@ -3808,6 +3894,125 @@ impl ChartApp {
         }
         if widget_id == "rc_modal:modal_bg" || widget_id == "rc_modal:header" {
             return; // consume — clicks on the modal chrome stay there
+        }
+
+        // === DOM settings modal (Stage B, 2026-07-30) ===
+        if let Some(rest) = widget_id.strip_prefix("dom_modal:") {
+            if rest == "close" {
+                self.dom_modal.close();
+                return;
+            }
+            if rest == "modal_bg" || rest == "header" {
+                return; // consume — chrome
+            }
+            use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+            let dom_pid = self.section_panel_for(RSP::SlotDom).and_then(|item| match item {
+                mlc_core::state::Panel::Dom(id) => Some(id),
+                _ => None,
+            });
+            let Some(pid) = dom_pid else { return };
+            match rest {
+                "mode:dom" | "mode:multi" => {
+                    let want_multi = rest == "mode:multi";
+                    let sub_info = self.panels_store.dom.get_mut(&pid).map(|state| {
+                        if state.multi_mode != want_multi {
+                            state.set_multi_mode(want_multi);
+                        }
+                        (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
+                    });
+                    if let Some((on, sym, exchanges)) = sub_info {
+                        if on && !sym.is_empty() {
+                            let at = digdigdig3::AccountType::Spot;
+                            for ex_label in &exchanges {
+                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                    let _ = self.core.subscribe_orderbook(eid, &sym, at);
+                                }
+                            }
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                "skin" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        use mlc_app_panels::trading::order_flow::dom::DomSkin;
+                        let skins = DomSkin::all();
+                        let cur = skins.iter().position(|s| *s == state.skin).unwrap_or(0);
+                        let next = skins[(cur + 1) % skins.len()];
+                        state.set_skin(next);
+                    }
+                }
+                "am" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.auto_center = !state.auto_center;
+                        if state.auto_center && state.market_price > 0.0 {
+                            state.center_price = state.market_price;
+                        }
+                    }
+                }
+                "filter" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.min_volume_filter = match state.min_volume_filter {
+                            v if v < 0.5 => 1.0,
+                            v if v < 1.5 => 5.0,
+                            v if v < 5.5 => 10.0,
+                            v if v < 10.5 => 25.0,
+                            v if v < 25.5 => 50.0,
+                            _ => 0.0,
+                        };
+                    }
+                }
+                "tick" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
+                        let cur = state.tick_size;
+                        let next = TICKS.iter().find(|&&t| t > cur * 1.001).copied().unwrap_or(TICKS[0]);
+                        state.tick_size = next;
+                        state.volume_by_price.clear();
+                    }
+                }
+                "ex_add" => {
+                    let added = self.panels_store.dom.get_mut(&pid)
+                        .and_then(|state| state.multi.cycle_add_exchange().map(|s| s.to_string()))
+                        .map(|ex| (ex, self.panels_store.dom.get(&pid).map(|s| s.multi.symbol.clone()).unwrap_or_default()));
+                    if let Some((ex, sym)) = added {
+                        if !sym.is_empty() {
+                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) {
+                                let _ = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
+                            }
+                        }
+                    }
+                }
+                "grid" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.cycle_grid_size();
+                    }
+                }
+                "depth" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.cycle_depth();
+                    }
+                }
+                _ => {
+                    if let Some(i_str) = rest.strip_prefix("col:") {
+                        if let (Ok(i), Some(state)) = (i_str.parse::<usize>(), self.panels_store.dom.get_mut(&pid)) {
+                            match i {
+                                0 => state.column_config.show_bid_orders = !state.column_config.show_bid_orders,
+                                1 => state.column_config.show_sell_trades = !state.column_config.show_sell_trades,
+                                2 => state.column_config.show_buy_trades = !state.column_config.show_buy_trades,
+                                _ => state.column_config.show_ask_orders = !state.column_config.show_ask_orders,
+                            }
+                        }
+                    } else if let Some(i_str) = rest.strip_prefix("ex_del:") {
+                        if let (Ok(i), Some(state)) = (i_str.parse::<usize>(), self.panels_store.dom.get_mut(&pid)) {
+                            if let Some(ex) = state.multi.config.exchanges.get(i).cloned() {
+                                state.multi.remove_exchange(&ex);
+                            }
+                        }
+                    }
+                }
+            }
+            self.sidebar_data_dirty = true;
+            return;
         }
 
         // === Trading Container modal clicks (owner spec 2026-07-28) ===
@@ -6750,12 +6955,18 @@ impl ChartApp {
             let (symbol, exchange_id, account_type) = parse_symbol_composite_key(key);
             // Target-aware commit: the quicksearch edit may be driven by the
             // trading container's embedded header toolbar, not the topbar.
-            if let Some(crate::SymbolQuickEditTarget::TradingPanel(pid)) =
-                self.symbol_quick_edit.as_ref().map(|e| e.target)
-            {
-                self.commit_symbol_search_to_trading_panel(pid, &symbol, &exchange_id, &account_type);
-                self.close_symbol_quick_dropdown();
-                return;
+            match self.symbol_quick_edit.as_ref().map(|e| e.target) {
+                Some(crate::SymbolQuickEditTarget::TradingPanel(pid)) => {
+                    self.commit_symbol_search_to_trading_panel(pid, &symbol, &exchange_id, &account_type);
+                    self.close_symbol_quick_dropdown();
+                    return;
+                }
+                Some(crate::SymbolQuickEditTarget::SectionPanel(pid)) => {
+                    self.commit_symbol_search_to_section_panel(pid, &symbol, &exchange_id, &account_type);
+                    self.close_symbol_quick_dropdown();
+                    return;
+                }
+                _ => {}
             }
             let resolved_exchange = self.core.exchange_symbols()
                 .find_by_label(&exchange_id)

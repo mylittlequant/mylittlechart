@@ -291,24 +291,26 @@ pub fn render_right_sidebar(
     let scrollbar_width: f64 = if owns_full_width { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
 
-    // Dynamic header height: slot panels and Agents go 2-row (68 px) when too narrow.
-    // SlotTrading is the exception — it never renders a toolbar (owner spec
-    // 2026-07-25: zero slot control-plane for Trading), so its header is
-    // always the plain single-row 40 px band that hosts only the `[x]`
-    // sidebar-collapse button.
-    let header_height = if panel == RightSidebarPanel::SlotTrading {
+    // Dynamic header height: Agents goes 2-row (68 px) when too narrow.
+    // ALL slot sections are a plain single-row 40 px band (global-docking
+    // Stage B, owner spec 2026-07-30: zero slot control-plane everywhere —
+    // the header row hosts the section's TC-style toolbar drawn by mlc-app,
+    // plus the `[x]` sidebar-collapse button).
+    let header_height = if matches!(
+        panel,
+        RightSidebarPanel::SlotTrading
+            | RightSidebarPanel::SlotDom
+            | RightSidebarPanel::SlotTape
+            | RightSidebarPanel::SlotL2
+            | RightSidebarPanel::SlotBigTrades
+    ) {
         40.0
-    } else if matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
+    } else if panel == RightSidebarPanel::Agents {
         // Available width = full width - left pad (8) - close X reservation (20).
-        // Mirrors `inner_w` inside render_slot_toolbar_in_header / render_agents_toolbar_in_header.
-        // Threshold = sum of all single-row buttons at minimum 28 px each
-        // (so the "wrap to 2 rows" trigger fires exactly when buttons would
-        // shrink below 28 px square — not earlier). Must match the
-        // `single_row` decision inside the respective toolbar fn.
+        // Threshold = sum of all single-row buttons at minimum 28 px each.
         // Agents: PTY(28)+2+Chat(28) +4+ 4×CLI(28+3×4) +4+ HVR(28×3+2×2)
         //         +2×4+ exp+rst(28×2+4) = 358
-        // Slot:   +(28)+4+ APL(28×3+2×2) +4+ HVR(28×3+2×2) +2×4+ exp+rst(28×2+4) = 284
-        let threshold = if panel == RightSidebarPanel::Agents { 358.0 } else { 284.0 };
+        let threshold = 358.0;
         let inner_w_for_panel = rect.width - 8.0 - 20.0;
         if inner_w_for_panel >= threshold { 40.0 } else { 68.0 }
     } else {
@@ -550,23 +552,13 @@ pub fn render_right_sidebar(
         );
     }
 
-    // Slot toolbar — rendered in the header row BEFORE scrollable clip so it's visible.
-    // SlotTrading never gets one — owner spec 2026-07-25 removes the entire
-    // slot control-plane ([+]/[T/U]/[H/V/R]/[⊞]/[↻]) for the Trading tab; the
-    // sole close affordance is the always-present `right_sidebar_close` [x].
-    if let Some(idx) = panel.slot_index().filter(|_| panel != RightSidebarPanel::SlotTrading) {
-        render_slot_toolbar_in_header(
-            ctx,
-            rect,
-            header_height,
-            idx as usize,
-            sidebar_state,
-            toolbar_theme,
-            &mut result,
-            input_coordinator,
-        );
-        let _ = idx;
-    }
+    // Slot toolbar — GONE for every section (global-docking Stage B, owner
+    // spec 2026-07-30): the slot control-plane ([+]/[T/U]/[H/V/R]/[⊞]/[↻])
+    // is abolished; each section hosts exactly one panel and the header row
+    // carries the TC-style section toolbar (symbol quick-search + color tag
+    // + thematic chips), drawn by mlc-app over this band. The sole close
+    // affordance is the always-present `right_sidebar_close` [x].
+    let _ = render_slot_toolbar_in_header; // retained for the Stage-B sweep
 
     // Agents toolbar — rendered in the header row BEFORE scrollable clip, mirroring slot pattern.
     if panel == RightSidebarPanel::Agents {
@@ -4084,8 +4076,12 @@ fn render_slot_panel(
     // Auto/Pinned source badge is gone entirely — legacy, removed. The
     // leaf/docking plumbing underneath is unchanged — only the drawn chrome
     // disappears.
-    let is_trading_slot = crate::free_slot::SlotKind::from_index(slot_idx)
-        == Some(crate::free_slot::SlotKind::Trading);
+    // Stage B (owner spec 2026-07-30): EVERY section renders chrome-less —
+    // the Trading treatment (no control strip, no overlay tab, no leaf [x])
+    // now applies to Dom/Tape/L2/BigTrades too; the section header toolbar
+    // (mlc-app) is the only chrome. The per-leaf branch below is dead
+    // pending the Stage-B demolition sweep.
+    let is_trading_slot = true;
 
     for (leaf_id, item, r) in leaves {
         if is_trading_slot {

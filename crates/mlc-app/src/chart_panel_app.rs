@@ -510,6 +510,67 @@ impl ChartPanelApp {
         )
     }
 
+    /// Render a data-section sidebar header toolbar (global-docking Stage B,
+    /// owner spec 2026-07-30) — the Trading-Container-style header for the
+    /// DOM / Trade Tape / L2 / Big Trades sections: symbol quick-search
+    /// system + color tag (+ DOM thematic chips). Same composer, same
+    /// `tch:` instance/state as the TC header — only one right section is
+    /// visible at a time, so the instance is shared.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_section_header_toolbar(
+        &self,
+        tb: &ChartToolbarState,
+        ctx: &mut dyn RenderContext,
+        header_rect: &mlc_app_layout::layout::LayoutRect,
+        active_symbol: &str,
+        active_exchange: &str,
+        active_account_type: &str,
+        symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
+        symbol_quick_search: bool,
+        dom_chips: Option<mlc_core::toolbar::SectionDomChips>,
+    ) -> ChartToolbarRenderResult {
+        let toolbar_theme = self.toolbar_theme_for_render();
+        let dropdown_theme = self.dropdown_theme_for_render();
+        let cfg = ToolbarConfig::custom()
+            .with_top(Some(mlc_core::toolbar::section_header_toolbar(dom_chips)));
+        let layout = ChartPanelLayout::compute(header_rect, &cfg);
+        let neutral_favs = mlc_core::user_profile::GranularityFavorites::default();
+        chart_toolbar_render_toolbars(
+            tb, ctx, &layout, &cfg,
+            None,                      // selected_primitive
+            Some(&toolbar_theme),
+            Some(&dropdown_theme),
+            None,                      // clock_time
+            &[],                       // presets
+            "",                        // active_preset_id
+            false,                     // autosave_enabled
+            None,                      // sync_flags
+            false,                     // is_expanded
+            false,                     // split_without_group
+            false,                     // is_mono_group
+            Some(active_symbol),
+            None,                      // active_timeframe (no TF system here)
+            0.0,                       // sidebar_w
+            None,                      // allowed_timeframes
+            None,                      // active_chart_type
+            None,                      // active_chart_type_param
+            None,                      // chart_type_data_modes
+            None,                      // timeframe_native_map
+            false,                     // footprint_live_only
+            &neutral_favs,
+            None,                      // granularity_edit_render
+            false,                     // pin_granularity_favorites
+            None,                      // granularity_drag_render
+            false,                     // split_symbol_compare
+            symbol_quick_search_render,
+            symbol_quick_search,
+            Some(active_exchange),
+            Some(active_account_type),
+            false,                     // suppress_chart_controls
+            true,                      // quicksearch_minimal (results only)
+        )
+    }
+
     /// Render all chart-owned modals in a single call.
     ///
     /// This method encapsulates the rendering of:

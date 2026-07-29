@@ -386,6 +386,67 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool, free_mode: b
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 
+/// DOM-specific chip state for [`section_header_toolbar`] — drives the
+/// dynamic labels of the thematic chips that moved from the (deleted) slot
+/// leaf control strip into the section header.
+#[derive(Clone, Copy, Debug)]
+pub struct SectionDomChips {
+    pub multi_mode: bool,
+    pub auto_center: bool,
+    pub min_volume_filter: f64,
+    pub tick_size: f64,
+}
+
+/// Data-section sidebar header toolbar (global-docking Stage B, owner spec
+/// 2026-07-30): every classic data section (DOM / Trade Tape / L2 / Big
+/// Trades) gets the Trading-Container-style header instead of the slot
+/// control-plane — symbol quick-search system + color-sync tag, plus the
+/// panel's own thematic chips (DOM: MX / A|M / F / tick). Item ids reuse
+/// the tch instance grammar (`symbol_selector` / `tc_color_tag`) so the
+/// shared dropdown / quicksearch machinery and the `tch:` dispatch apply
+/// verbatim; only the dispatch target differs — the section's panel.
+pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolbarDef {
+    let mut sections = vec![
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::dropdown("symbol_selector", vec![])
+                .with_icon(ToolbarIconId::new("Search"))
+                .with_text("BTCUSD")
+                .with_min_width(150.0)
+                .with_tooltip(t_toolbar(TK::SymbolSelector)),
+        ]),
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::button("tc_color_tag").with_min_width(24.0),
+            // Section gear — opens the section panel's settings modal
+            // (DOM: the dom-settings modal covering both modes). Placed
+            // before the chips so it never hides behind the overflow
+            // chevron on narrow sidebars.
+            ToolbarItemDef::icon_button("sec_gear", ToolbarIconId::new("Settings"))
+                .with_tooltip(t_toolbar(TK::Settings)),
+        ]).with_separator(),
+    ];
+    if let Some(c) = dom_chips {
+        // Mode toggle — the label states what is CURRENTLY on (owner spec
+        // 2026-07-30): "DOM" = single ladder, "M/D" = multi-exchange.
+        // Clicking flips. The thematic chips stay in BOTH modes.
+        let items = vec![
+            ToolbarItemDef::button("sec_mx")
+                .with_text(if c.multi_mode { "M/D" } else { "DOM" }),
+            ToolbarItemDef::button("sec_am")
+                .with_text(if c.auto_center { "A" } else { "M" }),
+            ToolbarItemDef::button("sec_filter")
+                .with_text(&if c.min_volume_filter > 0.0 {
+                    format!("F:{:.0}", c.min_volume_filter)
+                } else {
+                    "F".to_string()
+                }),
+            ToolbarItemDef::button("sec_tick")
+                .with_text(&format!("{}", c.tick_size)),
+        ];
+        sections.push(ToolbarSectionDef::new(items).with_separator());
+    }
+    PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
+}
+
 /// Chart type dropdown items (localized).
 ///
 /// All items drive `ChartOutEvent::ChangeChartType`. Plain render styles

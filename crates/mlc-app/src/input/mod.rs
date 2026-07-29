@@ -549,6 +549,7 @@ impl ChartApp {
             || self.panel_app.tags_tabs_state.is_open
             || self.tc_modal.is_open
             || self.rc_modal.is_open
+            || self.dom_modal.is_open
     }
 
     /// Handle a right-click at screen coordinates `(x, y)`.
@@ -1716,6 +1717,14 @@ impl ChartApp {
                             self.rc_modal.start_drag(x, y, rm.header_rect.x, rm.header_rect.y);
                             true
                         } else { false }
+                    }
+                    "dom_modal" => {
+                        let (hx, hy) = self.dom_modal.position.unwrap_or((
+                            (self.width as f64 - crate::dom_settings_modal::DOM_MODAL_W) / 2.0,
+                            self.height as f64 * 0.2,
+                        ));
+                        self.dom_modal.start_drag(x, y, hx, hy);
+                        true
                     }
                     "ind_settings" => {
                         if let Some(ref is) = self.frame_result.as_ref().and_then(|r| r.indicator_settings.as_ref()) {
@@ -3350,6 +3359,10 @@ impl ChartApp {
         if self.tc_modal.is_dragging {
             self.tc_modal.update_drag(x, y);
         }
+        if self.dom_modal.is_dragging {
+            self.dom_modal.update_drag(x, y);
+            return;
+        }
         if self.rc_modal.is_dragging {
             self.rc_modal.update_drag(x, y);
             return;
@@ -4149,6 +4162,10 @@ impl ChartApp {
         }
         if self.tc_modal.is_dragging {
             self.tc_modal.end_drag();
+        }
+        if self.dom_modal.is_dragging {
+            self.dom_modal.end_drag();
+            return;
         }
         if self.rc_modal.is_dragging {
             self.rc_modal.end_drag();

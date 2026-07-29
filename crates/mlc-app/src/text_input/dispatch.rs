@@ -894,6 +894,21 @@ impl ChartApp {
                         }
                         self.close_symbol_quick_dropdown();
                     }
+                    Some(crate::SymbolQuickEditTarget::SectionPanel(pid)) => {
+                        // Data-section header editor (Stage B) — group
+                        // instrument write + apply-key rebind.
+                        let first = self.symbol_quick_search_render()
+                            .and_then(|r| r.results.first().cloned());
+                        if let Some(res) = first {
+                            let resolved_exchange = self.core.exchange_symbols()
+                                .find_by_label(&res.exchange_id)
+                                .unwrap_or(self.active_exchange);
+                            self.commit_symbol_search_to_section_panel(
+                                pid, &res.symbol, resolved_exchange.as_str(), &res.account_type,
+                            );
+                        }
+                        self.close_symbol_quick_dropdown();
+                    }
                     // `TopbarChart` (or no live editor, defensive) — same
                     // dispatch `handle_search_modal_click`'s
                     // Commit-via-first-result contract uses for the

@@ -26,6 +26,7 @@ pub(crate) use agent as gate4agent;
 pub mod chart_container;
 pub mod chart_container_leaf;
 pub mod chart_panel_bridge;
+pub mod dom_settings_modal;
 pub mod chart_panel_state;
 pub mod chart_state;
 pub mod focus;
@@ -1104,6 +1105,8 @@ pub struct ChartApp {
     pub(crate) rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState,
     /// Last rendered Risk Calculator modal geometry (header drag anchor).
     pub(crate) rc_modal_result: Option<mlc_app_layout::layout::modals::TcModalResult>,
+    /// DOM settings modal (Stage B) — opened by the DOM section header gear.
+    pub(crate) dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState,
     /// Open standalone panel-settings surface (overlay gear, owner spec
     /// 2026-07-28): the target panel + the dropdown anchor. `None` = closed.
     pub(crate) panel_settings_open: Option<(mlc_core::state::Panel, (f64, f64))>,
@@ -1318,6 +1321,11 @@ pub enum SymbolQuickEditTarget {
     /// `commit_symbol_search_to_trading_panel` (group-propagating rebind),
     /// never `apply_symbol`.
     TradingPanel(mlc_core::state::PanelId),
+    /// A data-section header editor (global-docking Stage B, 2026-07-30) —
+    /// the DOM / Tape / L2 / BigTrades sidebar sections' symbol system.
+    /// Commits via `commit_symbol_search_to_section_panel` (group
+    /// instrument write + apply-key rebind).
+    SectionPanel(mlc_core::state::PanelId),
 }
 
 impl Default for SymbolQuickEditTarget {
@@ -2342,6 +2350,7 @@ impl ChartApp {
             tc_modal_result: None,
             rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             rc_modal_result: None,
+            dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -2751,6 +2760,7 @@ impl ChartApp {
             tc_modal_result: None,
             rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             rc_modal_result: None,
+            dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -3306,6 +3316,7 @@ impl ChartApp {
             tc_modal_result: None,
             rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             rc_modal_result: None,
+            dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -6470,7 +6481,8 @@ impl ChartApp {
             // (2026-07-25): read BEFORE `panels_store` borrows `self`
             // immutably below.
             let trading_symbol_edit_render = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
-                crate::SymbolQuickEditTarget::TradingPanel(pid) => {
+                crate::SymbolQuickEditTarget::TradingPanel(pid)
+                | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
                     self.symbol_quick_search_render().map(|r| (pid.0, r))
                 }
                 crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -6836,6 +6848,120 @@ impl ChartApp {
                     }
 
                     out_trading_header_result = Some(th_result);
+                }
+            }
+
+            // Data-section header toolbar (global-docking Stage B, owner
+            // spec 2026-07-30): DOM / Tape / L2 / BigTrades sections reuse
+            // the tch instance with the section def — symbol quick-search +
+            // color tag (+ DOM thematic chips). The slot control-plane is
+            // gone; this header is the section's only chrome.
+            {
+                use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+                let rp = self.sidebar_state.right_panel;
+                if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                    if let Some(item) = self.section_panel_for(rp) {
+                        let s_pid = item.panel_id();
+                        let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
+                        let dom_chips = if let mlc_core::state::Panel::Dom(id) = &item {
+                            self.panels_store.dom.get(id).map(|s| mlc_core::toolbar::SectionDomChips {
+                                multi_mode: s.multi_mode,
+                                auto_center: s.auto_center,
+                                min_volume_filter: s.min_volume_filter,
+                                tick_size: s.tick_size,
+                            })
+                        } else {
+                            None
+                        };
+                        let close_w = 36.0;
+                        let header_rect = LayoutRect::new(
+                            sidebar_rect.x,
+                            sidebar_rect.y,
+                            (sidebar_rect.width - close_w).max(0.0),
+                            40.0,
+                        );
+                        let th_sq_render = trading_symbol_edit_render.as_ref().map(|(_, r)| r);
+                        let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                        let th_result = self.panel_app.render_section_header_toolbar(
+                            &self.trading_header_tb,
+                            ctx,
+                            &header_rect,
+                            &s_sym,
+                            &s_ex,
+                            &s_at,
+                            th_sq_render,
+                            th_sqs_on,
+                            dom_chips,
+                        );
+
+                        // Color-sync tag square (same convention as the TC header).
+                        if let Some((_, tag_rect)) = th_result.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag") {
+                            let tag_color = sidebar_panel_color_map.get(&s_pid.0).copied();
+                            let css = match tag_color {
+                                Some(c) => format!(
+                                    "rgba({},{},{},1.0)",
+                                    (c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8
+                                ),
+                                None => "rgba(128,128,128,0.55)".to_string(),
+                            };
+                            let sq = 10.0;
+                            ctx.set_fill_color(&css);
+                            ctx.fill_rect(
+                                tag_rect.x + (tag_rect.width - sq) / 2.0,
+                                tag_rect.y + (tag_rect.height - sq) / 2.0,
+                                sq,
+                                sq,
+                            );
+                        }
+
+                        {
+                            use uzor::input::Sense;
+                            use mlc_app_layout::ui::z_order::ZLayer;
+                            let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                            for (id, rect) in &th_result.top_toolbar.item_rects {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("tch:{}", id),
+                                    uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                    Sense::CLICK,
+                                    &tch_layer,
+                                );
+                            }
+                            for (suffix, chev) in [
+                                ("__chevron_left", th_result.top_left_chevron),
+                                ("__chevron_right", th_result.top_right_chevron),
+                            ] {
+                                if let Some(r) = chev {
+                                    self.input_coordinator.borrow_mut().register_on_layer(
+                                        format!("tch:{}", suffix),
+                                        uzor::Rect::new(r.x, r.y, r.width, r.height),
+                                        Sense::CLICK,
+                                        &tch_layer,
+                                    );
+                                }
+                            }
+                            self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
+
+                            if let Some(ref dd) = th_result.dropdown_result {
+                                let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    "dropdown:__bg__",
+                                    uzor::Rect::new(dd.menu_rect.x, dd.menu_rect.y, dd.menu_rect.width, dd.menu_rect.height),
+                                    Sense::CLICK,
+                                    &dd_layer,
+                                );
+                                for (item_id, rect) in &dd.item_rects {
+                                    self.input_coordinator.borrow_mut().register_on_layer(
+                                        format!("dropdown:{}:{}", dd.dropdown_id, item_id),
+                                        uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                        Sense::CLICK,
+                                        &dd_layer,
+                                    );
+                                }
+                                self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
+                            }
+                        }
+                        out_trading_header_result = Some(th_result);
+                    }
                 }
             }
 
@@ -7308,7 +7434,8 @@ impl ChartApp {
         // Trading-header-symbol-edit / trading-header-tf arcs (2026-07-25):
         // read BEFORE `panels_store` borrows `self` immutably below.
         let trading_symbol_edit_render_main = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
-            crate::SymbolQuickEditTarget::TradingPanel(pid) => {
+            crate::SymbolQuickEditTarget::TradingPanel(pid)
+            | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
                 self.symbol_quick_search_render().map(|r| (pid.0, r))
             }
             crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -7556,6 +7683,67 @@ impl ChartApp {
 
         }
 
+        // Data-section header toolbar — draw-only vello copy (hit zones are
+        // registered by `render_to_scene`; parity note as for the TC header).
+        {
+            use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+            let rp = self.sidebar_state.right_panel;
+            if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                if let Some(item) = self.section_panel_for(rp) {
+                    let s_pid = item.panel_id();
+                    let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
+                    let dom_chips = if let mlc_core::state::Panel::Dom(id) = &item {
+                        self.panels_store.dom.get(id).map(|s| mlc_core::toolbar::SectionDomChips {
+                            multi_mode: s.multi_mode,
+                            auto_center: s.auto_center,
+                            min_volume_filter: s.min_volume_filter,
+                            tick_size: s.tick_size,
+                        })
+                    } else {
+                        None
+                    };
+                    let close_w = 36.0;
+                    let header_rect = LayoutRect::new(
+                        sidebar_rect.x,
+                        sidebar_rect.y,
+                        (sidebar_rect.width - close_w).max(0.0),
+                        40.0,
+                    );
+                    let th_sq_render = trading_symbol_edit_render_main.as_ref().map(|(_, r)| r);
+                    let th_sqs_on = self.core.user().profile().ui.symbol_quick_search;
+                    let th_result = self.panel_app.render_section_header_toolbar(
+                        &self.trading_header_tb,
+                        ctx,
+                        &header_rect,
+                        &s_sym,
+                        &s_ex,
+                        &s_at,
+                        th_sq_render,
+                        th_sqs_on,
+                        dom_chips,
+                    );
+                    if let Some((_, tag_rect)) = th_result.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag") {
+                        let tag_color = panel_color_map_main.get(&s_pid.0).copied();
+                        let css = match tag_color {
+                            Some(c) => format!(
+                                "rgba({},{},{},1.0)",
+                                (c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8
+                            ),
+                            None => "rgba(128,128,128,0.55)".to_string(),
+                        };
+                        let sq = 10.0;
+                        ctx.set_fill_color(&css);
+                        ctx.fill_rect(
+                            tag_rect.x + (tag_rect.width - sq) / 2.0,
+                            tag_rect.y + (tag_rect.height - sq) / 2.0,
+                            sq,
+                            sq,
+                        );
+                    }
+                }
+            }
+        }
+
         self.last_sidebar_result = Some(sidebar_result);
     }
 
@@ -7606,6 +7794,7 @@ impl ChartApp {
             || matches!(
                 self.symbol_quick_edit.as_ref().map(|e| e.target),
                 Some(SymbolQuickEditTarget::TradingPanel(_))
+                    | Some(SymbolQuickEditTarget::SectionPanel(_))
             )
     }
 
@@ -8324,6 +8513,35 @@ impl ChartApp {
         };
         self.rc_modal_result = rc_modal_result;
 
+        // 8e3. DOM settings modal (Stage B) — one modal for both DOM modes,
+        // opened by the DOM section header gear (`tch:sec_gear`).
+        if self.dom_modal.is_open {
+            use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+            let dom_pid = self
+                .section_panel_for(RSP::SlotDom)
+                .and_then(|item| match item {
+                    mlc_core::state::Panel::Dom(id) => Some(id),
+                    _ => None,
+                });
+            if let Some(pid) = dom_pid {
+                if let Some(dom) = self.panels_store.dom.get(&pid) {
+                    let coord = &mut *self.input_coordinator.borrow_mut();
+                    crate::dom_settings_modal::render_dom_settings_modal(
+                        ctx,
+                        coord,
+                        &frame_theme,
+                        &toolbar_theme,
+                        w,
+                        h,
+                        self.dom_modal.position,
+                        dom,
+                    );
+                }
+            } else {
+                self.dom_modal.is_open = false;
+            }
+        }
+
         // 8f. Standalone panel-settings surface (overlay gear, owner spec
         // 2026-07-28) — rendered last, topmost.
         let pset_result = self.build_panel_settings_view().map(|view| {
@@ -8449,6 +8667,7 @@ impl ChartApp {
             let is_trading_edit = matches!(
                 self.symbol_quick_edit.as_ref().map(|e| e.target),
                 Some(crate::SymbolQuickEditTarget::TradingPanel(_))
+                    | Some(crate::SymbolQuickEditTarget::SectionPanel(_))
             );
             let quick_open = !is_trading_edit
                 && self.panel_app.toolbar_state.open_dropdown_id.as_deref() == Some("symbol_selector");

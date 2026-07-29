@@ -262,6 +262,101 @@ impl ChartApp {
         }
     }
 
+    /// The single hosted panel of a data-section sidebar tab (global-docking
+    /// Stage B: sections host exactly one panel; the one-leaf dock tree
+    /// underneath is an implementation detail pending demolition).
+    pub(crate) fn section_panel_for(
+        &self,
+        panel: mlc_app_sidebar_content::state::RightSidebarPanel,
+    ) -> Option<mlc_core::state::Panel> {
+        use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
+        if panel == RSP::SlotTrading {
+            return None;
+        }
+        let idx = panel.slot_index()? as usize;
+        self.sidebar_state.slot_dockings.get(idx)?
+            .inner().tree().leaves().iter()
+            .find_map(|l| l.active_panel().cloned())
+    }
+
+    /// (symbol, exchange, account_type) of a data-section panel.
+    pub(crate) fn section_symbol_triplet(&self, item: &mlc_core::state::Panel) -> (String, String, String) {
+        use mlc_core::state::Panel;
+        match item {
+            Panel::Dom(id) => self.panels_store.dom.get(id)
+                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+            Panel::TradeTape(id) => self.panels_store.trade_tape.get(id)
+                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+            Panel::L2Tape(id) => self.panels_store.l2_tape.get(id)
+                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+            Panel::BigTrades(id) => self.panels_store.big_trades.get(id)
+                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+            _ => None,
+        }
+        .unwrap_or_default()
+    }
+
+    /// Open (or refocus) a data-section header's inline symbol editor —
+    /// the section counterpart of [`Self::open_trading_symbol_quick_edit`],
+    /// same seed grammar and select-all contract.
+    pub(crate) fn open_section_symbol_quick_edit(&mut self, item: &mlc_core::state::Panel) {
+        let pid = item.panel_id();
+        if matches!(
+            self.symbol_quick_edit.as_ref().map(|e| e.target),
+            Some(crate::SymbolQuickEditTarget::SectionPanel(p)) if p == pid
+        ) {
+            return;
+        }
+        let (sym, ex, at) = self.section_symbol_triplet(item);
+        let seed = if ex.is_empty() {
+            sym.clone()
+        } else {
+            format!("{}:{}:{}", sym, ex.to_uppercase(), at)
+        };
+        let cursor = seed.chars().count();
+        self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
+            target: crate::SymbolQuickEditTarget::SectionPanel(pid),
+            text: seed.clone(),
+            cursor,
+            selection: Some((0, cursor)),
+        });
+        let q_id = uzor::WidgetId::from(crate::text_input::SYMBOL_QUICK_SEARCH);
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        tf.set_text(&q_id, &seed);
+        tf.begin_edit(&q_id);
+        tf.focus(crate::text_input::SYMBOL_QUICK_SEARCH);
+        if let Some(fs) = tf.field_state_mut(&q_id) {
+            fs.selection_start = Some(0);
+            fs.cursor = cursor;
+        }
+    }
+
+    /// Commit a section-header symbol search: write the instrument on the
+    /// panel's tag group (every spawned market-data panel is a TagManager
+    /// member — auto or real) and run the group apply-key rebind. Real
+    /// groups propagate to all members; the private auto group rebinds just
+    /// this panel.
+    pub(crate) fn commit_symbol_search_to_section_panel(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        symbol: &str,
+        exchange: &str,
+        account_type: &str,
+    ) {
+        use mlc_core::ids::SyncMemberId;
+        let gid = self.core.tags().tag_for_member(SyncMemberId::Panel(pid.0));
+        if let Some(gid) = gid {
+            self.core.bubbles_mut().set_instrument(
+                gid, symbol.to_string(), exchange.to_string(), account_type.to_string(),
+            );
+            self.apply_key_to_panels_in_group(gid);
+        } else {
+            eprintln!("[ChartApp] section symbol commit: panel {} has no tag group — ignored", pid.0);
+        }
+        self.autosave_snapshot();
+    }
+
     /// Set the trading container's timeframe (embedded header TF system).
     /// Display-name grammar matches the topbar TF rows (`tf_{name}` →
     /// `name`, e.g. "1m"/"1H"). Stored + persisted on the container; TF
