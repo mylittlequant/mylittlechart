@@ -656,6 +656,8 @@ impl TradingContainerState {
     /// - one-row strips (metrics/tape) dock ONLY as horizontal bands —
     ///   any body zone maps to Up/Down by cursor half, edge drops only
     ///   top/bottom, never Center (no strip tabs), never full-height;
+    /// - vertical panels (DOM) hug only the VERTICAL container edges —
+    ///   top/bottom edge drops (a full-width DOM band) make no sense;
     /// - full panels can't subdivide a strip (no side splits of a 22px
     ///   band, no tabs on it);
     /// - full panel onto full panel: all 5 zones incl. Center = tabify.
@@ -671,6 +673,9 @@ impl TradingContainerState {
                     return matches!(zone, DropZone::Up | DropZone::Down).then_some(zone);
                 }
                 return Some(if frac.1 < 0.5 { DropZone::Up } else { DropZone::Down });
+            }
+            if is_edge && matches!(dragged, TcLeaf::Dom) {
+                return matches!(zone, DropZone::Left | DropZone::Right).then_some(zone);
             }
             if target_strip && !is_edge {
                 return None;
