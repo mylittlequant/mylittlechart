@@ -199,15 +199,15 @@ impl ChartApp {
                 BubbleEvent::OrderbookDeltaForMultiDom { exchange_id, symbol, bids, asks, .. } => {
                     let ex_label = exchange_id.as_str().to_string();
                     let target_ids: Vec<mlc_core::state::PanelId> = crate::standalone_panel::StandalonePanelRegistry::multi_dom_ids_for_symbol(
-                        &self.panels_store.multi_dom, symbol.as_str(),
+                        &self.panels_store.dom, symbol.as_str(),
                     ).collect();
                     for pid in target_ids {
-                        let Some(state) = self.panels_store.multi_dom.get_mut(&pid) else { continue };
-                        if let Some(idx) = state.exchange_idx(&ex_label) {
+                        let Some(state) = self.panels_store.dom.get_mut(&pid) else { continue };
+                        if let Some(idx) = state.multi.exchange_idx(&ex_label) {
                             let bids_v: Vec<(f64, f64)> = bids.iter().map(|(p, q)| (*p, *q)).collect();
                             let asks_v: Vec<(f64, f64)> = asks.iter().map(|(p, q)| (*p, *q)).collect();
-                            state.apply_snapshot(idx, bids_v.into_iter(), asks_v.into_iter());
-                            state.rebuild_merged();
+                            state.multi.apply_snapshot(idx, bids_v.into_iter(), asks_v.into_iter());
+                            state.multi.rebuild_merged();
                         }
                     }
                 }

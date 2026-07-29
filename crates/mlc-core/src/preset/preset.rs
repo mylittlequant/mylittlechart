@@ -151,6 +151,17 @@ pub enum PersistedFreeItemKind {
         tick_size: f64,
         levels_displayed: usize,
         center_price: f64,
+        /// Multi-exchange consolidated mode (merged Multi-DOM, global-docking
+        /// Stage A 2026-07-30). All defaulted so older presets restore in
+        /// single-ladder mode.
+        #[serde(default)]
+        multi_mode: bool,
+        #[serde(default)]
+        multi_exchanges: Vec<String>,
+        #[serde(default = "default_multi_dom_grid_size")]
+        multi_grid_size: f64,
+        #[serde(default = "default_multi_dom_depth")]
+        multi_depth: usize,
     },
     Footprint {
         #[serde(default)]
@@ -187,7 +198,10 @@ pub enum PersistedFreeItemKind {
     PositionManager,
     TradeLog,
     RiskCalculator,
-    /// Multi-exchange consolidated DOM panel.
+    /// LEGACY DECODE ONLY (pre Stage-A merge, 2026-07-30): Multi-DOM is now a
+    /// mode toggle on `Dom`. Never written anymore; old presets carrying this
+    /// variant hydrate into a `Dom` with `multi_mode = true`. Remove together
+    /// with slot persistence in Stage B.
     MultiDom {
         /// Symbol (e.g. "BTCUSDT").
         #[serde(default)]

@@ -1042,7 +1042,7 @@ impl ChartApp {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1056,6 +1056,18 @@ impl ChartApp {
                                             s.exchange = exchange.clone();
                                             s.account_type = normalize_account_type(account_type);
                                         }
+                                        // Restore the embedded multi-exchange book (merged Multi-DOM).
+                                        if !multi_exchanges.is_empty() {
+                                            s.multi = mlc_app_panels::trading::order_flow::multi_dom::MultiDomState::new(
+                                                s.symbol.clone(),
+                                                mlc_app_panels::trading::order_flow::multi_dom::MultiDomConfig {
+                                                    exchanges: multi_exchanges.clone(),
+                                                    grid_size: *multi_grid_size,
+                                                    depth_per_side: *multi_depth,
+                                                },
+                                            );
+                                        }
+                                        s.multi_mode = *multi_mode;
                                         // Subscribe to the shared orderbook + trade series if we have a concrete symbol.
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {
@@ -1063,6 +1075,14 @@ impl ChartApp {
                                                 s.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
                                                 let trade_handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = trade_handle;
+                                            }
+                                            if s.multi_mode {
+                                                let at = digdigdig3::AccountType::Spot;
+                                                for ex_label in &s.multi.config.exchanges {
+                                                    if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
+                                                        let _ = self.core.subscribe_orderbook(eid, &s.symbol, at);
+                                                    }
+                                                }
                                             }
                                         }
                                         self.panels_store.dom.insert(pid, s);
@@ -1367,15 +1387,19 @@ impl ChartApp {
                                     }
                                 }
                                 PersistedFreeItemKind::MultiDom { symbol, exchanges, grid_size, depth_per_side } => {
-                                    if !self.panels_store.multi_dom.contains_key(&pid) {
-                                        let config = mlc_app_panels::trading::order_flow::multi_dom::MultiDomConfig {
-                                            exchanges: exchanges.clone(),
-                                            grid_size: *grid_size,
-                                            depth_per_side: *depth_per_side,
-                                        };
-                                        let s = mlc_app_panels::trading::order_flow::multi_dom::MultiDomState::new(
-                                            symbol.clone(), config,
+                                    // LEGACY DECODE (pre Stage-A merge): materialize as a Dom
+                                    // panel in multi mode. Remove with slot persistence (Stage B).
+                                    if !self.panels_store.dom.contains_key(&pid) {
+                                        let mut s = mlc_app_panels::trading::order_flow::dom::DomState::new(symbol.clone(), 0.01);
+                                        s.multi = mlc_app_panels::trading::order_flow::multi_dom::MultiDomState::new(
+                                            symbol.clone(),
+                                            mlc_app_panels::trading::order_flow::multi_dom::MultiDomConfig {
+                                                exchanges: exchanges.clone(),
+                                                grid_size: *grid_size,
+                                                depth_per_side: *depth_per_side,
+                                            },
                                         );
+                                        s.multi_mode = true;
                                         // Subscribe orderbook for each configured exchange.
                                         if !symbol.is_empty() {
                                             for ex_label in exchanges {
@@ -1385,7 +1409,7 @@ impl ChartApp {
                                                 }
                                             }
                                         }
-                                        self.panels_store.multi_dom.insert(pid, s);
+                                        self.panels_store.dom.insert(pid, s);
                                     }
                                 }
                             }
@@ -1436,7 +1460,8 @@ impl ChartApp {
                                                 mlc_core::preset::preset::PersistedFreeItemKind::RiskCalculator           => Panel::RiskCalculator(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::TradingContainer { .. }  => Panel::TradingContainer(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::IndicatorPanel { .. }   => Panel::IndicatorPanel(pid),
-                                                mlc_core::preset::preset::PersistedFreeItemKind::MultiDom { .. }         => Panel::MultiDom(pid),
+                                                // Legacy decode: pre-merge Multi-DOM leaves restore as Dom (multi mode).
+                                                mlc_core::preset::preset::PersistedFreeItemKind::MultiDom { .. }         => Panel::Dom(pid),
                                             };
                                             if let Some(sk) = slot_kind {
                                                 if !sk.allowed_panel_kinds().contains(&item.kind_str()) {

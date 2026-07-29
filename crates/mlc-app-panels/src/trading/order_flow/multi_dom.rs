@@ -32,8 +32,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Serialize, Deserialize};
-
 use crate::panel_trait::TradingPanel;
 use crate::render::{RenderContext, TextAlign, TextBaseline};
 
@@ -48,10 +46,6 @@ pub const GRID_PRESETS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0];
 
 /// Depth (rows per side) presets, cycled by click.
 pub const DEPTH_PRESETS: &[usize] = &[10, 25, 50, 100];
-
-/// Multi-DOM panel ID — same shape as DomId.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct MultiDomId(pub u64);
 
 /// Local Eq/Ord newtype around f64 (no `ordered_float` dep).
 #[derive(Clone, Copy, Debug)]
@@ -820,23 +814,3 @@ impl MultiDomState {
     }
 }
 
-/// Lightweight wrapper for PanelKind registration.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MultiDomPanel {
-    id: MultiDomId,
-    title: String,
-}
-
-impl MultiDomPanel {
-    pub fn new(id: MultiDomId, title: String) -> Self {
-        Self { id, title }
-    }
-
-    pub fn id(&self) -> MultiDomId { self.id }
-    pub fn title(&self) -> &str { &self.title }
-    pub fn set_title(&mut self, title: String) { self.title = title; }
-
-    pub fn type_id(&self) -> &'static str { "multi_dom" }
-    pub fn kind_label(&self) -> &'static str { "Multi-Exchange DOM" }
-    pub fn min_size(&self) -> (f32, f32) { (200.0, 120.0) }
-}

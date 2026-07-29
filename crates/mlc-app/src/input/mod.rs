@@ -8092,6 +8092,10 @@ impl ChartApp {
                                 tick_size: state.tick_size,
                                 levels_displayed: state.levels_displayed,
                                 center_price: state.center_price,
+                                multi_mode: state.multi_mode,
+                                multi_exchanges: state.multi.config.exchanges.clone(),
+                                multi_grid_size: state.multi.config.grid_size,
+                                multi_depth: state.multi.config.depth_per_side,
                             }
                         }
                         Panel::Footprint(id) => {
@@ -8189,15 +8193,6 @@ impl ChartApp {
                                 bar_spacing: state.bar_spacing,
                                 view_position: state.view_position,
                                 height_ratio: state.height_ratio,
-                            }
-                        }
-                        Panel::MultiDom(id) => {
-                            let state = self.panels_store.multi_dom.get(id)?;
-                            PersistedFreeItemKind::MultiDom {
-                                symbol: state.symbol.clone(),
-                                exchanges: state.config.exchanges.clone(),
-                                grid_size: state.config.grid_size,
-                                depth_per_side: state.config.depth_per_side,
                             }
                         }
                         // Chart persistence is wired in Stage 8 (panels_store

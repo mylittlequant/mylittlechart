@@ -74,16 +74,16 @@ impl StandalonePanelRegistry {
         }
     }
 
-    /// `PanelId`s of every multi-exchange consolidated Dom panel tracking
-    /// `symbol`. Replaces the ad-hoc `panels_store.multi_dom.values_mut()`
-    /// scan-and-filter that used to live inline in the tick loop's
+    /// `PanelId`s of every Dom panel whose embedded multi-exchange book is
+    /// active and tracking `symbol` (merged Multi-DOM, Stage A 2026-07-30).
+    /// Replaces the ad-hoc scan that used to live inline in the tick loop's
     /// `OrderbookDeltaForMultiDom` handler.
     pub fn multi_dom_ids_for_symbol<'a>(
-        multi_dom: &'a std::collections::HashMap<PanelId, mlc_app_panels::trading::order_flow::multi_dom::MultiDomState>,
+        dom: &'a std::collections::HashMap<PanelId, mlc_app_panels::trading::order_flow::dom::DomState>,
         symbol: &'a str,
     ) -> impl Iterator<Item = PanelId> + 'a {
-        multi_dom.iter()
-            .filter(move |(_, state)| state.symbol == symbol)
+        dom.iter()
+            .filter(move |(_, state)| state.multi_mode && state.multi.symbol == symbol)
             .map(|(pid, _)| *pid)
     }
 }

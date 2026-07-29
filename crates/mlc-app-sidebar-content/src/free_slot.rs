@@ -25,7 +25,7 @@ pub enum SlotKind {
     /// positions, trade log, risk calc) are managed INSIDE the container,
     /// which renders as one self-contained leaf in the sidebar dock.
     Trading,
-    /// Hosts `Panel::Dom` and `Panel::MultiDom`.
+    /// Hosts `Panel::Dom` (multi-exchange view is a mode toggle on Dom).
     Dom,
     /// Hosts `Panel::TradeTape`.
     Tape,
@@ -85,15 +85,14 @@ impl SlotKind {
 
     /// The `Panel` kind strings (as used by `render_slot_spawn_dropdown` /
     /// `panel_click.rs`'s `slot:{idx}:spawn:{kind_str}` dispatch) this slot
-    /// kind accepts. `SlotDom` accepts two kinds (Dom + MultiDom); `SlotTrading`
-    /// accepts exactly one — `trading_container` — since OrderEntry /
-    /// PositionManager / TradeLog / RiskCalculator live INSIDE the container
-    /// as its hosted sub-panels, not as independently spawnable slot leaves
-    /// (owner spec 2026-07-25). Every other slot accepts exactly one kind.
+    /// kind accepts. Every slot accepts exactly one kind (Multi-DOM merged
+    /// into Dom as a mode toggle, Stage A 2026-07-30). `SlotTrading` hosts
+    /// only `trading_container` — OrderEntry / PositionManager / TradeLog /
+    /// RiskCalculator live INSIDE the container (owner spec 2026-07-25).
     pub fn allowed_panel_kinds(self) -> &'static [&'static str] {
         match self {
             SlotKind::Trading   => &["trading_container"],
-            SlotKind::Dom       => &["dom", "multi_dom"],
+            SlotKind::Dom       => &["dom"],
             SlotKind::Tape      => &["trade_tape"],
             SlotKind::L2        => &["l2_tape"],
             SlotKind::BigTrades => &["big_trades"],
@@ -101,7 +100,7 @@ impl SlotKind {
     }
 
     /// The default panel kind string spawned on auto-seed (first open of an
-    /// empty slot). For `SlotDom` this is `"dom"` (not `"multi_dom"`).
+    /// empty slot).
     pub fn default_panel_kind(self) -> &'static str {
         self.allowed_panel_kinds()[0]
     }
@@ -191,15 +190,15 @@ mod slot_kind_tests {
         assert_eq!(SlotKind::from_index(usize::MAX), None);
     }
 
-    /// Spawn-filter table (owner spec): SlotDom accepts 2 kinds
-    /// (Dom + MultiDom); every other slot accepts exactly 1.
+    /// Spawn-filter table (owner spec): every slot accepts exactly 1 kind
+    /// (Multi-DOM is a mode toggle on Dom since the Stage-A merge).
     #[test]
     fn allowed_panel_kinds_table() {
         assert_eq!(
             SlotKind::Trading.allowed_panel_kinds(),
             &["trading_container"],
         );
-        assert_eq!(SlotKind::Dom.allowed_panel_kinds(), &["dom", "multi_dom"]);
+        assert_eq!(SlotKind::Dom.allowed_panel_kinds(), &["dom"]);
         assert_eq!(SlotKind::Tape.allowed_panel_kinds(), &["trade_tape"]);
         assert_eq!(SlotKind::L2.allowed_panel_kinds(), &["l2_tape"]);
         assert_eq!(SlotKind::BigTrades.allowed_panel_kinds(), &["big_trades"]);
@@ -221,9 +220,7 @@ mod slot_kind_tests {
         }
     }
 
-    /// `default_panel_kind()` is always the first (and for most slots, only)
-    /// allowed kind — for `SlotDom` specifically this must be "dom", not
-    /// "multi_dom" (owner spec: auto-seed spawns Dom, not Multi-Exchange DOM).
+    /// `default_panel_kind()` is always the first (and only) allowed kind.
     #[test]
     fn default_panel_kind_matches_spec() {
         assert_eq!(SlotKind::Trading.default_panel_kind(), "trading_container");

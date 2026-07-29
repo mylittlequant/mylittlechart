@@ -112,7 +112,7 @@ pub enum RightSidebarPanel {
     Agents,
     /// Trading slot — hosts `TradingContainer` panels only, one per instrument.
     SlotTrading,
-    /// DOM slot — hosts `Dom` / `MultiDom` panels, one per instrument.
+    /// DOM slot — hosts `Dom` panels (multi-exchange = mode toggle), one per instrument.
     SlotDom,
     /// Trade Tape slot — hosts `TradeTape` panels, one per instrument.
     SlotTape,

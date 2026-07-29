@@ -260,7 +260,8 @@ pub fn render_right_sidebar(
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
+    // (auto_center, tick_size, min_volume_filter, multi_mode)
+    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64, bool)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
     // 4th tuple element is the panel's timeframe label (e.g.
@@ -924,7 +925,6 @@ fn render_watchlist_config_dropdown(
 /// this down to the subset a given [`crate::free_slot::SlotKind`] accepts.
 const ALL_SLOT_SPAWN_ITEMS: &[(&str, &str)] = &[
     ("dom",                "DOM"),
-    ("multi_dom",          "Multi-Exchange DOM"),
     ("footprint",          "Footprint"),
     ("volume_profile",     "Volume Profile"),
     ("liquidity_heatmap",  "Liquidity Heatmap"),
@@ -941,9 +941,8 @@ const ALL_SLOT_SPAWN_ITEMS: &[(&str, &str)] = &[
 
 /// Spawn-dropdown item list for one typed slot — filtered to the kinds that
 /// slot's [`crate::free_slot::SlotKind`] accepts (owner spec: type-locked
-/// slots).  `SlotDom` offers 2 items (Dom + MultiDom); `SlotTrading` offers 5
-/// (Trading container + Order Entry + Positions + Trade Log + Risk
-/// Calculator); every other slot offers exactly 1.
+/// slots). Every slot offers exactly 1 kind (Multi-DOM is a mode toggle on
+/// Dom since the Stage-A merge, 2026-07-30).
 pub fn slot_spawn_items(kind: crate::free_slot::SlotKind) -> Vec<(&'static str, &'static str)> {
     let allowed = kind.allowed_panel_kinds();
     ALL_SLOT_SPAWN_ITEMS
@@ -4010,7 +4009,8 @@ fn render_slot_panel(
     result: &mut RightSidebarResult,
     input_coordinator: &mut InputCoordinator,
     free_item_renderer: &mut dyn FnMut(&mlc_core::state::Panel, (f32, f32, f32, f32), &mut dyn RenderContext, &mut InputCoordinator, &str),
-    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64)>,
+    // (auto_center, tick_size, min_volume_filter, multi_mode)
+    panel_dom_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(bool, f64, f64, bool)>,
     panel_color_tag_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<[f32; 4]>,
     _panel_sync_flags_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<PanelSyncFlagsSnapshot>,
     panel_overlay_info_fn: &dyn Fn(&mlc_core::state::Panel) -> Option<(String, String, String, String)>,
@@ -4137,8 +4137,14 @@ fn render_slot_panel(
         let btn_y = header_y + (ctrl_strip_h - btn_h) / 2.0;
         let mut right_x = header_x + header_w - 3.0;
 
+        // (auto_center, tick_size, min_volume_filter, multi_mode) for Dom leaves.
+        let dom_info = panel_dom_info_fn(&item);
+        let dom_multi = matches!(dom_info, Some((_, _, _, true)));
+
         // [⚙] column config button — only for panels with column config
-        let has_col_config = matches!(
+        // (hidden for a Dom in multi-exchange mode: the multi view carries
+        // its own ⚙ config editor inside the panel header).
+        let has_col_config = !dom_multi && matches!(
             &item,
             mlc_core::state::Panel::Dom(_)
             | mlc_core::state::Panel::L2Tape(_)
@@ -4186,8 +4192,30 @@ fn render_slot_panel(
         result.item_rects.push((close_id, close_rect));
         right_x -= 2.0;
 
-        // DOM-specific: [A/M] toggle + tick_size label + [F] volume filter button
-        if let Some((auto_center, tick_size, min_volume_filter)) = panel_dom_info_fn(&item) {
+        // DOM-specific: [MX] multi-exchange toggle + (single mode only)
+        // [A/M] toggle + tick_size label + [F] volume filter button
+        if let Some((auto_center, tick_size, min_volume_filter, multi_mode)) = dom_info {
+            // [MX] multi-exchange consolidated mode (merged Multi-DOM, Stage A).
+            let mx_w = 24.0_f32;
+            right_x -= mx_w;
+            let mx_x = right_x;
+            let mx_id = format!("slot:{}:leaf:{}:mx_toggle", slot_idx, leaf_id.0);
+            let mx_hov = input_coordinator.is_hovered(&uzor::types::WidgetId::from(mx_id.as_str()));
+            if mx_hov || multi_mode {
+                ctx.set_fill_color(if multi_mode { &theme.accent } else { &theme.item_bg_hover });
+                ctx.fill_rounded_rect(mx_x as f64, btn_y as f64, mx_w as f64, btn_h as f64, 2.0);
+            }
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(if multi_mode { &theme.item_text_active } else { &theme.item_text_muted });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("MX", (mx_x + mx_w / 2.0) as f64, (btn_y + btn_h / 2.0) as f64);
+            let mx_rect = WidgetRect::new(mx_x as f64, btn_y as f64, mx_w as f64, btn_h as f64);
+            input_coordinator.register(mx_id.as_str(), mx_rect, uzor::input::Sense::CLICK);
+            result.item_rects.push((mx_id, mx_rect));
+            right_x -= 2.0;
+
+            if !multi_mode {
             // Tick size label (e.g. "0.01")
             let ts_text = format_tick_size(tick_size);
             let ts_w = 36.0_f32;
@@ -4263,6 +4291,7 @@ fn render_slot_panel(
             input_coordinator.register(f_id.as_str(), f_rect, uzor::input::Sense::CLICK);
             result.item_rects.push((f_id, f_rect));
             right_x -= 2.0;
+            } // !multi_mode — single-ladder chips only
         }
 
         // Panel type label on the left of the control strip (e.g. "DOM", "Footprint").
@@ -6877,8 +6906,8 @@ mod slot_spawn_dropdown_tests {
     use crate::free_slot::SlotKind;
 
     /// Spawn dropdown item list per slot kind (owner spec, T3): each slot
-    /// offers exactly the `Panel` kinds its `SlotKind` allows — SlotDom
-    /// offers 2 (Dom + MultiDom), every other slot offers exactly 1.
+    /// offers exactly the `Panel` kinds its `SlotKind` allows — one kind
+    /// per slot (Multi-DOM merged into Dom as a mode toggle, Stage A).
     #[test]
     fn spawn_items_per_slot_kind_table() {
         assert_eq!(
@@ -6887,7 +6916,7 @@ mod slot_spawn_dropdown_tests {
         );
         assert_eq!(
             slot_spawn_items(SlotKind::Dom).iter().map(|(k, _)| *k).collect::<Vec<_>>(),
-            vec!["dom", "multi_dom"],
+            vec!["dom"],
         );
         assert_eq!(
             slot_spawn_items(SlotKind::Tape).iter().map(|(k, _)| *k).collect::<Vec<_>>(),

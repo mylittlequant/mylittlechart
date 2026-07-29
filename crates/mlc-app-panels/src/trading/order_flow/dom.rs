@@ -211,6 +211,15 @@ pub struct DomState {
     /// `DomSkin::all()` variant; input handler toggles `self.skin` on
     /// click.
     pub skin_menu_open: bool,
+
+    /// Multi-exchange consolidated mode (merged Multi-DOM, global-docking
+    /// Stage A 2026-07-30). When ON, render + input delegate to `multi`;
+    /// the single-exchange ladder state above is untouched and survives
+    /// toggling back.
+    pub multi_mode: bool,
+    /// Embedded multi-exchange book state (per-exchange books, merged grid,
+    /// config editor). Fed by `OrderbookDeltaForMultiDom` events in tick.
+    pub multi: super::multi_dom::MultiDomState,
 }
 
 impl fmt::Debug for DomState {
@@ -253,6 +262,10 @@ pub struct DomSyncData {
 
 impl DomState {
     pub fn new(symbol: String, tick_size: f64) -> Self {
+        let multi = super::multi_dom::MultiDomState::new(
+            symbol.clone(),
+            super::multi_dom::MultiDomConfig::default(),
+        );
         Self {
             symbol,
             exchange: String::new(),
@@ -288,6 +301,34 @@ impl DomState {
             column_config: DomColumnConfig::default(),
             skin: DomSkin::default(),
             skin_menu_open: false,
+            multi_mode: false,
+            multi,
+        }
+    }
+
+    /// Toggle multi-exchange mode. On enable: re-syncs the embedded book's
+    /// symbol with the ladder's (dropping stale books on mismatch) and seeds
+    /// the default exchange trio on first use so the owner sees a
+    /// multi-column view immediately. Subscriptions are the caller's job
+    /// (app layer reads `multi.config.exchanges` after this call).
+    pub fn set_multi_mode(&mut self, on: bool) {
+        self.multi_mode = on;
+        if on {
+            if self.multi.symbol != self.symbol {
+                self.multi.symbol = self.symbol.clone();
+                for (b, a) in &mut self.multi.books_by_exchange {
+                    b.clear();
+                    a.clear();
+                }
+                self.multi.merged.clear();
+            }
+            if self.multi.config.exchanges.is_empty() {
+                for ex in ["binance", "bybit", "okx"] {
+                    self.multi.add_exchange(ex.to_string());
+                }
+            }
+        } else {
+            self.multi.editor_open = false;
         }
     }
 
@@ -929,6 +970,13 @@ impl TradingPanel for DomState {
         coordinator: &mut uzor::InputCoordinator,
         slot_prefix: &str,
     ) {
+        // Multi-exchange mode: the merged Multi-DOM view replaces the single
+        // ladder wholesale — its own header/body widgets take over input.
+        if self.multi_mode {
+            self.multi.render(ctx, x, y, w, h, theme, coordinator, slot_prefix);
+            return;
+        }
+
         // Register the entire DOM body as a single BlackboxPanel widget.
         // All input (drag/scroll/click/hover) is routed to handle_blackbox_event.
         {
@@ -1540,6 +1588,10 @@ impl TradingPanel for DomState {
     }
 
     fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
+        // Multi-mode widgets (`multi_dom:*`) belong to the embedded book.
+        if local_id.starts_with("multi_dom:") {
+            return self.multi.handle_click(local_id, _x, _y);
+        }
         // Skin selector menu rows are registered as `dom:skin:{idx}`.
         // Parse the trailing index and flip the active skin.
         if let Some(rest) = local_id.strip_prefix("dom:skin:") {
@@ -1560,6 +1612,9 @@ impl TradingPanel for DomState {
     }
 
     fn handle_drag_move(&mut self, _local_id: &str, _dx: f64, dy: f64) -> bool {
+        if self.multi_mode {
+            return true; // multi view has no drag-recenter
+        }
         self.auto_center = false;
         let lines = (dy / 20.0).round();
         let delta = lines * self.tick_size;
@@ -1573,6 +1628,14 @@ impl TradingPanel for DomState {
 
     fn handle_blackbox_event(&mut self, _local_x: f32, _local_y: f32, event: crate::panel_trait::BlackboxEvent) -> bool {
         use crate::panel_trait::BlackboxEvent;
+        if self.multi_mode {
+            // Right-click toggles the multi config editor; everything else
+            // is consumed so the hidden single ladder never recenters.
+            if matches!(event, BlackboxEvent::RightClick) {
+                self.multi.editor_open = !self.multi.editor_open;
+            }
+            return true;
+        }
         match event {
             BlackboxEvent::RightClick => {
                 // Right-click anywhere on the DOM body toggles the skin

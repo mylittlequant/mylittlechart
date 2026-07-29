@@ -6489,10 +6489,10 @@ impl ChartApp {
                 &mut |item, rect, ctx, coord, slot_prefix| {
                     panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
                 },
-                &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
+                &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64, bool)> {
                     use mlc_core::state::Panel;
                     match item {
-                        Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
+                        Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter, s.multi_mode)),
                         _ => None,
                     }
                 },
@@ -6507,8 +6507,6 @@ impl ChartApp {
                     match item {
                         Panel::Dom(id) => panels_store.dom.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
-                        Panel::MultiDom(id) => panels_store.multi_dom.get(id)
-                            .map(|s| (s.symbol.clone(), String::new(), String::new(), String::new())),
                         Panel::Footprint(id) => panels_store.footprint.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
@@ -7326,10 +7324,10 @@ impl ChartApp {
             &mut |item, rect, ctx, coord, slot_prefix| {
                 panels_render::render_free_item(panels_store, item, rect.0, rect.1, rect.2, rect.3, ctx, &panel_theme, coord, slot_prefix);
             },
-            &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64)> {
+            &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64, bool)> {
                 use mlc_core::state::Panel;
                 match item {
-                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter)),
+                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter, s.multi_mode)),
                     _ => None,
                 }
             },
@@ -7344,8 +7342,6 @@ impl ChartApp {
                 match item {
                     Panel::Dom(id) => panels_store.dom.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
-                    Panel::MultiDom(id) => panels_store.multi_dom.get(id)
-                        .map(|s| (s.symbol.clone(), String::new(), String::new(), String::new())),
                     Panel::Footprint(id) => panels_store.footprint.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::VolumeProfile(id) => panels_store.volume_profile.get(id)
@@ -8996,36 +8992,33 @@ impl ChartApp {
                     account_type: account_type.clone(),
                 });
             }
-            // Multi-DOM symbol sync: unsubscribe all exchanges on old symbol,
-            // re-subscribe on new symbol.  Exchange roster stays the same — only
-            // the symbol changes (tag-group driven).
-            let md_change = self.panels_store.multi_dom.get(&panel_id).and_then(|s| {
-                if s.symbol != symbol {
-                    Some((s.symbol.clone(), s.config.exchanges.clone()))
+            // Merged DOM's embedded multi-exchange book (Stage A): keep its
+            // symbol in lockstep — resubscribe the roster to the new symbol
+            // and drop stale books. Roster itself is tag-group independent.
+            let md_change = self.panels_store.dom.get(&panel_id).and_then(|s| {
+                if s.multi.symbol != symbol && !s.multi.config.exchanges.is_empty() {
+                    Some((s.multi.config.exchanges.clone(), s.multi_mode))
                 } else {
                     None
                 }
             });
-            if let Some((old_sym, exchanges)) = md_change {
-                let new_at = digdigdig3::AccountType::Spot;
-                for ex_label in &exchanges {
-                    if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                        if !old_sym.is_empty() {
-                            self.core.unsubscribe_orderbook(eid, &old_sym, new_at);
-                        }
-                        if !symbol.is_empty() {
+            if let Some((exchanges, multi_active)) = md_change {
+                if multi_active && !symbol.is_empty() {
+                    let new_at = digdigdig3::AccountType::Spot;
+                    for ex_label in &exchanges {
+                        if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
                             let _ = self.core.subscribe_orderbook(eid, &symbol, new_at);
                         }
                     }
                 }
-                if let Some(s) = self.panels_store.multi_dom.get_mut(&panel_id) {
-                    s.symbol = symbol.clone();
+                if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
+                    s.multi.symbol = symbol.clone();
                     // Clear stale book data; next snapshot refills.
-                    for (b, a) in &mut s.books_by_exchange {
+                    for (b, a) in &mut s.multi.books_by_exchange {
                         b.clear();
                         a.clear();
                     }
-                    s.merged.clear();
+                    s.multi.merged.clear();
                 }
             }
         }
