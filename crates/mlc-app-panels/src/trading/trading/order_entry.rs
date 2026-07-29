@@ -112,6 +112,11 @@ pub struct OrderEntryState {
     /// handling in `TradingManager::tick` does), so an unconditional clear
     /// erased every paper submit error before it was ever rendered.
     pub snapshot_error_shown: bool,
+
+    /// Show the risk-calculator gauge chip on the header (owner spec
+    /// 2026-07-29: overlay hosting of the calculator). Kept in sync by
+    /// `TradingContainerState::set_rc_overlay`; always false standalone.
+    pub show_rc_button: bool,
 }
 
 impl OrderEntryState {
@@ -142,6 +147,7 @@ impl OrderEntryState {
             scroll_offset: 0.0,
             snapshot: None,
             snapshot_error_shown: false,
+            show_rc_button: false,
         }
     }
 
@@ -618,7 +624,39 @@ impl TradingPanel for OrderEntryState {
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(TradingKey::OrderEntry.get(current_language()), (x + OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
+        let title = TradingKey::OrderEntry.get(current_language());
+        ctx.fill_text(title, (x + OE_PAD) as f64, (cursor_y + OE_TITLE_HEIGHT / 2.0) as f64);
+
+        // Risk-calculator gauge chip (overlay hosting, owner 2026-07-29)
+        // — right after the title, NOT in the corner: the container's
+        // hover chips [⚙][hand][✕] own the top-right of a Free leaf and
+        // would swallow the click.
+        if self.show_rc_button {
+            let title_w = ctx.measure_text(title);
+            let bs = 16.0_f32;
+            let bx = (x + OE_PAD) as f64 + title_w + 8.0;
+            let by = (cursor_y + (OE_TITLE_HEIGHT - bs) / 2.0) as f64;
+            let rc_btn_id = format!("{}:oe:rc_toggle", slot_prefix);
+            let hov = coordinator.is_hovered(&uzor::WidgetId::from(rc_btn_id.as_str()));
+            if hov {
+                ctx.set_fill_color(&theme.hover_overlay);
+                ctx.fill_rect(bx, by, bs as f64, bs as f64);
+            }
+            uzor::render::draw_svg_icon(
+                ctx,
+                mlc_core::state::icons::ICON_GAUGE,
+                bx + 2.0,
+                by + 2.0,
+                bs as f64 - 4.0,
+                bs as f64 - 4.0,
+                if hov { &theme.text_primary } else { &theme.text_muted },
+            );
+            coordinator.register(
+                rc_btn_id.as_str(),
+                uzor::Rect::new(bx, by, bs as f64, bs as f64),
+                uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+            );
+        }
 
         if !self.symbol.is_empty() {
             ctx.set_fill_color(&theme.text_muted);

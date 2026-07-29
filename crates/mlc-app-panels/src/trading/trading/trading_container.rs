@@ -449,14 +449,33 @@ pub struct TradingContainerState {
     /// [`Self::build_free_dock`]; `None` while in Fixed mode from spawn.
     pub free_dock: Option<TcFreeDock>,
 
+    /// Risk-calculator hosting (owner spec 2026-07-29): false = its own
+    /// panel/leaf (default), true = a standard app modal behind a gauge
+    /// chip on the Order Entry header. Persisted; switched via tc_modal
+    /// SETUP — use [`Self::set_rc_overlay`], never write the field
+    /// directly (the setter also re-homes the Free leaf and syncs the OE
+    /// chip). The modal itself (open state, position, drag) lives at the
+    /// app layer (`ChartApp::rc_modal`) like every other modal.
+    pub rc_overlay: bool,
+
+    /// Focus-highlight style for the Free-mode active leaf (owner spec
+    /// 2026-07-29): false = thin accent frame around the leaf, true = the
+    /// main-chart convention — a small 2px vertical accent bar in the
+    /// leaf's top-left corner. Persisted; switched via tc_modal SETUP.
+    pub focus_style_bar: bool,
+
     /// Last rendered container size `(w, h)`, cached by `render()` (which
     /// only takes `&self`, hence the `Cell`). Separator drags only receive
     /// incremental pixel deltas (see `TradingPanel::handle_drag_move`), not
     /// the container rect, so this is how they convert pixels back to
     /// ratios. Not persisted — always repopulated by the next render.
     pub last_size: std::cell::Cell<(f64, f64)>,
-    /// Widget-id slot prefix of the last render, cached by `render_free`
-    /// for the app-layer overlay pass ([`Self::render_free_overlay`] runs
+    /// Last rendered container origin `(x, y)` — pairs with `last_size`
+    /// so the overlay pass can anchor the RC popover in Fixed mode too.
+    /// Not persisted.
+    pub last_origin: std::cell::Cell<(f64, f64)>,
+    /// Widget-id slot prefix of the last render, cached by `render` for
+    /// the app-layer overlay pass ([`Self::render_free_overlay`] runs
     /// AFTER the embedded chart is painted, outside the panel render call,
     /// and has no other prefix source). Not persisted.
     pub last_slot_prefix: std::cell::RefCell<String>,
@@ -512,7 +531,10 @@ impl TradingContainerState {
             active_tab: BottomTab::default(),
             layout_mode: TcLayoutMode::default(),
             free_dock: None,
+            rc_overlay: false,
+            focus_style_bar: false,
             last_size: std::cell::Cell::new((0.0, 0.0)),
+            last_origin: std::cell::Cell::new((0.0, 0.0)),
             last_slot_prefix: std::cell::RefCell::new(String::new()),
             dom,
             order_entry: OrderEntryState::new(symbol),
@@ -615,9 +637,12 @@ impl TradingContainerState {
         let oe_id = tree
             .split_leaf(center_id, SplitKind::SplitRight, TcLeaf::OrderEntry)
             .expect("split center|oe");
-        let _rc_id = tree
-            .split_leaf(oe_id, SplitKind::SplitBottom, TcLeaf::RiskCalculator)
-            .expect("split oe|rc");
+        // Overlay-hosted calculator has no leaf — the popover pass draws it.
+        if !self.rc_overlay {
+            let _rc_id = tree
+                .split_leaf(oe_id, SplitKind::SplitBottom, TcLeaf::RiskCalculator)
+                .expect("split oe|rc");
+        }
 
         // Proportions (weights normalized by sum at layout time) from the
         // live pixel geometry. Each nested branch is binary.
@@ -633,8 +658,11 @@ impl TradingContainerState {
         };
         // H[C | V[OE;RC]]
         set_parent_props(&mut tree, center_id, vec![r.dom.2.max(1.0), r.order_entry.2.max(1.0)]);
-        // V[OE; RC]
-        set_parent_props(&mut tree, oe_id, vec![r.order_entry.3.max(1.0), r.risk_calculator.3.max(1.0)]);
+        // V[OE; RC] — only when RC actually split in (otherwise oe_id's
+        // parent is the H row above and these proportions would corrupt it).
+        if !self.rc_overlay {
+            set_parent_props(&mut tree, oe_id, vec![r.order_entry.3.max(1.0), r.risk_calculator.3.max(1.0)]);
+        }
         // V[tables; V[metrics; tape]]
         set_parent_props(&mut tree, tables_id, vec![tables_h, strips_h]);
         // V[metrics; tape]
@@ -803,6 +831,25 @@ impl TradingContainerState {
         }
     }
 
+    /// Switch the risk-calculator hosting (owner spec 2026-07-29):
+    /// `true` = overlay popover behind the gauge chip on Order Entry,
+    /// `false` = its own panel/leaf. Handles the Free-tree re-home and
+    /// keeps the OE chip flag in sync — the ONLY writer of `rc_overlay`.
+    pub fn set_rc_overlay(&mut self, on: bool) {
+        if self.rc_overlay == on {
+            return;
+        }
+        self.rc_overlay = on;
+        self.order_entry.show_rc_button = on;
+        if self.layout_mode == TcLayoutMode::Free {
+            if on {
+                self.close_free_leaf(&TcLeaf::RiskCalculator);
+            } else if self.free_leaf_hosting(&TcLeaf::RiskCalculator).is_none() {
+                self.spawn_free_leaf(TcLeaf::RiskCalculator);
+            }
+        }
+    }
+
     /// Focus the leaf hosting `kind` — focus follows the click (owner
     /// spec 2026-07-29). Strips are not focusable content; no-op outside
     /// Free mode or when `kind` isn't hosted.
@@ -824,6 +871,12 @@ impl TradingContainerState {
     /// leaf as its first panel.
     pub fn spawn_free_leaf(&mut self, kind: TcLeaf) {
         use uzor::panels::{DropZone, SplitKind};
+        // Spawning the calculator as a leaf is an implicit hosting flip
+        // back to panel mode (it can't be both a leaf and an overlay).
+        if kind == TcLeaf::RiskCalculator && self.rc_overlay {
+            self.rc_overlay = false;
+            self.order_entry.show_rc_button = false;
+        }
         // Already hosted somewhere (possibly as an inactive tab) — bring
         // it forward. A strip can't be "activated" visibly (solo one-row
         // leaf), so it re-homes to the canonical full-width bottom band
@@ -945,7 +998,9 @@ impl TradingContainerState {
         let dom_col_w = (w - right_w).max(0.0);
 
         let right_col_x = x + dom_col_w;
-        let right_split = Self::clamp_inner_split(self.right_split);
+        // Overlay-hosted calculator frees its region — OE takes the
+        // whole right column (owner spec 2026-07-29).
+        let right_split = if self.rc_overlay { 1.0 } else { Self::clamp_inner_split(self.right_split) };
         let oe_h = main_h * right_split;
         let rc_h = (main_h - oe_h).max(0.0);
 
@@ -1039,8 +1094,14 @@ impl TradingPanel for TradingContainerState {
         coordinator: &mut uzor::InputCoordinator,
         slot_prefix: &str,
     ) {
-        // Cache this frame's size for separator drags (see `last_size` doc).
+        // Cache this frame's geometry + widget namespace for separator
+        // drags and the app-layer overlay pass (popover anchoring works
+        // in Fixed mode too — see `last_origin`/`last_slot_prefix` docs).
         self.last_size.set((w as f64, h as f64));
+        self.last_origin.set((x as f64, y as f64));
+        if *self.last_slot_prefix.borrow() != slot_prefix {
+            *self.last_slot_prefix.borrow_mut() = slot_prefix.to_string();
+        }
 
         // Background
         ctx.set_fill_color(&theme.tc_bg);
@@ -1083,12 +1144,15 @@ impl TradingPanel for TradingContainerState {
             }
         }
 
-        // --- Right column: OrderEntry (top), RiskCalculator (bottom) ---
+        // --- Right column: OrderEntry (top), RiskCalculator (bottom;
+        // absent in overlay hosting — the popover pass draws it) ---
         let (ox, oy, ow, oh) = rects.order_entry;
         self.order_entry.render(ctx, ox as f32, oy as f32, ow as f32, oh as f32, theme, coordinator, slot_prefix);
 
-        let (rcx, rcy, rcw, rch) = rects.risk_calculator;
-        self.risk_calculator.render(ctx, rcx as f32, rcy as f32, rcw as f32, rch as f32, theme, coordinator, slot_prefix);
+        if !self.rc_overlay {
+            let (rcx, rcy, rcw, rch) = rects.risk_calculator;
+            self.risk_calculator.render(ctx, rcx as f32, rcy as f32, rcw as f32, rch as f32, theme, coordinator, slot_prefix);
+        }
 
         // --- Bottom strip: tab row + active view, full width (W3, 2026-07-25) ---
         let (tbx, tby, tbw, tbh) = rects.bottom_tab_bar;
@@ -1124,6 +1188,10 @@ impl TradingPanel for TradingContainerState {
             let regions = self.regions(x as f64, y as f64, w as f64, h as f64);
             for region in &regions {
                 let TradingRegionKind::Separator(sep) = region.kind else { continue };
+                // No OE|RC split exists while the calculator is overlay-hosted.
+                if self.rc_overlay && sep == TradingSeparator::OeRiskCalc {
+                    continue;
+                }
                 let (rx, ry, rw, rh) = region.rect;
                 // Visual line: thin bar centered in the (hit-padded) rect.
                 ctx.set_fill_color(&theme.tc_separator);
@@ -1624,11 +1692,17 @@ impl TradingContainerState {
     ///   targets), the armed drop-zone preview and a title ghost at the
     ///   cursor. Center (tabify) does not exist in this increment — the
     ///   dock classifies body drops sides-only.
+    /// App-layer overlay pass — runs AFTER the embedded chart: Free-mode
+    /// docking chrome (chips, tab bars, focus highlight, drag feedback).
+    /// `suppress_focus` — hide the focused-leaf highlight while an app
+    /// modal is up (single-active rule, owner spec 2026-07-29: the modal
+    /// is the active surface, the container must not also mark one).
     pub fn render_free_overlay(
         &self,
         ctx: &mut dyn RenderContext,
         theme: &crate::panel_theme::PanelTheme,
         coordinator: &mut uzor::InputCoordinator,
+        suppress_focus: bool,
     ) {
         use uzor::input::Sense;
         use uzor::panels::DropZone;
@@ -1858,23 +1932,36 @@ impl TradingContainerState {
             }
         }
 
-        // Focused-leaf outline (owner spec 2026-07-29): the one leaf that
-        // holds interaction focus wears a thin accent frame — the chip
-        // `is_active` styling only says what a STACK displays, never what
-        // is focused. Hidden while a drag is in flight (feedback owns the
-        // accent language) and pointless on a single-leaf tree.
-        if !drag_active && leaf_rects.len() > 1 {
+        // Focused-leaf highlight (owner spec 2026-07-29): the ONE leaf
+        // that holds interaction focus — the chip `is_active` styling only
+        // says what a STACK displays, never what is focused. Two styles
+        // (SETUP toggle): thin accent frame, or the main-chart convention
+        // — a small 2px vertical accent bar in the top-left corner.
+        // Hidden while a drag is in flight (feedback owns the accent
+        // language), while an app modal is up (single-active rule), and
+        // pointless on a single-leaf tree.
+        if !suppress_focus && !drag_active && leaf_rects.len() > 1 {
             if let Some(active) = ds.active_leaf() {
                 if let Some(r) = ds.panel_rects().get(&active) {
-                    ctx.set_stroke_color(&mlc_core::apply_opacity(&theme.accent, 0.7));
-                    ctx.set_stroke_width(1.5);
-                    ctx.set_line_dash(&[]);
-                    ctx.stroke_rect(
-                        r.x as f64 + 1.0,
-                        r.y as f64 + 1.0,
-                        (r.width as f64 - 2.0).max(0.0),
-                        (r.height as f64 - 2.0).max(0.0),
-                    );
+                    if self.focus_style_bar {
+                        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.92));
+                        ctx.fill_rect(
+                            r.x as f64,
+                            r.y as f64,
+                            2.0,
+                            20.0_f64.min(r.height as f64),
+                        );
+                    } else {
+                        ctx.set_stroke_color(&mlc_core::apply_opacity(&theme.accent, 0.7));
+                        ctx.set_stroke_width(1.5);
+                        ctx.set_line_dash(&[]);
+                        ctx.stroke_rect(
+                            r.x as f64 + 1.0,
+                            r.y as f64 + 1.0,
+                            (r.width as f64 - 2.0).max(0.0),
+                            (r.height as f64 - 2.0).max(0.0),
+                        );
+                    }
                 }
             }
         }

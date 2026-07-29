@@ -320,11 +320,16 @@ fn draw_rc_field_row(
     field_value_right: f32,
     now_ms: u64,
 ) {
-    ctx.set_fill_color(if live.is_some() { &theme.rc_input_bg } else { &theme.panel_bg });
+    // Calculator-look inputs (owner 2026-07-29): every editable row reads
+    // as an input cell — inset fill + hairline underline; the live row
+    // brightens its underline and grows an accent notch on the left.
+    ctx.set_fill_color(&theme.rc_input_bg);
     ctx.fill_rect(x as f64, row_y as f64, w as f64, RC_ROW_HEIGHT as f64);
+    ctx.set_fill_color(if live.is_some() { &theme.rc_input_border } else { &theme.separator });
+    ctx.fill_rect(x as f64, (row_y + RC_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
     if live.is_some() {
-        ctx.set_fill_color(&theme.rc_input_border);
-        ctx.fill_rect(x as f64, (row_y + RC_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
+        ctx.set_fill_color(&theme.accent);
+        ctx.fill_rect(x as f64, row_y as f64, 2.0, RC_ROW_HEIGHT as f64);
     }
 
     // Value width first (static text, or the live store text) — the label
@@ -396,6 +401,10 @@ const RC_TITLE_HEIGHT: f32 = 20.0;
 const RC_ROW_HEIGHT: f32 = 20.0;
 const RC_LEFT_PAD: f32 = 8.0;
 const RC_APPLY_HEIGHT: f32 = 24.0;
+/// The calculator "screen" — the framed answer block (owner 2026-07-29).
+const RC_SCREEN_HEIGHT: f32 = 52.0;
+/// Compact secondary-output rows under the screen.
+const RC_SMALL_ROW: f32 = 16.0;
 
 impl TradingPanel for RiskCalculatorState {
     fn kind(&self) -> &'static str { "risk_calculator" }
@@ -534,32 +543,67 @@ impl TradingPanel for RiskCalculatorState {
         );
         cursor_y += RC_ROW_HEIGHT;
 
-        ctx.set_fill_color(&theme.separator);
-        ctx.fill_rect((x + RC_LEFT_PAD) as f64, cursor_y as f64, (w - RC_LEFT_PAD * 2.0) as f64, 1.0);
-        cursor_y += 6.0;
+        cursor_y += 4.0;
 
-        // --- Computed output rows — dash when inputs incomplete, never a
-        // fake $0.00 (owner spec: "remove dead zero-rows look"). ---
+        // === Calculator display — the "screen" (owner spec 2026-07-29:
+        // look like a calculator — inputs above, ONE prominent answer).
+        // Position Size is the answer; Risk $ and R:R ride the screen's
+        // bottom edge. Dashes while inputs are incomplete.
         let ready = self.inputs_ready();
         let good_rr = self.risk_reward_ratio.map_or(false, |rr| rr >= 2.0);
+        let dash = "\u{2014}".to_string();
+        if cursor_y + RC_SCREEN_HEIGHT <= y + h - RC_APPLY_HEIGHT {
+            let sx = (x + RC_LEFT_PAD) as f64;
+            let sw = (w - RC_LEFT_PAD * 2.0) as f64;
+            let sy = cursor_y as f64;
+            ctx.set_fill_color(&theme.tc_inner_bg);
+            ctx.fill_rect(sx, sy, sw, RC_SCREEN_HEIGHT as f64);
+            ctx.set_stroke_color(&theme.rc_input_border);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rect(sx + 0.5, sy + 0.5, sw - 1.0, RC_SCREEN_HEIGHT as f64 - 1.0);
+
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_font("8px sans-serif");
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text("POSITION SIZE", sx + 6.0, sy + 10.0);
+
+            let answer = if ready { self.format_output("position_size") } else { dash.clone() };
+            ctx.set_font("16px monospace");
+            ctx.set_fill_color(&theme.text_primary);
+            ctx.set_text_align(TextAlign::Right);
+            ctx.fill_text(&answer, sx + sw - 6.0, sy + 26.0);
+
+            // Bottom strip of the screen: Risk $ left, R:R right — the
+            // left text yields to the right one on narrow panels.
+            ctx.set_font("9px monospace");
+            let rr_txt = format!("R:R {}", if ready { self.format_output("risk_reward_ratio") } else { dash.clone() });
+            let rr_w = ctx.measure_text(&rr_txt);
+            let risk_txt = format!("Risk {}", if ready { self.format_output("risk_amount") } else { dash.clone() });
+            let risk_fit = fit_label(ctx, &risk_txt, sw - rr_w - 18.0);
+            ctx.set_fill_color(&theme.rc_risk);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&risk_fit, sx + 6.0, sy + RC_SCREEN_HEIGHT as f64 - 10.0);
+            ctx.set_fill_color(if good_rr { &theme.rc_good_rr } else { &theme.text_primary });
+            ctx.set_text_align(TextAlign::Right);
+            ctx.fill_text(&rr_txt, sx + sw - 6.0, sy + RC_SCREEN_HEIGHT as f64 - 10.0);
+            cursor_y += RC_SCREEN_HEIGHT + 4.0;
+        }
+
+        // Secondary outputs — compact rows under the screen.
         let leverage_str = self.leverage.map(|lev| format!("{}x", lev)).unwrap_or_else(|| "1x".to_string());
-
-        // (label, value, color_key) — color_key: "risk", "profit", "good_rr", "default"
-        let computed_rows: [(&str, String, &str); 6] = [
-            ("Risk Amount:", if ready { self.format_output("risk_amount") } else { "\u{2014}".to_string() }, "risk"),
-            ("Position Size:", if ready { self.format_output("position_size") } else { "\u{2014}".to_string() }, "default"),
-            ("Risk/Unit:", if ready { self.format_output("risk_per_unit") } else { "\u{2014}".to_string() }, "default"),
-            ("Potential Profit:", if ready { self.format_output("potential_profit") } else { "\u{2014}".to_string() }, "profit"),
-            ("R:R Ratio:", if ready { self.format_output("risk_reward_ratio") } else { "\u{2014}".to_string() }, if good_rr { "good_rr" } else { "default" }),
-            ("Margin Req:", if ready { self.format_output("margin_required") } else { "\u{2014}".to_string() }, "default"),
+        let secondary_rows: [(&str, String, &str); 4] = [
+            ("Risk/Unit:", if ready { self.format_output("risk_per_unit") } else { dash.clone() }, "default"),
+            ("Potential Profit:", if ready { self.format_output("potential_profit") } else { dash.clone() }, "profit"),
+            ("Margin Req:", if ready { self.format_output("margin_required") } else { dash.clone() }, "default"),
+            ("Leverage:", leverage_str, "default"),
         ];
-
-        for (label, value, color_key) in &computed_rows {
-            if cursor_y + RC_ROW_HEIGHT > y + h - RC_APPLY_HEIGHT {
+        for (label, value, color_key) in &secondary_rows {
+            if cursor_y + RC_SMALL_ROW > y + h - RC_APPLY_HEIGHT {
                 break;
             }
-            let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
-            ctx.set_font("10px monospace");
+            let row_mid_y = (cursor_y + RC_SMALL_ROW / 2.0) as f64;
+            ctx.set_font("9px monospace");
             ctx.set_text_baseline(TextBaseline::Middle);
             let value_w = ctx.measure_text(value);
             let label_max = (w as f64 - RC_LEFT_PAD as f64 * 2.0) - value_w - 6.0;
@@ -569,29 +613,13 @@ impl TradingPanel for RiskCalculatorState {
             ctx.fill_text(&fitted, (x + RC_LEFT_PAD) as f64, row_mid_y);
 
             let value_color = match *color_key {
-                "risk"    => &theme.rc_risk,
-                "profit"  => &theme.rc_profit,
-                "good_rr" => &theme.rc_good_rr,
-                _         => &theme.text_primary,
+                "profit" => &theme.rc_profit,
+                _        => &theme.text_primary,
             };
             ctx.set_fill_color(value_color);
             ctx.set_text_align(TextAlign::Right);
             ctx.fill_text(value, (x + w - RC_LEFT_PAD) as f64, row_mid_y);
-            cursor_y += RC_ROW_HEIGHT;
-        }
-        // Leverage row is a static display (no leverage editor in this arc).
-        if cursor_y + RC_ROW_HEIGHT <= y + h - RC_APPLY_HEIGHT {
-            let row_mid_y = (cursor_y + RC_ROW_HEIGHT / 2.0) as f64;
-            let value_w = ctx.measure_text(&leverage_str);
-            let label_max = (w as f64 - RC_LEFT_PAD as f64 * 2.0) - value_w - 6.0;
-            let fitted = fit_label(ctx, "Leverage:", label_max);
-            ctx.set_fill_color(&theme.text_muted);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text(&fitted, (x + RC_LEFT_PAD) as f64, row_mid_y);
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.set_text_align(TextAlign::Right);
-            ctx.fill_text(&leverage_str, (x + w - RC_LEFT_PAD) as f64, row_mid_y);
-            cursor_y += RC_ROW_HEIGHT;
+            cursor_y += RC_SMALL_ROW;
         }
 
         // --- Apply size button ---

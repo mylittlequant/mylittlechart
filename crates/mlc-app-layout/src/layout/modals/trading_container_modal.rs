@@ -170,6 +170,12 @@ pub struct TcSetupData {
     /// disconnected strip's knobs are hidden). Fixed mode passes true.
     pub show_tape: bool,
     pub show_metrics: bool,
+    /// Risk-calculator hosting: false = its own panel, true = overlay
+    /// popover behind the gauge chip on Order Entry (owner 2026-07-29).
+    pub rc_overlay: bool,
+    /// Free-mode focus-highlight style: false = accent frame, true =
+    /// main-chart-style 2px corner bar (owner 2026-07-29).
+    pub focus_bar: bool,
 }
 
 /// `panels` — the MAP cards (container-local rects); `container_size` — the
@@ -614,6 +620,82 @@ fn render_setup_section(
         }
         row_y += btn_h + 20.0;
     }
+
+    // ── Risk-calculator hosting (owner spec 2026-07-29): its own panel,
+    // or an overlay popover behind the gauge chip on Order Entry.
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Risk Calculator", left, row_y + 10.0);
+    row_y += 26.0;
+
+    for (i, (id, label)) in [("panel", "Panel"), ("overlay", "OE Button")].iter().enumerate() {
+        let bx = left + i as f64 * (btn_w + 8.0);
+        let wid = format!("tc_modal:rc_host:{}", id);
+        let is_active = setup.rc_overlay == (*id == "overlay");
+        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+        let bg = if is_active {
+            toolbar_theme.accent.clone()
+        } else if is_hovered {
+            toolbar_theme.item_bg_hover.clone()
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(bx, row_y, btn_w, btn_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, bx + btn_w / 2.0, row_y + btn_h / 2.0);
+
+        input_coordinator.register_on_layer(
+            wid.as_str(),
+            WidgetRect::new(bx, row_y, btn_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+    row_y += btn_h + 20.0;
+
+    // ── Focus-highlight style (owner spec 2026-07-29): accent frame, or
+    // the main-chart convention — a 2px corner bar.
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Focus highlight", left, row_y + 10.0);
+    row_y += 26.0;
+
+    for (i, (id, label)) in [("frame", "Frame"), ("bar", "Corner bar")].iter().enumerate() {
+        let bx = left + i as f64 * (btn_w + 8.0);
+        let wid = format!("tc_modal:focus_style:{}", id);
+        let is_active = setup.focus_bar == (*id == "bar");
+        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
+        let bg = if is_active {
+            toolbar_theme.accent.clone()
+        } else if is_hovered {
+            toolbar_theme.item_bg_hover.clone()
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.06)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(bx, row_y, btn_w, btn_h, 4.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, bx + btn_w / 2.0, row_y + btn_h / 2.0);
+
+        input_coordinator.register_on_layer(
+            wid.as_str(),
+            WidgetRect::new(bx, row_y, btn_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+    row_y += btn_h + 20.0;
 
     // ── Layout reset ─────────────────────────────────────────────────────
     ctx.set_font("11px sans-serif");

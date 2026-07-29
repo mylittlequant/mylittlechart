@@ -1235,6 +1235,7 @@ impl ChartApp {
                                     source, tick_size, market_price,
                                     right_ratio, bottom_ratio, right_split, active_tab,
                                     timeframe, center_kind, layout_mode, free_tree,
+                                    rc_overlay, focus_bar,
                                 } => {
                                     if !self.panels_store.trading_container.contains_key(&pid) {
                                         let converted_source = convert_source(source);
@@ -1289,6 +1290,11 @@ impl ChartApp {
                                         // docking TREE restores from its persisted snapshot; a
                                         // missing/corrupt snapshot falls back to re-migrating from
                                         // the v1 ratios restored above (identical geometry).
+                                        // rc_overlay BEFORE the dock build — build_free_dock
+                                        // skips the RC leaf in overlay hosting.
+                                        s.rc_overlay = *rc_overlay;
+                                        s.order_entry.show_rc_button = *rc_overlay;
+                                        s.focus_style_bar = *focus_bar;
                                         if let Some(mode) = mlc_app_panels::trading::trading::trading_container::TcLayoutMode::from_wire_id(layout_mode) {
                                             s.layout_mode = mode;
                                             if mode == mlc_app_panels::trading::trading::trading_container::TcLayoutMode::Free

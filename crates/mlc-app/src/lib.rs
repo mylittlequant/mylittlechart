@@ -1098,6 +1098,12 @@ pub struct ChartApp {
     /// Last rendered Trading Container modal geometry — header drag reads
     /// the header rect off this between frames.
     pub(crate) tc_modal_result: Option<mlc_app_layout::layout::modals::TcModalResult>,
+    /// Risk Calculator modal (gauge chip on the Order Entry header —
+    /// overlay hosting, owner spec 2026-07-29). Standard modal state
+    /// shape reused; the `section` field is unused.
+    pub(crate) rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState,
+    /// Last rendered Risk Calculator modal geometry (header drag anchor).
+    pub(crate) rc_modal_result: Option<mlc_app_layout::layout::modals::TcModalResult>,
     /// Open standalone panel-settings surface (overlay gear, owner spec
     /// 2026-07-28): the target panel + the dropdown anchor. `None` = closed.
     pub(crate) panel_settings_open: Option<(mlc_core::state::Panel, (f64, f64))>,
@@ -2334,6 +2340,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            rc_modal_result: None,
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -2741,6 +2749,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            rc_modal_result: None,
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -3294,6 +3304,8 @@ impl ChartApp {
             trading_center_ind_overlay: mlc_app_layout::ui::modal_settings::IndicatorOverlayState::default(),
             tc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             tc_modal_result: None,
+            rc_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
+            rc_modal_result: None,
             panel_settings_open: None,
             panel_settings_result: None,
         };
@@ -6685,6 +6697,7 @@ impl ChartApp {
                             ctx,
                             &overlay_theme,
                             &mut self.input_coordinator.borrow_mut(),
+                            self.rc_modal.is_open || self.tc_modal.is_open,
                         );
                     }
                 }
@@ -7479,6 +7492,7 @@ impl ChartApp {
                         ctx,
                         &overlay_theme,
                         &mut self.input_coordinator.borrow_mut(),
+                        self.rc_modal.is_open || self.tc_modal.is_open,
                     );
                 }
             }
@@ -8158,6 +8172,8 @@ impl ChartApp {
                     ],
                     show_tape: connected(TcLeaf::Tape),
                     show_metrics: connected(TcLeaf::Metrics),
+                    rc_overlay: tc.rc_overlay,
+                    focus_bar: tc.focus_style_bar,
                 };
                 mlc_app_layout::layout::modals::render_trading_container_modal(
                     ctx,
@@ -8176,6 +8192,128 @@ impl ChartApp {
             None
         };
         self.tc_modal_result = tc_modal_result;
+
+        // 8e2. Risk Calculator modal — overlay hosting of the calculator
+        // (gauge chip on the OE header, owner spec 2026-07-29). Standard
+        // modal machinery: own modal layer, draggable header, ✕ +
+        // outside-click close. The calculator panel renders 1:1 into the
+        // modal body with its plain registrations joined to the modal
+        // layer (`set_default_layer`); its internal title strip is
+        // clipped away — the modal header IS the title.
+        let rc_modal_result = if self.rc_modal.is_open {
+            self.panels_store.trading_container.iter().next().and_then(|(_pid, tc)| {
+                if !tc.rc_overlay {
+                    return None;
+                }
+                let prefix = tc.last_slot_prefix.borrow().clone();
+                if prefix.is_empty() {
+                    return None;
+                }
+                use uzor::render::{TextAlign, TextBaseline};
+                const RC_W: f64 = 260.0;
+                const RC_H: f64 = 380.0;
+                const RC_HEADER_H: f64 = 28.0;
+                const RC_INNER_TITLE_H: f64 = 20.0; // RiskCalculatorState's own strip
+                let (mx, my) = self
+                    .rc_modal
+                    .position
+                    .unwrap_or(((w - RC_W) / 2.0, (h - RC_H) / 2.0));
+                let mx = mx.max(0.0).min((w - RC_W).max(0.0));
+                let my = my.max(0.0).min((h - RC_H).max(0.0));
+                let mut result = mlc_app_layout::layout::modals::TcModalResult::default();
+                result.modal_rect = uzor::Rect::new(mx, my, RC_W, RC_H);
+                result.header_rect = uzor::Rect::new(mx, my, RC_W, RC_HEADER_H);
+
+                let ptheme =
+                    panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
+                let coord = &mut *self.input_coordinator.borrow_mut();
+                use mlc_app_layout::ui::z_order::ZLayer;
+                let layer_id = ZLayer::Modal.push_named(coord, "rc_modal");
+                coord.register_on_layer(
+                    "rc_modal:header",
+                    result.header_rect,
+                    uzor::input::Sense::DRAG,
+                    &layer_id,
+                );
+                coord.register_on_layer(
+                    "rc_modal:modal_bg",
+                    result.modal_rect,
+                    uzor::input::Sense::CLICK,
+                    &layer_id,
+                );
+
+                // Frame + header.
+                ctx.set_fill_color(&frame_theme.toolbar_bg);
+                ctx.fill_rounded_rect(mx, my, RC_W, RC_H, 6.0);
+                ctx.set_fill_color(&toolbar_theme.item_text);
+                ctx.set_font("12px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("Risk Calculator", mx + 12.0, my + RC_HEADER_H / 2.0);
+                ctx.set_stroke_color(&frame_theme.toolbar_border);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(mx, my + RC_HEADER_H);
+                ctx.line_to(mx + RC_W, my + RC_HEADER_H);
+                ctx.stroke();
+
+                // Close ✕.
+                const CLOSE: f64 = 16.0;
+                let cx = mx + RC_W - CLOSE - 8.0;
+                let cy = my + (RC_HEADER_H - CLOSE) / 2.0;
+                let close_hov =
+                    coord.is_hovered(&uzor::WidgetId::from("rc_modal:close"));
+                if close_hov {
+                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                    ctx.fill_rounded_rect(cx, cy, CLOSE, CLOSE, 2.0);
+                }
+                ctx.set_stroke_color(&toolbar_theme.item_text);
+                ctx.set_stroke_width(1.5);
+                ctx.begin_path();
+                ctx.move_to(cx + 4.5, cy + 4.5);
+                ctx.line_to(cx + CLOSE - 4.5, cy + CLOSE - 4.5);
+                ctx.stroke();
+                ctx.begin_path();
+                ctx.move_to(cx + CLOSE - 4.5, cy + 4.5);
+                ctx.line_to(cx + 4.5, cy + CLOSE - 4.5);
+                ctx.stroke();
+                coord.register_on_layer(
+                    "rc_modal:close",
+                    uzor::Rect::new(cx, cy, CLOSE, CLOSE),
+                    uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+                    &layer_id,
+                );
+
+                // Body — the calculator panel, its own title strip clipped
+                // away (shifted up under the modal header).
+                coord.set_default_layer(Some(layer_id.clone()));
+                ctx.save();
+                ctx.clip_rect(mx, my + RC_HEADER_H, RC_W, RC_H - RC_HEADER_H);
+                use mlc_app_panels::panel_trait::TradingPanel as _;
+                tc.risk_calculator.render(
+                    ctx,
+                    mx as f32,
+                    (my + RC_HEADER_H - RC_INNER_TITLE_H) as f32,
+                    RC_W as f32,
+                    (RC_H - RC_HEADER_H + RC_INNER_TITLE_H) as f32,
+                    &ptheme,
+                    coord,
+                    &prefix,
+                );
+                ctx.restore();
+                coord.set_default_layer(None);
+
+                // Border last — above the body fill.
+                ctx.set_stroke_color(&frame_theme.toolbar_border);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rect(mx + 0.5, my + 0.5, RC_W - 1.0, RC_H - 1.0);
+
+                Some(result)
+            })
+        } else {
+            None
+        };
+        self.rc_modal_result = rc_modal_result;
 
         // 8f. Standalone panel-settings surface (overlay gear, owner spec
         // 2026-07-28) — rendered last, topmost.

@@ -548,6 +548,7 @@ impl ChartApp {
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
             || self.tc_modal.is_open
+            || self.rc_modal.is_open
     }
 
     /// Handle a right-click at screen coordinates `(x, y)`.
@@ -1707,6 +1708,12 @@ impl ChartApp {
                     "tc_modal" => {
                         if let Some(ref tm) = self.tc_modal_result {
                             self.tc_modal.start_drag(x, y, tm.header_rect.x, tm.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "rc_modal" => {
+                        if let Some(ref rm) = self.rc_modal_result {
+                            self.rc_modal.start_drag(x, y, rm.header_rect.x, rm.header_rect.y);
                             true
                         } else { false }
                     }
@@ -3326,6 +3333,10 @@ impl ChartApp {
         if self.tc_modal.is_dragging {
             self.tc_modal.update_drag(x, y);
         }
+        if self.rc_modal.is_dragging {
+            self.rc_modal.update_drag(x, y);
+            return;
+        }
         if self.panel_app.tags_tabs_state.is_dragging {
             self.panel_app.tags_tabs_state.update_drag(x, y);
             return;
@@ -4108,6 +4119,10 @@ impl ChartApp {
         }
         if self.tc_modal.is_dragging {
             self.tc_modal.end_drag();
+        }
+        if self.rc_modal.is_dragging {
+            self.rc_modal.end_drag();
+            return;
         }
         if self.panel_app.tags_tabs_state.is_dragging {
             self.panel_app.tags_tabs_state.end_drag();
@@ -8112,6 +8127,8 @@ impl ChartApp {
                                 center_kind: state.center_kind.wire_id().to_string(),
                                 layout_mode: state.layout_mode.wire_id().to_string(),
                                 free_tree: state.free_tree_json(),
+                                rc_overlay: state.rc_overlay,
+                                focus_bar: state.focus_style_bar,
                             }
                         }
                         Panel::IndicatorPanel(id) => {

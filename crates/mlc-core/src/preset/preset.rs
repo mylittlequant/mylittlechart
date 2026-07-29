@@ -245,6 +245,15 @@ pub enum PersistedFreeItemKind {
         /// Free restore then re-migrates from the v1 ratios above.
         #[serde(default)]
         free_tree: String,
+        /// Risk-calculator hosting (owner spec 2026-07-29): false = its
+        /// own panel/leaf (default), true = overlay popover behind the
+        /// gauge chip on Order Entry.
+        #[serde(default)]
+        rc_overlay: bool,
+        /// Free-mode focus-highlight style (owner spec 2026-07-29):
+        /// false = accent frame, true = main-chart-style corner bar.
+        #[serde(default)]
+        focus_bar: bool,
     },
     /// Standalone IndicatorPanel — symbol + which indicator + axis state.
     /// Live data (bars Vec, last_seen_bar_version) is ephemeral and re-pulled

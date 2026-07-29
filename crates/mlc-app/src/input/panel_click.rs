@@ -2196,6 +2196,17 @@ impl ChartApp {
                         // it matches this same widget-id shape — only the target store differs.
                         if let Some((leaf_id_str, local_id)) = leaf_rest.split_once(':') {
                             if local_id.starts_with("oe:") {
+                                // Gauge chip — toggles the Risk Calculator
+                                // modal (overlay hosting, owner 2026-07-29);
+                                // never reaches OrderEntry's own handler.
+                                if local_id == "oe:rc_toggle" {
+                                    if self.rc_modal.is_open {
+                                        self.rc_modal.close();
+                                    } else {
+                                        self.rc_modal.open();
+                                    }
+                                    return;
+                                }
                                 if let Ok(raw) = leaf_id_str.parse::<u64>() {
                                     let leaf_id = uzor::panels::LeafId(raw);
                                     let item_opt = self.sidebar_state.slot_dockings[idx]
@@ -3792,6 +3803,15 @@ impl ChartApp {
             return;
         }
 
+        // === Risk Calculator modal chrome (overlay hosting, 2026-07-29) ===
+        if widget_id == "rc_modal:close" {
+            self.rc_modal.close();
+            return;
+        }
+        if widget_id == "rc_modal:modal_bg" || widget_id == "rc_modal:header" {
+            return; // consume — clicks on the modal chrome stay there
+        }
+
         // === Trading Container modal clicks (owner spec 2026-07-28) ===
         if let Some(rest) = widget_id.strip_prefix("tc_modal:") {
             use mlc_app_layout::layout::modals::TcModalSection;
@@ -3824,6 +3844,26 @@ impl ChartApp {
                                     tc.free_dock = Some(tc.build_free_dock());
                                 }
                             }
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                // SETUP focus-highlight style (owner spec 2026-07-29):
+                // accent frame ↔ main-chart-style 2px corner bar.
+                "focus_style:frame" | "focus_style:bar" => {
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.focus_style_bar = rest == "focus_style:bar";
+                        }
+                        self.autosave_snapshot();
+                    }
+                }
+                // SETUP risk-calculator hosting (owner spec 2026-07-29):
+                // its own panel ↔ overlay popover behind the OE gauge chip.
+                "rc_host:panel" | "rc_host:overlay" => {
+                    if let Some(pid) = tc_pid {
+                        if let Some(tc) = self.panels_store.trading_container.get_mut(&pid) {
+                            tc.set_rc_overlay(rest == "rc_host:overlay");
                         }
                         self.autosave_snapshot();
                     }

@@ -1913,6 +1913,9 @@ impl ChartApp {
                 "modal_search" => {
                     self.modal_state.close();
                 }
+                "rc_modal" => {
+                    self.rc_modal.close();
+                }
                 // Top-level modals — close when user clicks outside them.
                 "overlay_settings" => {
                     self.panel_app.close_overlay_settings();
