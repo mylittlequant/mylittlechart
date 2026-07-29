@@ -3103,10 +3103,10 @@ impl ChartApp {
                 };
                 match item_id.as_str() {
                     "sec_gear" => {
-                        // DOM section gear → the dom-settings modal (both
-                        // modes). Other sections get their modals later.
+                        // Section gear → the section's settings modal
+                        // (DOM: dual-mode modal; TT/L2/BT: columns/thresholds).
                         self.trading_header_tb.open_dropdown_id = None;
-                        if matches!(section_item, Some(mlc_core::state::Panel::Dom(_))) {
+                        if section_item.is_some() {
                             self.dom_modal.open();
                         }
                         return;
@@ -3906,7 +3906,75 @@ impl ChartApp {
                 return; // consume — chrome
             }
             use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
-            let dom_pid = self.section_panel_for(RSP::SlotDom).and_then(|item| match item {
+            let rp = self.sidebar_state.right_panel;
+            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                self.section_panel_for(rp)
+            } else {
+                None
+            };
+            // Non-DOM sections: columns + Big-Trades thresholds.
+            match &section {
+                Some(mlc_core::state::Panel::TradeTape(pid)) => {
+                    if let (Some(i), Some(state)) = (
+                        rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()),
+                        self.panels_store.trade_tape.get_mut(pid),
+                    ) {
+                        match i {
+                            0 => state.column_config.show_time = !state.column_config.show_time,
+                            1 => state.column_config.show_price = !state.column_config.show_price,
+                            _ => state.column_config.show_size = !state.column_config.show_size,
+                        }
+                        self.sidebar_data_dirty = true;
+                    }
+                    return;
+                }
+                Some(mlc_core::state::Panel::L2Tape(pid)) => {
+                    if let (Some(i), Some(state)) = (
+                        rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()),
+                        self.panels_store.l2_tape.get_mut(pid),
+                    ) {
+                        match i {
+                            0 => state.column_config.show_time = !state.column_config.show_time,
+                            1 => state.column_config.show_type = !state.column_config.show_type,
+                            2 => state.column_config.show_side = !state.column_config.show_side,
+                            3 => state.column_config.show_price = !state.column_config.show_price,
+                            _ => state.column_config.show_qty = !state.column_config.show_qty,
+                        }
+                        self.sidebar_data_dirty = true;
+                    }
+                    return;
+                }
+                Some(mlc_core::state::Panel::BigTrades(pid)) => {
+                    if let Some(state) = self.panels_store.big_trades.get_mut(pid) {
+                        if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
+                            match i {
+                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                1 => state.column_config.show_side = !state.column_config.show_side,
+                                2 => state.column_config.show_price = !state.column_config.show_price,
+                                3 => state.column_config.show_size = !state.column_config.show_size,
+                                _ => state.column_config.show_notional = !state.column_config.show_notional,
+                            }
+                        } else if rest == "bt_size" {
+                            const SIZES: &[f64] = &[0.0, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0];
+                            let cur = state.size_threshold;
+                            state.size_threshold = SIZES.iter()
+                                .find(|&&s| s > cur + f64::EPSILON)
+                                .copied()
+                                .unwrap_or(0.0);
+                        } else if rest == "bt_notional" {
+                            const NOTIONALS: &[f64] = &[10_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0];
+                            state.notional_threshold = match state.notional_threshold {
+                                None => Some(NOTIONALS[0]),
+                                Some(cur) => NOTIONALS.iter().find(|&&n| n > cur * 1.001).copied(),
+                            };
+                        }
+                        self.sidebar_data_dirty = true;
+                    }
+                    return;
+                }
+                _ => {}
+            }
+            let dom_pid = section.and_then(|item| match item {
                 mlc_core::state::Panel::Dom(id) => Some(id),
                 _ => None,
             });

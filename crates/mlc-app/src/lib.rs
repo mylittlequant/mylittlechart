@@ -8517,28 +8517,75 @@ impl ChartApp {
         // opened by the DOM section header gear (`tch:sec_gear`).
         if self.dom_modal.is_open {
             use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
-            let dom_pid = self
-                .section_panel_for(RSP::SlotDom)
-                .and_then(|item| match item {
-                    mlc_core::state::Panel::Dom(id) => Some(id),
-                    _ => None,
-                });
-            if let Some(pid) = dom_pid {
-                if let Some(dom) = self.panels_store.dom.get(&pid) {
-                    let coord = &mut *self.input_coordinator.borrow_mut();
-                    crate::dom_settings_modal::render_dom_settings_modal(
-                        ctx,
-                        coord,
-                        &frame_theme,
-                        &toolbar_theme,
-                        w,
-                        h,
-                        self.dom_modal.position,
-                        dom,
-                    );
-                }
+            let rp = self.sidebar_state.right_panel;
+            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                self.section_panel_for(rp)
             } else {
-                self.dom_modal.is_open = false;
+                None
+            };
+            let coord = &mut *self.input_coordinator.borrow_mut();
+            match section {
+                Some(mlc_core::state::Panel::Dom(pid)) => {
+                    if let Some(dom) = self.panels_store.dom.get(&pid) {
+                        crate::dom_settings_modal::render_dom_settings_modal(
+                            ctx, coord, &frame_theme, &toolbar_theme,
+                            w, h, self.dom_modal.position, dom,
+                        );
+                    }
+                }
+                Some(mlc_core::state::Panel::TradeTape(pid)) => {
+                    if let Some(s) = self.panels_store.trade_tape.get(&pid) {
+                        let cc = &s.column_config;
+                        let cols = [
+                            ("Time", cc.show_time),
+                            ("Price", cc.show_price),
+                            ("Size", cc.show_size),
+                        ];
+                        crate::dom_settings_modal::render_section_settings_modal(
+                            ctx, coord, &frame_theme, &toolbar_theme,
+                            w, h, self.dom_modal.position,
+                            "Trade Tape Settings", &cols, None,
+                        );
+                    }
+                }
+                Some(mlc_core::state::Panel::L2Tape(pid)) => {
+                    if let Some(s) = self.panels_store.l2_tape.get(&pid) {
+                        let cc = &s.column_config;
+                        let cols = [
+                            ("Time", cc.show_time),
+                            ("Type", cc.show_type),
+                            ("Side", cc.show_side),
+                            ("Price", cc.show_price),
+                            ("Qty", cc.show_qty),
+                        ];
+                        crate::dom_settings_modal::render_section_settings_modal(
+                            ctx, coord, &frame_theme, &toolbar_theme,
+                            w, h, self.dom_modal.position,
+                            "L2 Tape Settings", &cols, None,
+                        );
+                    }
+                }
+                Some(mlc_core::state::Panel::BigTrades(pid)) => {
+                    if let Some(s) = self.panels_store.big_trades.get(&pid) {
+                        let cc = &s.column_config;
+                        let cols = [
+                            ("Time", cc.show_time),
+                            ("Side", cc.show_side),
+                            ("Price", cc.show_price),
+                            ("Size", cc.show_size),
+                            ("Notional", cc.show_notional),
+                        ];
+                        crate::dom_settings_modal::render_section_settings_modal(
+                            ctx, coord, &frame_theme, &toolbar_theme,
+                            w, h, self.dom_modal.position,
+                            "Big Trades Settings", &cols,
+                            Some((s.size_threshold, s.notional_threshold)),
+                        );
+                    }
+                }
+                _ => {
+                    self.dom_modal.is_open = false;
+                }
             }
         }
 

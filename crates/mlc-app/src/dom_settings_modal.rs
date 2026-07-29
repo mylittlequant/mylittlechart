@@ -212,3 +212,99 @@ pub fn render_dom_settings_modal(
 
     coord.pop_layer(&layer_id);
 }
+
+/// Generic data-section settings modal (Trade Tape / L2 / Big Trades) —
+/// same chrome and `dom_modal:*` id space as the DOM modal (one section is
+/// visible at a time; the click arm routes per the live section kind).
+/// v1 surface: column visibility (+ Big-Trades thresholds).
+#[allow(clippy::too_many_arguments)]
+pub fn render_section_settings_modal(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    frame_theme: &FrameTheme,
+    tt: &ToolbarTheme,
+    screen_w: f64,
+    screen_h: f64,
+    pos: Option<(f64, f64)>,
+    title: &str,
+    columns: &[(&str, bool)],
+    bt_thresholds: Option<(f64, Option<f64>)>,
+) {
+    let col_rows = columns.len().div_ceil(4);
+    let modal_h = HEADER_H
+        + PAD
+        + CAPTION_H
+        + (BTN_H + 6.0) * col_rows as f64
+        + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + PAD;
+    let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
+    let mx = mx.max(0.0).min((screen_w - DOM_MODAL_W).max(0.0));
+    let my = my.max(0.0).min((screen_h - modal_h).max(0.0));
+    let modal_rect = WidgetRect::new(mx, my, DOM_MODAL_W, modal_h);
+    let header_rect = WidgetRect::new(mx, my, DOM_MODAL_W, HEADER_H);
+
+    let layer_id = ZLayer::Modal.push_named(coord, "dom_modal");
+    coord.register_on_layer("dom_modal:header", header_rect, Sense::DRAG, &layer_id);
+    coord.register_on_layer("dom_modal:modal_bg", modal_rect, Sense::CLICK, &layer_id);
+
+    let modal_theme = ModalTheme::from_frame_theme(
+        &frame_theme.toolbar_bg,
+        &frame_theme.toolbar_border,
+        &tt.item_text,
+        &tt.item_text_active,
+        &frame_theme.toolbar_border,
+    );
+    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
+    ctx.set_fill_color(&frame_theme.toolbar_bg);
+    ctx.fill_rect(mx, my, DOM_MODAL_W, HEADER_H);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(title, mx + PAD, my + HEADER_H / 2.0);
+    let close_x = mx + DOM_MODAL_W - CLOSE_BTN - 12.0;
+    let close_y = my + (HEADER_H - CLOSE_BTN) / 2.0;
+    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, CLOSE_BTN, CLOSE_BTN, &tt.item_text);
+    coord.register_on_layer(
+        "dom_modal:close",
+        WidgetRect::new(close_x - 4.0, close_y - 4.0, CLOSE_BTN + 8.0, CLOSE_BTN + 8.0),
+        Sense::CLICK | Sense::HOVER,
+        &layer_id,
+    );
+    ctx.set_stroke_color(&frame_theme.toolbar_border);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(mx, my + HEADER_H);
+    ctx.line_to(mx + DOM_MODAL_W, my + HEADER_H);
+    ctx.stroke();
+
+    let left = mx + PAD;
+    let mut row_y = my + HEADER_H + PAD;
+    caption(ctx, tt, left, row_y, "Columns");
+    row_y += CAPTION_H;
+    let col_w = 70.0;
+    for (i, (label, on)) in columns.iter().enumerate() {
+        let cx = left + (i % 4) as f64 * (col_w + 6.0);
+        if i > 0 && i % 4 == 0 {
+            row_y += BTN_H + 6.0;
+        }
+        modal_btn(ctx, coord, &layer_id, tt, &format!("col:{}", i), cx, row_y, col_w, label, *on);
+    }
+    row_y += BTN_H + 6.0;
+
+    if let Some((size_thr, notional_thr)) = bt_thresholds {
+        row_y += ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Thresholds (click to cycle)");
+        row_y += CAPTION_H;
+        let s_label = if size_thr > 0.0 { format!("Size ≥ {}", size_thr) } else { "Size: all".to_string() };
+        modal_btn(ctx, coord, &layer_id, tt, "bt_size", left, row_y, 130.0, &s_label, size_thr > 0.0);
+        let n_label = match notional_thr {
+            Some(v) if v >= 1_000_000.0 => format!("Notional ≥ {:.0}M", v / 1_000_000.0),
+            Some(v) => format!("Notional ≥ {:.0}K", v / 1_000.0),
+            None => "Notional: all".to_string(),
+        };
+        modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 138.0, row_y, 150.0, &n_label, notional_thr.is_some());
+    }
+
+    coord.pop_layer(&layer_id);
+}
