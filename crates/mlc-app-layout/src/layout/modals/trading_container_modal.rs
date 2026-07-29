@@ -88,6 +88,9 @@ pub struct TradingContainerModalState {
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
     pub section: TcModalSection,
+    /// SETUP section scroll — the section outgrew the fixed modal height
+    /// (owner defect 2026-07-29: content spilled past the frame).
+    pub scroll: crate::ui::scroll_widget::ScrollState,
 }
 
 impl TradingContainerModalState {
@@ -129,6 +132,13 @@ pub struct TcModalResult {
     pub modal_rect: WidgetRect,
     /// Title bar (drag initiation — `tc_modal:header`).
     pub header_rect: WidgetRect,
+    /// SETUP section scroll geometry — wheel clamp inputs (0 outside SETUP).
+    pub setup_content_height: f64,
+    pub setup_viewport_height: f64,
+    /// SETUP scrollbar rects — handle drag + track click (None when the
+    /// content fits or outside SETUP).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    pub scrollbar_track_rect: Option<WidgetRect>,
 }
 
 // =============================================================================
@@ -319,11 +329,18 @@ pub fn render_trading_container_modal(
             content_x, content_y, content_w, content_h,
             &layer_id, input_coordinator,
         ),
-        TcModalSection::Setup => render_setup_section(
-            ctx, toolbar_theme, setup,
-            content_x, content_y, content_w,
-            &layer_id, input_coordinator,
-        ),
+        TcModalSection::Setup => {
+            let (setup_ch, setup_vh, handle, track) = render_setup_section(
+                ctx, toolbar_theme, setup,
+                content_x, content_y, content_w, content_h,
+                &layer_id, input_coordinator,
+                &state.scroll,
+            );
+            result.setup_content_height = setup_ch;
+            result.setup_viewport_height = setup_vh;
+            result.scrollbar_handle_rect = handle;
+            result.scrollbar_track_rect = track;
+        }
     }
 
     input_coordinator.pop_layer(&layer_id);
@@ -534,13 +551,40 @@ fn render_setup_section(
     content_x: f64,
     content_y: f64,
     content_w: f64,
+    content_h: f64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
-) {
+    scroll: &crate::ui::scroll_widget::ScrollState,
+) -> (f64, f64, Option<WidgetRect>, Option<WidgetRect>) {
+    use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
+    use crate::ui::widgets::types::WidgetTheme;
+
+    // The section outgrew the fixed modal height — clip + wheel-scroll
+    // the whole content column, honest scrollbar on overflow (owner
+    // defect 2026-07-29: rows spilled past the modal frame).
+    let viewport = WidgetRect::new(content_x, content_y, content_w, content_h);
+    input_coordinator.register_on_layer(
+        "tc_modal:setup_viewport",
+        viewport,
+        Sense::SCROLL,
+        layer_id,
+    );
+    let scrollable = ScrollableContainer::new(
+        viewport,
+        scroll,
+        Some(ScrollableConfig {
+            scrollbar_width: 8.0,
+            scrollbar_padding: 4.0,
+            always_show_scrollbar: false,
+        }),
+    );
+    scrollable.begin(ctx);
+    let content_y0 = scrollable.content_y();
+
     let center_label = setup.center_label.as_str();
     let hist_rows = &setup.hist_rows;
     let left = content_x + MODAL_PADDING;
-    let mut row_y = content_y + MODAL_PADDING;
+    let mut row_y = content_y0 + MODAL_PADDING;
 
     let btn_w = 70.0;
     let btn_h = 26.0;
@@ -833,9 +877,7 @@ fn render_setup_section(
     }
 
     // ── Metrics-strip inclusion toggles (owner spec 2026-07-28) ─────────
-    if !setup.show_metrics {
-        return;
-    }
+    if setup.show_metrics {
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
@@ -876,4 +918,34 @@ fn render_setup_section(
         );
         chip_x += chip_w + chip_gap;
     }
+    row_y += chip_h + MODAL_PADDING;
+    }
+
+    // Measured off the actual rows drawn above — the robust source of
+    // truth for the scrollbar (same doctrine as chart_settings).
+    let total_content_h = row_y - content_y0;
+    let widget_theme = WidgetTheme::default();
+    let scroll_result = scrollable.end(ctx, total_content_h, &widget_theme);
+
+    // Register scrollbar handle (inflated ±5px X) for DRAG, track for
+    // CLICK — same wiring as chart_settings.
+    if let Some(ref hr) = scroll_result.handle_rect {
+        let inflated = WidgetRect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "tc_modal:scrollbar_handle",
+            inflated,
+            Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = scroll_result.track_rect {
+        input_coordinator.register_on_layer(
+            "tc_modal:scrollbar_track",
+            WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
+
+    (total_content_h, content_h, scroll_result.handle_rect, scroll_result.track_rect)
 }

@@ -1820,6 +1820,9 @@ impl ChartApp {
                 } else if prefix == "chart_settings" {
                     self.panel_app.chart_settings_state.scroll.start_drag(y);
                     true
+                } else if prefix == "tc_modal" {
+                    self.tc_modal.scroll.start_drag(y);
+                    true
                 } else if prefix == "tags_tabs" {
                     let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
                     scroll_state.start_drag(y);
@@ -2224,6 +2227,20 @@ impl ChartApp {
         // === Slider drag start — must come BEFORE the modal guard ===
         // Scrollbar handle drags are now handled via InputCoordinator registration.
         // Track clicks remain manual (need geometry from frame_result).
+        if self.tc_modal.is_open {
+            if let Some(ref tm) = self.tc_modal_result {
+                if let Some(ref track_rect) = tm.scrollbar_track_rect {
+                    let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                        && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                    if hit {
+                        let (ch, vh) = (tm.setup_content_height, tm.setup_viewport_height);
+                        let (ty, th) = (track_rect.y, track_rect.height);
+                        self.tc_modal.scroll.handle_track_click(y, ty, th, ch, vh);
+                        return false;
+                    }
+                }
+            }
+        }
         if let Some(result) = &self.frame_result {
             // Chart settings slider drag start
             if self.panel_app.chart_settings_state.is_open {
@@ -3481,6 +3498,19 @@ impl ChartApp {
             }
             return;
         }
+        if self.tc_modal.scroll.is_dragging {
+            if let Some(ref tm) = self.tc_modal_result {
+                if let Some(ref track_rect) = tm.scrollbar_track_rect {
+                    self.tc_modal.scroll.handle_drag(
+                        y,
+                        track_rect.height,
+                        tm.setup_content_height,
+                        tm.setup_viewport_height,
+                    );
+                }
+            }
+            return;
+        }
         if self.panel_app.indicator_settings_state.scroll.is_dragging {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref is) = result.indicator_settings {
@@ -4230,6 +4260,10 @@ impl ChartApp {
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             self.panel_app.chart_settings_state.scroll.end_drag();
             eprintln!("[ChartApp] chart_settings scrollbar drag ended");
+            return;
+        }
+        if self.tc_modal.scroll.is_dragging {
+            self.tc_modal.scroll.end_drag();
             return;
         }
         if self.panel_app.indicator_settings_state.scroll.is_dragging {
@@ -5670,6 +5704,16 @@ impl ChartApp {
                                         cs.viewport_height,
                                     );
                                 }
+                            }
+                            return;
+                        }
+                        "tc_modal:setup_viewport" => {
+                            if let Some(ref tm) = self.tc_modal_result {
+                                self.tc_modal.scroll.handle_wheel(
+                                    scroll_step,
+                                    tm.setup_content_height,
+                                    tm.setup_viewport_height,
+                                );
                             }
                             return;
                         }
