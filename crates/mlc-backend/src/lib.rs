@@ -89,6 +89,10 @@ pub struct MiniTickerData {
     pub high_price: f64,
     pub low_price: f64,
     pub volume: f64,
+    /// Rolling last-price history (~1 sample/s from the miniTicker
+    /// stream, newest last, capped at 60) — feeds the watchlist
+    /// sparkline column (TapeSurf borrow, 2026-07-31).
+    pub spark: std::collections::VecDeque<f64>,
 }
 
 /// Events emitted by [`BackendCore::tick_writers`] for each logical update
@@ -1790,12 +1794,17 @@ impl BackendCore {
                             high_price: 0.0,
                             low_price: 0.0,
                             volume: 0.0,
+                            spark: std::collections::VecDeque::new(),
                         });
                     entry.last_price = last_price;
                     if let Some(v) = price_change_percent { entry.price_change_percent = v; }
                     if let Some(v) = high_price           { entry.high_price = v; }
                     if let Some(v) = low_price            { entry.low_price  = v; }
                     if let Some(v) = volume               { entry.volume     = v; }
+                    entry.spark.push_back(last_price);
+                    if entry.spark.len() > 60 {
+                        entry.spark.pop_front();
+                    }
                     events.push(BubbleEvent::MiniTickerUpdated {
                         exchange_id,
                         symbol,

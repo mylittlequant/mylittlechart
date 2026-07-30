@@ -364,7 +364,7 @@ impl TradingPanel for L2TapeState {
             ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
 
             // Chromatic overlay: color by event type + side, alpha scales with qty.
-            let chroma_color = self.row_chroma_color(event);
+            let chroma_color = self.row_chroma_color(event, theme);
             ctx.set_fill_color(&chroma_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
 
@@ -391,16 +391,8 @@ impl TradingPanel for L2TapeState {
             }
 
             if let Some(cx) = col_type_x {
-                // event_color returns f32 rgba — convert to hex inline.
-                let type_color = self.event_color(event);
-                let type_hex = format!(
-                    "#{:02x}{:02x}{:02x}{:02x}",
-                    (type_color[0].clamp(0.0, 1.0) * 255.0) as u8,
-                    (type_color[1].clamp(0.0, 1.0) * 255.0) as u8,
-                    (type_color[2].clamp(0.0, 1.0) * 255.0) as u8,
-                    (type_color[3].clamp(0.0, 1.0) * 255.0) as u8,
-                );
-                ctx.set_fill_color(&type_hex);
+                let type_color = self.event_color(event, theme);
+                ctx.set_fill_color(&type_color);
                 ctx.fill_text(L2TapeState::event_label(&event.event_type), cx as f64, row_mid_y);
             }
 
@@ -639,16 +631,17 @@ impl L2TapeState {
         self.push_total.saturating_sub(len.saturating_sub(deque_index + 1))
     }
 
-    /// Color for event type
-    pub fn event_color(&self, event: &L2Event) -> [f32; 4] {
+    /// Color for the event-type label — theme tokens (was a hardcoded
+    /// rgba table; skin doctrine 2026-07-31).
+    pub fn event_color(&self, event: &L2Event, theme: &crate::panel_theme::PanelTheme) -> String {
         match event.event_type {
             L2EventType::Add => match event.side {
-                L2Side::Bid => [0.055, 0.796, 0.506, 0.8],  // green for bid add
-                L2Side::Ask => [0.965, 0.275, 0.365, 0.8],  // red for ask add
+                L2Side::Bid => mlc_core::apply_opacity(&theme.buy, 0.8),
+                L2Side::Ask => mlc_core::apply_opacity(&theme.sell, 0.8),
             },
-            L2EventType::Modify => [0.529, 0.467, 0.878, 0.8],  // purple
-            L2EventType::Cancel => [0.471, 0.482, 0.525, 0.6],  // grey
-            L2EventType::Execute => [1.0, 0.843, 0.0, 0.9],     // gold
+            L2EventType::Modify => mlc_core::apply_opacity(&theme.accent, 0.8),
+            L2EventType::Cancel => mlc_core::apply_opacity(&theme.text_muted, 0.6),
+            L2EventType::Execute => mlc_core::apply_opacity(&theme.current_price, 0.9),
         }
     }
 
@@ -705,33 +698,30 @@ impl L2TapeState {
     ///
     /// Alpha scales with `(qty / max_qty_seen).sqrt().clamp(0.3, 1.0)` so
     /// larger events get more opaque overlays.
-    fn row_chroma_color(&self, event: &L2Event) -> String {
+    fn row_chroma_color(&self, event: &L2Event, theme: &crate::panel_theme::PanelTheme) -> String {
         let qty_ratio = if self.max_qty_seen > 0.0 {
             (event.quantity / self.max_qty_seen).sqrt().clamp(0.3, 1.0)
         } else {
             0.3
         };
 
-        // (r, g, b, base_alpha) — all in [0, 1]
-        let (r, g, b, base_alpha) = match event.event_type {
+        // Theme tokens (was a hardcoded rgba table; skin doctrine
+        // 2026-07-31): executes use the bright side endpoints, adds the
+        // base side colors, modify/cancel the accent/muted neutrals.
+        let (color, base_alpha) = match event.event_type {
             L2EventType::Execute => match event.side {
-                L2Side::Bid  => (0.0,  0.9,  0.35, 0.30), // bright green
-                L2Side::Ask  => (0.95, 0.18, 0.18, 0.30), // bright red
+                L2Side::Bid => (theme.buy_bright.clone(), 0.30),
+                L2Side::Ask => (theme.sell_bright.clone(), 0.30),
             },
             L2EventType::Add => match event.side {
-                L2Side::Bid  => (0.12, 0.47, 0.95, 0.15), // subtle blue
-                L2Side::Ask  => (0.95, 0.55, 0.05, 0.15), // subtle orange
+                L2Side::Bid => (theme.buy.clone(), 0.15),
+                L2Side::Ask => (theme.sell.clone(), 0.15),
             },
-            L2EventType::Modify => (0.55, 0.35, 0.90, 0.10), // neutral purple
-            L2EventType::Cancel => (0.45, 0.45, 0.50, 0.10), // gray
+            L2EventType::Modify => (theme.accent.clone(), 0.10),
+            L2EventType::Cancel => (theme.text_muted.clone(), 0.10),
         };
 
-        let alpha = (base_alpha * qty_ratio).clamp(0.0, 1.0);
-        let a_byte = (alpha * 255.0) as u8;
-        let r_byte = (r * 255.0) as u8;
-        let g_byte = (g * 255.0) as u8;
-        let b_byte = (b * 255.0) as u8;
-        format!("#{:02x}{:02x}{:02x}{:02x}", r_byte, g_byte, b_byte, a_byte)
+        mlc_core::apply_opacity(&color, (base_alpha * qty_ratio).clamp(0.0, 1.0))
     }
 
     /// Scroll by `delta` rows (positive = scroll toward older events).

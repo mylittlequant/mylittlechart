@@ -294,6 +294,11 @@ pub struct WatchlistItem {
     /// display strings back into a triplet.
     #[serde(default)]
     pub address: mlc_core::InstrumentAddress,
+    /// Rolling last-price history for the sparkline column (~1 sample/s
+    /// from the miniTicker stream, newest last; TapeSurf borrow
+    /// 2026-07-31). Empty when the symbol has no live ticker yet.
+    #[serde(default)]
+    pub spark: Vec<f64>,
 }
 
 impl WatchlistItem {
@@ -324,6 +329,10 @@ pub struct WatchlistColumnConfig {
     /// Show account type column (e.g. "S", "FC", "M"). Default false.
     #[serde(default)]
     pub show_account_type: bool,
+    /// Show the price sparkline column (TapeSurf watch-list borrow,
+    /// 2026-07-31). Default true.
+    #[serde(default = "default_true_column_config")]
+    pub show_spark: bool,
 
     /// Custom separator X positions as offsets from the left edge of the usable area.
     ///
@@ -362,6 +371,7 @@ impl Default for WatchlistColumnConfig {
             show_volume: false,
             show_high_low: false,
             show_account_type: false,
+            show_spark: true,
             separator_offsets: None,
             align_columns: true,
         }

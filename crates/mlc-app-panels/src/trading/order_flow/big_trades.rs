@@ -99,6 +99,9 @@ pub struct PublicTrade {
     pub price: f64,
     pub quantity: f64,
     pub side: TradeSide,
+    /// Local wall-clock at ingest (ms) — drives the new-row flash
+    /// (TapeSurf trades-feed polish, 2026-07-31).
+    pub arrival_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +148,10 @@ impl BigTradesState {
         const MAX_TRADES: usize = 1000;
         let cursor = self.last_seen_ts_ms;
         let mut new_max_ts = cursor;
+        let arrival_ms = web_time::SystemTime::now()
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
             if trade.ts_ms > new_max_ts { new_max_ts = trade.ts_ms; }
@@ -168,6 +175,7 @@ impl BigTradesState {
                 } else {
                     TradeSide::Buy
                 },
+                arrival_ms,
             };
 
             if public.quantity > self.max_qty_seen {
@@ -345,17 +353,36 @@ impl TradingPanel for BigTradesState {
         let trades = self.visible_trades(max_rows);
 
         let bar_max_width = w - BT_LEFT_PAD * 2.0;
+        // Size-intensity ramp + new-row flash (TapeSurf trades-feed
+        // polish): the size bar mixes toward the side's bright endpoint
+        // as the print grows; fresh rows get an accent underlay.
+        let flat_bars =
+            theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         for (i, trade) in trades.iter().enumerate() {
             let row_y = y + BT_HEADER_HEIGHT + (i as f32 * BT_ROW_HEIGHT);
 
             let bar_width = self.size_bar_width(trade, bar_max_width);
-            let bar_color = match trade.side {
-                TradeSide::Buy => &theme.buy,
-                TradeSide::Sell => &theme.sell,
+            let t_mix = if flat_bars || self.max_qty_seen <= 0.0 {
+                0.0
+            } else {
+                (trade.quantity / self.max_qty_seen).clamp(0.0, 1.0)
             };
-            ctx.set_fill_color(bar_color);
+            let (base, bright) = match trade.side {
+                TradeSide::Buy => (&theme.buy, &theme.buy_bright),
+                TradeSide::Sell => (&theme.sell, &theme.sell_bright),
+            };
+            let bar_color = mlc_core::mix_colors(base, bright, t_mix);
+            ctx.set_fill_color(&bar_color);
             ctx.fill_rect(x as f64, row_y as f64, bar_width as f64, BT_ROW_HEIGHT as f64);
+            if now_ms.saturating_sub(trade.arrival_ms) < 250 {
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, BT_ROW_HEIGHT as f64);
+            }
 
             let text_y = (row_y + BT_ROW_HEIGHT / 2.0) as f64;
 

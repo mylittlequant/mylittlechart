@@ -3148,6 +3148,7 @@ impl ChartApp {
                         if c.show_account_type { n += 1; }
                         if c.show_last_price   { n += 1; }
                         if c.show_change_pct   { n += 1; }
+                        if c.show_spark        { n += 1; }
                         if c.show_change_abs   { n += 1; }
                         if c.show_high_low     { n += 2; }
                         if c.show_volume       { n += 1; }
@@ -3174,6 +3175,7 @@ impl ChartApp {
                         "last_price"   => list_ui.column_config.show_last_price   = !list_ui.column_config.show_last_price,
                         "change_pct"   => list_ui.column_config.show_change_pct   = !list_ui.column_config.show_change_pct,
                         "change_abs"   => list_ui.column_config.show_change_abs   = !list_ui.column_config.show_change_abs,
+                        "spark"        => list_ui.column_config.show_spark        = !list_ui.column_config.show_spark,
                         "volume"       => list_ui.column_config.show_volume       = !list_ui.column_config.show_volume,
                         "high_low"     => list_ui.column_config.show_high_low     = !list_ui.column_config.show_high_low,
                         "account_type" => list_ui.column_config.show_account_type = !list_ui.column_config.show_account_type,

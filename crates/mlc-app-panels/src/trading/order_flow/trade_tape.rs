@@ -65,6 +65,9 @@ pub struct TapeEntry {
     pub quantity: f64,
     /// `true` = taker was buyer (aggressive buy); `false` = aggressive sell.
     pub is_buy: bool,
+    /// Local wall-clock at ingest (ms) — drives the new-row flash
+    /// (TapeSurf trades-feed polish, 2026-07-31).
+    pub arrival_ms: u64,
 }
 
 // ─── state ───────────────────────────────────────────────────────────────────
@@ -185,6 +188,10 @@ impl TradeTapeState {
 
         let cursor = self.last_seen_ts_ms;
         let mut new_max_ts = cursor;
+        let arrival_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         let new_entries: Vec<TapeEntry> = snapshot
             .into_iter()
             .filter(|p| p.ts_ms > cursor)
@@ -196,6 +203,7 @@ impl TradeTapeState {
                     quantity: p.quantity,
                     // TradePoint.side 0 = buyer maker -> taker is seller -> is_buy=false
                     is_buy: p.side != 0,
+                    arrival_ms,
                 }
             })
             .collect();
@@ -466,21 +474,43 @@ impl TradingPanel for TradeTapeState {
 
         let tick_size = self.dom_tick_size.unwrap_or(0.01);
         let entries = self.visible_entries(max_rows);
+        // Size-intensity ramp (TapeSurf trades-feed polish): row color
+        // mixes from the side color toward its bright endpoint as the
+        // print grows, on top of the existing alpha ramp. Flat texture
+        // collapses the mix. New rows flash with an accent underlay.
+        let flat_bars =
+            theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
 
         for (row_idx, entry) in entries.iter().enumerate() {
             let row_y = y + TT_HEADER_HEIGHT + (row_idx as f32 * TT_ROW_HEIGHT);
             let mid_y = (row_y + TT_ROW_HEIGHT / 2.0) as f64;
 
-            // Colored background with alpha-by-size
+            // Colored background: bright-mix + alpha, both by size.
             let alpha = self.row_alpha(entry.quantity);
-            let alpha_byte = (alpha * 255.0).round() as u8;
-            let bg_color = if entry.is_buy {
-                format!("#2ea043{:02x}", alpha_byte)
+            let t_mix = if flat_bars || self.max_qty_seen <= 0.0 {
+                0.0
             } else {
-                format!("#cc2233{:02x}", alpha_byte)
+                (entry.quantity / self.max_qty_seen).clamp(0.0, 1.0)
             };
+            let (base, bright) = if entry.is_buy {
+                (&theme.buy, &theme.buy_bright)
+            } else {
+                (&theme.sell, &theme.sell_bright)
+            };
+            let bg_color = mlc_core::apply_opacity(
+                &mlc_core::mix_colors(base, bright, t_mix),
+                alpha,
+            );
             ctx.set_fill_color(&bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, TT_ROW_HEIGHT as f64);
+            if now_ms.saturating_sub(entry.arrival_ms) < 250 {
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
+                ctx.fill_rect(x as f64, row_y as f64, w as f64, TT_ROW_HEIGHT as f64);
+            }
 
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);

@@ -829,6 +829,7 @@ impl ChartApp {
                             volume_24h: volume,
                             account_type: sym_account_type.to_string(),
                             address: address.clone(),
+                            spark: Vec::new(),
                         });
                     } else if let Some(ticker) = self.core.mini_ticker.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
@@ -841,6 +842,7 @@ impl ChartApp {
                             volume_24h: ticker.volume,
                             account_type: sym_account_type.to_string(),
                             address: address.clone(),
+                            spark: ticker.spark.iter().copied().collect(),
                         });
                     } else {
                         self.sidebar_state.watchlist_items.push(WatchlistItem {
@@ -853,6 +855,7 @@ impl ChartApp {
                             volume_24h: 0.0,
                             account_type: sym_account_type.to_string(),
                             address: address.clone(),
+                            spark: Vec::new(),
                         });
                     }
                 }

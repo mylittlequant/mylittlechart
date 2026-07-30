@@ -782,6 +782,7 @@ fn render_watchlist_config_dropdown(
         ("show_account_type", "Type",          col_cfg.show_account_type),
         ("show_last_price",   "Last Price",    col_cfg.show_last_price),
         ("show_change_pct",   "Change %",      col_cfg.show_change_pct),
+        ("show_spark",        "Sparkline",     col_cfg.show_spark),
         ("show_change_abs",   "Change",        col_cfg.show_change_abs),
         ("show_volume",       "Volume",        col_cfg.show_volume),
         ("show_high_low",     "High / Low",    col_cfg.show_high_low),
@@ -1034,6 +1035,7 @@ fn render_watchlist_column_header(
     if col_cfg.show_account_type  { col_labels.push("Type"); }
     if col_cfg.show_last_price    { col_labels.push("Last"); }
     if col_cfg.show_change_pct    { col_labels.push("Chg %"); }
+    if col_cfg.show_spark         { col_labels.push("Spark"); }
     if col_cfg.show_change_abs    { col_labels.push("Chg"); }
     if col_cfg.show_high_low      { col_labels.push("High"); col_labels.push("Low"); }
     if col_cfg.show_volume        { col_labels.push("Vol"); }
@@ -1261,6 +1263,9 @@ fn render_watchlist_items(
     }
     if col_cfg.show_change_pct {
         col_labels.push("Chg %");
+    }
+    if col_cfg.show_spark {
+        col_labels.push("Spark");
     }
     if col_cfg.show_change_abs {
         col_labels.push("Chg");
@@ -1561,9 +1566,9 @@ fn render_watchlist_items(
             let clip_w = (clip_r - clip_l).max(0.0);
             if clip_w >= 1.0 {
                 let change_color = if item.change_percent > 0.0 {
-                    "#26a69a"
+                    theme.success.as_str()
                 } else if item.change_percent < 0.0 {
-                    "#ef5350"
+                    theme.danger.as_str()
                 } else {
                     theme.item_text_muted.as_str()
                 };
@@ -1581,15 +1586,37 @@ fn render_watchlist_items(
             col_idx += 1;
         }
 
+        if col_cfg.show_spark {
+            // Price sparkline (TapeSurf watch-list borrow): min/max-
+            // normalized polyline over the miniTicker history, colored by
+            // the 24h change sign.
+            let (clip_l, clip_r) = col_clip(col_idx);
+            let clip_w = (clip_r - clip_l).max(0.0);
+            if clip_w >= 14.0 && item.spark.len() >= 2 {
+                let up = item.change_percent >= 0.0;
+                let color = if up { theme.success.as_str() } else { theme.danger.as_str() };
+                draw_price_sparkline(
+                    ctx,
+                    clip_l + 2.0,
+                    current_y + 9.0,
+                    (clip_w - 6.0).min(64.0),
+                    data_row_h - 18.0,
+                    &item.spark,
+                    color,
+                );
+            }
+            col_idx += 1;
+        }
+
         if col_cfg.show_change_abs {
             let (clip_l, clip_r) = col_clip(col_idx);
             let clip_w = (clip_r - clip_l).max(0.0);
             if clip_w >= 1.0 {
                 let abs_change = item.last_price - (item.last_price / (1.0 + item.change_percent / 100.0));
                 let change_color = if item.change_percent > 0.0 {
-                    "#26a69a"
+                    theme.success.as_str()
                 } else if item.change_percent < 0.0 {
-                    "#ef5350"
+                    theme.danger.as_str()
                 } else {
                     theme.item_text_muted.as_str()
                 };
@@ -3627,6 +3654,55 @@ fn render_connectors_panel(
 ///
 /// If `data` has fewer than 2 points, or `max_val <= 0`, the function draws
 /// only the background rectangle and returns.
+/// Price sparkline for watchlist rows (TapeSurf borrow, 2026-07-31):
+/// min/max-normalized polyline with a faint area fill — unlike
+/// [`draw_sparkline`] (0-anchored, fixed slot count) this scales to the
+/// window's own price range so small moves stay visible, and spreads the
+/// samples across the full width.
+fn draw_price_sparkline(
+    ctx: &mut dyn RenderContext,
+    x: f64, y: f64, w: f64, h: f64,
+    data: &[f64],
+    color: &str,
+) {
+    if data.len() < 2 || w <= 2.0 || h <= 2.0 {
+        return;
+    }
+    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+    for v in data {
+        lo = lo.min(*v);
+        hi = hi.max(*v);
+    }
+    let span = (hi - lo).max(1e-12);
+    let step = w / (data.len() - 1) as f64;
+    let py_of = |v: f64| y + h - ((v - lo) / span).clamp(0.0, 1.0) * h;
+
+    // Faint area fill under the line.
+    ctx.begin_path();
+    ctx.move_to(x, y + h);
+    for (i, v) in data.iter().enumerate() {
+        ctx.line_to(x + i as f64 * step, py_of(*v));
+    }
+    ctx.line_to(x + w, y + h);
+    ctx.close_path();
+    ctx.set_fill_color(&mlc_core::apply_opacity(color, 0.15));
+    ctx.fill();
+
+    // Line.
+    ctx.begin_path();
+    for (i, v) in data.iter().enumerate() {
+        let px = x + i as f64 * step;
+        if i == 0 {
+            ctx.move_to(px, py_of(*v));
+        } else {
+            ctx.line_to(px, py_of(*v));
+        }
+    }
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke();
+}
+
 fn draw_sparkline(
     ctx: &mut dyn RenderContext,
     x: f64, y: f64, w: f64, h: f64,

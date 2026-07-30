@@ -1313,6 +1313,7 @@ impl ChartApp {
                         if c.show_account_type { n += 1; }
                         if c.show_last_price   { n += 1; }
                         if c.show_change_pct   { n += 1; }
+                        if c.show_spark        { n += 1; }
                         if c.show_change_abs   { n += 1; }
                         if c.show_high_low     { n += 2; }
                         if c.show_volume       { n += 1; }
@@ -3147,6 +3148,7 @@ impl ChartApp {
                 if c.show_account_type { n += 1; }
                 if c.show_last_price   { n += 1; }
                 if c.show_change_pct   { n += 1; }
+                if c.show_spark        { n += 1; }
                 if c.show_change_abs   { n += 1; }
                 if c.show_high_low     { n += 2; }
                 if c.show_volume       { n += 1; }
