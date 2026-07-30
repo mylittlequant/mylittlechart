@@ -1604,6 +1604,37 @@ impl ChartApp {
                         if let Some(slot_kind) = mlc_app_sidebar_content::free_slot::SlotKind::from_index(idx_usize) {
                             self.spawn_panel_in_slot(idx_usize, slot_kind.default_panel_kind());
                         }
+                    } else {
+                        // Feed-handle refresh on section open (owner defect
+                        // 2026-07-30: Big Trades dead with a live symbol):
+                        // a handle can go STALE (points at a series object
+                        // the station has since replaced) — drop it here;
+                        // the per-tick `repair_panel_feed_handles` self-heal
+                        // resubscribes a fresh one next frame.
+                        if let Some(item) = self.section_panel_for(panel) {
+                            match item {
+                                mlc_core::state::Panel::Dom(id) => {
+                                    if let Some(s) = self.panels_store.dom.get_mut(&id) {
+                                        s.shared_orderbook = None;
+                                        s.shared_trades = None;
+                                        s.last_seen_update_id = None;
+                                    }
+                                }
+                                mlc_core::state::Panel::TradeTape(id) => {
+                                    if let Some(s) = self.panels_store.trade_tape.get_mut(&id) {
+                                        s.shared_trades = None;
+                                        s.last_seen_ts_ms = 0;
+                                    }
+                                }
+                                mlc_core::state::Panel::BigTrades(id) => {
+                                    if let Some(s) = self.panels_store.big_trades.get_mut(&id) {
+                                        s.shared_trades = None;
+                                        s.last_seen_ts_ms = 0;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 self.sidebar_data_dirty = true;

@@ -399,6 +399,15 @@ impl ChartApp {
         // per-tick compare instead of an `ActiveChartChanged` reaction.
         self.poll_trading_container_group_follow();
 
+        // Feed-handle self-heal (owner defect 2026-07-30: Big Trades dead
+        // with a live symbol): a panel with a concrete symbol must always
+        // hold a live shared-series handle. Cold-boot hydration can race
+        // the station (subscribe returns None) and the group rebind only
+        // fires on a KEY CHANGE — so a None handle with a matching key was
+        // dead forever. Retry until the handle materializes (no-op cost
+        // once it does).
+        self.repair_panel_feed_handles();
+
         // Embedded center chart lifecycle (chart-in-container arc,
         // 2026-07-26): lazy birth / preset-wipe recovery / instrument-TF
         // reconcile / viewport resize for the trading container's aux

@@ -357,6 +357,74 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+    /// Feed-handle self-heal (owner defect 2026-07-30): panels that read a
+    /// shared series (DOM book/trades, Trade Tape trades, Big Trades
+    /// trades) but hold `None` while their symbol is concrete get their
+    /// subscribe retried once per tick until the handle lands. Covers the
+    /// cold-boot hydration race and any historical dead-handle state — the
+    /// group rebind alone only repairs on a key CHANGE.
+    pub(crate) fn repair_panel_feed_handles(&mut self) {
+        enum Need {
+            DomBook(mlc_core::state::PanelId),
+            DomTrades(mlc_core::state::PanelId),
+            TapeTrades(mlc_core::state::PanelId),
+            BigTrades(mlc_core::state::PanelId),
+        }
+        let mut needs: Vec<(Need, String, String, String)> = Vec::new();
+        for (pid, s) in &self.panels_store.dom {
+            if !s.symbol.is_empty() && !s.exchange.is_empty() {
+                if s.shared_orderbook.is_none() {
+                    needs.push((Need::DomBook(*pid), s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+                }
+                if s.shared_trades.is_none() {
+                    needs.push((Need::DomTrades(*pid), s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+                }
+            }
+        }
+        for (pid, s) in &self.panels_store.trade_tape {
+            if !s.symbol.is_empty() && !s.exchange.is_empty() && s.shared_trades.is_none() {
+                needs.push((Need::TapeTrades(*pid), s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+            }
+        }
+        for (pid, s) in &self.panels_store.big_trades {
+            if !s.symbol.is_empty() && !s.exchange.is_empty() && s.shared_trades.is_none() {
+                needs.push((Need::BigTrades(*pid), s.exchange.clone(), s.symbol.clone(), s.account_type.clone()));
+            }
+        }
+        for (need, ex, sym, at_label) in needs {
+            let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) else { continue };
+            let at = crate::account_type_from_label(&at_label);
+            match need {
+                Need::DomBook(pid) => {
+                    let handle = self.core.subscribe_orderbook(eid, &sym, at);
+                    if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                        s.shared_orderbook = handle;
+                    }
+                }
+                Need::DomTrades(pid) => {
+                    let handle = self.core.subscribe_trades(eid, &sym, at);
+                    if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                        s.shared_trades = handle;
+                    }
+                }
+                Need::TapeTrades(pid) => {
+                    let handle = self.core.subscribe_trades(eid, &sym, at);
+                    if let Some(s) = self.panels_store.trade_tape.get_mut(&pid) {
+                        s.shared_trades = handle;
+                        s.last_seen_ts_ms = 0;
+                    }
+                }
+                Need::BigTrades(pid) => {
+                    let handle = self.core.subscribe_trades(eid, &sym, at);
+                    if let Some(s) = self.panels_store.big_trades.get_mut(&pid) {
+                        s.shared_trades = handle;
+                        s.last_seen_ts_ms = 0;
+                    }
+                }
+            }
+        }
+    }
+
     /// Set the trading container's timeframe (embedded header TF system).
     /// Display-name grammar matches the topbar TF rows (`tf_{name}` →
     /// `name`, e.g. "1m"/"1H"). Stored + persisted on the container; TF
