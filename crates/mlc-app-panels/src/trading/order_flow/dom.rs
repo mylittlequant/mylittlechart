@@ -1123,6 +1123,12 @@ impl TradingPanel for DomState {
             fit.clamp(40.0, DOM_PRICE_COL_WIDTH).min(w * 0.45)
         };
         const MIN_SIDE_COL: f32 = 40.0; // digits below this are unreadable
+        // L2 trigger once only the order pair remains. Higher than
+        // MIN_SIDE_COL so the whole compression ladder fits ABOVE the
+        // sidebar width floor (160): with the old 40/40 thresholds the
+        // floor landed in L1 and squeezing went L1 → collapse with no
+        // L2/L3 stage (owner defect 2026-07-31).
+        const L2_SIDE_COL: f32 = 64.0;
         let mut cc = self.column_config.clone();
         let mut heatmap_mode = false;
         loop {
@@ -1134,7 +1140,8 @@ impl TradingPanel for DomState {
                 break;
             }
             let a = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
-            if a / n >= MIN_SIDE_COL {
+            let min_side = if n <= 2.0 { L2_SIDE_COL } else { MIN_SIDE_COL };
+            if a / n >= min_side {
                 break;
             }
             if cc.show_sell_trades || cc.show_buy_trades {
@@ -1164,10 +1171,12 @@ impl TradingPanel for DomState {
             cc.show_buy_trades = false;
         }
         let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
-        // Width auto-L3 (Multi-DOM parity). Threshold sits BELOW the L2
-        // trigger (side < 40) so the cascade has a real L2 window:
-        // bars → shed trades → L2 cells (side 24..40) → L3 squares (<24).
-        if heatmap_mode && avail * 0.5 < 24.0 {
+        // Width auto-L3 (Multi-DOM parity). The ladder, with a ~47px
+        // fitted price column: 4-col bars → shed trades (<~236) → 2-col
+        // bars → L2 cells (side 52..64, w ≈ 178..195) → L3 squares
+        // (side < 52, w ≲ 178) — every stage sits above the sidebar's
+        // 160px floor, collapse only past the drag tolerance.
+        if heatmap_mode && avail * 0.5 < 52.0 {
             mosaic_mode = true;
         }
 
