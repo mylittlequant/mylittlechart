@@ -392,7 +392,9 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool, free_mode: b
 #[derive(Clone, Copy, Debug)]
 pub struct SectionDomChips {
     pub multi_mode: bool,
-    pub auto_center: bool,
+    /// Locked (ladder centered on mid) vs Free (user-scrolled) — the L/F
+    /// chip; per toggle semantics the label shows the CURRENT mode.
+    pub locked: bool,
     pub min_volume_filter: f64,
     pub tick_size: f64,
 }
@@ -401,7 +403,7 @@ pub struct SectionDomChips {
 /// 2026-07-30): every classic data section (DOM / Trade Tape / L2 / Big
 /// Trades) gets the Trading-Container-style header instead of the slot
 /// control-plane — symbol quick-search system + color-sync tag, plus the
-/// panel's own thematic chips (DOM: MX / A|M / F / tick). Item ids reuse
+/// panel's own thematic chips (DOM: MX / L|F / F / tick). Item ids reuse
 /// the tch instance grammar (`symbol_selector` / `tc_color_tag`) so the
 /// shared dropdown / quicksearch machinery and the `tch:` dispatch apply
 /// verbatim; only the dispatch target differs — the section's panel.
@@ -443,16 +445,14 @@ pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolba
         // 2026-07-30): "DOM" = single ladder, "M/D" = multi-exchange.
         // Clicking flips. The thematic chips stay in BOTH modes.
         // In multi mode the caller feeds `min_volume_filter` = the multi
-        // level filter and `tick_size` = the multi GRID; the A|M chip is a
-        // single-ladder concept and is hidden.
+        // level filter and `tick_size` = the multi GRID. The L/F chip lives
+        // in BOTH modes: Locked = ladder centered on mid, Free = scrolled.
         let mut items = vec![
             ToolbarItemDef::button("sec_mx")
                 .with_text(if c.multi_mode { "M/D" } else { "DOM" }),
+            ToolbarItemDef::button("sec_am")
+                .with_text(if c.locked { "L" } else { "F" }),
         ];
-        if !c.multi_mode {
-            items.push(ToolbarItemDef::button("sec_am")
-                .with_text(if c.auto_center { "A" } else { "M" }));
-        }
         items.push(ToolbarItemDef::button("sec_filter")
             .with_text(&if c.min_volume_filter > 0.0 {
                 format!("F:{}", c.min_volume_filter)

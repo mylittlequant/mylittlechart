@@ -330,8 +330,6 @@ impl DomState {
                     self.multi.add_exchange(ex.to_string());
                 }
             }
-        } else {
-            self.multi.editor_open = false;
         }
     }
 
@@ -1623,7 +1621,8 @@ impl TradingPanel for DomState {
 
     fn handle_drag_move(&mut self, _local_id: &str, _dx: f64, dy: f64) -> bool {
         if self.multi_mode {
-            return true; // multi view has no drag-recenter
+            self.multi.scroll_by(dy);
+            return true;
         }
         self.auto_center = false;
         let lines = (dy / 20.0).round();
@@ -1639,10 +1638,14 @@ impl TradingPanel for DomState {
     fn handle_blackbox_event(&mut self, _local_x: f32, _local_y: f32, event: crate::panel_trait::BlackboxEvent) -> bool {
         use crate::panel_trait::BlackboxEvent;
         if self.multi_mode {
-            // Right-click toggles the multi config editor; everything else
-            // is consumed so the hidden single ladder never recenters.
-            if matches!(event, BlackboxEvent::RightClick) {
-                self.multi.editor_open = !self.multi.editor_open;
+            // Multi ladder: wheel/drag scrolls the view (Free mode; the L/F
+            // chip re-locks onto mid). Config lives in the section-header
+            // gear modal — no in-panel editor. Everything is consumed so the
+            // hidden single ladder never recenters.
+            match event {
+                BlackboxEvent::Scroll { dy } => self.multi.scroll_by(dy as f64),
+                BlackboxEvent::DragMove { dy, .. } => self.multi.scroll_by(dy as f64),
+                _ => {}
             }
             return true;
         }

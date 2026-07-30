@@ -87,11 +87,15 @@ pub struct MultiDomState {
     /// REST re-seed of columns whose tracker never got a snapshot.
     pub last_reseed_ms: i64,
 
-    // ---- editor / UX state (ephemeral, not persisted) ----
-    /// True when the config editor overlay is visible.
-    pub editor_open: bool,
-    /// Cycle index into KNOWN_EXCHANGES for the "Add" button.
+    // ---- UX state (ephemeral, not persisted) ----
+    /// Cycle index into KNOWN_EXCHANGES for the settings-modal "Add" row.
     pub editor_exchange_cycle_idx: usize,
+    /// Locked (true) = ladder recenters on mid every tick; Free = the user
+    /// scrolls and the view keeps an absolute price anchor (the L/F chip).
+    pub locked: bool,
+    /// Absolute price at the vertical center of the ladder. Tracks mid while
+    /// locked; frozen (scroll-adjusted) while free. 0.0 = not yet anchored.
+    pub view_center_price: f64,
 }
 
 impl MultiDomState {
@@ -107,8 +111,9 @@ impl MultiDomState {
             max_level_qty: 0.0,
             min_level_qty: 0.0,
             last_reseed_ms: 0,
-            editor_open: false,
             editor_exchange_cycle_idx: 0,
+            locked: true,
+            view_center_price: 0.0,
         }
     }
 
@@ -179,6 +184,27 @@ impl MultiDomState {
         None
     }
 
+    /// Wheel/drag scroll: switch to Free and move the view anchor by whole
+    /// rows (same lines-per-pixel feel as the single ladder).
+    pub fn scroll_by(&mut self, dy: f64) {
+        if self.mid_price <= 0.0 { return; }
+        self.locked = false;
+        if self.view_center_price <= 0.0 {
+            self.view_center_price = self.mid_price;
+        }
+        let grid = self.config.grid_size.max(1e-9);
+        let lines = (dy / ROW_HEIGHT as f64).round();
+        self.view_center_price += lines * grid;
+    }
+
+    /// L/F toggle. Locking snaps the view back onto mid.
+    pub fn set_locked(&mut self, locked: bool) {
+        self.locked = locked;
+        if locked && self.mid_price > 0.0 {
+            self.view_center_price = self.mid_price;
+        }
+    }
+
     /// Refresh bucketed books + imbalance windows from the live tracker
     /// handles. Called once per frame while the panel is in multi mode.
     pub fn tick(&mut self) {
@@ -215,6 +241,9 @@ impl MultiDomState {
         }
         let Some(mid) = mid else { return }; // keep last state until a book lives
         self.mid_price = mid;
+        if self.locked || self.view_center_price <= 0.0 {
+            self.view_center_price = mid;
+        }
 
         // Pass 2: bucket onto the grid + imbalance windows + bar-scale max.
         let mut max_q = 0.0_f64;
@@ -259,8 +288,9 @@ impl Clone for MultiDomState {
             max_level_qty: self.max_level_qty,
             min_level_qty: self.min_level_qty,
             last_reseed_ms: self.last_reseed_ms,
-            editor_open: false, // never copy editor open state to clones
             editor_exchange_cycle_idx: self.editor_exchange_cycle_idx,
+            locked: self.locked,
+            view_center_price: self.view_center_price,
         }
     }
 }
@@ -287,12 +317,6 @@ const PRICE_COL_WIDTH: f32 = 64.0;
 const IMB_STRIP_H: f32 = 34.0;
 /// A level at or above this fraction of the column max is a "big order".
 const BIG_ORDER_FRAC: f64 = 0.35;
-
-/// Height of the editor overlay popup.
-const EDITOR_ROW_H: f32 = 22.0;
-fn editor_height(n_exchanges: usize) -> f32 {
-    EDITOR_ROW_H * (1 + n_exchanges + 1 + 1 + 1) as f32
-}
 
 fn fmt_qty(q: f64) -> String {
     if q >= 1_000_000.0 {
@@ -323,25 +347,9 @@ impl TradingPanel for MultiDomState {
     ) {
         use uzor::input::{Sense, WidgetKind, LayerId};
 
-        // Header right-click + explicit gear toggle the in-panel editor.
-        let header_id = format!("{}:multi_dom:header", slot_prefix);
-        coordinator.register_composite(
-            header_id,
-            WidgetKind::BlackboxPanel,
-            uzor::Rect::new(x as f64, y as f64, w as f64, HEADER_HEIGHT as f64),
-            Sense::RIGHT_CLICK,
-            &LayerId::main(),
-        );
-        let gear_btn_w = 20.0_f64;
-        let gear_btn_x = (x + w) as f64 - gear_btn_w;
-        let settings_id = format!("{}:multi_dom:settings", slot_prefix);
-        coordinator.register_composite(
-            settings_id,
-            WidgetKind::BlackboxPanel,
-            uzor::Rect::new(gear_btn_x, y as f64, gear_btn_w, HEADER_HEIGHT as f64),
-            Sense::CLICK,
-            &LayerId::main(),
-        );
+        // No in-panel config chrome: all Multi-DOM configuration lives in the
+        // section-header gear (canonical DOM settings modal). The body senses
+        // scroll/drag for the Free view mode.
         let body_id = format!("{}:multi_dom:body", slot_prefix);
         coordinator.register_composite(
             body_id,
@@ -358,13 +366,10 @@ impl TradingPanel for MultiDomState {
         let n = self.config.exchanges.len();
         if n == 0 {
             self.draw_empty_header(ctx, x, y, w, theme);
-            if self.editor_open {
-                self.draw_editor_menu(ctx, x, y, w, theme, slot_prefix, coordinator);
-            }
             return;
         }
 
-        // ── Header row: "Price | <exchange labels...>" + ⚙ ────────────────
+        // ── Header row: "Price | <exchange labels...>" ────────────────────
         let avail_w = (w - PRICE_COL_WIDTH).max(40.0);
         let col_w = avail_w / n as f32;
         ctx.set_fill_color(&theme.header_bg);
@@ -382,10 +387,6 @@ impl TradingPanel for MultiDomState {
             ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
             ctx.fill_text(ex, cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
         }
-        let gear_color = if self.editor_open { &theme.accent } else { &theme.text_muted };
-        ctx.set_fill_color(gear_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("\u{2699}", (x + w - 10.0) as f64, (y + HEADER_HEIGHT * 0.5) as f64);
 
         let body_y = y + HEADER_HEIGHT;
         let body_h = (h - HEADER_HEIGHT).max(0.0);
@@ -404,36 +405,13 @@ impl TradingPanel for MultiDomState {
             self.draw_book(ctx, x, body_y, w, body_h, theme, n, col_w);
         }
 
-        if self.editor_open {
-            self.draw_editor_menu(ctx, x, y, w, theme, slot_prefix, coordinator);
-        }
-
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
     }
 
-    fn handle_click(&mut self, local_id: &str, _x: f64, _y: f64) -> bool {
-        if local_id == "multi_dom:header" || local_id == "multi_dom:settings" {
-            self.editor_open = !self.editor_open;
-            return true;
-        }
-        if let Some(action) = local_id.strip_prefix("multi_dom:editor:") {
-            if let Some(idx_str) = action.strip_prefix("del:") {
-                if let Ok(idx) = idx_str.parse::<usize>() {
-                    if idx < self.config.exchanges.len() {
-                        let label = self.config.exchanges[idx].clone();
-                        self.remove_exchange(&label);
-                    }
-                }
-                return true;
-            }
-            match action {
-                "add" => { self.cycle_add_exchange(); return true; }
-                "grid" => { self.cycle_grid_size(); return true; }
-                "depth" => { self.cycle_depth(); return true; }
-                _ => {}
-            }
-        }
+    fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool {
+        // All Multi-DOM config actions route through the canonical DOM
+        // settings modal (dom_modal:* ids) — nothing panel-local to click.
         false
     }
 }
@@ -455,13 +433,23 @@ impl MultiDomState {
         if rows < 3 { return; }
         let half = rows / 2;
         let mid_idx = (self.mid_price / grid).floor() as i64;
+        // View anchor: mid while Locked; the user's absolute scroll price in
+        // Free (the L/F chip). Side/cum semantics stay keyed to mid.
+        let anchor = if self.locked || self.view_center_price <= 0.0 {
+            self.mid_price
+        } else {
+            self.view_center_price
+        };
+        let center_idx = (anchor / grid).floor() as i64;
         let max_norm = self.max_level_qty.max(1e-9);
         let big_thr = max_norm * BIG_ORDER_FRAC;
 
         // Cumulative depth from mid outward, per exchange per side — the
         // reference "waves": the stepped silhouette of book size at depth.
-        let up = half as usize;
-        let down = (rows - half) as usize;
+        // Sized to cover the visible window even when it is scrolled away
+        // from mid (top/bottom visible grid index vs mid).
+        let up = (center_idx + half - mid_idx).max(0) as usize;
+        let down = (mid_idx - (center_idx - (rows - 1 - half)) + 1).max(0) as usize;
         let mut ask_cum: Vec<Vec<f64>> = vec![vec![0.0; up + 1]; n];
         let mut bid_cum: Vec<Vec<f64>> = vec![vec![0.0; down + 1]; n];
         let mut max_cum = 0.0_f64;
@@ -495,7 +483,7 @@ impl MultiDomState {
 
         ctx.set_font("10px monospace");
         for r in 0..rows {
-            let idx = mid_idx + (half - r);
+            let idx = center_idx + (half - r);
             let price = idx as f64 * grid;
             if price <= 0.0 { continue; }
             let row_y = (body_y + ROW_HEIGHT * r as f32) as f64;
@@ -647,135 +635,9 @@ impl MultiDomState {
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(
-            "Multi-DOM — click \u{2699} to add exchanges",
+            "Multi-DOM — add exchanges via the header \u{2699}",
             (x + 4.0) as f64,
             (y + HEADER_HEIGHT * 0.5) as f64,
-        );
-        let gear_color = if self.editor_open { &theme.accent } else { &theme.text_muted };
-        ctx.set_fill_color(gear_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text("\u{2699}", (x + w - 10.0) as f64, (y + HEADER_HEIGHT * 0.5) as f64);
-    }
-
-    /// In-panel config editor overlay (click-cycle rows).
-    fn draw_editor_menu(
-        &self,
-        ctx: &mut dyn RenderContext,
-        x: f32, y: f32, w: f32,
-        theme: &crate::panel_theme::PanelTheme,
-        slot_prefix: &str,
-        coordinator: &mut uzor::InputCoordinator,
-    ) {
-        use uzor::input::{Sense, WidgetKind, LayerId};
-
-        let n = self.config.exchanges.len();
-        let popup_h = editor_height(n);
-        let popup_x = x + 4.0;
-        let popup_y = y + HEADER_HEIGHT + 2.0;
-        let popup_w = (w - 8.0).max(120.0);
-
-        ctx.set_fill_color("#1e2330");
-        ctx.fill_rect(popup_x as f64, popup_y as f64, popup_w as f64, popup_h as f64);
-        ctx.set_stroke_color(&theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(popup_x as f64, popup_y as f64);
-        ctx.line_to((popup_x + popup_w) as f64, popup_y as f64);
-        ctx.line_to((popup_x + popup_w) as f64, (popup_y + popup_h) as f64);
-        ctx.line_to(popup_x as f64, (popup_y + popup_h) as f64);
-        ctx.line_to(popup_x as f64, popup_y as f64);
-        ctx.stroke();
-
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_baseline(TextBaseline::Middle);
-
-        let row0_y = popup_y;
-        ctx.set_fill_color(&theme.header_bg);
-        ctx.fill_rect(popup_x as f64, row0_y as f64, popup_w as f64, EDITOR_ROW_H as f64);
-        ctx.set_fill_color(&theme.text_primary);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.fill_text("Multi-DOM Config", (popup_x + 6.0) as f64, (row0_y + EDITOR_ROW_H * 0.5) as f64);
-
-        for (i, ex) in self.config.exchanges.iter().enumerate() {
-            let row_y = popup_y + EDITOR_ROW_H * (1 + i) as f32;
-            let row_bg = if i % 2 == 0 { "#1a1f2e" } else { "#222840" };
-            ctx.set_fill_color(row_bg);
-            ctx.fill_rect(popup_x as f64, row_y as f64, popup_w as f64, EDITOR_ROW_H as f64);
-            ctx.set_fill_color(&theme.text_primary);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text(ex, (popup_x + 6.0) as f64, (row_y + EDITOR_ROW_H * 0.5) as f64);
-            let del_w = 32.0_f32;
-            let del_x = popup_x + popup_w - del_w - 4.0;
-            ctx.set_fill_color("#5a2020");
-            ctx.fill_rect(del_x as f64, (row_y + 3.0) as f64, del_w as f64, (EDITOR_ROW_H - 6.0) as f64);
-            ctx.set_fill_color("#ef5350");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("del", (del_x + del_w * 0.5) as f64, (row_y + EDITOR_ROW_H * 0.5) as f64);
-            let del_id = format!("{}:multi_dom:editor:del:{}", slot_prefix, i);
-            coordinator.register_composite(
-                del_id,
-                WidgetKind::BlackboxPanel,
-                uzor::Rect::new(del_x as f64, row_y as f64, del_w as f64, EDITOR_ROW_H as f64),
-                Sense::CLICK,
-                &LayerId::popup(),
-            );
-        }
-
-        let add_row_y = popup_y + EDITOR_ROW_H * (1 + n) as f32;
-        ctx.set_fill_color("#1a2a1a");
-        ctx.fill_rect(popup_x as f64, add_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64);
-        ctx.set_fill_color("#26a69a");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.fill_text("+ Add next exchange (cycle)", (popup_x + 6.0) as f64, (add_row_y + EDITOR_ROW_H * 0.5) as f64);
-        let add_id = format!("{}:multi_dom:editor:add", slot_prefix);
-        coordinator.register_composite(
-            add_id,
-            WidgetKind::BlackboxPanel,
-            uzor::Rect::new(popup_x as f64, add_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64),
-            Sense::CLICK,
-            &LayerId::popup(),
-        );
-
-        let grid_row_y = popup_y + EDITOR_ROW_H * (1 + n + 1) as f32;
-        ctx.set_fill_color("#1a1f2e");
-        ctx.fill_rect(popup_x as f64, grid_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64);
-        ctx.set_fill_color(&theme.text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.fill_text("Grid:", (popup_x + 6.0) as f64, (grid_row_y + EDITOR_ROW_H * 0.5) as f64);
-        ctx.set_fill_color(&theme.accent);
-        ctx.fill_text(
-            &format!("{}  (click to cycle)", self.config.grid_size),
-            (popup_x + 44.0) as f64,
-            (grid_row_y + EDITOR_ROW_H * 0.5) as f64,
-        );
-        let grid_id = format!("{}:multi_dom:editor:grid", slot_prefix);
-        coordinator.register_composite(
-            grid_id,
-            WidgetKind::BlackboxPanel,
-            uzor::Rect::new(popup_x as f64, grid_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64),
-            Sense::CLICK,
-            &LayerId::popup(),
-        );
-
-        let depth_row_y = popup_y + EDITOR_ROW_H * (1 + n + 2) as f32;
-        ctx.set_fill_color("#222840");
-        ctx.fill_rect(popup_x as f64, depth_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64);
-        ctx.set_fill_color(&theme.text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.fill_text("Depth:", (popup_x + 6.0) as f64, (depth_row_y + EDITOR_ROW_H * 0.5) as f64);
-        ctx.set_fill_color(&theme.accent);
-        ctx.fill_text(
-            &format!("{}  (click to cycle)", self.config.depth_per_side),
-            (popup_x + 50.0) as f64,
-            (depth_row_y + EDITOR_ROW_H * 0.5) as f64,
-        );
-        let depth_id = format!("{}:multi_dom:editor:depth", slot_prefix);
-        coordinator.register_composite(
-            depth_id,
-            WidgetKind::BlackboxPanel,
-            uzor::Rect::new(popup_x as f64, depth_row_y as f64, popup_w as f64, EDITOR_ROW_H as f64),
-            Sense::CLICK,
-            &LayerId::popup(),
         );
     }
 }

@@ -2430,45 +2430,9 @@ impl ChartApp {
                                 return;
                             }
 
-                            // --- Multi-DOM editor clicks (merged Dom, Stage A) ---
-                            // local_id: "multi_dom:header" | "multi_dom:editor:*"
-                            // These may trigger bridge subscribes for added exchanges.
-                            if local_id.starts_with("multi_dom:") {
-                                if let Ok(raw) = leaf_id_str.parse::<u64>() {
-                                    let leaf_id = uzor::panels::LeafId(raw);
-                                    let item_opt = self.sidebar_state.slot_dockings[idx]
-                                        .inner()
-                                        .tree()
-                                        .leaf(leaf_id)
-                                        .and_then(|l| l.active_panel().cloned());
-                                    if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
-                                        // Snapshot exchanges + symbol BEFORE mutation.
-                                        let (old_exchanges, sym) = self.panels_store.dom.get(&pid)
-                                            .map(|s| (s.multi.config.exchanges.clone(), s.multi.symbol.clone()))
-                                            .unwrap_or_default();
-
-                                        use mlc_app_panels::panel_trait::TradingPanel;
-                                        if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                            state.handle_click(local_id, x, y);
-                                        }
-
-                                        // Subscribe newly added exchanges (unsubscribe is a
-                                        // station-side no-op — grace window owns lifetime).
-                                        if let Some(state) = self.panels_store.dom.get(&pid) {
-                                            let at = digdigdig3::AccountType::Spot;
-                                            for ex in &state.multi.config.exchanges {
-                                                if !old_exchanges.iter().any(|e| e == ex) && !sym.is_empty() {
-                                                    if let Some(eid) = digdigdig3::ExchangeId::from_str(ex) {
-                                                        let _ = self.core.subscribe_orderbook(eid, &sym, at);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        self.sidebar_data_dirty = true;
-                                    }
-                                }
-                                return;
-                            }
+                            // Multi-DOM has no in-panel clickable chrome — its
+                            // config routes through the section-header gear
+                            // (canonical dom_modal:* ids handled below).
                         }
 
                         // --- slot:{idx}:leaf:{leaf_id}:focus_content — click inside panel body ---
@@ -3160,9 +3124,13 @@ impl ChartApp {
                                     }
                                 }
                                 "sec_am" => {
+                                    // L/F toggle: Locked recenters on mid and
+                                    // follows it; Free keeps the scrolled view.
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        // Single-ladder concept; no-op in multi.
-                                        if !state.multi_mode {
+                                        if state.multi_mode {
+                                            let to = !state.multi.locked;
+                                            state.multi.set_locked(to);
+                                        } else {
                                             state.auto_center = !state.auto_center;
                                             if state.auto_center && state.market_price > 0.0 {
                                                 state.center_price = state.market_price;

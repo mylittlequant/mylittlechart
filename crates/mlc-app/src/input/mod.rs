@@ -6280,7 +6280,7 @@ impl ChartApp {
                                     let (idx_str, after_slot) = rest.split_once(":leaf:")?;
                                     let panel_idx: usize = idx_str.parse().ok()?;
                                     if panel_idx != slot_idx { return None; }
-                                    for suffix in [":dom:body", ":position_manager:body", ":trade_log:body", ":orders:history", ":orders:body"] {
+                                    for suffix in [":dom:body", ":multi_dom:body", ":position_manager:body", ":trade_log:body", ":orders:history", ":orders:body"] {
                                         if let Some(leaf_id_str) = after_slot.strip_suffix(suffix) {
                                             let raw: u64 = leaf_id_str.parse().ok()?;
                                             return Some((uzor::panels::LeafId(raw), &suffix[1..]));
@@ -6300,15 +6300,20 @@ impl ChartApp {
                                     Some(Panel::Dom(pid)) => {
                                         if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                             if ctrl {
-                                                // Ctrl+scroll: zoom tick_size (depth aggregation).
-                                                let new_tick = if scroll_step > 0.0 {
-                                                    (state.tick_size * 10.0).clamp(0.0001, 100.0)
-                                                } else if scroll_step < 0.0 {
-                                                    (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                                // Ctrl+scroll: zoom aggregation — multi cycles
+                                                // the GRID, single zooms tick_size.
+                                                if state.multi_mode {
+                                                    state.multi.cycle_grid_size();
                                                 } else {
-                                                    state.tick_size
-                                                };
-                                                state.set_tick_size(new_tick);
+                                                    let new_tick = if scroll_step > 0.0 {
+                                                        (state.tick_size * 10.0).clamp(0.0001, 100.0)
+                                                    } else if scroll_step < 0.0 {
+                                                        (state.tick_size / 10.0).clamp(0.0001, 100.0)
+                                                    } else {
+                                                        state.tick_size
+                                                    };
+                                                    state.set_tick_size(new_tick);
+                                                }
                                             } else {
                                                 use mlc_app_panels::BlackboxEvent;
                                                 use mlc_app_panels::panel_trait::TradingPanel;

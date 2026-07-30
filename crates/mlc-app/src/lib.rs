@@ -6869,14 +6869,14 @@ impl ChartApp {
                                 // tick chip = the multi GRID.
                                 mlc_core::toolbar::SectionDomChips {
                                     multi_mode: true,
-                                    auto_center: true,
+                                    locked: s.multi.locked,
                                     min_volume_filter: s.multi.min_level_qty,
                                     tick_size: s.multi.config.grid_size,
                                 }
                             } else {
                                 mlc_core::toolbar::SectionDomChips {
                                     multi_mode: false,
-                                    auto_center: s.auto_center,
+                                    locked: s.auto_center,
                                     min_volume_filter: s.min_volume_filter,
                                     tick_size: s.tick_size,
                                 }
@@ -7770,14 +7770,14 @@ impl ChartApp {
                         self.panels_store.dom.get(id).map(|s| if s.multi_mode {
                             mlc_core::toolbar::SectionDomChips {
                                 multi_mode: true,
-                                auto_center: true,
+                                locked: s.multi.locked,
                                 min_volume_filter: s.multi.min_level_qty,
                                 tick_size: s.multi.config.grid_size,
                             }
                         } else {
                             mlc_core::toolbar::SectionDomChips {
                                 multi_mode: false,
-                                auto_center: s.auto_center,
+                                locked: s.auto_center,
                                 min_volume_filter: s.min_volume_filter,
                                 tick_size: s.tick_size,
                             }
