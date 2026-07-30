@@ -1579,16 +1579,18 @@ impl IndicatorManager {
             }
         }
 
-        // Special case: volume indicator color params. "builtin_volume" is
+        // Special case: volume indicator bool param. "builtin_volume" is
         // not reachable as an instance type_id (IndicatorInstance::new
         // always copies type_id from the definition's own field, which is
         // "volume" even through the migration alias — see
         // `register_legacy_aliases`), so it is deliberately not matched here.
+        //
+        // Colors are NOT seeded here: absent up_color/down_color the
+        // renderer falls back to the theme candle colors (+50% alpha), so
+        // volume INHERITS the bar colors of the active theme/skin (owner
+        // rule 2026-07-31). Only an explicit user color in the instance
+        // params overrides that.
         if inst.type_id == "volume" || inst.type_id == "vol" {
-            color_params.entry("up_color".to_string())
-                .or_insert_with(|| "#26A69A80".to_string());
-            color_params.entry("down_color".to_string())
-                .or_insert_with(|| "#EF535080".to_string());
             bool_params.entry("color_by_direction".to_string())
                 .or_insert(true);
         }

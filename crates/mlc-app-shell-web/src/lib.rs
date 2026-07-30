@@ -1260,6 +1260,33 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             }
         }
         st.chrome.tabs = tabs;
+
+        // Sync chrome colours from the chart theme — wasm parity with the
+        // native shell (scene_builder.rs:42-51). Without this the preset
+        // tab strip keeps its hardcoded defaults and ignores theme/skin
+        // switches (owner defect 2026-07-31).
+        {
+            let theme = st.chart.panel_app.theme_manager.current();
+            let c = (
+                theme.chart.background.clone(),
+                theme.colors.text_primary.clone(),
+                theme.colors.accent.clone(),
+                theme.colors.button_bg_hover.clone(),
+                theme.colors.danger.clone(),
+                theme.colors.toolbar_divider.clone(),
+                theme.colors.button_bg.clone(),
+            );
+            let colors = &mut st.chrome.colors;
+            colors.background = c.0;
+            colors.icon_normal = c.1;
+            colors.icon_hover = c.2.clone();
+            colors.button_hover = c.3;
+            colors.close_hover = c.4;
+            colors.separator = c.5;
+            colors.tab_accent = c.2;
+            colors.tooltip_bg = c.6;
+            colors.tooltip_text = colors.icon_normal.clone();
+        }
     }
 
     // ── Measure tab widths ────────────────────────────────────────────────────
