@@ -80,6 +80,12 @@ pub struct MultiDomState {
     pub mid_price: f64,
     /// Largest single bucketed level across all exchanges (bar scaling).
     pub max_level_qty: f64,
+    /// Minimum level qty to draw a bar/number (the header F chip). The
+    /// cumulative wave always uses the full book. 0.0 = off.
+    pub min_level_qty: f64,
+    /// Last empty-book reseed attempt (ms) — throttles the app layer's
+    /// REST re-seed of columns whose tracker never got a snapshot.
+    pub last_reseed_ms: i64,
 
     // ---- editor / UX state (ephemeral, not persisted) ----
     /// True when the config editor overlay is visible.
@@ -99,6 +105,8 @@ impl MultiDomState {
             imbalance: vec![(0.5, 0.5); n],
             mid_price: 0.0,
             max_level_qty: 0.0,
+            min_level_qty: 0.0,
+            last_reseed_ms: 0,
             editor_open: false,
             editor_exchange_cycle_idx: 0,
         }
@@ -249,6 +257,8 @@ impl Clone for MultiDomState {
             imbalance: self.imbalance.clone(),
             mid_price: self.mid_price,
             max_level_qty: self.max_level_qty,
+            min_level_qty: self.min_level_qty,
+            last_reseed_ms: self.last_reseed_ms,
             editor_open: false, // never copy editor open state to clones
             editor_exchange_cycle_idx: self.editor_exchange_cycle_idx,
         }
@@ -541,7 +551,7 @@ impl MultiDomState {
                     ctx.fill_rect(cx + 2.0, row_y, cell_w * wf, ROW_HEIGHT as f64);
                 }
 
-                if q <= 0.0 { continue; }
+                if q <= 0.0 || q < self.min_level_qty { continue; }
                 let frac = (q / max_norm).powf(0.6).clamp(0.04, 1.0);
                 let bw = cell_w * frac;
                 let big = q >= big_thr;

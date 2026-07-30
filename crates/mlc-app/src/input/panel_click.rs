@@ -3161,35 +3161,55 @@ impl ChartApp {
                                 }
                                 "sec_am" => {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        state.auto_center = !state.auto_center;
-                                        if state.auto_center && state.market_price > 0.0 {
-                                            state.center_price = state.market_price;
+                                        // Single-ladder concept; no-op in multi.
+                                        if !state.multi_mode {
+                                            state.auto_center = !state.auto_center;
+                                            if state.auto_center && state.market_price > 0.0 {
+                                                state.center_price = state.market_price;
+                                            }
                                         }
                                     }
                                 }
                                 "sec_filter" => {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        state.min_volume_filter = match state.min_volume_filter {
-                                            v if v < 0.5 => 1.0,
-                                            v if v < 1.5 => 5.0,
-                                            v if v < 5.5 => 10.0,
-                                            v if v < 10.5 => 25.0,
-                                            v if v < 25.5 => 50.0,
-                                            _ => 0.0,
-                                        };
+                                        if state.multi_mode {
+                                            // Multi: minimum level qty to draw.
+                                            state.multi.min_level_qty = match state.multi.min_level_qty {
+                                                v if v < 0.05 => 0.1,
+                                                v if v < 0.15 => 0.5,
+                                                v if v < 0.55 => 1.0,
+                                                v if v < 1.5 => 5.0,
+                                                v if v < 5.5 => 10.0,
+                                                _ => 0.0,
+                                            };
+                                        } else {
+                                            state.min_volume_filter = match state.min_volume_filter {
+                                                v if v < 0.5 => 1.0,
+                                                v if v < 1.5 => 5.0,
+                                                v if v < 5.5 => 10.0,
+                                                v if v < 10.5 => 25.0,
+                                                v if v < 25.5 => 50.0,
+                                                _ => 0.0,
+                                            };
+                                        }
                                     }
                                 }
                                 _ => {
-                                    // sec_tick — cycle tick size, drop stale buckets.
+                                    // sec_tick — single: cycle tick size;
+                                    // multi: cycle the bucket GRID.
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                                        const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
-                                        let cur = state.tick_size;
-                                        let next = TICKS.iter()
-                                            .find(|&&t| t > cur * 1.001)
-                                            .copied()
-                                            .unwrap_or(TICKS[0]);
-                                        state.tick_size = next;
-                                        state.volume_by_price.clear();
+                                        if state.multi_mode {
+                                            state.multi.cycle_grid_size();
+                                        } else {
+                                            const TICKS: &[f64] = &[0.001, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0];
+                                            let cur = state.tick_size;
+                                            let next = TICKS.iter()
+                                                .find(|&&t| t > cur * 1.001)
+                                                .copied()
+                                                .unwrap_or(TICKS[0]);
+                                            state.tick_size = next;
+                                            state.volume_by_price.clear();
+                                        }
                                     }
                                 }
                             }

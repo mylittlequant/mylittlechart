@@ -427,19 +427,46 @@ impl ChartApp {
         // Multi-DOM book handles (v2: per-exchange station trackers, no
         // delta events). Provisioned only while multi mode is ON; cleared
         // on symbol rebind / section reopen so this refills them fresh.
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
         let mut multi_needs: Vec<(mlc_core::state::PanelId, usize, String, String)> = Vec::new();
+        let mut reseed_pids: Vec<mlc_core::state::PanelId> = Vec::new();
         for (pid, s) in &self.panels_store.dom {
             if !s.multi_mode || s.multi.symbol.is_empty() {
                 continue;
             }
             for (i, ex) in s.multi.config.exchanges.iter().enumerate() {
-                if s.multi.handles.get(i).map_or(true, |h| h.is_none()) {
+                let missing = s.multi.handles.get(i).map_or(true, |h| h.is_none());
+                // A live handle whose bucketed book stays EMPTY means the
+                // tracker never got its REST snapshot (client wasn't dialed
+                // at subscribe time; deltas alone build up slowly) — re-seed,
+                // throttled to one attempt per 5s per panel.
+                let stale_empty = !missing
+                    && s.multi.books_by_exchange.get(i)
+                        .map_or(true, |(b, a)| b.is_empty() && a.is_empty())
+                    && now_ms - s.multi.last_reseed_ms >= 5000;
+                if missing || stale_empty {
                     multi_needs.push((*pid, i, ex.clone(), s.multi.symbol.clone()));
+                    if stale_empty {
+                        reseed_pids.push(*pid);
+                    }
                 }
+            }
+        }
+        for pid in reseed_pids {
+            if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                s.multi.last_reseed_ms = now_ms;
             }
         }
         for (pid, i, ex, sym) in multi_needs {
             let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) else { continue };
+            // The roster exchange may have NO data connection yet (only the
+            // chart's exchange is dialed by default) — ensure the connector
+            // exists, else subscribe_depth's REST seed silently no-ops and
+            // the column stays blank (owner defect 2026-07-30).
+            self.core.ensure_connector(eid);
             let handle = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
             if let Some(s) = self.panels_store.dom.get_mut(&pid) {
                 if s.multi.handles.len() <= i {

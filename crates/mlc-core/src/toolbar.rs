@@ -442,20 +442,25 @@ pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolba
         // Mode toggle — the label states what is CURRENTLY on (owner spec
         // 2026-07-30): "DOM" = single ladder, "M/D" = multi-exchange.
         // Clicking flips. The thematic chips stay in BOTH modes.
-        let items = vec![
+        // In multi mode the caller feeds `min_volume_filter` = the multi
+        // level filter and `tick_size` = the multi GRID; the A|M chip is a
+        // single-ladder concept and is hidden.
+        let mut items = vec![
             ToolbarItemDef::button("sec_mx")
                 .with_text(if c.multi_mode { "M/D" } else { "DOM" }),
-            ToolbarItemDef::button("sec_am")
-                .with_text(if c.auto_center { "A" } else { "M" }),
-            ToolbarItemDef::button("sec_filter")
-                .with_text(&if c.min_volume_filter > 0.0 {
-                    format!("F:{:.0}", c.min_volume_filter)
-                } else {
-                    "F".to_string()
-                }),
-            ToolbarItemDef::button("sec_tick")
-                .with_text(&format!("{}", c.tick_size)),
         ];
+        if !c.multi_mode {
+            items.push(ToolbarItemDef::button("sec_am")
+                .with_text(if c.auto_center { "A" } else { "M" }));
+        }
+        items.push(ToolbarItemDef::button("sec_filter")
+            .with_text(&if c.min_volume_filter > 0.0 {
+                format!("F:{}", c.min_volume_filter)
+            } else {
+                "F".to_string()
+            }));
+        items.push(ToolbarItemDef::button("sec_tick")
+            .with_text(&format!("{}", c.tick_size)));
         sections.push(ToolbarSectionDef::new(items).with_separator());
     }
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)

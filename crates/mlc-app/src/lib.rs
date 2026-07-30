@@ -6864,11 +6864,22 @@ impl ChartApp {
                         let s_pid = item.panel_id();
                         let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
                         let dom_chips = if let mlc_core::state::Panel::Dom(id) = &item {
-                            self.panels_store.dom.get(id).map(|s| mlc_core::toolbar::SectionDomChips {
-                                multi_mode: s.multi_mode,
-                                auto_center: s.auto_center,
-                                min_volume_filter: s.min_volume_filter,
-                                tick_size: s.tick_size,
+                            self.panels_store.dom.get(id).map(|s| if s.multi_mode {
+                                // Multi mode: F = multi level filter, the
+                                // tick chip = the multi GRID.
+                                mlc_core::toolbar::SectionDomChips {
+                                    multi_mode: true,
+                                    auto_center: true,
+                                    min_volume_filter: s.multi.min_level_qty,
+                                    tick_size: s.multi.config.grid_size,
+                                }
+                            } else {
+                                mlc_core::toolbar::SectionDomChips {
+                                    multi_mode: false,
+                                    auto_center: s.auto_center,
+                                    min_volume_filter: s.min_volume_filter,
+                                    tick_size: s.tick_size,
+                                }
                             })
                         } else {
                             None
@@ -7756,11 +7767,20 @@ impl ChartApp {
                     let s_pid = item.panel_id();
                     let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
                     let dom_chips = if let mlc_core::state::Panel::Dom(id) = &item {
-                        self.panels_store.dom.get(id).map(|s| mlc_core::toolbar::SectionDomChips {
-                            multi_mode: s.multi_mode,
-                            auto_center: s.auto_center,
-                            min_volume_filter: s.min_volume_filter,
-                            tick_size: s.tick_size,
+                        self.panels_store.dom.get(id).map(|s| if s.multi_mode {
+                            mlc_core::toolbar::SectionDomChips {
+                                multi_mode: true,
+                                auto_center: true,
+                                min_volume_filter: s.multi.min_level_qty,
+                                tick_size: s.multi.config.grid_size,
+                            }
+                        } else {
+                            mlc_core::toolbar::SectionDomChips {
+                                multi_mode: false,
+                                auto_center: s.auto_center,
+                                min_volume_filter: s.min_volume_filter,
+                                tick_size: s.tick_size,
+                            }
                         })
                     } else {
                         None

@@ -164,6 +164,20 @@ impl ChartApp {
 
             // Inline accumulator updates for items consumed after the loop.
             match event {
+                BubbleEvent::ConnectorReady { exchange_id } => {
+                    // A Multi-DOM roster exchange just dialed: drop its book
+                    // handles so the feed-handle self-heal resubscribes WITH
+                    // the REST seed that was skipped while the exchange had
+                    // no client (owner defect 2026-07-30: blank columns).
+                    let ex_label = exchange_id.as_str().to_string();
+                    for s in self.panels_store.dom.values_mut() {
+                        if let Some(i) = s.multi.config.exchanges.iter().position(|e| *e == ex_label) {
+                            if let Some(h) = s.multi.handles.get_mut(i) {
+                                *h = None;
+                            }
+                        }
+                    }
+                }
                 BubbleEvent::TradeUpdatePassthrough { exchange_id, account_type, symbol, price, .. } => {
                     had_trade_update = true;
                     last_trade_price_by_symbol.insert(
