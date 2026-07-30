@@ -3098,7 +3098,7 @@ impl ChartApp {
                         }
                         return;
                     }
-                    "sec_mx" | "sec_am" | "sec_filter" | "sec_tick" => {
+                    "sec_mx" | "sec_am" | "sec_filter" | "sec_tick" | "sec_imb" => {
                         self.trading_header_tb.open_dropdown_id = None;
                         if let Some(mlc_core::state::Panel::Dom(pid)) = section_item {
                             match item_id.as_str() {
@@ -3127,6 +3127,20 @@ impl ChartApp {
                                                 state.center_price = state.market_price;
                                             }
                                         }
+                                    }
+                                }
+                                "sec_imb" => {
+                                    // Imb strip toggle (multi only) — plain
+                                    // chip label = on, struck = off.
+                                    let mut changed = false;
+                                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                                        if state.multi_mode {
+                                            state.multi.config.show_imbalance = !state.multi.config.show_imbalance;
+                                            changed = true;
+                                        }
+                                    }
+                                    if changed {
+                                        self.autosave_snapshot();
                                     }
                                 }
                                 "sec_filter" => {
@@ -4062,30 +4076,11 @@ impl ChartApp {
                         state.volume_by_price.clear();
                     }
                 }
-                "ex_add" => {
-                    let added = self.panels_store.dom.get_mut(&pid)
-                        .and_then(|state| state.multi.cycle_add_exchange().map(|s| s.to_string()))
-                        .map(|ex| (ex, self.panels_store.dom.get(&pid).map(|s| s.multi.symbol.clone()).unwrap_or_default()));
-                    if let Some((ex, sym)) = added {
-                        self.subscribe_multi_roster(&sym, &[ex]);
-                    }
-                }
-                "grid" => {
-                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                        state.multi.cycle_grid_size();
-                    }
-                }
-                "depth" => {
-                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                        state.multi.cycle_depth();
-                    }
-                }
-                "imb" => {
-                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                        state.multi.config.show_imbalance = !state.multi.config.show_imbalance;
-                    }
-                    self.autosave_snapshot();
-                }
+                // Roster management (ex_add / ex_del) and grid / depth / imb
+                // buttons left the modal (owner spec 2026-07-30): columns
+                // live in the header picker dropdown, grid on the toolbar
+                // tick chip (+ ctrl+scroll), imbalance on the `sec_imb`
+                // toolbar chip.
                 _ => {
                     if let Some(i_str) = rest.strip_prefix("col:") {
                         if let (Ok(i), Some(state)) = (i_str.parse::<usize>(), self.panels_store.dom.get_mut(&pid)) {
@@ -4094,12 +4089,6 @@ impl ChartApp {
                                 1 => state.column_config.show_sell_trades = !state.column_config.show_sell_trades,
                                 2 => state.column_config.show_buy_trades = !state.column_config.show_buy_trades,
                                 _ => state.column_config.show_ask_orders = !state.column_config.show_ask_orders,
-                            }
-                        }
-                    } else if let Some(i_str) = rest.strip_prefix("ex_del:") {
-                        if let (Ok(i), Some(state)) = (i_str.parse::<usize>(), self.panels_store.dom.get_mut(&pid)) {
-                            if let Some(ex) = state.multi.config.exchanges.get(i).cloned() {
-                                state.multi.remove_exchange(&ex);
                             }
                         }
                     }

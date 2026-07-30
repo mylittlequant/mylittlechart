@@ -1369,6 +1369,7 @@ fn granularity_quick_pick_items(
             active: is_active,
             disabled: false,
             min_width: text_w + BTN_PAD_X,
+            strikethrough: false,
         }
     }).collect()
 }
@@ -2963,7 +2964,7 @@ fn convert_toolbar_def_to_sections(def: &PanelToolbarDef) -> Vec<ToolbarSection>
                 ToolbarItemDef::IconButton { id, icon, .. } => {
                     TcToolbarItem::icon_button(id, IconId::new(icon.name()))
                 }
-                ToolbarItemDef::Button { id, icon, text, min_width, .. } => {
+                ToolbarItemDef::Button { id, icon, text, min_width, strikethrough, .. } => {
                     if *id == "clock" {
                         // Clock buttons are converted to the Clock toolbar item type
                         // which renders with monospace font and right alignment.
@@ -2980,6 +2981,7 @@ fn convert_toolbar_def_to_sections(def: &PanelToolbarDef) -> Vec<ToolbarSection>
                             active: false,
                             disabled: false,
                             min_width: *min_width,
+                            strikethrough: *strikethrough,
                         }
                     }
                 }

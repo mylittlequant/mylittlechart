@@ -6924,6 +6924,7 @@ impl ChartApp {
                                     locked: s.multi.locked,
                                     min_volume_filter: s.multi.min_level_qty,
                                     tick_size: s.multi.config.grid_size,
+                                    show_imbalance: Some(s.multi.config.show_imbalance),
                                 }
                             } else {
                                 mlc_core::toolbar::SectionDomChips {
@@ -6931,6 +6932,7 @@ impl ChartApp {
                                     locked: s.auto_center,
                                     min_volume_filter: s.min_volume_filter,
                                     tick_size: s.tick_size,
+                                    show_imbalance: None,
                                 }
                             })
                         } else {
@@ -7826,6 +7828,7 @@ impl ChartApp {
                                 locked: s.multi.locked,
                                 min_volume_filter: s.multi.min_level_qty,
                                 tick_size: s.multi.config.grid_size,
+                                show_imbalance: Some(s.multi.config.show_imbalance),
                             }
                         } else {
                             mlc_core::toolbar::SectionDomChips {
@@ -7833,6 +7836,7 @@ impl ChartApp {
                                 locked: s.auto_center,
                                 min_volume_filter: s.min_volume_filter,
                                 tick_size: s.tick_size,
+                                show_imbalance: None,
                             }
                         })
                     } else {

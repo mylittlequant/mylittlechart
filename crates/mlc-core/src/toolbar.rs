@@ -397,6 +397,10 @@ pub struct SectionDomChips {
     pub locked: bool,
     pub min_volume_filter: f64,
     pub tick_size: f64,
+    /// Multi-DOM ±2%/±10% liquidity-share strip toggle chip — `Some(on)`
+    /// renders an "Imb" chip (plain = on, struck-through = off, owner
+    /// spec 2026-07-30); `None` (single mode) renders no chip.
+    pub show_imbalance: Option<bool>,
 }
 
 /// Data-section sidebar header toolbar (global-docking Stage B, owner spec
@@ -459,6 +463,14 @@ pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolba
             }));
         items.push(ToolbarItemDef::button("sec_tick")
             .with_text(&format!("{}", c.tick_size)));
+        // Imb strip toggle (multi mode only) — plain label = strips ON,
+        // struck-through = OFF (owner spec 2026-07-30; replaces the modal
+        // button).
+        if let Some(imb_on) = c.show_imbalance {
+            items.push(ToolbarItemDef::button("sec_imb")
+                .with_text("Imb")
+                .with_strikethrough(!imb_on));
+        }
         sections.push(ToolbarSectionDef::new(items).with_separator());
     }
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)

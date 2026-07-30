@@ -85,15 +85,20 @@ pub fn render_dom_settings_modal(
     pos: Option<(f64, f64)>,
     dom: &DomState,
 ) {
-    // Height from content: mode + skin + columns + ladder + multi block.
-    let n_ex = dom.multi.config.exchanges.len();
-    let modal_h = HEADER_H
-        + PAD
-        + (CAPTION_H + BTN_H + ROW_GAP) * 4.0            // mode / skin / columns / ladder
-        + CAPTION_H                                       // multi caption
-        + (BTN_H + 6.0) * (n_ex as f64 + 1.0)             // exchange rows + add
-        + CAPTION_H + BTN_H                               // grid+depth+imbalance row
-        + PAD;
+    // Mode-aware surface (owner spec 2026-07-30): the modal carries ONLY
+    // what has no toolbar/picker home. Multi mode = just the Mode switch
+    // (columns live in the header picker dropdown, grid on the tick chip,
+    // imbalance on the `sec_imb` chip, L/F on its chip). Single mode =
+    // Mode + Skin + Columns + Ladder.
+    let multi = dom.multi_mode;
+    let modal_h = if multi {
+        HEADER_H + PAD + CAPTION_H + BTN_H + PAD
+    } else {
+        HEADER_H + PAD
+            + (CAPTION_H + BTN_H + ROW_GAP) * 3.0        // mode / skin / columns
+            + CAPTION_H + BTN_H                          // ladder (no trailing gap)
+            + PAD
+    };
     let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
     let mx = mx.max(0.0).min((screen_w - DOM_MODAL_W).max(0.0));
     let my = my.max(0.0).min((screen_h - modal_h).max(0.0));
@@ -148,77 +153,52 @@ pub fn render_dom_settings_modal(
     row_y += CAPTION_H;
     modal_btn(ctx, coord, &layer_id, tt, "mode:dom", left, row_y, btn_w, "DOM", !dom.multi_mode);
     modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + btn_w + 8.0, row_y, btn_w + 10.0, "Multi-DOM", dom.multi_mode);
-    row_y += BTN_H + ROW_GAP;
 
-    caption(ctx, tt, left, row_y, "Skin (click to cycle)");
-    row_y += CAPTION_H;
-    modal_btn(ctx, coord, &layer_id, tt, "skin", left, row_y, btn_w * 2.0 + 18.0, &format!("{:?}", dom.skin), false);
-    row_y += BTN_H + ROW_GAP;
+    if !multi {
+        row_y += BTN_H + ROW_GAP;
 
-    caption(ctx, tt, left, row_y, "Columns");
-    row_y += CAPTION_H;
-    let cc = &dom.column_config;
-    let col_w = 70.0;
-    for (i, (label, on)) in [
-        ("Bid ord", cc.show_bid_orders),
-        ("Sell trd", cc.show_sell_trades),
-        ("Buy trd", cc.show_buy_trades),
-        ("Ask ord", cc.show_ask_orders),
-    ]
-    .iter()
-    .enumerate()
-    {
-        modal_btn(
-            ctx, coord, &layer_id, tt,
-            &format!("col:{}", i),
-            left + i as f64 * (col_w + 6.0),
-            row_y,
-            col_w,
-            label,
-            *on,
-        );
+        caption(ctx, tt, left, row_y, "Skin (click to cycle)");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "skin", left, row_y, btn_w * 2.0 + 18.0, &format!("{:?}", dom.skin), false);
+        row_y += BTN_H + ROW_GAP;
+
+        caption(ctx, tt, left, row_y, "Columns");
+        row_y += CAPTION_H;
+        let cc = &dom.column_config;
+        let col_w = 70.0;
+        for (i, (label, on)) in [
+            ("Bid ord", cc.show_bid_orders),
+            ("Sell trd", cc.show_sell_trades),
+            ("Buy trd", cc.show_buy_trades),
+            ("Ask ord", cc.show_ask_orders),
+        ]
+        .iter()
+        .enumerate()
+        {
+            modal_btn(
+                ctx, coord, &layer_id, tt,
+                &format!("col:{}", i),
+                left + i as f64 * (col_w + 6.0),
+                row_y,
+                col_w,
+                label,
+                *on,
+            );
+        }
+        row_y += BTN_H + ROW_GAP;
+
+        caption(ctx, tt, left, row_y, "Ladder");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "am", left, row_y, 80.0,
+            if dom.auto_center { "Auto" } else { "Manual" }, dom.auto_center);
+        let f_label = if dom.min_volume_filter > 0.0 {
+            format!("Filter {:.0}", dom.min_volume_filter)
+        } else {
+            "Filter off".to_string()
+        };
+        modal_btn(ctx, coord, &layer_id, tt, "filter", left + 88.0, row_y, 90.0, &f_label, dom.min_volume_filter > 0.0);
+        modal_btn(ctx, coord, &layer_id, tt, "tick", left + 186.0, row_y, 80.0, &format!("Tick {}", dom.tick_size), false);
     }
-    row_y += BTN_H + ROW_GAP;
-
-    caption(ctx, tt, left, row_y, "Ladder");
-    row_y += CAPTION_H;
-    modal_btn(ctx, coord, &layer_id, tt, "am", left, row_y, 80.0,
-        if dom.auto_center { "Auto" } else { "Manual" }, dom.auto_center);
-    let f_label = if dom.min_volume_filter > 0.0 {
-        format!("Filter {:.0}", dom.min_volume_filter)
-    } else {
-        "Filter off".to_string()
-    };
-    modal_btn(ctx, coord, &layer_id, tt, "filter", left + 88.0, row_y, 90.0, &f_label, dom.min_volume_filter > 0.0);
-    modal_btn(ctx, coord, &layer_id, tt, "tick", left + 186.0, row_y, 80.0, &format!("Tick {}", dom.tick_size), false);
-    row_y += BTN_H + ROW_GAP;
-
-    caption(ctx, tt, left, row_y, "Multi-exchange roster");
-    row_y += CAPTION_H;
-    for (i, ex) in dom.multi.config.exchanges.iter().enumerate() {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&tt.item_text);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        // System "EXCHANGE:AT" column label.
-        ctx.fill_text(
-            &mlc_app_panels::trading::order_flow::multi_dom::col_label(ex),
-            left + 4.0,
-            row_y + BTN_H / 2.0,
-        );
-        modal_btn(ctx, coord, &layer_id, tt, &format!("ex_del:{}", i), mx + DOM_MODAL_W - PAD - 54.0, row_y, 54.0, "Remove", false);
-        row_y += BTN_H + 6.0;
-    }
-    modal_btn(ctx, coord, &layer_id, tt, "ex_add", left, row_y, DOM_MODAL_W - PAD * 2.0, "+ Add next exchange", false);
-    row_y += BTN_H + 6.0 + CAPTION_H - 12.0;
-
-    modal_btn(ctx, coord, &layer_id, tt, "grid", left, row_y, 90.0, &format!("Grid {}", dom.multi.config.grid_size), false);
-    modal_btn(ctx, coord, &layer_id, tt, "depth", left + 98.0, row_y, 90.0, &format!("Depth {}", dom.multi.config.depth_per_side), false);
-    // Bottom ±2%/±10% liquidity-share strip toggle (owner spec 2026-07-30);
-    // label states what is CURRENTLY on.
-    modal_btn(ctx, coord, &layer_id, tt, "imb", left + 196.0, row_y, 90.0,
-        if dom.multi.config.show_imbalance { "Imb on" } else { "Imb off" },
-        dom.multi.config.show_imbalance);
 
     coord.pop_layer(&layer_id);
 }

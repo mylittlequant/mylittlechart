@@ -73,6 +73,9 @@ pub enum ToolbarItem {
         disabled: bool,
         /// Minimum width for buttons with text (0 = auto)
         min_width: f64,
+        /// Draw a line through the label — "feature currently OFF" look
+        /// for toggle chips whose label is the feature name (e.g. "Imb").
+        strikethrough: bool,
     },
     /// Icon-only button
     IconButton {
@@ -146,6 +149,7 @@ impl ToolbarItem {
             active: false,
             disabled: false,
             min_width: 0.0,
+            strikethrough: false,
         }
     }
 
@@ -183,8 +187,8 @@ impl ToolbarItem {
     /// Set minimum width for buttons/dropdowns
     pub fn with_min_width(self, width: f64) -> Self {
         match self {
-            Self::Button { id, icon, text, active, disabled, .. } => {
-                Self::Button { id, icon, text, active, disabled, min_width: width }
+            Self::Button { id, icon, text, active, disabled, strikethrough, .. } => {
+                Self::Button { id, icon, text, active, disabled, min_width: width, strikethrough }
             }
             Self::IconButton { id, icon, active, disabled, .. } => {
                 Self::IconButton { id, icon, active, disabled, min_width: width }
@@ -271,8 +275,8 @@ impl ToolbarItem {
     /// Set the active state of the item
     pub fn with_active(self, active: bool) -> Self {
         match self {
-            Self::Button { id, icon, text, disabled, min_width, .. } => {
-                Self::Button { id, icon, text, active, disabled, min_width }
+            Self::Button { id, icon, text, disabled, min_width, strikethrough, .. } => {
+                Self::Button { id, icon, text, active, disabled, min_width, strikethrough }
             }
             Self::IconButton { id, icon, disabled, min_width, .. } => {
                 Self::IconButton { id, icon, active, disabled, min_width }
@@ -313,8 +317,8 @@ impl ToolbarItem {
     /// Set the icon for IconButton or Dropdown
     pub fn with_icon(self, new_icon: IconId) -> Self {
         match self {
-            Self::Button { id, text, active, disabled, min_width, .. } => {
-                Self::Button { id, icon: Some(new_icon), text, active, disabled, min_width }
+            Self::Button { id, text, active, disabled, min_width, strikethrough, .. } => {
+                Self::Button { id, icon: Some(new_icon), text, active, disabled, min_width, strikethrough }
             }
             Self::IconButton { id, active, disabled, min_width, .. } => {
                 Self::IconButton { id, icon: new_icon, active, disabled, min_width }
@@ -339,8 +343,8 @@ impl ToolbarItem {
     /// Set the text/label for Button or Dropdown
     pub fn with_text(self, new_text: String) -> Self {
         match self {
-            Self::Button { id, icon, active, disabled, min_width, .. } => {
-                Self::Button { id, icon, text: Some(new_text), active, disabled, min_width }
+            Self::Button { id, icon, active, disabled, min_width, strikethrough, .. } => {
+                Self::Button { id, icon, text: Some(new_text), active, disabled, min_width, strikethrough }
             }
             Self::Dropdown { id, icon, active, show_chevron, min_width, .. } => {
                 Self::Dropdown { id, icon, text: Some(new_text), active, show_chevron, min_width }
@@ -1044,7 +1048,7 @@ pub fn draw_toolbar_with_icons(
             ToolbarItem::Spacer => {
                 config.item_size
             }
-            ToolbarItem::Button { id, icon, text, active, disabled, min_width } => {
+            ToolbarItem::Button { id, icon, text, active, disabled, min_width, strikethrough } => {
                 let icon_opt = icon.as_ref();
                 let text_opt = text.as_ref();
                 let is_hovered = hovered_id == Some(id.as_str());
@@ -1106,6 +1110,14 @@ pub fn draw_toolbar_with_icons(
                     ctx.set_text_align(if icon_opt.is_some() { TextAlign::Left } else { TextAlign::Center });
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text(text, text_x, item_rect.center_y());
+                    if *strikethrough {
+                        // "Feature OFF" presentation: 1px line through the
+                        // measured label, slightly overhanging each side.
+                        let tw = ctx.measure_text(text);
+                        let line_x = if icon_opt.is_some() { text_x } else { text_x - tw / 2.0 };
+                        ctx.set_fill_color(icon_color);
+                        ctx.fill_rect(line_x - 1.0, item_rect.center_y() - 0.5, tw + 2.0, 1.0);
+                    }
                 }
 
                 result.item_rects.push((id.clone(), item_rect));
