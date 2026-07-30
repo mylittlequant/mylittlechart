@@ -165,6 +165,10 @@ pub enum PersistedFreeItemKind {
         /// Bottom ±2% / ±10% liquidity-share strip (owner toggle 2026-07-30).
         #[serde(default = "default_true")]
         multi_show_imbalance: bool,
+        /// Intensity normalization: per-column max vs cross-exchange max
+        /// (TapeSurf Individual vs Cross Exchange, 2026-07-31).
+        #[serde(default)]
+        multi_per_column_norm: bool,
     },
     Footprint {
         #[serde(default)]

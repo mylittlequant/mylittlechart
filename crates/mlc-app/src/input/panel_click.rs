@@ -4049,11 +4049,12 @@ impl ChartApp {
                 }
                 // Skin texture layer manual switches — edit the live
                 // theme's panel_style (skin presets re-apply their own).
-                "tex:gradient" | "tex:flat" | "tex:cells" => {
+                "tex:gradient" | "tex:flat" | "tex:cells" | "tex:mosaic" => {
                     use mlc_core::theme::BarTexture;
                     let tex = match rest {
                         "tex:flat" => BarTexture::Flat,
                         "tex:cells" => BarTexture::Cells,
+                        "tex:mosaic" => BarTexture::Mosaic,
                         _ => BarTexture::Gradient,
                     };
                     self.panel_app.theme_manager.current_mut().panel_style.bar_texture = tex;
@@ -4061,6 +4062,14 @@ impl ChartApp {
                 "zebra" => {
                     let ps = &mut self.panel_app.theme_manager.current_mut().panel_style;
                     ps.row_zebra = !ps.row_zebra;
+                }
+                // Intensity normalization — per-panel Multi-DOM config
+                // (TapeSurf Individual vs Cross Exchange), persisted.
+                "norm:cross" | "norm:col" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.config.per_column_norm = rest == "norm:col";
+                    }
+                    self.autosave_snapshot();
                 }
                 "am" => {
                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {

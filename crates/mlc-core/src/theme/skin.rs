@@ -29,10 +29,15 @@ pub enum BarTexture {
     #[default]
     Gradient,
     /// No bar length at all: the whole cell fills at an intensity
-    /// proportional to volume — the TapeSurf "Compact" mosaic. Multi-DOM
-    /// renders mosaic columns; solo DOM treats it as Gradient (its cell
-    /// mode is the `DomSkin::BookmapHybrid` variant).
+    /// proportional to volume (L2 compression). Solo DOM treats it as
+    /// Gradient (its cell mode is the `DomSkin::BookmapHybrid` variant).
     Cells,
+    /// L3 compression — the TapeSurf "Compact" mosaic (dissection ref 14):
+    /// each venue collapses to a narrow strip of small squares, square
+    /// SIZE and color intensity ∝ volume, no numbers; per-venue bbo shown
+    /// as short horizontal markers across the strip. Multi-DOM only; solo
+    /// DOM treats it as Gradient.
+    Mosaic,
 }
 
 /// How chart candles are drawn.

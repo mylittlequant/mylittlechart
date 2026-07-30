@@ -8119,6 +8119,7 @@ impl ChartApp {
                                 multi_grid_size: state.multi.config.grid_size,
                                 multi_depth: state.multi.config.depth_per_side,
                                 multi_show_imbalance: state.multi.config.show_imbalance,
+                                multi_per_column_norm: state.multi.config.per_column_norm,
                             }
                         }
                         Panel::Footprint(id) => {

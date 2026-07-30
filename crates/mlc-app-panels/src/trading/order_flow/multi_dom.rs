@@ -54,6 +54,10 @@ pub struct MultiDomConfig {
     pub depth_per_side: usize,
     /// Bottom ±2% / ±10% bid-liquidity-share strip (owner toggle 2026-07-30).
     pub show_imbalance: bool,
+    /// Intensity normalization: `true` = each column scales to its OWN max
+    /// (TapeSurf Heatmap Mode `Individual` — a weak venue stays readable),
+    /// `false` = shared cross-exchange max (`Cross Exchange`, historical).
+    pub per_column_norm: bool,
 }
 
 impl Default for MultiDomConfig {
@@ -63,6 +67,7 @@ impl Default for MultiDomConfig {
             grid_size: 0.5,
             depth_per_side: 25,
             show_imbalance: true,
+            per_column_norm: false,
         }
     }
 }
@@ -470,6 +475,35 @@ impl TradingPanel for MultiDomState {
             // System format: "EXCHANGE:AT" (owner spec 2026-07-30).
             ctx.fill_text(&col_label(ex), cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
         }
+        // Per-venue spread stat (TapeSurf §2.4): the venue's OWN bbo gap,
+        // right-aligned in its header cell. Only on columns wide enough to
+        // stay clear of the centered label.
+        if col_w >= 96.0 {
+            let grid = self.config.grid_size.max(1e-9);
+            let decimals = if grid >= 1.0 { 0 } else if grid >= 0.1 { 1 } else { 2 };
+            ctx.set_font("9px monospace");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_fill_color(&theme.text_muted);
+            for (i, _) in self.config.exchanges.iter().enumerate() {
+                let (bm, am) = &self.books_by_exchange[i];
+                let (Some(bt), Some(ab)) =
+                    (bm.keys().next_back().copied(), am.keys().next().copied())
+                else {
+                    continue;
+                };
+                let spread = (ab - bt) as f64 * grid;
+                if spread < 0.0 {
+                    continue;
+                }
+                let cxr = x + PRICE_COL_WIDTH + col_w * (i as f32 + 1.0) - 4.0;
+                ctx.fill_text(
+                    &format!("Δ{:.*}", decimals, spread),
+                    cxr as f64,
+                    (y + HEADER_HEIGHT * 0.5) as f64,
+                );
+            }
+            ctx.set_font("11px sans-serif");
+        }
 
         let body_y = y + HEADER_HEIGHT;
         let body_h = (h - HEADER_HEIGHT).max(0.0);
@@ -526,7 +560,30 @@ impl MultiDomState {
         };
         let center_idx = (anchor / grid).floor() as i64;
         let max_norm = self.max_level_qty.max(1e-9);
-        let big_thr = max_norm * BIG_ORDER_FRAC;
+        // Per-venue bbo (each column's own best bid/ask bucket) — drives
+        // the per-column bbo markers (TapeSurf ref 13/14).
+        let col_bid_top: Vec<Option<i64>> = (0..n)
+            .map(|i| self.books_by_exchange[i].0.keys().next_back().copied())
+            .collect();
+        let col_ask_bot: Vec<Option<i64>> = (0..n)
+            .map(|i| self.books_by_exchange[i].1.keys().next().copied())
+            .collect();
+        // Intensity normalization (TapeSurf Individual vs Cross Exchange):
+        // per-column max when configured, shared cross-exchange max else.
+        let col_norm: Vec<f64> = (0..n)
+            .map(|i| {
+                if self.config.per_column_norm {
+                    let (bm, am) = &self.books_by_exchange[i];
+                    bm.values()
+                        .chain(am.values())
+                        .copied()
+                        .fold(0.0_f64, f64::max)
+                        .max(1e-9)
+                } else {
+                    max_norm
+                }
+            })
+            .collect();
 
         // Cumulative depth from mid outward, per exchange per side — the
         // reference "waves": the stepped silhouette of book size at depth.
@@ -576,9 +633,12 @@ impl MultiDomState {
                 k as f64 / (GRAD_STEPS - 1) as f64
             };
             let a = match texture {
-                // Mosaic cell fill: intensity carried by ALPHA (no bar
+                // Full-cell fill: intensity carried by ALPHA (no bar
                 // length), so the ramp is much wider than the bar LUT's.
                 BarTexture::Cells => 0.10 + 0.62 * t,
+                // Mosaic squares: size carries most of the signal, color
+                // stays near-opaque so small squares remain visible.
+                BarTexture::Mosaic => 0.35 + 0.55 * t,
                 _ => 0.45 + 0.35 * t,
             };
             ask_grad.push(mlc_core::apply_opacity(
@@ -644,22 +704,34 @@ impl MultiDomState {
                     )
                 };
 
-                // Wave underlay — cumulative silhouette. Skipped in
-                // mosaic mode (full-cell fills would bury it).
-                if cum > 0.0 && texture != BarTexture::Cells {
+                // Wave underlay — cumulative silhouette. Skipped in the
+                // compressed modes (full-cell fills / squares bury it).
+                if cum > 0.0 && !matches!(texture, BarTexture::Cells | BarTexture::Mosaic) {
                     let wf = (cum / max_cum).clamp(0.0, 1.0);
                     ctx.set_fill_color(if is_ask { &ask_wave } else { &bid_wave });
                     ctx.fill_rect(cx + 2.0, row_y, cell_w * wf, ROW_HEIGHT as f64);
                 }
 
                 if q <= 0.0 || q < self.min_level_qty { continue; }
-                let frac = (q / max_norm).powf(0.6).clamp(0.04, 1.0);
-                let big = q >= big_thr;
+                let frac = (q / col_norm[i]).powf(0.6).clamp(0.04, 1.0);
+                let big = q >= col_norm[i] * BIG_ORDER_FRAC;
                 let g = (frac * (GRAD_STEPS - 1) as f64).round() as usize;
+                if texture == BarTexture::Mosaic {
+                    // L3 mosaic (TapeSurf ref 14): one centered square per
+                    // level, square size + color intensity ∝ volume. No
+                    // numbers, no bars — the strip reads like a vertical
+                    // heatmap per venue.
+                    let side = 4.0 + frac * (ROW_HEIGHT as f64 - 6.0);
+                    let sx = cx + 2.0 + (cell_w - side) * 0.5;
+                    let sy = row_y + (ROW_HEIGHT as f64 - side) * 0.5;
+                    ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
+                    ctx.fill_rect(sx, sy, side, side);
+                    continue;
+                }
                 if texture == BarTexture::Cells {
-                    // Compact mosaic (TapeSurf ref 14): the whole cell
-                    // fills at volume intensity — no bar length. Dense,
-                    // chartless; only big levels get a number.
+                    // L2 compression: the whole cell fills at volume
+                    // intensity — no bar length. Only big levels get a
+                    // number.
                     ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
                     ctx.fill_rect(cx + 2.0, row_y + 1.0, cell_w, (ROW_HEIGHT - 2.0) as f64);
                     if big {
@@ -705,6 +777,82 @@ impl MultiDomState {
                 ctx.move_to(x as f64, row_y + ROW_HEIGHT as f64);
                 ctx.line_to((x + w) as f64, row_y + ROW_HEIGHT as f64);
                 ctx.stroke();
+            }
+        }
+
+        // ── Per-venue bbo markers (TapeSurf ref 13/14): each column's OWN
+        // best bid/ask as a bright horizontal marker — where every venue's
+        // book stands against the shared ladder, at a glance. Mosaic gets
+        // short strip-width markers; bar textures get full-cell lines.
+        for i in 0..n {
+            let cx = (x + PRICE_COL_WIDTH + col_w * i as f32) as f64;
+            let cell_w = (col_w - 4.0) as f64;
+            let (m_x, m_w) = if texture == BarTexture::Mosaic {
+                let mw = (cell_w * 0.5).clamp(16.0, 36.0).min(cell_w);
+                (cx + 2.0 + (cell_w - mw) * 0.5, mw)
+            } else {
+                (cx + 2.0, cell_w)
+            };
+            if let Some(bt) = col_bid_top[i] {
+                let r = half - (bt - center_idx);
+                if r >= 0 && r < rows {
+                    // Top edge of the best-bid row faces the venue's spread.
+                    let yy = body_y as f64 + ROW_HEIGHT as f64 * r as f64;
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.buy_bright, 0.9));
+                    ctx.fill_rect(m_x, yy, m_w, 1.5);
+                }
+            }
+            if let Some(ab) = col_ask_bot[i] {
+                let r = half - (ab - center_idx);
+                if r >= 0 && r < rows {
+                    let yy = body_y as f64 + ROW_HEIGHT as f64 * (r as f64 + 1.0);
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.sell_bright, 0.9));
+                    ctx.fill_rect(m_x, yy - 1.5, m_w, 1.5);
+                }
+            }
+        }
+
+        // ── Stepped cumulative outline (TapeSurf ref 13): the wave fill's
+        // silhouette as a crisp staircase — asks descend toward mid from
+        // the top, bids rise from the bottom. Skipped in the compressed
+        // modes along with the fill.
+        if !matches!(texture, BarTexture::Cells | BarTexture::Mosaic) {
+            let ask_line = mlc_core::apply_opacity(&theme.sell, 0.55);
+            let bid_line = mlc_core::apply_opacity(&theme.buy, 0.55);
+            for i in 0..n {
+                let cx = (x + PRICE_COL_WIDTH + col_w * i as f32) as f64 + 2.0;
+                let cell_w = (col_w - 4.0) as f64;
+                for side_ask in [true, false] {
+                    ctx.set_stroke_color(if side_ask { &ask_line } else { &bid_line });
+                    ctx.set_stroke_width(1.0);
+                    ctx.begin_path();
+                    let mut started = false;
+                    for r in 0..rows {
+                        let idx = center_idx + (half - r);
+                        if idx as f64 * grid <= 0.0 { continue; }
+                        let cum = if idx > mid_idx {
+                            if !side_ask { continue; }
+                            ask_cum[i].get((idx - mid_idx) as usize).copied().unwrap_or(0.0)
+                        } else {
+                            if side_ask { continue; }
+                            bid_cum[i].get((mid_idx - idx) as usize).copied().unwrap_or(0.0)
+                        };
+                        if cum <= 0.0 && !started { continue; }
+                        let wf = (cum / max_cum).clamp(0.0, 1.0);
+                        let xe = cx + cell_w * wf;
+                        let y0 = body_y as f64 + ROW_HEIGHT as f64 * r as f64;
+                        if started {
+                            ctx.line_to(xe, y0);
+                        } else {
+                            ctx.move_to(xe, y0);
+                            started = true;
+                        }
+                        ctx.line_to(xe, y0 + ROW_HEIGHT as f64);
+                    }
+                    if started {
+                        ctx.stroke();
+                    }
+                }
             }
         }
 

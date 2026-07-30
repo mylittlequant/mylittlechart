@@ -94,12 +94,12 @@ pub fn render_dom_settings_modal(
     let multi = dom.multi_mode;
     let modal_h = if multi {
         HEADER_H + PAD
-            + CAPTION_H + BTN_H + ROW_GAP                // mode
-            + CAPTION_H + BTN_H                          // texture
+            + (CAPTION_H + BTN_H + ROW_GAP) * 2.0        // mode / texture
+            + CAPTION_H + BTN_H                          // book (no trailing gap)
             + PAD
     } else {
         HEADER_H + PAD
-            + (CAPTION_H + BTN_H + ROW_GAP) * 4.0        // mode / skin / texture / columns
+            + (CAPTION_H + BTN_H + ROW_GAP) * 5.0        // mode / texture / book / skin / columns
             + CAPTION_H + BTN_H                          // ladder (no trailing gap)
             + PAD
     };
@@ -159,17 +159,19 @@ pub fn render_dom_settings_modal(
     modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + btn_w + 8.0, row_y, btn_w + 10.0, "Multi-DOM", dom.multi_mode);
     row_y += BTN_H + ROW_GAP;
 
-    // Bar texture + zebra (skin texture layer manual switch — edits the
-    // live theme's panel_style; a skin preset re-applies its own).
+    // Bar texture (skin texture layer manual switch — edits the live
+    // theme's panel_style; a skin preset re-applies its own). Cells = L2
+    // full-cell intensity, Mosaic = L3 squares (TapeSurf Compact, ref 14).
     {
         use mlc_core::theme::BarTexture;
         caption(ctx, tt, left, row_y, "Texture");
         row_y += CAPTION_H;
-        let tex_w = 70.0;
+        let tex_w = 64.0;
         for (i, (id, label, tex)) in [
             ("tex:gradient", "Gradient", BarTexture::Gradient),
             ("tex:flat", "Flat", BarTexture::Flat),
             ("tex:cells", "Cells", BarTexture::Cells),
+            ("tex:mosaic", "Mosaic", BarTexture::Mosaic),
         ]
         .iter()
         .enumerate()
@@ -180,11 +182,21 @@ pub fn render_dom_settings_modal(
                 label, style.bar_texture == *tex,
             );
         }
-        modal_btn(
-            ctx, coord, &layer_id, tt, "zebra",
-            left + 3.0 * (tex_w + 6.0), row_y, tex_w,
-            "Zebra", style.row_zebra,
-        );
+        row_y += BTN_H + ROW_GAP;
+
+        // Book row: intensity normalization (multi only — TapeSurf
+        // Individual vs Cross Exchange, per-panel config) + zebra (theme).
+        caption(ctx, tt, left, row_y, "Book");
+        row_y += CAPTION_H;
+        let mut bx = left;
+        if multi {
+            let per_col = dom.multi.config.per_column_norm;
+            modal_btn(ctx, coord, &layer_id, tt, "norm:cross", bx, row_y, 88.0, "Norm: Cross", !per_col);
+            bx += 88.0 + 6.0;
+            modal_btn(ctx, coord, &layer_id, tt, "norm:col", bx, row_y, 88.0, "Norm: Col", per_col);
+            bx += 88.0 + 6.0;
+        }
+        modal_btn(ctx, coord, &layer_id, tt, "zebra", bx, row_y, 70.0, "Zebra", style.row_zebra);
     }
 
     if !multi {
