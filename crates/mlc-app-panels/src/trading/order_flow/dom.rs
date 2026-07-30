@@ -1105,7 +1105,23 @@ impl TradingPanel for DomState {
         // color-intensity cell per row (volume = opacity, no digits).
         // Depth information is never dropped, only re-encoded.
         let pad = 4.0_f32;
-        let price_col_w = DOM_PRICE_COL_WIDTH.min(w * 0.45);
+        // Price column hugs the actual digits (owner 2026-07-31: the old
+        // fixed 70px kept dead margins between price and the volume bars
+        // when squeezed) — measured text + breathing room, capped by the
+        // legacy width.
+        let price_col_w = {
+            ctx.set_font("11px monospace");
+            let sample_price = if self.center_price > 0.0 {
+                self.center_price
+            } else {
+                self.market_price
+            };
+            let fit = ctx
+                .measure_text(&format!("{:.*}", self.price_decimals(), sample_price))
+                as f32
+                + 14.0;
+            fit.clamp(40.0, DOM_PRICE_COL_WIDTH).min(w * 0.45)
+        };
         const MIN_SIDE_COL: f32 = 40.0; // digits below this are unreadable
         let mut cc = self.column_config.clone();
         let mut heatmap_mode = false;
@@ -1148,9 +1164,10 @@ impl TradingPanel for DomState {
             cc.show_buy_trades = false;
         }
         let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
-        // Width auto-L3 (Multi-DOM parity): heat cells thinner than a
-        // readable strip degrade to squares on their own.
-        if heatmap_mode && avail * 0.5 < 40.0 {
+        // Width auto-L3 (Multi-DOM parity). Threshold sits BELOW the L2
+        // trigger (side < 40) so the cascade has a real L2 window:
+        // bars → shed trades → L2 cells (side 24..40) → L3 squares (<24).
+        if heatmap_mode && avail * 0.5 < 24.0 {
             mosaic_mode = true;
         }
 
