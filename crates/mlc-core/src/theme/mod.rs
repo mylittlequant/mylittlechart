@@ -32,6 +32,7 @@
 mod preset;
 mod runtime;
 mod manager;
+mod skin;
 mod style;
 
 // =============================================================================
@@ -57,6 +58,9 @@ pub use runtime::{
     RuntimeTheme, RuntimeUIColors, RuntimeChartColors, RuntimeSeriesColors,
     RuntimeFonts, RuntimeSizing, RuntimeEffects,
 };
+
+// Skin tokens — the 8-color theme model (TapeSurf doctrine 2026-07-31)
+pub use skin::SkinTokens;
 
 // Re-export manager and settings panel types
 pub use manager::{

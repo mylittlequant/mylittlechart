@@ -612,11 +612,22 @@ impl From<&UITheme> for RuntimeTheme {
 }
 
 impl RuntimeTheme {
-    /// Available preset names
-    pub const PRESETS: &'static [&'static str] = &["dark", "light", "high_contrast", "high_contrast_mono", "mascot"];
+    /// Available preset names. The tail entries are 8-token SKINS
+    /// (`theme::SkinTokens` presets derived over the dark base).
+    pub const PRESETS: &'static [&'static str] = &[
+        "dark", "light", "high_contrast", "high_contrast_mono", "mascot",
+        "surf", "vaporwave", "terminal",
+    ];
 
     /// Create from a preset name
     pub fn from_preset(name: &str) -> Self {
+        // Skin presets: dark base + the 8-token derivation over every
+        // color surface (UI chrome, chart, series, trading panels).
+        if let Some(tokens) = super::skin::SkinTokens::by_name(name) {
+            let mut rt = Self::from(&UITheme::dark());
+            tokens.apply(&mut rt);
+            return rt;
+        }
         match name {
             "dark" => Self::from(&UITheme::dark()),
             "light" => Self::from(&UITheme::light()),

@@ -162,7 +162,7 @@ pub use engine::render as render;
 // =============================================================================
 
 // Utility functions (platform-independent)
-pub use utils::{parse_css_color, apply_opacity, rgba_to_hex};
+pub use utils::{parse_css_color, apply_opacity, mix_colors, rgba_to_hex};
 pub use utils::format_indicator_value;
 pub use utils::catmull_rom_spline;
 

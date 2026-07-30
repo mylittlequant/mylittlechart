@@ -102,6 +102,23 @@ pub fn apply_opacity(color: &str, opacity: f64) -> String {
     format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, alpha)
 }
 
+/// Linear sRGB mix of two CSS colors: `t = 0.0` → pure `a`, `t = 1.0` →
+/// pure `b`. Alpha channels mix too. The skin-token system derives every
+/// dimmed/hover/border tier and the volume-intensity bar gradients
+/// (side color → side secondary) from exactly this operation.
+pub fn mix_colors(a: &str, b: &str, t: f64) -> String {
+    let t = t.clamp(0.0, 1.0);
+    let (ar, ag, ab, aa) = parse_css_color(a);
+    let (br, bg, bb, ba) = parse_css_color(b);
+    let lerp = |x: u8, y: u8| -> u8 {
+        (x as f64 + (y as f64 - x as f64) * t).round().clamp(0.0, 255.0) as u8
+    };
+    format!(
+        "#{:02X}{:02X}{:02X}{:02X}",
+        lerp(ar, br), lerp(ag, bg), lerp(ab, bb), lerp(aa, ba)
+    )
+}
+
 /// Convert RGBA tuple to hex string
 ///
 /// Returns `#RRGGBB` if alpha is 255, otherwise `#RRGGBBAA`.

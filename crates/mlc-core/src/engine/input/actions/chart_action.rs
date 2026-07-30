@@ -363,6 +363,10 @@ impl ChartAction {
             "theme_high_contrast" => Self::SetTheme("high_contrast"),
             "theme_high_contrast_mono" => Self::SetTheme("high_contrast_mono"),
             "theme_mascot" => Self::SetTheme("mascot"),
+            // 8-token skin presets (TapeSurf doctrine 2026-07-31)
+            "theme_surf" => Self::SetTheme("surf"),
+            "theme_vaporwave" => Self::SetTheme("vaporwave"),
+            "theme_terminal" => Self::SetTheme("terminal"),
             "open_theme_settings" => Self::OpenThemeSettings,
 
             // UI Style

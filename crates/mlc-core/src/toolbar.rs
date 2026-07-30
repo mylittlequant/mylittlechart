@@ -1008,6 +1008,11 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
                 DropdownItemDef::action("theme_high_contrast", MK::ThemeHighContrast.get(lang)),
                 DropdownItemDef::action("theme_high_contrast_mono", MK::ThemeHcMono.get(lang)),
                 DropdownItemDef::action("theme_mascot", MK::ThemeWizardHat.get(lang)),
+                DropdownItemDef::Separator,
+                // 8-token skin presets (proper nouns, not translated).
+                DropdownItemDef::action("theme_surf", "Surf"),
+                DropdownItemDef::action("theme_vaporwave", "Vaporwave"),
+                DropdownItemDef::action("theme_terminal", "Terminal"),
             ],
             grid_columns: None,
         },

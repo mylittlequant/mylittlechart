@@ -559,10 +559,21 @@ impl MultiDomState {
         let mid_stripe = mlc_core::apply_opacity(&theme.current_price, 0.12);
         let ask_wave = mlc_core::apply_opacity(&theme.sell, 0.13);
         let bid_wave = mlc_core::apply_opacity(&theme.buy, 0.13);
-        let ask_bar = mlc_core::apply_opacity(&theme.sell, 0.45);
-        let bid_bar = mlc_core::apply_opacity(&theme.buy, 0.45);
-        let ask_big = mlc_core::apply_opacity(&theme.sell, 0.75);
-        let bid_big = mlc_core::apply_opacity(&theme.buy, 0.75);
+        // Volume-intensity bar gradient (skin doctrine 2026-07-31): bar
+        // color runs side primary → side "bright" secondary as the level
+        // grows, so walls glow hotter. Quantized to a small LUT computed
+        // once per frame — no per-cell color math.
+        const GRAD_STEPS: usize = 8;
+        let mut ask_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        let mut bid_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        for k in 0..GRAD_STEPS {
+            let t = k as f64 / (GRAD_STEPS - 1) as f64;
+            let a = 0.45 + 0.35 * t;
+            ask_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.sell, &theme.sell_bright, t), a));
+            bid_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.buy, &theme.buy_bright, t), a));
+        }
 
         ctx.set_font("10px monospace");
         for r in 0..rows {
@@ -626,13 +637,8 @@ impl MultiDomState {
                 let frac = (q / max_norm).powf(0.6).clamp(0.04, 1.0);
                 let bw = cell_w * frac;
                 let big = q >= big_thr;
-                ctx.set_fill_color(if is_ask {
-                    if big { &ask_big } else { &ask_bar }
-                } else if big {
-                    &bid_big
-                } else {
-                    &bid_bar
-                });
+                let g = (frac * (GRAD_STEPS - 1) as f64).round() as usize;
+                ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
                 ctx.fill_rect(cx + 2.0, row_y + 1.0, bw, (ROW_HEIGHT - 2.0) as f64);
                 if big {
                     // Bright edge marker at the bar tip.

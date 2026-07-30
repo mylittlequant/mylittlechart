@@ -8070,12 +8070,19 @@ impl ChartApp {
             r.width = (r.width - sidebar_w).max(0.0);
             r
         };
+        // Kept for the centered search overlay (its layout still fits the
+        // content area); draggable modals below do NOT use it.
         let modal_right_edge = content_rect.x + content_rect.width;
+        // Draggable modals move freely across the WHOLE window (owner rule
+        // 2026-07-31). The old `modal_right_edge` guard (content edge minus
+        // the data sidebar) is a relic: with a wide sidebar open it pushed
+        // the clamp limit NEGATIVE and shoved modals off the left screen
+        // edge. Modals may overlap the sidebar.
         let modal_layout = ChartModalLayout {
-            prim_screen_w: modal_right_edge,
+            prim_screen_w: w,
             prim_screen_h: h,
             prim_modal_y: 60.0,
-            ind_screen_w: modal_right_edge,
+            ind_screen_w: w,
             ind_screen_h: h,
             chart_x: content_rect.x,
             chart_y: content_rect.y,

@@ -1210,6 +1210,25 @@ impl TradingPanel for DomState {
             _ => true,
         };
 
+        // Volume-intensity bar gradient (skin doctrine 2026-07-31): order
+        // bars run side primary → side "bright" secondary as the level
+        // grows. Small per-frame LUT — no per-row color math.
+        const GRAD_STEPS: usize = 8;
+        let mut ask_ord_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        let mut bid_ord_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        for k in 0..GRAD_STEPS {
+            let t = k as f64 / (GRAD_STEPS - 1) as f64;
+            let a = 0.20 + 0.35 * t;
+            ask_ord_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.sell, &theme.sell_bright, t), a));
+            bid_ord_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.buy, &theme.buy_bright, t), a));
+        }
+        let grad_idx = |vol: f64, max: f64| -> usize {
+            if max <= 0.0 { return 0; }
+            (((vol / max).clamp(0.0, 1.0)) * (GRAD_STEPS - 1) as f64).round() as usize
+        };
+
         // === STEP 4: Render each price level row ===
         for (i, level) in levels.iter().enumerate() {
             let row_y = body_y + (i as f32 * row_height);
@@ -1333,12 +1352,7 @@ impl TradingPanel for DomState {
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                let bid_bar_color = if theme.buy.len() >= 7 {
-                    format!("{}33", &theme.buy[..7])
-                } else {
-                    theme.buy.clone()
-                };
-                ctx.set_fill_color(&bid_bar_color);
+                ctx.set_fill_color(&bid_ord_grad[grad_idx(level.bid_volume, visible_max_volume)]);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
                 ctx.set_font("10px monospace");
@@ -1425,12 +1439,7 @@ impl TradingPanel for DomState {
                 let bar_y = row_y + 2.0;
                 let bar_h = row_height - 4.0;
 
-                let ask_bar_color = if theme.sell.len() >= 7 {
-                    format!("{}33", &theme.sell[..7])
-                } else {
-                    theme.sell.clone()
-                };
-                ctx.set_fill_color(&ask_bar_color);
+                ctx.set_fill_color(&ask_ord_grad[grad_idx(level.ask_volume, visible_max_volume)]);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
 
                 ctx.set_font("10px monospace");

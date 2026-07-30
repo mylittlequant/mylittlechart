@@ -71,9 +71,11 @@ pub fn render_settings_modal(
         (x, y)
     });
 
-    // Clamp to screen bounds
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_width);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_height);
+    // Clamp to screen bounds. `.max(0.0)` on the LIMIT keeps a window
+    // narrower than the modal from producing a negative clamp that shoves
+    // the modal off the left edge.
+    let modal_x = modal_x.max(0.0).min((screen_w - modal_width).max(0.0));
+    let modal_y = modal_y.max(0.0).min((screen_h - modal_height).max(0.0));
 
     let mut result = ChartSettingsModalResult::default();
 
@@ -1814,7 +1816,7 @@ fn render_appearance_settings(
     }
     let button_height = 26.0;
     let button_spacing = 4.0;
-    let theme_buttons_height = 5.0 * (button_height + button_spacing);
+    let theme_buttons_height = 8.0 * (button_height + button_spacing);
     let style_buttons_height = 6.0 * (button_height + button_spacing);
     let slider_height = 32.0;
     let style_sliders_height = 8.0 * slider_height;
@@ -1859,6 +1861,11 @@ fn render_appearance_settings(
         ("high_contrast", t_settings(SettingsKey::ThemeHighContrast), "#000000"),
         ("high_contrast_mono", t_settings(SettingsKey::ThemeHighContrastMono), "#000000"),
         ("mascot", t_settings(SettingsKey::ThemeWizardHat), "#0a0f1a"),
+        // 8-token skin presets (TapeSurf doctrine 2026-07-31) — proper
+        // nouns, not translated.
+        ("surf", "Surf", "#121215"),
+        ("vaporwave", "Vaporwave", "#13042c"),
+        ("terminal", "Terminal", "#000000"),
     ];
     let current_theme = theme_manager.preset_name();
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
