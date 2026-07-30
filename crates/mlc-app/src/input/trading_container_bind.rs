@@ -447,9 +447,20 @@ impl ChartApp {
                     && s.multi.books_by_exchange.get(i)
                         .map_or(true, |(b, a)| b.is_empty() && a.is_empty())
                     && now_ms - s.multi.last_reseed_ms >= 5000;
-                if missing || stale_empty {
+                // A crossed bbo (best bid >= best ask) marks a ghost book —
+                // dropped removes left stale levels across the spread. A fresh
+                // REST snapshot heals the covered range via the tracker's
+                // windowed merge. Same 5s throttle.
+                let crossed = !missing
+                    && now_ms - s.multi.last_reseed_ms >= 5000
+                    && s.multi.handles.get(i)
+                        .and_then(|h| h.as_ref())
+                        .map_or(false, |h| {
+                            h.blocking_read().bbo().map_or(false, |(b, a)| b >= a)
+                        });
+                if missing || stale_empty || crossed {
                     multi_needs.push((*pid, i, ex.clone(), s.multi.symbol.clone()));
-                    if stale_empty {
+                    if stale_empty || crossed {
                         reseed_pids.push(*pid);
                     }
                 }

@@ -172,8 +172,9 @@ pub struct DomState {
     /// Recently filled volume per price (for flash animation)
     pub recent_fills: HashMap<i64, (f64, Instant)>, // volume, timestamp
 
-    /// Auto-center mode: when true, center_price tracks market_price every update.
-    /// Wheel scroll or drag switches to Manual. Double-click restores Auto.
+    /// Locked mode (the header L/F chip): when true, center_price tracks
+    /// market_price every update and wheel/drag are IGNORED. Free (false)
+    /// enables manual scroll. Mode changes ONLY via the chip.
     pub auto_center: bool,
 
     /// Minimum volume filter — levels with total volume below this are dimmed.
@@ -1624,7 +1625,8 @@ impl TradingPanel for DomState {
             self.multi.scroll_by(dy);
             return true;
         }
-        self.auto_center = false;
+        // Locked (auto_center) = no manual panning; flip the L/F chip first.
+        if self.auto_center { return true; }
         let lines = (dy / 20.0).round();
         let delta = lines * self.tick_size;
         self.center_price += delta;
@@ -1671,7 +1673,9 @@ impl TradingPanel for DomState {
             }
             BlackboxEvent::DragStart | BlackboxEvent::DragEnd => true,
             BlackboxEvent::DragMove { dy, .. } => {
-                self.auto_center = false;
+                // Locked = no panning (owner rule: L blocks scroll entirely;
+                // flip the L/F chip to F to move the view).
+                if self.auto_center { return true; }
                 // 1 line = DOM_ROW_HEIGHT (20px). Drag down → lower prices at center.
                 let lines = (dy as f64 / 20.0).round();
                 let delta = lines * self.tick_size;
@@ -1679,8 +1683,8 @@ impl TradingPanel for DomState {
                 true
             }
             BlackboxEvent::Scroll { dy } => {
-                // Normal scroll (ctrl branch stays in input.rs).
-                self.auto_center = false;
+                // Normal scroll (ctrl branch stays in input.rs). Locked = no-op.
+                if self.auto_center { return true; }
                 let lines = (dy as f64 / 20.0).round();
                 let delta = lines * self.tick_size;
                 self.center_price += delta;

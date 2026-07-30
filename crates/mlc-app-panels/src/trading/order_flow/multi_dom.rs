@@ -184,11 +184,11 @@ impl MultiDomState {
         None
     }
 
-    /// Wheel/drag scroll: switch to Free and move the view anchor by whole
-    /// rows (same lines-per-pixel feel as the single ladder).
+    /// Wheel/drag scroll — Free mode ONLY (owner rule: Locked means NO
+    /// scroll; switch the L/F chip to F first). Moves the view anchor by
+    /// whole rows.
     pub fn scroll_by(&mut self, dy: f64) {
-        if self.mid_price <= 0.0 { return; }
-        self.locked = false;
+        if self.locked || self.mid_price <= 0.0 { return; }
         if self.view_center_price <= 0.0 {
             self.view_center_price = self.mid_price;
         }
@@ -216,19 +216,21 @@ impl MultiDomState {
         if self.imbalance.len() != n { self.imbalance.resize(n, (0.5, 0.5)); }
         let grid = self.config.grid_size.max(1e-9);
 
-        // Pass 1: raw top-of-book per exchange + the first live mid.
+        // Pass 1: raw top-of-book per exchange + per-venue mid candidates.
+        // The view mid is the MEDIAN of the venue mids: one venue's ghost
+        // book (stale unremoved levels around an old price) must not drag
+        // the anchor away from the real market. Crossed bbo (bid >= ask)
+        // marks exactly such a ghost book — excluded from the vote.
         let mut raw: Vec<(Vec<(f64, f64)>, Vec<(f64, f64)>)> = Vec::with_capacity(n);
-        let mut mid: Option<f64> = None;
+        let mut mids: Vec<f64> = Vec::new();
         for i in 0..n {
             let mut bids: Vec<(f64, f64)> = Vec::new();
             let mut asks: Vec<(f64, f64)> = Vec::new();
             if let Some(h) = &self.handles[i] {
                 let guard = h.blocking_read();
-                if mid.is_none() {
-                    if let Some((b, a)) = guard.bbo() {
-                        let (b, a) = (b.to_f64().unwrap_or(0.0), a.to_f64().unwrap_or(0.0));
-                        if b > 0.0 && a > 0.0 { mid = Some((b + a) * 0.5); }
-                    }
+                if let Some((b, a)) = guard.bbo() {
+                    let (b, a) = (b.to_f64().unwrap_or(0.0), a.to_f64().unwrap_or(0.0));
+                    if b > 0.0 && a > b { mids.push((b + a) * 0.5); }
                 }
                 bids = guard.top_bids(500).iter()
                     .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
@@ -239,7 +241,13 @@ impl MultiDomState {
             }
             raw.push((bids, asks));
         }
-        let Some(mid) = mid else { return }; // keep last state until a book lives
+        if mids.is_empty() { return } // keep last state until a clean book lives
+        mids.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = if mids.len() % 2 == 1 {
+            mids[mids.len() / 2]
+        } else {
+            (mids[mids.len() / 2 - 1] + mids[mids.len() / 2]) * 0.5
+        };
         self.mid_price = mid;
         if self.locked || self.view_center_price <= 0.0 {
             self.view_center_price = mid;
