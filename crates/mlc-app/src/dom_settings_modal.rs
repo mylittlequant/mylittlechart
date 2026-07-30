@@ -213,6 +213,92 @@ pub fn render_dom_settings_modal(
     coord.pop_layer(&layer_id);
 }
 
+/// Agents settings modal (Stage B agents reform, owner spec 2026-07-30) —
+/// behind the agents header gear. v1 surface: PTY/Chat mode + backend
+/// roster (clicking a backend spawns it, same wire as the header dropdown).
+#[allow(clippy::too_many_arguments)]
+pub fn render_agents_settings_modal(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    frame_theme: &FrameTheme,
+    tt: &ToolbarTheme,
+    screen_w: f64,
+    screen_h: f64,
+    pos: Option<(f64, f64)>,
+    is_pty: bool,
+    selected_backend: &str,
+) {
+    let backends = mlc_app_sidebar_content::render::AGENT_BACKENDS;
+    let modal_h = HEADER_H
+        + PAD
+        + CAPTION_H + BTN_H + ROW_GAP
+        + CAPTION_H + (BTN_H + 6.0) * backends.len() as f64
+        + PAD;
+    let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
+    let mx = mx.max(0.0).min((screen_w - DOM_MODAL_W).max(0.0));
+    let my = my.max(0.0).min((screen_h - modal_h).max(0.0));
+    let modal_rect = WidgetRect::new(mx, my, DOM_MODAL_W, modal_h);
+    let header_rect = WidgetRect::new(mx, my, DOM_MODAL_W, HEADER_H);
+
+    let layer_id = ZLayer::Modal.push_named(coord, "dom_modal");
+    coord.register_on_layer("dom_modal:header", header_rect, Sense::DRAG, &layer_id);
+    coord.register_on_layer("dom_modal:modal_bg", modal_rect, Sense::CLICK, &layer_id);
+
+    let modal_theme = ModalTheme::from_frame_theme(
+        &frame_theme.toolbar_bg,
+        &frame_theme.toolbar_border,
+        &tt.item_text,
+        &tt.item_text_active,
+        &frame_theme.toolbar_border,
+    );
+    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
+    ctx.set_fill_color(&frame_theme.toolbar_bg);
+    ctx.fill_rect(mx, my, DOM_MODAL_W, HEADER_H);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Agents Settings", mx + PAD, my + HEADER_H / 2.0);
+    let close_x = mx + DOM_MODAL_W - CLOSE_BTN - 12.0;
+    let close_y = my + (HEADER_H - CLOSE_BTN) / 2.0;
+    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, CLOSE_BTN, CLOSE_BTN, &tt.item_text);
+    coord.register_on_layer(
+        "dom_modal:close",
+        WidgetRect::new(close_x - 4.0, close_y - 4.0, CLOSE_BTN + 8.0, CLOSE_BTN + 8.0),
+        Sense::CLICK | Sense::HOVER,
+        &layer_id,
+    );
+    ctx.set_stroke_color(&frame_theme.toolbar_border);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(mx, my + HEADER_H);
+    ctx.line_to(mx + DOM_MODAL_W, my + HEADER_H);
+    ctx.stroke();
+
+    let left = mx + PAD;
+    let mut row_y = my + HEADER_H + PAD;
+    caption(ctx, tt, left, row_y, "Spawn mode");
+    row_y += CAPTION_H;
+    modal_btn(ctx, coord, &layer_id, tt, "agent_mode:pty", left, row_y, 90.0, "PTY", is_pty);
+    modal_btn(ctx, coord, &layer_id, tt, "agent_mode:chat", left + 98.0, row_y, 90.0, "Chat", !is_pty);
+    row_y += BTN_H + ROW_GAP;
+
+    caption(ctx, tt, left, row_y, "Backend (click to spawn)");
+    row_y += CAPTION_H;
+    for (id, full, _short) in backends.iter() {
+        modal_btn(
+            ctx, coord, &layer_id, tt,
+            &format!("agent_spawn:{}", id),
+            left, row_y, DOM_MODAL_W - PAD * 2.0,
+            full,
+            selected_backend == *id,
+        );
+        row_y += BTN_H + 6.0;
+    }
+
+    coord.pop_layer(&layer_id);
+}
+
 /// Generic data-section settings modal (Trade Tape / L2 / Big Trades) —
 /// same chrome and `dom_modal:*` id space as the DOM modal (one section is
 /// visible at a time; the click arm routes per the live section kind).

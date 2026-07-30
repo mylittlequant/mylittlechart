@@ -6891,7 +6891,7 @@ impl ChartApp {
                             &s_at,
                             th_sq_render,
                             th_sqs_on,
-                            dom_chips,
+                            mlc_core::toolbar::section_header_toolbar(dom_chips),
                         );
 
                         // Color-sync tag square (same convention as the TC header).
@@ -6962,6 +6962,69 @@ impl ChartApp {
                         }
                         out_trading_header_result = Some(th_result);
                     }
+                }
+
+                // Agents header (Stage B agents reform): composer toolbar —
+                // mode toggle icon + backend dropdown + gear. Same tch
+                // instance and dispatch as the section headers.
+                if rp == RSP::Agents {
+                    let is_pty = self.sidebar_state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+                    let (bl_full, bl_short) = mlc_app_sidebar_content::render::agent_backend_labels(
+                        &self.sidebar_state.agent_selected_backend,
+                    );
+                    // Big/small name mechanics by free sidebar space.
+                    let label = if sidebar_rect.width >= 220.0 { bl_full } else { bl_short };
+                    let close_w = 36.0;
+                    let header_rect = LayoutRect::new(
+                        sidebar_rect.x,
+                        sidebar_rect.y,
+                        (sidebar_rect.width - close_w).max(0.0),
+                        40.0,
+                    );
+                    let th_result = self.panel_app.render_section_header_toolbar(
+                        &self.trading_header_tb,
+                        ctx,
+                        &header_rect,
+                        "",
+                        "",
+                        "",
+                        None,
+                        false,
+                        mlc_core::toolbar::agents_header_toolbar(is_pty, label),
+                    );
+                    {
+                        use uzor::input::Sense;
+                        use mlc_app_layout::ui::z_order::ZLayer;
+                        let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                        for (id, rect) in &th_result.top_toolbar.item_rects {
+                            self.input_coordinator.borrow_mut().register_on_layer(
+                                format!("tch:{}", id),
+                                uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                Sense::CLICK,
+                                &tch_layer,
+                            );
+                        }
+                        self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
+                        if let Some(ref dd) = th_result.dropdown_result {
+                            let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
+                            self.input_coordinator.borrow_mut().register_on_layer(
+                                "dropdown:__bg__",
+                                uzor::Rect::new(dd.menu_rect.x, dd.menu_rect.y, dd.menu_rect.width, dd.menu_rect.height),
+                                Sense::CLICK,
+                                &dd_layer,
+                            );
+                            for (item_id, rect) in &dd.item_rects {
+                                self.input_coordinator.borrow_mut().register_on_layer(
+                                    format!("dropdown:{}:{}", dd.dropdown_id, item_id),
+                                    uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                                    Sense::CLICK,
+                                    &dd_layer,
+                                );
+                            }
+                            self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
+                        }
+                    }
+                    out_trading_header_result = Some(th_result);
                 }
             }
 
@@ -7720,7 +7783,7 @@ impl ChartApp {
                         &s_at,
                         th_sq_render,
                         th_sqs_on,
-                        dom_chips,
+                        mlc_core::toolbar::section_header_toolbar(dom_chips),
                     );
                     if let Some((_, tag_rect)) = th_result.top_toolbar.item_rects.iter().find(|(id, _)| id == "tc_color_tag") {
                         let tag_color = panel_color_map_main.get(&s_pid.0).copied();
@@ -8518,6 +8581,16 @@ impl ChartApp {
         if self.dom_modal.is_open {
             use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
             let rp = self.sidebar_state.right_panel;
+            // Agents settings modal (Stage B agents reform).
+            if rp == RSP::Agents {
+                let is_pty = self.sidebar_state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+                let selected = self.sidebar_state.agent_selected_backend.clone();
+                let coord = &mut *self.input_coordinator.borrow_mut();
+                crate::dom_settings_modal::render_agents_settings_modal(
+                    ctx, coord, &frame_theme, &toolbar_theme,
+                    w, h, self.dom_modal.position, is_pty, &selected,
+                );
+            } else {
             let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
                 self.section_panel_for(rp)
             } else {
@@ -8587,6 +8660,7 @@ impl ChartApp {
                     self.dom_modal.is_open = false;
                 }
             }
+            } // !Agents
         }
 
         // 8f. Standalone panel-settings surface (overlay gear, owner spec

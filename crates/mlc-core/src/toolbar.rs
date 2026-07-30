@@ -447,6 +447,31 @@ pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolba
     PanelToolbarDef::horizontal(sections).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 
+/// Agents section header toolbar (Stage B agents reform, owner spec
+/// 2026-07-30): [mode toggle icon] + [backend dropdown] + [gear], in that
+/// order. The mode button shows the CURRENT mode icon; a click flips
+/// PTY <-> Chat. The dropdown label is the caller-chosen full/short
+/// backend name (big/small mechanics by free space); a picked row spawns
+/// that backend, replacing the current pane.
+pub fn agents_header_toolbar(is_pty: bool, backend_label: &str) -> PanelToolbarDef {
+    PanelToolbarDef::horizontal(vec![
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::icon_button(
+                "agent_mode",
+                ToolbarIconId::new(if is_pty { "Terminal" } else { "ChatBubble" }),
+            ),
+            ToolbarItemDef::dropdown("agent_backend", vec![
+                DropdownItemDef::action("spawn:claude", "CLAUDE"),
+                DropdownItemDef::action("spawn:codex", "CODEX"),
+                DropdownItemDef::action("spawn:gemini", "GEMINI"),
+                DropdownItemDef::action("spawn:opencode", "OPENCODE"),
+            ]).with_text(backend_label),
+            ToolbarItemDef::icon_button("sec_gear", ToolbarIconId::new("Settings"))
+                .with_tooltip(t_toolbar(TK::Settings)),
+        ]),
+    ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
+}
+
 /// Chart type dropdown items (localized).
 ///
 /// All items drive `ChartOutEvent::ChangeChartType`. Plain render styles

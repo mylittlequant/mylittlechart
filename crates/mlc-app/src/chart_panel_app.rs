@@ -527,12 +527,11 @@ impl ChartPanelApp {
         active_account_type: &str,
         symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
         symbol_quick_search: bool,
-        dom_chips: Option<mlc_core::toolbar::SectionDomChips>,
+        top_def: uzor::panel_api::PanelToolbarDef,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
-        let cfg = ToolbarConfig::custom()
-            .with_top(Some(mlc_core::toolbar::section_header_toolbar(dom_chips)));
+        let cfg = ToolbarConfig::custom().with_top(Some(top_def));
         let layout = ChartPanelLayout::compute(header_rect, &cfg);
         let neutral_favs = mlc_core::user_profile::GranularityFavorites::default();
         chart_toolbar_render_toolbars(

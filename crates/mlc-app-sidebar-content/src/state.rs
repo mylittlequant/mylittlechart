@@ -347,6 +347,9 @@ pub struct SidebarState {
     ///
     /// Controlled by the [H][V][R] toggle in Row 2 of the agents panel control bar.
     pub agent_spawn_layout: AgentSpawnLayout,
+    /// Selected agent backend for the header dropdown (Stage B agents
+    /// reform 2026-07-30) — wire id ("claude" / "codex" / ...).
+    pub agent_selected_backend: String,
 
     /// Bounding rect of the agent terminal content area for the focused leaf,
     /// in sidebar-local coordinates.  `None` when the Agents panel is not open
@@ -817,6 +820,7 @@ impl Default for SidebarState {
             performance_data: PerformanceData::default(),
             agent_spawn_mode: InstanceMode::Pty,
             agent_spawn_layout: AgentSpawnLayout::SplitV,
+            agent_selected_backend: "claude".to_string(),
             agent_terminal_rect: None,
             agent_terminal_size: None,
             agent_input_buffers: HashMap::new(),

@@ -694,8 +694,11 @@ impl ChartApp {
             return;
         }
 
-        // --- CLI spawn buttons: agent:spawn:{claude|codex|gemini|opencode} ---
+        // --- Backend spawn: agent:spawn:{claude|codex|gemini|opencode} ---
+        // (Stage B: rows of the header backend dropdown + agents modal.)
         if let Some(cli_str) = widget_id.strip_prefix("agent:spawn:") {
+            // Remember the pick for the dropdown button label.
+            self.sidebar_state.agent_selected_backend = cli_str.to_string();
             use gate4agent::AgentCli;
             use mlc_app_sidebar_content::agents_dock::{AgentLeafDescriptor, AgentPaneLeaf};
             let cli = match cli_str {
@@ -3102,11 +3105,35 @@ impl ChartApp {
                     }
                 };
                 match item_id.as_str() {
+                    "agent_mode" => {
+                        // Agents mode toggle-click: PTY <-> Chat.
+                        self.trading_header_tb.open_dropdown_id = None;
+                        self.sidebar_state.agent_spawn_mode =
+                            if self.sidebar_state.agent_spawn_mode == gate4agent::InstanceMode::Pty {
+                                gate4agent::InstanceMode::Chat
+                            } else {
+                                gate4agent::InstanceMode::Pty
+                            };
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
+                    "agent_backend" => {
+                        // Backend dropdown — shared composer machinery.
+                        if self.trading_header_tb.open_dropdown_id.as_deref() == Some("agent_backend") {
+                            self.trading_header_tb.open_dropdown_id = None;
+                        } else {
+                            self.trading_header_tb.open_dropdown_id = Some("agent_backend".to_string());
+                        }
+                        return;
+                    }
                     "sec_gear" => {
                         // Section gear → the section's settings modal
-                        // (DOM: dual-mode modal; TT/L2/BT: columns/thresholds).
+                        // (DOM: dual-mode modal; TT/L2/BT: columns/thresholds;
+                        // Agents: agents settings modal).
                         self.trading_header_tb.open_dropdown_id = None;
-                        if section_item.is_some() {
+                        let is_agents = self.sidebar_state.right_panel
+                            == mlc_app_sidebar_content::state::RightSidebarPanel::Agents;
+                        if section_item.is_some() || is_agents {
                             self.dom_modal.open();
                         }
                         return;
@@ -3531,6 +3558,14 @@ impl ChartApp {
                         }
                         self.trading_header_tb.open_dropdown_id = None;
                         return;
+                    } else if dropdown_id == "agent_backend" {
+                        // Agents backend pick — spawn replaces the pane.
+                        self.trading_header_tb.open_dropdown_id = None;
+                        if let Some(cli) = item_id.strip_prefix("spawn:") {
+                            let wid = format!("agent:spawn:{}", cli);
+                            self.dispatch_panel_click(&wid, x, y);
+                        }
+                        return;
                     } else if dropdown_id == "tc_spawn" {
                         // Free-mode "+ Panel" spawn (owner spec 2026-07-29):
                         // one leaf per kind — an existing kind is activated,
@@ -3907,6 +3942,21 @@ impl ChartApp {
             }
             use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
             let rp = self.sidebar_state.right_panel;
+            // Agents modal rows (Stage B agents reform).
+            if rp == RSP::Agents {
+                if rest == "agent_mode:pty" {
+                    self.sidebar_state.agent_spawn_mode = gate4agent::InstanceMode::Pty;
+                    self.sidebar_data_dirty = true;
+                } else if rest == "agent_mode:chat" {
+                    self.sidebar_state.agent_spawn_mode = gate4agent::InstanceMode::Chat;
+                    self.sidebar_data_dirty = true;
+                } else if let Some(cli) = rest.strip_prefix("agent_spawn:") {
+                    self.dom_modal.close();
+                    let wid = format!("agent:spawn:{}", cli);
+                    self.dispatch_panel_click(&wid, x, y);
+                }
+                return;
+            }
             let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
                 self.section_panel_for(rp)
             } else {
