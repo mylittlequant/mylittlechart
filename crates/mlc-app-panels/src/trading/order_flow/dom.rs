@@ -1129,7 +1129,30 @@ impl TradingPanel for DomState {
                 break;
             }
         }
+        // Manual compression via the skin Texture switch (owner order
+        // 2026-07-31): Cells forces the L2 heat-cell mode, Mosaic the L3
+        // squares — at any width; trades shed along with the bars.
+        let mut mosaic_mode = false;
+        match theme.style.bar_texture {
+            mlc_core::theme::BarTexture::Cells => {
+                heatmap_mode = true;
+            }
+            mlc_core::theme::BarTexture::Mosaic => {
+                heatmap_mode = true;
+                mosaic_mode = true;
+            }
+            _ => {}
+        }
+        if heatmap_mode {
+            cc.show_sell_trades = false;
+            cc.show_buy_trades = false;
+        }
         let avail = (w - price_col_w - pad * 2.0 - DOM_LEFT_PAD * 2.0).max(0.0);
+        // Width auto-L3 (Multi-DOM parity): heat cells thinner than a
+        // readable strip degrade to squares on their own.
+        if heatmap_mode && avail * 0.5 < 40.0 {
+            mosaic_mode = true;
+        }
 
         // Count visible columns on each side (left = bid_orders + sell_trades, right = buy_trades + ask_orders)
         let left_count = cc.show_bid_orders as u8 + cc.show_sell_trades as u8;
@@ -1361,7 +1384,40 @@ impl TradingPanel for DomState {
             // color-intensity cell per row — opacity carries the volume
             // signal, digits are gone; 1px gaps keep the mosaic reading
             // as cells (owner spec 2026-07-29).
-            if heatmap_mode && !is_filtered && visible_max_volume > 0.0 {
+            if heatmap_mode && !is_filtered && visible_max_volume > 0.0 && mosaic_mode {
+                // L3 mosaic squares (Multi-DOM parity, owner 2026-07-31):
+                // one centered square per side, size + bright-mix ∝ volume.
+                let left_w = (price_col_x - x - 2.0).max(0.0);
+                let right_x = price_col_x + price_col_w + 1.0;
+                let right_w = (x + w - right_x - 1.0).max(0.0);
+                for (is_ask, vol, zone_x, zone_w, show) in [
+                    (false, level.bid_volume, x + 1.0, left_w, cc.show_bid_orders),
+                    (true, level.ask_volume, right_x, right_w, cc.show_ask_orders),
+                ] {
+                    if !show || vol <= 0.0 || zone_w <= 3.0 {
+                        continue;
+                    }
+                    let t = (vol / visible_max_volume).sqrt().clamp(0.0, 1.0);
+                    let side = (4.0 + t * (row_height as f64 - 6.0))
+                        .min(zone_w as f64 - 1.0);
+                    let (base, bright) = if is_ask {
+                        (&theme.sell, &theme.sell_bright)
+                    } else {
+                        (&theme.buy, &theme.buy_bright)
+                    };
+                    let c = mlc_core::apply_opacity(
+                        &mlc_core::mix_colors(base, bright, t),
+                        0.35 + 0.55 * t,
+                    );
+                    ctx.set_fill_color(&c);
+                    ctx.fill_rect(
+                        (zone_x + zone_w * 0.5) as f64 - side * 0.5,
+                        row_y as f64 + (row_height as f64 - side) * 0.5,
+                        side,
+                        side,
+                    );
+                }
+            } else if heatmap_mode && !is_filtered && visible_max_volume > 0.0 {
                 let left_w = (price_col_x - x - 2.0).max(0.0);
                 let right_x = price_col_x + price_col_w + 1.0;
                 let right_w = (x + w - right_x - 1.0).max(0.0);
