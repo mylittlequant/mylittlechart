@@ -1885,13 +1885,8 @@ impl ChartApp {
                                     (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
                                 });
                                 if let Some((on, sym, exchanges)) = sub_info {
-                                    if on && !sym.is_empty() {
-                                        let at = digdigdig3::AccountType::Spot;
-                                        for ex_label in &exchanges {
-                                            if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                let _ = self.core.subscribe_orderbook(eid, &sym, at);
-                                            }
-                                        }
+                                    if on {
+                                        self.subscribe_multi_roster(&sym, &exchanges);
                                     }
                                     self.sidebar_data_dirty = true;
                                     self.autosave_snapshot();
@@ -3113,13 +3108,8 @@ impl ChartApp {
                                         (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
                                     });
                                     if let Some((on, sym, exchanges)) = sub_info {
-                                        if on && !sym.is_empty() {
-                                            let at = digdigdig3::AccountType::Spot;
-                                            for ex_label in &exchanges {
-                                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                    let _ = self.core.subscribe_orderbook(eid, &sym, at);
-                                                }
-                                            }
+                                        if on {
+                                            self.subscribe_multi_roster(&sym, &exchanges);
                                         }
                                         self.autosave_snapshot();
                                     }
@@ -4028,13 +4018,8 @@ impl ChartApp {
                         (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
                     });
                     if let Some((on, sym, exchanges)) = sub_info {
-                        if on && !sym.is_empty() {
-                            let at = digdigdig3::AccountType::Spot;
-                            for ex_label in &exchanges {
-                                if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                    let _ = self.core.subscribe_orderbook(eid, &sym, at);
-                                }
-                            }
+                        if on {
+                            self.subscribe_multi_roster(&sym, &exchanges);
                         }
                         self.autosave_snapshot();
                     }
@@ -4082,11 +4067,7 @@ impl ChartApp {
                         .and_then(|state| state.multi.cycle_add_exchange().map(|s| s.to_string()))
                         .map(|ex| (ex, self.panels_store.dom.get(&pid).map(|s| s.multi.symbol.clone()).unwrap_or_default()));
                     if let Some((ex, sym)) = added {
-                        if !sym.is_empty() {
-                            if let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) {
-                                let _ = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
-                            }
-                        }
+                        self.subscribe_multi_roster(&sym, &[ex]);
                     }
                 }
                 "grid" => {
@@ -7048,6 +7029,14 @@ impl ChartApp {
         }
         if let Some(key) = item_id.strip_prefix("sym_quick_star:") {
             let (symbol, exchange, account_type) = parse_symbol_composite_key(key);
+            // Multi-DOM roster picker: the trailing icon is the DOM toggle,
+            // not the watchlist star — same action as clicking the row.
+            if let Some(crate::SymbolQuickEditTarget::MultiDomRoster(pid)) =
+                self.symbol_quick_edit.as_ref().map(|e| e.target)
+            {
+                self.toggle_multi_dom_roster(pid, &symbol, &exchange, &account_type);
+                return;
+            }
             self.watchlist_actions.push(crate::WatchlistAction::Toggle { symbol, exchange, account_type });
             self.watchlists_dirty = true;
             return;
@@ -7077,7 +7066,7 @@ impl ChartApp {
                     // Roster editing is multi-click — the dropdown stays
                     // open so several columns can be added/removed in one
                     // session; click-away / Escape closes it.
-                    self.toggle_multi_dom_roster(pid, &symbol, &exchange_id);
+                    self.toggle_multi_dom_roster(pid, &symbol, &exchange_id, &account_type);
                     return;
                 }
                 _ => {}

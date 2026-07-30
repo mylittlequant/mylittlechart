@@ -98,6 +98,46 @@ pub struct MultiDomState {
     pub view_center_price: f64,
 }
 
+// ── Roster column identity ───────────────────────────────────────────────────
+// A roster entry is an "exchange[:AT]" composite ("bybit:F"); a bare slug is
+// Spot (legacy persisted rosters). Column identity = the (exchange, AT) pair —
+// BYBIT:S and BYBIT:F are two distinct columns.
+
+/// Exchange slug part of a roster entry.
+pub fn col_exchange(entry: &str) -> &str {
+    entry.split(':').next().unwrap_or(entry)
+}
+
+/// Account-type short label of a roster entry ("S" when absent — legacy).
+pub fn col_at(entry: &str) -> &str {
+    match entry.splitn(2, ':').nth(1) {
+        Some(at) if !at.is_empty() => at,
+        _ => "S",
+    }
+}
+
+/// Canonical roster entry from an exchange slug + AT short label.
+pub fn col_entry(exchange: &str, at: &str) -> String {
+    let at = if at.is_empty() { "S" } else { at };
+    format!("{}:{}", exchange.to_lowercase(), at.to_uppercase())
+}
+
+/// Does a roster entry denote this (exchange, AT) column?
+pub fn col_matches(entry: &str, exchange: &str, at: &str) -> bool {
+    let want_at = if at.is_empty() { "S" } else { at };
+    col_exchange(entry).eq_ignore_ascii_case(exchange)
+        && col_at(entry).eq_ignore_ascii_case(want_at)
+}
+
+/// Column header label — the system "EXCHANGE:AT" format.
+pub fn col_label(entry: &str) -> String {
+    format!(
+        "{}:{}",
+        col_exchange(entry).to_uppercase(),
+        col_at(entry).to_uppercase()
+    )
+}
+
 impl MultiDomState {
     pub fn new(symbol: String, config: MultiDomConfig) -> Self {
         let n = config.exchanges.len();
@@ -117,20 +157,25 @@ impl MultiDomState {
         }
     }
 
-    /// Add an exchange if not already present. Appends blank book/handle slots.
-    pub fn add_exchange(&mut self, eid: ExchangeId) {
-        if self.config.exchanges.iter().any(|e| *e == eid) {
+    /// Add a column if not already present (entry = "exchange[:AT]",
+    /// normalized to the canonical composite). Appends blank book/handle slots.
+    pub fn add_exchange(&mut self, entry: ExchangeId) {
+        let ex = col_exchange(&entry).to_string();
+        let at = col_at(&entry).to_string();
+        if self.config.exchanges.iter().any(|e| col_matches(e, &ex, &at)) {
             return;
         }
-        self.config.exchanges.push(eid);
+        self.config.exchanges.push(col_entry(&ex, &at));
         self.handles.push(None);
         self.books_by_exchange.push((BTreeMap::new(), BTreeMap::new()));
         self.imbalance.push((0.5, 0.5));
     }
 
-    /// Remove an exchange and its book/handle state by label.
-    pub fn remove_exchange(&mut self, eid: &str) {
-        if let Some(idx) = self.config.exchanges.iter().position(|e| e == eid) {
+    /// Remove a column and its book/handle state by entry ("exchange[:AT]").
+    pub fn remove_exchange(&mut self, entry: &str) {
+        let ex = col_exchange(entry);
+        let at = col_at(entry);
+        if let Some(idx) = self.config.exchanges.iter().position(|e| col_matches(e, ex, at)) {
             self.config.exchanges.remove(idx);
             if idx < self.handles.len() { self.handles.remove(idx); }
             if idx < self.books_by_exchange.len() { self.books_by_exchange.remove(idx); }
@@ -393,7 +438,8 @@ impl TradingPanel for MultiDomState {
             // Dead handle → muted label (book not live yet).
             let live = self.handles.get(i).map(|h| h.is_some()).unwrap_or(false);
             ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
-            ctx.fill_text(ex, cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
+            // System format: "EXCHANGE:AT" (owner spec 2026-07-30).
+            ctx.fill_text(&col_label(ex), cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
         }
 
         let body_y = y + HEADER_HEIGHT;

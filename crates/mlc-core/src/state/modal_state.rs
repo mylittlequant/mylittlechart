@@ -84,6 +84,12 @@ pub struct SymbolQuickSearchRender {
     /// same shared `SearchResult` shape the full-screen modal uses,
     /// `in_watchlist` already resolved against the active watchlist).
     pub results: Vec<SearchResult>,
+    /// Multi-DOM roster picker mode (owner spec 2026-07-30): the trailing
+    /// row icon is the DOM svg instead of the watchlist star, and
+    /// `SearchResult::in_watchlist` carries "this (exchange, AT) column is
+    /// in the roster" — active icon = inside the Multi-DOM; clicking the
+    /// row (or the icon) toggles the column.
+    pub roster_mode: bool,
 }
 
 // =============================================================================

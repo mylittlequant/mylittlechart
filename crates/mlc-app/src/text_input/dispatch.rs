@@ -922,11 +922,14 @@ impl ChartApp {
                             .unwrap_or_default()
                             .into_iter()
                             .find(|res| {
+                                use mlc_app_panels::trading::order_flow::multi_dom;
                                 !(res.symbol.eq_ignore_ascii_case(&base)
-                                    && roster.iter().any(|e| e.eq_ignore_ascii_case(&res.exchange_id)))
+                                    && roster.iter().any(|e| {
+                                        multi_dom::col_matches(e, &res.exchange_id, &res.account_type)
+                                    }))
                             });
                         if let Some(res) = first {
-                            self.toggle_multi_dom_roster(pid, &res.symbol, &res.exchange_id);
+                            self.toggle_multi_dom_roster(pid, &res.symbol, &res.exchange_id, &res.account_type);
                         }
                     }
                     // `TopbarChart` (or no live editor, defensive) — same

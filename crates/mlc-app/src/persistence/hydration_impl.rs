@@ -1077,12 +1077,13 @@ impl ChartApp {
                                                 s.shared_trades = trade_handle;
                                             }
                                             if s.multi_mode {
-                                                let at = digdigdig3::AccountType::Spot;
-                                                for ex_label in &s.multi.config.exchanges {
-                                                    if let Some(eid) = digdigdig3::ExchangeId::from_str(ex_label) {
-                                                        let _ = self.core.subscribe_orderbook(eid, &s.symbol, at);
-                                                    }
-                                                }
+                                                let entries = s.multi.config.exchanges.clone();
+                                                let msym = if s.multi.symbol.is_empty() {
+                                                    s.symbol.clone()
+                                                } else {
+                                                    s.multi.symbol.clone()
+                                                };
+                                                self.subscribe_multi_roster(&msym, &entries);
                                             }
                                         }
                                         self.panels_store.dom.insert(pid, s);

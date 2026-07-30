@@ -592,7 +592,9 @@ pub fn chart_toolbar_render_toolbars(
                 } else {
                     sym.to_string()
                 };
-                let width = (24.0 + 8.0 + ctx.measure_text(&tier1) + 4.0).clamp(150.0, 220.0);
+                // Hug the content (owner rule 2026-07-30: no hardcoded floor
+                // — the button fits its label exactly), capped at 220.
+                let width = (24.0 + 8.0 + ctx.measure_text(&tier1) + 4.0).min(220.0);
                 let budget = width - (24.0 + 8.0) - 4.0;
                 let mut candidates: Vec<String> = vec![tier1];
                 if !at.is_empty() {
@@ -615,7 +617,9 @@ pub fn chart_toolbar_render_toolbars(
                 symbol_quick_search_render.map(|r| {
                     ctx.set_font("13px sans-serif");
                     let text_w = ctx.measure_text(&r.text);
-                    (24.0 + 8.0 + text_w + 24.0 + 8.0).max(150.0)
+                    // Content-hugging (owner rule 2026-07-30) — typed text +
+                    // caret headroom, no hardcoded floor.
+                    24.0 + 8.0 + text_w + 24.0 + 8.0
                 })
             } else {
                 None
@@ -1101,6 +1105,23 @@ pub fn chart_toolbar_render_toolbars(
                 let button_rect = control_result.item_rects.iter()
                     .find(|(id, _)| id == "symbol_selector")
                     .map(|(_, r)| *r)?;
+                // The strip can be chevron-scrolled: the item rect may sit
+                // partially (or fully) outside the toolbar. Skip when fully
+                // outside; otherwise CLIP the editor overlay to the strip so
+                // it never paints past the toolbar bounds (owner defect
+                // 2026-07-30: the input leaked left of the sidebar edge).
+                let strip = &layout.top_toolbar_rect;
+                if button_rect.right() <= strip.x || button_rect.x >= strip.x + strip.width {
+                    return None;
+                }
+                ctx.save();
+                ctx.begin_path();
+                ctx.move_to(strip.x, strip.y);
+                ctx.line_to(strip.x + strip.width, strip.y);
+                ctx.line_to(strip.x + strip.width, strip.y + strip.height);
+                ctx.line_to(strip.x, strip.y + strip.height);
+                ctx.close_path();
+                ctx.clip();
                 // Matches toolbar_core.rs's Dropdown draw arm: icon at
                 // `item_rect.x + 4.0`, `config.icon_size` wide (24.0 for the
                 // top control strip), text starts at `icon_size + 8.0`.
@@ -1160,6 +1181,7 @@ pub fn chart_toolbar_render_toolbars(
                 if render.cursor_visible {
                     draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
                 }
+                ctx.restore();
                 let tr = input_result.text_rect;
                 Some((
                     WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
@@ -1875,7 +1897,20 @@ fn chart_toolbar_render_dropdown(
                             }))
                             .map(|res| res.in_watchlist)
                             .unwrap_or(false);
-                        let (star_icon, star_color) = if in_watchlist {
+                        let roster_mode = symbol_quick_search_render
+                            .map(|r| r.roster_mode)
+                            .unwrap_or(false);
+                        let (star_icon, star_color) = if roster_mode {
+                            // Multi-DOM roster picker (owner spec 2026-07-30):
+                            // the trailing icon is the DOM svg; accent =
+                            // this (exchange, AT) column is inside the
+                            // Multi-DOM, toggling it off removes the column.
+                            if in_watchlist {
+                                (IconId::new("slot_dom"), Some("#2962ff".to_string()))
+                            } else {
+                                (IconId::new("slot_dom"), None)
+                            }
+                        } else if in_watchlist {
                             (IconId::new("star_filled"), Some("#FFD700".to_string()))
                         } else {
                             (IconId::new("star"), None)

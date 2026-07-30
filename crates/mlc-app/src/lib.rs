@@ -2101,45 +2101,38 @@ impl ChartApp {
             self.core.watchlists().find(self.watchlist_ui.active_list_id),
             self.core.exchange_symbols().as_map(),
         );
-        results.truncate(10);
-        // Multi-DOM roster target: prepend the already-added columns section
-        // (click on such a row REMOVES the column) and drop their duplicates
-        // from the search results below.
+        // Multi-DOM roster target (owner spec 2026-07-30): the list is a
+        // per-exchange facet of the query — every row carries a DOM-icon
+        // toggle whose ACTIVE state means "this (exchange, AT) column is in
+        // the Multi-DOM". Active rows float to the top; `in_watchlist` is
+        // reused as the active flag (roster_mode flips the renderer's icon).
+        let mut roster_mode = false;
         if let crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target {
             if let Some(s) = self.panels_store.dom.get(&pid) {
+                use mlc_app_panels::trading::order_flow::multi_dom;
+                roster_mode = true;
                 let base = s.multi.symbol.clone();
-                let roster: Vec<mlc_core::state::modal_state::SearchResult> = s
-                    .multi
-                    .config
-                    .exchanges
-                    .iter()
-                    .map(|ex| mlc_core::state::modal_state::SearchResult {
-                        symbol: base.clone(),
-                        name: "M/D column — click removes".to_string(),
-                        exchange: ex.to_uppercase(),
-                        exchange_id: ex.clone(),
-                        asset_type: "Crypto".to_string(),
-                        category_icon: "\u{20BF}".to_string(),
-                        in_watchlist: false,
-                        account_type: String::new(),
-                    })
-                    .collect();
-                results.retain(|r| {
-                    !(r.symbol.eq_ignore_ascii_case(&base)
-                        && roster.iter().any(|q| q.exchange_id.eq_ignore_ascii_case(&r.exchange_id)))
-                });
-                let mut merged = roster;
-                merged.extend(std::mem::take(&mut results));
-                merged.truncate(14);
-                results = merged;
+                let roster = s.multi.config.exchanges.clone();
+                for r in results.iter_mut() {
+                    r.in_watchlist = r.symbol.eq_ignore_ascii_case(&base)
+                        && roster.iter().any(|e| {
+                            multi_dom::col_matches(e, &r.exchange_id, &r.account_type)
+                        });
+                }
+                results.sort_by_key(|r| !r.in_watchlist);
             }
         }
+        // Truncate AFTER the roster pass — the active-flag/sort must see the
+        // FULL result set or an in-roster column outside the raw top-10
+        // silently vanishes from the list.
+        results.truncate(if roster_mode { 12 } else { 10 });
         Some(mlc_core::state::modal_state::SymbolQuickSearchRender {
             text,
             cursor,
             selection,
             cursor_visible,
             results,
+            roster_mode,
         })
     }
 
@@ -9988,6 +9981,15 @@ impl ChartApp {
         let q = q_parts.next().unwrap_or_default().to_string();
         let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
         let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
+        // "SYMBOL:AT" shorthand (owner spec 2026-07-30): when the second part
+        // is an account-type token rather than an exchange, treat it as the
+        // AT filter — "btcusdt:f" == "btcusdt::f".
+        let (q_exchange, q_at) = match (q_exchange, q_at) {
+            (Some(p), None) if matches!(p, "s" | "spot" | "f" | "fut" | "futures" | "perp") => {
+                (None, Some(p))
+            }
+            other => other,
+        };
 
         /// Short exchange aliases for the composite search syntax.
         fn exchange_alias(alias: &str) -> Option<&'static str> {

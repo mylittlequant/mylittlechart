@@ -171,9 +171,14 @@ impl ChartApp {
                     // no client (owner defect 2026-07-30: blank columns).
                     let ex_label = exchange_id.as_str().to_string();
                     for s in self.panels_store.dom.values_mut() {
-                        if let Some(i) = s.multi.config.exchanges.iter().position(|e| *e == ex_label) {
-                            if let Some(h) = s.multi.handles.get_mut(i) {
-                                *h = None;
+                        // Entries are "exchange[:AT]" composites — several
+                        // columns (S + F) can ride the same connector.
+                        for (i, e) in s.multi.config.exchanges.iter().enumerate() {
+                            use mlc_app_panels::trading::order_flow::multi_dom;
+                            if multi_dom::col_exchange(e).eq_ignore_ascii_case(&ex_label) {
+                                if let Some(h) = s.multi.handles.get_mut(i) {
+                                    *h = None;
+                                }
                             }
                         }
                     }

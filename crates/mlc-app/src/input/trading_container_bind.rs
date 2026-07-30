@@ -369,10 +369,28 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+    /// Subscribe every multi roster entry ("exchange[:AT]") for `sym` —
+    /// ensures the connector, resolves the AT label, idempotent per entry.
+    pub(crate) fn subscribe_multi_roster(&mut self, sym: &str, entries: &[String]) {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        if sym.is_empty() {
+            return;
+        }
+        for e in entries {
+            let ex_slug = multi_dom::col_exchange(e).to_string();
+            let at_label = multi_dom::col_at(e).to_string();
+            if let Some(eid) = digdigdig3::ExchangeId::from_str(&ex_slug) {
+                self.core.ensure_connector(eid);
+                let at = crate::account_type_from_label(&at_label);
+                let _ = self.core.subscribe_orderbook(eid, sym, at);
+            }
+        }
+    }
+
     /// Multi-DOM roster picker commit (owner spec 2026-07-30): a dropdown
-    /// row click on the SAME base symbol toggles that exchange's column;
+    /// row click on the SAME base symbol toggles that (exchange, AT) column;
     /// a row with a DIFFERENT symbol switches the base symbol (books and
-    /// handles reset, roster kept, clicked exchange ensured present).
+    /// handles reset, roster kept, clicked column ensured present).
     /// No chart apply, no tag-group coupling — the roster is the Multi-DOM's
     /// own concern.
     pub(crate) fn toggle_multi_dom_roster(
@@ -380,11 +398,13 @@ impl ChartApp {
         pid: mlc_core::state::PanelId,
         symbol: &str,
         exchange_id: &str,
+        account_type: &str,
     ) {
-        let ex = exchange_id.to_lowercase();
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        let entry = multi_dom::col_entry(exchange_id, account_type);
         let subs: Option<(String, Vec<String>)> = {
             let Some(s) = self.panels_store.dom.get_mut(&pid) else { return };
-            if !s.multi_mode || ex.is_empty() {
+            if !s.multi_mode || exchange_id.is_empty() {
                 None
             } else if !s.multi.symbol.eq_ignore_ascii_case(symbol) {
                 // Base symbol switch: fresh books/handles for the new key.
@@ -395,26 +415,29 @@ impl ChartApp {
                 }
                 s.multi.handles.clear();
                 s.multi.mid_price = 0.0;
-                if !s.multi.config.exchanges.iter().any(|e| e.eq_ignore_ascii_case(&ex)) {
-                    s.multi.add_exchange(ex.clone());
-                }
+                s.multi.add_exchange(entry);
                 Some((s.multi.symbol.clone(), s.multi.config.exchanges.clone()))
-            } else if s.multi.config.exchanges.iter().any(|e| e.eq_ignore_ascii_case(&ex)) {
+            } else if s.multi.config.exchanges.iter()
+                .any(|e| multi_dom::col_matches(e, exchange_id, account_type))
+            {
                 // Same base, column present — remove it.
-                s.multi.remove_exchange(&ex);
+                s.multi.remove_exchange(&entry);
                 None
             } else {
                 // Same base, new column — add + subscribe.
-                s.multi.add_exchange(ex.clone());
-                Some((s.multi.symbol.clone(), vec![ex]))
+                s.multi.add_exchange(entry.clone());
+                Some((s.multi.symbol.clone(), vec![entry]))
             }
         };
-        if let Some((sym, exchanges)) = subs {
+        if let Some((sym, entries)) = subs {
             if !sym.is_empty() {
-                for label in &exchanges {
-                    if let Some(eid) = digdigdig3::ExchangeId::from_str(label) {
+                for e in &entries {
+                    let ex_slug = multi_dom::col_exchange(e).to_string();
+                    let at_label = multi_dom::col_at(e).to_string();
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&ex_slug) {
                         self.core.ensure_connector(eid);
-                        let _ = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
+                        let at = crate::account_type_from_label(&at_label);
+                        let _ = self.core.subscribe_orderbook(eid, &sym, at);
                     }
                 }
             }
@@ -544,14 +567,18 @@ impl ChartApp {
                 s.multi.last_reseed_ms = now_ms;
             }
         }
-        for (pid, i, ex, sym) in multi_needs {
-            let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) else { continue };
+        for (pid, i, entry, sym) in multi_needs {
+            use mlc_app_panels::trading::order_flow::multi_dom;
+            let ex_slug = multi_dom::col_exchange(&entry).to_string();
+            let at_label = multi_dom::col_at(&entry).to_string();
+            let Some(eid) = digdigdig3::ExchangeId::from_str(&ex_slug) else { continue };
             // The roster exchange may have NO data connection yet (only the
             // chart's exchange is dialed by default) — ensure the connector
             // exists, else subscribe_depth's REST seed silently no-ops and
             // the column stays blank (owner defect 2026-07-30).
             self.core.ensure_connector(eid);
-            let handle = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
+            let at = crate::account_type_from_label(&at_label);
+            let handle = self.core.subscribe_orderbook(eid, &sym, at);
             if let Some(s) = self.panels_store.dom.get_mut(&pid) {
                 if s.multi.handles.len() <= i {
                     s.multi.handles.resize_with(i + 1, || None);
