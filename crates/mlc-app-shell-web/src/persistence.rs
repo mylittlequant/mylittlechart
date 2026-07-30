@@ -111,6 +111,11 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     let window_state = chart.build_window_state();
     let mut profile = chart.core.user().profile().clone();
     profile.ui.windows = vec![window_state];
+    // Shell duty (native parity: main.rs profile save writes
+    // `profile.ui.active_theme` from AppState.theme_preset): persist the
+    // active theme preset so a reload restores it. `preset_name()` is the
+    // base preset id ("dark"/"surf"/...), always non-empty.
+    profile.ui.active_theme = chart.panel_app.theme_manager.preset_name().to_string();
     profile.domain.connector_enabled = chart.core.user().connector_enabled().clone();
     profile.domain.server_enabled = chart.core.user().server_enabled();
     profile.domain.server_port = chart.core.user().server_port();

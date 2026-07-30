@@ -240,7 +240,7 @@ async fn run() -> Result<(), JsValue> {
         .iter()
         .find(|w| w.window_id == "win_web")
         .or_else(|| profile.ui.windows.first());
-    let app = ChartApp::new_window(
+    let mut app = ChartApp::new_window(
         core,
         bridge.clone(),
         "win_web".to_string(),
@@ -249,6 +249,12 @@ async fn run() -> Result<(), JsValue> {
         &profile_manager,
         false,
     );
+    // Shell duty (native parity: main.rs:1258 applies AppState.theme_preset
+    // to every fresh window): restore the profile's saved theme preset —
+    // without this a reload always came back on the default dark theme.
+    if !profile.ui.active_theme.is_empty() {
+        app.panel_app.theme_manager.set_preset(&profile.ui.active_theme);
+    }
     web_sys::console::log_1(&"[mlc-app-shell-web] app ready".into());
 
     let provider = WebWindowProvider::from_id("chart")
@@ -542,6 +548,18 @@ fn run_render_loop(
         {
             let mut st = state_clone.borrow_mut();
             st.chart.drain_pending_cold_apply();
+        }
+
+        // ── Drain theme changes ───────────────────────────────────────────────
+        // Native parity: main.rs "Drain theme changes → AppState → all
+        // windows". Single-window shell — no propagation needed; marking the
+        // profile dirty makes the drain below persist `ui.active_theme`
+        // (save_persistent_state reads theme_manager.preset_name()).
+        {
+            let mut st = state_clone.borrow_mut();
+            if st.chart.theme_changed.take().is_some() {
+                st.chart.profile_dirty = true;
+            }
         }
 
         // ── Persist dirty user state ──────────────────────────────────────────
