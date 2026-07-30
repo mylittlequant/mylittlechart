@@ -458,9 +458,16 @@ impl ChartApp {
                         .map_or(false, |h| {
                             h.blocking_read().bbo().map_or(false, |(b, a)| b >= a)
                         });
-                if missing || stale_empty || crossed {
+                // Periodic REST resync (30s): on wasm the station relay can
+                // drop delta events under main-thread pressure (Lagged trap);
+                // lost inserts/removes accumulate into voids/ghosts around
+                // mid. A fresh snapshot heals the covered band via the
+                // tracker's windowed merge — standard book-maintenance
+                // practice, ~1 REST call per venue per 30s.
+                let periodic = !missing && now_ms - s.multi.last_reseed_ms >= 30_000;
+                if missing || stale_empty || crossed || periodic {
                     multi_needs.push((*pid, i, ex.clone(), s.multi.symbol.clone()));
-                    if stale_empty || crossed {
+                    if stale_empty || crossed || periodic {
                         reseed_pids.push(*pid);
                     }
                 }
