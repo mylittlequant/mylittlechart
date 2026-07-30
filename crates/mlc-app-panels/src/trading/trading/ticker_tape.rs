@@ -217,11 +217,16 @@ impl TradingPanel for TickerTapeState {
             ctx.set_fill_color(&theme.header_bg);
             ctx.fill_rect(gx, y as f64, TAPE_GEAR_W, h as f64);
             let gear_hov = coordinator.is_hovered(&uzor::WidgetId::from(gear_id.as_str()));
-            ctx.set_fill_color(if gear_hov { &theme.text_primary } else { &theme.text_muted });
-            ctx.set_font("12px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("\u{2699}", gx + TAPE_GEAR_W / 2.0, mid_y);
+            let gear_sz = 12.0;
+            uzor::render::draw_svg_icon(
+                ctx,
+                mlc_core::state::icons::ICON_SETTINGS,
+                gx + (TAPE_GEAR_W - gear_sz) / 2.0,
+                mid_y - gear_sz / 2.0,
+                gear_sz,
+                gear_sz,
+                if gear_hov { &theme.text_primary } else { &theme.text_muted },
+            );
             coordinator.register(
                 gear_id.as_str(),
                 uzor::Rect::new(gx, y as f64, TAPE_GEAR_W, h as f64),

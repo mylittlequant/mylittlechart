@@ -1808,12 +1808,16 @@ impl TradingContainerState {
                     ctx.set_stroke_color(&theme.text_muted);
                     ctx.set_stroke_width(1.0);
                     ctx.set_line_dash(&[]);
-                    // gear glyph
-                    ctx.set_fill_color(&theme.text_muted);
-                    ctx.set_font("10px sans-serif");
-                    ctx.set_text_align(TextAlign::Center);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("\u{2699}", bx_gear + TB / 2.0, by + TB / 2.0);
+                    // gear — the system settings icon (centralized ICON_SETTINGS)
+                    uzor::render::draw_svg_icon(
+                        ctx,
+                        mlc_core::state::icons::ICON_SETTINGS,
+                        bx_gear,
+                        by,
+                        TB,
+                        TB,
+                        &theme.text_muted,
+                    );
                     // pan hand — the tear-out drag affordance (owner spec
                     // 2026-07-29: a hand, not a burger).
                     uzor::render::draw_svg_icon(
@@ -1902,13 +1906,18 @@ impl TradingContainerState {
                             );
                         }
                         "gear" => {
-                            // Same glyph as the strip gears — opens the
-                            // container's common settings modal.
-                            ctx.set_fill_color(if hovered { &theme.text_primary } else { &theme.text_muted });
-                            ctx.set_font("11px sans-serif");
-                            ctx.set_text_align(TextAlign::Center);
-                            ctx.set_text_baseline(TextBaseline::Middle);
-                            ctx.fill_text("\u{2699}", cx + CHIP / 2.0, cy + CHIP / 2.0);
+                            // The system settings gear (centralized
+                            // ICON_SETTINGS) — opens the container's common
+                            // settings modal.
+                            uzor::render::draw_svg_icon(
+                                ctx,
+                                mlc_core::state::icons::ICON_SETTINGS,
+                                cx + 1.0,
+                                cy + 1.0,
+                                CHIP - 2.0,
+                                CHIP - 2.0,
+                                if hovered { &theme.text_primary } else { &theme.text_muted },
+                            );
                         }
                         _ => {
                             // Diagonal cross.
