@@ -162,6 +162,9 @@ pub enum PersistedFreeItemKind {
         multi_grid_size: f64,
         #[serde(default = "default_multi_dom_depth")]
         multi_depth: usize,
+        /// Bottom ±2% / ±10% liquidity-share strip (owner toggle 2026-07-30).
+        #[serde(default = "default_true")]
+        multi_show_imbalance: bool,
     },
     Footprint {
         #[serde(default)]

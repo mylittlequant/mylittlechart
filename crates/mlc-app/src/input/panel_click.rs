@@ -4080,6 +4080,12 @@ impl ChartApp {
                         state.multi.cycle_depth();
                     }
                 }
+                "imb" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.config.show_imbalance = !state.multi.config.show_imbalance;
+                    }
+                    self.autosave_snapshot();
+                }
                 _ => {
                     if let Some(i_str) = rest.strip_prefix("col:") {
                         if let (Ok(i), Some(state)) = (i_str.parse::<usize>(), self.panels_store.dom.get_mut(&pid)) {

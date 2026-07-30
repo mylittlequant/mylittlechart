@@ -2433,7 +2433,12 @@ fn symbol_quick_dropdown_items(
     if let Some(r) = render {
         if !r.results.is_empty() {
             items.push(DropdownItemDef::Separator);
-            for res in &r.results {
+            for (idx, res) in r.results.iter().enumerate() {
+                // Roster mode: the pinned already-added block ends here —
+                // draw the separator between it and the search results.
+                if r.pinned_count > 0 && idx == r.pinned_count {
+                    items.push(DropdownItemDef::Separator);
+                }
                 let key = format!("{}:{}:{}", res.symbol, res.exchange_id, res.account_type);
                 let label = format!(
                     "{} \u{b7} {} \u{b7} {}",

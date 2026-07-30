@@ -90,6 +90,10 @@ pub struct SymbolQuickSearchRender {
     /// in the roster" — active icon = inside the Multi-DOM; clicking the
     /// row (or the icon) toggles the column.
     pub roster_mode: bool,
+    /// Roster mode: the first N rows of `results` are the PINNED
+    /// already-added columns (always present regardless of the query); the
+    /// dropdown builder draws a separator after them.
+    pub pinned_count: usize,
 }
 
 // =============================================================================

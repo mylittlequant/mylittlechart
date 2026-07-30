@@ -1042,7 +1042,7 @@ impl ChartApp {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1064,6 +1064,7 @@ impl ChartApp {
                                                     exchanges: multi_exchanges.clone(),
                                                     grid_size: *multi_grid_size,
                                                     depth_per_side: *multi_depth,
+                                                    show_imbalance: *multi_show_imbalance,
                                                 },
                                             );
                                         }
@@ -1398,6 +1399,7 @@ impl ChartApp {
                                                 exchanges: exchanges.clone(),
                                                 grid_size: *grid_size,
                                                 depth_per_side: *depth_per_side,
+                                                show_imbalance: true,
                                             },
                                         );
                                         s.multi_mode = true;

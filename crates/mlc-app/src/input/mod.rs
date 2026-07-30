@@ -8118,6 +8118,7 @@ impl ChartApp {
                                 multi_exchanges: state.multi.config.exchanges.clone(),
                                 multi_grid_size: state.multi.config.grid_size,
                                 multi_depth: state.multi.config.depth_per_side,
+                                multi_show_imbalance: state.multi.config.show_imbalance,
                             }
                         }
                         Panel::Footprint(id) => {

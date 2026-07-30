@@ -46,10 +46,13 @@ pub type ExchangeId = String;
 
 /// Static configuration for a multi-exchange book.
 #[derive(Clone, Debug)]
+#[allow(missing_docs)]
 pub struct MultiDomConfig {
     pub exchanges: Vec<ExchangeId>,
     pub grid_size: f64,
     pub depth_per_side: usize,
+    /// Bottom ±2% / ±10% bid-liquidity-share strip (owner toggle 2026-07-30).
+    pub show_imbalance: bool,
 }
 
 impl Default for MultiDomConfig {
@@ -58,6 +61,7 @@ impl Default for MultiDomConfig {
             exchanges: Vec::new(),
             grid_size: 0.5,
             depth_per_side: 25,
+            show_imbalance: true,
         }
     }
 }
@@ -482,7 +486,8 @@ impl MultiDomState {
         col_w: f32,
     ) {
         let grid = self.config.grid_size.max(1e-9);
-        let ladder_h = (body_h - IMB_STRIP_H).max(0.0);
+        let strip_h = if self.config.show_imbalance { IMB_STRIP_H } else { 0.0 };
+        let ladder_h = (body_h - strip_h).max(0.0);
         let rows = (ladder_h / ROW_HEIGHT).floor() as i64;
         if rows < 3 { return; }
         let half = rows / 2;
@@ -639,6 +644,9 @@ impl MultiDomState {
         }
 
         // ── Bottom strip: ±2% / ±10% bid-liquidity share per exchange ────
+        if !self.config.show_imbalance {
+            return;
+        }
         let strip_y = (body_y + ladder_h) as f64;
         ctx.set_stroke_color(&theme.separator);
         ctx.set_stroke_width(1.0);

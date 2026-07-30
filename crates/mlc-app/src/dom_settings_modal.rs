@@ -92,7 +92,7 @@ pub fn render_dom_settings_modal(
         + (CAPTION_H + BTN_H + ROW_GAP) * 4.0            // mode / skin / columns / ladder
         + CAPTION_H                                       // multi caption
         + (BTN_H + 6.0) * (n_ex as f64 + 1.0)             // exchange rows + add
-        + CAPTION_H + BTN_H                               // grid+depth row
+        + CAPTION_H + BTN_H                               // grid+depth+imbalance row
         + PAD;
     let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
     let mx = mx.max(0.0).min((screen_w - DOM_MODAL_W).max(0.0));
@@ -200,15 +200,25 @@ pub fn render_dom_settings_modal(
         ctx.set_fill_color(&tt.item_text);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(ex, left + 4.0, row_y + BTN_H / 2.0);
+        // System "EXCHANGE:AT" column label.
+        ctx.fill_text(
+            &mlc_app_panels::trading::order_flow::multi_dom::col_label(ex),
+            left + 4.0,
+            row_y + BTN_H / 2.0,
+        );
         modal_btn(ctx, coord, &layer_id, tt, &format!("ex_del:{}", i), mx + DOM_MODAL_W - PAD - 54.0, row_y, 54.0, "Remove", false);
         row_y += BTN_H + 6.0;
     }
     modal_btn(ctx, coord, &layer_id, tt, "ex_add", left, row_y, DOM_MODAL_W - PAD * 2.0, "+ Add next exchange", false);
     row_y += BTN_H + 6.0 + CAPTION_H - 12.0;
 
-    modal_btn(ctx, coord, &layer_id, tt, "grid", left, row_y, 130.0, &format!("Grid {}", dom.multi.config.grid_size), false);
-    modal_btn(ctx, coord, &layer_id, tt, "depth", left + 138.0, row_y, 130.0, &format!("Depth {}", dom.multi.config.depth_per_side), false);
+    modal_btn(ctx, coord, &layer_id, tt, "grid", left, row_y, 90.0, &format!("Grid {}", dom.multi.config.grid_size), false);
+    modal_btn(ctx, coord, &layer_id, tt, "depth", left + 98.0, row_y, 90.0, &format!("Depth {}", dom.multi.config.depth_per_side), false);
+    // Bottom ±2%/±10% liquidity-share strip toggle (owner spec 2026-07-30);
+    // label states what is CURRENTLY on.
+    modal_btn(ctx, coord, &layer_id, tt, "imb", left + 196.0, row_y, 90.0,
+        if dom.multi.config.show_imbalance { "Imb on" } else { "Imb off" },
+        dom.multi.config.show_imbalance);
 
     coord.pop_layer(&layer_id);
 }

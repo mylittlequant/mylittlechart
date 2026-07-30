@@ -2101,31 +2101,50 @@ impl ChartApp {
             self.core.watchlists().find(self.watchlist_ui.active_list_id),
             self.core.exchange_symbols().as_map(),
         );
-        // Multi-DOM roster target (owner spec 2026-07-30): the list is a
-        // per-exchange facet of the query — every row carries a DOM-icon
-        // toggle whose ACTIVE state means "this (exchange, AT) column is in
-        // the Multi-DOM". Active rows float to the top; `in_watchlist` is
-        // reused as the active flag (roster_mode flips the renderer's icon).
+        // Multi-DOM roster target (owner spec 2026-07-30): the already-added
+        // columns are PINNED as the first block (always present regardless of
+        // the query; the dropdown builder draws a separator after them),
+        // followed by the per-exchange facet of the query with the pinned
+        // rows deduped out. Every row carries a DOM-icon toggle whose ACTIVE
+        // state means "this (exchange, AT) column is in the Multi-DOM";
+        // `in_watchlist` is reused as the active flag.
         let mut roster_mode = false;
+        let mut pinned_count = 0usize;
         if let crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target {
             if let Some(s) = self.panels_store.dom.get(&pid) {
                 use mlc_app_panels::trading::order_flow::multi_dom;
                 roster_mode = true;
                 let base = s.multi.symbol.clone();
                 let roster = s.multi.config.exchanges.clone();
-                for r in results.iter_mut() {
-                    r.in_watchlist = r.symbol.eq_ignore_ascii_case(&base)
+                let pinned: Vec<mlc_core::state::modal_state::SearchResult> = roster
+                    .iter()
+                    .map(|e| mlc_core::state::modal_state::SearchResult {
+                        symbol: base.clone(),
+                        name: String::new(),
+                        exchange: multi_dom::col_exchange(e).to_uppercase(),
+                        exchange_id: multi_dom::col_exchange(e).to_string(),
+                        asset_type: "Crypto".to_string(),
+                        category_icon: String::new(),
+                        in_watchlist: true,
+                        account_type: multi_dom::col_at(e).to_uppercase(),
+                    })
+                    .collect();
+                pinned_count = pinned.len();
+                results.retain(|r| {
+                    !(r.symbol.eq_ignore_ascii_case(&base)
                         && roster.iter().any(|e| {
                             multi_dom::col_matches(e, &r.exchange_id, &r.account_type)
-                        });
-                }
-                results.sort_by_key(|r| !r.in_watchlist);
+                        }))
+                });
+                results.truncate(10);
+                let mut merged = pinned;
+                merged.extend(std::mem::take(&mut results));
+                results = merged;
             }
         }
-        // Truncate AFTER the roster pass — the active-flag/sort must see the
-        // FULL result set or an in-roster column outside the raw top-10
-        // silently vanishes from the list.
-        results.truncate(if roster_mode { 12 } else { 10 });
+        if !roster_mode {
+            results.truncate(10);
+        }
         Some(mlc_core::state::modal_state::SymbolQuickSearchRender {
             text,
             cursor,
@@ -2133,6 +2152,7 @@ impl ChartApp {
             cursor_visible,
             results,
             roster_mode,
+            pinned_count,
         })
     }
 
@@ -9977,7 +9997,9 @@ impl ChartApp {
         // rule 2026-07-17: "ввести как удобно — принять и зарезолвить");
         // parts stay positional. Symbols never contain these characters in
         // canonical form, so the split is unambiguous.
-        let mut q_parts = q_full.splitn(3, |c: char| c == ':' || c == '/' || c.is_whitespace());
+        let mut q_parts = q_full.splitn(3, |c: char| {
+            c == ':' || c == '/' || c == '\\' || c == '.' || c.is_whitespace()
+        });
         let q = q_parts.next().unwrap_or_default().to_string();
         let q_exchange = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
         let q_at = q_parts.next().map(str::trim).filter(|p| !p.is_empty());
