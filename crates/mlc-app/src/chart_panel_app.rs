@@ -298,6 +298,8 @@ impl ChartPanelApp {
             baseline_bottom_fill: rt.series.baseline_bottom_fill.clone(),
             bar_up: rt.series.bar_up.clone(),
             bar_down: rt.series.bar_down.clone(),
+            candle_style: rt.panel_style.candle_style,
+            candle_glow: rt.panel_style.glow,
         }
     }
 

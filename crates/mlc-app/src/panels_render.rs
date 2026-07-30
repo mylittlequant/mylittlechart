@@ -223,6 +223,8 @@ pub fn panel_theme_from_runtime(rt: &mlc_core::theme::RuntimeTheme) -> mlc_app_p
         tc_bg:        t.tc_bg.clone(),
         tc_inner_bg:  t.tc_inner_bg.clone(),
         tc_separator: t.tc_separator.clone(),
+
+        style: rt.panel_style,
     }
 }
 

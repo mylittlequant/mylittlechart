@@ -191,6 +191,10 @@ pub struct ChartTheme {
     pub bar_up: String,
     /// HLC/OHLC bars down color.
     pub bar_down: String,
+    /// Candle draw form (skin texture layer): Solid / ThinGlow / Phosphor.
+    pub candle_style: crate::theme::CandleStyle,
+    /// Soft glow underlay on candle bodies (skin texture layer).
+    pub candle_glow: bool,
 }
 
 impl Default for ChartTheme {
@@ -235,6 +239,8 @@ impl Default for ChartTheme {
             baseline_bottom_fill: "rgba(239, 83, 80, 0.28)".to_string(),
             bar_up: "#26a69a".to_string(),
             bar_down: "#ef5350".to_string(),
+            candle_style: crate::theme::CandleStyle::Solid,
+            candle_glow: false,
         }
     }
 }

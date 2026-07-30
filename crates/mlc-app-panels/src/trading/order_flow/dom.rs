@@ -207,6 +207,10 @@ pub struct DomState {
 
     /// Rendering skin (vendor preset). Default `Classic`.
     pub skin: DomSkin,
+    /// True once the user has manually picked a skin — from then on
+    /// `self.skin` wins over the theme-skin's `dom_skin` default
+    /// (skin-driven visualization defaults, layer 3 of the skin model).
+    pub skin_user_override: bool,
     /// True when the panel settings menu is visible (right-click on the
     /// panel header opens it). Renderer paints a popup with one row per
     /// `DomSkin::all()` variant; input handler toggles `self.skin` on
@@ -301,6 +305,7 @@ impl DomState {
             chase_last_update_ms: 0,
             column_config: DomColumnConfig::default(),
             skin: DomSkin::default(),
+            skin_user_override: false,
             skin_menu_open: false,
             multi_mode: false,
             multi,
@@ -840,9 +845,27 @@ impl DomState {
     }
 
     /// Set the current visual skin and close the selector menu (if open).
+    /// A manual pick pins the panel to this skin — the theme-skin's
+    /// `dom_skin` default stops applying (user override wins).
     pub fn set_skin(&mut self, skin: DomSkin) {
         self.skin = skin;
+        self.skin_user_override = true;
         self.skin_menu_open = false;
+    }
+
+    /// The skin actually rendered this frame: the user's manual pick if
+    /// one was made, otherwise the active theme-skin's default variant.
+    pub fn effective_skin(&self, theme: &crate::panel_theme::PanelTheme) -> DomSkin {
+        if self.skin_user_override {
+            return self.skin;
+        }
+        match theme.style.dom_skin {
+            mlc_core::theme::DomSkinDefault::Classic => DomSkin::Classic,
+            mlc_core::theme::DomSkinDefault::BidAskSplit => DomSkin::BidAskSplit,
+            mlc_core::theme::DomSkinDefault::DeltaColumn => DomSkin::DeltaColumn,
+            mlc_core::theme::DomSkinDefault::DominantSide => DomSkin::DominantSide,
+            mlc_core::theme::DomSkinDefault::BookmapHybrid => DomSkin::BookmapHybrid,
+        }
     }
 
     /// Toggle the skin-selector menu visibility (typically wired to a
@@ -1023,8 +1046,11 @@ impl TradingPanel for DomState {
         // single-column ladder per the selected preset. Returns early
         // — Classic path follows below for backwards compat with
         // existing column-config / trade-overlay / chase-tracker logic.
-        if self.skin != DomSkin::Classic {
-            render_alt_skin(ctx, self, x, y, w, h, body_y, body_h, theme);
+        // The variant is the user's manual pick, else the theme-skin's
+        // default (skin-driven visualization defaults).
+        let active_skin = self.effective_skin(theme);
+        if active_skin != DomSkin::Classic {
+            render_alt_skin(ctx, self, active_skin, x, y, w, h, body_y, body_h, theme);
             return;
         }
 
@@ -1214,10 +1240,14 @@ impl TradingPanel for DomState {
         // bars run side primary → side "bright" secondary as the level
         // grows. Small per-frame LUT — no per-row color math.
         const GRAD_STEPS: usize = 8;
+        // Flat skin texture: LUT collapses to the base side color. (Cells
+        // has no meaning for the solo ladder — its cell mode is the
+        // BookmapHybrid DomSkin — so it renders as Gradient here.)
+        let flat_bars = theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
         let mut ask_ord_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         let mut bid_ord_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         for k in 0..GRAD_STEPS {
-            let t = k as f64 / (GRAD_STEPS - 1) as f64;
+            let t = if flat_bars { 0.0 } else { k as f64 / (GRAD_STEPS - 1) as f64 };
             let a = 0.20 + 0.35 * t;
             ask_ord_grad.push(mlc_core::apply_opacity(
                 &mlc_core::mix_colors(&theme.sell, &theme.sell_bright, t), a));
@@ -1250,6 +1280,9 @@ impl TradingPanel for DomState {
                 &theme.dom_best_ask_bg
             } else if level.is_spread {
                 &theme.dom_spread_bg
+            } else if theme.style.row_zebra && i % 2 == 1 {
+                // Zebra ladder rows (skin texture layer).
+                &theme.row_bg_alt
             } else {
                 &theme.panel_bg
             };
@@ -1715,6 +1748,7 @@ impl TradingPanel for DomState {
 fn render_alt_skin(
     ctx: &mut dyn RenderContext,
     state: &DomState,
+    skin: DomSkin,
     x: f32,
     y: f32,
     w: f32,
@@ -1767,16 +1801,19 @@ fn render_alt_skin(
     ctx.set_text_align(uzor::render::TextAlign::Center);
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
     ctx.fill_text(
-        state.skin.label(),
+        skin.label(),
         body_x + body_w * 0.5,
         y as f64 + (DOM_COL_HEADER_HEIGHT as f64) * 0.5,
     );
 
-    // Pre-define palette.
-    let bid_color = "#ef5350";
-    let ask_color = "#26a69a";
-    let delta_pos = "#26a69a";
-    let delta_neg = "#ef5350";
+    // Palette from theme tokens (was a hardcoded #ef5350/#26a69a pair —
+    // and side-INVERTED vs the rest of the app: bids painted red). Bids =
+    // buy side, asks = sell side, same as the Classic ladder; delta keeps
+    // the positive-number-is-buy-colored convention.
+    let bid_color: &str = &theme.buy;
+    let ask_color: &str = &theme.sell;
+    let delta_pos: &str = &theme.buy;
+    let delta_neg: &str = &theme.sell;
 
     ctx.set_font(&format!("{}px monospace", 11));
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
@@ -1803,7 +1840,7 @@ fn render_alt_skin(
             row_y + row_h * 0.5,
         );
 
-        match state.skin {
+        match skin {
             DomSkin::Classic => unreachable!(),
             DomSkin::BidAskSplit => {
                 if bid_v > 0.0 {

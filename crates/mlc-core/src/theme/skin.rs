@@ -16,6 +16,81 @@
 
 use super::runtime::RuntimeTheme;
 use crate::utils::color::{apply_opacity, mix_colors};
+use serde::{Deserialize, Serialize};
+
+/// How orderflow volume bars are textured (layer 2 of the skin model:
+/// tokens / textures / visualization types).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BarTexture {
+    /// Constant side color, length ∝ volume (pre-gradient look).
+    Flat,
+    /// Color runs side primary → secondary as the level grows (default —
+    /// the shipped token-arc look).
+    #[default]
+    Gradient,
+    /// No bar length at all: the whole cell fills at an intensity
+    /// proportional to volume — the TapeSurf "Compact" mosaic. Multi-DOM
+    /// renders mosaic columns; solo DOM treats it as Gradient (its cell
+    /// mode is the `DomSkin::BookmapHybrid` variant).
+    Cells,
+}
+
+/// How chart candles are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CandleStyle {
+    /// Full-width filled bodies (default).
+    #[default]
+    Solid,
+    /// Thin bodies with a soft glow underlay (TapeSurf heatmap-chart
+    /// candles).
+    ThinGlow,
+    /// CRT phosphor: translucent body + bright outline + glow halo.
+    Phosphor,
+}
+
+/// Skin-driven default renderer variant for the solo DOM ladder (layer 3
+/// of the skin model: visualization TYPE defaults). Mirrors
+/// `mlc-app-panels::dom::DomSkin`, which lives above mlc-core in the
+/// crate graph — the panel maps this at render time; a user's manual
+/// per-panel pick always overrides the skin default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DomSkinDefault {
+    #[default]
+    Classic,
+    BidAskSplit,
+    DeltaColumn,
+    DominantSide,
+    BookmapHybrid,
+}
+
+/// Texture/draw-form parameters of a skin — HOW panels and the chart
+/// paint their data, orthogonal to the color tokens. Presets set these
+/// together with the tokens; renderers read them from `PanelTheme.style`
+/// / `ChartTheme.candle_style`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PanelStyleParams {
+    pub bar_texture: BarTexture,
+    /// Soft glow on chart candles (and future glow-capable elements).
+    pub glow: bool,
+    pub candle_style: CandleStyle,
+    /// Zebra-stripe ladder rows (`row_bg_alt`) in DOM/Multi-DOM.
+    pub row_zebra: bool,
+    /// Default solo-DOM renderer variant for this skin.
+    #[serde(default)]
+    pub dom_skin: DomSkinDefault,
+}
+
+impl Default for PanelStyleParams {
+    fn default() -> Self {
+        Self {
+            bar_texture: BarTexture::Gradient,
+            glow: false,
+            candle_style: CandleStyle::Solid,
+            row_zebra: false,
+            dom_skin: DomSkinDefault::Classic,
+        }
+    }
+}
 
 /// The eight colors a skin is made of. `&'static str` hex values —
 /// presets are compile-time constants (runtime-editable skins can layer
@@ -36,6 +111,8 @@ pub struct SkinTokens {
     pub asks_secondary: &'static str,
     pub accent: &'static str,
     pub accent_secondary: &'static str,
+    /// The texture/draw-form layer this skin ships with.
+    pub style: PanelStyleParams,
 }
 
 impl SkinTokens {
@@ -74,6 +151,7 @@ impl SkinTokens {
     /// sizing, effects and UI style are untouched.
     pub fn apply(&self, rt: &mut RuntimeTheme) {
         rt.name = self.name.to_string();
+        rt.panel_style = self.style;
         let bg_dim = self.bg_dimmed();
         let bg_vdim = self.bg_very_dimmed();
         let bg_raised = self.bg_raised();
@@ -248,6 +326,13 @@ impl SkinTokens {
         asks_secondary: "#ffd311",
         accent: "#00ffda",
         accent_secondary: "#30ff76",
+        style: PanelStyleParams {
+            bar_texture: BarTexture::Gradient,
+            glow: true,
+            candle_style: CandleStyle::ThinGlow,
+            row_zebra: false,
+            dom_skin: DomSkinDefault::Classic,
+        },
     };
 
     /// Deep violet bg, pink→purple asks, blue→cyan bids.
@@ -261,6 +346,14 @@ impl SkinTokens {
         asks_secondary: "#bc06f8",
         accent: "#1ccaff",
         accent_secondary: "#f806bc",
+        style: PanelStyleParams {
+            bar_texture: BarTexture::Gradient,
+            glow: true,
+            candle_style: CandleStyle::ThinGlow,
+            row_zebra: false,
+            // Neon heat cells — the radical variant for the neon skin.
+            dom_skin: DomSkinDefault::BookmapHybrid,
+        },
     };
 
     /// CRT: pure black, green phosphor text/bids, red asks.
@@ -274,6 +367,13 @@ impl SkinTokens {
         asks_secondary: "#ff6363",
         accent: "#00ff00",
         accent_secondary: "#ff0000",
+        style: PanelStyleParams {
+            bar_texture: BarTexture::Flat,
+            glow: true,
+            candle_style: CandleStyle::Phosphor,
+            row_zebra: true,
+            dom_skin: DomSkinDefault::Classic,
+        },
     };
 
     /// All skin presets, in picker order.

@@ -21,6 +21,7 @@
 
 use std::collections::BTreeMap;
 
+use mlc_core::theme::BarTexture;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::panel_trait::TradingPanel;
@@ -564,11 +565,22 @@ impl MultiDomState {
         // grows, so walls glow hotter. Quantized to a small LUT computed
         // once per frame — no per-cell color math.
         const GRAD_STEPS: usize = 8;
+        let texture = theme.style.bar_texture;
         let mut ask_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         let mut bid_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         for k in 0..GRAD_STEPS {
-            let t = k as f64 / (GRAD_STEPS - 1) as f64;
-            let a = 0.45 + 0.35 * t;
+            // Flat texture: constant side color (LUT collapses to step 0).
+            let t = if texture == BarTexture::Flat {
+                0.0
+            } else {
+                k as f64 / (GRAD_STEPS - 1) as f64
+            };
+            let a = match texture {
+                // Mosaic cell fill: intensity carried by ALPHA (no bar
+                // length), so the ramp is much wider than the bar LUT's.
+                BarTexture::Cells => 0.10 + 0.62 * t,
+                _ => 0.45 + 0.35 * t,
+            };
             ask_grad.push(mlc_core::apply_opacity(
                 &mlc_core::mix_colors(&theme.sell, &theme.sell_bright, t), a));
             bid_grad.push(mlc_core::apply_opacity(
@@ -583,6 +595,12 @@ impl MultiDomState {
             let row_y = (body_y + ROW_HEIGHT * r as f32) as f64;
             let is_ask = idx > mid_idx;
             let is_mid = idx == mid_idx;
+
+            // Zebra underlay (skin texture layer) — under the side stripes.
+            if theme.style.row_zebra && r % 2 == 1 {
+                ctx.set_fill_color(&theme.row_bg_alt);
+                ctx.fill_rect(x as f64, row_y, w as f64, ROW_HEIGHT as f64);
+            }
 
             // Faint side stripe across the full row.
             let stripe = if is_ask {
@@ -626,8 +644,9 @@ impl MultiDomState {
                     )
                 };
 
-                // Wave underlay — cumulative silhouette.
-                if cum > 0.0 {
+                // Wave underlay — cumulative silhouette. Skipped in
+                // mosaic mode (full-cell fills would bury it).
+                if cum > 0.0 && texture != BarTexture::Cells {
                     let wf = (cum / max_cum).clamp(0.0, 1.0);
                     ctx.set_fill_color(if is_ask { &ask_wave } else { &bid_wave });
                     ctx.fill_rect(cx + 2.0, row_y, cell_w * wf, ROW_HEIGHT as f64);
@@ -635,9 +654,25 @@ impl MultiDomState {
 
                 if q <= 0.0 || q < self.min_level_qty { continue; }
                 let frac = (q / max_norm).powf(0.6).clamp(0.04, 1.0);
-                let bw = cell_w * frac;
                 let big = q >= big_thr;
                 let g = (frac * (GRAD_STEPS - 1) as f64).round() as usize;
+                if texture == BarTexture::Cells {
+                    // Compact mosaic (TapeSurf ref 14): the whole cell
+                    // fills at volume intensity — no bar length. Dense,
+                    // chartless; only big levels get a number.
+                    ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
+                    ctx.fill_rect(cx + 2.0, row_y + 1.0, cell_w, (ROW_HEIGHT - 2.0) as f64);
+                    if big {
+                        ctx.set_fill_color(if is_ask { &theme.sell_bright } else { &theme.buy_bright });
+                        ctx.fill_rect(cx + 2.0, row_y + 1.0, 2.0, (ROW_HEIGHT - 2.0) as f64);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        ctx.set_fill_color(&theme.text_primary);
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.fill_text(&fmt_qty(q), cx + 6.0, row_y + ROW_HEIGHT as f64 * 0.5);
+                    }
+                    continue;
+                }
+                let bw = cell_w * frac;
                 ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
                 ctx.fill_rect(cx + 2.0, row_y + 1.0, bw, (ROW_HEIGHT - 2.0) as f64);
                 if big {

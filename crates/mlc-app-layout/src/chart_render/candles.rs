@@ -10,8 +10,54 @@
 //! - `draw_heikin_ashi()` - Smoothed Heikin Ashi candles
 
 use mlc_core::render::{RenderContext, crisp, crisp_rect};
+use mlc_core::theme::CandleStyle;
 use mlc_core::Bar;
 use super::ChartRenderState;
+
+/// Soft glow underlay for a candle body: two widening translucent
+/// rects behind the body rect (canvas2d has no blur — layered alpha
+/// approximates the halo). Cheap: two fills per bar.
+#[inline]
+fn draw_body_glow(
+    ctx: &mut dyn RenderContext,
+    color: &str,
+    x: f64, y: f64, w: f64, h: f64,
+) {
+    for (grow, alpha) in [(2.0_f64, 0.16_f64), (4.0, 0.07)] {
+        ctx.set_fill_color(&mlc_core::apply_opacity(color, alpha));
+        ctx.fill_rect(x - grow, y - grow, w + grow * 2.0, h + grow * 2.0);
+    }
+}
+
+/// Paint one candle body in the active skin draw-form. Solid/ThinGlow
+/// fill the rect (ThinGlow's narrowing happened at rect computation);
+/// Phosphor = translucent fill + bright 1px outline (CRT look).
+#[inline]
+fn paint_candle_body(
+    ctx: &mut dyn RenderContext,
+    style: CandleStyle,
+    glow: bool,
+    color: &str,
+    x: f64, y: f64, w: f64, h: f64,
+) {
+    if glow {
+        draw_body_glow(ctx, color, x, y, w, h);
+    }
+    match style {
+        CandleStyle::Phosphor => {
+            ctx.set_fill_color(&mlc_core::apply_opacity(color, 0.30));
+            ctx.fill_rect(x, y, w, h);
+            ctx.set_stroke_color(color);
+            ctx.set_stroke_width(1.0);
+            ctx.set_line_dash(&[]);
+            ctx.stroke_rect(x + 0.5, y + 0.5, (w - 1.0).max(0.5), (h - 1.0).max(0.5));
+        }
+        _ => {
+            ctx.set_fill_color(color);
+            ctx.fill_rect(x, y, w, h);
+        }
+    }
+}
 
 /// Draw standard candlestick bars (filled bodies, wicks)
 ///
@@ -118,14 +164,23 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         };
         let h = (bot - top).max(1.0);
 
+        // Skin texture layer: ThinGlow narrows the body to a slim core.
+        let candle_style = theme.candle_style;
+        let body_bar_w = match candle_style {
+            CandleStyle::ThinGlow => (bar_w * 0.45).max(1.0),
+            _ => bar_w,
+        };
+
         // Crisp body rectangle
-        let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, top, bar_w, h, dpr);
+        let (rx, ry, rw, rh) = crisp_rect(cx - body_bar_w / 2.0, top, body_bar_w, h, dpr);
 
         if disable_clip {
             // No clipping - draw directly
             if state.body_enabled {
-                ctx.set_fill_color(body_color);
-                ctx.fill_rect(rect.x + rx, rect.y + ry, rw, rh);
+                paint_candle_body(
+                    ctx, candle_style, theme.candle_glow, body_color,
+                    rect.x + rx, rect.y + ry, rw, rh,
+                );
             }
             if state.border_enabled {
                 if let Some(border) = border_color {
@@ -143,8 +198,10 @@ pub fn draw_candles(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
                 bounds.clamp_rect_y(rect.y + ry, rh),
             ) {
                 if state.body_enabled {
-                    ctx.set_fill_color(body_color);
-                    ctx.fill_rect(body_x, body_y, body_w, body_h);
+                    paint_candle_body(
+                        ctx, candle_style, theme.candle_glow, body_color,
+                        body_x, body_y, body_w, body_h,
+                    );
                 }
                 if state.border_enabled {
                     if let Some(border) = border_color {
@@ -452,13 +509,19 @@ pub fn draw_heikin_ashi(ctx: &mut dyn RenderContext, state: &ChartRenderState) {
         let bot = bot_raw.clamp(0.0, clamp_h);
         let h = (bot - top).max(1.0);
 
-        let (rx, ry, rw, rh) = crisp_rect(cx - bar_w / 2.0, top, bar_w, h, dpr);
+        let ha_body_w = match theme.candle_style {
+            CandleStyle::ThinGlow => (bar_w * 0.45).max(1.0),
+            _ => bar_w,
+        };
+        let (rx, ry, rw, rh) = crisp_rect(cx - ha_body_w / 2.0, top, ha_body_w, h, dpr);
         if let (Some((body_x, body_w)), Some((body_y, body_h))) = (
             bounds.clamp_rect_x(rect.x + rx, rw),
             bounds.clamp_rect_y(rect.y + ry, rh),
         ) {
-            ctx.set_fill_color(body_color);
-            ctx.fill_rect(body_x, body_y, body_w, body_h);
+            paint_candle_body(
+                ctx, theme.candle_style, theme.candle_glow, body_color,
+                body_x, body_y, body_w, body_h,
+            );
         }
 
         // Update for next iteration

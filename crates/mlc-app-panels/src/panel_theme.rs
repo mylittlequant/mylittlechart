@@ -109,6 +109,11 @@ pub struct PanelTheme {
     pub tc_bg: String,
     pub tc_inner_bg: String,
     pub tc_separator: String,
+
+    // === Skin texture layer ===
+    /// Draw-form parameters (bar texture, zebra, glow) — set by the
+    /// active skin, read by panel renderers alongside the colors.
+    pub style: mlc_core::theme::PanelStyleParams,
 }
 
 impl PanelTheme {
@@ -198,6 +203,9 @@ impl PanelTheme {
             tc_bg:        "#0a0a0fff".to_string(),
             tc_inner_bg:  "#1c1c29ff".to_string(),
             tc_separator: "#33333fff".to_string(),
+
+            // Skin texture layer
+            style: mlc_core::theme::PanelStyleParams::default(),
         }
     }
 }

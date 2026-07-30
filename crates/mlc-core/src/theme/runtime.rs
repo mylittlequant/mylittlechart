@@ -33,6 +33,10 @@ pub struct RuntimeTheme {
     /// Trading panel colors — panel-specific overrides not present in base colors
     #[serde(default)]
     pub trading: RuntimeTradingColors,
+    /// Skin texture/draw-form layer (bar texture, candle style, glow,
+    /// zebra) — set by skin presets, read by panel/chart renderers.
+    #[serde(default)]
+    pub panel_style: super::skin::PanelStyleParams,
 }
 
 /// UI element colors (toolbars, buttons, dropdowns, etc.)
@@ -607,6 +611,7 @@ impl From<&UITheme> for RuntimeTheme {
             style: UIStyle::default(),
             style_params: StyleParams::default(),
             trading: RuntimeTradingColors::default(),
+            panel_style: super::skin::PanelStyleParams::default(),
         }
     }
 }

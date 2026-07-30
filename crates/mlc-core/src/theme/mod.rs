@@ -60,7 +60,8 @@ pub use runtime::{
 };
 
 // Skin tokens — the 8-color theme model (TapeSurf doctrine 2026-07-31)
-pub use skin::SkinTokens;
+// + the texture/draw-form layer (skin arc layer 2).
+pub use skin::{SkinTokens, PanelStyleParams, BarTexture, CandleStyle, DomSkinDefault};
 
 // Re-export manager and settings panel types
 pub use manager::{
