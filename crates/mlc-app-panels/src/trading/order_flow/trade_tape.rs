@@ -56,6 +56,45 @@ impl Default for TradeTapeColumnConfig {
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
+/// Tape rendering skin (DomSkin pattern, owner order 2026-07-31):
+/// `Classic` = the original flat side-color rows (default — the
+/// pre-skin look, untouched); `Ramp` = TapeSurf trades-feed style
+/// (bright-mix intensity ramp + 250ms new-row accent flash). The
+/// theme-skin's `tape_skin` sets the default; a manual per-panel pick
+/// overrides it. Shared by Trade Tape and Big Trades.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum TapeSkin {
+    #[default]
+    Classic,
+    Ramp,
+}
+
+impl TapeSkin {
+    pub fn label(self) -> &'static str {
+        match self {
+            TapeSkin::Classic => "Classic",
+            TapeSkin::Ramp => "Ramp",
+        }
+    }
+    pub fn next(self) -> TapeSkin {
+        match self {
+            TapeSkin::Classic => TapeSkin::Ramp,
+            TapeSkin::Ramp => TapeSkin::Classic,
+        }
+    }
+    /// Resolve the effective skin: manual pick wins, else the theme-skin
+    /// default.
+    pub fn effective(
+        manual: Option<TapeSkin>,
+        theme: &crate::panel_theme::PanelTheme,
+    ) -> TapeSkin {
+        manual.unwrap_or(match theme.style.tape_skin {
+            mlc_core::theme::TapeSkinDefault::Classic => TapeSkin::Classic,
+            mlc_core::theme::TapeSkinDefault::Ramp => TapeSkin::Ramp,
+        })
+    }
+}
+
 /// A single executed public trade.
 #[derive(Clone, Debug)]
 pub struct TapeEntry {
@@ -123,6 +162,10 @@ pub struct TradeTapeState {
 
     /// Which columns to show.
     pub column_config: TradeTapeColumnConfig,
+
+    /// Manual skin pick — `None` follows the theme-skin's `tape_skin`
+    /// default (DomSkin precedence pattern).
+    pub skin: Option<TapeSkin>,
 }
 
 impl std::fmt::Debug for TradeTapeState {
@@ -160,6 +203,7 @@ impl TradeTapeState {
             dom_tick_size: None,
             crosshair_price: None,
             column_config: TradeTapeColumnConfig::default(),
+            skin: None,
         }
     }
 
@@ -474,10 +518,10 @@ impl TradingPanel for TradeTapeState {
 
         let tick_size = self.dom_tick_size.unwrap_or(0.01);
         let entries = self.visible_entries(max_rows);
-        // Size-intensity ramp (TapeSurf trades-feed polish): row color
-        // mixes from the side color toward its bright endpoint as the
-        // print grows, on top of the existing alpha ramp. Flat texture
-        // collapses the mix. New rows flash with an accent underlay.
+        // Skin dispatch (owner order 2026-07-31): Classic = the original
+        // flat side-color rows; Ramp = TapeSurf trades-feed style —
+        // bright-mix intensity + 250ms accent flash on fresh rows.
+        let skin = TapeSkin::effective(self.skin, theme);
         let flat_bars =
             theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
         let now_ms = SystemTime::now()
@@ -489,9 +533,13 @@ impl TradingPanel for TradeTapeState {
             let row_y = y + TT_HEADER_HEIGHT + (row_idx as f32 * TT_ROW_HEIGHT);
             let mid_y = (row_y + TT_ROW_HEIGHT / 2.0) as f64;
 
-            // Colored background: bright-mix + alpha, both by size.
+            // Colored background with alpha-by-size; Ramp adds the
+            // bright-endpoint mix by size.
             let alpha = self.row_alpha(entry.quantity);
-            let t_mix = if flat_bars || self.max_qty_seen <= 0.0 {
+            let t_mix = if skin == TapeSkin::Classic
+                || flat_bars
+                || self.max_qty_seen <= 0.0
+            {
                 0.0
             } else {
                 (entry.quantity / self.max_qty_seen).clamp(0.0, 1.0)
@@ -507,7 +555,7 @@ impl TradingPanel for TradeTapeState {
             );
             ctx.set_fill_color(&bg_color);
             ctx.fill_rect(x as f64, row_y as f64, w as f64, TT_ROW_HEIGHT as f64);
-            if now_ms.saturating_sub(entry.arrival_ms) < 250 {
+            if skin == TapeSkin::Ramp && now_ms.saturating_sub(entry.arrival_ms) < 250 {
                 ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, TT_ROW_HEIGHT as f64);
             }

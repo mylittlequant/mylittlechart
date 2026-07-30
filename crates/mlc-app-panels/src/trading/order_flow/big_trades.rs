@@ -52,6 +52,9 @@ pub struct BigTradesState {
     pub notional_threshold: Option<f64>,
     /// Flash animation state for new trades
     pub flash_trades: Vec<(usize, u64)>,  // (trade_index, flash_start_ms)
+    /// Manual skin pick — `None` follows the theme-skin's `tape_skin`
+    /// default (DomSkin precedence pattern; shared `TapeSkin` enum).
+    pub skin: Option<super::trade_tape::TapeSkin>,
     /// Market price from linked DOM
     pub dom_market_price: Option<f64>,
     /// Tick size from linked DOM
@@ -120,6 +123,7 @@ impl BigTradesState {
             size_threshold: 0.0,
             notional_threshold: None,
             flash_trades: Vec::new(),
+            skin: None,
             dom_market_price: None,
             dom_tick_size: None,
             scroll_offset: 0.0,
@@ -353,9 +357,10 @@ impl TradingPanel for BigTradesState {
         let trades = self.visible_trades(max_rows);
 
         let bar_max_width = w - BT_LEFT_PAD * 2.0;
-        // Size-intensity ramp + new-row flash (TapeSurf trades-feed
-        // polish): the size bar mixes toward the side's bright endpoint
-        // as the print grows; fresh rows get an accent underlay.
+        // Skin dispatch (owner order 2026-07-31): Classic = the original
+        // flat side-color size bar; Ramp = TapeSurf trades-feed style —
+        // bright-endpoint mix by size + 250ms accent flash on fresh rows.
+        let skin = super::trade_tape::TapeSkin::effective(self.skin, theme);
         let flat_bars =
             theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
         let now_ms = web_time::SystemTime::now()
@@ -367,7 +372,10 @@ impl TradingPanel for BigTradesState {
             let row_y = y + BT_HEADER_HEIGHT + (i as f32 * BT_ROW_HEIGHT);
 
             let bar_width = self.size_bar_width(trade, bar_max_width);
-            let t_mix = if flat_bars || self.max_qty_seen <= 0.0 {
+            let t_mix = if skin == super::trade_tape::TapeSkin::Classic
+                || flat_bars
+                || self.max_qty_seen <= 0.0
+            {
                 0.0
             } else {
                 (trade.quantity / self.max_qty_seen).clamp(0.0, 1.0)
@@ -379,7 +387,9 @@ impl TradingPanel for BigTradesState {
             let bar_color = mlc_core::mix_colors(base, bright, t_mix);
             ctx.set_fill_color(&bar_color);
             ctx.fill_rect(x as f64, row_y as f64, bar_width as f64, BT_ROW_HEIGHT as f64);
-            if now_ms.saturating_sub(trade.arrival_ms) < 250 {
+            if skin == super::trade_tape::TapeSkin::Ramp
+                && now_ms.saturating_sub(trade.arrival_ms) < 250
+            {
                 ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, BT_ROW_HEIGHT as f64);
             }

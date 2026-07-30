@@ -66,6 +66,18 @@ pub enum DomSkinDefault {
     BookmapHybrid,
 }
 
+/// Skin-driven default renderer variant for the list/tape panels (Trade
+/// Tape, Big Trades) — mirrors `mlc-app-panels::trade_tape::TapeSkin`.
+/// `Classic` = the original flat-color rows; `Ramp` = TapeSurf
+/// trades-feed style (bright-mix intensity ramp + new-row flash). A
+/// user's manual per-panel pick always overrides the skin default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TapeSkinDefault {
+    #[default]
+    Classic,
+    Ramp,
+}
+
 /// Texture/draw-form parameters of a skin — HOW panels and the chart
 /// paint their data, orthogonal to the color tokens. Presets set these
 /// together with the tokens; renderers read them from `PanelTheme.style`
@@ -81,6 +93,9 @@ pub struct PanelStyleParams {
     /// Default solo-DOM renderer variant for this skin.
     #[serde(default)]
     pub dom_skin: DomSkinDefault,
+    /// Default tape-panel renderer variant for this skin.
+    #[serde(default)]
+    pub tape_skin: TapeSkinDefault,
 }
 
 impl Default for PanelStyleParams {
@@ -91,6 +106,7 @@ impl Default for PanelStyleParams {
             candle_style: CandleStyle::Solid,
             row_zebra: false,
             dom_skin: DomSkinDefault::Classic,
+            tape_skin: TapeSkinDefault::Classic,
         }
     }
 }
@@ -335,6 +351,7 @@ impl SkinTokens {
             candle_style: CandleStyle::ThinGlow,
             row_zebra: false,
             dom_skin: DomSkinDefault::Classic,
+            tape_skin: TapeSkinDefault::Ramp,
         },
     };
 
@@ -356,6 +373,7 @@ impl SkinTokens {
             row_zebra: false,
             // Neon heat cells — the radical variant for the neon skin.
             dom_skin: DomSkinDefault::BookmapHybrid,
+            tape_skin: TapeSkinDefault::Ramp,
         },
     };
 
@@ -376,6 +394,7 @@ impl SkinTokens {
             candle_style: CandleStyle::Phosphor,
             row_zebra: true,
             dom_skin: DomSkinDefault::Classic,
+            tape_skin: TapeSkinDefault::Classic,
         },
     };
 

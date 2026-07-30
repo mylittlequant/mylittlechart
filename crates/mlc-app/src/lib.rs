@@ -8704,10 +8704,15 @@ impl ChartApp {
                             ("Price", cc.show_price),
                             ("Size", cc.show_size),
                         ];
+                        let skin_label = s
+                            .skin
+                            .map(|k| k.label().to_string())
+                            .unwrap_or_else(|| "Auto (theme)".to_string());
                         crate::dom_settings_modal::render_section_settings_modal(
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
                             "Trade Tape Settings", &cols, None,
+                            Some(&skin_label),
                         );
                     }
                 }
@@ -8725,6 +8730,7 @@ impl ChartApp {
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
                             "L2 Tape Settings", &cols, None,
+                            None,
                         );
                     }
                 }
@@ -8738,11 +8744,16 @@ impl ChartApp {
                             ("Size", cc.show_size),
                             ("Notional", cc.show_notional),
                         ];
+                        let skin_label = s
+                            .skin
+                            .map(|k| k.label().to_string())
+                            .unwrap_or_else(|| "Auto (theme)".to_string());
                         crate::dom_settings_modal::render_section_settings_modal(
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
                             "Big Trades Settings", &cols,
                             Some((s.size_threshold, s.notional_threshold)),
+                            Some(&skin_label),
                         );
                     }
                 }

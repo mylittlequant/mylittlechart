@@ -356,6 +356,7 @@ pub fn render_section_settings_modal(
     title: &str,
     columns: &[(&str, bool)],
     bt_thresholds: Option<(f64, Option<f64>)>,
+    skin_label: Option<&str>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
@@ -363,6 +364,7 @@ pub fn render_section_settings_modal(
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
         + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if skin_label.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + PAD;
     let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
     let mx = mx.max(0.0).min((screen_w - DOM_MODAL_W).max(0.0));
@@ -431,6 +433,15 @@ pub fn render_section_settings_modal(
             None => "Notional: all".to_string(),
         };
         modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 138.0, row_y, 150.0, &n_label, notional_thr.is_some());
+        row_y += BTN_H;
+    }
+
+    // Tape skin cycle (Classic / Ramp — DomSkin pattern).
+    if let Some(label) = skin_label {
+        row_y += ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Skin (click to cycle)");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "skin", left, row_y, 180.0, label, false);
     }
 
     coord.pop_layer(&layer_id);

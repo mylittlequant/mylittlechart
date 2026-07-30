@@ -3958,14 +3958,19 @@ impl ChartApp {
             // Non-DOM sections: columns + Big-Trades thresholds.
             match &section {
                 Some(mlc_core::state::Panel::TradeTape(pid)) => {
-                    if let (Some(i), Some(state)) = (
-                        rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()),
-                        self.panels_store.trade_tape.get_mut(pid),
-                    ) {
-                        match i {
-                            0 => state.column_config.show_time = !state.column_config.show_time,
-                            1 => state.column_config.show_price = !state.column_config.show_price,
-                            _ => state.column_config.show_size = !state.column_config.show_size,
+                    if let Some(state) = self.panels_store.trade_tape.get_mut(pid) {
+                        if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
+                            match i {
+                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                1 => state.column_config.show_price = !state.column_config.show_price,
+                                _ => state.column_config.show_size = !state.column_config.show_size,
+                            }
+                        } else if rest == "skin" {
+                            // Manual pick pins the panel skin (theme-skin
+                            // default until the first cycle).
+                            use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
+                            let cur = state.skin.unwrap_or(TapeSkin::Classic);
+                            state.skin = Some(cur.next());
                         }
                         self.sidebar_data_dirty = true;
                     }
@@ -4010,6 +4015,10 @@ impl ChartApp {
                                 None => Some(NOTIONALS[0]),
                                 Some(cur) => NOTIONALS.iter().find(|&&n| n > cur * 1.001).copied(),
                             };
+                        } else if rest == "skin" {
+                            use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
+                            let cur = state.skin.unwrap_or(TapeSkin::Classic);
+                            state.skin = Some(cur.next());
                         }
                         self.sidebar_data_dirty = true;
                     }
