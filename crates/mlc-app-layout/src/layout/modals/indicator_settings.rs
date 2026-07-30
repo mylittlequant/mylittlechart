@@ -1216,6 +1216,7 @@ pub fn render_indicator_settings_modal(
                             header_border: toolbar_theme.separator.clone(),
                             separator: toolbar_theme.separator.clone(),
                             shortcut_text: toolbar_theme.item_text_muted.clone(),
+                            accent: toolbar_theme.accent.clone(),
                         };
 
                         // Find the dropdown button position from content_items.

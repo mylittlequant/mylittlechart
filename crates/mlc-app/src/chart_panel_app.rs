@@ -355,6 +355,7 @@ impl ChartPanelApp {
             header_border:         rt.colors.border.clone(),
             separator:             rt.colors.divider.clone(),
             shortcut_text:         rt.colors.text_muted.clone(),
+            accent:                rt.colors.accent.clone(),
         }
     }
 

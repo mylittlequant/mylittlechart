@@ -331,6 +331,9 @@ pub struct DropdownTheme {
     pub header_border: String,
     pub separator: String,
     pub shortcut_text: String,
+    /// Theme accent — active-state trailing icons (Multi-DOM roster DOM
+    /// icon etc.). Tokenized, never hardcode a hex at a call site.
+    pub accent: String,
 }
 
 impl Default for DropdownTheme {
@@ -349,6 +352,7 @@ impl Default for DropdownTheme {
             header_border: "#363a45".to_string(),
             separator: "#363a45".to_string(),
             shortcut_text: "#6a6d78".to_string(),
+            accent: "#2962ff".to_string(),
         }
     }
 }

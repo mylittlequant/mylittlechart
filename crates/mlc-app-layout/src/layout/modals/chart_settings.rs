@@ -555,6 +555,7 @@ pub fn render_settings_modal(
             header_border: toolbar_theme.separator.clone(),
             separator: toolbar_theme.separator.clone(),
             shortcut_text: toolbar_theme.item_text_muted.clone(),
+            accent: toolbar_theme.accent.clone(),
         };
 
         let dropdown_id = match active_tab {

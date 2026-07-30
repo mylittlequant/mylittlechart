@@ -1906,8 +1906,10 @@ fn chart_toolbar_render_dropdown(
                             // the trailing icon is the DOM svg; accent =
                             // this (exchange, AT) column is inside the
                             // Multi-DOM, toggling it off removes the column.
+                            // Tokenized: theme accent, never a hardcoded hex
+                            // (owner rule 2026-07-31).
                             if in_watchlist {
-                                (IconId::new("slot_dom"), Some("#2962ff".to_string()))
+                                (IconId::new("slot_dom"), Some(theme.accent.clone()))
                             } else {
                                 (IconId::new("slot_dom"), None)
                             }

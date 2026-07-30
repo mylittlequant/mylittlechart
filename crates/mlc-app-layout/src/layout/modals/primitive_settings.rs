@@ -1957,6 +1957,7 @@ pub fn render_primitive_settings_modal(
             header_border: toolbar_theme.separator.clone(),
             separator: toolbar_theme.separator.clone(),
             shortcut_text: toolbar_theme.item_text_muted.clone(),
+            accent: toolbar_theme.accent.clone(),
         };
         let dropdown_result = render_dropdown(
             ctx,
@@ -2009,6 +2010,7 @@ pub fn render_primitive_settings_modal(
             header_border: toolbar_theme.separator.clone(),
             separator: toolbar_theme.separator.clone(),
             shortcut_text: toolbar_theme.item_text_muted.clone(),
+            accent: toolbar_theme.accent.clone(),
         };
         let hovered = state.hovered_item_id.as_deref();
         let dropdown_result = render_dropdown(
