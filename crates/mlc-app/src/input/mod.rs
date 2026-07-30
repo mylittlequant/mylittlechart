@@ -8132,6 +8132,8 @@ impl ChartApp {
                                 multi_depth: state.multi.config.depth_per_side,
                                 multi_show_imbalance: state.multi.config.show_imbalance,
                                 multi_per_column_norm: state.multi.config.per_column_norm,
+                                dom_depth_wave: state.show_depth_wave,
+                                dom_big_markers: state.show_big_markers,
                             }
                         }
                         Panel::Footprint(id) => {

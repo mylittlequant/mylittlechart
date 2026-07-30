@@ -38,16 +38,16 @@ impl Default for DomColumnConfig {
 ///
 /// - `Classic` — current 4-column layout: bid_orders / sell_trades /
 ///   buy_trades / ask_orders. Respects `DomColumnConfig`.
-/// - `BidAskSplit` — 2-column compact: bid volume (right-grown red)
-///   left of price, ask volume (left-grown green) right of price.
-///   Trades hidden. Quantower / Sierra "Bid x Ask" preset.
-/// - `DeltaColumn` — single column to the right of price: delta =
-///   ask − bid signed bar, green/red.
-/// - `DominantSide` — per row, single bar filling 100% with the
-///   dominant side's color; bar width ∝ max(bid, ask) / level_max.
-///   Sierra "Dominant Side" preset.
+/// - `BidAskSplit` — 2-column compact: bid volume left of price, ask
+///   volume right of price. Trades hidden. Quantower / Sierra
+///   "Bid x Ask" preset.
 /// - `BookmapHybrid` — 2-column bid/ask with cell **background**
 ///   colored by volume intensity (heat-cell mode). Numbers overlaid.
+///
+/// DeltaColumn / DominantSide were CUT (owner order 2026-07-31 — "из
+/// режимов реально разных 3"): the three survivors carry the Multi-DOM
+/// quality options instead (depth wave + stepped outline, big-order
+/// markers, gradient texture) as per-panel toggles.
 ///
 /// Pulling/Stacking-style diff tracking is intentionally NOT included
 /// in this enum — it needs per-tick book-delta history which is its
@@ -57,8 +57,6 @@ pub enum DomSkin {
     #[default]
     Classic,
     BidAskSplit,
-    DeltaColumn,
-    DominantSide,
     BookmapHybrid,
 }
 
@@ -67,8 +65,6 @@ impl DomSkin {
         match self {
             DomSkin::Classic       => "Classic",
             DomSkin::BidAskSplit   => "Bid × Ask",
-            DomSkin::DeltaColumn   => "Delta",
-            DomSkin::DominantSide  => "Dominant",
             DomSkin::BookmapHybrid => "Heat",
         }
     }
@@ -76,8 +72,6 @@ impl DomSkin {
         &[
             DomSkin::Classic,
             DomSkin::BidAskSplit,
-            DomSkin::DeltaColumn,
-            DomSkin::DominantSide,
             DomSkin::BookmapHybrid,
         ]
     }
@@ -211,6 +205,12 @@ pub struct DomState {
     /// `self.skin` wins over the theme-skin's `dom_skin` default
     /// (skin-driven visualization defaults, layer 3 of the skin model).
     pub skin_user_override: bool,
+    /// Cumulative depth wave + stepped outline in the order columns
+    /// (Multi-DOM parity, owner order 2026-07-31). Modal "Wave" toggle.
+    pub show_depth_wave: bool,
+    /// Bright edge marker on big resting orders (≥ 35% of visible max).
+    /// Modal "Big" toggle.
+    pub show_big_markers: bool,
     /// True when the panel settings menu is visible (right-click on the
     /// panel header opens it). Renderer paints a popup with one row per
     /// `DomSkin::all()` variant; input handler toggles `self.skin` on
@@ -306,6 +306,8 @@ impl DomState {
             column_config: DomColumnConfig::default(),
             skin: DomSkin::default(),
             skin_user_override: false,
+            show_depth_wave: true,
+            show_big_markers: true,
             skin_menu_open: false,
             multi_mode: false,
             multi,
@@ -862,8 +864,6 @@ impl DomState {
         match theme.style.dom_skin {
             mlc_core::theme::DomSkinDefault::Classic => DomSkin::Classic,
             mlc_core::theme::DomSkinDefault::BidAskSplit => DomSkin::BidAskSplit,
-            mlc_core::theme::DomSkinDefault::DeltaColumn => DomSkin::DeltaColumn,
-            mlc_core::theme::DomSkinDefault::DominantSide => DomSkin::DominantSide,
             mlc_core::theme::DomSkinDefault::BookmapHybrid => DomSkin::BookmapHybrid,
         }
     }
@@ -1259,6 +1259,31 @@ impl TradingPanel for DomState {
             (((vol / max).clamp(0.0, 1.0)) * (GRAD_STEPS - 1) as f64).round() as usize
         };
 
+        // Cumulative depth per side (Multi-DOM parity, owner 2026-07-31):
+        // ask depth accumulates from mid upward, bid depth from mid
+        // downward — rendered as a translucent wave + stepped outline in
+        // the order columns when the Wave toggle is on.
+        let ask_wave_color = mlc_core::apply_opacity(&theme.sell, 0.13);
+        let bid_wave_color = mlc_core::apply_opacity(&theme.buy, 0.13);
+        let (ask_cum, bid_cum, max_cum) = if self.show_depth_wave && !heatmap_mode {
+            let mut ask = vec![0.0_f64; levels.len()];
+            let mut bid = vec![0.0_f64; levels.len()];
+            let mut c = 0.0_f64;
+            for i in (0..levels.len()).rev() {
+                c += levels[i].ask_volume;
+                ask[i] = c;
+            }
+            let ask_total = c;
+            let mut c = 0.0_f64;
+            for (i, l) in levels.iter().enumerate() {
+                c += l.bid_volume;
+                bid[i] = c;
+            }
+            (ask, bid, ask_total.max(c).max(1e-9))
+        } else {
+            (Vec::new(), Vec::new(), 0.0)
+        };
+
         // === STEP 4: Render each price level row ===
         for (i, level) in levels.iter().enumerate() {
             let row_y = body_y + (i as f32 * row_height);
@@ -1374,6 +1399,25 @@ impl TradingPanel for DomState {
                 }
             }
 
+            // --- Step 4.1b: cumulative depth wave in the order columns ---
+            if self.show_depth_wave && !heatmap_mode && max_cum > 0.0 {
+                if cc.show_bid_orders && bid_cum[i] > 0.0 {
+                    let wf = (bid_cum[i] / max_cum).clamp(0.0, 1.0);
+                    let ww = bid_ord_col_w as f64 * wf;
+                    ctx.set_fill_color(&bid_wave_color);
+                    ctx.fill_rect(
+                        (bid_ord_col_x + bid_ord_col_w) as f64 - ww,
+                        row_y as f64, ww, row_height as f64,
+                    );
+                }
+                if cc.show_ask_orders && ask_cum[i] > 0.0 {
+                    let wf = (ask_cum[i] / max_cum).clamp(0.0, 1.0);
+                    let ww = ask_ord_col_w as f64 * wf;
+                    ctx.set_fill_color(&ask_wave_color);
+                    ctx.fill_rect(ask_ord_col_x as f64, row_y as f64, ww, row_height as f64);
+                }
+            }
+
             // --- Step 4.2: Bid order volume bar (right-aligned, grows leftward) ---
             if !heatmap_mode && cc.show_bid_orders && level.bid_volume > 0.0 && !is_filtered {
                 let bar_width = if visible_max_volume == 0.0 {
@@ -1387,6 +1431,14 @@ impl TradingPanel for DomState {
 
                 ctx.set_fill_color(&bid_ord_grad[grad_idx(level.bid_volume, visible_max_volume)]);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+                // Big resting order — bright marker at the bar tip.
+                if self.show_big_markers
+                    && visible_max_volume > 0.0
+                    && level.bid_volume >= visible_max_volume * 0.35
+                {
+                    ctx.set_fill_color(&theme.buy_bright);
+                    ctx.fill_rect(bar_x as f64, bar_y as f64, 2.0, bar_h as f64);
+                }
 
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Right);
@@ -1474,6 +1526,17 @@ impl TradingPanel for DomState {
 
                 ctx.set_fill_color(&ask_ord_grad[grad_idx(level.ask_volume, visible_max_volume)]);
                 ctx.fill_rect(bar_x as f64, bar_y as f64, bar_width as f64, bar_h as f64);
+                // Big resting order — bright marker at the bar tip.
+                if self.show_big_markers
+                    && visible_max_volume > 0.0
+                    && level.ask_volume >= visible_max_volume * 0.35
+                {
+                    ctx.set_fill_color(&theme.sell_bright);
+                    ctx.fill_rect(
+                        (bar_x + bar_width - 2.0).max(bar_x) as f64,
+                        bar_y as f64, 2.0, bar_h as f64,
+                    );
+                }
 
                 ctx.set_font("10px monospace");
                 ctx.set_text_align(TextAlign::Left);
@@ -1616,6 +1679,53 @@ impl TradingPanel for DomState {
                     };
                     ctx.set_fill_color(flash_color);
                     ctx.fill_rect(x as f64, flash_y as f64, w as f64, row_height as f64);
+                }
+            }
+        }
+
+        // ── Stepped cumulative outline over the depth wave ───────────────
+        // (Multi-DOM parity) — asks widen upward from mid, bids downward.
+        if self.show_depth_wave && !heatmap_mode && max_cum > 0.0 {
+            for side_ask in [true, false] {
+                let (col_x, col_w, show) = if side_ask {
+                    (ask_ord_col_x, ask_ord_col_w, cc.show_ask_orders)
+                } else {
+                    (bid_ord_col_x, bid_ord_col_w, cc.show_bid_orders)
+                };
+                if !show {
+                    continue;
+                }
+                let line_color = if side_ask {
+                    mlc_core::apply_opacity(&theme.sell, 0.55)
+                } else {
+                    mlc_core::apply_opacity(&theme.buy, 0.55)
+                };
+                ctx.set_stroke_color(&line_color);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                let mut started = false;
+                for i in 0..levels.len() {
+                    let cum = if side_ask { ask_cum[i] } else { bid_cum[i] };
+                    if cum <= 0.0 {
+                        continue;
+                    }
+                    let wf = (cum / max_cum).clamp(0.0, 1.0);
+                    let xe = if side_ask {
+                        col_x as f64 + col_w as f64 * wf
+                    } else {
+                        (col_x + col_w) as f64 - col_w as f64 * wf
+                    };
+                    let y0 = (body_y + i as f32 * row_height) as f64;
+                    if started {
+                        ctx.line_to(xe, y0);
+                    } else {
+                        ctx.move_to(xe, y0);
+                        started = true;
+                    }
+                    ctx.line_to(xe, y0 + row_height as f64);
+                }
+                if started {
+                    ctx.stroke();
                 }
             }
         }
@@ -1808,12 +1918,59 @@ fn render_alt_skin(
 
     // Palette from theme tokens (was a hardcoded #ef5350/#26a69a pair —
     // and side-INVERTED vs the rest of the app: bids painted red). Bids =
-    // buy side, asks = sell side, same as the Classic ladder; delta keeps
-    // the positive-number-is-buy-colored convention.
+    // buy side, asks = sell side, same as the Classic ladder.
     let bid_color: &str = &theme.buy;
     let ask_color: &str = &theme.sell;
-    let delta_pos: &str = &theme.buy;
-    let delta_neg: &str = &theme.sell;
+
+    // Volume-intensity gradient LUT (Multi-DOM parity; the Flat skin
+    // texture collapses it to the base side color).
+    const GRAD_STEPS: usize = 8;
+    let flat_bars = theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
+    let mut ask_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+    let mut bid_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+    for k in 0..GRAD_STEPS {
+        let t = if flat_bars { 0.0 } else { k as f64 / (GRAD_STEPS - 1) as f64 };
+        let a = 0.45 + 0.35 * t;
+        ask_grad.push(mlc_core::apply_opacity(
+            &mlc_core::mix_colors(ask_color, &theme.sell_bright, t), a));
+        bid_grad.push(mlc_core::apply_opacity(
+            &mlc_core::mix_colors(bid_color, &theme.buy_bright, t), a));
+    }
+    let g_of = |v: f64| -> usize {
+        ((v / max_vol).clamp(0.0, 1.0) * (GRAD_STEPS - 1) as f64).round() as usize
+    };
+
+    // Cumulative depth over the visible rows (RAW book — the volume
+    // filter never hides the wave) for the Wave toggle: fill under
+    // BidAskSplit bars, stepped outline for both alt skins.
+    let show_wave = state.show_depth_wave;
+    let mut row_vols: Vec<(f64, f64)> = Vec::with_capacity(visible_rows);
+    for i in 0..visible_rows {
+        let offset = half as i64 - i as i64;
+        let tick = center_tick + offset;
+        let (bv, av, _, _) = state
+            .volume_by_price
+            .get(&tick)
+            .copied()
+            .unwrap_or((0.0, 0.0, 0, 0));
+        row_vols.push((bv, av));
+    }
+    let mut ask_cum = vec![0.0_f64; visible_rows];
+    let mut bid_cum = vec![0.0_f64; visible_rows];
+    let mut c = 0.0_f64;
+    for i in (0..visible_rows).rev() {
+        c += row_vols[i].1;
+        ask_cum[i] = c;
+    }
+    let ask_total = c;
+    let mut c = 0.0_f64;
+    for i in 0..visible_rows {
+        c += row_vols[i].0;
+        bid_cum[i] = c;
+    }
+    let max_cum = ask_total.max(c).max(1e-9);
+    let ask_wave = mlc_core::apply_opacity(ask_color, 0.13);
+    let bid_wave = mlc_core::apply_opacity(bid_color, 0.13);
 
     ctx.set_font(&format!("{}px monospace", 11));
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
@@ -1822,12 +1979,23 @@ fn render_alt_skin(
         let offset = half as i64 - i as i64;
         let tick = center_tick + offset;
         let row_y = body_y as f64 + i as f64 * row_h;
+        let (bid_v, ask_v) = row_vols[i];
 
-        let (bid_v, ask_v, _, _) = state
-            .volume_by_price
-            .get(&tick)
-            .copied()
-            .unwrap_or((0.0, 0.0, 0, 0));
+        // Depth wave underlay — BidAskSplit gets the fill; Heat keeps
+        // its cells clean (stepped outline only, drawn after the loop).
+        if show_wave && skin == DomSkin::BidAskSplit {
+            if bid_cum[i] > 0.0 {
+                let ww = left_col_w * (bid_cum[i] / max_cum).clamp(0.0, 1.0);
+                ctx.set_fill_color(&bid_wave);
+                ctx.fill_rect(left_col_x + left_col_w - ww, row_y, ww, row_h);
+            }
+            if ask_cum[i] > 0.0 {
+                let ww = right_col_w * (ask_cum[i] / max_cum).clamp(0.0, 1.0);
+                ctx.set_fill_color(&ask_wave);
+                ctx.fill_rect(right_col_x, row_y, ww, row_h);
+            }
+        }
+
         if filter > 0.0 && (bid_v + ask_v) < filter { continue; }
 
         // Center price column.
@@ -1846,8 +2014,12 @@ fn render_alt_skin(
                 if bid_v > 0.0 {
                     let bw = (bid_v / max_vol).clamp(0.0, 1.0) * left_col_w;
                     let bx = left_col_x + left_col_w - bw; // grow toward price column
-                    ctx.set_fill_color(&with_alpha(bid_color, 0.55));
+                    ctx.set_fill_color(&bid_grad[g_of(bid_v)]);
                     ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
+                    if state.show_big_markers && bid_v >= max_vol * 0.35 {
+                        ctx.set_fill_color(&theme.buy_bright);
+                        ctx.fill_rect(bx, row_y + 2.0, 2.0, row_h - 4.0);
+                    }
                     ctx.set_fill_color(&theme.text_primary);
                     ctx.set_text_align(uzor::render::TextAlign::Right);
                     ctx.fill_text(
@@ -1858,8 +2030,15 @@ fn render_alt_skin(
                 }
                 if ask_v > 0.0 {
                     let aw = (ask_v / max_vol).clamp(0.0, 1.0) * right_col_w;
-                    ctx.set_fill_color(&with_alpha(ask_color, 0.55));
+                    ctx.set_fill_color(&ask_grad[g_of(ask_v)]);
                     ctx.fill_rect(right_col_x, row_y + 2.0, aw, row_h - 4.0);
+                    if state.show_big_markers && ask_v >= max_vol * 0.35 {
+                        ctx.set_fill_color(&theme.sell_bright);
+                        ctx.fill_rect(
+                            (right_col_x + aw - 2.0).max(right_col_x),
+                            row_y + 2.0, 2.0, row_h - 4.0,
+                        );
+                    }
                     ctx.set_fill_color(&theme.text_primary);
                     ctx.set_text_align(uzor::render::TextAlign::Left);
                     ctx.fill_text(
@@ -1869,53 +2048,19 @@ fn render_alt_skin(
                     );
                 }
             }
-            DomSkin::DeltaColumn => {
-                let d = ask_v - bid_v;
-                if d.abs() > 0.0 {
-                    let mag = (d.abs() / max_vol).clamp(0.0, 1.0);
-                    let color_str = if d >= 0.0 { delta_pos } else { delta_neg };
-                    let bx = right_col_x;
-                    let bw = mag * right_col_w;
-                    ctx.set_fill_color(&with_alpha(color_str, 0.55));
-                    ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
-                    ctx.set_fill_color(&theme.text_primary);
-                    ctx.set_text_align(uzor::render::TextAlign::Left);
-                    ctx.fill_text(
-                        &format_dom_qty(d),
-                        right_col_x + 4.0,
-                        row_y + row_h * 0.5,
-                    );
-                }
-            }
-            DomSkin::DominantSide => {
-                let (winner, win_v) = if ask_v >= bid_v { (ask_color, ask_v) } else { (bid_color, bid_v) };
-                if win_v > 0.0 {
-                    let mag = (win_v / max_vol).clamp(0.0, 1.0);
-                    let total_w = body_w - price_col_w - 8.0;
-                    let bw = mag * (total_w * 0.5);
-                    ctx.set_fill_color(&with_alpha(winner, 0.55));
-                    if ask_v >= bid_v {
-                        ctx.fill_rect(right_col_x, row_y + 2.0, bw, row_h - 4.0);
-                    } else {
-                        let bx = left_col_x + left_col_w - bw;
-                        ctx.fill_rect(bx, row_y + 2.0, bw, row_h - 4.0);
-                    }
-                    ctx.set_fill_color(&theme.text_primary);
-                    if ask_v >= bid_v {
-                        ctx.set_text_align(uzor::render::TextAlign::Left);
-                        ctx.fill_text(&format_dom_qty(win_v), right_col_x + 4.0, row_y + row_h * 0.5);
-                    } else {
-                        ctx.set_text_align(uzor::render::TextAlign::Right);
-                        ctx.fill_text(&format_dom_qty(win_v), left_col_x + left_col_w - 4.0, row_y + row_h * 0.5);
-                    }
-                }
-            }
             DomSkin::BookmapHybrid => {
                 if bid_v > 0.0 {
                     let ratio = (bid_v / max_vol).clamp(0.0, 1.0);
                     let alpha = 0.18 + 0.55 * ratio.sqrt();
-                    ctx.set_fill_color(&with_alpha(bid_color, alpha));
+                    let t = if flat_bars { 0.0 } else { ratio };
+                    let cell = mlc_core::apply_opacity(
+                        &mlc_core::mix_colors(bid_color, &theme.buy_bright, t), alpha);
+                    ctx.set_fill_color(&cell);
                     ctx.fill_rect(left_col_x, row_y + 1.0, left_col_w, row_h - 2.0);
+                    if state.show_big_markers && bid_v >= max_vol * 0.35 {
+                        ctx.set_fill_color(&theme.buy_bright);
+                        ctx.fill_rect(left_col_x, row_y + 1.0, 2.0, row_h - 2.0);
+                    }
                     ctx.set_fill_color(&theme.text_primary);
                     ctx.set_text_align(uzor::render::TextAlign::Right);
                     ctx.fill_text(
@@ -1927,8 +2072,18 @@ fn render_alt_skin(
                 if ask_v > 0.0 {
                     let ratio = (ask_v / max_vol).clamp(0.0, 1.0);
                     let alpha = 0.18 + 0.55 * ratio.sqrt();
-                    ctx.set_fill_color(&with_alpha(ask_color, alpha));
+                    let t = if flat_bars { 0.0 } else { ratio };
+                    let cell = mlc_core::apply_opacity(
+                        &mlc_core::mix_colors(ask_color, &theme.sell_bright, t), alpha);
+                    ctx.set_fill_color(&cell);
                     ctx.fill_rect(right_col_x, row_y + 1.0, right_col_w, row_h - 2.0);
+                    if state.show_big_markers && ask_v >= max_vol * 0.35 {
+                        ctx.set_fill_color(&theme.sell_bright);
+                        ctx.fill_rect(
+                            right_col_x + right_col_w - 2.0,
+                            row_y + 1.0, 2.0, row_h - 2.0,
+                        );
+                    }
                     ctx.set_fill_color(&theme.text_primary);
                     ctx.set_text_align(uzor::render::TextAlign::Left);
                     ctx.fill_text(
@@ -1937,6 +2092,44 @@ fn render_alt_skin(
                         row_y + row_h * 0.5,
                     );
                 }
+            }
+        }
+    }
+
+    // Stepped cumulative outline (Multi-DOM parity) — both alt skins.
+    if show_wave {
+        for side_ask in [true, false] {
+            let line_color = if side_ask {
+                mlc_core::apply_opacity(ask_color, 0.55)
+            } else {
+                mlc_core::apply_opacity(bid_color, 0.55)
+            };
+            ctx.set_stroke_color(&line_color);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            let mut started = false;
+            for i in 0..visible_rows {
+                let cum = if side_ask { ask_cum[i] } else { bid_cum[i] };
+                if cum <= 0.0 {
+                    continue;
+                }
+                let wf = (cum / max_cum).clamp(0.0, 1.0);
+                let xe = if side_ask {
+                    right_col_x + right_col_w * wf
+                } else {
+                    left_col_x + left_col_w - left_col_w * wf
+                };
+                let y0 = body_y as f64 + i as f64 * row_h;
+                if started {
+                    ctx.line_to(xe, y0);
+                } else {
+                    ctx.move_to(xe, y0);
+                    started = true;
+                }
+                ctx.line_to(xe, y0 + row_h);
+            }
+            if started {
+                ctx.stroke();
             }
         }
     }
@@ -1959,11 +2152,6 @@ fn format_dom_qty(q: f64) -> String {
     else if v >= 100.0  { format!("{:.0}", v) }
     else if v >= 10.0   { format!("{:.1}", v) }
     else                { format!("{:.2}", v) }
-}
-
-#[inline]
-fn with_alpha(hex: &str, alpha: f64) -> String {
-    mlc_core::apply_opacity(hex, alpha)
 }
 
 /// Draw the DomSkin selector popup overlay anchored to the top-right

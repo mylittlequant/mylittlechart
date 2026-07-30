@@ -169,6 +169,13 @@ pub enum PersistedFreeItemKind {
         /// (TapeSurf Individual vs Cross Exchange, 2026-07-31).
         #[serde(default)]
         multi_per_column_norm: bool,
+        /// Solo-ladder depth wave + stepped outline toggle (Multi-DOM
+        /// parity, 2026-07-31).
+        #[serde(default = "default_true")]
+        dom_depth_wave: bool,
+        /// Solo-ladder big-order marker toggle.
+        #[serde(default = "default_true")]
+        dom_big_markers: bool,
     },
     Footprint {
         #[serde(default)]

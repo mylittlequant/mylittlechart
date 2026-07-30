@@ -1042,7 +1042,7 @@ impl ChartApp {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm, dom_depth_wave, dom_big_markers } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1051,6 +1051,8 @@ impl ChartApp {
                                         let mut s = mlc_app_panels::trading::order_flow::dom::DomState::new(symbol, *tick_size);
                                         s.levels_displayed = *levels_displayed;
                                         s.center_price = *center_price;
+                                        s.show_depth_wave = *dom_depth_wave;
+                                        s.show_big_markers = *dom_big_markers;
                                         // Market-data panels no longer carry SymbolSource; TagManager tracks their group.
                                         if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
                                             s.exchange = exchange.clone();

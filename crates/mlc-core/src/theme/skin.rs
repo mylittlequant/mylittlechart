@@ -63,8 +63,6 @@ pub enum DomSkinDefault {
     #[default]
     Classic,
     BidAskSplit,
-    DeltaColumn,
-    DominantSide,
     BookmapHybrid,
 }
 

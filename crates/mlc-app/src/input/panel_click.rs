@@ -4071,6 +4071,20 @@ impl ChartApp {
                     }
                     self.autosave_snapshot();
                 }
+                // Solo-ladder depth-wave / big-marker toggles (Multi-DOM
+                // parity), persisted.
+                "wave" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.show_depth_wave = !state.show_depth_wave;
+                    }
+                    self.autosave_snapshot();
+                }
+                "big" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.show_big_markers = !state.show_big_markers;
+                    }
+                    self.autosave_snapshot();
+                }
                 "am" => {
                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                         state.auto_center = !state.auto_center;

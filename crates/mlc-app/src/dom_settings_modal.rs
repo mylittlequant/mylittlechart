@@ -184,8 +184,9 @@ pub fn render_dom_settings_modal(
         }
         row_y += BTN_H + ROW_GAP;
 
-        // Book row: intensity normalization (multi only — TapeSurf
-        // Individual vs Cross Exchange, per-panel config) + zebra (theme).
+        // Book row: multi = intensity normalization (TapeSurf Individual
+        // vs Cross Exchange, per-panel config); solo = depth Wave + Big
+        // marker toggles (Multi-DOM parity). Zebra (theme) in both.
         caption(ctx, tt, left, row_y, "Book");
         row_y += CAPTION_H;
         let mut bx = left;
@@ -195,6 +196,11 @@ pub fn render_dom_settings_modal(
             bx += 88.0 + 6.0;
             modal_btn(ctx, coord, &layer_id, tt, "norm:col", bx, row_y, 88.0, "Norm: Col", per_col);
             bx += 88.0 + 6.0;
+        } else {
+            modal_btn(ctx, coord, &layer_id, tt, "wave", bx, row_y, 70.0, "Wave", dom.show_depth_wave);
+            bx += 70.0 + 6.0;
+            modal_btn(ctx, coord, &layer_id, tt, "big", bx, row_y, 70.0, "Big", dom.show_big_markers);
+            bx += 70.0 + 6.0;
         }
         modal_btn(ctx, coord, &layer_id, tt, "zebra", bx, row_y, 70.0, "Zebra", style.row_zebra);
     }
