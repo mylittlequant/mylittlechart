@@ -400,6 +400,10 @@ impl std::fmt::Debug for MultiDomState {
 const ROW_HEIGHT: f32 = 16.0;
 const HEADER_HEIGHT: f32 = 18.0;
 const PRICE_COL_WIDTH: f32 = 64.0;
+/// Below this per-venue column width the panel auto-degrades to the L3
+/// mosaic texture and the header switches to short venue tags — bars and
+/// full "EXCHANGE:AT" labels don't fit (squeeze-to-L3, owner 2026-07-31).
+const NARROW_COL_W: f32 = 48.0;
 /// Bottom liquidity-imbalance strip: two 16px rows + separator.
 const IMB_STRIP_H: f32 = 34.0;
 /// A level at or above this fraction of the column max is a "big order".
@@ -466,6 +470,12 @@ impl TradingPanel for MultiDomState {
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text("Price", (x + 4.0) as f64, (y + HEADER_HEIGHT * 0.5) as f64);
+        // Narrow columns can't carry "EXCHANGE:AT" — switch to short venue
+        // tags ("BI:F") so the header stays readable at L3 widths.
+        let narrow = col_w < NARROW_COL_W;
+        if narrow {
+            ctx.set_font("8px monospace");
+        }
         for (i, ex) in self.config.exchanges.iter().enumerate() {
             let cx = x + PRICE_COL_WIDTH + col_w * i as f32 + col_w * 0.5;
             ctx.set_text_align(TextAlign::Center);
@@ -473,7 +483,16 @@ impl TradingPanel for MultiDomState {
             let live = self.handles.get(i).map(|h| h.is_some()).unwrap_or(false);
             ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
             // System format: "EXCHANGE:AT" (owner spec 2026-07-30).
-            ctx.fill_text(&col_label(ex), cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
+            let label = if narrow {
+                let exch: String = col_exchange(ex).chars().take(2).collect();
+                format!("{}:{}", exch.to_uppercase(), col_at(ex).to_uppercase())
+            } else {
+                col_label(ex)
+            };
+            ctx.fill_text(&label, cx as f64, (y + HEADER_HEIGHT * 0.5) as f64);
+        }
+        if narrow {
+            ctx.set_font("11px sans-serif");
         }
         // Per-venue spread stat (TapeSurf §2.4): the venue's OWN bbo gap,
         // right-aligned in its header cell. Only on columns wide enough to
@@ -622,7 +641,15 @@ impl MultiDomState {
         // grows, so walls glow hotter. Quantized to a small LUT computed
         // once per frame — no per-cell color math.
         const GRAD_STEPS: usize = 8;
-        let texture = theme.style.bar_texture;
+        // Width-driven auto-compression (owner order 2026-07-31): once the
+        // sidebar is squeezed so far that a column can't carry bars/numbers,
+        // the panel degrades to L3 mosaic on its own — the texture setting
+        // resumes when the panel widens back.
+        let texture = if col_w < NARROW_COL_W {
+            BarTexture::Mosaic
+        } else {
+            theme.style.bar_texture
+        };
         let mut ask_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         let mut bid_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
         for k in 0..GRAD_STEPS {

@@ -624,6 +624,10 @@ pub struct ChartToolbarState {
     pub hovered_top_toolbar_id: Option<String>,
     /// Hovered right sidebar toolbar item
     pub hovered_right_toolbar_id: Option<String>,
+    /// Right-rail button id of the currently OPEN sidebar panel — rendered
+    /// accent-active so the open tab is visible at a glance (owner order
+    /// 2026-07-31). Set per frame by the app from `sidebar_state`.
+    pub active_right_toolbar_id: Option<String>,
     /// Hovered bottom toolbar item
     pub hovered_bottom_toolbar_id: Option<String>,
     /// Currently open dropdown
@@ -687,6 +691,7 @@ impl Default for ChartToolbarState {
             hovered_left_toolbar_id: None,
             hovered_top_toolbar_id: None,
             hovered_right_toolbar_id: None,
+            active_right_toolbar_id: None,
             hovered_bottom_toolbar_id: None,
             open_dropdown_id: None,
             hovered_dropdown_item: None,

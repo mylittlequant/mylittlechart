@@ -810,7 +810,22 @@ pub fn chart_toolbar_render_toolbars(
         // --- Right toolbar (vertical, right side, sidebar style) ---
         let right_tc_result = if toolbar_config.right.is_some() {
             let right_def = toolbar_config.right.as_ref().unwrap();
-            let right_sections = convert_toolbar_def_to_sections(right_def);
+            let mut right_sections = convert_toolbar_def_to_sections(right_def);
+
+            // Accent-highlight the OPEN sidebar panel's button (owner order
+            // 2026-07-31) — otherwise there is no visual cue which tab is
+            // open. The app stamps the open panel's button id per frame.
+            if let Some(active_id) = tb.active_right_toolbar_id.as_deref() {
+                for section in &mut right_sections {
+                    for item in &mut section.items {
+                        if let TcToolbarItem::IconButton { id, active, .. } = item {
+                            if id == active_id {
+                                *active = true;
+                            }
+                        }
+                    }
+                }
+            }
 
             // Right toolbar uses sidebar_style so it renders with the sidebar variant.
             let right_theme = TcToolbarTheme {

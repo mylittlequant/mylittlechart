@@ -6189,6 +6189,7 @@ impl ChartApp {
             }
             let suppress_chart_controls = trading_focus_pid.is_some()
                 && self.core.user().profile().ui.trading_panel_topbar_takeover;
+            self.stamp_active_right_toolbar_id();
             let bubble_guard_tb = self.core.bubbles();
             let tags_guard_tb = self.core.tags();
             let presets_guard_tb = self.core.presets();
@@ -7384,6 +7385,7 @@ impl ChartApp {
         let suppress_chart_controls = trading_focus_pid.is_some()
             && self.core.user().profile().ui.trading_panel_topbar_takeover;
 
+        self.stamp_active_right_toolbar_id();
         let bubble_guard_tb2 = self.core.bubbles();
         let tags_guard_tb2 = self.core.tags();
         let presets_guard_tb2 = self.core.presets();
@@ -11016,6 +11018,21 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     /// Map a [`mlc_app_sidebar_content::state::RightSidebarPanel`] to a string name.
+    /// Stamp the right-rail button id of the currently open sidebar panel
+    /// into `toolbar_state` so the rail renders it accent-active (owner
+    /// order 2026-07-31). NOTE: Monitoring's BUTTON id is "monitoring" —
+    /// distinct from its persisted key "performance" (`panel_to_str`
+    /// back-compat), so this cannot reuse `panel_to_str` directly.
+    fn stamp_active_right_toolbar_id(&mut self) {
+        use mlc_app_sidebar_content::state::RightSidebarPanel as P;
+        self.panel_app.toolbar_state.active_right_toolbar_id =
+            match self.sidebar_state.right_panel {
+                P::None => None,
+                P::Monitoring => Some("monitoring".to_string()),
+                p => Self::panel_to_str(p),
+            };
+    }
+
     pub fn panel_to_str(panel: mlc_app_sidebar_content::state::RightSidebarPanel) -> Option<String> {
         use mlc_app_sidebar_content::state::RightSidebarPanel;
         match panel {

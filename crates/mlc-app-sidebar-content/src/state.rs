@@ -79,7 +79,11 @@ pub struct MetricsSnapshot {
 pub const RIGHT_SIDEBAR_WIDTH: f64 = 340.0;
 
 /// Minimum allowed right sidebar width (px).
-pub const MIN_SIDEBAR_WIDTH: f64 = 280.0;
+// Lowered 280 → 160 (owner order 2026-07-31): the sidebar must squeeze
+// down to the Multi-DOM L3 mosaic width (price col 64 + ~4 narrow venue
+// strips). Squeezing past this by more than the 20px tolerance collapses
+// the sidebar entirely (see the separator-drag handler in mlc-app).
+pub const MIN_SIDEBAR_WIDTH: f64 = 160.0;
 /// Hard upper bound — the real cap is enforced dynamically by the caller
 /// based on the available window width minus the minimum chart width.
 /// We just keep this absurdly large so it never bites in practice.

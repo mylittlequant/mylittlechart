@@ -3102,9 +3102,21 @@ impl ChartApp {
                 self.persist_profile();
                 return;
             }
+            // Squeeze-to-collapse (owner order 2026-07-31): the drag can
+            // compress down to MIN_SIDEBAR_WIDTH (L3 mosaic width); pushing
+            // MORE than 20px past the minimum collapses the sidebar.
+            let raw_width = self.right_toolbar_left_x - x;
+            if raw_width < mlc_app_sidebar_content::state::MIN_SIDEBAR_WIDTH - 20.0 {
+                self.sidebar_separator_drag_active = false;
+                self.sidebar_state
+                    .set_right_panel(mlc_app_sidebar_content::state::RightSidebarPanel::None);
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
+                return;
+            }
             // Enforce [MIN_SIDEBAR_WIDTH, right_toolbar_left_x - min_chart_w] clamp.
             let max_w = self.right_toolbar_left_x - min_chart_w;
-            let new_width = (self.right_toolbar_left_x - x)
+            let new_width = raw_width
                 .clamp(mlc_app_sidebar_content::state::MIN_SIDEBAR_WIDTH, max_w);
             self.sidebar_state.set_right_width(new_width);
             // NOTE: width is persisted on drag-end (on_drag_end), not on every
