@@ -909,6 +909,26 @@ impl ChartApp {
                         }
                         self.close_symbol_quick_dropdown();
                     }
+                    Some(crate::SymbolQuickEditTarget::MultiDomRoster(pid)) => {
+                        // Enter applies the first NON-roster result row (the
+                        // roster block sits on top of the list); the dropdown
+                        // stays open — roster editing is a multi-click
+                        // session, Escape / click-away closes it.
+                        let (base, roster) = self.panels_store.dom.get(&pid)
+                            .map(|s| (s.multi.symbol.clone(), s.multi.config.exchanges.clone()))
+                            .unwrap_or_default();
+                        let first = self.symbol_quick_search_render()
+                            .map(|r| r.results)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find(|res| {
+                                !(res.symbol.eq_ignore_ascii_case(&base)
+                                    && roster.iter().any(|e| e.eq_ignore_ascii_case(&res.exchange_id)))
+                            });
+                        if let Some(res) = first {
+                            self.toggle_multi_dom_roster(pid, &res.symbol, &res.exchange_id);
+                        }
+                    }
                     // `TopbarChart` (or no live editor, defensive) — same
                     // dispatch `handle_search_modal_click`'s
                     // Commit-via-first-result contract uses for the

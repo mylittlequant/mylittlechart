@@ -1326,6 +1326,12 @@ pub enum SymbolQuickEditTarget {
     /// Commits via `commit_symbol_search_to_section_panel` (group
     /// instrument write + apply-key rebind).
     SectionPanel(mlc_core::state::PanelId),
+    /// The Multi-DOM header's own symbol+exchange picker (owner spec
+    /// 2026-07-30): the dropdown lists the already-added roster columns
+    /// first (click removes), then search results — a same-symbol row
+    /// click ADDS that exchange as a column; a different-symbol row click
+    /// switches the base symbol. No chart apply, no tag-group coupling.
+    MultiDomRoster(mlc_core::state::PanelId),
 }
 
 impl Default for SymbolQuickEditTarget {
@@ -2096,6 +2102,38 @@ impl ChartApp {
             self.core.exchange_symbols().as_map(),
         );
         results.truncate(10);
+        // Multi-DOM roster target: prepend the already-added columns section
+        // (click on such a row REMOVES the column) and drop their duplicates
+        // from the search results below.
+        if let crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target {
+            if let Some(s) = self.panels_store.dom.get(&pid) {
+                let base = s.multi.symbol.clone();
+                let roster: Vec<mlc_core::state::modal_state::SearchResult> = s
+                    .multi
+                    .config
+                    .exchanges
+                    .iter()
+                    .map(|ex| mlc_core::state::modal_state::SearchResult {
+                        symbol: base.clone(),
+                        name: "M/D column — click removes".to_string(),
+                        exchange: ex.to_uppercase(),
+                        exchange_id: ex.clone(),
+                        asset_type: "Crypto".to_string(),
+                        category_icon: "\u{20BF}".to_string(),
+                        in_watchlist: false,
+                        account_type: String::new(),
+                    })
+                    .collect();
+                results.retain(|r| {
+                    !(r.symbol.eq_ignore_ascii_case(&base)
+                        && roster.iter().any(|q| q.exchange_id.eq_ignore_ascii_case(&r.exchange_id)))
+                });
+                let mut merged = roster;
+                merged.extend(std::mem::take(&mut results));
+                merged.truncate(14);
+                results = merged;
+            }
+        }
         Some(mlc_core::state::modal_state::SymbolQuickSearchRender {
             text,
             cursor,
@@ -6482,7 +6520,8 @@ impl ChartApp {
             // immutably below.
             let trading_symbol_edit_render = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
                 crate::SymbolQuickEditTarget::TradingPanel(pid)
-                | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
+                | crate::SymbolQuickEditTarget::SectionPanel(pid)
+                | crate::SymbolQuickEditTarget::MultiDomRoster(pid) => {
                     self.symbol_quick_search_render().map(|r| (pid.0, r))
                 }
                 crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -7509,7 +7548,8 @@ impl ChartApp {
         // read BEFORE `panels_store` borrows `self` immutably below.
         let trading_symbol_edit_render_main = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
             crate::SymbolQuickEditTarget::TradingPanel(pid)
-            | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
+            | crate::SymbolQuickEditTarget::SectionPanel(pid)
+            | crate::SymbolQuickEditTarget::MultiDomRoster(pid) => {
                 self.symbol_quick_search_render().map(|r| (pid.0, r))
             }
             crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -7878,6 +7918,7 @@ impl ChartApp {
                 self.symbol_quick_edit.as_ref().map(|e| e.target),
                 Some(SymbolQuickEditTarget::TradingPanel(_))
                     | Some(SymbolQuickEditTarget::SectionPanel(_))
+                    | Some(SymbolQuickEditTarget::MultiDomRoster(_))
             )
     }
 
@@ -8809,6 +8850,7 @@ impl ChartApp {
                 self.symbol_quick_edit.as_ref().map(|e| e.target),
                 Some(crate::SymbolQuickEditTarget::TradingPanel(_))
                     | Some(crate::SymbolQuickEditTarget::SectionPanel(_))
+                    | Some(crate::SymbolQuickEditTarget::MultiDomRoster(_))
             );
             let quick_open = !is_trading_edit
                 && self.panel_app.toolbar_state.open_dropdown_id.as_deref() == Some("symbol_selector");

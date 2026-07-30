@@ -408,21 +408,19 @@ pub struct SectionDomChips {
 /// shared dropdown / quicksearch machinery and the `tch:` dispatch apply
 /// verbatim; only the dispatch target differs — the section's panel.
 pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolbarDef {
-    // Multi-DOM mode (owner spec 2026-07-30): NO tag-group symbol search
-    // and NO color tag — exchange wiring is the Multi-DOM's own concern
-    // (its symbol+AT picker + exchange checklist live in the DOM settings
-    // modal). The gear stays as the only chrome besides the chips.
+    // Multi-DOM mode (owner spec 2026-07-30): the quicksearch STAYS but is
+    // the Multi-DOM's OWN symbol+exchange picker — shows only the SYMBOL
+    // (no color tag, no tag-group coupling); result rows toggle exchange
+    // COLUMNS. Single mode keeps the tag-group symbol system + color tag.
     let multi_on = dom_chips.map(|c| c.multi_mode).unwrap_or(false);
     let mut sections = Vec::new();
-    if !multi_on {
-        sections.push(ToolbarSectionDef::new(vec![
-            ToolbarItemDef::dropdown("symbol_selector", vec![])
-                .with_icon(ToolbarIconId::new("Search"))
-                .with_text("BTCUSD")
-                .with_min_width(150.0)
-                .with_tooltip(t_toolbar(TK::SymbolSelector)),
-        ]));
-    }
+    sections.push(ToolbarSectionDef::new(vec![
+        ToolbarItemDef::dropdown("symbol_selector", vec![])
+            .with_icon(ToolbarIconId::new("Search"))
+            .with_text("BTCUSD")
+            .with_min_width(150.0)
+            .with_tooltip(t_toolbar(TK::SymbolSelector)),
+    ]));
     sections.push(
         ToolbarSectionDef::new({
             let mut items = Vec::new();

@@ -187,7 +187,8 @@ impl ChartApp {
         // handlers (below) commit or dismiss explicitly.
         if let Some(edit) = self.symbol_quick_edit.as_ref() {
             if let crate::SymbolQuickEditTarget::TradingPanel(pid)
-            | crate::SymbolQuickEditTarget::SectionPanel(pid) = edit.target
+            | crate::SymbolQuickEditTarget::SectionPanel(pid)
+            | crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target
             {
                 // The search icon is also a "related" entry point (not just
                 // the tab body) — otherwise this block would close the
@@ -7070,6 +7071,13 @@ impl ChartApp {
                 Some(crate::SymbolQuickEditTarget::SectionPanel(pid)) => {
                     self.commit_symbol_search_to_section_panel(pid, &symbol, &exchange_id, &account_type);
                     self.close_symbol_quick_dropdown();
+                    return;
+                }
+                Some(crate::SymbolQuickEditTarget::MultiDomRoster(pid)) => {
+                    // Roster editing is multi-click — the dropdown stays
+                    // open so several columns can be added/removed in one
+                    // session; click-away / Escape closes it.
+                    self.toggle_multi_dom_roster(pid, &symbol, &exchange_id);
                     return;
                 }
                 _ => {}

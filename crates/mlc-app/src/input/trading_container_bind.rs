@@ -284,7 +284,13 @@ impl ChartApp {
         use mlc_core::state::Panel;
         match item {
             Panel::Dom(id) => self.panels_store.dom.get(id)
-                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                .map(|s| if s.multi_mode {
+                    // Multi-DOM: the header shows only the base SYMBOL —
+                    // exchanges are the roster's own concern (owner spec).
+                    (s.multi.symbol.clone(), String::new(), String::new())
+                } else {
+                    (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                }),
             Panel::TradeTape(id) => self.panels_store.trade_tape.get(id)
                 .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
             Panel::L2Tape(id) => self.panels_store.l2_tape.get(id)
@@ -298,13 +304,19 @@ impl ChartApp {
 
     /// Open (or refocus) a data-section header's inline symbol editor —
     /// the section counterpart of [`Self::open_trading_symbol_quick_edit`],
-    /// same seed grammar and select-all contract.
+    /// same seed grammar and select-all contract. A Dom section in multi
+    /// mode opens the Multi-DOM roster picker target instead (result rows
+    /// toggle exchange columns; no tag-group coupling).
     pub(crate) fn open_section_symbol_quick_edit(&mut self, item: &mlc_core::state::Panel) {
         let pid = item.panel_id();
-        if matches!(
-            self.symbol_quick_edit.as_ref().map(|e| e.target),
-            Some(crate::SymbolQuickEditTarget::SectionPanel(p)) if p == pid
-        ) {
+        let multi = matches!(item, mlc_core::state::Panel::Dom(id)
+            if self.panels_store.dom.get(id).map_or(false, |s| s.multi_mode));
+        let target = if multi {
+            crate::SymbolQuickEditTarget::MultiDomRoster(pid)
+        } else {
+            crate::SymbolQuickEditTarget::SectionPanel(pid)
+        };
+        if self.symbol_quick_edit.as_ref().map(|e| e.target) == Some(target) {
             return;
         }
         let (sym, ex, at) = self.section_symbol_triplet(item);
@@ -315,7 +327,7 @@ impl ChartApp {
         };
         let cursor = seed.chars().count();
         self.symbol_quick_edit = Some(crate::SymbolQuickEdit {
-            target: crate::SymbolQuickEditTarget::SectionPanel(pid),
+            target,
             text: seed.clone(),
             cursor,
             selection: Some((0, cursor)),
@@ -354,6 +366,60 @@ impl ChartApp {
         } else {
             eprintln!("[ChartApp] section symbol commit: panel {} has no tag group — ignored", pid.0);
         }
+        self.autosave_snapshot();
+    }
+
+    /// Multi-DOM roster picker commit (owner spec 2026-07-30): a dropdown
+    /// row click on the SAME base symbol toggles that exchange's column;
+    /// a row with a DIFFERENT symbol switches the base symbol (books and
+    /// handles reset, roster kept, clicked exchange ensured present).
+    /// No chart apply, no tag-group coupling — the roster is the Multi-DOM's
+    /// own concern.
+    pub(crate) fn toggle_multi_dom_roster(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        symbol: &str,
+        exchange_id: &str,
+    ) {
+        let ex = exchange_id.to_lowercase();
+        let subs: Option<(String, Vec<String>)> = {
+            let Some(s) = self.panels_store.dom.get_mut(&pid) else { return };
+            if !s.multi_mode || ex.is_empty() {
+                None
+            } else if !s.multi.symbol.eq_ignore_ascii_case(symbol) {
+                // Base symbol switch: fresh books/handles for the new key.
+                s.multi.symbol = symbol.to_string();
+                for (b, a) in s.multi.books_by_exchange.iter_mut() {
+                    b.clear();
+                    a.clear();
+                }
+                s.multi.handles.clear();
+                s.multi.mid_price = 0.0;
+                if !s.multi.config.exchanges.iter().any(|e| e.eq_ignore_ascii_case(&ex)) {
+                    s.multi.add_exchange(ex.clone());
+                }
+                Some((s.multi.symbol.clone(), s.multi.config.exchanges.clone()))
+            } else if s.multi.config.exchanges.iter().any(|e| e.eq_ignore_ascii_case(&ex)) {
+                // Same base, column present — remove it.
+                s.multi.remove_exchange(&ex);
+                None
+            } else {
+                // Same base, new column — add + subscribe.
+                s.multi.add_exchange(ex.clone());
+                Some((s.multi.symbol.clone(), vec![ex]))
+            }
+        };
+        if let Some((sym, exchanges)) = subs {
+            if !sym.is_empty() {
+                for label in &exchanges {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(label) {
+                        self.core.ensure_connector(eid);
+                        let _ = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
+                    }
+                }
+            }
+        }
+        self.sidebar_data_dirty = true;
         self.autosave_snapshot();
     }
 
