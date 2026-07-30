@@ -1604,7 +1604,6 @@ impl ChartApp {
             | BubbleEvent::SymbolsLoaded { .. }
             | BubbleEvent::OrderbookSnapshotRest { .. }
             | BubbleEvent::OrderbookDelta { .. }
-            | BubbleEvent::OrderbookDeltaForMultiDom { .. }
             | BubbleEvent::TradingUpdate { .. } => {
                 // Handled by the inline accumulator logic in tick() before/after
                 // calling this method. No additional window-level work needed here.

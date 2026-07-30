@@ -423,6 +423,31 @@ impl ChartApp {
                 }
             }
         }
+
+        // Multi-DOM book handles (v2: per-exchange station trackers, no
+        // delta events). Provisioned only while multi mode is ON; cleared
+        // on symbol rebind / section reopen so this refills them fresh.
+        let mut multi_needs: Vec<(mlc_core::state::PanelId, usize, String, String)> = Vec::new();
+        for (pid, s) in &self.panels_store.dom {
+            if !s.multi_mode || s.multi.symbol.is_empty() {
+                continue;
+            }
+            for (i, ex) in s.multi.config.exchanges.iter().enumerate() {
+                if s.multi.handles.get(i).map_or(true, |h| h.is_none()) {
+                    multi_needs.push((*pid, i, ex.clone(), s.multi.symbol.clone()));
+                }
+            }
+        }
+        for (pid, i, ex, sym) in multi_needs {
+            let Some(eid) = digdigdig3::ExchangeId::from_str(&ex) else { continue };
+            let handle = self.core.subscribe_orderbook(eid, &sym, digdigdig3::AccountType::Spot);
+            if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                if s.multi.handles.len() <= i {
+                    s.multi.handles.resize_with(i + 1, || None);
+                }
+                s.multi.handles[i] = handle;
+            }
+        }
     }
 
     /// Set the trading container's timeframe (embedded header TF system).

@@ -196,21 +196,6 @@ impl ChartApp {
                     });
                     entry.events.push(ObDeltaEvent { ts_ms: *ts_ms, bids: bids.clone(), asks: asks.clone() });
                 }
-                BubbleEvent::OrderbookDeltaForMultiDom { exchange_id, symbol, bids, asks, .. } => {
-                    let ex_label = exchange_id.as_str().to_string();
-                    let target_ids: Vec<mlc_core::state::PanelId> = crate::standalone_panel::StandalonePanelRegistry::multi_dom_ids_for_symbol(
-                        &self.panels_store.dom, symbol.as_str(),
-                    ).collect();
-                    for pid in target_ids {
-                        let Some(state) = self.panels_store.dom.get_mut(&pid) else { continue };
-                        if let Some(idx) = state.multi.exchange_idx(&ex_label) {
-                            let bids_v: Vec<(f64, f64)> = bids.iter().map(|(p, q)| (*p, *q)).collect();
-                            let asks_v: Vec<(f64, f64)> = asks.iter().map(|(p, q)| (*p, *q)).collect();
-                            state.multi.apply_snapshot(idx, bids_v.into_iter(), asks_v.into_iter());
-                            state.multi.rebuild_merged();
-                        }
-                    }
-                }
                 BubbleEvent::TradingUpdate { update } => {
                     trading_updates.push(update.clone());
                 }
@@ -407,6 +392,16 @@ impl ChartApp {
         // dead forever. Retry until the handle materializes (no-op cost
         // once it does).
         self.repair_panel_feed_handles();
+
+        // Multi-DOM v2: refresh the bucketed per-exchange books from the
+        // live station trackers. Per-frame (NOT event-gated): DomState's
+        // own updates ride the ob_dirty event loop, but the multi book
+        // must refresh even when the single-ladder key has no traffic.
+        for state in self.panels_store.dom.values_mut() {
+            if state.multi_mode {
+                state.multi.tick();
+            }
+        }
 
         // Embedded center chart lifecycle (chart-in-container arc,
         // 2026-07-26): lazy birth / preset-wipe recovery / instrument-TF

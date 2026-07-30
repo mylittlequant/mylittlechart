@@ -406,24 +406,38 @@ pub struct SectionDomChips {
 /// shared dropdown / quicksearch machinery and the `tch:` dispatch apply
 /// verbatim; only the dispatch target differs — the section's panel.
 pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolbarDef {
-    let mut sections = vec![
-        ToolbarSectionDef::new(vec![
+    // Multi-DOM mode (owner spec 2026-07-30): NO tag-group symbol search
+    // and NO color tag — exchange wiring is the Multi-DOM's own concern
+    // (its symbol+AT picker + exchange checklist live in the DOM settings
+    // modal). The gear stays as the only chrome besides the chips.
+    let multi_on = dom_chips.map(|c| c.multi_mode).unwrap_or(false);
+    let mut sections = Vec::new();
+    if !multi_on {
+        sections.push(ToolbarSectionDef::new(vec![
             ToolbarItemDef::dropdown("symbol_selector", vec![])
                 .with_icon(ToolbarIconId::new("Search"))
                 .with_text("BTCUSD")
                 .with_min_width(150.0)
                 .with_tooltip(t_toolbar(TK::SymbolSelector)),
-        ]),
-        ToolbarSectionDef::new(vec![
-            ToolbarItemDef::button("tc_color_tag").with_min_width(24.0),
+        ]));
+    }
+    sections.push(
+        ToolbarSectionDef::new({
+            let mut items = Vec::new();
+            if !multi_on {
+                items.push(ToolbarItemDef::button("tc_color_tag").with_min_width(24.0));
+            }
             // Section gear — opens the section panel's settings modal
             // (DOM: the dom-settings modal covering both modes). Placed
             // before the chips so it never hides behind the overflow
             // chevron on narrow sidebars.
-            ToolbarItemDef::icon_button("sec_gear", ToolbarIconId::new("Settings"))
-                .with_tooltip(t_toolbar(TK::Settings)),
-        ]).with_separator(),
-    ];
+            items.push(
+                ToolbarItemDef::icon_button("sec_gear", ToolbarIconId::new("Settings"))
+                    .with_tooltip(t_toolbar(TK::Settings)),
+            );
+            items
+        }).with_separator(),
+    );
     if let Some(c) = dom_chips {
         // Mode toggle — the label states what is CURRENTLY on (owner spec
         // 2026-07-30): "DOM" = single ladder, "M/D" = multi-exchange.

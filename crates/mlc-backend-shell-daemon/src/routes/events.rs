@@ -46,7 +46,6 @@ fn event_type_name(e: &BubbleEvent) -> &'static str {
         BubbleEvent::ErrorReported { .. } => "ErrorReported",
         BubbleEvent::OrderbookSnapshotRest { .. } => "OrderbookSnapshotRest",
         BubbleEvent::OrderbookDelta { .. } => "OrderbookDelta",
-        BubbleEvent::OrderbookDeltaForMultiDom { .. } => "OrderbookDeltaForMultiDom",
         BubbleEvent::TradingUpdate { .. } => "TradingUpdate",
         BubbleEvent::FootprintBarAppended { .. } => "FootprintBarAppended",
         BubbleEvent::RenkoBarAppended { .. } => "RenkoBarAppended",

@@ -1618,6 +1618,7 @@ impl ChartApp {
                                         s.shared_orderbook = None;
                                         s.shared_trades = None;
                                         s.last_seen_update_id = None;
+                                        s.multi.handles.clear();
                                     }
                                 }
                                 mlc_core::state::Panel::TradeTape(id) => {

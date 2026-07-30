@@ -9353,12 +9353,14 @@ impl ChartApp {
                 }
                 if let Some(s) = self.panels_store.dom.get_mut(&panel_id) {
                     s.multi.symbol = symbol.clone();
-                    // Clear stale book data; next snapshot refills.
+                    // Drop stale books + handles; the per-tick feed-handle
+                    // self-heal resubscribes fresh trackers for the new key.
                     for (b, a) in &mut s.multi.books_by_exchange {
                         b.clear();
                         a.clear();
                     }
-                    s.multi.merged.clear();
+                    s.multi.handles.clear();
+                    s.multi.mid_price = 0.0;
                 }
             }
         }

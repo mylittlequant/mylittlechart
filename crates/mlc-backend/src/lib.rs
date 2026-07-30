@@ -217,15 +217,6 @@ pub enum BubbleEvent {
         asks: Vec<(f64, f64)>,
         ts_ms: i64,
     },
-    /// Multi-DOM fan-out: delta was routed into a multi-dom panel state.
-    /// Carried per-event so the reactor doesn't need to re-route.
-    OrderbookDeltaForMultiDom {
-        exchange_id: ExchangeId,
-        symbol: String,
-        account_type: String,
-        bids: Vec<(f64, f64)>,
-        asks: Vec<(f64, f64)>,
-    },
     /// Private stream updates (order/balance/position) — passed through for
     /// the per-app trading manager tick.
     TradingUpdate { update: LiveUpdate },
@@ -473,16 +464,6 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("bids", bids)?;
                 m.serialize_entry("asks", asks)?;
                 m.serialize_entry("ts_ms", ts_ms)?;
-                m.end()
-            }
-            Self::OrderbookDeltaForMultiDom { exchange_id, symbol, account_type, bids, asks } => {
-                let mut m = s.serialize_map(Some(6))?;
-                m.serialize_entry("type", "OrderbookDeltaForMultiDom")?;
-                m.serialize_entry("exchange_id", ex!(exchange_id))?;
-                m.serialize_entry("symbol", symbol)?;
-                m.serialize_entry("account_type", account_type)?;
-                m.serialize_entry("bids", bids)?;
-                m.serialize_entry("asks", asks)?;
                 m.end()
             }
             Self::TradingUpdate { .. } => {
@@ -1871,15 +1852,8 @@ impl BackendCore {
                         asks: asks.clone(),
                         ts_ms: timestamp,
                     });
-                    // Separate event tag for multi-dom fan-out so reactor can
-                    // distinguish without re-cloning the slice.
-                    events.push(BubbleEvent::OrderbookDeltaForMultiDom {
-                        exchange_id,
-                        symbol,
-                        account_type: at_str,
-                        bids,
-                        asks,
-                    });
+                    // (Multi-DOM delta fan-out removed 2026-07-30 — the
+                    // panel reads per-exchange station trackers directly.)
                 }
 
                 // ── ConnectorMetrics ────────────────────────────────────────────

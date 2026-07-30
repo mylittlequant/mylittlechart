@@ -46,7 +46,6 @@
 //! (`RightSidebarPanel::Alerts`), not a multi-instance panel — nothing to
 //! register.
 
-use mlc_core::state::PanelId;
 use mlc_app_layout::ui::modal_settings::{WatchlistGroupNameInputState, WatchlistModalState};
 
 /// Registry for outer-dock standalone panels (no `inner_docking`).
@@ -74,16 +73,6 @@ impl StandalonePanelRegistry {
         }
     }
 
-    /// `PanelId`s of every Dom panel whose embedded multi-exchange book is
-    /// active and tracking `symbol` (merged Multi-DOM, Stage A 2026-07-30).
-    /// Replaces the ad-hoc scan that used to live inline in the tick loop's
-    /// `OrderbookDeltaForMultiDom` handler.
-    pub fn multi_dom_ids_for_symbol<'a>(
-        dom: &'a std::collections::HashMap<PanelId, mlc_app_panels::trading::order_flow::dom::DomState>,
-        symbol: &'a str,
-    ) -> impl Iterator<Item = PanelId> + 'a {
-        dom.iter()
-            .filter(move |(_, state)| state.multi_mode && state.multi.symbol == symbol)
-            .map(|(pid, _)| *pid)
-    }
+    // Multi-DOM delta fan-out helper removed 2026-07-30 (multi-dom v2):
+    // the panel reads per-exchange station trackers directly in tick().
 }

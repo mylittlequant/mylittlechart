@@ -320,7 +320,10 @@ impl DomState {
                     b.clear();
                     a.clear();
                 }
-                self.multi.merged.clear();
+                // Handles belong to the old symbol — the app layer's
+                // feed-handle self-heal resubscribes fresh ones.
+                self.multi.handles.clear();
+                self.multi.mid_price = 0.0;
             }
             if self.multi.config.exchanges.is_empty() {
                 for ex in ["binance", "bybit", "okx"] {
@@ -500,6 +503,13 @@ impl DomState {
     /// Returns immediately when there is no shared handle or when the version
     /// has not advanced since the last call.
     pub fn tick(&mut self) {
+        // Multi-exchange mode: only the embedded multi book is visible —
+        // refresh it and skip the single-ladder bookkeeping.
+        if self.multi_mode {
+            self.multi.tick();
+            return;
+        }
+
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
