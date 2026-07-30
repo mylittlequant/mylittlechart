@@ -666,6 +666,11 @@ pub fn render_settings_modal(
                             DropdownItem::item("7", "7"),
                             DropdownItem::item("9", "9"),
                         ]),
+                        "candle_style" => Some(vec![
+                            DropdownItem::item("solid", "Solid"),
+                            DropdownItem::item("thin_glow", "Thin Glow"),
+                            DropdownItem::item("phosphor", "Phosphor"),
+                        ]),
                         _ => None,
                     }
                 }
@@ -932,6 +937,34 @@ fn render_instrument_settings(
         let wick_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.wick_down_color, theme);
         result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
         result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
+        row_y += row_height;
+
+        // Row: candle draw-form (skin texture layer) — canonical split
+        // dropdown: text half cycles Solid → Thin Glow → Phosphor, the
+        // chevron opens the options list. Skins set the default; this
+        // row is the manual switch.
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text("Candle style", label_x, row_y + row_height / 2.0);
+        let dropdown_x = x + 140.0;
+        let chevron_w = 20.0;
+        let dropdown_width = 140.0;
+        let dropdown_height = 28.0;
+        let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
+        let text_w = dropdown_width - chevron_w;
+        draw_split_dropdown(
+            ctx, dropdown_x, dropdown_y, dropdown_width, dropdown_height,
+            &settings.candle_style_label, row_y + row_height / 2.0, theme,
+        );
+        result.content_items.push((
+            "dropdown_cycle:candle_style".to_string(),
+            WidgetRect::new(dropdown_x, dropdown_y, text_w, dropdown_height),
+        ));
+        result.content_items.push((
+            "dropdown_menu:candle_style".to_string(),
+            WidgetRect::new(dropdown_x + text_w, dropdown_y, chevron_w, dropdown_height),
+        ));
         row_y += row_height + 16.0;
     } else if settings.chart_type == "hollow_candles" {
         // Section: HOLLOW CANDLES — own up/down color pair (owner-approved

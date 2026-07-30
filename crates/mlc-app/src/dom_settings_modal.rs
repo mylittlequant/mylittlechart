@@ -75,6 +75,7 @@ fn caption(ctx: &mut dyn RenderContext, tt: &ToolbarTheme, x: f64, y: f64, text:
 }
 
 /// Render the modal on its own `dom_modal` modal layer.
+#[allow(clippy::too_many_arguments)]
 pub fn render_dom_settings_modal(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -84,18 +85,21 @@ pub fn render_dom_settings_modal(
     screen_h: f64,
     pos: Option<(f64, f64)>,
     dom: &DomState,
+    style: mlc_core::theme::PanelStyleParams,
 ) {
     // Mode-aware surface (owner spec 2026-07-30): the modal carries ONLY
-    // what has no toolbar/picker home. Multi mode = just the Mode switch
-    // (columns live in the header picker dropdown, grid on the tick chip,
-    // imbalance on the `sec_imb` chip, L/F on its chip). Single mode =
-    // Mode + Skin + Columns + Ladder.
+    // what has no toolbar/picker home. Multi mode = Mode switch + bar
+    // Texture (skin texture layer manual switch). Single mode = Mode +
+    // Skin + Texture + Columns + Ladder.
     let multi = dom.multi_mode;
     let modal_h = if multi {
-        HEADER_H + PAD + CAPTION_H + BTN_H + PAD
+        HEADER_H + PAD
+            + CAPTION_H + BTN_H + ROW_GAP                // mode
+            + CAPTION_H + BTN_H                          // texture
+            + PAD
     } else {
         HEADER_H + PAD
-            + (CAPTION_H + BTN_H + ROW_GAP) * 3.0        // mode / skin / columns
+            + (CAPTION_H + BTN_H + ROW_GAP) * 4.0        // mode / skin / texture / columns
             + CAPTION_H + BTN_H                          // ladder (no trailing gap)
             + PAD
     };
@@ -153,6 +157,35 @@ pub fn render_dom_settings_modal(
     row_y += CAPTION_H;
     modal_btn(ctx, coord, &layer_id, tt, "mode:dom", left, row_y, btn_w, "DOM", !dom.multi_mode);
     modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + btn_w + 8.0, row_y, btn_w + 10.0, "Multi-DOM", dom.multi_mode);
+    row_y += BTN_H + ROW_GAP;
+
+    // Bar texture + zebra (skin texture layer manual switch — edits the
+    // live theme's panel_style; a skin preset re-applies its own).
+    {
+        use mlc_core::theme::BarTexture;
+        caption(ctx, tt, left, row_y, "Texture");
+        row_y += CAPTION_H;
+        let tex_w = 70.0;
+        for (i, (id, label, tex)) in [
+            ("tex:gradient", "Gradient", BarTexture::Gradient),
+            ("tex:flat", "Flat", BarTexture::Flat),
+            ("tex:cells", "Cells", BarTexture::Cells),
+        ]
+        .iter()
+        .enumerate()
+        {
+            modal_btn(
+                ctx, coord, &layer_id, tt, id,
+                left + i as f64 * (tex_w + 6.0), row_y, tex_w,
+                label, style.bar_texture == *tex,
+            );
+        }
+        modal_btn(
+            ctx, coord, &layer_id, tt, "zebra",
+            left + 3.0 * (tex_w + 6.0), row_y, tex_w,
+            "Zebra", style.row_zebra,
+        );
+    }
 
     if !multi {
         row_y += BTN_H + ROW_GAP;

@@ -4047,6 +4047,21 @@ impl ChartApp {
                         state.set_skin(next);
                     }
                 }
+                // Skin texture layer manual switches — edit the live
+                // theme's panel_style (skin presets re-apply their own).
+                "tex:gradient" | "tex:flat" | "tex:cells" => {
+                    use mlc_core::theme::BarTexture;
+                    let tex = match rest {
+                        "tex:flat" => BarTexture::Flat,
+                        "tex:cells" => BarTexture::Cells,
+                        _ => BarTexture::Gradient,
+                    };
+                    self.panel_app.theme_manager.current_mut().panel_style.bar_texture = tex;
+                }
+                "zebra" => {
+                    let ps = &mut self.panel_app.theme_manager.current_mut().panel_style;
+                    ps.row_zebra = !ps.row_zebra;
+                }
                 "am" => {
                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                         state.auto_center = !state.auto_center;

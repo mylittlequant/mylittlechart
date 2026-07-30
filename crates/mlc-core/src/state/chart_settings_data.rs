@@ -40,6 +40,11 @@ pub struct InstrumentSettings {
     pub wick_up_color: String,
     /// Wick down color
     pub wick_down_color: String,
+    /// Candle draw-form label (skin texture layer): "Solid" | "Thin Glow" |
+    /// "Phosphor". Read-only mirror of `RuntimeTheme.panel_style` for the
+    /// modal's cycle row; the durable value lives on the runtime theme.
+    #[serde(default)]
+    pub candle_style_label: String,
     /// Footprint checkbox: draw ABS-marker (absorption tint + "ABS" label).
     /// Unused when `chart_type != "footprint"`.
     pub footprint_show_abs_markers: bool,

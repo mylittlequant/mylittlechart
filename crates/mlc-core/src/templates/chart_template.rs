@@ -81,6 +81,7 @@ impl ChartTemplate {
                 wick_enabled: true,
                 wick_up_color: "#26a69a".to_string(),
                 wick_down_color: "#ef5350".to_string(),
+                candle_style_label: "Solid".to_string(),
                 footprint_show_abs_markers: true,
                 footprint_show_volume_text: true,
                 footprint_buy_color: "#26a69a".to_string(),

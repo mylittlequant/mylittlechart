@@ -1117,6 +1117,20 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] instrument:line_markers_size = {}px", px);
                 }
+                "candle_style" => {
+                    // Skin texture layer manual pick — sets the candle
+                    // draw-form on the runtime theme; glow follows.
+                    use mlc_core::theme::CandleStyle;
+                    let style = match value.as_str() {
+                        "thin_glow" => CandleStyle::ThinGlow,
+                        "phosphor" => CandleStyle::Phosphor,
+                        _ => CandleStyle::Solid,
+                    };
+                    let rt = self.panel_app.theme_manager.current_mut();
+                    rt.panel_style.candle_style = style;
+                    rt.panel_style.glow = style != CandleStyle::Solid;
+                    eprintln!("[ChartApp] instrument:candle_style = {:?}", style);
+                }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
@@ -1237,6 +1251,21 @@ impl ChartApp {
                 }
                 "line_markers_size" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("line_markers_size");
+                }
+                "candle_style" => {
+                    // Skin texture layer manual switch — cycles the candle
+                    // draw-form on the runtime theme; glow follows (Solid =
+                    // no glow, ThinGlow/Phosphor = glow on).
+                    use mlc_core::theme::CandleStyle;
+                    let rt = self.panel_app.theme_manager.current_mut();
+                    let next = match rt.panel_style.candle_style {
+                        CandleStyle::Solid => CandleStyle::ThinGlow,
+                        CandleStyle::ThinGlow => CandleStyle::Phosphor,
+                        CandleStyle::Phosphor => CandleStyle::Solid,
+                    };
+                    rt.panel_style.candle_style = next;
+                    rt.panel_style.glow = next != CandleStyle::Solid;
+                    eprintln!("[ChartApp] candle_style cycled: {:?}", next);
                 }
                 _ => {
                     eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);

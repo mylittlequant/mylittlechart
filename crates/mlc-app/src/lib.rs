@@ -8688,6 +8688,7 @@ impl ChartApp {
                         crate::dom_settings_modal::render_dom_settings_modal(
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position, dom,
+                            self.panel_app.theme_manager.current().panel_style,
                         );
                     }
                 }
@@ -11192,6 +11193,12 @@ impl ChartApp {
                 wick_enabled:   css.instrument_wick_enabled,
                 wick_up_color:  series.candle_up_wick.clone(),
                 wick_down_color: series.candle_down_wick.clone(),
+                candle_style_label: match rt.panel_style.candle_style {
+                    mlc_core::theme::CandleStyle::Solid => "Solid",
+                    mlc_core::theme::CandleStyle::ThinGlow => "Thin Glow",
+                    mlc_core::theme::CandleStyle::Phosphor => "Phosphor",
+                }
+                .to_string(),
                 footprint_show_abs_markers: css.footprint_show_abs_markers,
                 footprint_show_volume_text: css.footprint_show_volume_text,
                 footprint_buy_color: series.footprint_buy.clone(),
