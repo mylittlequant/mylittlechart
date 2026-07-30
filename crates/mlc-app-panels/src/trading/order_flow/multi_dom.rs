@@ -90,6 +90,21 @@ pub struct MultiDomState {
     /// Last empty-book reseed attempt (ms) — throttles the app layer's
     /// REST re-seed of columns whose tracker never got a snapshot.
     pub last_reseed_ms: i64,
+    /// Current reseed throttle interval (ms). Starts at 5s; the app layer
+    /// doubles it (cap 60s) while unhealthy-column reseeds keep firing
+    /// without effect and resets it once every column is healthy — an
+    /// unfixable column (banned venue, absent symbol) must not turn the
+    /// repair loop into a REST/dial storm.
+    pub reseed_backoff_ms: i64,
+    /// Per-column tracker-liveness probe, parallel to `config.exchanges`:
+    /// `(last seen tracker revision, ms timestamp when it last CHANGED)`.
+    /// A live handle whose revision froze while the app runs means the
+    /// station feed behind the column died — the app layer treats it like
+    /// a stale column and reseeds (freeze detector, owner order 2026-07-30).
+    pub col_revisions: Vec<(u64, i64)>,
+    /// Previous repair-pass verdict — lets the repair loop log only the
+    /// healthy↔unhealthy TRANSITIONS instead of spamming every pass.
+    pub was_unhealthy: bool,
 
     // ---- UX state (ephemeral, not persisted) ----
     /// Cycle index into KNOWN_EXCHANGES for the settings-modal "Add" row.
@@ -155,6 +170,9 @@ impl MultiDomState {
             max_level_qty: 0.0,
             min_level_qty: 0.0,
             last_reseed_ms: 0,
+            reseed_backoff_ms: 5_000,
+            col_revisions: vec![(0, 0); n],
+            was_unhealthy: false,
             editor_exchange_cycle_idx: 0,
             locked: true,
             view_center_price: 0.0,
@@ -173,6 +191,7 @@ impl MultiDomState {
         self.handles.push(None);
         self.books_by_exchange.push((BTreeMap::new(), BTreeMap::new()));
         self.imbalance.push((0.5, 0.5));
+        self.col_revisions.push((0, 0));
     }
 
     /// Remove a column and its book/handle state by entry ("exchange[:AT]").
@@ -184,6 +203,7 @@ impl MultiDomState {
             if idx < self.handles.len() { self.handles.remove(idx); }
             if idx < self.books_by_exchange.len() { self.books_by_exchange.remove(idx); }
             if idx < self.imbalance.len() { self.imbalance.remove(idx); }
+            if idx < self.col_revisions.len() { self.col_revisions.remove(idx); }
         }
     }
 
@@ -263,6 +283,7 @@ impl MultiDomState {
             self.books_by_exchange = (0..n).map(|_| (BTreeMap::new(), BTreeMap::new())).collect();
         }
         if self.imbalance.len() != n { self.imbalance.resize(n, (0.5, 0.5)); }
+        if self.col_revisions.len() != n { self.col_revisions.resize(n, (0, 0)); }
         let grid = self.config.grid_size.max(1e-9);
 
         // Pass 1: raw top-of-book per exchange + per-venue mid candidates.
@@ -345,6 +366,9 @@ impl Clone for MultiDomState {
             max_level_qty: self.max_level_qty,
             min_level_qty: self.min_level_qty,
             last_reseed_ms: self.last_reseed_ms,
+            reseed_backoff_ms: self.reseed_backoff_ms,
+            col_revisions: self.col_revisions.clone(),
+            was_unhealthy: self.was_unhealthy,
             editor_exchange_cycle_idx: self.editor_exchange_cycle_idx,
             locked: self.locked,
             view_center_price: self.view_center_price,

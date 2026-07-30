@@ -637,6 +637,19 @@ pub struct DataBridge {
     /// with no backoff, which on a persistently-failing venue snowballed into
     /// an OOM-level request storm.
     symbols_warmup_inflight: Arc<Mutex<HashSet<ExchangeId>>>,
+    /// Exchanges with a `connect_public` dial currently in flight —
+    /// single-flight gate for `ensure_connector`. Without it, racing callers
+    /// (panel hydration, the repair loop) all passed the `is_connected`
+    /// check and spawned parallel dials (wasm incident 2026-07-30: 7
+    /// simultaneous sockets to one venue at boot).
+    connector_dialing: Arc<Mutex<HashSet<ExchangeId>>>,
+    /// Per-exchange dial backoff after a FAILED `connect_public`:
+    /// `(earliest_next_attempt_elapsed_ms, consecutive_failures)`. The
+    /// repair loop retries `ensure_connector` every 5s forever; against a
+    /// venue that instantly refuses (connect-rate ban) that turned into a
+    /// dial storm which kept the ban alive. Exponential 5s → 300s cap,
+    /// cleared on success.
+    connector_retry: Arc<Mutex<HashMap<ExchangeId, (u128, u32)>>>,
     /// Active derived-bar / footprint subscription task handles, keyed by
     /// instrument `(ExchangeId, symbol, AccountType)`.
     ///
@@ -861,6 +874,8 @@ impl DataBridge {
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
             symbols_warmup_inflight: Arc::new(Mutex::new(HashSet::new())),
+            connector_dialing: Arc::new(Mutex::new(HashSet::new())),
+            connector_retry: Arc::new(Mutex::new(HashMap::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
             overlay_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -1355,9 +1370,31 @@ impl DataBridge {
         if self.hub.is_connected(exchange_id) {
             return;
         }
+        // Dial backoff: a venue that just refused a connect (rate-limit ban,
+        // network down) must not be re-dialed on every repair tick — the
+        // storm itself keeps the ban alive (wasm incident 2026-07-30: 409
+        // dials to one venue in 27 min).
+        let now = crate::elapsed_ms();
+        {
+            let retry = self.connector_retry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((next_at, _)) = retry.get(&exchange_id) {
+                if now < *next_at {
+                    return;
+                }
+            }
+        }
+        // Single-flight: only one dial task per exchange at a time.
+        {
+            let mut dialing = self.connector_dialing.lock().unwrap_or_else(|e| e.into_inner());
+            if !dialing.insert(exchange_id) {
+                return;
+            }
+        }
         let hub = self.hub.clone();
         let tx = self.tx.clone();
         let connector_ready_tx = self.connector_ready_tx.clone();
+        let dialing_set = self.connector_dialing.clone();
+        let retry_map = self.connector_retry.clone();
         crate::dlog!(
             "[STARTUP-WAVE bridge] ensure_connector SPAWN {:?} t={}ms",
             exchange_id,
@@ -1370,8 +1407,17 @@ impl DataBridge {
             // of TCP/TLS handshakes does not block rendering (it never did; the
             // measured present-stall came from a different path). Eager connect
             // gives the fullest symbol list and fastest first data.
-            match hub.connect_public(exchange_id, false).await {
+            let result = hub.connect_public(exchange_id, false).await;
+            {
+                let mut dialing = dialing_set.lock().unwrap_or_else(|e| e.into_inner());
+                dialing.remove(&exchange_id);
+            }
+            match result {
                 Ok(()) => {
+                    {
+                        let mut retry = retry_map.lock().unwrap_or_else(|e| e.into_inner());
+                        retry.remove(&exchange_id);
+                    }
                     crate::dlog!(
                         "[STARTUP-WAVE bridge] connect_public DONE {:?} t={}ms took={}ms (firing ConnectorReady)",
                         exchange_id,
@@ -1385,6 +1431,19 @@ impl DataBridge {
                     // Connector ready.
                 }
                 Err(e) => {
+                    let (next_at, fails) = {
+                        let mut retry = retry_map.lock().unwrap_or_else(|e| e.into_inner());
+                        let fails = retry.get(&exchange_id).map(|(_, f)| *f).unwrap_or(0) + 1;
+                        // 5s, 10s, 20s, ... capped at 300s.
+                        let delay = (5_000u128 << (fails - 1).min(6)).min(300_000);
+                        let next_at = crate::elapsed_ms() + delay;
+                        retry.insert(exchange_id, (next_at, fails));
+                        (next_at, fails)
+                    };
+                    crate::dlog!(
+                        "[Bridge] connect_public FAILED {:?} fails={} backoff_until_t={}ms: {}",
+                        exchange_id, fails, next_at, e
+                    );
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
                         account_type: digdigdig3::AccountType::Spot,

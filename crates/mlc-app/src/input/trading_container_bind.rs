@@ -521,32 +521,66 @@ impl ChartApp {
             .unwrap_or_default()
             .as_millis() as i64;
         let mut multi_needs: Vec<(mlc_core::state::PanelId, usize, String, String)> = Vec::new();
-        let mut reseed_pids: Vec<mlc_core::state::PanelId> = Vec::new();
+        // (pid, any column was UNHEALTHY — drives the reseed backoff —
+        //  and the human-readable per-column reasons for the log line).
+        let mut reseed_pids: Vec<(mlc_core::state::PanelId, bool, String)> = Vec::new();
+        // Deferred `col_revisions` bookkeeping (the scan borrows immutably).
+        let mut rev_updates: Vec<(mlc_core::state::PanelId, usize, u64, i64)> = Vec::new();
+        // Panels whose columns are ALL healthy — reset their backoff.
+        let mut healthy_pids: Vec<mlc_core::state::PanelId> = Vec::new();
         for (pid, s) in &self.panels_store.dom {
             if !s.multi_mode || s.multi.symbol.is_empty() {
                 continue;
             }
+            // Unhealthy-column reseeds escalate: 5s → 10s → ... → 60s cap
+            // (reset once every column is healthy). A column that CANNOT be
+            // fixed (banned venue, absent symbol) must not turn this loop
+            // into a REST/dial storm — that storm is what kept the exchange
+            // connect-rate ban alive in the 2026-07-30 incident.
+            let throttle = s.multi.reseed_backoff_ms.max(5_000);
+            let throttle_ok = now_ms - s.multi.last_reseed_ms >= throttle;
+            let mut any_unhealthy = false;
+            let mut panel_reseed = false;
+            let mut reasons: Vec<String> = Vec::new();
             for (i, ex) in s.multi.config.exchanges.iter().enumerate() {
                 let missing = s.multi.handles.get(i).map_or(true, |h| h.is_none());
+                // Tracker probe via try_read — NEVER blocking_read here: a
+                // wedged writer must cost us one skipped repair pass, not a
+                // parked UI thread.
+                let probe = s.multi.handles.get(i)
+                    .and_then(|h| h.as_ref())
+                    .and_then(|h| h.try_read().ok().map(|g| (g.revision(), g.bbo())));
+                // Freeze detector (owner order 2026-07-30 «нет механизма как
+                // на клайнах»): the tracker's apply-revision not moving for
+                // 15s while the panel runs means the feed behind the column
+                // died — books look plausible but are dead. Treated like a
+                // stale column: REST reseed (below) repaints, and if the
+                // station forwarder exited its gate reopens on resubscribe.
+                let (last_rev, last_change) = s.multi.col_revisions.get(i)
+                    .copied().unwrap_or((0, 0));
+                let mut frozen = false;
+                if let Some((rev, _)) = probe {
+                    if rev != last_rev || last_change == 0 {
+                        rev_updates.push((*pid, i, rev, now_ms));
+                    } else if now_ms - last_change >= 15_000 {
+                        frozen = true;
+                    }
+                }
                 // A live handle whose bucketed book stays EMPTY means the
                 // tracker never got its REST snapshot (client wasn't dialed
-                // at subscribe time; deltas alone build up slowly) — re-seed,
-                // throttled to one attempt per 5s per panel.
+                // at subscribe time; deltas alone build up slowly) — re-seed.
                 let stale_empty = !missing
                     && s.multi.books_by_exchange.get(i)
                         .map_or(true, |(b, a)| b.is_empty() && a.is_empty())
-                    && now_ms - s.multi.last_reseed_ms >= 5000;
+                    && throttle_ok;
                 // A crossed bbo (best bid >= best ask) marks a ghost book —
                 // dropped removes left stale levels across the spread. A fresh
                 // REST snapshot heals the covered range via the tracker's
-                // windowed merge. Same 5s throttle.
+                // windowed merge.
                 let crossed = !missing
-                    && now_ms - s.multi.last_reseed_ms >= 5000
-                    && s.multi.handles.get(i)
-                        .and_then(|h| h.as_ref())
-                        .map_or(false, |h| {
-                            h.blocking_read().bbo().map_or(false, |(b, a)| b >= a)
-                        });
+                    && throttle_ok
+                    && probe.map_or(false, |(_, bbo)| bbo.map_or(false, |(b, a)| b >= a));
+                let frozen = frozen && !missing && throttle_ok;
                 // Periodic REST resync (30s): on wasm the station relay can
                 // drop delta events under main-thread pressure (Lagged trap);
                 // lost inserts/removes accumulate into voids/ghosts around
@@ -554,17 +588,57 @@ impl ChartApp {
                 // tracker's windowed merge — standard book-maintenance
                 // practice, ~1 REST call per venue per 30s.
                 let periodic = !missing && now_ms - s.multi.last_reseed_ms >= 30_000;
-                if missing || stale_empty || crossed || periodic {
+                if stale_empty || crossed || frozen {
+                    any_unhealthy = true;
+                    let why = if stale_empty { "empty" } else if crossed { "crossed" } else { "frozen" };
+                    reasons.push(format!("{}:{}", ex, why));
+                }
+                if missing || stale_empty || crossed || frozen || periodic {
                     multi_needs.push((*pid, i, ex.clone(), s.multi.symbol.clone()));
-                    if stale_empty || crossed || periodic {
-                        reseed_pids.push(*pid);
+                    if stale_empty || crossed || frozen || periodic {
+                        panel_reseed = true;
                     }
                 }
             }
+            if panel_reseed {
+                reseed_pids.push((*pid, any_unhealthy, reasons.join(" ")));
+            }
+            if !any_unhealthy {
+                healthy_pids.push(*pid);
+            }
         }
-        for pid in reseed_pids {
+        for (pid, i, rev, ts) in rev_updates {
+            if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                if s.multi.col_revisions.len() <= i {
+                    s.multi.col_revisions.resize(i + 1, (0, 0));
+                }
+                s.multi.col_revisions[i] = (rev, ts);
+            }
+        }
+        for pid in healthy_pids {
+            if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+                s.multi.reseed_backoff_ms = 5_000;
+                // Log the unhealthy→healthy TRANSITION only (never steady
+                // state — repeated состояние is noise that buries defects).
+                if s.multi.was_unhealthy {
+                    s.multi.was_unhealthy = false;
+                    crate::sglog!("[MD repair] {:?} all columns healthy", pid);
+                }
+            }
+        }
+        for (pid, unhealthy, reasons) in reseed_pids {
             if let Some(s) = self.panels_store.dom.get_mut(&pid) {
                 s.multi.last_reseed_ms = now_ms;
+                if unhealthy {
+                    s.multi.reseed_backoff_ms = (s.multi.reseed_backoff_ms.max(5_000) * 2).min(60_000);
+                    // Backoff-throttled by construction (one line per reseed
+                    // window, 5s→60s), states WHICH columns and WHY.
+                    crate::sglog!(
+                        "[MD repair] {:?} reseed [{}] next in {}ms",
+                        pid, reasons, s.multi.reseed_backoff_ms
+                    );
+                    s.multi.was_unhealthy = true;
+                }
             }
         }
         for (pid, i, entry, sym) in multi_needs {
