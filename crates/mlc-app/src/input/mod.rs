@@ -393,6 +393,12 @@ impl ChartApp {
                                             // Click acknowledged — no panel action yet.
                                             // Return without closing dropdowns so the click
                                             // doesn't reset UI state the user didn't touch.
+                                            // EXCEPT the live symbol quick-edit: a click
+                                            // into a panel body is a click-away for it
+                                            // (owner defect 2026-07-31).
+                                            if self.symbol_quick_edit.is_some() {
+                                                self.close_symbol_quick_dropdown();
+                                            }
                                             return;
                                         }
                                         _ => {}
@@ -415,6 +421,13 @@ impl ChartApp {
         }
 
         // 3. Click on canvas — close any open transient overlays first.
+        // A click that hit NO registered widget (empty toolbar strip,
+        // canvas gutters) is a click-away for the live symbol quick-edit
+        // too — the dispatch-path click-away block never sees it (owner
+        // defect 2026-07-31: «на пустой тулбар не сбрасывает»).
+        if self.symbol_quick_edit.is_some() {
+            self.close_symbol_quick_dropdown();
+        }
         self.close_transient_overlays();
 
         // 4. Split panel routing — route click to the correct leaf.
@@ -8188,6 +8201,8 @@ impl ChartApp {
                                 source,
                                 multi_mode: state.multi_mode,
                                 multi_entries: state.multi.entries.clone(),
+                                show_imbalance: state.show_imbalance,
+                                imb_window_min: state.imb_window_min,
                             }
                         }
                         Panel::OrderEntry(id) => {

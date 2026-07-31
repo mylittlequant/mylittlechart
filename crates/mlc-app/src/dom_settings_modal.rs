@@ -359,6 +359,7 @@ pub fn render_section_settings_modal(
     bt_thresholds: Option<(f64, Option<f64>)>,
     skin_label: Option<&str>,
     multi_mode: Option<bool>,
+    imbalance: Option<(bool, u8)>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
@@ -367,6 +368,7 @@ pub fn render_section_settings_modal(
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
         + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if imbalance.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if skin_label.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + PAD;
     let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
@@ -434,6 +436,20 @@ pub fn render_section_settings_modal(
         modal_btn(ctx, coord, &layer_id, tt, &format!("col:{}", i), cx, row_y, col_w, label, *on);
     }
     row_y += BTN_H + 6.0;
+
+    // Imbalance footer (owner order 2026-07-31): on/off + window cycle.
+    if let Some((imb_on, imb_win)) = imbalance {
+        row_y += ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Imbalance");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "imb", left, row_y, 70.0, "Imb", imb_on);
+        modal_btn(
+            ctx, coord, &layer_id, tt, "imb_win",
+            left + 78.0, row_y, 90.0,
+            &format!("Win: {}m", imb_win.max(1)), false,
+        );
+        row_y += BTN_H;
+    }
 
     if let Some((size_thr, notional_thr)) = bt_thresholds {
         row_y += ROW_GAP - 6.0;

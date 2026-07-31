@@ -220,6 +220,11 @@ pub enum PersistedFreeItemKind {
         multi_mode: bool,
         #[serde(default)]
         multi_entries: Vec<String>,
+        /// Imbalance footer strip + its window (owner 2026-07-31).
+        #[serde(default = "default_true")]
+        show_imbalance: bool,
+        #[serde(default = "default_imb_window_min")]
+        imb_window_min: u8,
     },
     OrderEntry {
         #[serde(default)]
@@ -330,6 +335,7 @@ pub enum PersistedFreeItemKind {
 
 fn default_price_max() -> f64 { 100.0 }
 fn default_true() -> bool { true }
+fn default_imb_window_min() -> u8 { 2 }
 fn default_bar_spacing() -> f64 { 8.0 }
 fn default_height_ratio() -> f32 { 1.0 }
 fn default_multi_dom_grid_size() -> f64 { 0.5 }

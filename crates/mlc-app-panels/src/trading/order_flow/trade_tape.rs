@@ -31,9 +31,15 @@ use mlc_core::i18n::{TradingKey, current_language};
 
 const TT_ROW_HEIGHT: f32 = 14.0;
 const TT_HEADER_HEIGHT: f32 = 18.0;
+const TT_FOOTER_HEIGHT: f32 = 16.0;
 const TT_LEFT_PAD: f32 = 4.0;
 const TT_MAX_TRADES: usize = 1000;
 const TT_RETENTION_MS: i64 = 120_000; // 2 minutes
+/// Time-based pruning never drops below this many entries per venue
+/// group — a quiet venue must keep filling its visible column instead of
+/// evaporating by age (owner defect 2026-07-31: «слишком рано удаляете
+/// сделки снизу, когда сделок мало»).
+const TT_MIN_KEEP_PER_GROUP: usize = 150;
 
 // ─── column config ───────────────────────────────────────────────────────────
 
@@ -177,6 +183,12 @@ pub struct TradeTapeState {
     pub multi_mode: bool,
     /// Embedded multi-venue roster + per-venue feed state.
     pub multi: super::multi_tape::MultiTapeState,
+
+    /// Buy/sell imbalance footer strip (owner order 2026-07-31 — «как в
+    /// М/Д кнопку включения/выключения»). Modal "Imb" toggle.
+    pub show_imbalance: bool,
+    /// Imbalance window in minutes (modal click-cycle 1/2/5/10).
+    pub imb_window_min: u8,
 }
 
 impl std::fmt::Debug for TradeTapeState {
@@ -217,6 +229,8 @@ impl TradeTapeState {
             skin: None,
             multi_mode: false,
             multi: super::multi_tape::MultiTapeState::new(),
+            show_imbalance: true,
+            imb_window_min: 2,
         }
     }
 
@@ -397,17 +411,38 @@ impl TradeTapeState {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        let cutoff = now_ms - TT_RETENTION_MS;
-        while let Some(front) = self.trades.front() {
-            if front.timestamp < cutoff {
-                self.trades.pop_front();
-            } else {
-                break;
-            }
+        // Retention covers at least the imbalance window (modal-config).
+        let retention = TT_RETENTION_MS.max(self.imb_window_min as i64 * 60_000);
+        let cutoff = now_ms - retention;
+        if self.trades.front().map_or(true, |f| f.timestamp >= cutoff) {
+            return;
         }
+        // Age-prune WITHOUT starving a quiet venue: an entry older than
+        // the cutoff is dropped only when its venue group still keeps
+        // TT_MIN_KEEP_PER_GROUP newer entries — otherwise the visible
+        // column would empty out by age alone.
+        let mut newer: std::collections::HashMap<Option<u8>, usize> =
+            std::collections::HashMap::new();
+        let mut keep: Vec<bool> = vec![true; self.trades.len()];
+        for (i, e) in self.trades.iter().enumerate().rev() {
+            let rank = newer.entry(e.venue).or_insert(0);
+            if e.timestamp < cutoff && *rank >= TT_MIN_KEEP_PER_GROUP {
+                keep[i] = false;
+            }
+            *rank += 1;
+        }
+        let mut it = keep.iter();
+        self.trades.retain(|_| *it.next().unwrap_or(&true));
     }
 
     fn recompute_window_stats(&mut self) {
+        // The buy/sell ratio window is the modal-config imbalance window;
+        // the alpha-ramp max spans the whole buffer.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let win_cutoff = now_ms - self.imb_window_min.max(1) as i64 * 60_000;
         let mut max_qty = 0.0_f64;
         let mut buy_vol = 0.0_f64;
         let mut sell_vol = 0.0_f64;
@@ -415,10 +450,12 @@ impl TradeTapeState {
             if entry.quantity > max_qty {
                 max_qty = entry.quantity;
             }
-            if entry.is_buy {
-                buy_vol += entry.quantity;
-            } else {
-                sell_vol += entry.quantity;
+            if entry.timestamp >= win_cutoff {
+                if entry.is_buy {
+                    buy_vol += entry.quantity;
+                } else {
+                    sell_vol += entry.quantity;
+                }
             }
         }
         self.max_qty_seen = max_qty;
@@ -550,24 +587,10 @@ impl TradingPanel for TradeTapeState {
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
-        // ── ratio bar (header) ───────────────────────────────────────────
-        let total_vol = self.buy_vol_window + self.sell_vol_window;
-        if total_vol > 0.0 {
-            let buy_frac = (self.buy_vol_window / total_vol) as f32;
-            let buy_px = (w * buy_frac).max(0.0).min(w);
-            ctx.set_fill_color(&theme.buy);
-            ctx.fill_rect(x as f64, y as f64, buy_px as f64, TT_HEADER_HEIGHT as f64);
-            ctx.set_fill_color(&theme.sell);
-            ctx.fill_rect(
-                (x + buy_px) as f64,
-                y as f64,
-                (w - buy_px) as f64,
-                TT_HEADER_HEIGHT as f64,
-            );
-        } else {
-            ctx.set_fill_color(&theme.header_bg);
-            ctx.fill_rect(x as f64, y as f64, w as f64, TT_HEADER_HEIGHT as f64);
-        }
+        // ── header (the buy/sell ratio moved to the imbalance FOOTER,
+        // owner order 2026-07-31) ────────────────────────────────────────
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, TT_HEADER_HEIGHT as f64);
 
         // ── multi mode: per-venue columns under one tagged header ─────────
         // (по образцу Multi-DOM, owner order 2026-07-31 — NOT a merged
@@ -603,7 +626,7 @@ impl TradingPanel for TradeTapeState {
 
         let header_mid_y = (y + TT_HEADER_HEIGHT / 2.0) as f64;
 
-        ctx.set_fill_color("#000000cc");
+        ctx.set_fill_color(&theme.text_header);
         for (i, &col) in visible_cols.iter().enumerate() {
             let lx = col_x(i) as f64;
             let label = match col {
@@ -620,7 +643,8 @@ impl TradingPanel for TradeTapeState {
         }
 
         // ── rows ─────────────────────────────────────────────────────────
-        let content_h = h - TT_HEADER_HEIGHT;
+        let footer_h = if self.show_imbalance { TT_FOOTER_HEIGHT } else { 0.0 };
+        let content_h = h - TT_HEADER_HEIGHT - footer_h;
         let max_rows = (content_h / TT_ROW_HEIGHT).floor() as usize;
         if max_rows == 0 {
             return;
@@ -702,6 +726,21 @@ impl TradingPanel for TradeTapeState {
             ctx.fill_text(TradingKey::NoTrades.get(current_language()), (x + w / 2.0) as f64, (y + h / 2.0) as f64);
         }
 
+        // ── imbalance footer (owner order 2026-07-31): the buy/sell
+        // volume-share strip over the modal-config window, M/D style.
+        if self.show_imbalance {
+            self.draw_imbalance_footer(
+                ctx,
+                x,
+                y + h - TT_FOOTER_HEIGHT,
+                w,
+                theme,
+                self.buy_vol_window,
+                self.sell_vol_window,
+                true,
+            );
+        }
+
         // ── PAUSED badge ─────────────────────────────────────────────────
         if !self.auto_scroll {
             let badge_w = 54.0_f64;
@@ -722,6 +761,63 @@ impl TradingPanel for TradeTapeState {
 }
 
 impl TradeTapeState {
+    /// One imbalance strip segment: buy-share fill + centered percent.
+    /// `with_label` also draws the window tag at the left edge.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_imbalance_footer(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        buy_vol: f64,
+        sell_vol: f64,
+        with_label: bool,
+    ) {
+        ctx.set_stroke_color(&theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(x as f64, y as f64);
+        ctx.line_to((x + w) as f64, y as f64);
+        ctx.stroke();
+        let total = buy_vol + sell_vol;
+        let share = if total > 0.0 { buy_vol / total } else { 0.5 };
+        let label_w = if with_label { 24.0_f32 } else { 0.0 };
+        let bar_x = x + label_w + 2.0;
+        let bar_w = (w - label_w - 6.0).max(0.0);
+        if with_label {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("9px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &format!("{}m", self.imb_window_min.max(1)),
+                (x + 3.0) as f64,
+                (y + TT_FOOTER_HEIGHT * 0.5) as f64,
+            );
+        }
+        let gw = bar_w as f64 * share.clamp(0.0, 1.0);
+        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.buy, 0.55));
+        ctx.fill_rect(bar_x as f64, (y + 2.0) as f64, gw, (TT_FOOTER_HEIGHT - 4.0) as f64);
+        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.sell, 0.55));
+        ctx.fill_rect(
+            bar_x as f64 + gw,
+            (y + 2.0) as f64,
+            bar_w as f64 - gw,
+            (TT_FOOTER_HEIGHT - 4.0) as f64,
+        );
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("9px monospace");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            &format!("{:.0}%", share * 100.0),
+            (bar_x + bar_w * 0.5) as f64,
+            (y + TT_FOOTER_HEIGHT * 0.5) as f64,
+        );
+    }
+
     /// M/TT columnar render (по образцу Multi-DOM, owner order
     /// 2026-07-31): one venue per column side by side, one unifying
     /// header row tagged per venue. Each column streams ITS venue's
@@ -778,7 +874,8 @@ impl TradeTapeState {
 
         // ── Body: per-venue row stacks. Scroll/pause state is shared —
         // every column shifts together.
-        let content_h = h - TT_HEADER_HEIGHT;
+        let footer_h = if self.show_imbalance { TT_FOOTER_HEIGHT } else { 0.0 };
+        let content_h = h - TT_HEADER_HEIGHT - footer_h;
         let max_rows = (content_h / TT_ROW_HEIGHT).floor() as usize;
         if max_rows == 0 {
             return;
@@ -837,6 +934,34 @@ impl TradeTapeState {
                     &Self::format_qty(entry.quantity),
                     (cx0 + col_w - 3.0) as f64,
                     mid_y,
+                );
+            }
+        }
+
+        // ── Per-venue imbalance footer (M/D bottom-strip grammar): each
+        // column's own buy/sell share over the modal-config window.
+        if self.show_imbalance {
+            let win_cutoff = now_ms as i64 - self.imb_window_min.max(1) as i64 * 60_000;
+            let fy = y + h - TT_FOOTER_HEIGHT;
+            for i in 0..n {
+                let (mut bv, mut sv) = (0.0_f64, 0.0_f64);
+                for e in self.trades.iter().rev() {
+                    if e.timestamp < win_cutoff {
+                        break;
+                    }
+                    if e.venue == Some(i as u8) {
+                        if e.is_buy { bv += e.quantity; } else { sv += e.quantity; }
+                    }
+                }
+                self.draw_imbalance_footer(
+                    ctx,
+                    x + col_w * i as f32,
+                    fy,
+                    col_w,
+                    theme,
+                    bv,
+                    sv,
+                    i == 0,
                 );
             }
         }

@@ -3974,6 +3974,7 @@ impl ChartApp {
                         self.sidebar_data_dirty = true;
                         return;
                     }
+                    let mut persist = false;
                     if let Some(state) = self.panels_store.trade_tape.get_mut(pid) {
                         if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
                             match i {
@@ -3987,8 +3988,23 @@ impl ChartApp {
                             use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
                             let cur = state.skin.unwrap_or(TapeSkin::Classic);
                             state.skin = Some(cur.next());
+                        } else if rest == "imb" {
+                            state.show_imbalance = !state.show_imbalance;
+                            persist = true;
+                        } else if rest == "imb_win" {
+                            const WINDOWS: &[u8] = &[1, 2, 5, 10];
+                            let cur = state.imb_window_min;
+                            state.imb_window_min = WINDOWS
+                                .iter()
+                                .find(|&&m| m > cur)
+                                .copied()
+                                .unwrap_or(WINDOWS[0]);
+                            persist = true;
                         }
                         self.sidebar_data_dirty = true;
+                    }
+                    if persist {
+                        self.autosave_snapshot();
                     }
                     return;
                 }

@@ -8786,6 +8786,7 @@ impl ChartApp {
                             "Trade Tape Settings", &cols, None,
                             Some(&skin_label),
                             Some(s.multi_mode),
+                            Some((s.show_imbalance, s.imb_window_min)),
                         );
                     }
                 }
@@ -8805,6 +8806,7 @@ impl ChartApp {
                             "L2 Tape Settings", &cols, None,
                             None,
                             Some(s.multi_mode),
+                            None,
                         );
                     }
                 }
@@ -8829,6 +8831,7 @@ impl ChartApp {
                             Some((s.size_threshold, s.notional_threshold)),
                             Some(&skin_label),
                             Some(s.multi_mode),
+                            None,
                         );
                     }
                 }

@@ -744,20 +744,41 @@ impl L2TapeState {
         } else {
             self.tick_single_diff();
         }
+        self.prune_events_retention();
+    }
 
-        // Time-based retention: drain events older than retention_ms.
+    /// Time-based retention WITHOUT starving a quiet venue (owner defect
+    /// 2026-07-31): eviction is front-only (the flash-serial mapping
+    /// depends on it), and stops at the first aged event whose venue
+    /// group would drop below its keep-minimum — a thin venue's visible
+    /// column must not empty out by age alone.
+    fn prune_events_retention(&mut self) {
+        /// Age-prune floor per venue group.
+        const L2_MIN_KEEP_PER_GROUP: usize = 150;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
+        if self.events.front().map_or(true, |f| f.timestamp >= cutoff_ms) {
+            return;
+        }
+        let mut counts: std::collections::HashMap<Option<u8>, usize> =
+            std::collections::HashMap::new();
+        for e in &self.events {
+            *counts.entry(e.venue).or_insert(0) += 1;
+        }
         let before_len = self.events.len();
         while let Some(front) = self.events.front() {
-            if front.timestamp < cutoff_ms {
-                self.events.pop_front();
-            } else {
+            if front.timestamp >= cutoff_ms {
                 break;
             }
+            let Some(c) = counts.get_mut(&front.venue) else { break };
+            if *c <= L2_MIN_KEEP_PER_GROUP {
+                break;
+            }
+            *c -= 1;
+            self.events.pop_front();
         }
         // Only recalculate when events were removed (the old max may be gone).
         if self.events.len() < before_len {
@@ -1385,24 +1406,8 @@ impl L2TapeState {
             entry.1 = qty;
         }
 
-        // Time-based retention: drain events older than retention_ms.
-        let now_ms = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
-        let before_len = self.events.len();
-        while let Some(front) = self.events.front() {
-            if front.timestamp < cutoff_ms {
-                self.events.pop_front();
-            } else {
-                break;
-            }
-        }
-        if self.events.len() < before_len {
-            self.recalc_max_qty();
-        }
-
+        // Time-based retention (venue-keep-min aware).
+        self.prune_events_retention();
     }
 
 }
