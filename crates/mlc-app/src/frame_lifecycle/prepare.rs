@@ -861,6 +861,43 @@ impl ChartApp {
                 }
             }
 
+            // --- Watchlist TICKER section (TapeSurf Ticker widget borrow,
+            // owner order 2026-07-31): extended info for the ACTIVE
+            // chart's instrument, pinned to the watchlist bottom.
+            {
+                use mlc_app_sidebar_content::types::TickerSectionData;
+                self.sidebar_state.ticker_section = self
+                    .panel_app
+                    .panel_grid
+                    .active_container_id()
+                    .and_then(|cid| {
+                        let symbol = self.symbol_for_chart(cid)?;
+                        let exchange = self.exchange_for_chart(cid)?;
+                        let at = self.account_type_for_chart(cid).unwrap_or_default();
+                        let ticker = self
+                            .core
+                            .mini_ticker
+                            .get(&format!("{}:{}:{}", symbol, exchange, at))?;
+                        let pct = ticker.price_change_percent;
+                        // Absolute change back-derived from the percent
+                        // (display only — the wire event carries no abs).
+                        let change_abs = if (100.0 + pct).abs() > f64::EPSILON {
+                            ticker.last_price * pct / (100.0 + pct)
+                        } else {
+                            0.0
+                        };
+                        Some(TickerSectionData {
+                            symbol,
+                            exchange,
+                            account_type: at.to_string(),
+                            last_price: ticker.last_price,
+                            change_pct: pct,
+                            change_abs,
+                            spark: ticker.spark.iter().copied().collect(),
+                        })
+                    });
+            }
+
             // --- Connectors: populate from active hub ---
             {
                 use mlc_app_sidebar_content::types::ConnectorStatusItem;

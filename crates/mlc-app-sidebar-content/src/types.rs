@@ -333,6 +333,11 @@ pub struct WatchlistColumnConfig {
     /// 2026-07-31). Default true.
     #[serde(default = "default_true_column_config")]
     pub show_spark: bool,
+    /// TICKER section pinned to the watchlist bottom (TapeSurf Ticker
+    /// widget borrow, owner order 2026-07-31): big price + change +
+    /// area spark for the ACTIVE chart's instrument. Default true.
+    #[serde(default = "default_true_column_config")]
+    pub show_ticker_section: bool,
 
     /// Custom separator X positions as offsets from the left edge of the usable area.
     ///
@@ -372,10 +377,32 @@ impl Default for WatchlistColumnConfig {
             show_high_low: false,
             show_account_type: false,
             show_spark: true,
+            show_ticker_section: true,
             separator_offsets: None,
             align_columns: true,
         }
     }
+}
+
+/// Data for the watchlist-bottom TICKER section (TapeSurf Ticker widget
+/// borrow, owner order 2026-07-31): extended info for the ACTIVE chart's
+/// instrument — big price, change, area sparkline. Built per frame by
+/// the app layer from the mini-ticker cache.
+#[derive(Clone, Debug, Default)]
+pub struct TickerSectionData {
+    /// Display symbol (e.g. "BTCUSDT").
+    pub symbol: String,
+    /// Exchange display name (e.g. "binance").
+    pub exchange: String,
+    /// Account-type short label ("S" default).
+    pub account_type: String,
+    pub last_price: f64,
+    /// 24h percent change.
+    pub change_pct: f64,
+    /// Absolute change derived from the percent (display only).
+    pub change_abs: f64,
+    /// Rolling last-price history, newest last (miniTicker cadence).
+    pub spark: Vec<f64>,
 }
 
 // =============================================================================

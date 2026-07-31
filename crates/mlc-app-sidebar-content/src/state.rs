@@ -215,6 +215,10 @@ pub struct SidebarState {
     pub right_sidebar_width: f64,
     /// Items for the Watchlist panel (populated by app before render).
     pub watchlist_items: Vec<WatchlistItem>,
+    /// Watchlist-bottom TICKER section data for the ACTIVE chart's
+    /// instrument (populated by app before render; `None` = no active
+    /// chart / no ticker yet).
+    pub ticker_section: Option<crate::types::TickerSectionData>,
     /// Items for rendering in the Object Tree sidebar (populated by app before render).
     pub object_tree_items: Vec<ObjectTreeItem>,
     /// Alert items for the Alerts panel (populated by app before render).
@@ -793,6 +797,7 @@ impl Default for SidebarState {
             right_panel: RightSidebarPanel::default(),
             right_sidebar_width: RIGHT_SIDEBAR_WIDTH,
             watchlist_items: Vec::new(),
+            ticker_section: None,
             object_tree_items: Vec::new(),
             alert_items: Vec::new(),
             connector_items: Vec::new(),

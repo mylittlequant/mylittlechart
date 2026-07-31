@@ -589,6 +589,13 @@ pub fn render_right_sidebar(
                 watchlist_column_config,
                 watchlist_color_flag_fn,
             );
+            // Reserve scroll room under the pinned TICKER section so the
+            // last rows can scroll up from beneath it.
+            if watchlist_column_config.show_ticker_section
+                && sidebar_state.ticker_section.is_some()
+            {
+                content_height += WATCHLIST_TICKER_SECTION_H;
+            }
         }
 
         RightSidebarPanel::Alerts => {
@@ -714,6 +721,17 @@ pub fn render_right_sidebar(
     }
 
     // -------------------------------------------------------------------------
+    // Watchlist-bottom TICKER section (TapeSurf Ticker widget borrow,
+    // owner order 2026-07-31): big price + change + area spark for the
+    // ACTIVE chart's instrument, pinned OVER the scroll area's bottom.
+    // -------------------------------------------------------------------------
+    if panel == RightSidebarPanel::Watchlist && watchlist_column_config.show_ticker_section {
+        if let Some(ref t) = sidebar_state.ticker_section {
+            render_watchlist_ticker_section(ctx, rect, toolbar_theme, t);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Watchlist column-config dropdown overlay (rendered over scrollable area).
     // -------------------------------------------------------------------------
     if panel == RightSidebarPanel::Watchlist && sidebar_state.watchlist_config_dropdown_open {
@@ -748,6 +766,72 @@ pub fn render_right_sidebar(
     }
 
     result
+}
+
+/// Height of the watchlist-bottom TICKER section.
+pub const WATCHLIST_TICKER_SECTION_H: f64 = 96.0;
+
+/// The TICKER section pinned to the watchlist bottom: instrument line,
+/// big price with a direction arrow, change % + abs, area sparkline
+/// (TapeSurf Ticker widget: "big price + spark").
+fn render_watchlist_ticker_section(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    theme: &ToolbarTheme,
+    t: &crate::types::TickerSectionData,
+) {
+    let h = WATCHLIST_TICKER_SECTION_H;
+    let y0 = rect.y + rect.height - h;
+    // Opaque backdrop over the scrolled rows + top separator.
+    ctx.set_fill_color(&theme.background);
+    ctx.fill_rect(rect.x, y0, rect.width, h);
+    ctx.set_fill_color(&theme.separator);
+    ctx.fill_rect(rect.x, y0, rect.width, 1.0);
+
+    let up = t.change_pct >= 0.0;
+    let chg_color = if up { &theme.success } else { &theme.danger };
+    let left = rect.x + 10.0;
+
+    // Instrument line: "BTCUSDT · BINANCE · S".
+    ctx.set_font("10px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&theme.item_text_muted);
+    let at = if t.account_type.is_empty() { "S" } else { &t.account_type };
+    ctx.fill_text(
+        &format!("{} · {} · {}", t.symbol, t.exchange.to_uppercase(), at),
+        left,
+        y0 + 14.0,
+    );
+
+    // Big price + direction arrow.
+    ctx.set_font("bold 22px sans-serif");
+    ctx.set_fill_color(chg_color);
+    let arrow = if up { "▲" } else { "▼" };
+    ctx.fill_text(&format!("{} {:.2}", arrow, t.last_price), left, y0 + 38.0);
+
+    // Change % + abs.
+    ctx.set_font("11px monospace");
+    ctx.fill_text(
+        &format!("{}{:.2}% · {}{:.2}",
+            if up { "+" } else { "" }, t.change_pct,
+            if up { "+" } else { "" }, t.change_abs),
+        left,
+        y0 + 58.0,
+    );
+
+    // Area sparkline strip across the bottom.
+    if t.spark.len() >= 2 {
+        draw_price_sparkline(
+            ctx,
+            rect.x + 8.0,
+            y0 + 66.0,
+            rect.width - 16.0,
+            h - 72.0,
+            &t.spark,
+            chg_color,
+        );
+    }
 }
 
 // =============================================================================
@@ -786,6 +870,7 @@ fn render_watchlist_config_dropdown(
         ("show_change_abs",   "Change",        col_cfg.show_change_abs),
         ("show_volume",       "Volume",        col_cfg.show_volume),
         ("show_high_low",     "High / Low",    col_cfg.show_high_low),
+        ("show_ticker",       "Ticker",        col_cfg.show_ticker_section),
         ("show_align_columns","Align columns", col_cfg.align_columns),
     ];
 
