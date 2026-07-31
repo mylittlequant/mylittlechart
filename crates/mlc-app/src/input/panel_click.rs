@@ -4074,10 +4074,19 @@ impl ChartApp {
                     return;
                 }
                 Some(mlc_core::state::Panel::BigTrades(pid)) => {
-                    if rest == "mode:single" || rest == "mode:multi" {
-                        let want = rest == "mode:multi";
+                    if rest == "mode:single" || rest == "mode:multi" || rest == "mode:agg" {
                         let subs = self.panels_store.big_trades.get_mut(pid).map(|s| {
-                            s.set_multi_mode(want);
+                            match rest {
+                                "mode:agg" => s.set_agg_mode(true),
+                                "mode:multi" => {
+                                    s.set_agg_mode(false);
+                                    s.set_multi_mode(true);
+                                }
+                                _ => {
+                                    s.set_agg_mode(false);
+                                    s.set_multi_mode(false);
+                                }
+                            }
                             (s.multi_mode, s.multi.symbol.clone(), s.multi.entries.clone())
                         });
                         if let Some((on, sym, entries)) = subs {

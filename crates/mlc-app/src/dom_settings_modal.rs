@@ -358,7 +358,8 @@ pub fn render_section_settings_modal(
     columns: &[(&str, bool)],
     bt_thresholds: Option<(f64, Option<f64>, bool)>,
     skin_label: Option<&str>,
-    multi_mode: Option<bool>,
+    // `(mode, offers_agg)`: 0 = Single, 1 = Multi, 2 = Aggregated.
+    mode: Option<(u8, bool)>,
     imbalance: Option<(bool, u8)>,
     big_flag: Option<Option<f64>>,
     tt_filter: Option<f64>,
@@ -366,7 +367,7 @@ pub fn render_section_settings_modal(
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
         + PAD
-        + if multi_mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
+        + if mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
         + if bt_thresholds.is_some() { (ROW_GAP + CAPTION_H + BTN_H) * 2.0 } else { 0.0 }
@@ -418,13 +419,17 @@ pub fn render_section_settings_modal(
     let left = mx + PAD;
     let mut row_y = my + HEADER_H + PAD;
 
-    // Mode row (M/TT · M/L2 · M/BT, owner 2026-07-31) — same grammar as
-    // the DOM modal's DOM/Multi-DOM switch.
-    if let Some(multi_on) = multi_mode {
+    // Mode row (M/TT · M/L2 · M/BT, owner 2026-07-31; BT gains the
+    // all-venue Aggregated mode, owner 2026-08-01) — same grammar as the
+    // DOM modal's DOM/Multi-DOM switch.
+    if let Some((cur_mode, offers_agg)) = mode {
         caption(ctx, tt, left, row_y, "Mode");
         row_y += CAPTION_H;
-        modal_btn(ctx, coord, &layer_id, tt, "mode:single", left, row_y, 90.0, "Single", !multi_on);
-        modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + 98.0, row_y, 100.0, "Multi", multi_on);
+        modal_btn(ctx, coord, &layer_id, tt, "mode:single", left, row_y, 90.0, "Single", cur_mode == 0);
+        modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + 98.0, row_y, 90.0, "Multi", cur_mode == 1);
+        if offers_agg {
+            modal_btn(ctx, coord, &layer_id, tt, "mode:agg", left + 196.0, row_y, 100.0, "Aggregated", cur_mode == 2);
+        }
         row_y += BTN_H + ROW_GAP;
     }
 

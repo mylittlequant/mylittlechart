@@ -8183,6 +8183,7 @@ impl ChartApp {
                                 source,
                                 multi_mode: state.multi_mode,
                                 multi_entries: state.multi.entries.clone(),
+                                agg_mode: state.agg_mode,
                             }
                         }
                         Panel::L2Tape(id) => {

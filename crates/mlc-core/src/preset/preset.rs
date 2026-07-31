@@ -202,6 +202,9 @@ pub enum PersistedFreeItemKind {
         multi_mode: bool,
         #[serde(default)]
         multi_entries: Vec<String>,
+        /// Aggregated all-venue single-column mode (owner 2026-08-01).
+        #[serde(default)]
+        agg_mode: bool,
     },
     L2Tape {
         #[serde(default)]

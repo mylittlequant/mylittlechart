@@ -91,6 +91,11 @@ pub struct BigTradesState {
     /// handles (thresholds applied per print) and render shows the
     /// EXCHANGE column; single-venue fields survive toggling back.
     pub multi_mode: bool,
+    /// Aggregated mode (owner spec 2026-08-01): ALL available venues
+    /// subscribed, ONE merged column of genuinely big prints above the
+    /// thresholds, each row tagged with its venue. Implies `multi_mode`
+    /// (same roster feeds/pull), different render.
+    pub agg_mode: bool,
     /// Embedded multi-venue roster + per-venue feed state.
     pub multi: super::multi_tape::MultiTapeState,
 }
@@ -150,7 +155,36 @@ impl BigTradesState {
             column_config: BigTradesColumnConfig::default(),
             show_big_markers: true,
             multi_mode: false,
+            agg_mode: false,
             multi: super::multi_tape::MultiTapeState::new(),
+        }
+    }
+
+    /// Enter/leave Aggregated mode (owner spec 2026-08-01): ON fills the
+    /// roster with EVERY known venue (Spot) for the panel's symbol and
+    /// rides the multi feed pull; OFF drops back to single mode (the
+    /// all-venue roster stays for a later Multi pick — prune via the
+    /// header picker). Subscriptions are the caller's job.
+    pub fn set_agg_mode(&mut self, on: bool) {
+        if self.agg_mode == on {
+            return;
+        }
+        self.agg_mode = on;
+        self.big_trades.clear();
+        self.scroll_offset = 0.0;
+        self.max_qty_seen = 0.0;
+        if on {
+            self.multi_mode = true;
+            if !self.multi.symbol.eq_ignore_ascii_case(&self.symbol) {
+                let sym = self.symbol.clone();
+                self.multi.reset_for_symbol(&sym);
+            }
+            for ex in super::multi_dom::KNOWN_EXCHANGES {
+                self.multi.add_entry(&super::multi_dom::col_entry(ex, "S"));
+            }
+        } else {
+            self.multi_mode = false;
+            self.last_seen_ts_ms = 0;
         }
     }
 
@@ -426,8 +460,10 @@ impl TradingPanel for BigTradesState {
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
 
         // Multi mode: per-venue columns under one tagged header (по
-        // образцу Multi-DOM, owner order 2026-07-31).
-        if self.multi_mode {
+        // образцу Multi-DOM, owner order 2026-07-31). Aggregated mode
+        // rides the SAME merged feed but renders as ONE classic column
+        // with a venue tag per row (owner spec 2026-08-01).
+        if self.multi_mode && !self.agg_mode {
             self.render_multi(ctx, x, y, w, h, theme);
             return;
         }
@@ -438,7 +474,9 @@ impl TradingPanel for BigTradesState {
             label: &'static str,
             width: f32,
         }
-        let mut cols: Vec<ColDef> = Vec::with_capacity(5);
+        let mut cols: Vec<ColDef> = Vec::with_capacity(6);
+        // Aggregated mode: the venue tag leads the merged column.
+        if self.agg_mode                    { cols.push(ColDef { label: "EXCH",     width: 44.0 }); }
         if self.column_config.show_time     { cols.push(ColDef { label: "TIME",     width: 60.0 }); }
         if self.column_config.show_side     { cols.push(ColDef { label: "SIDE",     width: 36.0 }); }
         if self.column_config.show_price    { cols.push(ColDef { label: "PRICE",    width: 80.0 }); }
@@ -540,6 +578,18 @@ impl TradingPanel for BigTradesState {
 
             // Track which visible column index maps to which data field.
             let mut col_idx = 0usize;
+
+            if self.agg_mode {
+                // Short venue tag "BI:S" — muted, print data stays primary.
+                let tag = trade
+                    .venue
+                    .map(|v| self.multi.venue_tag(v as usize))
+                    .unwrap_or_default();
+                ctx.set_fill_color(&theme.text_muted);
+                ctx.fill_text(&tag, col_xs[col_idx] as f64, text_y);
+                ctx.set_fill_color(&theme.text_primary);
+                col_idx += 1;
+            }
 
             if self.column_config.show_time {
                 let secs = (trade.timestamp / 1000) % 86400;

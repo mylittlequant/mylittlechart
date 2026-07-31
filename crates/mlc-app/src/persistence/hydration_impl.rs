@@ -1158,7 +1158,7 @@ impl ChartApp {
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::BigTrades { source, multi_mode, multi_entries } => {
+                                PersistedFreeItemKind::BigTrades { source, multi_mode, multi_entries, agg_mode } => {
                                     if !self.panels_store.big_trades.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1186,6 +1186,7 @@ impl ChartApp {
                                                 s.multi.add_entry(e);
                                             }
                                             s.multi_mode = true;
+                                            s.agg_mode = *agg_mode;
                                         }
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
