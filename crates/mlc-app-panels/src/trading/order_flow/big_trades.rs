@@ -242,6 +242,11 @@ impl BigTradesState {
                 self.big_trades.pop_front();
             }
             self.big_trades.push_back(public);
+            // Scrolled-back view stays anchored while the feed flows —
+            // no pause semantics (owner order 2026-08-01; ring scroll).
+            if self.scroll_offset > 0.0 {
+                self.scroll_offset += 1.0;
+            }
         }
 
         self.last_seen_ts_ms = new_max_ts;
@@ -300,6 +305,9 @@ impl BigTradesState {
                 self.big_trades.pop_front();
             }
             self.big_trades.push_back(public);
+            if self.scroll_offset > 0.0 {
+                self.scroll_offset += 1.0;
+            }
         }
     }
 
@@ -692,12 +700,20 @@ impl BigTradesState {
         ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
         for i in 0..n {
             let cx0 = x + col_w * i as f32;
+            // Shared scroll offset, clamped per column to that venue's own
+            // history depth (ring-scroll, owner order 2026-08-01).
+            let cnt = self
+                .big_trades
+                .iter()
+                .filter(|t| t.venue == Some(i as u8))
+                .count();
+            let skip_i = skip.min(cnt.saturating_sub(max_rows.min(cnt)));
             let rows = self
                 .big_trades
                 .iter()
                 .rev()
                 .filter(|t| t.venue == Some(i as u8))
-                .skip(skip)
+                .skip(skip_i)
                 .take(max_rows);
             for (row_idx, trade) in rows.enumerate() {
                 let row_y = y + BT_HEADER_HEIGHT + row_idx as f32 * BT_ROW_HEIGHT;

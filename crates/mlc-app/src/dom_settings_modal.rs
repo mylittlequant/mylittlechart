@@ -361,6 +361,7 @@ pub fn render_section_settings_modal(
     multi_mode: Option<bool>,
     imbalance: Option<(bool, u8)>,
     big_flag: Option<Option<f64>>,
+    tt_filter: Option<f64>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
@@ -368,8 +369,9 @@ pub fn render_section_settings_modal(
         + if multi_mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
-        + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if bt_thresholds.is_some() { (ROW_GAP + CAPTION_H + BTN_H) * 2.0 } else { 0.0 }
         + if imbalance.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if big_flag.is_some() || tt_filter.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if skin_label.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + PAD;
     let (mx, my) = pos.unwrap_or(((screen_w - DOM_MODAL_W) / 2.0, (screen_h - modal_h) / 2.0));
@@ -438,46 +440,74 @@ pub fn render_section_settings_modal(
     }
     row_y += BTN_H + 6.0;
 
-    // Imbalance footer (owner order 2026-07-31): on/off + window cycle.
-    // TT also carries the big-print flag threshold here (TapeSurf ref 17).
+    // Imbalance footer (owner order 2026-07-31; labels self-describing
+    // per owner order 2026-08-01 «надо лейблы кнопок сменить»).
     if let Some((imb_on, imb_win)) = imbalance {
         row_y += ROW_GAP - 6.0;
-        caption(ctx, tt, left, row_y, "Imbalance / Big print");
+        caption(ctx, tt, left, row_y, "Imbalance footer");
         row_y += CAPTION_H;
-        modal_btn(ctx, coord, &layer_id, tt, "imb", left, row_y, 70.0, "Imb", imb_on);
+        modal_btn(
+            ctx, coord, &layer_id, tt, "imb",
+            left, row_y, 120.0,
+            if imb_on { "Imbalance: on" } else { "Imbalance: off" },
+            imb_on,
+        );
         modal_btn(
             ctx, coord, &layer_id, tt, "imb_win",
-            left + 78.0, row_y, 90.0,
-            &format!("Win: {}m", imb_win.max(1)), false,
+            left + 128.0, row_y, 110.0,
+            &format!("Window: {}m", imb_win.max(1)), false,
         );
+        row_y += BTN_H;
+    }
+
+    // Print controls (TT): big-print flag threshold + draw-time min-qty
+    // filter (both click-cycle).
+    if big_flag.is_some() || tt_filter.is_some() {
+        row_y += ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Prints (click to cycle)");
+        row_y += CAPTION_H;
+        let mut px = left;
         if let Some(flag) = big_flag {
             let f_label = match flag {
                 Some(v) if v >= 1_000_000.0 => format!("Flag ≥ {:.0}M", v / 1_000_000.0),
                 Some(v) => format!("Flag ≥ {:.0}K", v / 1_000.0),
                 None => "Flag: off".to_string(),
             };
-            modal_btn(
-                ctx, coord, &layer_id, tt, "tt_flag",
-                left + 176.0, row_y, 120.0,
-                &f_label, flag.is_some(),
-            );
+            modal_btn(ctx, coord, &layer_id, tt, "tt_flag", px, row_y, 120.0, &f_label, flag.is_some());
+            px += 128.0;
+        }
+        if let Some(min_qty) = tt_filter {
+            let f_label = if min_qty > 0.0 {
+                format!("Filter ≥ {}", min_qty)
+            } else {
+                "Filter: off".to_string()
+            };
+            modal_btn(ctx, coord, &layer_id, tt, "tt_filter", px, row_y, 120.0, &f_label, min_qty > 0.0);
         }
         row_y += BTN_H;
     }
 
     if let Some((size_thr, notional_thr, big_markers)) = bt_thresholds {
         row_y += ROW_GAP - 6.0;
-        caption(ctx, tt, left, row_y, "Thresholds (click to cycle) / markers");
+        caption(ctx, tt, left, row_y, "Thresholds (click to cycle)");
         row_y += CAPTION_H;
         let s_label = if size_thr > 0.0 { format!("Size ≥ {}", size_thr) } else { "Size: all".to_string() };
-        modal_btn(ctx, coord, &layer_id, tt, "bt_size", left, row_y, 110.0, &s_label, size_thr > 0.0);
+        modal_btn(ctx, coord, &layer_id, tt, "bt_size", left, row_y, 130.0, &s_label, size_thr > 0.0);
         let n_label = match notional_thr {
-            Some(v) if v >= 1_000_000.0 => format!("Ntl ≥ {:.0}M", v / 1_000_000.0),
-            Some(v) => format!("Ntl ≥ {:.0}K", v / 1_000.0),
-            None => "Ntl: all".to_string(),
+            Some(v) if v >= 1_000_000.0 => format!("Notional ≥ {:.0}M", v / 1_000_000.0),
+            Some(v) => format!("Notional ≥ {:.0}K", v / 1_000.0),
+            None => "Notional: all".to_string(),
         };
-        modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 116.0, row_y, 120.0, &n_label, notional_thr.is_some());
-        modal_btn(ctx, coord, &layer_id, tt, "bt_big", left + 242.0, row_y, 54.0, "Big", big_markers);
+        modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 138.0, row_y, 150.0, &n_label, notional_thr.is_some());
+        row_y += BTN_H + ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Markers");
+        row_y += CAPTION_H;
+        modal_btn(
+            ctx, coord, &layer_id, tt, "bt_big",
+            left, row_y, 120.0,
+            if big_markers { "Big markers: on" } else { "Big markers: off" },
+            big_markers,
+        );
         row_y += BTN_H;
     }
 

@@ -519,20 +519,6 @@ impl TradingPanel for L2TapeState {
             );
         }
 
-        // PAUSED badge — shown when user has scrolled up away from the tail.
-        if !self.auto_scroll {
-            let badge_w = 54.0_f64;
-            let badge_h = 14.0_f64;
-            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
-            let badge_y = (y + L2_HEADER_HEIGHT + 2.0) as f64;
-            ctx.set_fill_color("#c8a000cc");
-            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("#000000ff");
-            ctx.fill_text(TradingKey::Paused.get(current_language()), (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
-        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
@@ -731,13 +717,21 @@ impl L2TapeState {
         ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
         for i in 0..n {
             let cx0 = x + col_w * i as f32;
+            // Shared scroll offset, clamped per column to that venue's own
+            // history depth (ring-scroll, owner order 2026-08-01).
+            let cnt = self
+                .events
+                .iter()
+                .filter(|e| e.venue == Some(i as u8))
+                .count();
+            let skip_i = skip.min(cnt.saturating_sub(max_rows.min(cnt)));
             let rows = self
                 .events
                 .iter()
                 .enumerate()
                 .rev()
                 .filter(|(_, e)| e.venue == Some(i as u8))
-                .skip(skip)
+                .skip(skip_i)
                 .take(max_rows);
             for (row_idx, (deque_idx, event)) in rows.enumerate() {
                 let row_y = y + L2_HEADER_HEIGHT + row_idx as f32 * L2_ROW_HEIGHT;
@@ -823,23 +817,6 @@ impl L2TapeState {
             ctx.fill_rect(sx, y as f64, 1.0, h as f64);
         }
 
-        if !self.auto_scroll {
-            let badge_w = 54.0_f64;
-            let badge_h = 14.0_f64;
-            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
-            let badge_y = (y + L2_HEADER_HEIGHT + 2.0) as f64;
-            ctx.set_fill_color("#c8a000cc");
-            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("#000000ff");
-            ctx.fill_text(
-                TradingKey::Paused.get(current_language()),
-                (x + w / 2.0) as f64,
-                badge_y + badge_h / 2.0,
-            );
-        }
     }
 
     pub fn new() -> Self {
@@ -902,9 +879,10 @@ impl L2TapeState {
                 ));
             }
         } else {
-            // Fresh diff baseline for the single book.
+            // Fresh diff baseline for the single book + single-feed ring cap.
             self.previous_book.clear();
             self.last_seen_update_id = None;
+            self.max_events = 10_000;
         }
     }
 
@@ -1004,7 +982,21 @@ impl L2TapeState {
     /// the venue index.
     fn tick_multi_diff(&mut self) {
         self.multi.sync_len();
+        // Ring capacity scales with the roster — one venue's burst must
+        // not flush another venue's events out of the shared ring
+        // (owner defect 2026-08-01: BINANCE column starved).
+        self.max_events = 10_000 * self.multi.entries.len().max(1);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
         for i in 0..self.multi.entries.len() {
+            // ~4 Hz per venue: the snapshot diff emits O(book) events per
+            // pass — running it every frame turns band shifts into event
+            // tsunamis that starve the other columns.
+            if now_ms - self.multi.book_last_diff_ms[i] < 250 {
+                continue;
+            }
             let Some(handle) = self.multi.book_handles[i].clone() else { continue };
             let guard = handle.blocking_read();
             let current_uid = guard.last_update_id();
@@ -1012,6 +1004,7 @@ impl L2TapeState {
                 continue; // this venue's book has not advanced
             }
             self.multi.book_uids[i] = current_uid;
+            self.multi.book_last_diff_ms[i] = now_ms;
             let bids: Vec<(f64, f64)> = guard.top_bids(1000)
                 .iter()
                 .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
@@ -1166,6 +1159,12 @@ impl L2TapeState {
         }
         self.events.push_back(event);
         self.push_total += 1;
+        // Scrolled-back view stays anchored on the rows under the cursor
+        // while the feed keeps flowing — NO pause semantics on scroll
+        // (owner order 2026-08-01 «нахуй паузд»; ring scroll).
+        if !self.auto_scroll {
+            self.scroll_offset += 1.0;
+        }
 
         // Serial of the event just pushed equals push_total.
         self.flash_events.push((self.push_total, now_ms));

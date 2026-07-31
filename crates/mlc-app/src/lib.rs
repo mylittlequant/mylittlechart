@@ -8790,6 +8790,7 @@ impl ChartApp {
                             Some(s.multi_mode),
                             Some((s.show_imbalance, s.imb_window_min)),
                             Some(s.flag_notional),
+                            Some(s.filter_min_qty),
                         );
                     }
                 }
@@ -8810,6 +8811,7 @@ impl ChartApp {
                             None,
                             Some(s.multi_mode),
                             Some((s.show_imbalance, s.imb_window_min)),
+                            None,
                             None,
                         );
                     }
@@ -8835,6 +8837,7 @@ impl ChartApp {
                             Some((s.size_threshold, s.notional_threshold, s.show_big_markers)),
                             Some(&skin_label),
                             Some(s.multi_mode),
+                            None,
                             None,
                             None,
                         );

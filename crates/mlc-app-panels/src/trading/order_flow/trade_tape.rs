@@ -404,6 +404,12 @@ impl TradeTapeState {
             self.trades.pop_front();
         }
         self.trades.push_back(entry);
+        // Scrolled-back view stays anchored while the feed keeps flowing
+        // — NO pause semantics on scroll (owner order 2026-08-01; ring
+        // scroll).
+        if !self.auto_scroll {
+            self.scroll_offset += 1.0;
+        }
     }
 
     /// Flush `pause_buffer` into `trades` and resume live updates.
@@ -541,6 +547,10 @@ impl TradeTapeState {
     // ─── input ────────────────────────────────────────────────────────────
 
     /// Scroll by `delta` rows (positive = toward older trades).
+    ///
+    /// NO pause semantics (owner order 2026-08-01): the feed keeps
+    /// flowing; `push_entry` compensates the offset so the scrolled view
+    /// stays anchored. Scrolling back to 0 re-enables the live tail.
     pub fn handle_scroll(&mut self, delta: f64) {
         let filtered_count = self
             .trades
@@ -554,7 +564,6 @@ impl TradeTapeState {
 
         if self.scroll_offset > 0.0 {
             self.auto_scroll = false;
-            self.paused = true;
         } else {
             self.resume();
         }
@@ -769,20 +778,6 @@ impl TradingPanel for TradeTapeState {
             );
         }
 
-        // ── PAUSED badge ─────────────────────────────────────────────────
-        if !self.auto_scroll {
-            let badge_w = 54.0_f64;
-            let badge_h = 14.0_f64;
-            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
-            let badge_y = (y + TT_HEADER_HEIGHT + 2.0) as f64;
-            ctx.set_fill_color("#c8a000cc");
-            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("#000000ff");
-            ctx.fill_text(TradingKey::Paused.get(current_language()), (x + w / 2.0) as f64, badge_y + badge_h / 2.0);
-        }
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
@@ -919,13 +914,23 @@ impl TradeTapeState {
         ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
         for i in 0..n {
             let cx0 = x + col_w * i as f32;
+            // Shared scroll offset, clamped PER COLUMN to that venue's own
+            // history depth — a slow venue must show its oldest rows, not
+            // scroll into emptiness while a fast venue's offset grows
+            // (ring-scroll compensation, owner order 2026-08-01).
+            let cnt = self
+                .trades
+                .iter()
+                .filter(|e| e.venue == Some(i as u8) && e.quantity >= self.filter_min_qty)
+                .count();
+            let skip_i = skip.min(cnt.saturating_sub(max_rows.min(cnt)));
             let rows = self
                 .trades
                 .iter()
                 .rev()
                 .filter(|e| e.venue == Some(i as u8))
                 .filter(|e| e.quantity >= self.filter_min_qty)
-                .skip(skip)
+                .skip(skip_i)
                 .take(max_rows);
             for (row_idx, entry) in rows.enumerate() {
                 let row_y = y + TT_HEADER_HEIGHT + row_idx as f32 * TT_ROW_HEIGHT;
@@ -1010,24 +1015,6 @@ impl TradeTapeState {
             ctx.fill_rect(sx, y as f64, 1.0, h as f64);
         }
 
-        // PAUSED badge — shared scroll state.
-        if !self.auto_scroll {
-            let badge_w = 54.0_f64;
-            let badge_h = 14.0_f64;
-            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
-            let badge_y = (y + TT_HEADER_HEIGHT + 2.0) as f64;
-            ctx.set_fill_color("#c8a000cc");
-            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
-            ctx.set_font("9px sans-serif");
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("#000000ff");
-            ctx.fill_text(
-                TradingKey::Paused.get(current_language()),
-                (x + w / 2.0) as f64,
-                badge_y + badge_h / 2.0,
-            );
-        }
     }
 }
 

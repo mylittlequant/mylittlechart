@@ -3996,6 +3996,17 @@ impl ChartApp {
                                 None => Some(FLAGS[0]),
                                 Some(cur) => FLAGS.iter().find(|&&v| v > cur * 1.001).copied(),
                             };
+                        } else if rest == "tt_filter" {
+                            // Draw-time min-qty filter cycle (the state
+                            // field existed with no UI — owner ask
+                            // 2026-08-01 «кнопки для управления не нашёл»).
+                            const FILTERS: &[f64] = &[0.001, 0.01, 0.1, 1.0];
+                            let cur = state.filter_min_qty;
+                            state.filter_min_qty = if cur <= 0.0 {
+                                FILTERS[0]
+                            } else {
+                                FILTERS.iter().find(|&&v| v > cur * 1.001).copied().unwrap_or(0.0)
+                            };
                         } else if rest == "imb" {
                             state.show_imbalance = !state.show_imbalance;
                             persist = true;
