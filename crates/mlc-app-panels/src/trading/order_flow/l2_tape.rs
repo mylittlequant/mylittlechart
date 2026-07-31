@@ -411,9 +411,23 @@ impl TradingPanel for L2TapeState {
 
             // Spoof marker (owner order 2026-08-01): bright edge on a
             // Cancel that pulled a fresh large add — DOM big-marker
-            // grammar, current-price (gold) token.
+            // grammar, current-price (gold) token. Wall marker: a LARGE
+            // Add (same threshold family) gets the side-bright edge —
+            // «стена встала».
             if event.spoof {
                 ctx.set_fill_color(&mlc_core::apply_opacity(&theme.current_price, 0.9));
+                ctx.fill_rect(x as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
+            } else if event.event_type == L2EventType::Add
+                && self.max_qty_seen > 0.0
+                && event.quantity >= self.max_qty_seen * Self::SPOOF_BIG_FRAC
+            {
+                ctx.set_fill_color(&mlc_core::apply_opacity(
+                    match event.side {
+                        L2Side::Bid => &theme.buy_bright,
+                        L2Side::Ask => &theme.sell_bright,
+                    },
+                    0.9,
+                ));
                 ctx.fill_rect(x as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
             }
 
@@ -742,6 +756,18 @@ impl L2TapeState {
                 }
                 if event.spoof {
                     ctx.set_fill_color(&mlc_core::apply_opacity(&theme.current_price, 0.9));
+                    ctx.fill_rect(cx0 as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
+                } else if event.event_type == L2EventType::Add
+                    && self.max_qty_seen > 0.0
+                    && event.quantity >= self.max_qty_seen * Self::SPOOF_BIG_FRAC
+                {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(
+                        match event.side {
+                            L2Side::Bid => &theme.buy_bright,
+                            L2Side::Ask => &theme.sell_bright,
+                        },
+                        0.9,
+                    ));
                     ctx.fill_rect(cx0 as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
                 }
                 ctx.set_text_baseline(TextBaseline::Middle);

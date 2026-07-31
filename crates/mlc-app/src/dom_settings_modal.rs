@@ -356,7 +356,7 @@ pub fn render_section_settings_modal(
     pos: Option<(f64, f64)>,
     title: &str,
     columns: &[(&str, bool)],
-    bt_thresholds: Option<(f64, Option<f64>)>,
+    bt_thresholds: Option<(f64, Option<f64>, bool)>,
     skin_label: Option<&str>,
     multi_mode: Option<bool>,
     imbalance: Option<(bool, u8)>,
@@ -465,18 +465,19 @@ pub fn render_section_settings_modal(
         row_y += BTN_H;
     }
 
-    if let Some((size_thr, notional_thr)) = bt_thresholds {
+    if let Some((size_thr, notional_thr, big_markers)) = bt_thresholds {
         row_y += ROW_GAP - 6.0;
-        caption(ctx, tt, left, row_y, "Thresholds (click to cycle)");
+        caption(ctx, tt, left, row_y, "Thresholds (click to cycle) / markers");
         row_y += CAPTION_H;
         let s_label = if size_thr > 0.0 { format!("Size ≥ {}", size_thr) } else { "Size: all".to_string() };
-        modal_btn(ctx, coord, &layer_id, tt, "bt_size", left, row_y, 130.0, &s_label, size_thr > 0.0);
+        modal_btn(ctx, coord, &layer_id, tt, "bt_size", left, row_y, 110.0, &s_label, size_thr > 0.0);
         let n_label = match notional_thr {
-            Some(v) if v >= 1_000_000.0 => format!("Notional ≥ {:.0}M", v / 1_000_000.0),
-            Some(v) => format!("Notional ≥ {:.0}K", v / 1_000.0),
-            None => "Notional: all".to_string(),
+            Some(v) if v >= 1_000_000.0 => format!("Ntl ≥ {:.0}M", v / 1_000_000.0),
+            Some(v) => format!("Ntl ≥ {:.0}K", v / 1_000.0),
+            None => "Ntl: all".to_string(),
         };
-        modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 138.0, row_y, 150.0, &n_label, notional_thr.is_some());
+        modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 116.0, row_y, 120.0, &n_label, notional_thr.is_some());
+        modal_btn(ctx, coord, &layer_id, tt, "bt_big", left + 242.0, row_y, 54.0, "Big", big_markers);
         row_y += BTN_H;
     }
 

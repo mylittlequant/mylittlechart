@@ -4100,6 +4100,8 @@ impl ChartApp {
                                 None => Some(NOTIONALS[0]),
                                 Some(cur) => NOTIONALS.iter().find(|&&n| n > cur * 1.001).copied(),
                             };
+                        } else if rest == "bt_big" {
+                            state.show_big_markers = !state.show_big_markers;
                         } else if rest == "skin" {
                             use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
                             let cur = state.skin.unwrap_or(TapeSkin::Classic);

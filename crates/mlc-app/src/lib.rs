@@ -8831,7 +8831,7 @@ impl ChartApp {
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
                             "Big Trades Settings", &cols,
-                            Some((s.size_threshold, s.notional_threshold)),
+                            Some((s.size_threshold, s.notional_threshold, s.show_big_markers)),
                             Some(&skin_label),
                             Some(s.multi_mode),
                             None,

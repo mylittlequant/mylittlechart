@@ -81,6 +81,11 @@ pub struct BigTradesState {
     /// Column visibility configuration.
     pub column_config: BigTradesColumnConfig,
 
+    /// Bright edge on the size bar of a GIANT print (≥ half the window
+    /// max — DOM big-marker grammar; owner order 2026-08-01 «в БТ тоже
+    /// ценные визуальные маркеры»). Modal "Big" toggle.
+    pub show_big_markers: bool,
+
     /// Multi-venue mode (M/BT, по образцу Multi-DOM, owner 2026-07-31).
     /// When ON, `tick` pulls a merged time-sorted stream from the roster
     /// handles (thresholds applied per print) and render shows the
@@ -143,6 +148,7 @@ impl BigTradesState {
             last_seen_ts_ms: 0,
             crosshair_price: None,
             column_config: BigTradesColumnConfig::default(),
+            show_big_markers: true,
             multi_mode: false,
             multi: super::multi_tape::MultiTapeState::new(),
         }
@@ -496,6 +502,20 @@ impl TradingPanel for BigTradesState {
             let bar_color = mlc_core::mix_colors(base, bright, t_mix);
             ctx.set_fill_color(&bar_color);
             ctx.fill_rect(x as f64, row_y as f64, bar_width as f64, BT_ROW_HEIGHT as f64);
+            // Giant print: bright edge at the bar tip (DOM big-marker
+            // grammar) — ≥ half the window max.
+            if self.show_big_markers
+                && self.max_qty_seen > 0.0
+                && trade.quantity >= self.max_qty_seen * 0.5
+            {
+                ctx.set_fill_color(bright);
+                ctx.fill_rect(
+                    (x as f64 + bar_width as f64 - 2.0).max(x as f64),
+                    row_y as f64,
+                    2.0,
+                    BT_ROW_HEIGHT as f64,
+                );
+            }
             if skin == super::trade_tape::TapeSkin::Ramp
                 && now_ms.saturating_sub(trade.arrival_ms) < 250
             {
@@ -697,6 +717,18 @@ impl BigTradesState {
                 let bar_w = self.size_bar_width(trade, col_w - 2.0);
                 ctx.set_fill_color(&mlc_core::mix_colors(base, bright, t_mix));
                 ctx.fill_rect(cx0 as f64, row_y as f64, bar_w as f64, BT_ROW_HEIGHT as f64);
+                if self.show_big_markers
+                    && self.max_qty_seen > 0.0
+                    && trade.quantity >= self.max_qty_seen * 0.5
+                {
+                    ctx.set_fill_color(bright);
+                    ctx.fill_rect(
+                        (cx0 as f64 + bar_w as f64 - 2.0).max(cx0 as f64),
+                        row_y as f64,
+                        2.0,
+                        BT_ROW_HEIGHT as f64,
+                    );
+                }
                 if skin == super::trade_tape::TapeSkin::Ramp
                     && now_ms.saturating_sub(trade.arrival_ms) < 250
                 {
