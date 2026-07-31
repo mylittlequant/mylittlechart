@@ -37,6 +37,15 @@ pub struct MultiTapeState {
     /// Per-venue `last_update_id` from the most recent tracker read (L2) —
     /// skips the diff when a venue's book has not advanced.
     pub book_uids: Vec<Option<u64>>,
+    /// Last dead-venue reseed attempt (ms) — throttles the app layer's
+    /// re-subscribe of venues whose handle landed but never delivered
+    /// (the Multi-DOM empty-column disease: subscribe raced the venue
+    /// connector dial).
+    pub last_reseed_ms: i64,
+    /// Current reseed throttle (ms), escalating 5s→60s while dead venues
+    /// persist, reset once every venue delivers — an unfixable venue
+    /// must not turn the repair loop into a dial storm.
+    pub reseed_backoff_ms: i64,
 }
 
 impl std::fmt::Debug for MultiTapeState {
@@ -101,6 +110,8 @@ impl MultiTapeState {
         for h in &mut self.book_handles { *h = None; }
         for b in &mut self.prev_books { b.clear(); }
         for u in &mut self.book_uids { *u = None; }
+        self.last_reseed_ms = 0;
+        self.reseed_backoff_ms = 0;
     }
 
     /// Keep every parallel vector sized to the roster (defensive resize —

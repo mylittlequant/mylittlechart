@@ -778,33 +778,96 @@ impl ChartApp {
                 }
             }
             enum TapeKind { Tt, L2, Bt }
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
             let mut tape_needs: Vec<(TapeKind, mlc_core::state::PanelId, usize, String, String)> =
                 Vec::new();
+            // Reseed bookkeeping, applied mutably after the scans:
+            // (kind, pid, reseeding-now, all-venues-alive).
+            let mut tape_marks: Vec<(TapeKind, mlc_core::state::PanelId, bool, bool)> = Vec::new();
+            // Dead-venue detection (the Multi-DOM empty-column disease):
+            // the handle landed but the venue NEVER delivered — subscribe
+            // raced the venue connector dial and silently armed nothing.
+            // Re-subscribe with an escalating 5s→60s throttle. TT/BT
+            // signal: per-venue cursor still 0; L2 signal: no tracker
+            // update-id ever seen.
             for (pid, s) in &self.panels_store.trade_tape {
                 if s.multi_mode && !s.multi.symbol.is_empty() {
+                    let throttle_ok =
+                        now_ms - s.multi.last_reseed_ms >= s.multi.reseed_backoff_ms.max(5_000);
+                    let mut any_dead = false;
                     for (i, e) in s.multi.entries.iter().enumerate() {
-                        if s.multi.trade_handles.get(i).map_or(true, |h| h.is_none()) {
+                        let missing = s.multi.trade_handles.get(i).map_or(true, |h| h.is_none());
+                        let dead =
+                            !missing && s.multi.trade_cursors.get(i).map_or(false, |c| *c == 0);
+                        if dead {
+                            any_dead = true;
+                        }
+                        if missing || (dead && throttle_ok) {
                             tape_needs.push((TapeKind::Tt, *pid, i, e.clone(), s.multi.symbol.clone()));
                         }
                     }
+                    tape_marks.push((TapeKind::Tt, *pid, any_dead && throttle_ok, !any_dead));
                 }
             }
             for (pid, s) in &self.panels_store.big_trades {
                 if s.multi_mode && !s.multi.symbol.is_empty() {
+                    let throttle_ok =
+                        now_ms - s.multi.last_reseed_ms >= s.multi.reseed_backoff_ms.max(5_000);
+                    let mut any_dead = false;
                     for (i, e) in s.multi.entries.iter().enumerate() {
-                        if s.multi.trade_handles.get(i).map_or(true, |h| h.is_none()) {
+                        let missing = s.multi.trade_handles.get(i).map_or(true, |h| h.is_none());
+                        let dead =
+                            !missing && s.multi.trade_cursors.get(i).map_or(false, |c| *c == 0);
+                        if dead {
+                            any_dead = true;
+                        }
+                        if missing || (dead && throttle_ok) {
                             tape_needs.push((TapeKind::Bt, *pid, i, e.clone(), s.multi.symbol.clone()));
                         }
                     }
+                    tape_marks.push((TapeKind::Bt, *pid, any_dead && throttle_ok, !any_dead));
                 }
             }
             for (pid, s) in &self.panels_store.l2_tape {
                 if s.multi_mode && !s.multi.symbol.is_empty() {
+                    let throttle_ok =
+                        now_ms - s.multi.last_reseed_ms >= s.multi.reseed_backoff_ms.max(5_000);
+                    let mut any_dead = false;
                     for (i, e) in s.multi.entries.iter().enumerate() {
-                        if s.multi.book_handles.get(i).map_or(true, |h| h.is_none()) {
+                        let missing = s.multi.book_handles.get(i).map_or(true, |h| h.is_none());
+                        let dead =
+                            !missing && s.multi.book_uids.get(i).map_or(false, |u| u.is_none());
+                        if dead {
+                            any_dead = true;
+                        }
+                        if missing || (dead && throttle_ok) {
                             tape_needs.push((TapeKind::L2, *pid, i, e.clone(), s.multi.symbol.clone()));
                         }
                     }
+                    tape_marks.push((TapeKind::L2, *pid, any_dead && throttle_ok, !any_dead));
+                }
+            }
+            for (kind, pid, reseeding, all_alive) in &tape_marks {
+                let m = match kind {
+                    TapeKind::Tt => self.panels_store.trade_tape.get_mut(pid).map(|s| &mut s.multi),
+                    TapeKind::Bt => self.panels_store.big_trades.get_mut(pid).map(|s| &mut s.multi),
+                    TapeKind::L2 => self.panels_store.l2_tape.get_mut(pid).map(|s| &mut s.multi),
+                };
+                let Some(m) = m else { continue };
+                if *reseeding {
+                    m.last_reseed_ms = now_ms;
+                    m.reseed_backoff_ms = (m.reseed_backoff_ms.max(5_000) * 2).min(60_000);
+                    // Backoff-throttled by construction (one line per
+                    // reseed window, 5s→60s).
+                    crate::sglog!(
+                        "[MT repair] {:?} dead venues resubscribed, next in {}ms",
+                        pid, m.reseed_backoff_ms
+                    );
+                } else if *all_alive && m.reseed_backoff_ms != 0 {
+                    m.reseed_backoff_ms = 0;
                 }
             }
             for (kind, pid, i, entry, sym) in tape_needs {
