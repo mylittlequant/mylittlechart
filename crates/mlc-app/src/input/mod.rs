@@ -8168,6 +8168,8 @@ impl ChartApp {
                             let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::BigTrades {
                                 source,
+                                multi_mode: state.multi_mode,
+                                multi_entries: state.multi.entries.clone(),
                             }
                         }
                         Panel::L2Tape(id) => {
@@ -8175,6 +8177,8 @@ impl ChartApp {
                             let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::L2Tape {
                                 source,
+                                multi_mode: state.multi_mode,
+                                multi_entries: state.multi.entries.clone(),
                             }
                         }
                         Panel::TradeTape(id) => {
@@ -8182,6 +8186,8 @@ impl ChartApp {
                             let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
                             PersistedFreeItemKind::TradeTape {
                                 source,
+                                multi_mode: state.multi_mode,
+                                multi_entries: state.multi.entries.clone(),
                             }
                         }
                         Panel::OrderEntry(id) => {

@@ -1158,7 +1158,7 @@ impl ChartApp {
                                         self.panels_store.liquidity_heatmap.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::BigTrades { source } => {
+                                PersistedFreeItemKind::BigTrades { source, multi_mode, multi_entries } => {
                                     if !self.panels_store.big_trades.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1178,10 +1178,19 @@ impl ChartApp {
                                                 s.shared_trades = handle;
                                             }
                                         }
+                                        // Multi-venue roster (M/BT): entries restore here;
+                                        // handles land via the feed-handle self-heal.
+                                        if *multi_mode {
+                                            s.multi.symbol = s.symbol.clone();
+                                            for e in multi_entries {
+                                                s.multi.add_entry(e);
+                                            }
+                                            s.multi_mode = true;
+                                        }
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::L2Tape { source } => {
+                                PersistedFreeItemKind::L2Tape { source, multi_mode, multi_entries } => {
                                     if !self.panels_store.l2_tape.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1200,10 +1209,19 @@ impl ChartApp {
                                                 s.shared_orderbook = self.core.subscribe_orderbook(eid, &s.symbol, at);
                                             }
                                         }
+                                        // Multi-venue roster (M/L2): entries restore here;
+                                        // handles land via the feed-handle self-heal.
+                                        if *multi_mode {
+                                            s.multi.symbol = s.symbol.clone();
+                                            for e in multi_entries {
+                                                s.multi.add_entry(e);
+                                            }
+                                            s.multi_mode = true;
+                                        }
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::TradeTape { source } => {
+                                PersistedFreeItemKind::TradeTape { source, multi_mode, multi_entries } => {
                                     if !self.panels_store.trade_tape.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1222,6 +1240,15 @@ impl ChartApp {
                                                 let handle = self.core.subscribe_trades(eid, &s.symbol, at);
                                                 s.shared_trades = handle;
                                             }
+                                        }
+                                        // Multi-venue roster (M/TT): entries restore here;
+                                        // handles land via the feed-handle self-heal.
+                                        if *multi_mode {
+                                            s.multi.symbol = s.symbol.clone();
+                                            for e in multi_entries {
+                                                s.multi.add_entry(e);
+                                            }
+                                            s.multi_mode = true;
                                         }
                                         self.panels_store.trade_tape.insert(pid, s);
                                     }

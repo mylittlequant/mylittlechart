@@ -1332,6 +1332,10 @@ pub enum SymbolQuickEditTarget {
     /// click ADDS that exchange as a column; a different-symbol row click
     /// switches the base symbol. No chart apply, no tag-group coupling.
     MultiDomRoster(mlc_core::state::PanelId),
+    /// A multi-tape section header's roster picker (M/TT · M/L2 · M/BT,
+    /// owner order 2026-07-31) — same contract as `MultiDomRoster`, the
+    /// panel id resolves to whichever tape store holds it.
+    MultiTapeRoster(mlc_core::state::PanelId),
 }
 
 impl Default for SymbolQuickEditTarget {
@@ -2110,12 +2114,48 @@ impl ChartApp {
         // `in_watchlist` is reused as the active flag.
         let mut roster_mode = false;
         let mut pinned_count = 0usize;
-        if let crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target {
-            if let Some(s) = self.panels_store.dom.get(&pid) {
+        // Section pickers carry the SECTION'S OWN slot icon on every row
+        // (owner order 2026-07-31: «для каждой нужна своя иконка») and the
+        // icon click adds the venue to THIS panel — never the watchlist.
+        let section_icon: Option<String> = match edit.target {
+            crate::SymbolQuickEditTarget::MultiDomRoster(_) => Some("slot_dom".to_string()),
+            crate::SymbolQuickEditTarget::MultiTapeRoster(pid)
+            | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
+                let ps = &self.panels_store;
+                if ps.dom.contains_key(&pid) {
+                    Some("slot_dom".to_string())
+                } else if ps.trade_tape.contains_key(&pid) {
+                    Some("slot_tape".to_string())
+                } else if ps.l2_tape.contains_key(&pid) {
+                    Some("slot_l2".to_string())
+                } else if ps.big_trades.contains_key(&pid) {
+                    Some("slot_big_trades".to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        // Multi-tape roster target shares the same pinned-block contract
+        // (M/TT · M/L2 · M/BT, owner 2026-07-31).
+        let roster_source: Option<(String, Vec<String>)> = match edit.target {
+            crate::SymbolQuickEditTarget::MultiDomRoster(pid) => self
+                .panels_store
+                .dom
+                .get(&pid)
+                .map(|s| (s.multi.symbol.clone(), s.multi.config.exchanges.clone())),
+            crate::SymbolQuickEditTarget::MultiTapeRoster(pid) => {
+                let ps = &self.panels_store;
+                ps.trade_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone()))
+                    .or_else(|| ps.l2_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
+                    .or_else(|| ps.big_trades.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
+            }
+            _ => None,
+        };
+        {
+            if let Some((base, roster)) = roster_source {
                 use mlc_app_panels::trading::order_flow::multi_dom;
                 roster_mode = true;
-                let base = s.multi.symbol.clone();
-                let roster = s.multi.config.exchanges.clone();
                 let pinned: Vec<mlc_core::state::modal_state::SearchResult> = roster
                     .iter()
                     .map(|e| mlc_core::state::modal_state::SearchResult {
@@ -2137,6 +2177,12 @@ impl ChartApp {
                         }))
                 });
                 results.truncate(10);
+                // Result rows are NOT in the roster by construction — the
+                // watchlist flag must not light their section icon (owner
+                // defect 2026-07-31: watchlist rows looked already-added).
+                for r in results.iter_mut() {
+                    r.in_watchlist = false;
+                }
                 let mut merged = pinned;
                 merged.extend(std::mem::take(&mut results));
                 results = merged;
@@ -2144,6 +2190,28 @@ impl ChartApp {
         }
         if !roster_mode {
             results.truncate(10);
+            // Single-mode section picker: the active icon marks the panel's
+            // CURRENT venue (the one already streaming) — same "in this
+            // panel" semantics the roster mode uses, never the watchlist.
+            if section_icon.is_some() {
+                if let crate::SymbolQuickEditTarget::SectionPanel(pid) = edit.target {
+                    let cur: Option<(String, String, String)> = {
+                        let ps = &self.panels_store;
+                        ps.dom.get(&pid).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone()))
+                            .or_else(|| ps.trade_tape.get(&pid).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())))
+                            .or_else(|| ps.l2_tape.get(&pid).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())))
+                            .or_else(|| ps.big_trades.get(&pid).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())))
+                    };
+                    if let Some((sym, ex, at)) = cur {
+                        let at = if at.is_empty() { "S".to_string() } else { at };
+                        for r in results.iter_mut() {
+                            r.in_watchlist = r.symbol.eq_ignore_ascii_case(&sym)
+                                && r.exchange_id.eq_ignore_ascii_case(&ex)
+                                && r.account_type.eq_ignore_ascii_case(&at);
+                        }
+                    }
+                }
+            }
         }
         Some(mlc_core::state::modal_state::SymbolQuickSearchRender {
             text,
@@ -2153,6 +2221,7 @@ impl ChartApp {
             results,
             roster_mode,
             pinned_count,
+            section_icon,
         })
     }
 
@@ -6537,7 +6606,8 @@ impl ChartApp {
             let trading_symbol_edit_render = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
                 crate::SymbolQuickEditTarget::TradingPanel(pid)
                 | crate::SymbolQuickEditTarget::SectionPanel(pid)
-                | crate::SymbolQuickEditTarget::MultiDomRoster(pid) => {
+                | crate::SymbolQuickEditTarget::MultiDomRoster(pid)
+                | crate::SymbolQuickEditTarget::MultiTapeRoster(pid) => {
                     self.symbol_quick_search_render().map(|r| (pid.0, r))
                 }
                 crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -7568,7 +7638,8 @@ impl ChartApp {
         let trading_symbol_edit_render_main = self.symbol_quick_edit.as_ref().and_then(|e| match e.target {
             crate::SymbolQuickEditTarget::TradingPanel(pid)
             | crate::SymbolQuickEditTarget::SectionPanel(pid)
-            | crate::SymbolQuickEditTarget::MultiDomRoster(pid) => {
+            | crate::SymbolQuickEditTarget::MultiDomRoster(pid)
+            | crate::SymbolQuickEditTarget::MultiTapeRoster(pid) => {
                 self.symbol_quick_search_render().map(|r| (pid.0, r))
             }
             crate::SymbolQuickEditTarget::TopbarChart => None,
@@ -7940,6 +8011,7 @@ impl ChartApp {
                 Some(SymbolQuickEditTarget::TradingPanel(_))
                     | Some(SymbolQuickEditTarget::SectionPanel(_))
                     | Some(SymbolQuickEditTarget::MultiDomRoster(_))
+                    | Some(SymbolQuickEditTarget::MultiTapeRoster(_))
             )
     }
 
@@ -8713,6 +8785,7 @@ impl ChartApp {
                             w, h, self.dom_modal.position,
                             "Trade Tape Settings", &cols, None,
                             Some(&skin_label),
+                            Some(s.multi_mode),
                         );
                     }
                 }
@@ -8731,6 +8804,7 @@ impl ChartApp {
                             w, h, self.dom_modal.position,
                             "L2 Tape Settings", &cols, None,
                             None,
+                            Some(s.multi_mode),
                         );
                     }
                 }
@@ -8754,6 +8828,7 @@ impl ChartApp {
                             "Big Trades Settings", &cols,
                             Some((s.size_threshold, s.notional_threshold)),
                             Some(&skin_label),
+                            Some(s.multi_mode),
                         );
                     }
                 }
@@ -8891,6 +8966,7 @@ impl ChartApp {
                 Some(crate::SymbolQuickEditTarget::TradingPanel(_))
                     | Some(crate::SymbolQuickEditTarget::SectionPanel(_))
                     | Some(crate::SymbolQuickEditTarget::MultiDomRoster(_))
+                    | Some(crate::SymbolQuickEditTarget::MultiTapeRoster(_))
             );
             let quick_open = !is_trading_edit
                 && self.panel_app.toolbar_state.open_dropdown_id.as_deref() == Some("symbol_selector");

@@ -1913,20 +1913,20 @@ fn chart_toolbar_render_dropdown(
                             }))
                             .map(|res| res.in_watchlist)
                             .unwrap_or(false);
-                        let roster_mode = symbol_quick_search_render
-                            .map(|r| r.roster_mode)
-                            .unwrap_or(false);
-                        let (star_icon, star_color) = if roster_mode {
-                            // Multi-DOM roster picker (owner spec 2026-07-30):
-                            // the trailing icon is the DOM svg; accent =
-                            // this (exchange, AT) column is inside the
-                            // Multi-DOM, toggling it off removes the column.
-                            // Tokenized: theme accent, never a hardcoded hex
-                            // (owner rule 2026-07-31).
+                        let section_icon = symbol_quick_search_render
+                            .and_then(|r| r.section_icon.as_deref());
+                        let (star_icon, star_color) = if let Some(icon) = section_icon {
+                            // Section picker (owner order 2026-07-31): the
+                            // trailing icon is the SECTION'S OWN slot svg
+                            // («для каждой нужна своя иконка»); accent =
+                            // this venue is inside THIS panel (roster
+                            // column or the single-mode current venue).
+                            // Tokenized: theme accent, never a hardcoded
+                            // hex (owner rule 2026-07-31).
                             if in_watchlist {
-                                (IconId::new("slot_dom"), Some(theme.accent.clone()))
+                                (IconId::new(icon), Some(theme.accent.clone()))
                             } else {
-                                (IconId::new("slot_dom"), None)
+                                (IconId::new(icon), None)
                             }
                         } else if in_watchlist {
                             (IconId::new("star_filled"), Some("#FFD700".to_string()))

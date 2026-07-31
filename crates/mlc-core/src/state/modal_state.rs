@@ -94,6 +94,12 @@ pub struct SymbolQuickSearchRender {
     /// already-added columns (always present regardless of the query); the
     /// dropdown builder draws a separator after them.
     pub pinned_count: usize,
+    /// Section pickers (owner order 2026-07-31): the trailing row icon is
+    /// the SECTION'S OWN slot icon (`"slot_dom"` / `"slot_tape"` /
+    /// `"slot_l2"` / `"slot_big_trades"`) instead of the watchlist star,
+    /// and clicking it adds that venue to THIS panel (parallel roster
+    /// column) — never the watchlist. `None` = plain star behavior.
+    pub section_icon: Option<String>,
 }
 
 // =============================================================================

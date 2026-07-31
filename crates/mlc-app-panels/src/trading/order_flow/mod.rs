@@ -7,6 +7,7 @@ pub mod l2_tape;
 pub mod trade_tape;
 pub mod indicator_panel;
 pub mod multi_dom;
+pub mod multi_tape;
 
 // Re-export DomSyncData for use in other crates
 pub use dom::DomSyncData;

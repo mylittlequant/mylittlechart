@@ -422,6 +422,28 @@ impl ChartApp {
             }
         }
 
+        // Multi-tapes (M/TT · M/L2 · M/BT, owner 2026-07-31): merged
+        // roster streams refresh per frame like the Multi-DOM book — the
+        // event-gated single-key loops don't cover roster venues whose
+        // symbol has no chart traffic. Per-venue cursors dedupe against
+        // the event-driven ticks.
+        for state in self.panels_store.trade_tape.values_mut() {
+            if state.multi_mode {
+                state.tick();
+            }
+        }
+        for state in self.panels_store.big_trades.values_mut() {
+            if state.multi_mode {
+                state.tick();
+            }
+        }
+        for state in self.panels_store.l2_tape.values_mut() {
+            if state.multi_mode {
+                state.tick();
+                state.prune_flash();
+            }
+        }
+
         // Embedded center chart lifecycle (chart-in-container arc,
         // 2026-07-26): lazy birth / preset-wipe recovery / instrument-TF
         // reconcile / viewport resize for the trading container's aux

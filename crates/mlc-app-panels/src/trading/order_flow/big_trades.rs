@@ -80,6 +80,14 @@ pub struct BigTradesState {
 
     /// Column visibility configuration.
     pub column_config: BigTradesColumnConfig,
+
+    /// Multi-venue mode (M/BT, по образцу Multi-DOM, owner 2026-07-31).
+    /// When ON, `tick` pulls a merged time-sorted stream from the roster
+    /// handles (thresholds applied per print) and render shows the
+    /// EXCHANGE column; single-venue fields survive toggling back.
+    pub multi_mode: bool,
+    /// Embedded multi-venue roster + per-venue feed state.
+    pub multi: super::multi_tape::MultiTapeState,
 }
 
 impl fmt::Debug for BigTradesState {
@@ -105,6 +113,9 @@ pub struct PublicTrade {
     /// Local wall-clock at ingest (ms) — drives the new-row flash
     /// (TapeSurf trades-feed polish, 2026-07-31).
     pub arrival_ms: u64,
+    /// Roster index of the source venue in multi mode (`None` =
+    /// single-venue print). Drives the EXCHANGE column (TapeSurf ref 17).
+    pub venue: Option<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +143,36 @@ impl BigTradesState {
             last_seen_ts_ms: 0,
             crosshair_price: None,
             column_config: BigTradesColumnConfig::default(),
+            multi_mode: false,
+            multi: super::multi_tape::MultiTapeState::new(),
+        }
+    }
+
+    /// Toggle multi-venue mode (M/BT — same contract as Trade Tape's
+    /// `set_multi_mode`): roster base symbol re-synced, panel's own venue
+    /// seeds the roster on first use, visible buffer cleared on switch.
+    /// Subscriptions are the caller's job.
+    pub fn set_multi_mode(&mut self, on: bool) {
+        if self.multi_mode == on {
+            return;
+        }
+        self.multi_mode = on;
+        self.big_trades.clear();
+        self.scroll_offset = 0.0;
+        self.max_qty_seen = 0.0;
+        if on {
+            if !self.multi.symbol.eq_ignore_ascii_case(&self.symbol) {
+                let sym = self.symbol.clone();
+                self.multi.reset_for_symbol(&sym);
+            }
+            if self.multi.entries.is_empty() && !self.exchange.is_empty() {
+                self.multi.add_entry(&super::multi_dom::col_entry(
+                    &self.exchange,
+                    &self.account_type,
+                ));
+            }
+        } else {
+            self.last_seen_ts_ms = 0;
         }
     }
 
@@ -140,6 +181,10 @@ impl BigTradesState {
     /// Call this once per frame (or before render). It is a no-op when there is
     /// no shared series or when the version has not advanced.
     pub fn tick(&mut self) {
+        if self.multi_mode {
+            self.tick_multi();
+            return;
+        }
         let handle = match self.shared_trades.as_ref() {
             Some(h) => h.clone(),
             None => return,
@@ -180,6 +225,7 @@ impl BigTradesState {
                     TradeSide::Buy
                 },
                 arrival_ms,
+                venue: None,
             };
 
             if public.quantity > self.max_qty_seen {
@@ -193,6 +239,62 @@ impl BigTradesState {
         }
 
         self.last_seen_ts_ms = new_max_ts;
+    }
+
+    /// Multi-venue pull (M/BT): drain every roster handle past its own
+    /// cursor, apply size/notional thresholds per print, tag with the
+    /// venue index, merge time-sorted into the shared buffer.
+    fn tick_multi(&mut self) {
+        const MAX_TRADES: usize = 1000;
+        self.multi.sync_len();
+        let arrival_ms = web_time::SystemTime::now()
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut merged: Vec<PublicTrade> = Vec::new();
+        for i in 0..self.multi.entries.len() {
+            let Some(handle) = self.multi.trade_handles[i].clone() else { continue };
+            let guard = handle.blocking_read();
+            let snapshot = guard.snapshot();
+            drop(guard);
+            let cursor = self.multi.trade_cursors[i];
+            let mut new_max_ts = cursor;
+            for trade in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+                if trade.ts_ms > new_max_ts {
+                    new_max_ts = trade.ts_ms;
+                }
+                if trade.quantity < self.size_threshold {
+                    continue;
+                }
+                if let Some(notional_min) = self.notional_threshold {
+                    if trade.price * trade.quantity < notional_min {
+                        continue;
+                    }
+                }
+                merged.push(PublicTrade {
+                    timestamp: trade.ts_ms,
+                    price: trade.price,
+                    quantity: trade.quantity,
+                    side: if trade.side == 0 { TradeSide::Sell } else { TradeSide::Buy },
+                    arrival_ms,
+                    venue: Some(i as u8),
+                });
+            }
+            self.multi.trade_cursors[i] = new_max_ts;
+        }
+        if merged.is_empty() {
+            return;
+        }
+        merged.sort_by_key(|t| t.timestamp);
+        for public in merged {
+            if public.quantity > self.max_qty_seen {
+                self.max_qty_seen = public.quantity;
+            }
+            if self.big_trades.len() >= MAX_TRADES {
+                self.big_trades.pop_front();
+            }
+            self.big_trades.push_back(public);
+        }
     }
 
     /// Scroll through the trade list.  Positive `delta` scrolls toward older trades.
@@ -308,6 +410,13 @@ impl TradingPanel for BigTradesState {
         }
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        // Multi mode: per-venue columns under one tagged header (по
+        // образцу Multi-DOM, owner order 2026-07-31).
+        if self.multi_mode {
+            self.render_multi(ctx, x, y, w, h, theme);
+            return;
+        }
 
         // Build visible column list: (label, default_width).
         // The last visible column gets all remaining width (no fixed width needed).
@@ -491,6 +600,132 @@ impl TradingPanel for BigTradesState {
             true
         } else {
             false
+        }
+    }
+}
+
+impl BigTradesState {
+    /// M/BT columnar render (по образцу Multi-DOM, owner order
+    /// 2026-07-31): one venue per column, one unifying tagged header.
+    /// Each column shows ITS venue's threshold-passing prints newest-at-
+    /// top: size bar underlay + price + size (same visual language as the
+    /// single panel).
+    fn render_multi(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        let n = self.multi.entries.len();
+        if n == 0 {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "Multi tape — add venues via the header picker",
+                (x + w * 0.5) as f64,
+                (y + h * 0.5) as f64,
+            );
+            return;
+        }
+        let col_w = w / n as f32;
+        let narrow = col_w < 72.0;
+
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, BT_HEADER_HEIGHT as f64);
+        ctx.set_font(if narrow { "8px monospace" } else { "10px monospace" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        for (i, e) in self.multi.entries.iter().enumerate() {
+            let live = self
+                .multi
+                .trade_handles
+                .get(i)
+                .map(|h| h.is_some())
+                .unwrap_or(false);
+            ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
+            let label = if narrow {
+                self.multi.venue_tag(i)
+            } else {
+                super::multi_dom::col_label(e)
+            };
+            let cx = x + col_w * i as f32 + col_w * 0.5;
+            ctx.fill_text(&label, cx as f64, (y + BT_HEADER_HEIGHT * 0.5) as f64);
+        }
+
+        let content_h = h - BT_HEADER_HEIGHT;
+        let max_rows = (content_h / BT_ROW_HEIGHT).floor() as usize;
+        if max_rows == 0 {
+            return;
+        }
+        let skip = (self.scroll_offset as usize).min(self.big_trades.len());
+        let skin = super::trade_tape::TapeSkin::effective(self.skin, theme);
+        let flat_bars = theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
+        for i in 0..n {
+            let cx0 = x + col_w * i as f32;
+            let rows = self
+                .big_trades
+                .iter()
+                .rev()
+                .filter(|t| t.venue == Some(i as u8))
+                .skip(skip)
+                .take(max_rows);
+            for (row_idx, trade) in rows.enumerate() {
+                let row_y = y + BT_HEADER_HEIGHT + row_idx as f32 * BT_ROW_HEIGHT;
+                let text_y = (row_y + BT_ROW_HEIGHT / 2.0) as f64;
+                let t_mix = if skin == super::trade_tape::TapeSkin::Classic
+                    || flat_bars
+                    || self.max_qty_seen <= 0.0
+                {
+                    0.0
+                } else {
+                    (trade.quantity / self.max_qty_seen).clamp(0.0, 1.0)
+                };
+                let (base, bright) = match trade.side {
+                    TradeSide::Buy => (&theme.buy, &theme.buy_bright),
+                    TradeSide::Sell => (&theme.sell, &theme.sell_bright),
+                };
+                let bar_w = self.size_bar_width(trade, col_w - 2.0);
+                ctx.set_fill_color(&mlc_core::mix_colors(base, bright, t_mix));
+                ctx.fill_rect(cx0 as f64, row_y as f64, bar_w as f64, BT_ROW_HEIGHT as f64);
+                if skin == super::trade_tape::TapeSkin::Ramp
+                    && now_ms.saturating_sub(trade.arrival_ms) < 250
+                {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
+                    ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, BT_ROW_HEIGHT as f64);
+                }
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_fill_color(match trade.side {
+                    TradeSide::Buy => &theme.buy,
+                    TradeSide::Sell => &theme.sell,
+                });
+                ctx.fill_text(&format!("{:.2}", trade.price), (cx0 + 3.0) as f64, text_y);
+                ctx.set_text_align(TextAlign::Right);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(
+                    &format!("{:.4}", trade.quantity),
+                    (cx0 + col_w - 3.0) as f64,
+                    text_y,
+                );
+                ctx.set_fill_color(&theme.separator);
+                ctx.fill_rect(cx0 as f64, (row_y + BT_ROW_HEIGHT - 1.0) as f64, col_w as f64, 1.0);
+            }
+        }
+
+        ctx.set_fill_color(&theme.separator);
+        for i in 1..n {
+            let sx = (x + col_w * i as f32) as f64;
+            ctx.fill_rect(sx, y as f64, 1.0, h as f64);
         }
     }
 }

@@ -196,14 +196,30 @@ pub enum PersistedFreeItemKind {
     BigTrades {
         #[serde(default)]
         source: PersistedSymbolSource,
+        /// Multi-venue mode + roster (M/BT, owner 2026-07-31). Defaulted
+        /// so older presets restore in single-venue mode.
+        #[serde(default)]
+        multi_mode: bool,
+        #[serde(default)]
+        multi_entries: Vec<String>,
     },
     L2Tape {
         #[serde(default)]
         source: PersistedSymbolSource,
+        /// Multi-venue mode + roster (M/L2, owner 2026-07-31).
+        #[serde(default)]
+        multi_mode: bool,
+        #[serde(default)]
+        multi_entries: Vec<String>,
     },
     TradeTape {
         #[serde(default)]
         source: PersistedSymbolSource,
+        /// Multi-venue mode + roster (M/TT, owner 2026-07-31).
+        #[serde(default)]
+        multi_mode: bool,
+        #[serde(default)]
+        multi_entries: Vec<String>,
     },
     OrderEntry {
         #[serde(default)]

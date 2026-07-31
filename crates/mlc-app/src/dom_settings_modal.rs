@@ -343,7 +343,8 @@ pub fn render_agents_settings_modal(
 /// Generic data-section settings modal (Trade Tape / L2 / Big Trades) —
 /// same chrome and `dom_modal:*` id space as the DOM modal (one section is
 /// visible at a time; the click arm routes per the live section kind).
-/// v1 surface: column visibility (+ Big-Trades thresholds).
+/// Surface: mode switch (Single/Multi roster, owner 2026-07-31) + column
+/// visibility (+ Big-Trades thresholds + tape skin).
 #[allow(clippy::too_many_arguments)]
 pub fn render_section_settings_modal(
     ctx: &mut dyn RenderContext,
@@ -357,10 +358,12 @@ pub fn render_section_settings_modal(
     columns: &[(&str, bool)],
     bt_thresholds: Option<(f64, Option<f64>)>,
     skin_label: Option<&str>,
+    multi_mode: Option<bool>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
         + PAD
+        + if multi_mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
         + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
@@ -409,6 +412,17 @@ pub fn render_section_settings_modal(
 
     let left = mx + PAD;
     let mut row_y = my + HEADER_H + PAD;
+
+    // Mode row (M/TT · M/L2 · M/BT, owner 2026-07-31) — same grammar as
+    // the DOM modal's DOM/Multi-DOM switch.
+    if let Some(multi_on) = multi_mode {
+        caption(ctx, tt, left, row_y, "Mode");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "mode:single", left, row_y, 90.0, "Single", !multi_on);
+        modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + 98.0, row_y, 100.0, "Multi", multi_on);
+        row_y += BTN_H + ROW_GAP;
+    }
+
     caption(ctx, tt, left, row_y, "Columns");
     row_y += CAPTION_H;
     let col_w = 70.0;

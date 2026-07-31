@@ -292,11 +292,23 @@ impl ChartApp {
                     (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
                 }),
             Panel::TradeTape(id) => self.panels_store.trade_tape.get(id)
-                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                .map(|s| if s.multi_mode {
+                    (s.multi.symbol.clone(), String::new(), String::new())
+                } else {
+                    (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                }),
             Panel::L2Tape(id) => self.panels_store.l2_tape.get(id)
-                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                .map(|s| if s.multi_mode {
+                    (s.multi.symbol.clone(), String::new(), String::new())
+                } else {
+                    (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                }),
             Panel::BigTrades(id) => self.panels_store.big_trades.get(id)
-                .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())),
+                .map(|s| if s.multi_mode {
+                    (s.multi.symbol.clone(), String::new(), String::new())
+                } else {
+                    (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
+                }),
             _ => None,
         }
         .unwrap_or_default()
@@ -308,11 +320,22 @@ impl ChartApp {
     /// mode opens the Multi-DOM roster picker target instead (result rows
     /// toggle exchange columns; no tag-group coupling).
     pub(crate) fn open_section_symbol_quick_edit(&mut self, item: &mlc_core::state::Panel) {
+        use mlc_core::state::Panel;
         let pid = item.panel_id();
-        let multi = matches!(item, mlc_core::state::Panel::Dom(id)
+        let multi_dom = matches!(item, Panel::Dom(id)
             if self.panels_store.dom.get(id).map_or(false, |s| s.multi_mode));
-        let target = if multi {
+        // Multi-tape sections open the SAME roster-picker flow (M/TT ·
+        // M/L2 · M/BT, owner 2026-07-31).
+        let multi_tape = match item {
+            Panel::TradeTape(id) => self.panels_store.trade_tape.get(id).map_or(false, |s| s.multi_mode),
+            Panel::L2Tape(id) => self.panels_store.l2_tape.get(id).map_or(false, |s| s.multi_mode),
+            Panel::BigTrades(id) => self.panels_store.big_trades.get(id).map_or(false, |s| s.multi_mode),
+            _ => false,
+        };
+        let target = if multi_dom {
             crate::SymbolQuickEditTarget::MultiDomRoster(pid)
+        } else if multi_tape {
+            crate::SymbolQuickEditTarget::MultiTapeRoster(pid)
         } else {
             crate::SymbolQuickEditTarget::SectionPanel(pid)
         };
@@ -446,6 +469,218 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+    /// Subscribe multi-tape roster entries: trades feed for TT/BT, book
+    /// for L2 (`book = true`). Same idempotent contract as
+    /// [`Self::subscribe_multi_roster`].
+    pub(crate) fn subscribe_multi_tape_roster(
+        &mut self,
+        sym: &str,
+        entries: &[String],
+        book: bool,
+    ) {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        if sym.is_empty() {
+            return;
+        }
+        for e in entries {
+            let ex_slug = multi_dom::col_exchange(e).to_string();
+            let at_label = multi_dom::col_at(e).to_string();
+            if let Some(eid) = digdigdig3::ExchangeId::from_str(&ex_slug) {
+                self.core.ensure_connector(eid);
+                let at = crate::account_type_from_label(&at_label);
+                if book {
+                    let _ = self.core.subscribe_orderbook(eid, sym, at);
+                } else {
+                    let _ = self.core.subscribe_trades(eid, sym, at);
+                }
+            }
+        }
+    }
+
+    /// Multi-tape roster picker commit (M/TT · M/L2 · M/BT, owner
+    /// 2026-07-31) — same contract as [`Self::toggle_multi_dom_roster`]:
+    /// same-symbol row toggles that venue, different-symbol row switches
+    /// the base symbol (handles reset, roster kept). The panel id resolves
+    /// to whichever tape store holds it.
+    pub(crate) fn toggle_multi_tape_roster(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        symbol: &str,
+        exchange_id: &str,
+        account_type: &str,
+    ) {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        use mlc_app_panels::trading::order_flow::multi_tape::MultiTapeState;
+        if exchange_id.is_empty() {
+            return;
+        }
+        let entry = multi_dom::col_entry(exchange_id, account_type);
+        // One toggle body shared across the three stores.
+        fn toggle(
+            m: &mut MultiTapeState,
+            symbol: &str,
+            exchange_id: &str,
+            account_type: &str,
+            entry: &str,
+        ) -> Option<(String, Vec<String>)> {
+            if !m.symbol.eq_ignore_ascii_case(symbol) {
+                let sym = symbol.to_string();
+                m.reset_for_symbol(&sym);
+                m.add_entry(entry);
+                Some((m.symbol.clone(), m.entries.clone()))
+            } else if m
+                .entries
+                .iter()
+                .any(|e| multi_dom::col_matches(e, exchange_id, account_type))
+            {
+                m.remove_entry(entry);
+                None
+            } else {
+                m.add_entry(entry);
+                Some((m.symbol.clone(), vec![entry.to_string()]))
+            }
+        }
+        // (needs_book, subscription work) per hosting store.
+        let work: Option<(bool, Option<(String, Vec<String>)>)> =
+            if let Some(s) = self.panels_store.trade_tape.get_mut(&pid) {
+                if s.multi_mode {
+                    Some((false, toggle(&mut s.multi, symbol, exchange_id, account_type, &entry)))
+                } else {
+                    None
+                }
+            } else if let Some(s) = self.panels_store.l2_tape.get_mut(&pid) {
+                if s.multi_mode {
+                    Some((true, toggle(&mut s.multi, symbol, exchange_id, account_type, &entry)))
+                } else {
+                    None
+                }
+            } else if let Some(s) = self.panels_store.big_trades.get_mut(&pid) {
+                if s.multi_mode {
+                    Some((false, toggle(&mut s.multi, symbol, exchange_id, account_type, &entry)))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+        if let Some((book, Some((sym, entries)))) = work {
+            self.subscribe_multi_tape_roster(&sym, &entries, book);
+        }
+        self.sidebar_data_dirty = true;
+        self.autosave_snapshot();
+    }
+
+    /// Section-picker icon click while the panel is in SINGLE mode (owner
+    /// order 2026-07-31: «добавляться он должен сюда, а не куда-то в
+    /// другое место»): the clicked venue joins THIS panel in parallel —
+    /// the panel flips to multi seeded with its own current venue, the
+    /// clicked venue lands via the roster toggle, and the live picker
+    /// target morphs to the roster target so further icon clicks keep
+    /// editing the roster. Returns `false` when `pid` is not a section
+    /// panel (caller falls through to the watchlist star).
+    pub(crate) fn add_parallel_section_venue(
+        &mut self,
+        pid: mlc_core::state::PanelId,
+        symbol: &str,
+        exchange_id: &str,
+        account_type: &str,
+    ) -> bool {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        if exchange_id.is_empty() {
+            return false;
+        }
+        // DOM section: flip to multi WITHOUT the default-trio seeding —
+        // the roster starts as [own venue] + the clicked one.
+        let mut is_dom = false;
+        let mut dom_flip: Option<(String, Vec<String>)> = None;
+        if let Some(s) = self.panels_store.dom.get_mut(&pid) {
+            is_dom = true;
+            if !s.multi_mode {
+                if s.symbol.eq_ignore_ascii_case(symbol)
+                    && multi_dom::col_matches(
+                        &multi_dom::col_entry(&s.exchange, &s.account_type),
+                        exchange_id,
+                        account_type,
+                    )
+                {
+                    return true; // clicked the panel's own venue — no-op
+                }
+                if !s.multi.symbol.eq_ignore_ascii_case(&s.symbol) {
+                    s.multi.symbol = s.symbol.clone();
+                    for (b, a) in &mut s.multi.books_by_exchange {
+                        b.clear();
+                        a.clear();
+                    }
+                    s.multi.handles.clear();
+                    s.multi.mid_price = 0.0;
+                }
+                if s.multi.config.exchanges.is_empty() && !s.exchange.is_empty() {
+                    let entry = multi_dom::col_entry(&s.exchange, &s.account_type);
+                    s.multi.add_exchange(entry);
+                }
+                s.multi_mode = true;
+                dom_flip = Some((s.multi.symbol.clone(), s.multi.config.exchanges.clone()));
+            }
+        }
+        if is_dom {
+            if let Some((sym, entries)) = dom_flip {
+                self.subscribe_multi_roster(&sym, &entries);
+            }
+            self.toggle_multi_dom_roster(pid, symbol, exchange_id, account_type);
+            if let Some(edit) = self.symbol_quick_edit.as_mut() {
+                edit.target = crate::SymbolQuickEditTarget::MultiDomRoster(pid);
+            }
+            return true;
+        }
+        // Tape sections: `set_multi_mode` seeds the roster with the
+        // panel's own venue; the toggle adds the clicked one.
+        // (was_single, roster symbol, roster entries, book-feed panel).
+        let flipped: Option<(bool, String, Vec<String>, bool)> = {
+            let ps = &mut self.panels_store;
+            if let Some(s) = ps.trade_tape.get_mut(&pid) {
+                let own = s.symbol.eq_ignore_ascii_case(symbol)
+                    && multi_dom::col_matches(
+                        &multi_dom::col_entry(&s.exchange, &s.account_type),
+                        exchange_id, account_type);
+                let was_single = !s.multi_mode;
+                if was_single && own { return true; }
+                s.set_multi_mode(true);
+                Some((was_single, s.multi.symbol.clone(), s.multi.entries.clone(), false))
+            } else if let Some(s) = ps.l2_tape.get_mut(&pid) {
+                let own = s.symbol.eq_ignore_ascii_case(symbol)
+                    && multi_dom::col_matches(
+                        &multi_dom::col_entry(&s.exchange, &s.account_type),
+                        exchange_id, account_type);
+                let was_single = !s.multi_mode;
+                if was_single && own { return true; }
+                s.set_multi_mode(true);
+                Some((was_single, s.multi.symbol.clone(), s.multi.entries.clone(), true))
+            } else if let Some(s) = ps.big_trades.get_mut(&pid) {
+                let own = s.symbol.eq_ignore_ascii_case(symbol)
+                    && multi_dom::col_matches(
+                        &multi_dom::col_entry(&s.exchange, &s.account_type),
+                        exchange_id, account_type);
+                let was_single = !s.multi_mode;
+                if was_single && own { return true; }
+                s.set_multi_mode(true);
+                Some((was_single, s.multi.symbol.clone(), s.multi.entries.clone(), false))
+            } else {
+                None
+            }
+        };
+        let Some((was_single, sym, entries, book)) = flipped else {
+            return false;
+        };
+        if was_single {
+            self.subscribe_multi_tape_roster(&sym, &entries, book);
+        }
+        self.toggle_multi_tape_roster(pid, symbol, exchange_id, account_type);
+        if let Some(edit) = self.symbol_quick_edit.as_mut() {
+            edit.target = crate::SymbolQuickEditTarget::MultiTapeRoster(pid);
+        }
+        true
+    }
+
     /// Feed-handle self-heal (owner defect 2026-07-30): panels that read a
     /// shared series (DOM book/trades, Trade Tape trades, Big Trades
     /// trades) but hold `None` while their symbol is concrete get their
@@ -508,6 +743,82 @@ impl ChartApp {
                     if let Some(s) = self.panels_store.big_trades.get_mut(&pid) {
                         s.shared_trades = handle;
                         s.last_seen_ts_ms = 0;
+                    }
+                }
+            }
+        }
+
+        // Multi-tape roster handles (M/TT · M/L2 · M/BT, owner 2026-07-31):
+        // venues holding `None` get their subscribe retried — the same
+        // self-heal contract as the singles above. `subscribe_*` is
+        // idempotent; `ensure_connector` dials a missing venue connector
+        // once (no reseed/backoff machinery needed — tapes stream, they
+        // have no REST snapshot to storm).
+        {
+            use mlc_app_panels::trading::order_flow::multi_dom;
+            enum TapeKind { Tt, L2, Bt }
+            let mut tape_needs: Vec<(TapeKind, mlc_core::state::PanelId, usize, String, String)> =
+                Vec::new();
+            for (pid, s) in &self.panels_store.trade_tape {
+                if s.multi_mode && !s.multi.symbol.is_empty() {
+                    for (i, e) in s.multi.entries.iter().enumerate() {
+                        if s.multi.trade_handles.get(i).map_or(true, |h| h.is_none()) {
+                            tape_needs.push((TapeKind::Tt, *pid, i, e.clone(), s.multi.symbol.clone()));
+                        }
+                    }
+                }
+            }
+            for (pid, s) in &self.panels_store.big_trades {
+                if s.multi_mode && !s.multi.symbol.is_empty() {
+                    for (i, e) in s.multi.entries.iter().enumerate() {
+                        if s.multi.trade_handles.get(i).map_or(true, |h| h.is_none()) {
+                            tape_needs.push((TapeKind::Bt, *pid, i, e.clone(), s.multi.symbol.clone()));
+                        }
+                    }
+                }
+            }
+            for (pid, s) in &self.panels_store.l2_tape {
+                if s.multi_mode && !s.multi.symbol.is_empty() {
+                    for (i, e) in s.multi.entries.iter().enumerate() {
+                        if s.multi.book_handles.get(i).map_or(true, |h| h.is_none()) {
+                            tape_needs.push((TapeKind::L2, *pid, i, e.clone(), s.multi.symbol.clone()));
+                        }
+                    }
+                }
+            }
+            for (kind, pid, i, entry, sym) in tape_needs {
+                let ex_slug = multi_dom::col_exchange(&entry).to_string();
+                let at_label = multi_dom::col_at(&entry).to_string();
+                let Some(eid) = digdigdig3::ExchangeId::from_str(&ex_slug) else { continue };
+                self.core.ensure_connector(eid);
+                let at = crate::account_type_from_label(&at_label);
+                match kind {
+                    TapeKind::Tt => {
+                        let h = self.core.subscribe_trades(eid, &sym, at);
+                        if let Some(s) = self.panels_store.trade_tape.get_mut(&pid) {
+                            s.multi.sync_len();
+                            if i < s.multi.trade_handles.len() {
+                                s.multi.trade_handles[i] = h;
+                            }
+                        }
+                    }
+                    TapeKind::Bt => {
+                        let h = self.core.subscribe_trades(eid, &sym, at);
+                        if let Some(s) = self.panels_store.big_trades.get_mut(&pid) {
+                            s.multi.sync_len();
+                            if i < s.multi.trade_handles.len() {
+                                s.multi.trade_handles[i] = h;
+                            }
+                        }
+                    }
+                    TapeKind::L2 => {
+                        let h = self.core.subscribe_orderbook(eid, &sym, at);
+                        if let Some(s) = self.panels_store.l2_tape.get_mut(&pid) {
+                            s.multi.sync_len();
+                            if i < s.multi.book_handles.len() {
+                                s.multi.book_handles[i] = h;
+                            }
+                        }
                     }
                 }
             }

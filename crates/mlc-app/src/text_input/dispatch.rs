@@ -932,6 +932,32 @@ impl ChartApp {
                             self.toggle_multi_dom_roster(pid, &res.symbol, &res.exchange_id, &res.account_type);
                         }
                     }
+                    Some(crate::SymbolQuickEditTarget::MultiTapeRoster(pid)) => {
+                        // Same Enter contract as the Multi-DOM roster:
+                        // apply the first non-roster result, keep the
+                        // dropdown open (multi-click session).
+                        let (base, roster) = {
+                            let ps = &self.panels_store;
+                            ps.trade_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone()))
+                                .or_else(|| ps.l2_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
+                                .or_else(|| ps.big_trades.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
+                                .unwrap_or_default()
+                        };
+                        let first = self.symbol_quick_search_render()
+                            .map(|r| r.results)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find(|res| {
+                                use mlc_app_panels::trading::order_flow::multi_dom;
+                                !(res.symbol.eq_ignore_ascii_case(&base)
+                                    && roster.iter().any(|e| {
+                                        multi_dom::col_matches(e, &res.exchange_id, &res.account_type)
+                                    }))
+                            });
+                        if let Some(res) = first {
+                            self.toggle_multi_tape_roster(pid, &res.symbol, &res.exchange_id, &res.account_type);
+                        }
+                    }
                     // `TopbarChart` (or no live editor, defensive) — same
                     // dispatch `handle_search_modal_click`'s
                     // Commit-via-first-result contract uses for the

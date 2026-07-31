@@ -53,6 +53,9 @@ pub struct L2Event {
     pub order_count: Option<usize>,
     /// Order ID (if available from exchange)
     pub order_id: Option<String>,
+    /// Roster index of the source venue in multi mode (`None` =
+    /// single-venue event). Drives the EXCHANGE column (TapeSurf ref 17).
+    pub venue: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +151,13 @@ pub struct L2TapeState {
 
     /// Column visibility configuration.
     pub column_config: L2TapeColumnConfig,
+
+    /// Multi-venue mode (M/L2, по образцу Multi-DOM, owner 2026-07-31).
+    /// When ON, `tick` runs the snapshot diff per roster venue and events
+    /// carry the venue index; single-venue fields survive toggling back.
+    pub multi_mode: bool,
+    /// Embedded multi-venue roster + per-venue book/diff state.
+    pub multi: super::multi_tape::MultiTapeState,
 }
 
 /// Spoofing alert data
@@ -238,6 +248,13 @@ impl TradingPanel for L2TapeState {
         }
         ctx.set_fill_color(&theme.panel_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        // Multi mode: per-venue columns under one tagged header (по
+        // образцу Multi-DOM, owner order 2026-07-31).
+        if self.multi_mode {
+            self.render_multi(ctx, x, y, w, h, theme);
+            return;
+        }
 
         // Build visible column list from config.
         // Each entry: (label, original fraction).
@@ -496,6 +513,164 @@ impl TradingPanel for L2TapeState {
 }
 
 impl L2TapeState {
+    /// M/L2 columnar render (по образцу Multi-DOM, owner order
+    /// 2026-07-31): one venue per column, one unifying tagged header.
+    /// Each column streams ITS venue's book events newest-at-top — the
+    /// chromatic type/side background carries the event class, text =
+    /// type tag (wide columns) + price + qty.
+    fn render_multi(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        let n = self.multi.entries.len();
+        if n == 0 {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "Multi tape — add venues via the header picker",
+                (x + w * 0.5) as f64,
+                (y + h * 0.5) as f64,
+            );
+            return;
+        }
+        let col_w = w / n as f32;
+        let narrow = col_w < 72.0;
+        let show_type = col_w >= 120.0;
+
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, L2_HEADER_HEIGHT as f64);
+        ctx.set_font(if narrow { "8px monospace" } else { "10px monospace" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        for (i, e) in self.multi.entries.iter().enumerate() {
+            let live = self
+                .multi
+                .book_handles
+                .get(i)
+                .map(|h| h.is_some())
+                .unwrap_or(false);
+            ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
+            let label = if narrow {
+                self.multi.venue_tag(i)
+            } else {
+                super::multi_dom::col_label(e)
+            };
+            let cx = x + col_w * i as f32 + col_w * 0.5;
+            ctx.fill_text(&label, cx as f64, (y + L2_HEADER_HEIGHT * 0.5) as f64);
+        }
+
+        let content_h = h - L2_HEADER_HEIGHT;
+        let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
+        if max_rows == 0 {
+            return;
+        }
+        let skip = if self.auto_scroll { 0 } else { self.scroll_offset as usize };
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let flash_active: std::collections::HashSet<usize> = self.flash_events
+            .iter()
+            .filter(|&&(_, start)| now_ms.saturating_sub(start) < 200)
+            .map(|&(serial, _)| serial)
+            .collect();
+        let decimals = if self.tick_size >= 1.0 {
+            0usize
+        } else if self.tick_size >= 0.1 {
+            1
+        } else if self.tick_size >= 0.01 {
+            2
+        } else if self.tick_size >= 0.001 {
+            3
+        } else {
+            4
+        };
+        ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
+        for i in 0..n {
+            let cx0 = x + col_w * i as f32;
+            let rows = self
+                .events
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, e)| e.venue == Some(i as u8))
+                .skip(skip)
+                .take(max_rows);
+            for (row_idx, (deque_idx, event)) in rows.enumerate() {
+                let row_y = y + L2_HEADER_HEIGHT + row_idx as f32 * L2_ROW_HEIGHT;
+                let row_mid_y = (row_y + L2_ROW_HEIGHT / 2.0) as f64;
+                // Zebra base + chromatic type/side overlay + flash — the
+                // single panel's visual language per column.
+                let row_bg = if row_idx % 2 == 0 { &theme.panel_bg } else { &theme.row_bg_alt };
+                ctx.set_fill_color(row_bg);
+                ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
+                let chroma = self.row_chroma_color(event, theme);
+                ctx.set_fill_color(&chroma);
+                ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
+                if flash_active.contains(&self.event_serial(deque_idx)) {
+                    ctx.set_fill_color("#ffffff28");
+                    ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
+                }
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_text_align(TextAlign::Left);
+                let mut tx = cx0 + 3.0;
+                if show_type {
+                    let type_color = self.event_color(event, theme);
+                    ctx.set_fill_color(&type_color);
+                    ctx.fill_text(L2TapeState::event_label(&event.event_type), tx as f64, row_mid_y);
+                    tx += 30.0;
+                }
+                ctx.set_fill_color(match event.side {
+                    L2Side::Bid => &theme.buy,
+                    L2Side::Ask => &theme.sell,
+                });
+                ctx.fill_text(
+                    &format!("{:.prec$}", event.price, prec = decimals),
+                    tx as f64,
+                    row_mid_y,
+                );
+                ctx.set_text_align(TextAlign::Right);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(
+                    &abbreviate_qty(event.quantity),
+                    (cx0 + col_w - 3.0) as f64,
+                    row_mid_y,
+                );
+            }
+        }
+
+        ctx.set_fill_color(&theme.separator);
+        for i in 1..n {
+            let sx = (x + col_w * i as f32) as f64;
+            ctx.fill_rect(sx, y as f64, 1.0, h as f64);
+        }
+
+        if !self.auto_scroll {
+            let badge_w = 54.0_f64;
+            let badge_h = 14.0_f64;
+            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
+            let badge_y = (y + L2_HEADER_HEIGHT + 2.0) as f64;
+            ctx.set_fill_color("#c8a000cc");
+            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color("#000000ff");
+            ctx.fill_text(
+                TradingKey::Paused.get(current_language()),
+                (x + w / 2.0) as f64,
+                badge_y + badge_h / 2.0,
+            );
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             symbol: String::new(),
@@ -522,6 +697,40 @@ impl L2TapeState {
             shared_orderbook: None,
             last_seen_update_id: None,
             column_config: L2TapeColumnConfig::default(),
+            multi_mode: false,
+            multi: super::multi_tape::MultiTapeState::new(),
+        }
+    }
+
+    /// Toggle multi-venue mode (M/L2 — same contract as Trade Tape's
+    /// `set_multi_mode`): roster base symbol re-synced, panel's own venue
+    /// seeds the roster on first use, event buffer cleared on switch.
+    /// Subscriptions are the caller's job.
+    pub fn set_multi_mode(&mut self, on: bool) {
+        if self.multi_mode == on {
+            return;
+        }
+        self.multi_mode = on;
+        self.events.clear();
+        self.flash_events.clear();
+        self.scroll_offset = 0.0;
+        self.auto_scroll = true;
+        self.max_qty_seen = 0.0;
+        if on {
+            if !self.multi.symbol.eq_ignore_ascii_case(&self.symbol) {
+                let sym = self.symbol.clone();
+                self.multi.reset_for_symbol(&sym);
+            }
+            if self.multi.entries.is_empty() && !self.exchange.is_empty() {
+                self.multi.add_entry(&super::multi_dom::col_entry(
+                    &self.exchange,
+                    &self.account_type,
+                ));
+            }
+        } else {
+            // Fresh diff baseline for the single book.
+            self.previous_book.clear();
+            self.last_seen_update_id = None;
         }
     }
 
@@ -530,6 +739,34 @@ impl L2TapeState {
     /// from the broadcast drain (not from the tracker) because it needs per-event timestamps.
     /// This tick() is used only for the periodic snapshot-based diff path.
     pub fn tick(&mut self) {
+        if self.multi_mode {
+            self.tick_multi_diff();
+        } else {
+            self.tick_single_diff();
+        }
+
+        // Time-based retention: drain events older than retention_ms.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
+        let before_len = self.events.len();
+        while let Some(front) = self.events.front() {
+            if front.timestamp < cutoff_ms {
+                self.events.pop_front();
+            } else {
+                break;
+            }
+        }
+        // Only recalculate when events were removed (the old max may be gone).
+        if self.events.len() < before_len {
+            self.recalc_max_qty();
+        }
+    }
+
+    /// Single-venue snapshot diff (the original `tick` body).
+    fn tick_single_diff(&mut self) {
         let Some(ref ob_handle) = self.shared_orderbook else { return };
 
         let guard = ob_handle.blocking_read();
@@ -565,24 +802,41 @@ impl L2TapeState {
 
         // Diff current snapshot against previous_book and generate L2Events.
         self.diff_and_push_events(&bids, &asks, timestamp);
+    }
 
-        // Time-based retention: drain events older than retention_ms.
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let cutoff_ms = now_ms.saturating_sub(self.retention_ms) as i64;
-        let before_len = self.events.len();
-        while let Some(front) = self.events.front() {
-            if front.timestamp < cutoff_ms {
-                self.events.pop_front();
-            } else {
-                break;
+    /// Multi-venue snapshot diff (M/L2): the same diff/classify pass per
+    /// roster venue against that venue's OWN previous book; events carry
+    /// the venue index.
+    fn tick_multi_diff(&mut self) {
+        self.multi.sync_len();
+        for i in 0..self.multi.entries.len() {
+            let Some(handle) = self.multi.book_handles[i].clone() else { continue };
+            let guard = handle.blocking_read();
+            let current_uid = guard.last_update_id();
+            if current_uid == self.multi.book_uids[i] {
+                continue; // this venue's book has not advanced
             }
-        }
-        // Only recalculate when events were removed (the old max may be gone).
-        if self.events.len() < before_len {
-            self.recalc_max_qty();
+            self.multi.book_uids[i] = current_uid;
+            let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                .iter()
+                .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                .collect();
+            let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                .iter()
+                .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                .collect();
+            drop(guard);
+
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+
+            // The venue's diff state is swapped out for the pass — the
+            // classify body needs `&mut self` for `push_event`.
+            let mut book = std::mem::take(&mut self.multi.prev_books[i]);
+            self.diff_into(&mut book, &bids, &asks, timestamp, Some(i as u8));
+            self.multi.prev_books[i] = book;
         }
     }
 
@@ -802,9 +1056,28 @@ impl L2TapeState {
     /// Also updates `previous_book` to reflect the new state.
     /// Called by `tick()` after pulling a fresh snapshot from the shared series.
     fn diff_and_push_events(&mut self, bids: &[(f64, f64)], asks: &[(f64, f64)], timestamp: i64) {
+        // The book is swapped out for the pass — the classify body needs
+        // `&mut self` for `push_event` (same dance `tick_multi_diff` does
+        // with a venue book).
+        let mut book = std::mem::take(&mut self.previous_book);
+        self.diff_into(&mut book, bids, asks, timestamp, None);
+        self.previous_book = book;
+    }
+
+    /// Snapshot diff/classify against an EXTERNAL previous-book map — the
+    /// single book or one multi-roster venue's own (M/L2). Pushed events
+    /// carry `venue`.
+    fn diff_into(
+        &mut self,
+        book: &mut HashMap<i64, (f64, f64)>,
+        bids: &[(f64, f64)],
+        asks: &[(f64, f64)],
+        timestamp: i64,
+        venue: Option<u8>,
+    ) {
         for &(price, qty) in bids {
             let tick = self.price_to_tick(price);
-            let prev_qty = self.previous_book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
+            let prev_qty = book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
 
             let event_type = if qty == 0.0 && prev_qty > 0.0 {
                 L2EventType::Cancel
@@ -813,7 +1086,7 @@ impl L2TapeState {
             } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
-                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                let entry = book.entry(tick).or_insert((0.0, 0.0));
                 entry.0 = qty;
                 continue;
             };
@@ -821,7 +1094,7 @@ impl L2TapeState {
             if let Some(min_q) = self.min_quantity {
                 let relevant_qty = if qty > 0.0 { qty } else { prev_qty };
                 if relevant_qty < min_q {
-                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    let entry = book.entry(tick).or_insert((0.0, 0.0));
                     entry.0 = qty;
                     continue;
                 }
@@ -835,15 +1108,16 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
+                venue,
             });
 
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            let entry = book.entry(tick).or_insert((0.0, 0.0));
             entry.0 = qty;
         }
 
         for &(price, qty) in asks {
             let tick = self.price_to_tick(price);
-            let prev_qty = self.previous_book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
+            let prev_qty = book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
 
             let event_type = if qty == 0.0 && prev_qty > 0.0 {
                 L2EventType::Cancel
@@ -852,7 +1126,7 @@ impl L2TapeState {
             } else if qty > 0.0 && prev_qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
-                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                let entry = book.entry(tick).or_insert((0.0, 0.0));
                 entry.1 = qty;
                 continue;
             };
@@ -860,7 +1134,7 @@ impl L2TapeState {
             if let Some(min_q) = self.min_quantity {
                 let relevant_qty = if qty > 0.0 { qty } else { prev_qty };
                 if relevant_qty < min_q {
-                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    let entry = book.entry(tick).or_insert((0.0, 0.0));
                     entry.1 = qty;
                     continue;
                 }
@@ -874,9 +1148,10 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
+                venue,
             });
 
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            let entry = book.entry(tick).or_insert((0.0, 0.0));
             entry.1 = qty;
         }
     }
@@ -899,6 +1174,11 @@ impl L2TapeState {
         delta_asks: &[(f64, f64)],
         force_rebuild: bool,
     ) {
+        // Multi mode streams through `tick_multi_diff` — the single-venue
+        // delta drain must not mix its events into the merged buffer.
+        if self.multi_mode {
+            return;
+        }
         // Update BBO from tracker.
         if let Some(ref ob_handle) = self.shared_orderbook {
             let guard = ob_handle.blocking_read();
@@ -964,6 +1244,10 @@ impl L2TapeState {
         delta_asks: &[(f64, f64)],
         ts_ms: i64,
     ) {
+        // Multi mode streams through `tick_multi_diff` — see apply_ob_update.
+        if self.multi_mode {
+            return;
+        }
         // Update BBO from tracker.
         if let Some(ref ob_handle) = self.shared_orderbook {
             let guard = ob_handle.blocking_read();
@@ -1054,6 +1338,7 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
+                venue: None,
             });
 
             let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
@@ -1093,6 +1378,7 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
+                venue: None,
             });
 
             let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));

@@ -188,7 +188,8 @@ impl ChartApp {
         if let Some(edit) = self.symbol_quick_edit.as_ref() {
             if let crate::SymbolQuickEditTarget::TradingPanel(pid)
             | crate::SymbolQuickEditTarget::SectionPanel(pid)
-            | crate::SymbolQuickEditTarget::MultiDomRoster(pid) = edit.target
+            | crate::SymbolQuickEditTarget::MultiDomRoster(pid)
+            | crate::SymbolQuickEditTarget::MultiTapeRoster(pid) = edit.target
             {
                 // The search icon is also a "related" entry point (not just
                 // the tab body) — otherwise this block would close the
@@ -3955,9 +3956,24 @@ impl ChartApp {
             } else {
                 None
             };
-            // Non-DOM sections: columns + Big-Trades thresholds.
+            // Non-DOM sections: mode switch + columns + Big-Trades thresholds.
             match &section {
                 Some(mlc_core::state::Panel::TradeTape(pid)) => {
+                    if rest == "mode:single" || rest == "mode:multi" {
+                        let want = rest == "mode:multi";
+                        let subs = self.panels_store.trade_tape.get_mut(pid).map(|s| {
+                            s.set_multi_mode(want);
+                            (s.multi_mode, s.multi.symbol.clone(), s.multi.entries.clone())
+                        });
+                        if let Some((on, sym, entries)) = subs {
+                            if on {
+                                self.subscribe_multi_tape_roster(&sym, &entries, false);
+                            }
+                            self.autosave_snapshot();
+                        }
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
                     if let Some(state) = self.panels_store.trade_tape.get_mut(pid) {
                         if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
                             match i {
@@ -3977,6 +3993,21 @@ impl ChartApp {
                     return;
                 }
                 Some(mlc_core::state::Panel::L2Tape(pid)) => {
+                    if rest == "mode:single" || rest == "mode:multi" {
+                        let want = rest == "mode:multi";
+                        let subs = self.panels_store.l2_tape.get_mut(pid).map(|s| {
+                            s.set_multi_mode(want);
+                            (s.multi_mode, s.multi.symbol.clone(), s.multi.entries.clone())
+                        });
+                        if let Some((on, sym, entries)) = subs {
+                            if on {
+                                self.subscribe_multi_tape_roster(&sym, &entries, true);
+                            }
+                            self.autosave_snapshot();
+                        }
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
                     if let (Some(i), Some(state)) = (
                         rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()),
                         self.panels_store.l2_tape.get_mut(pid),
@@ -3993,6 +4024,21 @@ impl ChartApp {
                     return;
                 }
                 Some(mlc_core::state::Panel::BigTrades(pid)) => {
+                    if rest == "mode:single" || rest == "mode:multi" {
+                        let want = rest == "mode:multi";
+                        let subs = self.panels_store.big_trades.get_mut(pid).map(|s| {
+                            s.set_multi_mode(want);
+                            (s.multi_mode, s.multi.symbol.clone(), s.multi.entries.clone())
+                        });
+                        if let Some((on, sym, entries)) = subs {
+                            if on {
+                                self.subscribe_multi_tape_roster(&sym, &entries, false);
+                            }
+                            self.autosave_snapshot();
+                        }
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
                     if let Some(state) = self.panels_store.big_trades.get_mut(pid) {
                         if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
                             match i {
@@ -7073,11 +7119,24 @@ impl ChartApp {
             let (symbol, exchange, account_type) = parse_symbol_composite_key(key);
             // Multi-DOM roster picker: the trailing icon is the DOM toggle,
             // not the watchlist star — same action as clicking the row.
-            if let Some(crate::SymbolQuickEditTarget::MultiDomRoster(pid)) =
-                self.symbol_quick_edit.as_ref().map(|e| e.target)
-            {
-                self.toggle_multi_dom_roster(pid, &symbol, &exchange, &account_type);
-                return;
+            match self.symbol_quick_edit.as_ref().map(|e| e.target) {
+                Some(crate::SymbolQuickEditTarget::MultiDomRoster(pid)) => {
+                    self.toggle_multi_dom_roster(pid, &symbol, &exchange, &account_type);
+                    return;
+                }
+                Some(crate::SymbolQuickEditTarget::MultiTapeRoster(pid)) => {
+                    self.toggle_multi_tape_roster(pid, &symbol, &exchange, &account_type);
+                    return;
+                }
+                Some(crate::SymbolQuickEditTarget::SectionPanel(pid)) => {
+                    // Section-picker icon = add the venue to THIS panel in
+                    // parallel (owner order 2026-07-31) — the watchlist is
+                    // «куда-то в другое место».
+                    if self.add_parallel_section_venue(pid, &symbol, &exchange, &account_type) {
+                        return;
+                    }
+                }
+                _ => {}
             }
             self.watchlist_actions.push(crate::WatchlistAction::Toggle { symbol, exchange, account_type });
             self.watchlists_dirty = true;
@@ -7109,6 +7168,11 @@ impl ChartApp {
                     // open so several columns can be added/removed in one
                     // session; click-away / Escape closes it.
                     self.toggle_multi_dom_roster(pid, &symbol, &exchange_id, &account_type);
+                    return;
+                }
+                Some(crate::SymbolQuickEditTarget::MultiTapeRoster(pid)) => {
+                    // Same multi-click contract as the Multi-DOM roster.
+                    self.toggle_multi_tape_roster(pid, &symbol, &exchange_id, &account_type);
                     return;
                 }
                 _ => {}

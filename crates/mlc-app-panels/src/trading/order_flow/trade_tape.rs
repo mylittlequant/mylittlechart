@@ -107,6 +107,9 @@ pub struct TapeEntry {
     /// Local wall-clock at ingest (ms) — drives the new-row flash
     /// (TapeSurf trades-feed polish, 2026-07-31).
     pub arrival_ms: u64,
+    /// Roster index of the source venue in multi mode (`None` =
+    /// single-venue entry). Drives the EXCHANGE column (TapeSurf ref 17).
+    pub venue: Option<u8>,
 }
 
 // ─── state ───────────────────────────────────────────────────────────────────
@@ -166,6 +169,14 @@ pub struct TradeTapeState {
     /// Manual skin pick — `None` follows the theme-skin's `tape_skin`
     /// default (DomSkin precedence pattern).
     pub skin: Option<TapeSkin>,
+
+    /// Multi-venue mode (M/TT, по образцу Multi-DOM, owner 2026-07-31).
+    /// When ON, `tick` pulls a merged time-sorted stream from the roster
+    /// handles and render shows the EXCHANGE column; the single-venue
+    /// fields above are untouched and survive toggling back.
+    pub multi_mode: bool,
+    /// Embedded multi-venue roster + per-venue feed state.
+    pub multi: super::multi_tape::MultiTapeState,
 }
 
 impl std::fmt::Debug for TradeTapeState {
@@ -204,6 +215,41 @@ impl TradeTapeState {
             crosshair_price: None,
             column_config: TradeTapeColumnConfig::default(),
             skin: None,
+            multi_mode: false,
+            multi: super::multi_tape::MultiTapeState::new(),
+        }
+    }
+
+    /// Toggle multi-venue mode (M/TT). On enable: re-sync the roster's
+    /// base symbol with the panel's (stale handles drop, self-heal
+    /// re-provisions) and seed the roster with the panel's own venue on
+    /// first use. The visible buffer is cleared on every switch — the two
+    /// modes stream different feeds. Subscriptions are the caller's job
+    /// (app layer reads `multi.entries` after this call).
+    pub fn set_multi_mode(&mut self, on: bool) {
+        if self.multi_mode == on {
+            return;
+        }
+        self.multi_mode = on;
+        self.trades.clear();
+        self.pause_buffer.clear();
+        self.scroll_offset = 0.0;
+        self.auto_scroll = true;
+        self.paused = false;
+        self.max_qty_seen = 0.0;
+        if on {
+            if !self.multi.symbol.eq_ignore_ascii_case(&self.symbol) {
+                self.multi.reset_for_symbol(&self.symbol.clone());
+            }
+            if self.multi.entries.is_empty() && !self.exchange.is_empty() {
+                self.multi.add_entry(&super::multi_dom::col_entry(
+                    &self.exchange,
+                    &self.account_type,
+                ));
+            }
+        } else {
+            // Single feed resumes from the ring's history.
+            self.last_seen_ts_ms = 0;
         }
     }
 
@@ -213,9 +259,64 @@ impl TradeTapeState {
     ///
     /// Call once per frame before render.
     pub fn tick(&mut self) {
-        self.pull_new_trades();
+        if self.multi_mode {
+            self.pull_new_trades_multi();
+        } else {
+            self.pull_new_trades();
+        }
         self.prune_retention();
         self.recompute_window_stats();
+    }
+
+    /// Multi-venue pull (M/TT): drain every roster handle past its own
+    /// cursor, tag entries with the venue index, merge time-sorted into
+    /// the shared buffer.
+    fn pull_new_trades_multi(&mut self) {
+        self.multi.sync_len();
+        let arrival_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut merged: Vec<TapeEntry> = Vec::new();
+        for i in 0..self.multi.entries.len() {
+            let Some(handle) = self.multi.trade_handles[i].clone() else { continue };
+            let guard = handle.blocking_read();
+            let snapshot = guard.snapshot();
+            drop(guard);
+            let cursor = self.multi.trade_cursors[i];
+            let mut new_max_ts = cursor;
+            for p in snapshot {
+                if p.ts_ms <= cursor {
+                    continue;
+                }
+                if p.ts_ms > new_max_ts {
+                    new_max_ts = p.ts_ms;
+                }
+                merged.push(TapeEntry {
+                    timestamp: p.ts_ms,
+                    price: p.price,
+                    quantity: p.quantity,
+                    is_buy: p.side != 0,
+                    arrival_ms,
+                    venue: Some(i as u8),
+                });
+            }
+            self.multi.trade_cursors[i] = new_max_ts;
+        }
+        if merged.is_empty() {
+            return;
+        }
+        merged.sort_by_key(|e| e.timestamp);
+        for entry in merged {
+            if self.paused {
+                if self.pause_buffer.len() >= self.max_trades {
+                    self.pause_buffer.pop_front();
+                }
+                self.pause_buffer.push_back(entry);
+            } else {
+                self.push_entry(entry);
+            }
+        }
     }
 
     fn pull_new_trades(&mut self) {
@@ -248,6 +349,7 @@ impl TradeTapeState {
                     // TradePoint.side 0 = buyer maker -> taker is seller -> is_buy=false
                     is_buy: p.side != 0,
                     arrival_ms,
+                    venue: None,
                 }
             })
             .collect();
@@ -467,9 +569,17 @@ impl TradingPanel for TradeTapeState {
             ctx.fill_rect(x as f64, y as f64, w as f64, TT_HEADER_HEIGHT as f64);
         }
 
+        // ── multi mode: per-venue columns under one tagged header ─────────
+        // (по образцу Multi-DOM, owner order 2026-07-31 — NOT a merged
+        // list with a text venue column).
+        if self.multi_mode {
+            self.render_multi(ctx, x, y, w, h, theme);
+            return;
+        }
+
         // ── dynamic column layout ─────────────────────────────────────────
         // Build list of visible columns in order, then distribute width evenly.
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, PartialEq)]
         enum Col { Time, Price, Size }
 
         let mut visible_cols: Vec<Col> = Vec::with_capacity(3);
@@ -609,6 +719,154 @@ impl TradingPanel for TradeTapeState {
     }
 
     fn handle_click(&mut self, _local_id: &str, _x: f64, _y: f64) -> bool { false }
+}
+
+impl TradeTapeState {
+    /// M/TT columnar render (по образцу Multi-DOM, owner order
+    /// 2026-07-31): one venue per column side by side, one unifying
+    /// header row tagged per venue. Each column streams ITS venue's
+    /// prints newest-at-top (price + size; row bg = the same
+    /// alpha-by-size ramp + skin flash the single tape uses).
+    fn render_multi(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        let n = self.multi.entries.len();
+        if n == 0 {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "Multi tape — add venues via the header picker",
+                (x + w * 0.5) as f64,
+                (y + h * 0.5) as f64,
+            );
+            return;
+        }
+        let col_w = w / n as f32;
+        let narrow = col_w < 72.0;
+
+        // ── Unifying header: one tag per venue column (Multi-DOM grammar:
+        // full "EXCHANGE:AT", short "BI:F" when narrow; muted = dead feed).
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, TT_HEADER_HEIGHT as f64);
+        ctx.set_font(if narrow { "8px monospace" } else { "10px monospace" });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        for (i, e) in self.multi.entries.iter().enumerate() {
+            let live = self
+                .multi
+                .trade_handles
+                .get(i)
+                .map(|h| h.is_some())
+                .unwrap_or(false);
+            ctx.set_fill_color(if live { &theme.text_primary } else { &theme.text_muted });
+            let label = if narrow {
+                self.multi.venue_tag(i)
+            } else {
+                super::multi_dom::col_label(e)
+            };
+            let cx = x + col_w * i as f32 + col_w * 0.5;
+            ctx.fill_text(&label, cx as f64, (y + TT_HEADER_HEIGHT * 0.5) as f64);
+        }
+
+        // ── Body: per-venue row stacks. Scroll/pause state is shared —
+        // every column shifts together.
+        let content_h = h - TT_HEADER_HEIGHT;
+        let max_rows = (content_h / TT_ROW_HEIGHT).floor() as usize;
+        if max_rows == 0 {
+            return;
+        }
+        let skip = if self.auto_scroll { 0 } else { self.scroll_offset as usize };
+        let tick_size = self.dom_tick_size.unwrap_or(0.01);
+        let skin = TapeSkin::effective(self.skin, theme);
+        let flat_bars = theme.style.bar_texture == mlc_core::theme::BarTexture::Flat;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        ctx.set_font(if narrow { "9px monospace" } else { "10px monospace" });
+        for i in 0..n {
+            let cx0 = x + col_w * i as f32;
+            let rows = self
+                .trades
+                .iter()
+                .rev()
+                .filter(|e| e.venue == Some(i as u8))
+                .filter(|e| e.quantity >= self.filter_min_qty)
+                .skip(skip)
+                .take(max_rows);
+            for (row_idx, entry) in rows.enumerate() {
+                let row_y = y + TT_HEADER_HEIGHT + row_idx as f32 * TT_ROW_HEIGHT;
+                let mid_y = (row_y + TT_ROW_HEIGHT / 2.0) as f64;
+                let alpha = self.row_alpha(entry.quantity);
+                let t_mix = if skin == TapeSkin::Classic || flat_bars || self.max_qty_seen <= 0.0 {
+                    0.0
+                } else {
+                    (entry.quantity / self.max_qty_seen).clamp(0.0, 1.0)
+                };
+                let (base, bright) = if entry.is_buy {
+                    (&theme.buy, &theme.buy_bright)
+                } else {
+                    (&theme.sell, &theme.sell_bright)
+                };
+                let bg = mlc_core::apply_opacity(&mlc_core::mix_colors(base, bright, t_mix), alpha);
+                ctx.set_fill_color(&bg);
+                ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, TT_ROW_HEIGHT as f64);
+                if skin == TapeSkin::Ramp && now_ms.saturating_sub(entry.arrival_ms) < 250 {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.accent, 0.22));
+                    ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, TT_ROW_HEIGHT as f64);
+                }
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_fill_color(if entry.is_buy { &theme.buy_bright } else { &theme.sell_bright });
+                ctx.fill_text(
+                    &Self::format_price(entry.price, tick_size),
+                    (cx0 + 3.0) as f64,
+                    mid_y,
+                );
+                ctx.set_text_align(TextAlign::Right);
+                ctx.set_fill_color(&theme.text_primary);
+                ctx.fill_text(
+                    &Self::format_qty(entry.quantity),
+                    (cx0 + col_w - 3.0) as f64,
+                    mid_y,
+                );
+            }
+        }
+
+        // Column separators over the full panel height.
+        ctx.set_fill_color(&theme.separator);
+        for i in 1..n {
+            let sx = (x + col_w * i as f32) as f64;
+            ctx.fill_rect(sx, y as f64, 1.0, h as f64);
+        }
+
+        // PAUSED badge — shared scroll state.
+        if !self.auto_scroll {
+            let badge_w = 54.0_f64;
+            let badge_h = 14.0_f64;
+            let badge_x = (x + w / 2.0) as f64 - badge_w / 2.0;
+            let badge_y = (y + TT_HEADER_HEIGHT + 2.0) as f64;
+            ctx.set_fill_color("#c8a000cc");
+            ctx.fill_rect(badge_x, badge_y, badge_w, badge_h);
+            ctx.set_font("9px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_fill_color("#000000ff");
+            ctx.fill_text(
+                TradingKey::Paused.get(current_language()),
+                (x + w / 2.0) as f64,
+                badge_y + badge_h / 2.0,
+            );
+        }
+    }
 }
 
 // ─── lightweight panel wrapper (PanelKind) ───────────────────────────────────
