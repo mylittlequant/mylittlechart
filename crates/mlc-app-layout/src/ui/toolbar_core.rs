@@ -1173,11 +1173,22 @@ pub fn draw_toolbar_with_icons(
                     &theme.item_text
                 };
 
+                // Order-flow slot text chips draw at 20px (owner order
+                // 2026-08-01 «16х16 увеличь до 20х20») — every other icon
+                // keeps the theme size.
+                let icon_size = if matches!(
+                    id.as_str(),
+                    "slot_dom" | "slot_tape" | "slot_l2" | "slot_big_trades"
+                ) {
+                    (config.icon_size + 4.0).max(20.0)
+                } else {
+                    config.icon_size
+                };
                 let icon_rect = WidgetRect::new(
-                    item_rect.center_x() - config.icon_size / 2.0,
-                    item_rect.center_y() - config.icon_size / 2.0,
-                    config.icon_size,
-                    config.icon_size,
+                    item_rect.center_x() - icon_size / 2.0,
+                    item_rect.center_y() - icon_size / 2.0,
+                    icon_size,
+                    icon_size,
                 );
                 render_icon(ctx, icon, icon_rect, icon_color);
 

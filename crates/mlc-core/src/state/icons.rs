@@ -1464,7 +1464,7 @@ pub const ICON_SLOT_DOM_GLYPH: &str = r##"<svg xmlns="http://www.w3.org/2000/svg
 
 /// DOM slot — text chip "DOM" (owner order 2026-08-01 «нужно написать
 /// DOM TT L2 BT»; same chip grammar as the L2 badge).
-pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6.5" width="21" height="11" rx="2.5" stroke-width="1.2"/><path d="M4.6 9.5 V14.5 M4.6 9.5 C7.4 9.5 7.4 14.5 4.6 14.5"/><path d="M11.2 9.5 C13.3 9.5 13.3 14.5 11.2 14.5 C9.1 14.5 9.1 9.5 11.2 9.5 Z"/><path d="M15.2 14.5 V9.5 L17.2 12.3 L19.2 9.5 V14.5"/></svg>"##;
+pub const ICON_SLOT_DOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6.5" width="21" height="11" rx="2.5" stroke-width="1.2"/><path d="M4.4 9 V15.5 M4.4 9 C7.6 9 7.6 15.5 4.4 15.5"/><path d="M11.2 9 C13.5 9 13.5 15.5 11.2 15.5 C8.9 15.5 8.9 9 11.2 9 Z"/><path d="M15 15.5 V9 L17.2 12.6 L19.4 9 V15.5"/></svg>"##;
 
 /// Trade Tape slot glyph variant (redrawn 2026-07-18; kept as a variant
 /// per owner order 2026-08-01).
@@ -1478,12 +1478,12 @@ pub const ICON_SLOT_TAPE_GLYPH: &str = r##"<svg xmlns="http://www.w3.org/2000/sv
 </svg>"##;
 
 /// Trade Tape slot — text chip "TT" (owner order 2026-08-01).
-pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M6.5 9.5 H11.5 M9 9.5 V14.5"/><path d="M12.8 9.5 H17.8 M15.3 9.5 V14.5"/></svg>"##;
+pub const ICON_SLOT_TAPE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M6.2 9 H11.2 M8.7 9 V15.5"/><path d="M12.8 9 H17.8 M15.3 9 V15.5"/></svg>"##;
 
 /// L2 Tape slot — text-chip glyph. Redrawn 2026-07-18 (owner-picked
 /// chip design; see nemo/docs/mlc/research/icon-drafts/); previous design
 /// owner-picked (round 4, L-b) 2026-07-11.
-pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><polyline points="7,9.5 7,14.5 10,14.5"/><path d="M12.5 10.6 C12.5 8.9 16.3 8.9 16.3 10.6 C16.3 12 13 12.9 12.7 14.5 L16.6 14.5"/></svg>"##;
+pub const ICON_SLOT_L2: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><polyline points="6.8,9 6.8,15.5 10,15.5"/><path d="M12.4 10.4 C12.4 8.4 16.6 8.4 16.6 10.4 C16.6 12.2 13.1 13.2 12.7 15.5 L16.9 15.5"/></svg>"##;
 
 /// Big Trades slot glyph variant — sonar/ripple (owner-picked #12 of 24,
 /// 2026-07-11; kept as a variant per owner order 2026-08-01).
@@ -1496,7 +1496,7 @@ pub const ICON_SLOT_BIG_TRADES_GLYPH: &str = r##"<svg xmlns="http://www.w3.org/2
 </svg>"##;
 
 /// Big Trades slot — text chip "BT" (owner order 2026-08-01).
-pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M6.8 9.5 V14.5 M6.8 9.5 C9.6 9.5 9.6 12 6.8 12 C9.8 12 9.8 14.5 6.8 14.5"/><path d="M12.8 9.5 H17.8 M15.3 9.5 V14.5"/></svg>"##;
+pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M6.6 9 V15.5 M6.6 9 C9.6 9 9.6 12.25 6.6 12.25 C9.8 12.25 9.8 15.5 6.6 15.5"/><path d="M12.8 9 H17.8 M15.3 9 V15.5"/></svg>"##;
 
 /// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
 /// The two used to collide (Performance reused `ICON_SIGNAL` before the
