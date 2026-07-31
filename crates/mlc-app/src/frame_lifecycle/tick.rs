@@ -296,6 +296,51 @@ impl ChartApp {
                 // ── L2 Tape: per-event calls with original wire ts ─────────────
                 let l2_t0 = web_time::Instant::now();
                 for state in self.panels_store.l2_tape.values_mut() {
+                    // M/L2 primary feed (owner defect 2026-08-01 «лента
+                    // стала будто медленнее»): route this (exchange, AT)
+                    // delta batch to every roster venue it matches — the
+                    // same per-event firehose the single panel gets. The
+                    // snapshot diff in tick_multi_diff stays as a resync
+                    // fallback for venues whose deltas never reach the
+                    // drain.
+                    if state.multi_mode {
+                        if &state.symbol != symbol {
+                            continue;
+                        }
+                        let idxs: Vec<usize> = state
+                            .multi
+                            .entries
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, e)| {
+                                mlc_app_panels::trading::order_flow::multi_dom::col_matches(
+                                    e, ex_str, at_str,
+                                )
+                            })
+                            .map(|(i, _)| i)
+                            .collect();
+                        if idxs.is_empty() {
+                            continue;
+                        }
+                        for i in idxs {
+                            if entry.force_rebuild {
+                                // REST snapshot replaced the venue book —
+                                // drop the diff baseline; the next delta
+                                // (or the fallback) re-seeds silently.
+                                if i < state.multi.prev_books.len() {
+                                    state.multi.prev_books[i].clear();
+                                    state.multi.book_uids[i] = None;
+                                }
+                            } else {
+                                for ev in &entry.events {
+                                    state.apply_ob_delta_venue(i, &ev.bids, &ev.asks, ev.ts_ms);
+                                }
+                            }
+                        }
+                        state.prune_flash();
+                        state.prune_spoof_memory();
+                        continue;
+                    }
                     if &state.symbol == symbol && &state.exchange == ex_str && &state.account_type == at_str {
                         if entry.force_rebuild || entry.events.is_empty() {
                             state.apply_ob_update(

@@ -363,6 +363,8 @@ pub fn render_section_settings_modal(
     imbalance: Option<(bool, u8)>,
     big_flag: Option<Option<f64>>,
     tt_filter: Option<f64>,
+    // (adds, modifies, cancels, executes) row-visibility chips — L2 only.
+    l2_events: Option<(bool, bool, bool, bool)>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
@@ -372,6 +374,7 @@ pub fn render_section_settings_modal(
         + (BTN_H + 6.0) * col_rows as f64
         + if bt_thresholds.is_some() { (ROW_GAP + CAPTION_H + BTN_H) * 2.0 } else { 0.0 }
         + if imbalance.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if l2_events.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if big_flag.is_some() || tt_filter.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if skin_label.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + PAD;
@@ -462,6 +465,19 @@ pub fn render_section_settings_modal(
             left + 128.0, row_y, 110.0,
             &format!("Window: {}m", imb_win.max(1)), false,
         );
+        row_y += BTN_H;
+    }
+
+    // Event-type row visibility (L2, owner order 2026-08-01 «включение
+    // выключение какие именно типы событий показывать»).
+    if let Some((adds, mods, cxls, execs)) = l2_events {
+        row_y += ROW_GAP - 6.0;
+        caption(ctx, tt, left, row_y, "Event types");
+        row_y += CAPTION_H;
+        modal_btn(ctx, coord, &layer_id, tt, "evt:add", left, row_y, 68.0, "Add", adds);
+        modal_btn(ctx, coord, &layer_id, tt, "evt:mod", left + 74.0, row_y, 68.0, "Modify", mods);
+        modal_btn(ctx, coord, &layer_id, tt, "evt:cxl", left + 148.0, row_y, 68.0, "Cancel", cxls);
+        modal_btn(ctx, coord, &layer_id, tt, "evt:exe", left + 222.0, row_y, 68.0, "Execute", execs);
         row_y += BTN_H;
     }
 

@@ -475,13 +475,21 @@ impl TradingPanel for BigTradesState {
             width: f32,
         }
         let mut cols: Vec<ColDef> = Vec::with_capacity(6);
-        // Aggregated mode: the venue tag leads the merged column.
-        if self.agg_mode                    { cols.push(ColDef { label: "EXCH",     width: 44.0 }); }
         if self.column_config.show_time     { cols.push(ColDef { label: "TIME",     width: 60.0 }); }
         if self.column_config.show_side     { cols.push(ColDef { label: "SIDE",     width: 36.0 }); }
         if self.column_config.show_price    { cols.push(ColDef { label: "PRICE",    width: 80.0 }); }
         if self.column_config.show_size     { cols.push(ColDef { label: "SIZE",     width: 70.0 }); }
-        if self.column_config.show_notional { cols.push(ColDef { label: "NOTIONAL", width: 0.0  }); }
+        if self.column_config.show_notional {
+            cols.push(ColDef {
+                label: "NOTIONAL",
+                width: if self.agg_mode { 76.0 } else { 0.0 },
+            });
+        }
+        // Aggregated mode: EXCHANGE closes the row — full source identity
+        // "EXCHANGE:AT" per print (owner order 2026-08-01 «в последней
+        // колонке нужно писать EXCHANGE и описать откуда и какой аккаунт
+        // тайп дал событие»).
+        if self.agg_mode                    { cols.push(ColDef { label: "EXCHANGE", width: 0.0 }); }
 
         // Compute x positions for each column.
         // The last column stretches to fill remaining space.
@@ -579,18 +587,6 @@ impl TradingPanel for BigTradesState {
             // Track which visible column index maps to which data field.
             let mut col_idx = 0usize;
 
-            if self.agg_mode {
-                // Short venue tag "BI:S" — muted, print data stays primary.
-                let tag = trade
-                    .venue
-                    .map(|v| self.multi.venue_tag(v as usize))
-                    .unwrap_or_default();
-                ctx.set_fill_color(&theme.text_muted);
-                ctx.fill_text(&tag, col_xs[col_idx] as f64, text_y);
-                ctx.set_fill_color(&theme.text_primary);
-                col_idx += 1;
-            }
-
             if self.column_config.show_time {
                 let secs = (trade.timestamp / 1000) % 86400;
                 let hh = secs / 3600;
@@ -627,13 +623,30 @@ impl TradingPanel for BigTradesState {
             if self.column_config.show_notional {
                 let notional_str = format!("{:.2}", trade.price * trade.quantity);
                 ctx.fill_text(&notional_str, col_xs[col_idx] as f64, text_y);
+                col_idx += 1;
+            }
+
+            if self.agg_mode {
+                // Full source identity "EXCHANGE:AT" — muted so the print
+                // data stays primary.
+                let label = trade
+                    .venue
+                    .and_then(|v| self.multi.entries.get(v as usize))
+                    .map(|e| super::multi_dom::col_label(e))
+                    .unwrap_or_default();
+                ctx.set_fill_color(&theme.text_muted);
+                ctx.fill_text(&label, col_xs[col_idx] as f64, text_y);
+                ctx.set_fill_color(&theme.text_primary);
             }
 
             ctx.set_fill_color(&theme.separator);
             ctx.fill_rect(x as f64, (row_y + BT_ROW_HEIGHT - 1.0) as f64, w as f64, 1.0);
         }
 
-        if !self.symbol.is_empty() {
+        // Symbol badge — suppressed in Aggregated mode (the EXCHANGE
+        // header owns the right edge; the title bar already names the
+        // symbol).
+        if !self.symbol.is_empty() && !self.agg_mode {
             ctx.set_fill_color(&theme.text_muted);
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Right);

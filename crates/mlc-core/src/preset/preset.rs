@@ -219,6 +219,15 @@ pub enum PersistedFreeItemKind {
         show_imbalance: bool,
         #[serde(default = "default_imb_window_min")]
         imb_window_min: u8,
+        /// Per-event-type row visibility (owner 2026-08-01).
+        #[serde(default = "default_true")]
+        show_adds: bool,
+        #[serde(default = "default_true")]
+        show_mods: bool,
+        #[serde(default = "default_true")]
+        show_cxls: bool,
+        #[serde(default = "default_true")]
+        show_execs: bool,
     },
     TradeTape {
         #[serde(default)]

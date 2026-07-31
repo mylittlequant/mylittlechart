@@ -4065,6 +4065,18 @@ impl ChartApp {
                                 .copied()
                                 .unwrap_or(WINDOWS[0]);
                             persist = true;
+                        } else if rest == "evt:add" {
+                            state.show_adds = !state.show_adds;
+                            persist = true;
+                        } else if rest == "evt:mod" {
+                            state.show_mods = !state.show_mods;
+                            persist = true;
+                        } else if rest == "evt:cxl" {
+                            state.show_cxls = !state.show_cxls;
+                            persist = true;
+                        } else if rest == "evt:exe" {
+                            state.show_execs = !state.show_execs;
+                            persist = true;
                         }
                         self.sidebar_data_dirty = true;
                     }

@@ -8195,6 +8195,10 @@ impl ChartApp {
                                 multi_entries: state.multi.entries.clone(),
                                 show_imbalance: state.show_imbalance,
                                 imb_window_min: state.imb_window_min,
+                                show_adds: state.show_adds,
+                                show_mods: state.show_mods,
+                                show_cxls: state.show_cxls,
+                                show_execs: state.show_execs,
                             }
                         }
                         Panel::TradeTape(id) => {

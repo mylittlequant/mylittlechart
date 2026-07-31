@@ -173,6 +173,14 @@ pub struct L2TapeState {
     /// `(qty, arrival ts_ms)`. A Cancel of the same level within the
     /// spoof window marks the event + records a [`SpoofAlert`].
     pub last_big_adds: HashMap<(Option<u8>, i64), (f64, i64)>,
+
+    /// Per-event-type visibility toggles (owner order 2026-08-01
+    /// «включение выключение какие именно типы событий показывать»).
+    /// Rows only — the lifecycle footer keeps counting every type.
+    pub show_adds: bool,
+    pub show_mods: bool,
+    pub show_cxls: bool,
+    pub show_execs: bool,
 }
 
 /// Spoofing alert data
@@ -506,7 +514,7 @@ impl TradingPanel for L2TapeState {
         // book filling or draining over the modal-config window.
         if self.show_imbalance {
             let win_cutoff = now_ms as i64 - self.imb_window_min.max(1) as i64 * 60_000;
-            let (add_vol, cxl_vol) = self.imb_add_cancel(None, win_cutoff);
+            let (add_vol, mod_vol, cxl_vol) = self.imb_lifecycle(None, win_cutoff);
             self.draw_imbalance_footer(
                 ctx,
                 x,
@@ -514,6 +522,7 @@ impl TradingPanel for L2TapeState {
                 w,
                 theme,
                 add_vol,
+                mod_vol,
                 cxl_vol,
                 true,
             );
@@ -560,10 +569,14 @@ impl TradingPanel for L2TapeState {
 }
 
 impl L2TapeState {
-    /// Add/Cancel volume over the imbalance window for one venue group
-    /// (`None` = the single feed).
-    fn imb_add_cancel(&self, venue: Option<u8>, win_cutoff: i64) -> (f64, f64) {
-        let (mut add, mut cxl) = (0.0_f64, 0.0_f64);
+    /// Order-lifecycle volumes over the imbalance window for one venue
+    /// group (`None` = the single feed): `(added, modified, cancelled)`.
+    /// This footer is NOT the Trade Tape's buy/sell imbalance — L2 is an
+    /// order-event stream, so its footer reads book lifecycle (owner
+    /// order 2026-08-01 «нужно что-то ещё что показывает созданные
+    /// ордера, изменённые, отменённые»).
+    fn imb_lifecycle(&self, venue: Option<u8>, win_cutoff: i64) -> (f64, f64, f64) {
+        let (mut add, mut mdf, mut cxl) = (0.0_f64, 0.0_f64, 0.0_f64);
         for e in self.events.iter().rev() {
             if e.timestamp < win_cutoff {
                 break;
@@ -573,16 +586,17 @@ impl L2TapeState {
             }
             match e.event_type {
                 L2EventType::Add => add += e.quantity,
+                L2EventType::Modify => mdf += e.quantity,
                 L2EventType::Cancel => cxl += e.quantity,
                 _ => {}
             }
         }
-        (add, cxl)
+        (add, mdf, cxl)
     }
 
-    /// One imbalance strip segment: FILL share (adds vs cancels) — is the
-    /// book filling (buy token) or draining (sell token). Same footer
-    /// grammar as the Trade Tape's buy/sell strip.
+    /// One lifecycle strip segment: FILL share bar (adds vs cancels — is
+    /// the book filling or draining) + `A/M/C` volume readout when the
+    /// segment is wide enough.
     #[allow(clippy::too_many_arguments)]
     fn draw_imbalance_footer(
         &self,
@@ -592,6 +606,7 @@ impl L2TapeState {
         w: f32,
         theme: &crate::panel_theme::PanelTheme,
         add_vol: f64,
+        mod_vol: f64,
         cxl_vol: f64,
         with_label: bool,
     ) {
@@ -627,8 +642,18 @@ impl L2TapeState {
         ctx.set_font("9px monospace");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
+        let text = if bar_w >= 190.0 {
+            format!(
+                "A {}  M {}  C {}",
+                abbreviate_qty(add_vol),
+                abbreviate_qty(mod_vol),
+                abbreviate_qty(cxl_vol),
+            )
+        } else {
+            format!("A{:.0}%", share * 100.0)
+        };
         ctx.fill_text(
-            &format!("A{:.0}%", share * 100.0),
+            &text,
             (bar_x + bar_w * 0.5) as f64,
             (y + L2_FOOTER_HEIGHT * 0.5) as f64,
         );
@@ -663,7 +688,12 @@ impl L2TapeState {
         }
         let col_w = w / n as f32;
         let narrow = col_w < 72.0;
-        let show_type = col_w >= 120.0;
+        // TIME first when it fits (owner defect 2026-08-01 «в л2 почему-то
+        // не пишут время» — the multi columns dropped the single panel's
+        // TIME column entirely); TYPE next when wider still.
+        let show_time = self.column_config.show_time && col_w >= 110.0;
+        let show_type = self.column_config.show_type
+            && col_w >= if show_time { 160.0 } else { 120.0 };
 
         ctx.set_fill_color(&theme.header_bg);
         ctx.fill_rect(x as f64, y as f64, w as f64, L2_HEADER_HEIGHT as f64);
@@ -722,7 +752,7 @@ impl L2TapeState {
             let cnt = self
                 .events
                 .iter()
-                .filter(|e| e.venue == Some(i as u8))
+                .filter(|e| e.venue == Some(i as u8) && self.event_visible(&e.event_type))
                 .count();
             let skip_i = skip.min(cnt.saturating_sub(max_rows.min(cnt)));
             let rows = self
@@ -730,7 +760,9 @@ impl L2TapeState {
                 .iter()
                 .enumerate()
                 .rev()
-                .filter(|(_, e)| e.venue == Some(i as u8))
+                .filter(|(_, e)| {
+                    e.venue == Some(i as u8) && self.event_visible(&e.event_type)
+                })
                 .skip(skip_i)
                 .take(max_rows);
             for (row_idx, (deque_idx, event)) in rows.enumerate() {
@@ -767,6 +799,18 @@ impl L2TapeState {
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.set_text_align(TextAlign::Left);
                 let mut tx = cx0 + 3.0;
+                if show_time {
+                    let total_secs = (event.timestamp / 1000) % 86400;
+                    let time_str = format!(
+                        "{:02}:{:02}:{:02}",
+                        total_secs / 3600,
+                        (total_secs % 3600) / 60,
+                        total_secs % 60
+                    );
+                    ctx.set_fill_color(&theme.text_muted);
+                    ctx.fill_text(&time_str, tx as f64, row_mid_y);
+                    tx += 50.0;
+                }
                 if show_type {
                     let type_color = self.event_color(event, theme);
                     ctx.set_fill_color(&type_color);
@@ -797,7 +841,7 @@ impl L2TapeState {
             let win_cutoff = now_ms as i64 - self.imb_window_min.max(1) as i64 * 60_000;
             let fy = y + h - L2_FOOTER_HEIGHT;
             for i in 0..n {
-                let (add_vol, cxl_vol) = self.imb_add_cancel(Some(i as u8), win_cutoff);
+                let (add_vol, mod_vol, cxl_vol) = self.imb_lifecycle(Some(i as u8), win_cutoff);
                 self.draw_imbalance_footer(
                     ctx,
                     x + col_w * i as f32,
@@ -805,6 +849,7 @@ impl L2TapeState {
                     col_w,
                     theme,
                     add_vol,
+                    mod_vol,
                     cxl_vol,
                     i == 0,
                 );
@@ -850,6 +895,20 @@ impl L2TapeState {
             show_imbalance: true,
             imb_window_min: 2,
             last_big_adds: HashMap::new(),
+            show_adds: true,
+            show_mods: true,
+            show_cxls: true,
+            show_execs: true,
+        }
+    }
+
+    /// Row visibility per event type (modal "Event types" chips).
+    pub fn event_visible(&self, et: &L2EventType) -> bool {
+        match et {
+            L2EventType::Add => self.show_adds,
+            L2EventType::Modify => self.show_mods,
+            L2EventType::Cancel => self.show_cxls,
+            L2EventType::Execute => self.show_execs,
         }
     }
 
@@ -991,10 +1050,13 @@ impl L2TapeState {
             .unwrap_or_default()
             .as_millis() as i64;
         for i in 0..self.multi.entries.len() {
-            // ~4 Hz per venue: the snapshot diff emits O(book) events per
-            // pass — running it every frame turns band shifts into event
-            // tsunamis that starve the other columns.
-            if now_ms - self.multi.book_last_diff_ms[i] < 250 {
+            // The raw delta drain is the primary feed (owner defect
+            // 2026-08-01 «лента стала будто медленнее» — the old 250ms
+            // snapshot-diff throttle was batching the stream). While a
+            // venue's delta stream is live, the snapshot diff would only
+            // double-emit — skip it. It remains as the RESYNC fallback
+            // for venues whose deltas never reach the drain.
+            if now_ms - self.multi.delta_fed_ms[i] < 1500 {
                 continue;
             }
             let Some(handle) = self.multi.book_handles[i].clone() else { continue };
@@ -1003,6 +1065,7 @@ impl L2TapeState {
             if current_uid == self.multi.book_uids[i] {
                 continue; // this venue's book has not advanced
             }
+            let first_seed = self.multi.book_uids[i].is_none();
             self.multi.book_uids[i] = current_uid;
             self.multi.book_last_diff_ms[i] = now_ms;
             let bids: Vec<(f64, f64)> = guard.top_bids(1000)
@@ -1014,6 +1077,26 @@ impl L2TapeState {
                 .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
                 .collect();
             drop(guard);
+
+            // First contact with this venue's book: seed the baseline
+            // SILENTLY (no events) — diffing a full snapshot against an
+            // empty book would fabricate an Add for every level.
+            if first_seed && self.multi.prev_books[i].is_empty() {
+                let book = &mut self.multi.prev_books[i];
+                for &(price, qty) in &bids {
+                    if qty > 0.0 {
+                        let tick = (price / self.tick_size).round() as i64;
+                        book.entry(tick).or_insert((0.0, 0.0)).0 = qty;
+                    }
+                }
+                for &(price, qty) in &asks {
+                    if qty > 0.0 {
+                        let tick = (price / self.tick_size).round() as i64;
+                        book.entry(tick).or_insert((0.0, 0.0)).1 = qty;
+                    }
+                }
+                continue;
+            }
 
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1028,6 +1111,77 @@ impl L2TapeState {
         }
     }
 
+    /// Apply one venue's WS delta event (M/L2 primary feed, 2026-08-01):
+    /// per-event classification against that venue's OWN book with the
+    /// original wire timestamp — the same firehose grammar the single
+    /// panel gets from the drain, so the multi columns stream at event
+    /// rate instead of batched snapshot diffs.
+    pub fn apply_ob_delta_venue(
+        &mut self,
+        venue: usize,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        ts_ms: i64,
+    ) {
+        if !self.multi_mode {
+            return;
+        }
+        self.multi.sync_len();
+        if venue >= self.multi.entries.len() {
+            return;
+        }
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.multi.delta_fed_ms[venue] = now_ms;
+
+        // First delta before any baseline: seed the venue book silently
+        // from its tracker so the delta classifies against real state.
+        if self.multi.prev_books[venue].is_empty() {
+            if let Some(handle) = self.multi.book_handles[venue].clone() {
+                let guard = handle.blocking_read();
+                let uid = guard.last_update_id();
+                let bids: Vec<(f64, f64)> = guard.top_bids(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                let asks: Vec<(f64, f64)> = guard.top_asks(1000)
+                    .iter()
+                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                    .collect();
+                drop(guard);
+                self.multi.book_uids[venue] = uid;
+                let book = &mut self.multi.prev_books[venue];
+                for &(price, qty) in &bids {
+                    if qty > 0.0 {
+                        let tick = (price / self.tick_size).round() as i64;
+                        book.entry(tick).or_insert((0.0, 0.0)).0 = qty;
+                    }
+                }
+                for &(price, qty) in &asks {
+                    if qty > 0.0 {
+                        let tick = (price / self.tick_size).round() as i64;
+                        book.entry(tick).or_insert((0.0, 0.0)).1 = qty;
+                    }
+                }
+                return;
+            }
+        }
+
+        if delta_bids.is_empty() && delta_asks.is_empty() {
+            return;
+        }
+        // Some venues' delta frames carry no wire timestamp (ts 0) —
+        // stamp arrival time instead of rendering 00:00:00 rows that
+        // age-prune instantly (stand defect 2026-08-01).
+        let ts = if ts_ms > 0 { ts_ms } else { now_ms };
+        let mut book = std::mem::take(&mut self.multi.prev_books[venue]);
+        self.classify_deltas_into(&mut book, delta_bids, delta_asks, ts, Some(venue as u8));
+        self.multi.prev_books[venue] = book;
+        self.prune_events_retention();
+    }
+
     /// Get visible events as `(deque_index, &L2Event)`, most recent first.
     ///
     /// Applies filters and `scroll_offset`.  When `auto_scroll` is true the
@@ -1040,6 +1194,9 @@ impl L2TapeState {
             .enumerate()
             .rev()
             .filter(|(_, e)| {
+                if !self.event_visible(&e.event_type) {
+                    return false;
+                }
                 if let Some(ref ft) = self.filter_type {
                     if &e.event_type != ft {
                         return false;
@@ -1623,10 +1780,31 @@ impl L2TapeState {
         delta_asks: &[(f64, f64)],
         timestamp: i64,
     ) {
+        // The book is swapped out for the pass — the classify body needs
+        // `&mut self` for `push_event` (same dance the venue paths do).
+        let mut book = std::mem::take(&mut self.previous_book);
+        self.classify_deltas_into(&mut book, delta_bids, delta_asks, timestamp, None);
+        self.previous_book = book;
+
+        // Time-based retention (venue-keep-min aware).
+        self.prune_events_retention();
+    }
+
+    /// Classify one delta batch against an EXTERNAL book map — the single
+    /// `previous_book` or one multi-roster venue's own (M/L2 delta feed).
+    /// Pushed events carry `venue`.
+    fn classify_deltas_into(
+        &mut self,
+        book: &mut HashMap<i64, (f64, f64)>,
+        delta_bids: &[(f64, f64)],
+        delta_asks: &[(f64, f64)],
+        timestamp: i64,
+        venue: Option<u8>,
+    ) {
         // Incremental: classify each delta level and push events.
         for &(price, qty) in delta_bids {
             let tick = self.price_to_tick(price);
-            let prev_qty = self.previous_book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
+            let prev_qty = book.get(&tick).map(|(b, _)| *b).unwrap_or(0.0);
 
             let event_type = if qty == 0.0 && prev_qty > 0.0 {
                 L2EventType::Cancel
@@ -1635,8 +1813,8 @@ impl L2TapeState {
             } else if qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
-                // Unchanged — update previous_book and skip.
-                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                // Unchanged — update the book and skip.
+                let entry = book.entry(tick).or_insert((0.0, 0.0));
                 entry.0 = qty;
                 continue;
             };
@@ -1644,7 +1822,7 @@ impl L2TapeState {
             if let Some(min_q) = self.min_quantity {
                 let relevant = if qty > 0.0 { qty } else { prev_qty };
                 if relevant < min_q {
-                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    let entry = book.entry(tick).or_insert((0.0, 0.0));
                     entry.0 = qty;
                     continue;
                 }
@@ -1658,17 +1836,17 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
-                venue: None,
+                venue,
                 spoof: false,
             });
 
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            let entry = book.entry(tick).or_insert((0.0, 0.0));
             entry.0 = qty;
         }
 
         for &(price, qty) in delta_asks {
             let tick = self.price_to_tick(price);
-            let prev_qty = self.previous_book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
+            let prev_qty = book.get(&tick).map(|(_, a)| *a).unwrap_or(0.0);
 
             let event_type = if qty == 0.0 && prev_qty > 0.0 {
                 L2EventType::Cancel
@@ -1677,7 +1855,7 @@ impl L2TapeState {
             } else if qty > 0.0 && (qty - prev_qty).abs() > f64::EPSILON {
                 L2EventType::Modify
             } else {
-                let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                let entry = book.entry(tick).or_insert((0.0, 0.0));
                 entry.1 = qty;
                 continue;
             };
@@ -1685,7 +1863,7 @@ impl L2TapeState {
             if let Some(min_q) = self.min_quantity {
                 let relevant = if qty > 0.0 { qty } else { prev_qty };
                 if relevant < min_q {
-                    let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+                    let entry = book.entry(tick).or_insert((0.0, 0.0));
                     entry.1 = qty;
                     continue;
                 }
@@ -1699,16 +1877,13 @@ impl L2TapeState {
                 quantity: if qty > 0.0 { qty } else { prev_qty },
                 order_count: None,
                 order_id: None,
-                venue: None,
+                venue,
                 spoof: false,
             });
 
-            let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
+            let entry = book.entry(tick).or_insert((0.0, 0.0));
             entry.1 = qty;
         }
-
-        // Time-based retention (venue-keep-min aware).
-        self.prune_events_retention();
     }
 
 }

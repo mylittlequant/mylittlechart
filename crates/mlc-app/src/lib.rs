@@ -8791,6 +8791,7 @@ impl ChartApp {
                             Some((s.show_imbalance, s.imb_window_min)),
                             Some(s.flag_notional),
                             Some(s.filter_min_qty),
+                            None,
                         );
                     }
                 }
@@ -8813,6 +8814,7 @@ impl ChartApp {
                             Some((s.show_imbalance, s.imb_window_min)),
                             None,
                             None,
+                            Some((s.show_adds, s.show_mods, s.show_cxls, s.show_execs)),
                         );
                     }
                 }
@@ -8840,6 +8842,7 @@ impl ChartApp {
                                 if s.agg_mode { 2 } else if s.multi_mode { 1 } else { 0 },
                                 true,
                             )),
+                            None,
                             None,
                             None,
                             None,

@@ -481,12 +481,16 @@ impl TradeTapeState {
 
     // ─── alpha scaling ────────────────────────────────────────────────────
 
-    /// Row background alpha: `sqrt(qty / max_qty).clamp(0.15, 1.0)`.
+    /// Row background alpha: `(qty / max_qty).clamp(0.08, 1.0)` — LINEAR
+    /// (owner order 2026-08-01 «все трейды сильно непрозрачные»): the old
+    /// sqrt curve lifted mid-size prints toward opaque so the whole tape
+    /// read saturated. Small prints now sit as faint tints; only genuine
+    /// size saturates.
     fn row_alpha(&self, qty: f64) -> f64 {
         if self.max_qty_seen <= 0.0 {
-            return 0.15;
+            return 0.08;
         }
-        (qty / self.max_qty_seen).sqrt().clamp(0.15, 1.0)
+        (qty / self.max_qty_seen).clamp(0.08, 1.0)
     }
 
     // ─── visible rows ─────────────────────────────────────────────────────
@@ -695,13 +699,21 @@ impl TradingPanel for TradeTapeState {
             let notional = entry.price * entry.quantity;
             let flagged = self.flag_notional.map_or(false, |t| notional >= t);
             let alpha = if flagged { 0.85 } else { self.row_alpha(entry.quantity) };
-            let t_mix = if skin == TapeSkin::Classic
-                || flat_bars
-                || self.max_qty_seen <= 0.0
-            {
-                0.0
-            } else {
+            // Brightness scales with size in EVERY skin (owner order
+            // 2026-08-01 «увеличивать яркость и прокрашенность в
+            // зависимости от объёма») — Classic at half strength, Ramp
+            // full; flat-texture themes stay flat.
+            let ratio = if self.max_qty_seen > 0.0 {
                 (entry.quantity / self.max_qty_seen).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let t_mix = if flat_bars {
+                0.0
+            } else if skin == TapeSkin::Classic {
+                ratio * 0.5
+            } else {
+                ratio
             };
             let (base, bright) = if entry.is_buy {
                 (&theme.buy, &theme.buy_bright)
@@ -870,6 +882,9 @@ impl TradeTapeState {
         }
         let col_w = w / n as f32;
         let narrow = col_w < 72.0;
+        // TIME when the column is wide enough (owner ask 2026-08-01 «есть
+        // ли там линия времени?» — the multi columns dropped it).
+        let show_time = self.column_config.show_time && col_w >= 120.0;
 
         // ── Unifying header: one tag per venue column (Multi-DOM grammar:
         // full "EXCHANGE:AT", short "BI:F" when narrow; muted = dead feed).
@@ -939,10 +954,19 @@ impl TradeTapeState {
                     .flag_notional
                     .map_or(false, |t| entry.price * entry.quantity >= t);
                 let alpha = if flagged { 0.85 } else { self.row_alpha(entry.quantity) };
-                let t_mix = if skin == TapeSkin::Classic || flat_bars || self.max_qty_seen <= 0.0 {
-                    0.0
-                } else {
+                // Same size→brightness ramp as the single tape (Classic
+                // half strength) — see the single render's comment.
+                let ratio = if self.max_qty_seen > 0.0 {
                     (entry.quantity / self.max_qty_seen).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let t_mix = if flat_bars {
+                    0.0
+                } else if skin == TapeSkin::Classic {
+                    ratio * 0.5
+                } else {
+                    ratio
                 };
                 let (base, bright) = if entry.is_buy {
                     (&theme.buy, &theme.buy_bright)
@@ -958,6 +982,21 @@ impl TradeTapeState {
                 }
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.set_text_align(TextAlign::Left);
+                let mut tx = cx0 + 3.0;
+                if show_time {
+                    // Compact HH:MM:SS (no millis) — the multi column is
+                    // too narrow for the single tape's 12-char format.
+                    let secs = (entry.timestamp / 1000) % 86_400;
+                    let time_str = format!(
+                        "{:02}:{:02}:{:02}",
+                        secs / 3600,
+                        (secs % 3600) / 60,
+                        secs % 60
+                    );
+                    ctx.set_fill_color(&theme.text_muted);
+                    ctx.fill_text(&time_str, tx as f64, mid_y);
+                    tx += 54.0;
+                }
                 ctx.set_fill_color(if flagged {
                     &theme.text_primary
                 } else if entry.is_buy {
@@ -967,7 +1006,7 @@ impl TradeTapeState {
                 });
                 ctx.fill_text(
                     &Self::format_price(entry.price, tick_size),
-                    (cx0 + 3.0) as f64,
+                    tx as f64,
                     mid_y,
                 );
                 ctx.set_text_align(TextAlign::Right);

@@ -37,10 +37,15 @@ pub struct MultiTapeState {
     /// Per-venue `last_update_id` from the most recent tracker read (L2) —
     /// skips the diff when a venue's book has not advanced.
     pub book_uids: Vec<Option<u64>>,
-    /// Per-venue last snapshot-diff wall-clock (ms) — throttles the L2
-    /// diff to ~4 Hz per venue so one venue's burst can't flood the
-    /// shared ring (owner defect 2026-08-01: BINANCE column starved).
+    /// Per-venue last snapshot-diff wall-clock (ms) — bookkeeping for the
+    /// L2 snapshot-diff RESYNC fallback (the primary feed is the raw
+    /// delta drain since 2026-08-01, owner defect «лента стала будто
+    /// медленнее» — the 250ms diff throttle was batching the stream).
     pub book_last_diff_ms: Vec<i64>,
+    /// Per-venue last raw-delta arrival (ms). While a venue's delta
+    /// stream is live the snapshot-diff fallback skips it — diffing on
+    /// top of per-event deltas would double-emit.
+    pub delta_fed_ms: Vec<i64>,
     /// Last dead-venue reseed attempt (ms) — throttles the app layer's
     /// re-subscribe of venues whose handle landed but never delivered
     /// (the Multi-DOM empty-column disease: subscribe raced the venue
@@ -89,6 +94,7 @@ impl MultiTapeState {
         self.prev_books.push(std::collections::HashMap::new());
         self.book_uids.push(None);
         self.book_last_diff_ms.push(0);
+        self.delta_fed_ms.push(0);
     }
 
     /// Remove a venue and its parallel slots by entry.
@@ -103,6 +109,7 @@ impl MultiTapeState {
             if i < self.prev_books.len() { self.prev_books.remove(i); }
             if i < self.book_uids.len() { self.book_uids.remove(i); }
             if i < self.book_last_diff_ms.len() { self.book_last_diff_ms.remove(i); }
+            if i < self.delta_fed_ms.len() { self.delta_fed_ms.remove(i); }
         }
     }
 
@@ -117,6 +124,7 @@ impl MultiTapeState {
         for b in &mut self.prev_books { b.clear(); }
         for u in &mut self.book_uids { *u = None; }
         for d in &mut self.book_last_diff_ms { *d = 0; }
+        for d in &mut self.delta_fed_ms { *d = 0; }
         self.last_reseed_ms = 0;
         self.reseed_backoff_ms = 0;
     }
@@ -133,6 +141,7 @@ impl MultiTapeState {
         }
         if self.book_uids.len() != n { self.book_uids.resize(n, None); }
         if self.book_last_diff_ms.len() != n { self.book_last_diff_ms.resize(n, 0); }
+        if self.delta_fed_ms.len() != n { self.delta_fed_ms.resize(n, 0); }
     }
 
     /// Short venue tag for the row column — `"BI:F"` (same format the
