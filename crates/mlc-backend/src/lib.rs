@@ -66,7 +66,7 @@ use mlc_core::Bar;
 use crate::indicator::IndicatorManager;
 use mlc_backend_data_bridge::{
     DataBridge, LiveUpdate, LiveUpdateReceiver, OrderbookSource,
-    SharedTradeSeries, SharedOrderBookTracker,
+    SharedTradeSeries, SharedOrderBookTracker, SharedLiquidationSeries,
 };
 use crate::trading::TradingManager;
 use crate::watchlist::WatchlistManager;
@@ -2480,6 +2480,11 @@ impl BackendCore {
         self.bridge.unsubscribe_orderbook(exchange_id, symbol, account_type);
     }
 
+    /// Remove one consumer interest in the liquidation stream for an instrument.
+    pub fn unsubscribe_liquidations(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_liquidations(exchange_id, symbol, account_type);
+    }
+
     /// Unsubscribe a single mini-ticker symbol (e.g. removed from watchlist).
     pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.bridge.unsubscribe_mini_ticker(exchange_id, symbol, account_type);
@@ -2705,6 +2710,19 @@ impl BackendCore {
         account_type: AccountType,
     ) -> Option<SharedOrderBookTracker> {
         self.bridge.subscribe_orderbook(exchange_id, symbol, account_type)
+    }
+
+    /// Subscribe to the liquidation stream for an instrument, returning the
+    /// shared `Series<LiquidationPoint>` handle for direct tape reads
+    /// (plan D, 2026-08-01). Bare pass-through — no backfill ladder
+    /// (that machinery is trade/candle-fold specific).
+    pub fn subscribe_liquidations(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<SharedLiquidationSeries> {
+        self.bridge.subscribe_liquidations(exchange_id, symbol, account_type)
     }
 
     /// Narrow escape hatch to the raw `DataBridge` for the handful of

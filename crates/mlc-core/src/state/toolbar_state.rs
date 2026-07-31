@@ -1023,6 +1023,7 @@ impl ChartToolbarState {
             "slot_tape"       => vec![ChartOutEvent::ToggleSlot(2)],
             "slot_l2"         => vec![ChartOutEvent::ToggleSlot(3)],
             "slot_big_trades" => vec![ChartOutEvent::ToggleSlot(4)],
+            "slot_liq"        => vec![ChartOutEvent::ToggleSlot(5)],
             "trading" => vec![ChartOutEvent::ToggleTradingPanel],
             "positions" => vec![ChartOutEvent::TogglePositions],
             "theme_settings" => vec![ChartOutEvent::ToggleThemeSettings],

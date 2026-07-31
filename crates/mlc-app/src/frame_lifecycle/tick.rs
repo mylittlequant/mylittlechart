@@ -490,6 +490,10 @@ impl ChartApp {
                 state.prune_spoof_memory();
             }
         }
+        // LIQ tape — all-venue merged pull (plan D, 2026-08-01).
+        for state in self.panels_store.liq_tape.values_mut() {
+            state.tick();
+        }
 
         // Embedded center chart lifecycle (chart-in-container arc,
         // 2026-07-26): lazy birth / preset-wipe recovery / instrument-TF

@@ -1648,7 +1648,7 @@ impl ChartApp {
                                     Panel::Dom(_) | Panel::Footprint(_)
                                     | Panel::VolumeProfile(_) | Panel::LiquidityHeatmap(_)
                                     | Panel::BigTrades(_) | Panel::L2Tape(_)
-                                    | Panel::TradeTape(_)
+                                    | Panel::TradeTape(_) | Panel::LiqTape(_)
                                 );
                                 if is_market_data {
                                     let member = SyncMemberId::Panel(item.panel_id().0);
@@ -2090,6 +2090,7 @@ impl ChartApp {
                                         | Panel::LiquidityHeatmap(_)
                                         | Panel::BigTrades(_)
                                         | Panel::L2Tape(_)
+                                        | Panel::LiqTape(_)
                                         | Panel::TradeTape(_) => None,
                                         Panel::OrderEntry(id) => self.panels_store.order_entry.get(id).map(|s| s.source.clone()),
                                         Panel::TradingContainer(id) => self.panels_store.trading_container.get(id).map(|s| s.source.clone()),
@@ -2466,7 +2467,7 @@ impl ChartApp {
                                         Panel::Dom(_) | Panel::Footprint(_)
                                         | Panel::VolumeProfile(_) | Panel::LiquidityHeatmap(_)
                                         | Panel::BigTrades(_) | Panel::L2Tape(_)
-                                        | Panel::TradeTape(_)
+                                        | Panel::TradeTape(_) | Panel::LiqTape(_)
                                     );
                                     if is_market_data {
                                         let member = SyncMemberId::Panel(item.panel_id().0);
@@ -3059,7 +3060,7 @@ impl ChartApp {
                 let section_item = {
                     use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
                     let rp = self.sidebar_state.right_panel;
-                    if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                    if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades | RSP::SlotLiq) {
                         self.section_panel_for(rp)
                     } else {
                         None
@@ -3951,7 +3952,7 @@ impl ChartApp {
                 }
                 return;
             }
-            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades | RSP::SlotLiq) {
                 self.section_panel_for(rp)
             } else {
                 None
@@ -4140,6 +4141,36 @@ impl ChartApp {
                             state.skin = Some(cur.next());
                         }
                         self.sidebar_data_dirty = true;
+                    }
+                    return;
+                }
+                Some(mlc_core::state::Panel::LiqTape(pid)) => {
+                    let mut persist = false;
+                    if let Some(state) = self.panels_store.liq_tape.get_mut(pid) {
+                        if rest == "bt_size" {
+                            const SIZES: &[f64] = &[0.0, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0];
+                            let cur = state.size_threshold;
+                            state.size_threshold = SIZES.iter()
+                                .find(|&&s| s > cur + f64::EPSILON)
+                                .copied()
+                                .unwrap_or(0.0);
+                            persist = true;
+                        } else if rest == "bt_notional" {
+                            const NOTIONALS: &[f64] = &[10_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0];
+                            state.notional_threshold = match state.notional_threshold {
+                                None => Some(NOTIONALS[0]),
+                                Some(cur) => NOTIONALS.iter().find(|&&n| n > cur * 1.001).copied(),
+                            };
+                            persist = true;
+                        } else if rest == "skin" {
+                            use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
+                            let cur = state.skin.unwrap_or(TapeSkin::Classic);
+                            state.skin = Some(cur.next());
+                        }
+                        self.sidebar_data_dirty = true;
+                    }
+                    if persist {
+                        self.autosave_snapshot();
                     }
                     return;
                 }
@@ -6116,6 +6147,20 @@ impl ChartApp {
                     state.account_type = account_type_str.clone();
                 }
                 Some(mlc_core::state::Panel::BigTrades(pid))
+            }
+            "liq_tape" => {
+                let pid = self.panels_store.create_liq_tape();
+                if let Some(state) = self.panels_store.liq_tape.get_mut(&pid) {
+                    state.symbol = symbol.clone();
+                    state.exchange = exchange_str.clone();
+                    state.account_type = account_type_str.clone();
+                    if !symbol.is_empty() {
+                        // All-venue Futures roster; the feed self-heal
+                        // provisions the liq-series handles from it.
+                        state.ensure_roster(&symbol);
+                    }
+                }
+                Some(mlc_core::state::Panel::LiqTape(pid))
             }
             "l2_tape" => {
                 let pid = self.panels_store.create_l2_tape();

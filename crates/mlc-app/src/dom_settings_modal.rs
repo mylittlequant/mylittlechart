@@ -356,7 +356,9 @@ pub fn render_section_settings_modal(
     pos: Option<(f64, f64)>,
     title: &str,
     columns: &[(&str, bool)],
-    bt_thresholds: Option<(f64, Option<f64>, bool)>,
+    // (size ≥, notional ≥, Some(big-markers-on) — `None` hides the
+    // Markers row; the LIQ tape has thresholds but no giant-marker).
+    bt_thresholds: Option<(f64, Option<f64>, Option<bool>)>,
     skin_label: Option<&str>,
     // `(mode, offers_agg)`: 0 = Single, 1 = Multi, 2 = Aggregated.
     mode: Option<(u8, bool)>,
@@ -372,7 +374,8 @@ pub fn render_section_settings_modal(
         + if mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
         + CAPTION_H
         + (BTN_H + 6.0) * col_rows as f64
-        + if bt_thresholds.is_some() { (ROW_GAP + CAPTION_H + BTN_H) * 2.0 } else { 0.0 }
+        + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
+        + if matches!(bt_thresholds, Some((_, _, Some(_)))) { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if imbalance.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if l2_events.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if big_flag.is_some() || tt_filter.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
@@ -520,16 +523,19 @@ pub fn render_section_settings_modal(
             None => "Notional: all".to_string(),
         };
         modal_btn(ctx, coord, &layer_id, tt, "bt_notional", left + 138.0, row_y, 150.0, &n_label, notional_thr.is_some());
-        row_y += BTN_H + ROW_GAP - 6.0;
-        caption(ctx, tt, left, row_y, "Markers");
-        row_y += CAPTION_H;
-        modal_btn(
-            ctx, coord, &layer_id, tt, "bt_big",
-            left, row_y, 120.0,
-            if big_markers { "Big markers: on" } else { "Big markers: off" },
-            big_markers,
-        );
         row_y += BTN_H;
+        if let Some(big_markers) = big_markers {
+            row_y += ROW_GAP - 6.0;
+            caption(ctx, tt, left, row_y, "Markers");
+            row_y += CAPTION_H;
+            modal_btn(
+                ctx, coord, &layer_id, tt, "bt_big",
+                left, row_y, 120.0,
+                if big_markers { "Big markers: on" } else { "Big markers: off" },
+                big_markers,
+            );
+            row_y += BTN_H;
+        }
     }
 
     // Tape skin cycle (Classic / Ramp — DomSkin pattern).

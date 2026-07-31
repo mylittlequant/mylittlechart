@@ -287,6 +287,7 @@ pub fn render_right_sidebar(
             | RightSidebarPanel::SlotTape
             | RightSidebarPanel::SlotL2
             | RightSidebarPanel::SlotBigTrades
+            | RightSidebarPanel::SlotLiq
     );
     let scrollbar_width: f64 = if owns_full_width { 0.0 } else { 8.0 };
     let _content_padding = 12.0;
@@ -303,6 +304,7 @@ pub fn render_right_sidebar(
             | RightSidebarPanel::SlotTape
             | RightSidebarPanel::SlotL2
             | RightSidebarPanel::SlotBigTrades
+            | RightSidebarPanel::SlotLiq
     ) {
         40.0
     } else {
@@ -345,6 +347,7 @@ pub fn render_right_sidebar(
         RightSidebarPanel::SlotTape      => ("Trade Tape",   Icon::SlotTape),
         RightSidebarPanel::SlotL2        => ("L2 Tape",      Icon::SlotL2),
         RightSidebarPanel::SlotBigTrades => ("Big Trades",   Icon::SlotBigTrades),
+        RightSidebarPanel::SlotLiq       => ("Liquidations", Icon::SlotLiq),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -384,7 +387,7 @@ pub fn render_right_sidebar(
     ctx.fill_rect(rect.x, rect.y, rect.width, header_height);
 
     // Header icon (left side, 18 × 18, centred vertically) — NOT drawn for slot or Agents panels.
-    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades | RightSidebarPanel::SlotLiq) {
         let icon_size = 18.0;
         let icon_x = rect.x + 12.0;
         let icon_y = rect.y + (header_height - icon_size) / 2.0;
@@ -392,7 +395,7 @@ pub fn render_right_sidebar(
     }
 
     // Header title — suppressed for Slot panels and Agents (toolbar buttons fill that row).
-    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades) {
+    if !matches!(panel, RightSidebarPanel::Agents | RightSidebarPanel::SlotTrading | RightSidebarPanel::SlotDom | RightSidebarPanel::SlotTape | RightSidebarPanel::SlotL2 | RightSidebarPanel::SlotBigTrades | RightSidebarPanel::SlotLiq) {
         ctx.set_font("13px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text);
         ctx.set_text_align(TextAlign::Left);
@@ -671,7 +674,8 @@ pub fn render_right_sidebar(
         | RightSidebarPanel::SlotDom
         | RightSidebarPanel::SlotTape
         | RightSidebarPanel::SlotL2
-        | RightSidebarPanel::SlotBigTrades => {
+        | RightSidebarPanel::SlotBigTrades
+        | RightSidebarPanel::SlotLiq => {
             let slot_idx = panel.slot_index().unwrap_or(0) as usize;
             content_height = render_slot_panel(
                 ctx,

@@ -10,6 +10,7 @@
 //! app layer's feed-handle self-heal (`repair_panel_feed_handles`) — the
 //! panel never dials anything itself.
 
+use super::liq_tape::SharedLiquidationSeries;
 use super::multi_dom::{col_at, col_entry, col_exchange, col_matches};
 use super::trade_tape::{SharedOrderBookTracker, SharedTradeSeries};
 
@@ -27,8 +28,12 @@ pub struct MultiTapeState {
     pub entries: Vec<String>,
     /// Per-venue trade-series handles (TT / BT), parallel to `entries`.
     pub trade_handles: Vec<Option<SharedTradeSeries>>,
-    /// Per-venue trade cursors — newest `ts_ms` already pulled.
+    /// Per-venue trade cursors — newest `ts_ms` already pulled. The LIQ
+    /// tape reuses these cursors over `liq_handles`.
     pub trade_cursors: Vec<i64>,
+    /// Per-venue liquidation-series handles (LIQ tape), parallel to
+    /// `entries` — a distinct station ring type (`LiquidationPoint`).
+    pub liq_handles: Vec<Option<SharedLiquidationSeries>>,
     /// Per-venue orderbook handles (L2), parallel to `entries`.
     pub book_handles: Vec<Option<SharedOrderBookTracker>>,
     /// Per-venue previous bucketed book `tick → (bid_qty, ask_qty)` —
@@ -90,6 +95,7 @@ impl MultiTapeState {
         self.entries.push(col_entry(&ex, &at));
         self.trade_handles.push(None);
         self.trade_cursors.push(0);
+        self.liq_handles.push(None);
         self.book_handles.push(None);
         self.prev_books.push(std::collections::HashMap::new());
         self.book_uids.push(None);
@@ -105,6 +111,7 @@ impl MultiTapeState {
             self.entries.remove(i);
             if i < self.trade_handles.len() { self.trade_handles.remove(i); }
             if i < self.trade_cursors.len() { self.trade_cursors.remove(i); }
+            if i < self.liq_handles.len() { self.liq_handles.remove(i); }
             if i < self.book_handles.len() { self.book_handles.remove(i); }
             if i < self.prev_books.len() { self.prev_books.remove(i); }
             if i < self.book_uids.len() { self.book_uids.remove(i); }
@@ -120,6 +127,7 @@ impl MultiTapeState {
         self.symbol = symbol.to_string();
         for h in &mut self.trade_handles { *h = None; }
         for c in &mut self.trade_cursors { *c = 0; }
+        for h in &mut self.liq_handles { *h = None; }
         for h in &mut self.book_handles { *h = None; }
         for b in &mut self.prev_books { b.clear(); }
         for u in &mut self.book_uids { *u = None; }
@@ -135,6 +143,7 @@ impl MultiTapeState {
         let n = self.entries.len();
         if self.trade_handles.len() != n { self.trade_handles.resize_with(n, || None); }
         if self.trade_cursors.len() != n { self.trade_cursors.resize(n, 0); }
+        if self.liq_handles.len() != n { self.liq_handles.resize_with(n, || None); }
         if self.book_handles.len() != n { self.book_handles.resize_with(n, || None); }
         if self.prev_books.len() != n {
             self.prev_books.resize_with(n, std::collections::HashMap::new);

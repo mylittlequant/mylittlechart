@@ -2130,6 +2130,8 @@ impl ChartApp {
                     Some("slot_l2".to_string())
                 } else if ps.big_trades.contains_key(&pid) {
                     Some("slot_big_trades".to_string())
+                } else if ps.liq_tape.contains_key(&pid) {
+                    Some("slot_liq".to_string())
                 } else {
                     None
                 }
@@ -6657,6 +6659,8 @@ impl ChartApp {
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                        Panel::LiqTape(id) => panels_store.liq_tape.get(id)
+                            .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                             .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                         Panel::TradingContainer(id) => panels_store.trading_container.get(id)
@@ -6985,7 +6989,7 @@ impl ChartApp {
             {
                 use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
                 let rp = self.sidebar_state.right_panel;
-                if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+                if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades | RSP::SlotLiq) {
                     if let Some(item) = self.section_panel_for(rp) {
                         let s_pid = item.panel_id();
                         let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
@@ -7686,6 +7690,8 @@ impl ChartApp {
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::TradeTape(id) => panels_store.trade_tape.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::LiqTape(id) => panels_store.liq_tape.get(id)
+                        .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::OrderEntry(id) => panels_store.order_entry.get(id)
                         .map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
                     Panel::TradingContainer(id) => panels_store.trading_container.get(id)
@@ -7893,7 +7899,7 @@ impl ChartApp {
         {
             use mlc_app_sidebar_content::state::RightSidebarPanel as RSP;
             let rp = self.sidebar_state.right_panel;
-            if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+            if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades | RSP::SlotLiq) {
                 if let Some(item) = self.section_panel_for(rp) {
                     let s_pid = item.panel_id();
                     let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
@@ -8753,7 +8759,7 @@ impl ChartApp {
                     w, h, self.dom_modal.position, is_pty, &selected,
                 );
             } else {
-            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades) {
+            let section = if matches!(rp, RSP::SlotDom | RSP::SlotTape | RSP::SlotL2 | RSP::SlotBigTrades | RSP::SlotLiq) {
                 self.section_panel_for(rp)
             } else {
                 None
@@ -8836,12 +8842,32 @@ impl ChartApp {
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
                             "Big Trades Settings", &cols,
-                            Some((s.size_threshold, s.notional_threshold, s.show_big_markers)),
+                            Some((s.size_threshold, s.notional_threshold, Some(s.show_big_markers))),
                             Some(&skin_label),
                             Some((
                                 if s.agg_mode { 2 } else if s.multi_mode { 1 } else { 0 },
                                 true,
                             )),
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
+                    }
+                }
+                Some(mlc_core::state::Panel::LiqTape(pid)) => {
+                    if let Some(s) = self.panels_store.liq_tape.get(&pid) {
+                        let skin_label = s
+                            .skin
+                            .map(|k| k.label().to_string())
+                            .unwrap_or_else(|| "Auto (theme)".to_string());
+                        crate::dom_settings_modal::render_section_settings_modal(
+                            ctx, coord, &frame_theme, &toolbar_theme,
+                            w, h, self.dom_modal.position,
+                            "Liquidations Settings", &[],
+                            Some((s.size_threshold, s.notional_threshold, None)),
+                            Some(&skin_label),
+                            None,
                             None,
                             None,
                             None,
@@ -9389,6 +9415,17 @@ impl ChartApp {
                     s.shared_trades = new_handle;
                     s.last_seen_ts_ms = 0;
                     s.big_trades.clear();
+                }
+            }
+            // LiqTape symbol change: reset the all-venue roster to the new
+            // symbol — handles/cursors drop, the feed self-heal refills.
+            if let Some(s) = self.panels_store.liq_tape.get_mut(&panel_id) {
+                let symbol_changed = s.symbol != symbol;
+                s.symbol = symbol.clone();
+                s.exchange = exchange.clone();
+                s.account_type = account_type.clone();
+                if symbol_changed && !symbol.is_empty() {
+                    s.ensure_roster(&symbol);
                 }
             }
             // VolumeProfile symbol change: unsubscribe old, subscribe new.
@@ -11159,6 +11196,7 @@ impl ChartApp {
             RightSidebarPanel::SlotTape => Some("slot_tape".to_string()),
             RightSidebarPanel::SlotL2 => Some("slot_l2".to_string()),
             RightSidebarPanel::SlotBigTrades => Some("slot_big_trades".to_string()),
+            RightSidebarPanel::SlotLiq => Some("slot_liq".to_string()),
         }
     }
 
@@ -11187,6 +11225,7 @@ impl ChartApp {
             "slot_tape" | "slot3" => RightSidebarPanel::SlotTape,
             "slot_l2" | "slot4" => RightSidebarPanel::SlotL2,
             "slot_big_trades" => RightSidebarPanel::SlotBigTrades,
+            "slot_liq" => RightSidebarPanel::SlotLiq,
             _ => RightSidebarPanel::None,
         }
     }
@@ -11607,6 +11646,7 @@ mod typed_slot_hydration_tests {
             RightSidebarPanel::SlotTape,
             RightSidebarPanel::SlotL2,
             RightSidebarPanel::SlotBigTrades,
+            RightSidebarPanel::SlotLiq,
         ];
         for panel in typed_slots {
             let written = crate::ChartApp::panel_to_str(panel).expect("typed slot must serialize to Some");
@@ -11628,6 +11668,7 @@ mod typed_slot_hydration_tests {
             RightSidebarPanel::SlotTape,
             RightSidebarPanel::SlotL2,
             RightSidebarPanel::SlotBigTrades,
+            RightSidebarPanel::SlotLiq,
         ];
         for panel in typed_slots {
             let written = crate::ChartApp::panel_to_str(panel).expect("typed slot must serialize to Some");

@@ -309,6 +309,9 @@ impl ChartApp {
                 } else {
                     (s.symbol.clone(), s.exchange.clone(), s.account_type.clone())
                 }),
+            // LIQ is all-venue by construction — header shows base symbol.
+            Panel::LiqTape(id) => self.panels_store.liq_tape.get(id)
+                .map(|s| (s.symbol.clone(), String::new(), String::new())),
             _ => None,
         }
         .unwrap_or_default()
@@ -777,7 +780,15 @@ impl ChartApp {
                     s.multi.symbol = s.symbol.clone();
                 }
             }
-            enum TapeKind { Tt, L2, Bt }
+            // LIQ tape is all-venue by construction — late sync seeds the
+            // whole Futures roster once the symbol materializes.
+            for s in self.panels_store.liq_tape.values_mut() {
+                if s.multi.symbol.is_empty() && !s.symbol.is_empty() {
+                    let sym = s.symbol.clone();
+                    s.ensure_roster(&sym);
+                }
+            }
+            enum TapeKind { Tt, L2, Bt, Liq }
             let now_ms = web_time::SystemTime::now()
                 .duration_since(web_time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -850,11 +861,36 @@ impl ChartApp {
                     tape_marks.push((TapeKind::L2, *pid, any_dead && throttle_ok, !any_dead));
                 }
             }
+            // LIQ: missing-handle refill ONLY — no dead-venue detection
+            // (liquidations are sparse; a quiet venue is indistinguishable
+            // from a dead feed and a cursor-based reseed would storm).
+            // The refill itself IS backoff-throttled though: wire-absent
+            // venues (Bitget V2 has no public liq channel) fail their
+            // subscribe every time, and an unthrottled per-frame retry is
+            // a resubscribe storm of its own.
+            for (pid, s) in &self.panels_store.liq_tape {
+                if !s.multi.symbol.is_empty() {
+                    let throttle_ok =
+                        now_ms - s.multi.last_reseed_ms >= s.multi.reseed_backoff_ms.max(2_000);
+                    let mut any_missing = false;
+                    for (i, e) in s.multi.entries.iter().enumerate() {
+                        let missing = s.multi.liq_handles.get(i).map_or(true, |h| h.is_none());
+                        if missing {
+                            any_missing = true;
+                        }
+                        if missing && throttle_ok {
+                            tape_needs.push((TapeKind::Liq, *pid, i, e.clone(), s.multi.symbol.clone()));
+                        }
+                    }
+                    tape_marks.push((TapeKind::Liq, *pid, any_missing && throttle_ok, !any_missing));
+                }
+            }
             for (kind, pid, reseeding, all_alive) in &tape_marks {
                 let m = match kind {
                     TapeKind::Tt => self.panels_store.trade_tape.get_mut(pid).map(|s| &mut s.multi),
                     TapeKind::Bt => self.panels_store.big_trades.get_mut(pid).map(|s| &mut s.multi),
                     TapeKind::L2 => self.panels_store.l2_tape.get_mut(pid).map(|s| &mut s.multi),
+                    TapeKind::Liq => self.panels_store.liq_tape.get_mut(pid).map(|s| &mut s.multi),
                 };
                 let Some(m) = m else { continue };
                 if *reseeding {
@@ -901,6 +937,15 @@ impl ChartApp {
                             s.multi.sync_len();
                             if i < s.multi.book_handles.len() {
                                 s.multi.book_handles[i] = h;
+                            }
+                        }
+                    }
+                    TapeKind::Liq => {
+                        let h = self.core.subscribe_liquidations(eid, &sym, at);
+                        if let Some(s) = self.panels_store.liq_tape.get_mut(&pid) {
+                            s.multi.sync_len();
+                            if i < s.multi.liq_handles.len() {
+                                s.multi.liq_handles[i] = h;
                             }
                         }
                     }

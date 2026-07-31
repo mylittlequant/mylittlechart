@@ -93,6 +93,9 @@ pub enum Panel {
     L2Tape(PanelId),
     TradeTape(PanelId),
     BigTrades(PanelId),
+    /// Liquidation tape — all-venue merged forced-close event stream
+    /// (BT-Agg grammar; owner spec 2026-08-01, plan D).
+    LiqTape(PanelId),
     Footprint(PanelId),
     VolumeProfile(PanelId),
     LiquidityHeatmap(PanelId),
@@ -115,6 +118,7 @@ impl Panel {
             Panel::L2Tape(_)            => PanelKind::L2Tape,
             Panel::TradeTape(_)         => PanelKind::TradeTape,
             Panel::BigTrades(_)         => PanelKind::BigTrades,
+            Panel::LiqTape(_)           => PanelKind::LiqTape,
             Panel::Footprint(_)         => PanelKind::Footprint,
             Panel::VolumeProfile(_)     => PanelKind::VolumeProfile,
             Panel::LiquidityHeatmap(_)  => PanelKind::LiquidityHeatmap,
@@ -144,6 +148,7 @@ impl Panel {
             | Panel::L2Tape(id)
             | Panel::TradeTape(id)
             | Panel::BigTrades(id)
+            | Panel::LiqTape(id)
             | Panel::Footprint(id)
             | Panel::VolumeProfile(id)
             | Panel::LiquidityHeatmap(id)
@@ -165,6 +170,7 @@ impl uzor::panels::DockPanel for Panel {
             Panel::L2Tape(_)            => "L2 Tape",
             Panel::TradeTape(_)         => "Trade Tape",
             Panel::BigTrades(_)         => "Big Trades",
+            Panel::LiqTape(_)           => "Liquidations",
             Panel::Footprint(_)         => "Footprint",
             Panel::VolumeProfile(_)     => "Volume Profile",
             Panel::LiquidityHeatmap(_)  => "Liquidity Heatmap",
@@ -187,6 +193,7 @@ impl uzor::panels::DockPanel for Panel {
             Panel::L2Tape(_)            => "free_l2_tape",
             Panel::TradeTape(_)         => "free_trade_tape",
             Panel::BigTrades(_)         => "free_big_trades",
+            Panel::LiqTape(_)           => "free_liq_tape",
             Panel::Footprint(_)         => "free_footprint",
             Panel::VolumeProfile(_)     => "free_volume_profile",
             Panel::LiquidityHeatmap(_)  => "free_liquidity_heatmap",
@@ -227,6 +234,7 @@ pub enum PanelKind {
     L2Tape,
     TradeTape,
     BigTrades,
+    LiqTape,
     Footprint,
     VolumeProfile,
     LiquidityHeatmap,
@@ -246,6 +254,7 @@ impl PanelKind {
             PanelKind::L2Tape            => "l2_tape",
             PanelKind::TradeTape         => "trade_tape",
             PanelKind::BigTrades         => "big_trades",
+            PanelKind::LiqTape           => "liq_tape",
             PanelKind::Footprint         => "footprint",
             PanelKind::VolumeProfile     => "volume_profile",
             PanelKind::LiquidityHeatmap  => "liquidity_heatmap",

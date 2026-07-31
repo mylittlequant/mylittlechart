@@ -67,6 +67,8 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip("L2 Tape"),
             ToolbarItemDef::icon_button("slot_big_trades", ToolbarIconId::new("slot_big_trades"))
                 .with_tooltip("Big Trades"),
+            ToolbarItemDef::icon_button("slot_liq", ToolbarIconId::new("slot_liq"))
+                .with_tooltip("Liquidations"),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }

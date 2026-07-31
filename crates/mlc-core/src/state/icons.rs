@@ -295,6 +295,8 @@ pub enum Icon {
     SlotL2,
     /// One oversized block among small rows — Big Trades slot.
     SlotBigTrades,
+    /// "LIQ" text chip — Liquidations slot.
+    SlotLiq,
 }
 
 // =============================================================================
@@ -1498,6 +1500,10 @@ pub const ICON_SLOT_BIG_TRADES_GLYPH: &str = r##"<svg xmlns="http://www.w3.org/2
 /// Big Trades slot — text chip "BT" (owner order 2026-08-01).
 pub const ICON_SLOT_BIG_TRADES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M6.6 9 V15.5 M6.6 9 C9.6 9 9.6 12.25 6.6 12.25 C9.8 12.25 9.8 15.5 6.6 15.5"/><path d="M12.8 9 H17.8 M15.3 9 V15.5"/></svg>"##;
 
+/// Liquidations slot chip — "LIQ" in the slot text-chip grammar
+/// (owner spec 2026-08-01, plan D: rail button under BT).
+pub const ICON_SLOT_LIQ: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="11" rx="2.5" stroke-width="1.2"/><path d="M5.6 9 V15.5 H8.8"/><path d="M11 9 V15.5"/><path d="M15.4 9 C17.6 9 17.6 15.5 15.4 15.5 C13.2 15.5 13.2 9 15.4 9 Z"/><path d="M16.4 13.7 L18.4 15.9"/></svg>"##;
+
 /// Performance panel — gauge / speedometer, distinct from `Signal` (Zap bolt).
 /// The two used to collide (Performance reused `ICON_SIGNAL` before the
 /// typed-slot redesign 2026-07-11).
@@ -1868,6 +1874,7 @@ impl Icon {
             Icon::SlotTape => ICON_SLOT_TAPE,
             Icon::SlotL2 => ICON_SLOT_L2,
             Icon::SlotBigTrades => ICON_SLOT_BIG_TRADES,
+            Icon::SlotLiq => ICON_SLOT_LIQ,
         }
     }
 
@@ -2070,6 +2077,7 @@ impl Icon {
             "slot_tape" | "slottape" => Some(Icon::SlotTape),
             "slot_l2" | "slotl2" => Some(Icon::SlotL2),
             "slot_big_trades" | "slotbigtrades" => Some(Icon::SlotBigTrades),
+            "slot_liq" | "slotliq" => Some(Icon::SlotLiq),
             _ => None,
         }
     }
@@ -2326,6 +2334,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "slot_tape" | "slottape" => Some(ICON_SLOT_TAPE),
         "slot_l2" | "slotl2" => Some(ICON_SLOT_L2),
         "slot_big_trades" | "slotbigtrades" => Some(ICON_SLOT_BIG_TRADES),
+        "slot_liq" | "slotliq" => Some(ICON_SLOT_LIQ),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),
@@ -2493,6 +2502,7 @@ mod typed_slot_icon_tests {
         Icon::SlotTape,
         Icon::SlotL2,
         Icon::SlotBigTrades,
+        Icon::SlotLiq,
     ];
 
     /// Every typed-slot icon resolves to non-empty, well-formed SVG.
@@ -2564,6 +2574,7 @@ mod typed_slot_icon_tests {
             ("slot_tape", Icon::SlotTape),
             ("slot_l2", Icon::SlotL2),
             ("slot_big_trades", Icon::SlotBigTrades),
+            ("slot_liq", Icon::SlotLiq),
             ("gauge", Icon::Gauge),
         ];
         for (name, icon) in pairs {

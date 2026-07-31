@@ -58,28 +58,24 @@ pub struct ChartPreset {
     /// Persisted so tags survive preset switching.
     #[serde(default)]
     pub leaf_color_tags: std::collections::HashMap<u64, [f32; 4]>,
-    /// Per-slot `DockingManager<Panel>` layout snapshots (5 typed slots:
-    /// index 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades — matches
+    /// Per-slot `DockingManager<Panel>` layout snapshots (typed slots:
+    /// index 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades, 5=Liq — matches
     /// `mlc_app_sidebar_content::free_slot::SlotKind::index()`).
     ///
     /// Each entry is a serialized `uzor::panels::serialize::LayoutSnapshot`
     /// JSON string, or `None` if the slot is empty. Slots host trading panels
     /// and detached mini-charts.
     ///
-    /// Grew from 4 to 5 entries in the typed-slot redesign (2026-07-11).
-    /// Old 4-entry saves fail `serde`'s fixed-size array deserialization
-    /// (array length mismatch) — `preset::storage`'s load path falls back to
-    /// an empty preset rather than a partial one; see
-    /// `hydration_impl.rs::hydrate_slots` for the legacy-index note (the
-    /// array position itself was ALREADY the canonical slot index pre- and
-    /// post-redesign, so no positional remap is needed for saves that DO
-    /// load — only the widened array length is new).
+    /// `Vec`, not a fixed array (since the 5→6 widening, 2026-08-01): the
+    /// 4→5 widening proved a fixed `[T; N]` DROPS every older save on the
+    /// serde length mismatch. A Vec deserializes any length; readers index
+    /// with `.get(i)` and the snapshot writer resizes up before writing.
     #[serde(default)]
-    pub slot_layouts: [Option<String>; 5],
+    pub slot_layouts: Vec<Option<String>>,
     /// Per-slot leaf descriptors (parallel to `slot_layouts`). Each vec lists
     /// the `Panel` payloads for leaves in the corresponding slot.
     #[serde(default)]
-    pub slot_leaves: [Vec<PersistedFreeLeaf>; 5],
+    pub slot_leaves: Vec<Vec<PersistedFreeLeaf>>,
 }
 
 /// Serializable descriptor for a single `Panel` leaf inside a slot.
@@ -205,6 +201,21 @@ pub enum PersistedFreeItemKind {
         /// Aggregated all-venue single-column mode (owner 2026-08-01).
         #[serde(default)]
         agg_mode: bool,
+    },
+    /// Liquidation tape — all-venue merged forced-close stream (plan D,
+    /// owner 2026-08-01). Roster is implicit (all futures venues); the
+    /// persisted entries allow future per-panel pruning.
+    LiqTape {
+        #[serde(default)]
+        source: PersistedSymbolSource,
+        #[serde(default)]
+        multi_entries: Vec<String>,
+        /// Minimum base-qty to show (0 = all).
+        #[serde(default)]
+        size_threshold: f64,
+        /// Minimum notional to show (`None` = all).
+        #[serde(default)]
+        notional_threshold: Option<f64>,
     },
     L2Tape {
         #[serde(default)]
@@ -392,8 +403,8 @@ impl ChartPreset {
             indicators: Vec::new(),
             alerts: Vec::new(),
             leaf_color_tags: std::collections::HashMap::new(),
-            slot_layouts: [None, None, None, None, None],
-            slot_leaves: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            slot_layouts: vec![None; 6],
+            slot_leaves: vec![Vec::new(); 6],
         }
     }
 

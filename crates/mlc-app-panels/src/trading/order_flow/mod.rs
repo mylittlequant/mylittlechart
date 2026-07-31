@@ -4,6 +4,7 @@ pub mod volume_profile;
 pub mod liquidity_heatmap;
 pub mod big_trades;
 pub mod l2_tape;
+pub mod liq_tape;
 pub mod trade_tape;
 pub mod indicator_panel;
 pub mod multi_dom;

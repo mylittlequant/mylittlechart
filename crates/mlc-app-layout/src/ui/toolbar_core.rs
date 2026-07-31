@@ -1178,7 +1178,7 @@ pub fn draw_toolbar_with_icons(
                 // keeps the theme size.
                 let icon_size = if matches!(
                     id.as_str(),
-                    "slot_dom" | "slot_tape" | "slot_l2" | "slot_big_trades"
+                    "slot_dom" | "slot_tape" | "slot_l2" | "slot_big_trades" | "slot_liq"
                 ) {
                     (config.icon_size + 4.0).max(20.0)
                 } else {

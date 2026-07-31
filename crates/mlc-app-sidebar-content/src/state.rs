@@ -124,6 +124,9 @@ pub enum RightSidebarPanel {
     SlotL2,
     /// Big Trades slot — hosts `BigTrades` panels, one per instrument.
     SlotBigTrades,
+    /// Liquidations slot — hosts `LiqTape` panels (all-venue liquidation
+    /// stream; plan D, owner 2026-08-01).
+    SlotLiq,
 }
 
 impl RightSidebarPanel {
@@ -150,13 +153,15 @@ impl RightSidebarPanel {
             RightSidebarPanel::SlotTape      => "slot_tape",
             RightSidebarPanel::SlotL2        => "slot_l2",
             RightSidebarPanel::SlotBigTrades => "slot_big_trades",
+            RightSidebarPanel::SlotLiq       => "slot_liq",
         }
     }
 
-    /// If this panel is a typed free slot, returns its index (0..=4).
+    /// If this panel is a typed free slot, returns its index (0..=5).
     ///
-    /// Index↔kind mapping is fixed: 0=Trading, 1=Dom, 2=Tape, 3=L2, 4=BigTrades
-    /// (matches [`crate::free_slot::SlotKind`] and `SidebarState::slot_dockings`).
+    /// Index↔kind mapping is fixed: 0=Trading, 1=Dom, 2=Tape, 3=L2,
+    /// 4=BigTrades, 5=Liq (matches [`crate::free_slot::SlotKind`] and
+    /// `SidebarState::slot_dockings`).
     pub fn slot_index(self) -> Option<u8> {
         match self {
             RightSidebarPanel::SlotTrading   => Some(0),
@@ -164,11 +169,12 @@ impl RightSidebarPanel {
             RightSidebarPanel::SlotTape      => Some(2),
             RightSidebarPanel::SlotL2        => Some(3),
             RightSidebarPanel::SlotBigTrades => Some(4),
+            RightSidebarPanel::SlotLiq       => Some(5),
             _ => None,
         }
     }
 
-    /// Construct a slot panel from its index (0..=4). Panics on out of range.
+    /// Construct a slot panel from its index (0..=5). Panics on out of range.
     pub fn from_slot_index(idx: u8) -> Self {
         match idx {
             0 => RightSidebarPanel::SlotTrading,
@@ -176,6 +182,7 @@ impl RightSidebarPanel {
             2 => RightSidebarPanel::SlotTape,
             3 => RightSidebarPanel::SlotL2,
             4 => RightSidebarPanel::SlotBigTrades,
+            5 => RightSidebarPanel::SlotLiq,
             _ => panic!("slot index out of range: {}", idx),
         }
     }
@@ -444,7 +451,7 @@ pub struct SidebarState {
     /// to the slot's type (see `render_slot_spawn_dropdown` filter).
     /// Content is per-chart-preset; these are rebuilt from the active preset's
     /// `slot_layouts` on preset switch.
-    pub slot_dockings: [crate::free_slot::SlotDockingManager; 5],
+    pub slot_dockings: [crate::free_slot::SlotDockingManager; crate::free_slot::SLOT_COUNT],
 
     /// `(slot_idx 0..5, leaf_id)` — currently focused leaf in free slot sidebars.
     pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
@@ -848,13 +855,7 @@ impl Default for SidebarState {
             agent_docking: AgentDockingManager::new(),
             focused_agent_leaf: None,
             agent_leaves: HashMap::new(),
-            slot_dockings: [
-                crate::free_slot::SlotDockingManager::new(),
-                crate::free_slot::SlotDockingManager::new(),
-                crate::free_slot::SlotDockingManager::new(),
-                crate::free_slot::SlotDockingManager::new(),
-                crate::free_slot::SlotDockingManager::new(),
-            ],
+            slot_dockings: std::array::from_fn(|_| crate::free_slot::SlotDockingManager::new()),
             focused_free_leaf: None,
             slot_spawn_dropdown: None,
             slot_spawn_button_rect: [None; 5],
@@ -1049,6 +1050,7 @@ mod typed_slot_tests {
             RightSidebarPanel::SlotTape,
             RightSidebarPanel::SlotL2,
             RightSidebarPanel::SlotBigTrades,
+            RightSidebarPanel::SlotLiq,
         ];
         for (expected_idx, panel) in slots.iter().enumerate() {
             let idx = panel.slot_index().expect("typed slot must report an index");
@@ -1087,6 +1089,7 @@ mod typed_slot_tests {
             RightSidebarPanel::SlotTape,
             RightSidebarPanel::SlotL2,
             RightSidebarPanel::SlotBigTrades,
+            RightSidebarPanel::SlotLiq,
         ].iter().map(|p| p.scroll_key()).collect();
         let mut deduped = keys.clone();
         deduped.sort_unstable();
@@ -1097,6 +1100,6 @@ mod typed_slot_tests {
     #[test]
     #[should_panic(expected = "slot index out of range")]
     fn from_slot_index_panics_out_of_range() {
-        let _ = RightSidebarPanel::from_slot_index(5);
+        let _ = RightSidebarPanel::from_slot_index(6);
     }
 }

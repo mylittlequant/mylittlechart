@@ -15,10 +15,10 @@
 // SlotKind
 // =============================================================================
 
-/// The 5 typed right-sidebar slots. Index (0..=4) is the canonical ordering
+/// The 6 typed right-sidebar slots. Index (0..=5) is the canonical ordering
 /// used everywhere a slot is addressed positionally: `SidebarState::slot_dockings`,
 /// `RightSidebarPanel::slot_index()` / `from_slot_index()`, and the rail
-/// toolbar button ids (`slot_trading` .. `slot_big_trades`).
+/// toolbar button ids (`slot_trading` .. `slot_liq`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotKind {
     /// Hosts `Panel::TradingContainer` only — its children (order entry,
@@ -33,23 +33,27 @@ pub enum SlotKind {
     L2,
     /// Hosts `Panel::BigTrades`.
     BigTrades,
+    /// Hosts `Panel::LiqTape` — all-venue liquidation stream (plan D,
+    /// owner 2026-08-01).
+    Liq,
 }
 
 /// Number of typed right-sidebar slots — length of `SidebarState::slot_dockings`
 /// and `SlotKind::ALL`.
-pub const SLOT_COUNT: usize = 5;
+pub const SLOT_COUNT: usize = 6;
 
 impl SlotKind {
-    /// All 5 kinds in canonical index order.
+    /// All 6 kinds in canonical index order.
     pub const ALL: [SlotKind; SLOT_COUNT] = [
         SlotKind::Trading,
         SlotKind::Dom,
         SlotKind::Tape,
         SlotKind::L2,
         SlotKind::BigTrades,
+        SlotKind::Liq,
     ];
 
-    /// Canonical slot index (0..=4) — matches `slot_dockings[idx]`.
+    /// Canonical slot index (0..=5) — matches `slot_dockings[idx]`.
     pub fn index(self) -> usize {
         match self {
             SlotKind::Trading   => 0,
@@ -57,10 +61,11 @@ impl SlotKind {
             SlotKind::Tape      => 2,
             SlotKind::L2        => 3,
             SlotKind::BigTrades => 4,
+            SlotKind::Liq       => 5,
         }
     }
 
-    /// Construct from a canonical slot index (0..=4). `None` when out of range.
+    /// Construct from a canonical slot index (0..=5). `None` when out of range.
     pub fn from_index(idx: usize) -> Option<Self> {
         match idx {
             0 => Some(SlotKind::Trading),
@@ -68,6 +73,7 @@ impl SlotKind {
             2 => Some(SlotKind::Tape),
             3 => Some(SlotKind::L2),
             4 => Some(SlotKind::BigTrades),
+            5 => Some(SlotKind::Liq),
             _ => None,
         }
     }
@@ -80,6 +86,7 @@ impl SlotKind {
             SlotKind::Tape      => "Trade Tape",
             SlotKind::L2        => "L2 Tape",
             SlotKind::BigTrades => "Big Trades",
+            SlotKind::Liq       => "Liquidations",
         }
     }
 
@@ -96,6 +103,7 @@ impl SlotKind {
             SlotKind::Tape      => &["trade_tape"],
             SlotKind::L2        => &["l2_tape"],
             SlotKind::BigTrades => &["big_trades"],
+            SlotKind::Liq       => &["liq_tape"],
         }
     }
 
@@ -166,7 +174,7 @@ mod slot_kind_tests {
     #[test]
     fn slot_count_matches_all_len() {
         assert_eq!(SLOT_COUNT, SlotKind::ALL.len());
-        assert_eq!(SLOT_COUNT, 5);
+        assert_eq!(SLOT_COUNT, 6);
     }
 
     /// `index()` / `from_index()` round-trip for every kind, and `ALL` is in
@@ -182,11 +190,12 @@ mod slot_kind_tests {
         assert_eq!(SlotKind::ALL[2], SlotKind::Tape);
         assert_eq!(SlotKind::ALL[3], SlotKind::L2);
         assert_eq!(SlotKind::ALL[4], SlotKind::BigTrades);
+        assert_eq!(SlotKind::ALL[5], SlotKind::Liq);
     }
 
     #[test]
     fn from_index_out_of_range_is_none() {
-        assert_eq!(SlotKind::from_index(5), None);
+        assert_eq!(SlotKind::from_index(6), None);
         assert_eq!(SlotKind::from_index(usize::MAX), None);
     }
 
@@ -202,6 +211,7 @@ mod slot_kind_tests {
         assert_eq!(SlotKind::Tape.allowed_panel_kinds(), &["trade_tape"]);
         assert_eq!(SlotKind::L2.allowed_panel_kinds(), &["l2_tape"]);
         assert_eq!(SlotKind::BigTrades.allowed_panel_kinds(), &["big_trades"]);
+        assert_eq!(SlotKind::Liq.allowed_panel_kinds(), &["liq_tape"]);
     }
 
     /// No panel kind string is shared between two different slot kinds —
@@ -228,6 +238,7 @@ mod slot_kind_tests {
         assert_eq!(SlotKind::Tape.default_panel_kind(), "trade_tape");
         assert_eq!(SlotKind::L2.default_panel_kind(), "l2_tape");
         assert_eq!(SlotKind::BigTrades.default_panel_kind(), "big_trades");
+        assert_eq!(SlotKind::Liq.default_panel_kind(), "liq_tape");
     }
 
     #[test]
@@ -238,7 +249,7 @@ mod slot_kind_tests {
         deduped.dedup();
         assert_eq!(deduped.len(), labels.len(), "SlotKind::label() collision: {:?}", labels);
         labels.sort_unstable();
-        assert_eq!(labels, vec!["Big Trades", "DOM", "L2 Tape", "Trade Tape", "Trading"]);
+        assert_eq!(labels, vec!["Big Trades", "DOM", "L2 Tape", "Liquidations", "Trade Tape", "Trading"]);
     }
 
     // === Auto-seed preconditions (T1d) ===

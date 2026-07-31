@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use digdigdig3_station::SeriesKey as StationSeriesKey;
 use digdigdig3_station::series::Kind as StationKind;
 use digdigdig3_station::series::Series as StationSeries;
-use digdigdig3_station::data::{BarPoint, TradePoint};
+use digdigdig3_station::data::{BarPoint, LiquidationPoint, TradePoint};
 
 /// Type alias for the public trade-series handle returned by `subscribe_trades`.
 ///
@@ -40,6 +40,11 @@ use digdigdig3_station::data::{BarPoint, TradePoint};
 /// `Arc<tokio::sync::RwLock<Series<TradePoint>>>` directly; the mlc-side
 /// `TradeSeries` wrapper is gone.
 pub type SharedTradeSeries = Arc<tokio::sync::RwLock<StationSeries<TradePoint>>>;
+
+/// Type alias for the liquidation-series handle returned by
+/// `subscribe_liquidations` (plan D, 2026-08-01) — the station's own
+/// compact `Series<LiquidationPoint>` ring, same sharing model as trades.
+pub type SharedLiquidationSeries = Arc<tokio::sync::RwLock<StationSeries<LiquidationPoint>>>;
 
 /// Type alias for the per-key live orderbook reconstructor returned by `subscribe_orderbook`.
 ///
@@ -612,6 +617,13 @@ pub struct DataBridge {
     /// `watch`'s `changed()` always observes the latest value regardless of
     /// when it started listening).
     trade_forwarder_cancel: Arc<Mutex<HashMap<(ExchangeId, AccountType, String), tokio::sync::watch::Sender<bool>>>>,
+    /// Liquidation twin of `station_trade_subscribed` (plan D, 2026-08-01):
+    /// one gate per `(ExchangeId, AccountType, symbol)` liquidation
+    /// forwarder — same single-flight discipline.
+    station_liquidation_subscribed: Arc<Mutex<HashSet<(ExchangeId, AccountType, String)>>>,
+    /// Liquidation twin of `trade_forwarder_cancel` — same watch-channel
+    /// real-unsubscribe machinery.
+    liquidation_forwarder_cancel: Arc<Mutex<HashMap<(ExchangeId, AccountType, String), tokio::sync::watch::Sender<bool>>>>,
     /// C4: tracks which `(ExchangeId, AccountType, symbol)` tuples already have a live
     /// station orderbook-subscriber task spawned.
     ///
@@ -870,6 +882,8 @@ impl DataBridge {
             backfill_engine: crate::backfill_engine::BackfillEngine::new(),
             station_trade_subscribed: Arc::new(Mutex::new(HashSet::new())),
             trade_forwarder_cancel: Arc::new(Mutex::new(HashMap::new())),
+            station_liquidation_subscribed: Arc::new(Mutex::new(HashSet::new())),
+            liquidation_forwarder_cancel: Arc::new(Mutex::new(HashMap::new())),
             station_orderbook_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_ticker_subscribed: Arc::new(Mutex::new(HashSet::new())),
             station_private_subscribed: Arc::new(Mutex::new(HashSet::new())),
@@ -2818,6 +2832,172 @@ impl DataBridge {
         let wire = self.wire_symbol(exchange_id, account_type, symbol);
         let key = StationSeriesKey::new(exchange_id, account_type, wire, StationKind::Trade);
         self.station.series::<TradePoint>(&key)
+    }
+
+    /// Liquidation twin of [`Self::subscribe_trades`] (plan D, 2026-08-01):
+    /// spawn (or re-use) a station Liquidation forwarder for this key and
+    /// return the station's `Series<LiquidationPoint>` handle. The tape
+    /// panel reads the shared ring directly (cursor pull) — no
+    /// `LiveUpdate` re-broadcast is needed, so the forwarder loop only
+    /// holds the subscription handle alive and drains events.
+    ///
+    /// Venue caveats (research doc `liq-feed-path-2026-08-01.md` §1):
+    /// liquidations are futures-only everywhere; Binance/Gate.io reject a
+    /// Spot request, Bybit silently no-ops on Spot, Bitfinex is one global
+    /// venue-wide channel. Callers subscribe Futures keys.
+    pub fn subscribe_liquidations(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Option<SharedLiquidationSeries> {
+        let gate_key = (exchange_id, account_type, symbol.to_string());
+
+        {
+            let mut subs = self.station_liquidation_subscribed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if subs.insert(gate_key.clone()) {
+                let station = self.station.clone();
+                let station_liquidation_subscribed = self.station_liquidation_subscribed.clone();
+                // Cancel channel installed BEFORE the spawn — same race fix
+                // as subscribe_trades (2026-07-13).
+                let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+                {
+                    let mut cancels = self.liquidation_forwarder_cancel
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    cancels.insert(gate_key.clone(), cancel_tx);
+                }
+                let liquidation_forwarder_cancel = self.liquidation_forwarder_cancel.clone();
+                let symbol_canonical = symbol.to_string();
+                let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
+                let gate_key_task = gate_key.clone();
+                self.spawn_bg(async move {
+                    let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                        exchange_id,
+                        symbol_canonical.clone(),
+                        account_type,
+                        [digdigdig3_station::Stream::Liquidation],
+                    );
+                    let mut report = match station.subscribe(sub_set).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            crate::dlog!(
+                                "[Bridge] station liquidation subscribe failed {:?} sym={}: {:?}",
+                                exchange_id, symbol_wire, e
+                            );
+                            let mut subs = station_liquidation_subscribed
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            subs.remove(&gate_key_task);
+                            let mut cancels = liquidation_forwarder_cancel
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            cancels.remove(&gate_key_task);
+                            return;
+                        }
+                    };
+                    if !report.failed.is_empty() {
+                        for f in &report.failed {
+                            crate::dlog!(
+                                "[Bridge] station liquidation partial-fail {:?} sym={}: {:?}",
+                                exchange_id, symbol_wire, f.error
+                            );
+                        }
+                    }
+                    // Drain-only loop: the station forwarder writes each
+                    // point into the shared ring; the tape reads it there.
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_rx.changed() => {
+                                if *cancel_rx.borrow() {
+                                    crate::dlog!(
+                                        "[Bridge] station liquidation forwarder cancelled {:?} sym={}",
+                                        exchange_id, symbol_wire
+                                    );
+                                    break;
+                                }
+                            }
+                            ev = report.handle.recv() => {
+                                if ev.is_none() { break }
+                            }
+                        }
+                    }
+                    let mut subs = station_liquidation_subscribed
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    subs.remove(&gate_key_task);
+                    let mut cancels = liquidation_forwarder_cancel
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    cancels.remove(&gate_key_task);
+                    crate::dlog!(
+                        "[Bridge] station liquidation forwarder exited {:?} sym={}, gate removed",
+                        exchange_id, symbol_wire
+                    );
+                });
+            }
+        }
+
+        // Key lookup must reproduce the STATION's own key grammar: the
+        // station keys `series_handles` by `SymbolNormalizer::to_exchange`
+        // of the canonical symbol (station.rs `subscribe` — "BTC-USDT-SWAP"
+        // for OKX F, "BTC_USDT" for GateIO, "XBTUSDTM" for KuCoin). MLC's
+        // `wire_symbol` is NOT that transform — on Futures it resolves
+        // dated-contract forms ("BTCUSDT_261225") that never match (stand
+        // defect 2026-08-01: only venues whose raw == canonical armed).
+        let key_symbol = Self::station_series_symbol(exchange_id, account_type, symbol);
+        let key = StationSeriesKey::new(
+            exchange_id,
+            account_type,
+            key_symbol,
+            StationKind::Liquidation,
+        );
+        self.station.series::<LiquidationPoint>(&key)
+    }
+
+    /// The `SeriesKey.symbol` form the station registers for a canonical
+    /// symbol — canonical base/quote split (same suffix table the station's
+    /// `parse_symbol` uses) + `SymbolNormalizer::to_exchange`. Falls back to
+    /// the input verbatim when the normalizer has no rule (matches the
+    /// station's passthrough behavior for raw-friendly venues).
+    fn station_series_symbol(
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: &str,
+    ) -> String {
+        let canonical = if let Some((b, q)) = symbol.split_once(['-', '/', '_']) {
+            digdigdig3::Symbol::new(b, q)
+        } else {
+            let upper = symbol.to_uppercase();
+            let mut parsed = None;
+            for q in ["USDT", "USDC", "USD", "BTC", "ETH", "BUSD", "EUR", "JPY"] {
+                if let Some(base) = upper.strip_suffix(q) {
+                    if !base.is_empty() {
+                        parsed = Some(digdigdig3::Symbol::new(base, q));
+                        break;
+                    }
+                }
+            }
+            parsed.unwrap_or_else(|| digdigdig3::Symbol::new(&upper, ""))
+        };
+        digdigdig3::core::utils::SymbolNormalizer::to_exchange(exchange_id, &canonical, account_type)
+            .unwrap_or_else(|_| symbol.to_string())
+    }
+
+    /// Cancel the liquidation forwarder for this key — same contract as
+    /// [`Self::unsubscribe_trades`] (no mlc-side refcount; the caller is
+    /// responsible for being the last consumer).
+    pub fn unsubscribe_liquidations(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let gate_key = (exchange_id, account_type, symbol.to_string());
+        let mut cancels = self.liquidation_forwarder_cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(cancel_tx) = cancels.remove(&gate_key) {
+            let _ = cancel_tx.send(true);
+        }
     }
 
     /// Subscribe to a single symbol's mini ticker stream via WebSocket.

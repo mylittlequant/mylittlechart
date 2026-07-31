@@ -1038,7 +1038,8 @@ impl ChartApp {
 
                     for i in 0..mlc_app_sidebar_content::free_slot::SLOT_COUNT {
                         // Pre-insert state into the store keyed by the saved panel_id.
-                        for pl in &preset.slot_leaves[i] {
+                        // Older saves carry fewer slots — absent = empty.
+                        for pl in preset.slot_leaves.get(i).map(|v| v.as_slice()).unwrap_or(&[]) {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
@@ -1189,6 +1190,32 @@ impl ChartApp {
                                             s.agg_mode = *agg_mode;
                                         }
                                         self.panels_store.big_trades.insert(pid, s);
+                                    }
+                                }
+                                PersistedFreeItemKind::LiqTape { source, multi_entries, size_threshold, notional_threshold } => {
+                                    if !self.panels_store.liq_tape.contains_key(&pid) {
+                                        let symbol = match source {
+                                            mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
+                                            mlc_core::preset::preset::PersistedSymbolSource::BoundToChart { .. } | mlc_core::preset::preset::PersistedSymbolSource::HyperFocus => String::new(),
+                                        };
+                                        let mut s = mlc_app_panels::trading::order_flow::liq_tape::LiqTapeState::new();
+                                        s.symbol = symbol;
+                                        if let mlc_core::preset::preset::PersistedSymbolSource::Fixed { exchange, account_type, .. } = source {
+                                            s.exchange = exchange.clone();
+                                            s.account_type = normalize_account_type(account_type);
+                                        }
+                                        s.size_threshold = *size_threshold;
+                                        s.notional_threshold = *notional_threshold;
+                                        for e in multi_entries {
+                                            s.multi.add_entry(e);
+                                        }
+                                        // All-venue Futures roster; liq-series
+                                        // handles land via the feed self-heal.
+                                        if !s.symbol.is_empty() {
+                                            let sym = s.symbol.clone();
+                                            s.ensure_roster(&sym);
+                                        }
+                                        self.panels_store.liq_tape.insert(pid, s);
                                     }
                                 }
                                 PersistedFreeItemKind::L2Tape { source, multi_mode, multi_entries, show_imbalance, imb_window_min, show_adds, show_mods, show_cxls, show_execs } => {
@@ -1463,7 +1490,8 @@ impl ChartApp {
                         // variant kind (e.g. "free_dom")  -  panel identity comes from
                         // the leaf_id passed by restore_tree_with_id.
                         let leaves_by_id: std::collections::HashMap<u64, &mlc_core::preset::preset::PersistedFreeLeaf> =
-                            preset.slot_leaves[i].iter().map(|l| (l.leaf_id, l)).collect();
+                            preset.slot_leaves.get(i).map(|v| v.as_slice()).unwrap_or(&[])
+                                .iter().map(|l| (l.leaf_id, l)).collect();
 
                         // Type-lock: this slot only accepts panel kinds matching its
                         // `SlotKind` (owner redesign 2026-07-11, hard cutover — no
@@ -1478,7 +1506,7 @@ impl ChartApp {
                         // offending leaf/kind before that happens.
                         let slot_kind = mlc_app_sidebar_content::free_slot::SlotKind::from_index(i);
 
-                        let mgr = match preset.slot_layouts[i].as_deref() {
+                        let mgr = match preset.slot_layouts.get(i).and_then(|o| o.as_deref()) {
                             Some(json) => {
                                 match uzor::panels::serialize::LayoutSnapshot::from_json(json) {
                                     Ok(snap) => {
@@ -1496,6 +1524,7 @@ impl ChartApp {
                                                 mlc_core::preset::preset::PersistedFreeItemKind::LiquidityHeatmap { .. }  => Panel::LiquidityHeatmap(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::BigTrades { .. }         => Panel::BigTrades(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::L2Tape { .. }            => Panel::L2Tape(pid),
+                                                mlc_core::preset::preset::PersistedFreeItemKind::LiqTape { .. }           => Panel::LiqTape(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::TradeTape { .. }         => Panel::TradeTape(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::OrderEntry { .. }        => Panel::OrderEntry(pid),
                                                 mlc_core::preset::preset::PersistedFreeItemKind::PositionManager          => Panel::PositionManager(pid),

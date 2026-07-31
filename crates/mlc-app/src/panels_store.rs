@@ -20,6 +20,7 @@ use mlc_app_panels::trading::order_flow::{
     footprint::FootprintState,
     indicator_panel::IndicatorPanelState,
     l2_tape::L2TapeState,
+    liq_tape::LiqTapeState,
     liquidity_heatmap::LiquidityHeatmapState,
     trade_tape::TradeTapeState,
     volume_profile::VolumeProfileState,
@@ -45,6 +46,7 @@ pub struct TradingPanelsStore {
     pub liquidity_heatmap: HashMap<PanelId, LiquidityHeatmapState>,
     pub big_trades: HashMap<PanelId, BigTradesState>,
     pub l2_tape: HashMap<PanelId, L2TapeState>,
+    pub liq_tape: HashMap<PanelId, LiqTapeState>,
     pub trade_tape: HashMap<PanelId, TradeTapeState>,
     pub order_entry: HashMap<PanelId, OrderEntryState>,
     pub position_manager: HashMap<PanelId, PositionManagerState>,
@@ -74,6 +76,7 @@ impl TradingPanelsStore {
             liquidity_heatmap: HashMap::new(),
             big_trades: HashMap::new(),
             l2_tape: HashMap::new(),
+            liq_tape: HashMap::new(),
             trade_tape: HashMap::new(),
             order_entry: HashMap::new(),
             position_manager: HashMap::new(),
@@ -142,6 +145,13 @@ impl TradingPanelsStore {
     pub fn create_l2_tape(&mut self) -> PanelId {
         let id = self.alloc_id();
         self.l2_tape.insert(id, L2TapeState::new());
+        id
+    }
+
+    /// Allocate a new Liquidation Tape panel.
+    pub fn create_liq_tape(&mut self) -> PanelId {
+        let id = self.alloc_id();
+        self.liq_tape.insert(id, LiqTapeState::new());
         id
     }
 
@@ -231,6 +241,7 @@ impl TradingPanelsStore {
             Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get(id).map(|s| s as &dyn TradingPanel),
             Panel::BigTrades(id) => self.big_trades.get(id).map(|s| s as &dyn TradingPanel),
             Panel::L2Tape(id) => self.l2_tape.get(id).map(|s| s as &dyn TradingPanel),
+            Panel::LiqTape(id) => self.liq_tape.get(id).map(|s| s as &dyn TradingPanel),
             Panel::TradeTape(id) => self.trade_tape.get(id).map(|s| s as &dyn TradingPanel),
             Panel::OrderEntry(id) => self.order_entry.get(id).map(|s| s as &dyn TradingPanel),
             Panel::PositionManager(id) => self.position_manager.get(id).map(|s| s as &dyn TradingPanel),
@@ -252,6 +263,7 @@ impl TradingPanelsStore {
             Panel::LiquidityHeatmap(id) => self.liquidity_heatmap.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::BigTrades(id) => self.big_trades.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::L2Tape(id) => self.l2_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
+            Panel::LiqTape(id) => self.liq_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::TradeTape(id) => self.trade_tape.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::OrderEntry(id) => self.order_entry.get_mut(id).map(|s| s as &mut dyn TradingPanel),
             Panel::PositionManager(id) => self.position_manager.get_mut(id).map(|s| s as &mut dyn TradingPanel),
@@ -307,6 +319,18 @@ impl TradingPanelsStore {
                 let pid = self.alloc_id();
                 self.l2_tape.insert(pid, L2TapeState::new());
                 Some(Panel::L2Tape(pid))
+            }
+            Panel::LiqTape(id) => {
+                let s = self.liq_tape.get(id)?;
+                let pid = self.alloc_id();
+                let mut clone = LiqTapeState::new();
+                clone.symbol = s.symbol.clone();
+                clone.exchange = s.exchange.clone();
+                clone.account_type = s.account_type.clone();
+                let sym = clone.symbol.clone();
+                clone.ensure_roster(&sym);
+                self.liq_tape.insert(pid, clone);
+                Some(Panel::LiqTape(pid))
             }
             Panel::TradeTape(_) => {
                 let pid = self.alloc_id();
@@ -385,6 +409,7 @@ impl TradingPanelsStore {
             Panel::LiquidityHeatmap(id) => { self.liquidity_heatmap.remove(id); }
             Panel::BigTrades(id)        => { self.big_trades.remove(id); }
             Panel::L2Tape(id)           => { self.l2_tape.remove(id); }
+            Panel::LiqTape(id)          => { self.liq_tape.remove(id); }
             Panel::TradeTape(id)        => { self.trade_tape.remove(id); }
             Panel::OrderEntry(id)       => { self.order_entry.remove(id); }
             Panel::PositionManager(id)  => { self.position_manager.remove(id); }

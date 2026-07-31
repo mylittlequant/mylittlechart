@@ -362,6 +362,7 @@ impl ChartApp {
                 RightSidebarPanel::SlotTape      => Some(2),
                 RightSidebarPanel::SlotL2        => Some(3),
                 RightSidebarPanel::SlotBigTrades => Some(4),
+                RightSidebarPanel::SlotLiq       => Some(5),
                 _ => None,
             };
             if let Some(idx) = slot_idx_opt {
@@ -389,6 +390,7 @@ impl ChartApp {
                                         | Some(Panel::Footprint(_))
                                         | Some(Panel::LiquidityHeatmap(_))
                                         | Some(Panel::BigTrades(_))
+                                        | Some(Panel::LiqTape(_))
                                         | Some(Panel::VolumeProfile(_)) => {
                                             // Click acknowledged — no panel action yet.
                                             // Return without closing dropdowns so the click
@@ -845,12 +847,14 @@ impl ChartApp {
                                 Some(item @ Panel::L2Tape(_))
                                 | Some(item @ Panel::Footprint(_))
                                 | Some(item @ Panel::BigTrades(_))
+                                | Some(item @ Panel::LiqTape(_))
                                 | Some(item @ Panel::LiquidityHeatmap(_))
                                 | Some(item @ Panel::VolumeProfile(_)) => {
                                     let local_id = match &item {
                                         Panel::L2Tape(_) => "l2tape:body",
                                         Panel::Footprint(_) => "footprint:body",
                                         Panel::BigTrades(_) => "bigtrades:body",
+                                        Panel::LiqTape(_) => "liqtape:body",
                                         Panel::LiquidityHeatmap(_) => "heatmap:body",
                                         Panel::VolumeProfile(_) => "volprofile:body",
                                         _ => unreachable!(),
@@ -1567,12 +1571,14 @@ impl ChartApp {
                                             Some(item @ Panel::L2Tape(_))
                                             | Some(item @ Panel::Footprint(_))
                                             | Some(item @ Panel::BigTrades(_))
+                                            | Some(item @ Panel::LiqTape(_))
                                             | Some(item @ Panel::LiquidityHeatmap(_))
                                             | Some(item @ Panel::VolumeProfile(_)) => {
                                                 let local_id = match &item {
                                                     Panel::L2Tape(_) => "l2tape:body",
                                                     Panel::Footprint(_) => "footprint:body",
                                                     Panel::BigTrades(_) => "bigtrades:body",
+                                                    Panel::LiqTape(_) => "liqtape:body",
                                                     Panel::LiquidityHeatmap(_) => "heatmap:body",
                                                     Panel::VolumeProfile(_) => "volprofile:body",
                                                     _ => unreachable!(),
@@ -6266,6 +6272,7 @@ impl ChartApp {
                             RightSidebarPanel::SlotTape      => Some(2),
                             RightSidebarPanel::SlotL2        => Some(3),
                             RightSidebarPanel::SlotBigTrades => Some(4),
+                            RightSidebarPanel::SlotLiq       => Some(5),
                             _ => None,
                         };
 
@@ -6402,6 +6409,7 @@ impl ChartApp {
                                 match item_opt {
                                     Some(item @ Panel::BigTrades(_))
                                     | Some(item @ Panel::L2Tape(_))
+                                    | Some(item @ Panel::LiqTape(_))
                                     | Some(item @ Panel::Footprint(_))
                                     | Some(item @ Panel::LiquidityHeatmap(_))
                                     | Some(item @ Panel::VolumeProfile(_))
@@ -6410,6 +6418,7 @@ impl ChartApp {
                                         let local_id = match &item {
                                             Panel::BigTrades(_) => "bigtrades:body",
                                             Panel::L2Tape(_) => "l2tape:body",
+                                            Panel::LiqTape(_) => "liqtape:body",
                                             Panel::Footprint(_) => "footprint:body",
                                             Panel::LiquidityHeatmap(_) => "heatmap:body",
                                             Panel::VolumeProfile(_) => "volprofile:body",
@@ -8088,6 +8097,16 @@ impl ChartApp {
         // Snapshot per-slot Panel docking layouts.
         // Each entry is a LayoutSnapshot JSON string, or None if the slot is empty.
         // `slot_leaves` carries the per-leaf kind + panel_id for state restoration.
+        // A preset loaded from an older save may carry fewer slots — widen up.
+        {
+            let n = mlc_app_sidebar_content::free_slot::SLOT_COUNT;
+            if preset.slot_layouts.len() < n {
+                preset.slot_layouts.resize(n, None);
+            }
+            if preset.slot_leaves.len() < n {
+                preset.slot_leaves.resize_with(n, Vec::new);
+            }
+        }
         for i in 0..mlc_app_sidebar_content::free_slot::SLOT_COUNT {
             let tree = self.sidebar_state.slot_dockings[i].inner().tree();
             preset.slot_layouts[i] = uzor::panels::serialize::LayoutSnapshot::from_tree(tree, "slot")
@@ -8174,6 +8193,16 @@ impl ChartApp {
                                 source,
                                 tick_size: state.tick_size,
                                 snapshot_interval_ms: state.snapshot_interval_ms,
+                            }
+                        }
+                        Panel::LiqTape(id) => {
+                            let state = self.panels_store.liq_tape.get(id)?;
+                            let source = persist_source_from_fields(&state.symbol, &state.exchange, &state.account_type);
+                            PersistedFreeItemKind::LiqTape {
+                                source,
+                                multi_entries: state.multi.entries.clone(),
+                                size_threshold: state.size_threshold,
+                                notional_threshold: state.notional_threshold,
                             }
                         }
                         Panel::BigTrades(id) => {

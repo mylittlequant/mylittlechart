@@ -1633,6 +1633,12 @@ impl ChartApp {
                                         s.last_seen_ts_ms = 0;
                                     }
                                 }
+                                mlc_core::state::Panel::LiqTape(id) => {
+                                    if let Some(s) = self.panels_store.liq_tape.get_mut(&id) {
+                                        for h in &mut s.multi.liq_handles { *h = None; }
+                                        for c in &mut s.multi.trade_cursors { *c = 0; }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
