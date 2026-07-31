@@ -8775,6 +8775,7 @@ impl ChartApp {
                             ("Time", cc.show_time),
                             ("Price", cc.show_price),
                             ("Size", cc.show_size),
+                            ("Notional", cc.show_notional),
                         ];
                         let skin_label = s
                             .skin
@@ -8787,6 +8788,7 @@ impl ChartApp {
                             Some(&skin_label),
                             Some(s.multi_mode),
                             Some((s.show_imbalance, s.imb_window_min)),
+                            Some(s.flag_notional),
                         );
                     }
                 }
@@ -8807,6 +8809,7 @@ impl ChartApp {
                             None,
                             Some(s.multi_mode),
                             Some((s.show_imbalance, s.imb_window_min)),
+                            None,
                         );
                     }
                 }
@@ -8831,6 +8834,7 @@ impl ChartApp {
                             Some((s.size_threshold, s.notional_threshold)),
                             Some(&skin_label),
                             Some(s.multi_mode),
+                            None,
                             None,
                         );
                     }

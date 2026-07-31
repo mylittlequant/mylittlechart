@@ -3980,7 +3980,8 @@ impl ChartApp {
                             match i {
                                 0 => state.column_config.show_time = !state.column_config.show_time,
                                 1 => state.column_config.show_price = !state.column_config.show_price,
-                                _ => state.column_config.show_size = !state.column_config.show_size,
+                                2 => state.column_config.show_size = !state.column_config.show_size,
+                                _ => state.column_config.show_notional = !state.column_config.show_notional,
                             }
                         } else if rest == "skin" {
                             // Manual pick pins the panel skin (theme-skin
@@ -3988,6 +3989,13 @@ impl ChartApp {
                             use mlc_app_panels::trading::order_flow::trade_tape::TapeSkin;
                             let cur = state.skin.unwrap_or(TapeSkin::Classic);
                             state.skin = Some(cur.next());
+                        } else if rest == "tt_flag" {
+                            // Big-print flag threshold cycle (ref 17).
+                            const FLAGS: &[f64] = &[10_000.0, 50_000.0, 100_000.0, 500_000.0, 1_000_000.0];
+                            state.flag_notional = match state.flag_notional {
+                                None => Some(FLAGS[0]),
+                                Some(cur) => FLAGS.iter().find(|&&v| v > cur * 1.001).copied(),
+                            };
                         } else if rest == "imb" {
                             state.show_imbalance = !state.show_imbalance;
                             persist = true;

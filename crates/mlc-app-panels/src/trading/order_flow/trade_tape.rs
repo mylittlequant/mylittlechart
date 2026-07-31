@@ -48,6 +48,10 @@ pub struct TradeTapeColumnConfig {
     pub show_time: bool,
     pub show_price: bool,
     pub show_size: bool,
+    /// NOTIONAL column (TapeSurf ref 17 — the trades feed carries one).
+    /// Default OFF: the classic look stays untouched.
+    #[serde(default)]
+    pub show_notional: bool,
 }
 
 impl Default for TradeTapeColumnConfig {
@@ -56,6 +60,7 @@ impl Default for TradeTapeColumnConfig {
             show_time: true,
             show_price: true,
             show_size: true,
+            show_notional: false,
         }
     }
 }
@@ -189,6 +194,10 @@ pub struct TradeTapeState {
     pub show_imbalance: bool,
     /// Imbalance window in minutes (modal click-cycle 1/2/5/10).
     pub imb_window_min: u8,
+    /// Big-print flag threshold in NOTIONAL units (TapeSurf ref 17:
+    /// "flagged big print" — a solid-highlight row). `None` = off.
+    /// Modal click-cycle.
+    pub flag_notional: Option<f64>,
 }
 
 impl std::fmt::Debug for TradeTapeState {
@@ -231,6 +240,7 @@ impl TradeTapeState {
             multi: super::multi_tape::MultiTapeState::new(),
             show_imbalance: true,
             imb_window_min: 2,
+            flag_notional: None,
         }
     }
 
@@ -603,12 +613,13 @@ impl TradingPanel for TradeTapeState {
         // ── dynamic column layout ─────────────────────────────────────────
         // Build list of visible columns in order, then distribute width evenly.
         #[derive(Clone, Copy, PartialEq)]
-        enum Col { Time, Price, Size }
+        enum Col { Time, Price, Size, Notional }
 
-        let mut visible_cols: Vec<Col> = Vec::with_capacity(3);
-        if self.column_config.show_time  { visible_cols.push(Col::Time);  }
-        if self.column_config.show_price { visible_cols.push(Col::Price); }
-        if self.column_config.show_size  { visible_cols.push(Col::Size);  }
+        let mut visible_cols: Vec<Col> = Vec::with_capacity(4);
+        if self.column_config.show_time     { visible_cols.push(Col::Time);     }
+        if self.column_config.show_price    { visible_cols.push(Col::Price);    }
+        if self.column_config.show_size     { visible_cols.push(Col::Size);     }
+        if self.column_config.show_notional { visible_cols.push(Col::Notional); }
 
         // Reserve right edge for symbol label (or 0 if no cols — degenerate).
         let usable_w = w - TT_LEFT_PAD;
@@ -630,9 +641,10 @@ impl TradingPanel for TradeTapeState {
         for (i, &col) in visible_cols.iter().enumerate() {
             let lx = col_x(i) as f64;
             let label = match col {
-                Col::Time  => "TIME",
-                Col::Price => "PRICE",
-                Col::Size  => "SIZE",
+                Col::Time     => "TIME",
+                Col::Price    => "PRICE",
+                Col::Size     => "SIZE",
+                Col::Notional => "NOTIONAL",
             };
             ctx.fill_text(label, lx, header_mid_y);
         }
@@ -668,8 +680,12 @@ impl TradingPanel for TradeTapeState {
             let mid_y = (row_y + TT_ROW_HEIGHT / 2.0) as f64;
 
             // Colored background with alpha-by-size; Ramp adds the
-            // bright-endpoint mix by size.
-            let alpha = self.row_alpha(entry.quantity);
+            // bright-endpoint mix by size. A print at/above the flag
+            // threshold gets the SOLID highlight (TapeSurf ref 17:
+            // "flagged big print").
+            let notional = entry.price * entry.quantity;
+            let flagged = self.flag_notional.map_or(false, |t| notional >= t);
+            let alpha = if flagged { 0.85 } else { self.row_alpha(entry.quantity) };
             let t_mix = if skin == TapeSkin::Classic
                 || flat_bars
                 || self.max_qty_seen <= 0.0
@@ -706,13 +722,25 @@ impl TradingPanel for TradeTapeState {
                         ctx.fill_text(&Self::format_time(entry.timestamp), cx, mid_y);
                     }
                     Col::Price => {
-                        let price_color = if entry.is_buy { &theme.buy_bright } else { &theme.sell_bright };
+                        // On a flagged solid row the side-bright price
+                        // would sink into the fill — plain text wins.
+                        let price_color = if flagged {
+                            &theme.text_primary
+                        } else if entry.is_buy {
+                            &theme.buy_bright
+                        } else {
+                            &theme.sell_bright
+                        };
                         ctx.set_fill_color(price_color);
                         ctx.fill_text(&Self::format_price(entry.price, tick_size), cx, mid_y);
                     }
                     Col::Size => {
                         ctx.set_fill_color(&theme.text_primary);
                         ctx.fill_text(&Self::format_qty(entry.quantity), cx, mid_y);
+                    }
+                    Col::Notional => {
+                        ctx.set_fill_color(&theme.text_primary);
+                        ctx.fill_text(&Self::format_qty(notional), cx, mid_y);
                     }
                 }
             }
@@ -902,7 +930,10 @@ impl TradeTapeState {
             for (row_idx, entry) in rows.enumerate() {
                 let row_y = y + TT_HEADER_HEIGHT + row_idx as f32 * TT_ROW_HEIGHT;
                 let mid_y = (row_y + TT_ROW_HEIGHT / 2.0) as f64;
-                let alpha = self.row_alpha(entry.quantity);
+                let flagged = self
+                    .flag_notional
+                    .map_or(false, |t| entry.price * entry.quantity >= t);
+                let alpha = if flagged { 0.85 } else { self.row_alpha(entry.quantity) };
                 let t_mix = if skin == TapeSkin::Classic || flat_bars || self.max_qty_seen <= 0.0 {
                     0.0
                 } else {
@@ -922,7 +953,13 @@ impl TradeTapeState {
                 }
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.set_text_align(TextAlign::Left);
-                ctx.set_fill_color(if entry.is_buy { &theme.buy_bright } else { &theme.sell_bright });
+                ctx.set_fill_color(if flagged {
+                    &theme.text_primary
+                } else if entry.is_buy {
+                    &theme.buy_bright
+                } else {
+                    &theme.sell_bright
+                });
                 ctx.fill_text(
                     &Self::format_price(entry.price, tick_size),
                     (cx0 + 3.0) as f64,

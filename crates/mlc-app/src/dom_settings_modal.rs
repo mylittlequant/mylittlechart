@@ -360,6 +360,7 @@ pub fn render_section_settings_modal(
     skin_label: Option<&str>,
     multi_mode: Option<bool>,
     imbalance: Option<(bool, u8)>,
+    big_flag: Option<Option<f64>>,
 ) {
     let col_rows = columns.len().div_ceil(4);
     let modal_h = HEADER_H
@@ -438,9 +439,10 @@ pub fn render_section_settings_modal(
     row_y += BTN_H + 6.0;
 
     // Imbalance footer (owner order 2026-07-31): on/off + window cycle.
+    // TT also carries the big-print flag threshold here (TapeSurf ref 17).
     if let Some((imb_on, imb_win)) = imbalance {
         row_y += ROW_GAP - 6.0;
-        caption(ctx, tt, left, row_y, "Imbalance");
+        caption(ctx, tt, left, row_y, "Imbalance / Big print");
         row_y += CAPTION_H;
         modal_btn(ctx, coord, &layer_id, tt, "imb", left, row_y, 70.0, "Imb", imb_on);
         modal_btn(
@@ -448,6 +450,18 @@ pub fn render_section_settings_modal(
             left + 78.0, row_y, 90.0,
             &format!("Win: {}m", imb_win.max(1)), false,
         );
+        if let Some(flag) = big_flag {
+            let f_label = match flag {
+                Some(v) if v >= 1_000_000.0 => format!("Flag ≥ {:.0}M", v / 1_000_000.0),
+                Some(v) => format!("Flag ≥ {:.0}K", v / 1_000.0),
+                None => "Flag: off".to_string(),
+            };
+            modal_btn(
+                ctx, coord, &layer_id, tt, "tt_flag",
+                left + 176.0, row_y, 120.0,
+                &f_label, flag.is_some(),
+            );
+        }
         row_y += BTN_H;
     }
 
