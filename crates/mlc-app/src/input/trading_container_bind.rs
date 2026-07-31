@@ -756,6 +756,27 @@ impl ChartApp {
         // have no REST snapshot to storm).
         {
             use mlc_app_panels::trading::order_flow::multi_dom;
+            // Late symbol sync: a panel hydrated from a BoundToChart /
+            // HyperFocus source has an EMPTY symbol at restore time (the
+            // real key lands via the group rebind later) — the roster's
+            // base symbol restored empty with it and the venue scan below
+            // would skip the panel forever. Adopt the panel's key once it
+            // materializes.
+            for s in self.panels_store.trade_tape.values_mut() {
+                if s.multi_mode && s.multi.symbol.is_empty() && !s.symbol.is_empty() {
+                    s.multi.symbol = s.symbol.clone();
+                }
+            }
+            for s in self.panels_store.l2_tape.values_mut() {
+                if s.multi_mode && s.multi.symbol.is_empty() && !s.symbol.is_empty() {
+                    s.multi.symbol = s.symbol.clone();
+                }
+            }
+            for s in self.panels_store.big_trades.values_mut() {
+                if s.multi_mode && s.multi.symbol.is_empty() && !s.symbol.is_empty() {
+                    s.multi.symbol = s.symbol.clone();
+                }
+            }
             enum TapeKind { Tt, L2, Bt }
             let mut tape_needs: Vec<(TapeKind, mlc_core::state::PanelId, usize, String, String)> =
                 Vec::new();
