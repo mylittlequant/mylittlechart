@@ -211,6 +211,11 @@ pub enum PersistedFreeItemKind {
         multi_mode: bool,
         #[serde(default)]
         multi_entries: Vec<String>,
+        /// Add/Cancel imbalance footer + its window (owner 2026-08-01).
+        #[serde(default = "default_true")]
+        show_imbalance: bool,
+        #[serde(default = "default_imb_window_min")]
+        imb_window_min: u8,
     },
     TradeTape {
         #[serde(default)]

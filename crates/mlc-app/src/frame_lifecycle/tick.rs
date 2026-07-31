@@ -313,6 +313,7 @@ impl ChartApp {
                             }
                         }
                         state.prune_flash();
+                        state.prune_spoof_memory();
                     }
                 }
                 self.last_l2_panel_us += l2_t0.elapsed().as_micros() as u64;
@@ -441,6 +442,7 @@ impl ChartApp {
             if state.multi_mode {
                 state.tick();
                 state.prune_flash();
+                state.prune_spoof_memory();
             }
         }
 

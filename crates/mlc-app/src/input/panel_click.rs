@@ -4024,18 +4024,33 @@ impl ChartApp {
                         self.sidebar_data_dirty = true;
                         return;
                     }
-                    if let (Some(i), Some(state)) = (
-                        rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()),
-                        self.panels_store.l2_tape.get_mut(pid),
-                    ) {
-                        match i {
-                            0 => state.column_config.show_time = !state.column_config.show_time,
-                            1 => state.column_config.show_type = !state.column_config.show_type,
-                            2 => state.column_config.show_side = !state.column_config.show_side,
-                            3 => state.column_config.show_price = !state.column_config.show_price,
-                            _ => state.column_config.show_qty = !state.column_config.show_qty,
+                    let mut persist = false;
+                    if let Some(state) = self.panels_store.l2_tape.get_mut(pid) {
+                        if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
+                            match i {
+                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                1 => state.column_config.show_type = !state.column_config.show_type,
+                                2 => state.column_config.show_side = !state.column_config.show_side,
+                                3 => state.column_config.show_price = !state.column_config.show_price,
+                                _ => state.column_config.show_qty = !state.column_config.show_qty,
+                            }
+                        } else if rest == "imb" {
+                            state.show_imbalance = !state.show_imbalance;
+                            persist = true;
+                        } else if rest == "imb_win" {
+                            const WINDOWS: &[u8] = &[1, 2, 5, 10];
+                            let cur = state.imb_window_min;
+                            state.imb_window_min = WINDOWS
+                                .iter()
+                                .find(|&&m| m > cur)
+                                .copied()
+                                .unwrap_or(WINDOWS[0]);
+                            persist = true;
                         }
                         self.sidebar_data_dirty = true;
+                    }
+                    if persist {
+                        self.autosave_snapshot();
                     }
                     return;
                 }

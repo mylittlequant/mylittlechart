@@ -56,6 +56,10 @@ pub struct L2Event {
     /// Roster index of the source venue in multi mode (`None` =
     /// single-venue event). Drives the EXCHANGE column (TapeSurf ref 17).
     pub venue: Option<u8>,
+    /// `true` on a Cancel that removed a LARGE add shortly after it was
+    /// placed (spoof detector, owner order 2026-08-01) — render marks the
+    /// row.
+    pub spoof: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -158,6 +162,17 @@ pub struct L2TapeState {
     pub multi_mode: bool,
     /// Embedded multi-venue roster + per-venue book/diff state.
     pub multi: super::multi_tape::MultiTapeState,
+
+    /// Add/Cancel imbalance footer strip (owner order 2026-08-01): is the
+    /// book FILLING (add volume) or DRAINING (cancel volume) over the
+    /// window. Modal "Imb" toggle.
+    pub show_imbalance: bool,
+    /// Imbalance window in minutes (modal click-cycle 1/2/5/10).
+    pub imb_window_min: u8,
+    /// Spoof-detector memory: recent LARGE adds by `(venue, tick)` →
+    /// `(qty, arrival ts_ms)`. A Cancel of the same level within the
+    /// spoof window marks the event + records a [`SpoofAlert`].
+    pub last_big_adds: HashMap<(Option<u8>, i64), (f64, i64)>,
 }
 
 /// Spoofing alert data
@@ -197,6 +212,7 @@ impl L2TapePanel {
 
 const L2_ROW_HEIGHT: f32 = 16.0;
 const L2_HEADER_HEIGHT: f32 = 16.0;
+const L2_FOOTER_HEIGHT: f32 = 16.0;
 const L2_LEFT_PAD: f32 = 6.0;
 
 /// Format a quantity value using K / M suffixes when the magnitude warrants it.
@@ -343,7 +359,8 @@ impl TradingPanel for L2TapeState {
             ctx.fill_text(&badge_text, badge_x, header_text_y);
         }
 
-        let content_h = h - L2_HEADER_HEIGHT;
+        let footer_h = if self.show_imbalance { L2_FOOTER_HEIGHT } else { 0.0 };
+        let content_h = h - L2_HEADER_HEIGHT - footer_h;
         let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
         if max_rows == 0 {
             return;
@@ -392,6 +409,14 @@ impl TradingPanel for L2TapeState {
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
             }
 
+            // Spoof marker (owner order 2026-08-01): bright edge on a
+            // Cancel that pulled a fresh large add — DOM big-marker
+            // grammar, current-price (gold) token.
+            if event.spoof {
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.current_price, 0.9));
+                ctx.fill_rect(x as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
+            }
+
             ctx.set_font("10px monospace");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
@@ -408,9 +433,14 @@ impl TradingPanel for L2TapeState {
             }
 
             if let Some(cx) = col_type_x {
-                let type_color = self.event_color(event, theme);
-                ctx.set_fill_color(&type_color);
-                ctx.fill_text(L2TapeState::event_label(&event.event_type), cx as f64, row_mid_y);
+                if event.spoof {
+                    ctx.set_fill_color(&theme.current_price);
+                    ctx.fill_text("SPF", cx as f64, row_mid_y);
+                } else {
+                    let type_color = self.event_color(event, theme);
+                    ctx.set_fill_color(&type_color);
+                    ctx.fill_text(L2TapeState::event_label(&event.event_type), cx as f64, row_mid_y);
+                }
             }
 
             if let Some(cx) = col_side_x {
@@ -455,6 +485,23 @@ impl TradingPanel for L2TapeState {
                 "No events",
                 (x + w / 2.0) as f64,
                 (y + h / 2.0) as f64,
+            );
+        }
+
+        // ── Add/Cancel imbalance footer (owner order 2026-08-01): is the
+        // book filling or draining over the modal-config window.
+        if self.show_imbalance {
+            let win_cutoff = now_ms as i64 - self.imb_window_min.max(1) as i64 * 60_000;
+            let (add_vol, cxl_vol) = self.imb_add_cancel(None, win_cutoff);
+            self.draw_imbalance_footer(
+                ctx,
+                x,
+                y + h - L2_FOOTER_HEIGHT,
+                w,
+                theme,
+                add_vol,
+                cxl_vol,
+                true,
             );
         }
 
@@ -513,6 +560,80 @@ impl TradingPanel for L2TapeState {
 }
 
 impl L2TapeState {
+    /// Add/Cancel volume over the imbalance window for one venue group
+    /// (`None` = the single feed).
+    fn imb_add_cancel(&self, venue: Option<u8>, win_cutoff: i64) -> (f64, f64) {
+        let (mut add, mut cxl) = (0.0_f64, 0.0_f64);
+        for e in self.events.iter().rev() {
+            if e.timestamp < win_cutoff {
+                break;
+            }
+            if e.venue != venue {
+                continue;
+            }
+            match e.event_type {
+                L2EventType::Add => add += e.quantity,
+                L2EventType::Cancel => cxl += e.quantity,
+                _ => {}
+            }
+        }
+        (add, cxl)
+    }
+
+    /// One imbalance strip segment: FILL share (adds vs cancels) — is the
+    /// book filling (buy token) or draining (sell token). Same footer
+    /// grammar as the Trade Tape's buy/sell strip.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_imbalance_footer(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        add_vol: f64,
+        cxl_vol: f64,
+        with_label: bool,
+    ) {
+        ctx.set_fill_color(&theme.separator);
+        ctx.fill_rect(x as f64, y as f64, w as f64, 1.0);
+        let total = add_vol + cxl_vol;
+        let share = if total > 0.0 { add_vol / total } else { 0.5 };
+        let label_w = if with_label { 24.0_f32 } else { 0.0 };
+        let bar_x = x + label_w + 2.0;
+        let bar_w = (w - label_w - 6.0).max(0.0);
+        if with_label {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("9px monospace");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                &format!("{}m", self.imb_window_min.max(1)),
+                (x + 3.0) as f64,
+                (y + L2_FOOTER_HEIGHT * 0.5) as f64,
+            );
+        }
+        let gw = bar_w as f64 * share.clamp(0.0, 1.0);
+        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.buy, 0.55));
+        ctx.fill_rect(bar_x as f64, (y + 2.0) as f64, gw, (L2_FOOTER_HEIGHT - 4.0) as f64);
+        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.sell, 0.55));
+        ctx.fill_rect(
+            bar_x as f64 + gw,
+            (y + 2.0) as f64,
+            bar_w as f64 - gw,
+            (L2_FOOTER_HEIGHT - 4.0) as f64,
+        );
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("9px monospace");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(
+            &format!("A{:.0}%", share * 100.0),
+            (bar_x + bar_w * 0.5) as f64,
+            (y + L2_FOOTER_HEIGHT * 0.5) as f64,
+        );
+    }
+
     /// M/L2 columnar render (по образцу Multi-DOM, owner order
     /// 2026-07-31): one venue per column, one unifying tagged header.
     /// Each column streams ITS venue's book events newest-at-top — the
@@ -566,7 +687,8 @@ impl L2TapeState {
             ctx.fill_text(&label, cx as f64, (y + L2_HEADER_HEIGHT * 0.5) as f64);
         }
 
-        let content_h = h - L2_HEADER_HEIGHT;
+        let footer_h = if self.show_imbalance { L2_FOOTER_HEIGHT } else { 0.0 };
+        let content_h = h - L2_HEADER_HEIGHT - footer_h;
         let max_rows = (content_h / L2_ROW_HEIGHT).floor() as usize;
         if max_rows == 0 {
             return;
@@ -618,6 +740,10 @@ impl L2TapeState {
                     ctx.set_fill_color("#ffffff28");
                     ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
                 }
+                if event.spoof {
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.current_price, 0.9));
+                    ctx.fill_rect(cx0 as f64, row_y as f64, 3.0, L2_ROW_HEIGHT as f64);
+                }
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.set_text_align(TextAlign::Left);
                 let mut tx = cx0 + 3.0;
@@ -642,6 +768,25 @@ impl L2TapeState {
                     &abbreviate_qty(event.quantity),
                     (cx0 + col_w - 3.0) as f64,
                     row_mid_y,
+                );
+            }
+        }
+
+        // ── Per-venue Add/Cancel imbalance footer.
+        if self.show_imbalance {
+            let win_cutoff = now_ms as i64 - self.imb_window_min.max(1) as i64 * 60_000;
+            let fy = y + h - L2_FOOTER_HEIGHT;
+            for i in 0..n {
+                let (add_vol, cxl_vol) = self.imb_add_cancel(Some(i as u8), win_cutoff);
+                self.draw_imbalance_footer(
+                    ctx,
+                    x + col_w * i as f32,
+                    fy,
+                    col_w,
+                    theme,
+                    add_vol,
+                    cxl_vol,
+                    i == 0,
                 );
             }
         }
@@ -699,6 +844,9 @@ impl L2TapeState {
             column_config: L2TapeColumnConfig::default(),
             multi_mode: false,
             multi: super::multi_tape::MultiTapeState::new(),
+            show_imbalance: true,
+            imb_window_min: 2,
+            last_big_adds: HashMap::new(),
         }
     }
 
@@ -939,7 +1087,50 @@ impl L2TapeState {
     }
 
     /// Add an event to the buffer, recording a flash animation entry.
-    pub fn push_event(&mut self, event: L2Event) {
+    ///
+    /// Central spoof detector (owner order 2026-08-01; both the
+    /// snapshot-diff and the delta path land here): a LARGE Add
+    /// (≥ [`Self::SPOOF_BIG_FRAC`] of the window max) is remembered by
+    /// `(venue, tick)`; a Cancel of that level within
+    /// [`Self::SPOOF_WINDOW_MS`] marks the event + records a
+    /// [`SpoofAlert`].
+    pub fn push_event(&mut self, mut event: L2Event) {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let tick = self.price_to_tick(event.price);
+        let key = (event.venue, tick);
+        match event.event_type {
+            L2EventType::Add => {
+                if self.max_qty_seen > 0.0
+                    && event.quantity >= self.max_qty_seen * Self::SPOOF_BIG_FRAC
+                {
+                    self.last_big_adds.insert(key, (event.quantity, now_ms as i64));
+                }
+            }
+            L2EventType::Cancel => {
+                if let Some((add_qty, add_ts)) = self.last_big_adds.remove(&key) {
+                    let dt = (now_ms as i64 - add_ts).max(0) as u64;
+                    if dt <= Self::SPOOF_WINDOW_MS {
+                        event.spoof = true;
+                        if self.spoof_alerts.len() >= 64 {
+                            self.spoof_alerts.pop_front();
+                        }
+                        self.spoof_alerts.push_back(SpoofAlert {
+                            timestamp: event.timestamp,
+                            price: event.price,
+                            side: event.side.clone(),
+                            quantity: add_qty,
+                            duration_ms: dt,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
         if self.events.len() >= self.max_events {
             self.events.pop_front();
         }
@@ -950,12 +1141,25 @@ impl L2TapeState {
         self.events.push_back(event);
         self.push_total += 1;
 
+        // Serial of the event just pushed equals push_total.
+        self.flash_events.push((self.push_total, now_ms));
+    }
+
+    /// An Add at or above this fraction of the window max is "large"
+    /// (same threshold family as the DOM's `BIG_ORDER_FRAC`).
+    const SPOOF_BIG_FRAC: f64 = 0.30;
+    /// A large Add cancelled within this window is a spoof print.
+    const SPOOF_WINDOW_MS: u64 = 5_000;
+
+    /// Drop spoof-memory entries older than twice the spoof window —
+    /// called from the tick loop alongside flash pruning.
+    pub fn prune_spoof_memory(&mut self) {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64;
-        // Serial of the event just pushed equals push_total.
-        self.flash_events.push((self.push_total, now_ms));
+            .as_millis() as i64;
+        let cutoff = now_ms - (Self::SPOOF_WINDOW_MS as i64) * 2;
+        self.last_big_adds.retain(|_, (_, ts)| *ts >= cutoff);
     }
 
     /// Recompute `max_qty_seen` from the current event buffer.
@@ -1130,6 +1334,7 @@ impl L2TapeState {
                 order_count: None,
                 order_id: None,
                 venue,
+                spoof: false,
             });
 
             let entry = book.entry(tick).or_insert((0.0, 0.0));
@@ -1170,10 +1375,79 @@ impl L2TapeState {
                 order_count: None,
                 order_id: None,
                 venue,
+                spoof: false,
             });
 
             let entry = book.entry(tick).or_insert((0.0, 0.0));
             entry.1 = qty;
+        }
+
+        // Reverse pass (2026-08-01): previous-book levels that VANISHED
+        // from the snapshot are CANCELS — the forward loops only see
+        // levels present in the NEW snapshot, so removals never produced
+        // an event here (the delta path gets explicit qty==0 rows
+        // instead; this snapshot path did not). Range-guarded: a level
+        // outside the snapshot's covered band merely scrolled out of the
+        // top-N window — not a cancel.
+        let bid_min = bids
+            .iter()
+            .filter(|&&(p, q)| p > 0.0 && q > 0.0)
+            .map(|&(p, _)| self.price_to_tick(p))
+            .min();
+        let ask_max = asks
+            .iter()
+            .filter(|&&(p, q)| p > 0.0 && q > 0.0)
+            .map(|&(p, _)| self.price_to_tick(p))
+            .max();
+        let bid_set: std::collections::HashSet<i64> = bids
+            .iter()
+            .filter(|&&(_, q)| q > 0.0)
+            .map(|&(p, _)| self.price_to_tick(p))
+            .collect();
+        let ask_set: std::collections::HashSet<i64> = asks
+            .iter()
+            .filter(|&&(_, q)| q > 0.0)
+            .map(|&(p, _)| self.price_to_tick(p))
+            .collect();
+        let mut vanished: Vec<(i64, f64, L2Side)> = Vec::new();
+        for (&tick, &(bq, aq)) in book.iter() {
+            if bq > 0.0 {
+                if let Some(min) = bid_min {
+                    if tick >= min && !bid_set.contains(&tick) {
+                        vanished.push((tick, bq, L2Side::Bid));
+                    }
+                }
+            }
+            if aq > 0.0 {
+                if let Some(max) = ask_max {
+                    if tick <= max && !ask_set.contains(&tick) {
+                        vanished.push((tick, aq, L2Side::Ask));
+                    }
+                }
+            }
+        }
+        for (tick, qty, side) in vanished {
+            let entry = book.entry(tick).or_insert((0.0, 0.0));
+            match side {
+                L2Side::Bid => entry.0 = 0.0,
+                L2Side::Ask => entry.1 = 0.0,
+            }
+            if let Some(min_q) = self.min_quantity {
+                if qty < min_q {
+                    continue;
+                }
+            }
+            self.push_event(L2Event {
+                timestamp,
+                event_type: L2EventType::Cancel,
+                side,
+                price: tick as f64 * self.tick_size,
+                quantity: qty,
+                order_count: None,
+                order_id: None,
+                venue,
+                spoof: false,
+            });
         }
     }
 
@@ -1360,6 +1634,7 @@ impl L2TapeState {
                 order_count: None,
                 order_id: None,
                 venue: None,
+                spoof: false,
             });
 
             let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));
@@ -1400,6 +1675,7 @@ impl L2TapeState {
                 order_count: None,
                 order_id: None,
                 venue: None,
+                spoof: false,
             });
 
             let entry = self.previous_book.entry(tick).or_insert((0.0, 0.0));

@@ -1190,7 +1190,7 @@ impl ChartApp {
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::L2Tape { source, multi_mode, multi_entries } => {
+                                PersistedFreeItemKind::L2Tape { source, multi_mode, multi_entries, show_imbalance, imb_window_min } => {
                                     if !self.panels_store.l2_tape.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1218,6 +1218,8 @@ impl ChartApp {
                                             }
                                             s.multi_mode = true;
                                         }
+                                        s.show_imbalance = *show_imbalance;
+                                        s.imb_window_min = (*imb_window_min).max(1);
                                         self.panels_store.l2_tape.insert(pid, s);
                                     }
                                 }

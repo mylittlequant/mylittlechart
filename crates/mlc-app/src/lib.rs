@@ -8806,7 +8806,7 @@ impl ChartApp {
                             "L2 Tape Settings", &cols, None,
                             None,
                             Some(s.multi_mode),
-                            None,
+                            Some((s.show_imbalance, s.imb_window_min)),
                         );
                     }
                 }
