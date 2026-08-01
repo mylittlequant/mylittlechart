@@ -565,26 +565,17 @@ impl ChartApp {
                     }
                 }
 
-                // Recalc by the window's BUBBLE id — instances hang off
+                // Recalc by the event's BUBBLE id — instances hang off
                 // `current_tag_id`, and ChartId/BubbleId come from separate
                 // counters. The old `BubbleId(cid.0)` cast recalced a
-                // usually-nonexistent bubble, leaving indicator values stale
-                // (sized for the PRE-replace series) until the next
-                // trade-tick recalc — visible as the volume histogram
-                // vanishing for a beat after every bars reload (owner
-                // report 2026-07-05).
-                let matched_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid.containers().iter()
-                    .filter(|(cid, _)| {
-                        self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
-                            && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                            && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                            && self.account_type_for_chart(**cid).map_or(false, |at| at == event_account_type)
-                    })
-                    .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
-                    .collect();
-                for b in &matched_bids {
-                    self.core.indicators_mut().recalc_bubble(*b, new_bars);
-                }
+                // usually-nonexistent bubble (owner report 2026-07-05); the
+                // instrument-wide sweep that replaced it recalced every
+                // same-instrument bubble with THIS bubble's array — foreign
+                // depth poisoning peer windows' indicator output (2026-08-01
+                // F-chart incident). `new_bars` belongs to `*bid` alone;
+                // peer bubbles receive their own per-bubble event from the
+                // fan-out writer.
+                self.core.indicators_mut().recalc_bubble(*bid, new_bars);
             }
 
             // ── ScrollBarsAppended ─────────────────────────────────────────────
@@ -686,7 +677,22 @@ impl ChartApp {
                         Some(t) => t,
                         None => continue,
                     };
-                    if !(win_sym.as_str() == symbol.as_str()
+                    // Match by `current_tag_id == *bid` like the BarsLoaded /
+                    // BackfillCompleted arms — NOT by instrument alone. The
+                    // ScrollBarsLoaded writer fans the page out per bubble and
+                    // emits one event PER bubble with that bubble's own
+                    // prev_bars/bars; two unsynced windows on the same
+                    // instrument (main chart + trading-container chart) hold
+                    // DIFFERENT bubbles whose arrays differ in depth. Without
+                    // the bid gate each window also reconciled against the
+                    // OTHER bubble's arrays: once the foreign array outgrew
+                    // the window's own bar_count, the anchor was captured in
+                    // foreign (deeper) coordinates and view_start walked off
+                    // the window's own array by one page per event — the
+                    // F-chart axis breakage of 2026-08-01 (candles collapse
+                    // to dashes + zero-spike + blown scale ~10s after load).
+                    if !(window.current_tag_id == *bid
+                        && win_sym.as_str() == symbol.as_str()
                         && win_exch.as_str() == exchange_id.as_str()
                         && win_tf.name == *tf_name
                         && *win_at == event_account_type)
@@ -738,18 +744,16 @@ impl ChartApp {
                 }
 
                 if any_matched {
-                    // Same BubbleId-not-ChartId fix as the BarsLoaded arm above.
-                    let matched_bids: Vec<mlc_core::ids::BubbleId> = self.panel_app.panel_grid.containers().iter()
-                        .filter(|(cid, _)| {
-                            self.symbol_for_chart(**cid).map_or(false, |s| s == *symbol)
-                                && self.exchange_for_chart(**cid).map_or(false, |e| e == exchange_id.as_str())
-                                && self.timeframe_for_chart(**cid).map_or(false, |tf| tf.name == *tf_name)
-                        })
-                        .filter_map(|(cid, _)| self.bubble_for_chart(*cid))
-                        .collect();
-                    for b in &matched_bids {
-                        self.core.indicators_mut().recalc_bubble(*b, new_bars);
-                    }
+                    // Recalc ONLY the event's own bubble: `new_bars` is THAT
+                    // bubble's post-merge array. The instrument-wide sweep
+                    // this replaces recalced every same-instrument bubble
+                    // with a FOREIGN array — indicator output (VOLUME) sized
+                    // to another bubble's depth, rendered against this
+                    // bubble's own bars (the sparse-spike volume row of the
+                    // 2026-08-01 F-chart incident). Peer bubbles get their
+                    // own ScrollBarsAppended (the writer fans out per
+                    // bubble), so nobody is starved by the narrowing.
+                    self.core.indicators_mut().recalc_bubble(*bid, new_bars);
                 }
             }
 
