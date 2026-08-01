@@ -13,6 +13,7 @@
 //! - Visibility/lock/timeframe integration
 //! - Full indicator catalog (480+ indicators from zengeld-chart-indicators)
 
+use mli::data_loader::stream_kind::StreamKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
@@ -342,6 +343,13 @@ pub struct IndicatorDefinition {
     pub histogram_style: HistogramStyle,
     /// Machine ID for fast factory access (typed enum instead of string parsing)
     pub machine_id: Option<BarIndicatorId>,
+    /// Data streams this indicator DECLARES it consumes, carried verbatim
+    /// from its mli catalog signature (`input_stream` first, then
+    /// `aux_streams`). The host arms live subscriptions from this instead
+    /// of matching indicator ids — an overlay that needs the order book
+    /// says so in its signature, and nothing in the app has to know its
+    /// name. Empty only for definitions built outside the catalog.
+    pub streams: Vec<StreamKind>,
 }
 
 /// An instantiated indicator with configured parameters

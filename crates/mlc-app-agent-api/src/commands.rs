@@ -123,13 +123,21 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 // between `windows` (the Vec<WindowRefMut>) and `chart`.
                 let chart: &mut mlc_app::ChartApp = unsafe { &mut *chart_ptr };
 
-                let bars: Vec<mlc_core::Bar> = chart.panel_app.panel_grid.containers()
+                // The panel names WHERE the indicator was ordered; the bubble it
+                // is tagged to names WHO owns it. Resolve the bubble once and
+                // use it for both the input bars and the ownership binding —
+                // `chart_id` is a panel id and is not interchangeable with a
+                // `BubbleId` (passing it straight through bound the instance to
+                // a foreign bubble, or to none at all when no bubble had that
+                // numeric id).
+                let bid = chart.panel_app.panel_grid.containers()
                     .values().find(|cw| cw.id.0 == chart_id)
-                    .map(|cw| cw.current_tag_id)
+                    .map(|cw| cw.current_tag_id);
+                let bars: Vec<mlc_core::Bar> = bid
                     .and_then(|bid| chart.with_bubble(bid, |b| b.bars.clone()))
                     .unwrap_or_default();
 
-                let new_id_opt = chart.core.indicators_mut().add(Some(mlc_core::ids::BubbleId(chart_id)), &type_id);
+                let new_id_opt = chart.core.indicators_mut().add(bid, &type_id);
                 if let Some(new_id) = new_id_opt {
                     for (k, v) in &params {
                         let iv = match v {

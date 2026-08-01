@@ -194,6 +194,15 @@ impl<'a> Indicators<'a> {
     }
 
     /// Type ID (references `IndicatorDefinition`).
+    /// Data streams the indicator type DECLARED it consumes, from its mli
+    /// catalog signature (`input_stream` + `aux_streams`). A bubble uses
+    /// this to decide which live feeds it must keep alive for the
+    /// indicators bound to it — the same way it already keeps klines and
+    /// trades alive for its chart.
+    pub fn definition_streams(&self, type_id: &str) -> Vec<mlc_backend_indicator_engine::StreamKind> {
+        self.definition(type_id).map(|d| d.streams.clone()).unwrap_or_default()
+    }
+
     pub fn type_id_of(&self, id: u64) -> Option<String> {
         self.mgr.get_instance(id).map(|inst| inst.type_id.clone())
     }
@@ -370,6 +379,15 @@ impl<'a> IndicatorsMut<'a> {
     }
 
     /// Type ID (references `IndicatorDefinition`).
+    /// Data streams the indicator type DECLARED it consumes, from its mli
+    /// catalog signature (`input_stream` + `aux_streams`). A bubble uses
+    /// this to decide which live feeds it must keep alive for the
+    /// indicators bound to it — the same way it already keeps klines and
+    /// trades alive for its chart.
+    pub fn definition_streams(&self, type_id: &str) -> Vec<mlc_backend_indicator_engine::StreamKind> {
+        self.definition(type_id).map(|d| d.streams.clone()).unwrap_or_default()
+    }
+
     pub fn type_id_of(&self, id: u64) -> Option<String> {
         self.mgr.get_instance(id).map(|inst| inst.type_id.clone())
     }
@@ -518,9 +536,16 @@ impl<'a> IndicatorsMut<'a> {
 
     /// Remove every indicator instance bound to `bid`. Returns the number
     /// removed. Replaces `purge_synced_instances_for_window`.
+    ///
+    /// "Every" is literal: the bubble owns its instances, so when the bubble
+    /// goes away they go with it. This used to delegate to
+    /// `purge_synced_instances_for_bubble`, which filters `origin_id.is_some()`
+    /// and therefore reaped only sync-group CLONES — deleting a bubble left
+    /// every original instance in the manager, bound to a dead bubble id, with
+    /// no render site able to reach it and no way to delete it.
     pub fn purge_for_bubble(&mut self, bid: BubbleId) -> usize {
         let before = self.mgr.instances_count();
-        self.mgr.purge_synced_instances_for_bubble(bid.0);
+        self.mgr.purge_all_instances_for_bubble(bid.0);
         before - self.mgr.instances_count()
     }
 

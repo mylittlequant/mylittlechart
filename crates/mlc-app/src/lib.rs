@@ -431,6 +431,16 @@ pub struct ColdApplyTimings {
 }
 
 pub struct ChartApp {
+    /// Live feeds each bubble currently holds on behalf of its indicators
+    /// (see `ensure_bubble_indicator_feeds`). RAM-only bookkeeping: the
+    /// durable truth is the set of indicator instances on the bubble; this
+    /// only records what was already subscribed so the reconcile can diff
+    /// instead of re-subscribing every tick.
+    pub(crate) bubble_feeds: std::collections::HashMap<
+        mlc_core::ids::BubbleId,
+        std::collections::HashSet<mlc_backend_indicator_engine::StreamKind>,
+    >,
+
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
 
@@ -2384,6 +2394,7 @@ impl ChartApp {
         let core = mlc_backend::BackendCore::new(bridge.clone(), trading);
 
         let mut app = Self {
+            bubble_feeds: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -2792,6 +2803,7 @@ impl ChartApp {
     /// `core.tick_writers`, no independent broadcast receiver of its own.
     pub fn new_empty(core: std::sync::Arc<mlc_backend::BackendCore>) -> Self {
         let mut app = Self {
+            bubble_feeds: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3359,6 +3371,7 @@ impl ChartApp {
         skeleton: bool,
     ) -> Self {
         let mut app = Self {
+            bubble_feeds: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),

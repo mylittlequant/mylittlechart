@@ -205,8 +205,13 @@ impl ChartApp {
                 // Was not in a color group — the window's `current_tag_id`
                 // simply flips to `auto_bid`; `auto_bid`'s own primitives are
                 // already authoritative (no per-window synced copy to purge
-                // under the per-bubble model).
-                self.core.indicators_mut().purge_for_bubble(mlc_core::ids::BubbleId(chart_id.0));
+                // under the per-bubble model). Desync moves a PANEL between
+                // bubbles; it destroys no bubble, so it destroys no indicator.
+                // (There used to be a `purge_for_bubble(BubbleId(chart_id.0))`
+                // here — a panel id cast to a bubble id, against a purge that
+                // only reaped clones. Now that the purge is literal it would
+                // wipe the indicators of whatever bubble happened to share the
+                // panel's number, so it is gone.)
                 if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                     window.current_tag_id = auto_bid;
                 }

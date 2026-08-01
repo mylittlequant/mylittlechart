@@ -50,6 +50,9 @@
 pub use mli::bar_indicators;
 pub use mli::catalog;
 pub use mli::core::types;
+/// The stream vocabulary indicators declare their data needs in — a bubble
+/// reads it to know which live feeds to keep alive for its indicators.
+pub use mli::data_loader::stream_kind::StreamKind;
 
 // Signal system — UI-side feature, NOT in mli. Lives in mlc permanently.
 pub mod signals;

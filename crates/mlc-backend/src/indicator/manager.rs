@@ -249,65 +249,16 @@ impl IndicatorManager {
         self.remove_instance(id)
     }
 
-    /// Remove all cloned indicator instances for a specific bubble (used on desync).
-    /// DEPRECATED: Only used by legacy origin_id-based sync. TagManager uses
-    /// pre_tag_indicator_ids filtering instead.
-    pub fn purge_synced_instances_for_bubble(&mut self, target_bubble_id: u64) {
-        let to_remove: Vec<u64> = self.instances.values()
-            .filter(|inst| inst.origin_id.is_some() && inst.bubble_id == Some(target_bubble_id))
-            .map(|inst| inst.id)
-            .collect();
-
-        for id in to_remove {
-            if let Some(inst) = self.instances.remove(&id) {
-                let key = inst.bubble_id.unwrap_or(0);
-                if let Some(ids) = self.by_bubble_id.get_mut(&key) {
-                    ids.retain(|&i| i != id);
-                }
-            }
-            self.compute_caches.remove(&id);
-        }
-    }
-
-    /// Legacy alias for `purge_group_indicators_for_bubble`.
-    pub fn purge_group_indicators_for_window(&mut self, target_bubble_id: u64, group_type_ids: &[String]) {
-        self.purge_group_indicators_for_bubble(target_bubble_id, group_type_ids)
-    }
-
-    /// Remove only indicator instances whose type_id is in `group_type_ids` for the given bubble.
-    /// Used when disconnecting from a TagManager group — removes group-owned indicators
-    /// but keeps any pre-existing indicators the bubble had before joining.
-    pub fn purge_group_indicators_for_bubble(&mut self, target_bubble_id: u64, group_type_ids: &[String]) {
-        let to_remove: Vec<u64> = self.instances.values()
-            .filter(|inst| {
-                inst.bubble_id == Some(target_bubble_id)
-                    && group_type_ids.contains(&inst.type_id)
-            })
-            .map(|inst| inst.id)
-            .collect();
-
-        let count = to_remove.len();
-        for id in to_remove {
-            if let Some(inst) = self.instances.remove(&id) {
-                let key = inst.bubble_id.unwrap_or(0);
-                if let Some(ids) = self.by_bubble_id.get_mut(&key) {
-                    ids.retain(|&i| i != id);
-                }
-            }
-            self.compute_caches.remove(&id);
-        }
-        if count > 0 {
-            eprintln!("[IndicatorManager] Purged {} group indicators for bubble {}", count, target_bubble_id);
-        }
-    }
-
-    /// Legacy alias for `purge_all_instances_for_bubble`.
-    pub fn purge_all_instances_for_window(&mut self, target_bubble_id: u64) {
-        self.purge_all_instances_for_bubble(target_bubble_id)
-    }
-
-    /// Remove ALL indicator instances belonging to a bubble (regardless of origin_id).
-    /// Used when disconnecting from a TagManager group — the group owns the indicators.
+    /// Remove ALL indicator instances belonging to a bubble. The bubble owns
+    /// its instances, so this runs when the bubble itself goes away
+    /// (`ChartApp::remove_tag`, daemon `DELETE /bubbles/{id}`). It does not
+    /// run when a PANEL detaches — a panel moving between bubbles destroys
+    /// nothing.
+    ///
+    /// Three narrower purges lived here and are gone: a clone-only variant
+    /// (`origin_id.is_some()`) left every original behind on bubble deletion,
+    /// a type-filtered group variant had no callers, and both carried
+    /// `*_for_window` aliases from the pre-bubble id space.
     pub fn purge_all_instances_for_bubble(&mut self, target_bubble_id: u64) {
         let to_remove: Vec<u64> = self.instances.values()
             .filter(|inst| inst.bubble_id == Some(target_bubble_id))

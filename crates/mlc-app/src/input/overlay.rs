@@ -904,13 +904,10 @@ impl ChartApp {
         // Liquidation Heatmap: the ONE opaque-overlay id that backs a REAL
         // `IndicatorInstance` (see overlay_catalog.rs doc comment).
         if type_id == Self::LIQ_HEATMAP_TYPE_ID {
-            // Removing the legend row IS turning the overlay off (the
-            // instance is the state) — all that is left to do here is drop
-            // the live subscription; the generic instance removal below
-            // does the rest.
-            if let Some(cid) = self.panel_app.panel_grid.active_container().map(|w| w.id) {
-                self.disarm_liq_overlay_feed(cid);
-            }
+            // Nothing to do by hand: removing the legend row removes the
+            // instance, and the bubble's per-tick feed reconcile
+            // (`ensure_bubble_indicator_feeds`) drops the feed nobody
+            // declares anymore. Fall through to the generic removal.
         } else if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
             // Symmetric guard for the add-side intercept in modals.rs: the
             // remaining opaque host-driven overlays (Volume Profile / TPO
@@ -1022,43 +1019,97 @@ impl ChartApp {
         );
     }
 
-    /// Subscribe the live Liquidation Heatmap feed for `cid`'s instrument.
+    /// Keep every bubble subscribed to the feeds ITS indicators declared.
     ///
-    /// Called when the overlay's `IndicatorInstance` is ADDED — the
-    /// instance is the on/off state (owner doctrine 2026-08-01), so this
-    /// only owns the data side. Clearing the bubble's stale heat buffer
-    /// here mirrors what the retired toggle event did, so a re-add starts
-    /// from an empty map instead of yesterday's cells.
-    pub(crate) fn arm_liq_overlay_feed(&mut self, cid: mlc_core::state::ChartId) {
-        let (Some(symbol), Some(at)) = (self.symbol_for_chart(cid), self.account_type_for_chart(cid))
-        else { return };
-        if symbol.is_empty() {
-            return;
-        }
-        let eid = self.exchange_id_for_chart(cid);
-        if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
-            return;
-        }
-        if let Some(bid) = self.bubble_for_chart(cid) {
-            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                mlc_backend::chart_type::clear_slot_liq_heatmap(bubble);
-            });
-        }
-        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.ensure_connector(eid);
-        self.core.subscribe_liquidation_heatmap(eid, &symbol, at_dig3);
-    }
+    /// Data is pulled by the bubble, never by the UI: an indicator states
+    /// what it consumes in its mli signature (`input_stream` /
+    /// `aux_streams`), and the bubble that hosts it keeps that feed alive —
+    /// exactly how it already keeps klines and trades alive for the chart
+    /// drawn on it. The indicator then reads the layer off the bubble.
+    ///
+    /// Runs once per tick and is idempotent, so adding an indicator,
+    /// deleting it, switching the instrument or restoring a preset all
+    /// converge here instead of each click site arming feeds by hand.
+    /// `Bar`/`Tick` need no action — those layers are always on for a
+    /// bubble with a chart.
+    pub(crate) fn ensure_bubble_indicator_feeds(&mut self) {
+        use mlc_backend_indicator_engine::StreamKind;
 
-    /// Drop the live Liquidation Heatmap feed for `cid`'s instrument —
-    /// called when the overlay's instance is removed.
-    pub(crate) fn disarm_liq_overlay_feed(&mut self, cid: mlc_core::state::ChartId) {
-        let (Some(symbol), Some(at)) = (self.symbol_for_chart(cid), self.account_type_for_chart(cid))
-        else { return };
-        if symbol.is_empty() {
-            return;
+        // What each bubble's indicators declare, and where that bubble is
+        // rendered (its instrument comes from the window bound to it).
+        let mut wanted: std::collections::HashMap<mlc_core::ids::BubbleId, std::collections::HashSet<StreamKind>> =
+            std::collections::HashMap::new();
+        for inst in self.core.indicators().all_instances() {
+            let Some(bid) = inst.bubble_id else { continue };
+            let streams = self.core.indicators().definition_streams(&inst.type_id);
+            if streams.is_empty() {
+                continue;
+            }
+            let entry = wanted.entry(mlc_core::ids::BubbleId(bid)).or_default();
+            for s in streams {
+                if !matches!(s, StreamKind::Bar | StreamKind::Tick) {
+                    entry.insert(s);
+                }
+            }
         }
-        let eid = self.exchange_id_for_chart(cid);
-        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-        self.core.unsubscribe_liquidation_heatmap(eid, &symbol, at_dig3);
+
+        let targets: Vec<(mlc_core::state::ChartId, mlc_core::ids::BubbleId)> = self
+            .panel_app.panel_grid.containers().keys()
+            .filter_map(|cid| self.bubble_for_chart(*cid).map(|bid| (*cid, bid)))
+            .collect();
+
+        for (cid, bid) in targets {
+            let want = wanted.get(&bid).cloned().unwrap_or_default();
+            let held = self.bubble_feeds.get(&bid).cloned().unwrap_or_default();
+            if want == held {
+                continue;
+            }
+            let (Some(symbol), Some(at)) = (self.symbol_for_chart(cid), self.account_type_for_chart(cid))
+            else { continue };
+            if symbol.is_empty() {
+                continue;
+            }
+            let eid = self.exchange_id_for_chart(cid);
+            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                continue;
+            }
+            let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+
+            for stream in want.difference(&held) {
+                match stream {
+                    StreamKind::OrderBook => {
+                        self.core.bubbles_mut().with_bubble_mut(bid, |b| {
+                            mlc_backend::chart_type::clear_slot_dom_heatmap(b);
+                        });
+                        self.core.ensure_connector(eid);
+                        self.core.subscribe_dom_heatmap(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] book feed up ({} {:?})", bid, symbol, eid);
+                    }
+                    StreamKind::Liquidation => {
+                        self.core.bubbles_mut().with_bubble_mut(bid, |b| {
+                            mlc_backend::chart_type::clear_slot_liq_heatmap(b);
+                        });
+                        self.core.ensure_connector(eid);
+                        self.core.subscribe_liquidation_heatmap(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] liquidation feed up ({} {:?})", bid, symbol, eid);
+                    }
+                    _ => {}
+                }
+            }
+            for stream in held.difference(&want) {
+                match stream {
+                    StreamKind::OrderBook => {
+                        self.core.unsubscribe_dom_heatmap(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] book feed down", bid);
+                    }
+                    StreamKind::Liquidation => {
+                        self.core.unsubscribe_liquidation_heatmap(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] liquidation feed down", bid);
+                    }
+                    _ => {}
+                }
+            }
+            self.bubble_feeds.insert(bid, want);
+        }
     }
 }

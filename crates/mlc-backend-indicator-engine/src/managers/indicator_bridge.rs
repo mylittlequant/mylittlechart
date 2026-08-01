@@ -48,19 +48,16 @@ impl IndicatorBridge {
 
         // Get rendering properties with defaults
         //
-        // `overlay_liquidation_heatmap` never has rendering metadata (its
+        // The opaque overlays never have rendering metadata (their
         // `machine_id` is `None`, so `UnifiedIndicatorCatalog::get` never
-        // resolves a `RenderingMetadata` for it — see `unified.rs`), which
-        // would otherwise default it to `overlay = false` (sub-pane). It IS
-        // conceptually an overlay — it paints on the main chart under the
-        // series, never in a sub-pane — and wave 1 (2026-08-01) promotes it
-        // to a real `IndicatorInstance` for the Indicator Settings modal, so
-        // this override matters now: `IndicatorInstance::new` derives
+        // resolves a `RenderingMetadata` — see `unified.rs`), which would
+        // default them to `overlay = false` (sub-pane). They ARE overlays —
+        // each paints on the main chart under the series, never in a
+        // sub-pane — and this matters as they are promoted to real
+        // `IndicatorInstance`s: `IndicatorInstance::new` derives
         // `pane = if definition.overlay { 0 } else { 1 }`, and a `pane = 1`
-        // instance would spawn a phantom empty sub-pane. The other 5 opaque
-        // overlays are unaffected — they never reach `IndicatorInstance::new`
-        // (still intercepted in the picker add-flow before ever becoming one).
-        let overlay = if info.id() == "overlay_liquidation_heatmap" {
+        // instance would spawn a phantom empty sub-pane.
+        let overlay = if info.id().starts_with("overlay_") {
             true
         } else {
             rendering.map(|r| r.overlay).unwrap_or(false)
@@ -101,6 +98,12 @@ impl IndicatorBridge {
             histogram_style,
             // Use machine_id directly from signature (typed enum - no string parsing!)
             machine_id: info.signature.machine_id,
+            // Declared data streams, verbatim from the catalog signature —
+            // primary first, then auxiliaries. The host arms subscriptions
+            // from this list; see `ChartApp::arm_indicator_feeds`.
+            streams: std::iter::once(info.signature.input_stream)
+                .chain(info.signature.aux_streams.iter().copied())
+                .collect(),
         }
     }
 

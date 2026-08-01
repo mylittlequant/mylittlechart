@@ -927,16 +927,10 @@ impl ChartApp {
                             if let Some(ref color) = auto_color {
                                 self.core.indicators_mut().set_all_output_colors(new_id, color.clone());
                             }
-                            // Liquidation Heatmap: the picker no longer
-                            // intercepts this id (see the match arm above) — it
-                            // just created a real `IndicatorInstance`, which IS
-                            // the overlay's on/off state. Nothing to flip; only
-                            // the live feed needs arming.
-                            if item_id == Self::LIQ_HEATMAP_TYPE_ID {
-                                if let Some(cid) = active_container_id {
-                                    self.arm_liq_overlay_feed(cid);
-                                }
-                            }
+                            // Nothing overlay-specific here: the instance IS
+                            // the overlay's state, and the bubble raises the
+                            // feeds its indicators declared on the next tick
+                            // (`ensure_bubble_indicator_feeds`).
                             if let Some(active_leaf) = active_leaf {
                                 // If this window is in a sync group and indicators are synced,
                                 // track the config in the group and push to peers.

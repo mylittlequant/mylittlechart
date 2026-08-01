@@ -458,6 +458,14 @@ impl ChartApp {
         // once it does).
         self.repair_panel_feed_handles();
 
+        // A bubble keeps alive every feed its own indicators declared they
+        // consume — the same contract that already keeps klines and trades
+        // flowing for the chart on it. Nothing here knows an indicator by
+        // name: the streams come from each instance's mli catalog
+        // signature. Per-tick and idempotent, so add / remove / symbol
+        // change / preset restore all converge through one path.
+        self.ensure_bubble_indicator_feeds();
+
         // Multi-DOM v2: refresh the bucketed per-exchange books from the
         // live station trackers. Per-frame (NOT event-gated): DomState's
         // own updates ride the ob_dirty event loop, but the multi book
