@@ -44,12 +44,6 @@ pub fn right_toolbar() -> PanelToolbarDef {
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("watchlist", ToolbarIconId::new("List"))
                 .with_tooltip(t_toolbar(TK::Watchlist)),
-            // Screener — separate button directly under the watchlist
-            // button (owner spec 2026-08-01, plan F: «отдельной кнопкой под
-            // вотчлистом»). Provisional "SCR" text-chip icon — see
-            // `mlc-core/src/state/icons.rs::ICON_SCREENER`.
-            ToolbarItemDef::icon_button("screener", ToolbarIconId::new("screener"))
-                .with_tooltip("Screener"),
             ToolbarItemDef::icon_button("alerts", ToolbarIconId::new("Bell"))
                 .with_tooltip(t_toolbar(TK::Alerts)),
             ToolbarItemDef::icon_button("object_tree", ToolbarIconId::new("TreePine"))
@@ -75,6 +69,11 @@ pub fn right_toolbar() -> PanelToolbarDef {
                 .with_tooltip("Big Trades"),
             ToolbarItemDef::icon_button("slot_liq", ToolbarIconId::new("slot_liq"))
                 .with_tooltip("Liquidations"),
+            // Screener — under the LIQ chip (owner re-placement 2026-08-01
+            // «добавляй отдельной кнопкой можешь под ликвидации»).
+            // Provisional "SCR" text chip pending owner sign-off.
+            ToolbarItemDef::icon_button("screener", ToolbarIconId::new("screener"))
+                .with_tooltip("Screener"),
         ]),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }

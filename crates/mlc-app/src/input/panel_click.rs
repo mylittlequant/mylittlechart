@@ -4231,9 +4231,31 @@ impl ChartApp {
                     return;
                 }
                 Some(mlc_core::state::Panel::LiqTape(pid)) => {
+                    if rest == "mode:single" || rest == "mode:multi" || rest == "mode:agg" {
+                        if let Some(s) = self.panels_store.liq_tape.get_mut(pid) {
+                            s.set_mode(match rest {
+                                "mode:agg" => 2,
+                                "mode:multi" => 1,
+                                _ => 0,
+                            });
+                        }
+                        // Handles for any newly-seeded roster entries land
+                        // via the feed self-heal (missing-refill).
+                        self.autosave_snapshot();
+                        self.sidebar_data_dirty = true;
+                        return;
+                    }
                     let mut persist = false;
                     if let Some(state) = self.panels_store.liq_tape.get_mut(pid) {
-                        if rest == "bt_size" {
+                        if let Some(i) = rest.strip_prefix("col:").and_then(|s| s.parse::<usize>().ok()) {
+                            match i {
+                                0 => state.column_config.show_time = !state.column_config.show_time,
+                                1 => state.column_config.show_side = !state.column_config.show_side,
+                                2 => state.column_config.show_price = !state.column_config.show_price,
+                                3 => state.column_config.show_size = !state.column_config.show_size,
+                                _ => state.column_config.show_notional = !state.column_config.show_notional,
+                            }
+                        } else if rest == "bt_size" {
                             const SIZES: &[f64] = &[0.0, 0.1, 0.5, 1.0, 5.0, 10.0, 50.0];
                             let cur = state.size_threshold;
                             state.size_threshold = SIZES.iter()

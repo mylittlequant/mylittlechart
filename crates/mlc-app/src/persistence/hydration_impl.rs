@@ -1192,7 +1192,7 @@ impl ChartApp {
                                         self.panels_store.big_trades.insert(pid, s);
                                     }
                                 }
-                                PersistedFreeItemKind::LiqTape { source, multi_entries, size_threshold, notional_threshold } => {
+                                PersistedFreeItemKind::LiqTape { source, multi_entries, size_threshold, notional_threshold, multi_mode, agg_mode } => {
                                     if !self.panels_store.liq_tape.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1206,10 +1206,15 @@ impl ChartApp {
                                         }
                                         s.size_threshold = *size_threshold;
                                         s.notional_threshold = *notional_threshold;
+                                        s.multi_mode = *multi_mode;
+                                        s.agg_mode = *agg_mode;
+                                        if s.agg_mode {
+                                            s.multi_mode = true;
+                                        }
                                         for e in multi_entries {
                                             s.multi.add_entry(e);
                                         }
-                                        // All-venue Futures roster; liq-series
+                                        // Mode-aware roster; liq-series
                                         // handles land via the feed self-heal.
                                         if !s.symbol.is_empty() {
                                             let sym = s.symbol.clone();

@@ -333,6 +333,13 @@ impl ChartApp {
             Panel::TradeTape(id) => self.panels_store.trade_tape.get(id).map_or(false, |s| s.multi_mode),
             Panel::L2Tape(id) => self.panels_store.l2_tape.get(id).map_or(false, |s| s.multi_mode),
             Panel::BigTrades(id) => self.panels_store.big_trades.get(id).map_or(false, |s| s.multi_mode),
+            // LIQ: roster editing only in the explicit Multi mode (Agg owns
+            // the full-venue roster itself).
+            Panel::LiqTape(id) => self
+                .panels_store
+                .liq_tape
+                .get(id)
+                .map_or(false, |s| s.multi_mode && !s.agg_mode),
             _ => false,
         };
         let target = if multi_dom {
@@ -560,6 +567,18 @@ impl ChartApp {
             } else if let Some(s) = self.panels_store.big_trades.get_mut(&pid) {
                 if s.multi_mode {
                     Some((false, toggle(&mut s.multi, symbol, exchange_id, account_type, &entry)))
+                } else {
+                    None
+                }
+            } else if let Some(s) = self.panels_store.liq_tape.get_mut(&pid) {
+                if s.multi_mode && !s.agg_mode {
+                    // Liquidations are Futures-only — the picked venue is
+                    // coerced to its :F feed. Handles land via the feed
+                    // self-heal (subscribe_liquidations is repair-driven),
+                    // so no trade/book subscription work here.
+                    let entry_f = multi_dom::col_entry(exchange_id, "F");
+                    let _ = toggle(&mut s.multi, symbol, exchange_id, "F", &entry_f);
+                    Some((false, None))
                 } else {
                     None
                 }

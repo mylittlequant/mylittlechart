@@ -216,6 +216,12 @@ pub enum PersistedFreeItemKind {
         /// Minimum notional to show (`None` = all).
         #[serde(default)]
         notional_threshold: Option<f64>,
+        /// Mode triad (owner 2026-08-01): defaults keep older saves in
+        /// the original all-venue Aggregated behavior.
+        #[serde(default = "default_true")]
+        multi_mode: bool,
+        #[serde(default = "default_true")]
+        agg_mode: bool,
     },
     L2Tape {
         #[serde(default)]

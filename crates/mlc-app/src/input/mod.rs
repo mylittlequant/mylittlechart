@@ -8203,6 +8203,8 @@ impl ChartApp {
                                 multi_entries: state.multi.entries.clone(),
                                 size_threshold: state.size_threshold,
                                 notional_threshold: state.notional_threshold,
+                                multi_mode: state.multi_mode,
+                                agg_mode: state.agg_mode,
                             }
                         }
                         Panel::BigTrades(id) => {

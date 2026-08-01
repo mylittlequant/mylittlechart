@@ -372,8 +372,10 @@ pub fn render_section_settings_modal(
     let modal_h = HEADER_H
         + PAD
         + if mode.is_some() { CAPTION_H + BTN_H + ROW_GAP } else { 0.0 }
-        + CAPTION_H
-        + (BTN_H + 6.0) * col_rows as f64
+        // Columns section only when there ARE columns (the LIQ modal
+        // rendered an empty caption + a phantom row height that pushed
+        // the Skin button past the modal edge — owner defect 2026-08-01).
+        + if columns.is_empty() { 0.0 } else { CAPTION_H + (BTN_H + 6.0) * col_rows as f64 }
         + if bt_thresholds.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if matches!(bt_thresholds, Some((_, _, Some(_)))) { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
         + if imbalance.is_some() { ROW_GAP + CAPTION_H + BTN_H } else { 0.0 }
@@ -439,17 +441,19 @@ pub fn render_section_settings_modal(
         row_y += BTN_H + ROW_GAP;
     }
 
-    caption(ctx, tt, left, row_y, "Columns");
-    row_y += CAPTION_H;
-    let col_w = 70.0;
-    for (i, (label, on)) in columns.iter().enumerate() {
-        let cx = left + (i % 4) as f64 * (col_w + 6.0);
-        if i > 0 && i % 4 == 0 {
-            row_y += BTN_H + 6.0;
+    if !columns.is_empty() {
+        caption(ctx, tt, left, row_y, "Columns");
+        row_y += CAPTION_H;
+        let col_w = 70.0;
+        for (i, (label, on)) in columns.iter().enumerate() {
+            let cx = left + (i % 4) as f64 * (col_w + 6.0);
+            if i > 0 && i % 4 == 0 {
+                row_y += BTN_H + 6.0;
+            }
+            modal_btn(ctx, coord, &layer_id, tt, &format!("col:{}", i), cx, row_y, col_w, label, *on);
         }
-        modal_btn(ctx, coord, &layer_id, tt, &format!("col:{}", i), cx, row_y, col_w, label, *on);
+        row_y += BTN_H + 6.0;
     }
-    row_y += BTN_H + 6.0;
 
     // Imbalance footer (owner order 2026-07-31; labels self-describing
     // per owner order 2026-08-01 «надо лейблы кнопок сменить»).

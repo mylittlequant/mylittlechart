@@ -8857,6 +8857,14 @@ impl ChartApp {
                 }
                 Some(mlc_core::state::Panel::LiqTape(pid)) => {
                     if let Some(s) = self.panels_store.liq_tape.get(&pid) {
+                        let cc = &s.column_config;
+                        let cols = [
+                            ("Time", cc.show_time),
+                            ("Side", cc.show_side),
+                            ("Price", cc.show_price),
+                            ("Size", cc.show_size),
+                            ("Notional", cc.show_notional),
+                        ];
                         let skin_label = s
                             .skin
                             .map(|k| k.label().to_string())
@@ -8864,10 +8872,10 @@ impl ChartApp {
                         crate::dom_settings_modal::render_section_settings_modal(
                             ctx, coord, &frame_theme, &toolbar_theme,
                             w, h, self.dom_modal.position,
-                            "Liquidations Settings", &[],
+                            "Liquidations Settings", &cols,
                             Some((s.size_threshold, s.notional_threshold, None)),
                             Some(&skin_label),
-                            None,
+                            Some((s.mode_index(), true)),
                             None,
                             None,
                             None,
