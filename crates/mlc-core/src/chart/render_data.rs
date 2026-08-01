@@ -643,6 +643,43 @@ pub enum HistoryDepthDisplay {
     LiveOnly,
 }
 
+/// How the DOM Heatmap is INKED — every value comes from the overlay's
+/// `IndicatorInstance`, none of it a constant, because the layer is tuned by
+/// eye against the reference and the tuning has to be reachable.
+///
+/// Grid geometry (`row_ticks`, `band_pct`) is NOT here: it decides what the
+/// buffer stores, so it lives at the ingest seam instead.
+#[derive(Clone, Copy, Debug)]
+pub struct DomHeatmapInk {
+    /// Gain on the on-screen depth normaliser.
+    pub sensitivity: f64,
+    /// Exponent of the depth→alpha curve. `<1` lifts weak cells, `>1` sinks
+    /// them into the background so only walls stand out.
+    pub contrast: f64,
+    /// Fill alpha at full depth.
+    pub opacity: f64,
+    /// A cell at this multiple of the visible mean is drawn as a solid wall
+    /// with dark digits.
+    pub wall_x: f64,
+    /// Per-cell size numbers on/off.
+    pub show_values: bool,
+    /// Scale on the auto-fitted digit size.
+    pub value_size: f64,
+}
+
+impl Default for DomHeatmapInk {
+    fn default() -> Self {
+        Self {
+            sensitivity: 1.0,
+            contrast: 1.7,
+            opacity: 0.55,
+            wall_x: 5.0,
+            show_values: true,
+            value_size: 1.0,
+        }
+    }
+}
+
 /// State needed for chart rendering
 ///
 /// This struct aggregates all the data needed to render a chart frame.
@@ -774,17 +811,10 @@ pub struct ChartRenderState<'a> {
     /// slider. Unused (but always populated) when `liq_heatmap_ref` is
     /// `None`.
     pub liq_sensitivity: f64,
-    /// DOM Heatmap gain — the `sensitivity` param on the
-    /// `overlay_dom_heatmap` `IndicatorInstance` (catalog default `1.0`
-    /// when no instance exists). Divides the ON-SCREEN depth maximum before
-    /// cell alpha is normalised, so a higher value brightens thin
-    /// liquidity; mirrors the reference's SENSITIVITY slider. Unused (but
-    /// always populated) when `dom_heatmap_ref` is `None`.
-    pub dom_sensitivity: f64,
-    /// DOM Heatmap fill alpha at full depth — the `opacity` param on the
-    /// same instance (catalog default `0.55`). The heat paints under the
-    /// candles, so this is what keeps them readable through it.
-    pub dom_opacity: f64,
+    /// DOM Heatmap ink settings, read off the `overlay_dom_heatmap`
+    /// `IndicatorInstance` (catalog defaults when no instance exists).
+    /// Unused (but always populated) when `dom_heatmap_ref` is `None`.
+    pub dom_params: DomHeatmapInk,
     /// True when the chart type is non-temporal (renko / pnf / kagi /
     /// three_line_break). These types render on a derived series whose
     /// `bars` shadow carries each element's real open timestamp but no

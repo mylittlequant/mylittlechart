@@ -46,12 +46,12 @@ pub struct ChartWindowRenderInputs<'a> {
     /// param, or `1.0` when no instance exists yet. Forwarded 1:1 onto
     /// `ChartRenderState::liq_sensitivity`.
     pub liq_sensitivity: f64,
-    /// DOM Heatmap gain + fill alpha — resolved by the caller (`mlc-app`)
-    /// from the `overlay_dom_heatmap` `IndicatorInstance`'s `sensitivity` /
-    /// `opacity` params, or the catalog defaults when no instance exists.
-    /// Forwarded 1:1 onto `ChartRenderState`.
-    pub dom_sensitivity: f64,
-    pub dom_opacity: f64,
+    /// DOM Heatmap ink settings — resolved by the caller (`mlc-app`, which
+    /// holds the indicators facade this bubble-scoped struct deliberately
+    /// has no access to) from the `overlay_dom_heatmap` `IndicatorInstance`,
+    /// or the catalog defaults when no instance exists. Forwarded 1:1 onto
+    /// `ChartRenderState`.
+    pub dom_params: mlc_core::chart::render_data::DomHeatmapInk,
     /// Footprint display toggles (ABS markers / volume text / heat
     /// intensity) — per-panel view state, mirrors `oi_show`/`funding_show`.
     pub footprint_display: FootprintDisplayOptions,
@@ -207,8 +207,7 @@ pub fn build_chart_render_state<'a>(
         liq_heatmap_ref: if window.liq_heatmap_show { bubble.liq_heatmap.as_ref() } else { None },
         liq_dots_ref: if window.liq_heatmap_show { bubble.liq_dots.as_deref() } else { None },
         liq_sensitivity: window.liq_sensitivity,
-        dom_sensitivity: window.dom_sensitivity,
-        dom_opacity: window.dom_opacity,
+        dom_params: window.dom_params,
         // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
         // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)
         // is swapped into `bars` after this state is built.

@@ -29,12 +29,30 @@
 //! reads warm and below reads cool.
 
 use mlc_core::chart::dom_heatmap::{DomHeatmapBuffer, DomTradeDot};
-use mlc_core::render::RenderContext;
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::Bar;
 use super::ChartRenderState;
 
 /// Minimum on-screen height of one price row.
 const MIN_ROW_PX: f64 = 2.0;
+/// Cell size below which the per-cell numbers stop being legible and are
+/// dropped, leaving the texture — the reference behaves the same way.
+const MIN_TEXT_ROW_PX: f64 = 7.0;
+const MIN_TEXT_COL_PX: f64 = 16.0;
+
+/// Compact book size, matching the reference's ladder grammar: whole units
+/// once past a hundred, one decimal in the teens, two below that.
+fn format_depth(v: f64) -> String {
+    if v >= 1000.0 {
+        format!("{:.1}k", v / 1000.0)
+    } else if v >= 100.0 {
+        format!("{v:.0}")
+    } else if v >= 10.0 {
+        format!("{v:.1}")
+    } else {
+        format!("{v:.2}")
+    }
+}
 
 /// Bid (below-price) cell colour — teal, `alpha` in 0–1.
 fn bid_color(alpha: f64) -> String {
@@ -104,10 +122,14 @@ pub fn draw_dom_heatmap(
     let right_edge = rect.x + rect.width;
 
     // Resolve every cell to pixels once, taking the on-screen maximum in the
-    // same pass.
+    // same pass. The bar still forming is drawn from `buf.live` — the book as
+    // it stands — instead of from its cell, which holds the bar's running
+    // peak and would freeze the newest column at whatever passed through it
+    // first. Its cell takes over the moment the bar closes.
     let mut placed: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(buf.cells.len());
     let mut max_depth = 1e-9_f64;
-    for cell in &buf.cells {
+    let frozen = buf.cells.iter().filter(|c| c.ts_ms != buf.live_bar_ms);
+    for cell in frozen.chain(buf.live.iter()) {
         let Some(bar_idx) = bar_index_at(bars, cell.ts_ms) else { continue };
         let cx = vp.bar_to_x_f64(bar_idx as f64) + rect.x - col_w * 0.5;
         if cx + col_w < rect.x || cx > right_edge {
@@ -126,19 +148,62 @@ pub fn draw_dom_heatmap(
         return;
     }
 
-    let norm = max_depth / state.dom_sensitivity.max(0.1);
-    let opacity = state.dom_opacity.clamp(0.05, 1.0);
+    let ink = state.dom_params;
+    let norm = max_depth / ink.sensitivity.max(0.1);
+    let opacity = ink.opacity.clamp(0.05, 1.0);
+    // `contrast` is the exponent of depth→alpha. The reference reads as a
+    // dark field with a few bright walls, which is what an exponent above 1
+    // does; below 1 lifts the weak cells and the whole layer floods.
+    let contrast = ink.contrast.clamp(0.2, 6.0);
+    // A wall is measured against the visible MEAN, not the maximum: the
+    // maximum IS the wall, so normalising by it would mark every frame's
+    // biggest cell no matter how ordinary.
+    let mean_depth = if placed.is_empty() {
+        0.0
+    } else {
+        placed.iter().map(|(_, _, b, a)| b.max(*a)).sum::<f64>() / placed.len() as f64
+    };
+    let wall_at = mean_depth * ink.wall_x.max(1.0);
+
+    // Per-cell size numbers, as in the reference. They are legible only when
+    // a cell is big enough to hold them, so the same rule the reference
+    // follows applies: at coarse zoom the digits drop out and the texture
+    // stays.
+    let show_text = ink.show_values && row_px >= MIN_TEXT_ROW_PX && col_w >= MIN_TEXT_COL_PX;
+    // Bounded by BOTH cell dimensions: a wide short cell and a tall narrow
+    // one both have to hold four monospace characters.
+    let font_px = ((row_px * 0.46).min(col_w * 0.22) * ink.value_size.clamp(0.3, 3.0)).clamp(6.0, 14.0);
 
     for (cx, cy, bid_depth, ask_depth) in placed {
-        let bid_alpha = (bid_depth / norm).sqrt().clamp(0.0, 1.0) * opacity;
-        let ask_alpha = (ask_depth / norm).sqrt().clamp(0.0, 1.0) * opacity;
-        if bid_alpha > 0.03 {
+        let depth = bid_depth.max(ask_depth);
+        let is_wall = wall_at > 0.0 && depth >= wall_at;
+        let bid_alpha = if is_wall && bid_depth >= ask_depth {
+            1.0
+        } else {
+            (bid_depth / norm).clamp(0.0, 1.0).powf(contrast) * opacity
+        };
+        let ask_alpha = if is_wall && ask_depth > bid_depth {
+            1.0
+        } else {
+            (ask_depth / norm).clamp(0.0, 1.0).powf(contrast) * opacity
+        };
+        if bid_alpha > 0.02 {
             ctx.set_fill_color(&bid_color(bid_alpha));
             ctx.fill_rect(cx, cy, col_w, row_px);
         }
-        if ask_alpha > 0.03 {
+        if ask_alpha > 0.02 {
             ctx.set_fill_color(&ask_color(ask_alpha));
             ctx.fill_rect(cx, cy, col_w, row_px);
+        }
+        if show_text && depth > 0.0 && (is_wall || bid_alpha.max(ask_alpha) > 0.02) {
+            // Dark digits on a solid wall, muted grey on the field — the
+            // reference's contrast trick, and the reason a wall reads at a
+            // glance.
+            ctx.set_fill_color(if is_wall { "#0b0f14" } else { "#b9c3ccb0" });
+            ctx.set_font(&format!("{font_px:.0}px monospace"));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&format_depth(depth), cx + col_w * 0.5, cy + row_px * 0.5);
         }
     }
 

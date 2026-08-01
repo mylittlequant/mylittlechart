@@ -1458,10 +1458,10 @@ impl ChartApp {
                 // `row_ticks` param. Resolved before the write borrow — and a
                 // change in either invalidates the grid, so the buffer is
                 // rebuilt rather than fed cells of a second grain.
-                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64)> = bubble_ids
+                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64, f64)> = bubble_ids
                     .iter()
                     .map(|b| {
-                        let (_, _, row_ticks) = self.dom_heatmap_params(*b);
+                        let (row_ticks, band) = self.dom_heatmap_grid(*b);
                         let bar_ms = self
                             .core
                             .bubbles()
@@ -1469,19 +1469,19 @@ impl ChartApp {
                             .map(|tf| tf.interval_ms)
                             .filter(|ms| *ms > 0)
                             .unwrap_or(60_000);
-                        (*b, bar_ms, row_ticks)
+                        (*b, bar_ms, row_ticks, band)
                     })
                     .collect();
-                for (b, bar_ms, row_ticks) in dom_geometry {
+                for (b, bar_ms, row_ticks, band) in dom_geometry {
                     self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
                         let slot = bubble.dom_heatmap_mut();
                         let stale = slot
                             .as_ref()
-                            .map_or(true, |buf| !buf.matches_geometry(bar_ms, row_ticks));
+                            .map_or(true, |buf| !buf.matches_geometry(bar_ms, row_ticks, band));
                         if stale {
                             *slot = Some(mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(
-                                DEFAULT_TICK, bar_ms, row_ticks,
+                                DEFAULT_TICK, bar_ms, row_ticks, band,
                             ));
                         }
                         if let Some(buf) = slot.as_mut() {

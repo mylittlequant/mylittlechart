@@ -1724,24 +1724,47 @@ impl ChartApp {
             .unwrap_or(false)
     }
 
-    /// `(sensitivity, opacity, row_ticks)` for the DOM Heatmap overlay on
-    /// `bid`'s bubble, falling back to the catalog defaults when no
-    /// instance exists. `row_ticks` is grid GEOMETRY — changing it
-    /// invalidates the buffer, which the ingest arm rebuilds.
+    /// How the DOM Heatmap overlay on `bid`'s bubble is INKED, from its
+    /// `IndicatorInstance` — catalog defaults when no instance exists.
     #[inline]
-    pub fn dom_heatmap_params(&self, bid: mlc_core::ids::BubbleId) -> (f64, f64, i64) {
-        const DEFAULTS: (f64, f64, i64) = (1.0, 0.55, 10);
+    pub fn dom_heatmap_ink(&self, bid: mlc_core::ids::BubbleId) -> mlc_core::chart::render_data::DomHeatmapInk {
+        use mlc_core::chart::render_data::DomHeatmapInk;
+        let d = DomHeatmapInk::default();
         let indicators = self.core.indicators();
         let Some(inst) = indicators
             .instances_for_bubble(bid)
             .into_iter()
             .find(|inst| inst.type_id == Self::DOM_HEATMAP_TYPE_ID)
-        else { return DEFAULTS };
-        let f = |k: &str, d: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(d);
+        else { return d };
+        let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
+        DomHeatmapInk {
+            sensitivity: f("sensitivity", d.sensitivity),
+            contrast: f("contrast", d.contrast),
+            opacity: f("opacity", d.opacity),
+            wall_x: f("wall_x", d.wall_x),
+            show_values: inst.params.get("show_values").and_then(|v| v.as_bool()).unwrap_or(d.show_values),
+            value_size: f("value_size", d.value_size),
+        }
+    }
+
+    /// Grid GEOMETRY of the DOM Heatmap on `bid`'s bubble —
+    /// `(row_ticks, band_fraction)`. Separate from the ink because these
+    /// decide what the buffer STORES: changing either invalidates the grid,
+    /// and the ingest arm rebuilds rather than mixing two grains.
+    #[inline]
+    pub fn dom_heatmap_grid(&self, bid: mlc_core::ids::BubbleId) -> (i64, f64) {
+        const DEFAULT_ROW_TICKS: i64 = 4;
+        const DEFAULT_BAND_PCT: f64 = 0.6;
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::DOM_HEATMAP_TYPE_ID)
+        else { return (DEFAULT_ROW_TICKS, DEFAULT_BAND_PCT / 100.0) };
+        let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
         (
-            f("sensitivity", DEFAULTS.0),
-            f("opacity", DEFAULTS.1),
-            f("row_ticks", DEFAULTS.2 as f64).round().max(1.0) as i64,
+            f("row_ticks", DEFAULT_ROW_TICKS as f64).round().max(1.0) as i64,
+            f("band_pct", DEFAULT_BAND_PCT).max(0.01) / 100.0,
         )
     }
 
@@ -4750,7 +4773,7 @@ impl ChartApp {
                 let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let overlay_trade_archive_available = self.trade_archive_available_for(&overlay_bubble_mgr, window.current_tag_id);
                 let overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
-                let overlay_dom = self.dom_heatmap_params(window.current_tag_id);
+                let overlay_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let overlay_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
@@ -4765,8 +4788,7 @@ impl ChartApp {
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
                     dom_heatmap_show: overlay_dom_active,
-                    dom_sensitivity: overlay_dom.0,
-                    dom_opacity: overlay_dom.1,
+                    dom_params: overlay_dom,
                     liq_heatmap_show: overlay_liq_active,
                     liq_sensitivity: overlay_liq_sensitivity,
                     footprint_display: overlay_panel.footprint_display,
@@ -4868,7 +4890,7 @@ impl ChartApp {
             let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
             let single_overlay_trade_archive_available = self.trade_archive_available_for(&single_overlay_bubble_mgr, window.current_tag_id);
             let single_overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
-            let single_dom = self.dom_heatmap_params(window.current_tag_id);
+            let single_dom = self.dom_heatmap_ink(window.current_tag_id);
             let single_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
@@ -4883,8 +4905,7 @@ impl ChartApp {
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
                 dom_heatmap_show: single_dom_active,
-                dom_sensitivity: single_dom.0,
-                dom_opacity: single_dom.1,
+                dom_params: single_dom,
                 liq_heatmap_show: single_overlay_liq_active,
                 liq_sensitivity: single_overlay_liq_sensitivity,
                 footprint_display: single_panel.footprint_display,
@@ -5170,7 +5191,7 @@ impl ChartApp {
                 let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let split_trade_archive_available = self.trade_archive_available_for(&split_bubble_mgr, window.current_tag_id);
                 let split_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
-                let split_dom = self.dom_heatmap_params(window.current_tag_id);
+                let split_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let split_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let split_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
@@ -5185,8 +5206,7 @@ impl ChartApp {
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
                     dom_heatmap_show: split_dom_active,
-                    dom_sensitivity: split_dom.0,
-                    dom_opacity: split_dom.1,
+                    dom_params: split_dom,
                     liq_heatmap_show: split_liq_active,
                     liq_sensitivity: split_liq_sensitivity,
                     footprint_display: split_panel.footprint_display,
@@ -5827,7 +5847,7 @@ impl ChartApp {
                 let single_window_chart_type_for_wicks = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let single_window_trade_archive_available = self.trade_archive_available_for(&single_window_bubble_mgr, window.current_tag_id);
                 let single_window_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
-                let single_window_dom = self.dom_heatmap_params(window.current_tag_id);
+                let single_window_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let single_window_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_window_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
@@ -5842,8 +5862,7 @@ impl ChartApp {
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
                     dom_heatmap_show: single_window_dom_active,
-                    dom_sensitivity: single_window_dom.0,
-                    dom_opacity: single_window_dom.1,
+                    dom_params: single_window_dom,
                     liq_heatmap_show: single_window_liq_active,
                     liq_sensitivity: single_window_liq_sensitivity,
                     footprint_display: single_window_panel.footprint_display,

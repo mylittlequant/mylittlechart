@@ -32,7 +32,13 @@ use std::collections::VecDeque;
 pub const MAX_CELLS: usize = 40_000;
 
 /// Default price ticks folded into one heat row.
-pub const DEFAULT_ROW_TICKS: i64 = 10;
+pub const DEFAULT_ROW_TICKS: i64 = 4;
+
+/// Half-width of the price band kept around the book's mid, as a fraction
+/// of price. Exchanges stream depth far past anything a chart ever shows;
+/// keeping the whole ladder spends the ring on rows nobody looks at and
+/// starves the history that makes the layer readable.
+pub const BAND_FRACTION: f64 = 0.006;
 
 /// One cell in the 2-D heatmap grid: one bar column × one price row.
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +71,9 @@ pub struct DomHeatmapBuffer {
     pub bar_ms: i64,
     /// Instrument ticks folded into one price row.
     pub row_ticks: i64,
+    /// Half-width of the kept price band around the book's mid, as a
+    /// fraction of price — see [`BAND_FRACTION`].
+    pub band_fraction: f64,
     /// Cell ring — newest bar at back.
     pub cells: VecDeque<DomHeatmapCell>,
     /// Maximum cells before oldest are evicted.
@@ -74,27 +83,40 @@ pub struct DomHeatmapBuffer {
     /// time order, so everything mergeable is at the tail.
     cur_bar_ms: i64,
     cur_bar_len: usize,
+    /// The bar currently forming.
+    pub live_bar_ms: i64,
+    /// The book as it stands RIGHT NOW, replaced wholesale on every
+    /// snapshot. The forming bar is drawn from this instead of from its
+    /// cell, so the newest column tracks the live book and only freezes —
+    /// at the bar's peak, which its cell has been accumulating all along —
+    /// when the bar closes.
+    pub live: Vec<DomHeatmapCell>,
 }
 
 impl DomHeatmapBuffer {
     /// Create an empty buffer for a given instrument tick, bar duration and
     /// row grouping.
-    pub fn new(tick_size: f64, bar_ms: i64, row_ticks: i64) -> Self {
+    pub fn new(tick_size: f64, bar_ms: i64, row_ticks: i64, band_fraction: f64) -> Self {
         Self {
             tick_size: if tick_size > 0.0 { tick_size } else { 1.0 },
             bar_ms: bar_ms.max(1),
             row_ticks: row_ticks.max(1),
+            band_fraction: if band_fraction > 0.0 { band_fraction } else { BAND_FRACTION },
             cells: VecDeque::new(),
             max_cells: MAX_CELLS,
             cur_bar_ms: i64::MIN,
             cur_bar_len: 0,
+            live_bar_ms: i64::MIN,
+            live: Vec::new(),
         }
     }
 
     /// Whether this buffer's geometry still matches what the caller wants.
     /// A mismatch means the grid must be rebuilt, not appended to.
-    pub fn matches_geometry(&self, bar_ms: i64, row_ticks: i64) -> bool {
-        self.bar_ms == bar_ms.max(1) && self.row_ticks == row_ticks.max(1)
+    pub fn matches_geometry(&self, bar_ms: i64, row_ticks: i64, band_fraction: f64) -> bool {
+        self.bar_ms == bar_ms.max(1)
+            && self.row_ticks == row_ticks.max(1)
+            && (self.band_fraction - band_fraction).abs() < 1e-9
     }
 
     /// Height of one price row in instrument price units.
@@ -124,18 +146,42 @@ impl DomHeatmapBuffer {
             self.cur_bar_len = 0;
         }
 
+        // Band around the book's own mid — see `BAND_FRACTION`.
+        let best_bid = bids.iter().filter(|(_, q)| *q > 0.0).map(|(p, _)| *p).fold(f64::MIN, f64::max);
+        let best_ask = asks.iter().filter(|(_, q)| *q > 0.0).map(|(p, _)| *p).fold(f64::MAX, f64::min);
+        let mid = match (best_bid > f64::MIN, best_ask < f64::MAX) {
+            (true, true) => (best_bid + best_ask) * 0.5,
+            (true, false) => best_bid,
+            (false, true) => best_ask,
+            (false, false) => return,
+        };
+        let half_band = mid * self.band_fraction;
+        let (lo, hi) = (mid - half_band, mid + half_band);
+
         use std::collections::HashMap;
         let mut by_row: HashMap<i64, (f64, f64)> = HashMap::new();
         for &(price, qty) in bids {
-            if qty > 0.0 {
+            if qty > 0.0 && price >= lo && price <= hi {
                 by_row.entry(self.row_of(price)).or_insert((0.0, 0.0)).0 += qty;
             }
         }
         for &(price, qty) in asks {
-            if qty > 0.0 {
+            if qty > 0.0 && price >= lo && price <= hi {
                 by_row.entry(self.row_of(price)).or_insert((0.0, 0.0)).1 += qty;
             }
         }
+
+        // The live column is the book as it stands, not the bar's peak —
+        // rebuilt from scratch each snapshot so a pulled wall disappears
+        // from the forming bar the moment it is pulled.
+        self.live_bar_ms = bar;
+        self.live.clear();
+        self.live.extend(by_row.iter().map(|(row, (bid, ask))| DomHeatmapCell {
+            ts_ms: bar,
+            price_row: *row,
+            bid_depth: *bid,
+            ask_depth: *ask,
+        }));
 
         for (price_row, (bid_depth, ask_depth)) in by_row {
             let tail_start = self.cells.len() - self.cur_bar_len;
