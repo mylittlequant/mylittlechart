@@ -54,16 +54,17 @@ fn format_depth(v: f64) -> String {
     }
 }
 
-/// Bid (below-price) cell colour — teal, `alpha` in 0–1.
-fn bid_color(alpha: f64) -> String {
+/// Cell colour: the skin's base→hot pair for that side, leaned by `heat`
+/// (the level's share of the visible maximum), then taken to `alpha`.
+///
+/// The pair is the SAME one the DOM ladder's intensity bars use, so a level
+/// that glows in the panel glows the same way on the chart — one skin, not
+/// a bespoke palette per surface.
+fn heat_color(base: &str, hot: &str, heat: f64, alpha: f64) -> String {
+    let mixed = mlc_core::utils::color::mix_colors(base, hot, heat.clamp(0.0, 1.0));
+    let (r, g, b, _) = mlc_core::utils::color::parse_css_color(&mixed);
     let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", 0x14, 0xb8, 0xa6, a)
-}
-
-/// Ask (above-price) cell colour — red, `alpha` in 0–1.
-fn ask_color(alpha: f64) -> String {
-    let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
-    format!("#{:02x}{:02x}{:02x}{:02x}", 0xdc, 0x35, 0x2b, a)
+    mlc_core::utils::color::rgba_to_hex(r, g, b, a)
 }
 
 /// Index of the last bar at or before `ts_ms`, or `None` when `ts_ms`
@@ -126,7 +127,7 @@ pub fn draw_dom_heatmap(
     // it stands — instead of from its cell, which holds the bar's running
     // peak and would freeze the newest column at whatever passed through it
     // first. Its cell takes over the moment the bar closes.
-    let mut placed: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(buf.cells.len());
+    let mut placed: Vec<(f64, f64, f64, f64, bool)> = Vec::with_capacity(buf.cells.len());
     let mut max_depth = 1e-9_f64;
     let frozen = buf.cells.iter().filter(|c| c.ts_ms != buf.live_bar_ms);
     for cell in frozen.chain(buf.live.iter()) {
@@ -142,7 +143,20 @@ pub fn draw_dom_heatmap(
         let norm_y = (ps.price_max - price) / price_range;
         let cy = rect.y + norm_y * rect.height - row_px * 0.5;
         max_depth = max_depth.max(cell.bid_depth).max(cell.ask_depth);
-        placed.push((cx, cy, cell.bid_depth, cell.ask_depth));
+        // Digits are suppressed wherever the candle covers the cell: half a
+        // number sticking out from under a body reads as noise. The heat
+        // itself still paints — under the candle there is just no text.
+        //
+        // The test is the row's RECT against the candle's range, not the
+        // row's centre price: a row is `row_size` tall (several price units),
+        // so a centre-point test left the rows immediately above and below a
+        // candle printing their digits hard against its edge, which is
+        // exactly what looked wrong.
+        let half_row = buf.row_size() * 0.5;
+        let covered = bars
+            .get(bar_idx)
+            .is_some_and(|b| price + half_row >= b.low && price - half_row <= b.high);
+        placed.push((cx, cy, cell.bid_depth, cell.ask_depth, covered));
     }
     if placed.is_empty() {
         return;
@@ -161,7 +175,7 @@ pub fn draw_dom_heatmap(
     let mean_depth = if placed.is_empty() {
         0.0
     } else {
-        placed.iter().map(|(_, _, b, a)| b.max(*a)).sum::<f64>() / placed.len() as f64
+        placed.iter().map(|(_, _, b, a, _)| b.max(*a)).sum::<f64>() / placed.len() as f64
     };
     let wall_at = mean_depth * ink.wall_x.max(1.0);
 
@@ -174,32 +188,31 @@ pub fn draw_dom_heatmap(
     // one both have to hold four monospace characters.
     let font_px = ((row_px * 0.46).min(col_w * 0.22) * ink.value_size.clamp(0.3, 3.0)).clamp(6.0, 14.0);
 
-    for (cx, cy, bid_depth, ask_depth) in placed {
+    let theme = state.theme;
+    for (cx, cy, bid_depth, ask_depth, covered) in placed {
         let depth = bid_depth.max(ask_depth);
         let is_wall = wall_at > 0.0 && depth >= wall_at;
-        let bid_alpha = if is_wall && bid_depth >= ask_depth {
-            1.0
-        } else {
-            (bid_depth / norm).clamp(0.0, 1.0).powf(contrast) * opacity
-        };
-        let ask_alpha = if is_wall && ask_depth > bid_depth {
-            1.0
-        } else {
-            (ask_depth / norm).clamp(0.0, 1.0).powf(contrast) * opacity
-        };
+        let bid_heat = (bid_depth / norm).clamp(0.0, 1.0);
+        let ask_heat = (ask_depth / norm).clamp(0.0, 1.0);
+        let bid_alpha = if is_wall && bid_depth >= ask_depth { 1.0 } else { bid_heat.powf(contrast) * opacity };
+        let ask_alpha = if is_wall && ask_depth > bid_depth { 1.0 } else { ask_heat.powf(contrast) * opacity };
         if bid_alpha > 0.02 {
-            ctx.set_fill_color(&bid_color(bid_alpha));
+            ctx.set_fill_color(&heat_color(&theme.heat_bid, &theme.heat_bid_hot, bid_heat, bid_alpha));
             ctx.fill_rect(cx, cy, col_w, row_px);
         }
         if ask_alpha > 0.02 {
-            ctx.set_fill_color(&ask_color(ask_alpha));
+            ctx.set_fill_color(&heat_color(&theme.heat_ask, &theme.heat_ask_hot, ask_heat, ask_alpha));
             ctx.fill_rect(cx, cy, col_w, row_px);
         }
-        if show_text && depth > 0.0 && (is_wall || bid_alpha.max(ask_alpha) > 0.02) {
+        if show_text && !covered && depth > 0.0 && (is_wall || bid_alpha.max(ask_alpha) > 0.02) {
             // Dark digits on a solid wall, muted grey on the field — the
             // reference's contrast trick, and the reason a wall reads at a
             // glance.
-            ctx.set_fill_color(if is_wall { "#0b0f14" } else { "#b9c3ccb0" });
+            ctx.set_fill_color(&if is_wall {
+                mlc_core::utils::color::apply_opacity(&theme.background, 0.92)
+            } else {
+                mlc_core::utils::color::apply_opacity(&theme.text, 0.62)
+            });
             ctx.set_font(&format!("{font_px:.0}px monospace"));
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);

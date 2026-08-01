@@ -195,6 +195,15 @@ pub struct ChartTheme {
     pub candle_style: crate::theme::CandleStyle,
     /// Soft glow underlay on candle bodies (skin texture layer).
     pub candle_glow: bool,
+    /// DOM-heat gradient, bid side: base colour and the "hot" endpoint a
+    /// deep level leans toward. Same token pair the DOM ladder's intensity
+    /// bars use, so the on-chart heat and the panel read as one skin
+    /// instead of two palettes.
+    pub heat_bid: String,
+    pub heat_bid_hot: String,
+    /// Ask side of the same pair.
+    pub heat_ask: String,
+    pub heat_ask_hot: String,
 }
 
 impl Default for ChartTheme {
@@ -241,6 +250,10 @@ impl Default for ChartTheme {
             bar_down: "#ef5350".to_string(),
             candle_style: crate::theme::CandleStyle::Solid,
             candle_glow: false,
+            heat_bid: "#14b8a6".to_string(),
+            heat_bid_hot: "#30ff76".to_string(),
+            heat_ask: "#dc352b".to_string(),
+            heat_ask_hot: "#ffd311".to_string(),
         }
     }
 }

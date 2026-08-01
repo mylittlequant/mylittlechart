@@ -187,6 +187,14 @@ pub struct RuntimeSeriesColors {
     pub volume_up: String,
     pub volume_down: String,
 
+    // DOM-heat gradient endpoints. The overlay leans a level's colour from
+    // base toward "hot" with its depth, the same way the DOM ladder's
+    // intensity bars do — one skin, not two palettes.
+    pub heat_bid: String,
+    pub heat_bid_hot: String,
+    pub heat_ask: String,
+    pub heat_ask_hot: String,
+
     // Footprint clusters (buy/sell volume text + heat fill). Additive
     // 2026-07-05 — old theme JSON without these keys falls back to the
     // same green/red the footprint renderer always hardcoded, so existing
@@ -551,6 +559,10 @@ impl From<&UITheme> for RuntimeTheme {
                 ma_third: theme.series.ma_third.to_string(),
                 volume_up: theme.series.volume_up.to_string(),
                 volume_down: theme.series.volume_down.to_string(),
+                heat_bid: theme.series.candle_up_body.to_string(),
+                heat_bid_hot: theme.series.candle_up_body.to_string(),
+                heat_ask: theme.series.candle_down_body.to_string(),
+                heat_ask_hot: theme.series.candle_down_body.to_string(),
                 footprint_buy: theme.series.footprint_buy.to_string(),
                 footprint_sell: theme.series.footprint_sell.to_string(),
                 renko_up: theme.series.renko_up.to_string(),

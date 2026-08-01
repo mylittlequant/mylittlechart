@@ -300,6 +300,10 @@ impl ChartPanelApp {
             bar_down: rt.series.bar_down.clone(),
             candle_style: rt.panel_style.candle_style,
             candle_glow: rt.panel_style.glow,
+            heat_bid: rt.series.heat_bid.clone(),
+            heat_bid_hot: rt.series.heat_bid_hot.clone(),
+            heat_ask: rt.series.heat_ask.clone(),
+            heat_ask_hot: rt.series.heat_ask_hot.clone(),
         }
     }
 

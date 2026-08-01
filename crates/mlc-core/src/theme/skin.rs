@@ -261,8 +261,16 @@ impl SkinTokens {
         s.ma_fast = self.accent.to_string();
         s.ma_slow = self.accent_secondary.to_string();
         s.ma_third = mix_colors(self.accent, self.text, 0.5);
-        s.volume_up = apply_opacity(self.bids, 0.55);
-        s.volume_down = apply_opacity(self.asks, 0.55);
+        // Volume bars carry the side colour at FULL strength. They used to
+        // be dimmed to 55%, which read as washed-out next to every other
+        // surface the same skin paints — the panel ladders, the candles and
+        // now the on-chart heat all use the token undimmed.
+        s.volume_up = self.bids.to_string();
+        s.volume_down = self.asks.to_string();
+        s.heat_bid = self.bids.to_string();
+        s.heat_bid_hot = self.bids_secondary.to_string();
+        s.heat_ask = self.asks.to_string();
+        s.heat_ask_hot = self.asks_secondary.to_string();
         s.footprint_buy = self.bids.to_string();
         s.footprint_sell = self.asks.to_string();
         s.renko_up = self.bids.to_string();
