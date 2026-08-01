@@ -47,7 +47,24 @@ impl IndicatorBridge {
         let params = self.extract_params(info);
 
         // Get rendering properties with defaults
-        let overlay = rendering.map(|r| r.overlay).unwrap_or(false);
+        //
+        // `overlay_liquidation_heatmap` never has rendering metadata (its
+        // `machine_id` is `None`, so `UnifiedIndicatorCatalog::get` never
+        // resolves a `RenderingMetadata` for it — see `unified.rs`), which
+        // would otherwise default it to `overlay = false` (sub-pane). It IS
+        // conceptually an overlay — it paints on the main chart under the
+        // series, never in a sub-pane — and wave 1 (2026-08-01) promotes it
+        // to a real `IndicatorInstance` for the Indicator Settings modal, so
+        // this override matters now: `IndicatorInstance::new` derives
+        // `pane = if definition.overlay { 0 } else { 1 }`, and a `pane = 1`
+        // instance would spawn a phantom empty sub-pane. The other 5 opaque
+        // overlays are unaffected — they never reach `IndicatorInstance::new`
+        // (still intercepted in the picker add-flow before ever becoming one).
+        let overlay = if info.id() == "overlay_liquidation_heatmap" {
+            true
+        } else {
+            rendering.map(|r| r.overlay).unwrap_or(false)
+        };
         let bounds = rendering.and_then(|r| r.bounds);
         let zero_baseline = rendering.map(|r| r.zero_baseline).unwrap_or(false);
         let histogram_style = rendering
@@ -58,10 +75,21 @@ impl IndicatorBridge {
         // Get description
         let description = info.signature.description.clone();
 
+        // `short_name` is what the chart legend row and the settings-modal
+        // title render. For a normal indicator the catalog id IS the label
+        // ("RSI", "SMA", "VOLUME"), but the opaque overlays are keyed by a
+        // machine-shaped id (`overlay_liquidation_heatmap`) that reads as a
+        // leak of internals on screen — use their human name instead.
+        let short_name = if info.id().starts_with("overlay_") {
+            info.signature.name.clone()
+        } else {
+            info.id().to_string()
+        };
+
         IndicatorDefinition {
             type_id: info.id().to_lowercase(),
             name: info.signature.name.clone(),
-            short_name: info.id().to_string(),
+            short_name,
             description,
             category,
             params,
@@ -169,8 +197,15 @@ impl IndicatorBridge {
 
         // Add global source parameter ONLY for PriceOnly indicators (backward compatibility)
         // This is the main "source" parameter that applies to the whole indicator
+        //
+        // The opaque host-driven overlays are excluded: they compute nothing
+        // from a price series (`machine_id: None` — the host paints them from
+        // its own live feed), so a "Source: close" row in their settings modal
+        // is a control that does nothing. Their `source_type` still reads
+        // `PriceOnly` by default in the catalog, hence the explicit skip
+        // rather than a signature change.
         use crate::catalog::SourceType;
-        if info.signature.source_type == SourceType::PriceOnly {
+        if info.signature.source_type == SourceType::PriceOnly && !info.id().starts_with("overlay_") {
             // Only add if there's no component-level source already
             if !params.iter().any(|p| p.name == "source") {
                 params.push(IndicatorParam::source("source", "Source"));
@@ -238,6 +273,9 @@ impl IndicatorBridge {
             CatalogCategory::Ratio => IndicatorCategory::Custom,
             CatalogCategory::Position => IndicatorCategory::Custom,
             CatalogCategory::Zigzag => IndicatorCategory::Trend,
+            // The 6 opaque host-driven overlays (overlay_catalog.rs) —
+            // previously fell into the `Custom` catch-all below.
+            CatalogCategory::Overlay => IndicatorCategory::TotalOverlay,
             // Catch-all for any new categories
             CatalogCategory::Custom | CatalogCategory::Composite |
             CatalogCategory::Experimental | CatalogCategory::Unknown => IndicatorCategory::Custom,

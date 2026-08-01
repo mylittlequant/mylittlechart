@@ -810,16 +810,27 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::IndicatorSearch => {
-                        // Opaque host-driven overlays (Volume Profile / OI Delta /
-                        // Funding Rate / CVD) are catalog entries for discoverability
-                        // only — they carry no `machine_id` in mli and are not
-                        // computed through `IndicatorManager`. Intercept here and
-                        // dispatch the existing Toggle event instead of falling
-                        // through to the regular add() path below.
-                        if let Some(event) = crate::overlay_toggle_for_catalog_id(item_id) {
-                            self.process_chart_out_event(event);
-                            self.modal_state.close();
-                            return;
+                        // Opaque host-driven overlays (Volume Profile / TPO Profile /
+                        // OI Delta / Funding Rate / DOM Heatmap) are catalog entries
+                        // for discoverability only — they carry no `machine_id` in
+                        // mli and are not computed through `IndicatorManager`.
+                        // Intercept here and dispatch the existing Toggle event
+                        // instead of falling through to the regular add() path
+                        // below.
+                        //
+                        // `overlay_liquidation_heatmap` is the ONE exception (wave
+                        // 1, 2026-08-01): it is deliberately NOT intercepted here
+                        // anymore — it falls through to the regular add() path so
+                        // it becomes a real `IndicatorInstance` (legend row + gear
+                        // + a `sensitivity` param in the Indicator Settings modal).
+                        // The render gate itself is turned on right after a
+                        // successful add, below.
+                        if item_id != "overlay_liquidation_heatmap" {
+                            if let Some(event) = crate::overlay_toggle_for_catalog_id(item_id) {
+                                self.process_chart_out_event(event);
+                                self.modal_state.close();
+                                return;
+                            }
                         }
                         // Trading-panel focus (chart-in-container arc,
                         // 2026-07-26): the picked indicator lands on the
@@ -915,6 +926,16 @@ impl ChartApp {
                             // Apply auto-color when this is a duplicate overlay indicator.
                             if let Some(ref color) = auto_color {
                                 self.core.indicators_mut().set_all_output_colors(new_id, color.clone());
+                            }
+                            // Liquidation Heatmap: the picker no longer
+                            // intercepts this id (see the match arm above) — it
+                            // just created a real `IndicatorInstance`, which IS
+                            // the overlay's on/off state. Nothing to flip; only
+                            // the live feed needs arming.
+                            if item_id == Self::LIQ_HEATMAP_TYPE_ID {
+                                if let Some(cid) = active_container_id {
+                                    self.arm_liq_overlay_feed(cid);
+                                }
                             }
                             if let Some(active_leaf) = active_leaf {
                                 // If this window is in a sync group and indicators are synced,

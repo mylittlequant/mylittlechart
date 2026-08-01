@@ -236,8 +236,6 @@ pub enum ChartOutEvent {
     // chart type. Mirrors the OI Delta / Funding Rate toggle shape above. ===
     /// Toggle the DOM Heatmap background overlay on the active chart.
     ToggleDomHeatmapOverlay,
-    /// Toggle the Liquidation Heatmap background overlay on the active chart.
-    ToggleLiquidationHeatmapOverlay,
 
     // === Theme (app-global) ===
     SetTheme(&'static str),

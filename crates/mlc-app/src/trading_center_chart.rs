@@ -341,6 +341,8 @@ impl ChartApp {
         let chart_type = bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
         let trade_archive_available =
             self.trade_archive_available_for(&bubble_mgr, window.current_tag_id);
+        let liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+        let liq_active = self.liq_overlay_active(window.current_tag_id);
         let window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
             viewport: window.viewport(),
             price_scale: window.price_scale(),
@@ -357,7 +359,8 @@ impl ChartApp {
             oi_show: window.oi_show,
             funding_show: window.funding_show,
             dom_heatmap_show: window.dom_heatmap_show,
-            liq_heatmap_show: window.liq_heatmap_show,
+            liq_heatmap_show: liq_active,
+            liq_sensitivity,
             footprint_display: panel.footprint_display,
             tick_intensity: panel.tick_intensity,
             tpo_display: panel.tpo_display,

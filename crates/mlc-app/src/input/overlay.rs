@@ -901,14 +901,25 @@ impl ChartApp {
             None => return,
         };
 
-        // Symmetric guard for the add-side intercept in modals.rs: an
-        // opaque host-driven overlay (Volume Profile / OI Delta / Funding
-        // Rate) never becomes a real `IndicatorInstance`, so this branch is
-        // not reachable in the current UI flow — kept for correctness if a
-        // caller ever passes an `overlay_*` backing id. CVD is NOT one of
-        // these — it is a real `IndicatorInstance` and is removed below
-        // like any other indicator.
-        if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
+        // Liquidation Heatmap: the ONE opaque-overlay id that backs a REAL
+        // `IndicatorInstance` (see overlay_catalog.rs doc comment).
+        if type_id == Self::LIQ_HEATMAP_TYPE_ID {
+            // Removing the legend row IS turning the overlay off (the
+            // instance is the state) — all that is left to do here is drop
+            // the live subscription; the generic instance removal below
+            // does the rest.
+            if let Some(cid) = self.panel_app.panel_grid.active_container().map(|w| w.id) {
+                self.disarm_liq_overlay_feed(cid);
+            }
+        } else if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
+            // Symmetric guard for the add-side intercept in modals.rs: the
+            // remaining opaque host-driven overlays (Volume Profile / TPO
+            // Profile / OI Delta / Funding Rate / DOM Heatmap) never become
+            // a real `IndicatorInstance`, so this branch is not reachable
+            // in the current UI flow — kept for correctness if a caller
+            // ever passes one of their backing ids. CVD is NOT one of
+            // these — it is a real `IndicatorInstance` and is removed below
+            // like any other indicator.
             self.process_chart_out_event(event);
             return;
         }
@@ -1009,5 +1020,45 @@ impl ChartApp {
             type_id,
             all_to_remove.len(),
         );
+    }
+
+    /// Subscribe the live Liquidation Heatmap feed for `cid`'s instrument.
+    ///
+    /// Called when the overlay's `IndicatorInstance` is ADDED — the
+    /// instance is the on/off state (owner doctrine 2026-08-01), so this
+    /// only owns the data side. Clearing the bubble's stale heat buffer
+    /// here mirrors what the retired toggle event did, so a re-add starts
+    /// from an empty map instead of yesterday's cells.
+    pub(crate) fn arm_liq_overlay_feed(&mut self, cid: mlc_core::state::ChartId) {
+        let (Some(symbol), Some(at)) = (self.symbol_for_chart(cid), self.account_type_for_chart(cid))
+        else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let eid = self.exchange_id_for_chart(cid);
+        if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+            return;
+        }
+        if let Some(bid) = self.bubble_for_chart(cid) {
+            self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
+                mlc_backend::chart_type::clear_slot_liq_heatmap(bubble);
+            });
+        }
+        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+        self.core.ensure_connector(eid);
+        self.core.subscribe_liquidation_heatmap(eid, &symbol, at_dig3);
+    }
+
+    /// Drop the live Liquidation Heatmap feed for `cid`'s instrument —
+    /// called when the overlay's instance is removed.
+    pub(crate) fn disarm_liq_overlay_feed(&mut self, cid: mlc_core::state::ChartId) {
+        let (Some(symbol), Some(at)) = (self.symbol_for_chart(cid), self.account_type_for_chart(cid))
+        else { return };
+        if symbol.is_empty() {
+            return;
+        }
+        let eid = self.exchange_id_for_chart(cid);
+        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
+        self.core.unsubscribe_liquidation_heatmap(eid, &symbol, at_dig3);
     }
 }

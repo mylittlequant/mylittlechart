@@ -1430,49 +1430,6 @@ impl ChartApp {
                 }
                 state_mutated = true;
             }
-            // === Liquidation Heatmap overlay (C13; chart-type → overlay migration) ===
-            // Mirrors ToggleDomHeatmapOverlay above.
-            ChartOutEvent::ToggleLiquidationHeatmapOverlay => {
-                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                if let Some(cid) = cid_opt {
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            // Per-container venue (2026-07-15 wrong-venue bug).
-                            let chart_eid = self.exchange_id_for_chart(cid);
-                            let eid_str = chart_eid.as_str();
-                            let connector_enabled = self.sidebar_state.connector_enabled
-                                .get(eid_str).copied().unwrap_or(true);
-                            if connector_enabled {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let liq_show_now = {
-                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                        w.liq_heatmap_show = !w.liq_heatmap_show;
-                                        eprintln!("[ChartApp] liq_heatmap_show toggled -> {}", w.liq_heatmap_show);
-                                        w.liq_heatmap_show
-                                    } else { false }
-                                };
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                        mlc_backend::chart_type::clear_slot_liq_heatmap(bubble);
-                                    });
-                                }
-                                if liq_show_now {
-                                    self.core.subscribe_liquidation_heatmap(
-                                        chart_eid, &symbol, at,
-                                    );
-                                } else {
-                                    self.core.unsubscribe_liquidation_heatmap(
-                                        chart_eid, &symbol, at,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                state_mutated = true;
-            }
             ChartOutEvent::ToggleCrosshair => {
                 let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_crosshair();
@@ -3147,7 +3104,12 @@ impl ChartApp {
         let liq_targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> =
             self.panel_app.panel_grid.containers().iter()
                 .filter_map(|(cid, w)| {
-                    if !w.liq_heatmap_show { return None; }
+                    let _ = w;
+                    // Instance-driven (owner doctrine 2026-08-01): a restored
+                    // preset carrying a visible `overlay_liquidation_heatmap`
+                    // instance is what re-arms the feed — there is no window
+                    // bool to consult.
+                    if !self.liq_overlay_active_for_chart(*cid) { return None; }
                     let sym = self.symbol_for_chart(*cid)?;
                     if sym.is_empty() { return None; }
                     let exch = self.exchange_for_chart(*cid)?;

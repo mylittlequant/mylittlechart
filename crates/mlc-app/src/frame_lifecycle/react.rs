@@ -1428,16 +1428,25 @@ impl ChartApp {
             }
 
             // ── DOM heatmap pass-throughs ──────────────────────────────────────
+            //
+            // Gate on `win.dom_heatmap_show` (chart-type → overlay
+            // migration bool), NOT on `chart_type_for_chart` — the old
+            // "dom_heatmap" chart_type id was removed from the registry
+            // (`mlc-core/src/chart_type/registry.rs`), so a gate comparing
+            // against it can never match (G1 fix, 2026-08-01: this arm
+            // filtered every event away, silently starving the overlay's
+            // ring buffer regardless of the toggle). Mirrors the OI/Funding
+            // handlers above.
             BubbleEvent::DomHeatmapSnapshotPassthrough { exchange_id, account_type, symbol, ts_ms, bids, asks } => {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    self.panel_app.panel_grid.containers().keys()
-                        .filter_map(|cid| {
+                    self.panel_app.panel_grid.containers().iter()
+                        .filter_map(|(cid, win)| {
+                            if !win.dom_heatmap_show { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_dom = self.chart_type_for_chart(*cid) == Some("dom_heatmap");
-                            if !is_dom || s != *symbol || a != event_account_type { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -1466,15 +1475,16 @@ impl ChartApp {
                 }
             }
 
+            // Gate on `win.dom_heatmap_show` (G1 fix — see the snapshot arm above).
             BubbleEvent::DomTradeDotPassthrough { exchange_id: _, account_type, symbol, dot } => {
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    self.panel_app.panel_grid.containers().keys()
-                        .filter_map(|cid| {
+                    self.panel_app.panel_grid.containers().iter()
+                        .filter_map(|(cid, win)| {
+                            if !win.dom_heatmap_show { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_dom = self.chart_type_for_chart(*cid) == Some("dom_heatmap");
-                            if !is_dom || s != *symbol || a != event_account_type { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -1491,16 +1501,27 @@ impl ChartApp {
             }
 
             // ── Liquidation pass-throughs ──────────────────────────────────────
+            //
+            // Gate on the window's own Liquidation Heatmap INDICATOR
+            // INSTANCE, not on `chart_type_for_chart` — the old
+            // "liquidation_heatmap" chart_type id was removed from the
+            // registry (`mlc-core/src/chart_type/registry.rs`), so a gate
+            // comparing against it can never match (G1: this arm filtered
+            // every event away, silently starving the overlay's ring
+            // buffer regardless of the toggle). The instance IS the on/off
+            // state (owner doctrine 2026-08-01) — see
+            // `ChartApp::liq_overlay_active`.
             BubbleEvent::LiquidationEventPassthrough { exchange_id, account_type, symbol, ts_ms, price, value_usd, side } => {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    self.panel_app.panel_grid.containers().keys()
-                        .filter_map(|cid| {
+                    self.panel_app.panel_grid.containers().iter()
+                        .filter_map(|(cid, win)| {
+                            let _ = win;
+                            if !self.liq_overlay_active_for_chart(*cid) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_liq = self.chart_type_for_chart(*cid) == Some("liquidation_heatmap");
-                            if !is_liq || s != *symbol || a != event_account_type { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };
@@ -1537,16 +1558,18 @@ impl ChartApp {
                 }
             }
 
+            // Gate on the overlay's indicator instance — see the event arm above.
             BubbleEvent::LiquidationBucketPassthrough { exchange_id, account_type, symbol, ts_ms, long_liq_usd, short_liq_usd } => {
                 let at_label = account_type.as_str();
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
-                    self.panel_app.panel_grid.containers().keys()
-                        .filter_map(|cid| {
+                    self.panel_app.panel_grid.containers().iter()
+                        .filter_map(|(cid, win)| {
+                            let _ = win;
+                            if !self.liq_overlay_active_for_chart(*cid) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
-                            let is_liq = self.chart_type_for_chart(*cid) == Some("liquidation_heatmap");
-                            if !is_liq || s != *symbol || a != event_account_type { return None; }
+                            if s != *symbol || a != event_account_type { return None; }
                             Some(*cid)
                         }).collect()
                 };

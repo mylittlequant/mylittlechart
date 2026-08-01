@@ -95,8 +95,12 @@ pub fn draw_liquidation_heatmap(
     // Pixel width of one bucket column — same as C12.
     let col_w = vp.bar_spacing.max(1.0);
 
-    // Normalisation guard.
-    let max_vol = buf.max_volume_seen.max(1e-9);
+    // Normalisation guard. `sensitivity` (wave 1, 2026-08-01) is a gain on
+    // the heat normalizer — higher sensitivity divides `max_volume_seen`
+    // down, brightening weaker clusters that would otherwise round to
+    // near-zero alpha, mirroring TapeSurf's "gain" slider.
+    let sensitivity = state.liq_sensitivity;
+    let max_vol = (buf.max_volume_seen / sensitivity.max(0.1)).max(1e-9);
 
     // ── Render cells ──────────────────────────────────────────────────────────
     for cell in &buf.cells {

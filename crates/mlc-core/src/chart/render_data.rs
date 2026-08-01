@@ -765,6 +765,15 @@ pub struct ChartRenderState<'a> {
     pub liq_heatmap_ref: Option<&'a crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
     /// Liquidation Heatmap dot overlay (C13). Same gate as `liq_heatmap_ref`.
     pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
+    /// Liquidation Heatmap gain (wave 1, 2026-08-01) — the `sensitivity`
+    /// param on the `overlay_liquidation_heatmap` `IndicatorInstance`
+    /// (default `1.0` when no instance exists, or the instance's own
+    /// param value otherwise). `draw_liquidation_heatmap` divides
+    /// `max_volume_seen` by this before normalizing cell alpha — higher
+    /// sensitivity brightens weaker clusters, mirroring TapeSurf's "gain"
+    /// slider. Unused (but always populated) when `liq_heatmap_ref` is
+    /// `None`.
+    pub liq_sensitivity: f64,
     /// True when the chart type is non-temporal (renko / pnf / kagi /
     /// three_line_break). These types render on a derived series whose
     /// `bars` shadow carries each element's real open timestamp but no

@@ -119,6 +119,13 @@ pub enum IndicatorCategory {
     Volatility,
     Volume,
     Oscillator,
+    /// On-chart data overlays (Volume Profile / TPO Profile / OI Delta /
+    /// Funding Rate / DOM Heatmap / Liquidation Heatmap) — the 6 opaque
+    /// host-driven overlays from mli's `overlay_catalog` (mli-side
+    /// `IndicatorCategory::Overlay`). Distinct from `Custom`, which they
+    /// fell into before this variant existed (`IndicatorBridge::
+    /// map_category` catch-all).
+    TotalOverlay,
     Custom,
 }
 
@@ -131,6 +138,7 @@ impl IndicatorCategory {
             IndicatorCategory::Volatility => "Volatility",
             IndicatorCategory::Volume => "Volume",
             IndicatorCategory::Oscillator => "Oscillator",
+            IndicatorCategory::TotalOverlay => "Total Overlay",
             IndicatorCategory::Custom => "Custom",
         }
     }
@@ -143,6 +151,7 @@ impl IndicatorCategory {
             IndicatorCategory::Volatility,
             IndicatorCategory::Volume,
             IndicatorCategory::Oscillator,
+            IndicatorCategory::TotalOverlay,
             IndicatorCategory::Custom,
         ]
     }
@@ -388,6 +397,10 @@ pub enum IndicatorCategoryFilter {
     Oscillator,
     /// Moving averages (SMA, EMA, WMA, etc.)
     Average,
+    /// On-chart data overlays (Volume Profile / TPO Profile / OI Delta /
+    /// Funding Rate / DOM Heatmap / Liquidation Heatmap) — mirrors
+    /// `IndicatorCategory::TotalOverlay`.
+    TotalOverlay,
     /// Other/Custom indicators
     Other,
 }
@@ -403,6 +416,7 @@ impl IndicatorCategoryFilter {
             Self::Volume => "Volume",
             Self::Oscillator => "Oscillators",
             Self::Average => "Averages",
+            Self::TotalOverlay => "Overlays",
             Self::Other => "Other",
         }
     }
@@ -417,6 +431,7 @@ impl IndicatorCategoryFilter {
             Self::Volume => "histogram",
             Self::Oscillator => "sine_wave",
             Self::Average => "line_chart",
+            Self::TotalOverlay => "volume_profile",
             Self::Other => "more_horizontal",
         }
     }
@@ -431,6 +446,7 @@ impl IndicatorCategoryFilter {
             Self::Volume,
             Self::Oscillator,
             Self::Average,
+            Self::TotalOverlay,
             Self::Other,
         ]
     }
@@ -458,6 +474,7 @@ impl IndicatorCategoryFilter {
             Self::Volume => matches!(category, IndicatorCategory::Volume),
             Self::Oscillator => matches!(category, IndicatorCategory::Oscillator),
             Self::Average => matches!(category, IndicatorCategory::Trend), // MAs are usually in Trend
+            Self::TotalOverlay => matches!(category, IndicatorCategory::TotalOverlay),
             Self::Other => matches!(category, IndicatorCategory::Custom),
         }
     }

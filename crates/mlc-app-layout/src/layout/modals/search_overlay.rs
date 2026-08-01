@@ -203,6 +203,7 @@ pub fn render_search_overlay(
                 IndicatorCategoryFilter::Volume => Icon::Histogram,
                 IndicatorCategoryFilter::Oscillator => Icon::SineWave,
                 IndicatorCategoryFilter::Average => Icon::LineChart,
+                IndicatorCategoryFilter::TotalOverlay => Icon::VolumeProfile,
                 IndicatorCategoryFilter::Other => Icon::MoreHorizontal,
             };
             draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, tab_icon_size, tab_icon_size, icon_color);
