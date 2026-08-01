@@ -991,22 +991,6 @@ impl ChartApp {
                         .collect()
                 };
 
-                // A trade whose price is not a positive finite number is
-                // garbage — folding it into the live candle sets `close`
-                // to it and drives `low` to it permanently (min is
-                // sticky), which blows the auto-scale down to ~0 and
-                // renders as a full-height drop candle at the live edge
-                // (owner-visible F-chart breakage, live-caught 2026-08-01:
-                // `i=2000 o=62946.7 h=62947.1 l=0 c=0`). Drop it here and
-                // name the venue once so the parser side can be chased.
-                if !(*price > 0.0) || !price.is_finite() {
-                    crate::sglog!(
-                        "[trade] dropped non-positive price {} qty {} from {} {}:{} ts={}",
-                        price, quantity, exchange_id.as_str(), symbol, account_type, timestamp,
-                    );
-                    return;
-                }
-
                 let mut bubble_periods: std::collections::HashMap<mlc_core::ids::BubbleId, i64> = std::collections::HashMap::new();
                 for (cid_tu, _window) in self.panel_app.panel_grid.containers().iter() {
                     if derived_cids_tu.contains(cid_tu) { continue; }
