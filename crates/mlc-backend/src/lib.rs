@@ -37,6 +37,7 @@ pub mod trade_store;
 pub mod user;
 pub mod trading;
 pub mod exchange_symbols;
+pub mod screener;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -704,6 +705,16 @@ pub struct BackendCore {
     /// `mlc-app`'s demand dispatch via [`Self::trade_oldest_ts`].
     pub trade_store: TradeStore,
 
+    /// Crypto screener v1 cache (plan F, owner spec 2026-08-01,
+    /// `docs/mlc/plans/orderflow-panels-arc2-2026-08-01.md` §F). Keyed the
+    /// same way as `mini_ticker` (`"{symbol}:{exchange}:{account_type}"`).
+    /// Unlike `mini_ticker` this is written from a DETACHED background
+    /// fetch task (see [`Self::scan_screener_symbol`]), not synchronously
+    /// from `&self` inside `tick_writers` — hence the extra `Arc` so the
+    /// spawned task can hold its own clone independent of `BackendCore`'s
+    /// own lifetime.
+    pub screener_metrics: Arc<DashMap<String, crate::screener::ScreenerMetrics>>,
+
     /// Synchronous [`BubbleEvent`]s queued by facade calls that mutate the
     /// bubble store OUTSIDE the broadcast-driven `tick_writers` loop and
     /// have no per-bubble caller in hand to hand the event to directly
@@ -876,6 +887,7 @@ impl BackendCore {
             bridge,
             mini_ticker: DashMap::new(),
             trade_store: TradeStore::new(),
+            screener_metrics: Arc::new(DashMap::new()),
             pending_bubble_events: std::sync::Mutex::new(Vec::new()),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
@@ -2431,6 +2443,40 @@ impl BackendCore {
     /// Cancel the Funding Rate overlay subscription for an instrument.
     pub fn unsubscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.bridge.unsubscribe_funding_rate(exchange_id, symbol, account_type);
+    }
+
+    /// Trigger a background scan for one screener row (plan F, owner spec
+    /// 2026-08-01): fetches ~120 1h bars via a pure READ-ONLY REST history
+    /// call (no bubble/window touched, no `LiveUpdate` broadcast — see
+    /// `DataBridge::fetch_history_readonly`), computes RSI(14)/ATR%(14)/
+    /// distance-to-24h-high-low in `crate::screener`, and caches the result
+    /// in [`Self::screener_metrics`] keyed like `mini_ticker`
+    /// (`"{symbol}:{exchange}:{account_type}"`). Fire-and-forget — the
+    /// caller reads the cache on a later frame; the cell renders "…" until
+    /// then.
+    pub fn scan_screener_symbol(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = crate::screener::screener_key(symbol, exchange_id.as_str(), account_type.short_label());
+        let metrics_map = self.screener_metrics.clone();
+        let symbol_owned = symbol.to_string();
+        self.bridge.fetch_history_readonly(
+            exchange_id,
+            symbol,
+            account_type,
+            "1h",
+            120,
+            move |result| match result {
+                Ok(bars) => {
+                    if let Some(metrics) = crate::screener::compute_screener_metrics(&bars) {
+                        metrics_map.insert(key, metrics);
+                    } else {
+                        eprintln!("[screener] {} scan returned too few bars for RSI/ATR(14)", symbol_owned);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[screener] {} scan failed: {}", symbol_owned, e);
+                }
+            },
+        );
     }
 
     /// Subscribe to the DOM Heatmap overlay stream for an instrument

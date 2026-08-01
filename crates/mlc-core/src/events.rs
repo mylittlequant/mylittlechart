@@ -50,6 +50,10 @@ pub enum ChartOutEvent {
 
     // === Sidebar / Panel toggles (app-level) ===
     ToggleWatchlist,
+    /// Toggle the crypto screener panel — WATCHLIST mode v1 (plan F, owner
+    /// spec 2026-08-01, `docs/mlc/plans/orderflow-panels-arc2-2026-08-01.md`
+    /// §F). A plain panel, NOT a typed slot.
+    ToggleScreener,
     ToggleAlerts,
     ToggleObjectTree,
     ToggleSignals,

@@ -28,6 +28,7 @@ use uzor::types::Rect as WidgetRect;
 use crate::state::{SidebarState, RightSidebarPanel};
 use crate::types::ObjectItemState;
 use crate::types::WatchlistColumnConfig;
+use crate::types::{ScreenerItem, ScreenerFilters, ScreenerSortKey, screener_sort_key_for_col};
 
 
 // =============================================================================
@@ -348,6 +349,7 @@ pub fn render_right_sidebar(
         RightSidebarPanel::SlotL2        => ("L2 Tape",      Icon::SlotL2),
         RightSidebarPanel::SlotBigTrades => ("Big Trades",   Icon::SlotBigTrades),
         RightSidebarPanel::SlotLiq       => ("Liquidations", Icon::SlotLiq),
+        RightSidebarPanel::Screener    => ("Screener",     Icon::Screener),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -501,7 +503,27 @@ pub fn render_right_sidebar(
 
     }
 
-
+    // Screener panel: "Scan" text button — triggers the background history
+    // scan for every watchlist symbol (plan F v1, owner spec 2026-08-01).
+    if panel == RightSidebarPanel::Screener {
+        let scan_label = "Scan";
+        ctx.set_font("11px sans-serif");
+        let scan_w = ctx.measure_text(scan_label) + 14.0;
+        let scan_h = 20.0;
+        let scan_x = close_x - scan_w - 8.0;
+        let scan_y = rect.y + (header_height - scan_h) / 2.0;
+        let scan_hovered = input_coordinator
+            .is_hovered(&uzor::types::WidgetId::from("screener_scan"));
+        let scan_rect = WidgetRect::new(scan_x, scan_y, scan_w, scan_h);
+        ctx.set_fill_color(if scan_hovered { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
+        ctx.fill_rounded_rect(scan_rect.x, scan_rect.y, scan_rect.width, scan_rect.height, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(scan_label, scan_x + scan_w / 2.0, scan_y + scan_h / 2.0);
+        input_coordinator.register("screener_scan", scan_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("screener_scan".to_string(), scan_rect));
+    }
 
     // Header bottom border — 2 px solid bar, matching the visual weight of
     // inter-leaf docking separators inside slot / agent bodies below.
@@ -516,12 +538,16 @@ pub fn render_right_sidebar(
     // scrollable clip so it stays fixed at the top.  The scrollable viewport is
     // shrunk by the header height so that only data rows scroll.
     let watchlist_header_h = if panel == RightSidebarPanel::Watchlist { 23.0 } else { 0.0 }; // 22 header + 1 separator
+    // Screener panel: filter-chip row + sortable column-header row, same
+    // "pinned outside the scroll clip" treatment as the watchlist header.
+    let screener_header_h = if panel == RightSidebarPanel::Screener { SCREENER_HEADER_H } else { 0.0 };
+    let extra_header_h = watchlist_header_h + screener_header_h; // mutually exclusive — at most one is nonzero
 
     let viewport_rect = WidgetRect::new(
         content_rect.x,
-        content_rect.y + watchlist_header_h,
+        content_rect.y + extra_header_h,
         content_rect.width + scrollbar_width,
-        (content_rect.height - watchlist_header_h).max(0.0),
+        (content_rect.height - extra_header_h).max(0.0),
     );
     let scroll_config = ScrollableConfig {
         scrollbar_width,
@@ -546,6 +572,21 @@ pub fn render_right_sidebar(
             &mut result,
             input_coordinator,
             watchlist_column_config,
+        );
+    }
+
+    // Draw the screener filter-chip row + sortable column header at a fixed
+    // position before clipping (same treatment as the watchlist header).
+    if panel == RightSidebarPanel::Screener {
+        render_screener_header_rows(
+            ctx,
+            rect,
+            content_rect.y,
+            rect.width - scrollbar_width,
+            sidebar_state,
+            toolbar_theme,
+            &mut result,
+            input_coordinator,
         );
     }
 
@@ -693,6 +734,19 @@ pub fn render_right_sidebar(
                 panel_sync_flags_fn,    // kept for API compat; currently unused in slot rendering
                 panel_overlay_info_fn,
                 panel_col_visibility_fn,
+            );
+        }
+
+        RightSidebarPanel::Screener => {
+            content_height = render_screener_rows(
+                ctx,
+                rect,
+                content_y,
+                content_width,
+                sidebar_state,
+                toolbar_theme,
+                &mut result,
+                input_coordinator,
             );
         }
 
@@ -1937,6 +1991,334 @@ fn format_price_compact(v: f64) -> String {
     } else {
         format!("{:.6}", v)
     }
+}
+
+// =============================================================================
+// Screener panel (plan F v1 — watchlist mode, owner spec 2026-08-01)
+// =============================================================================
+
+/// Combined height of the screener's pinned filter-chip row + sortable
+/// column-header row (rendered OUTSIDE the scroll clip, same "fixed at the
+/// top" treatment as the watchlist column header).
+const SCREENER_HEADER_H: f64 = 50.0; // 28 filter row + 22 column header
+const SCREENER_FILTER_ROW_H: f64 = 28.0;
+const SCREENER_COL_HEADER_H: f64 = 22.0;
+
+const SCREENER_COL_LABELS: [&str; 8] =
+    ["Symbol", "Last", "24h%", "Vol", "RSI", "ATR%", "Dist Hi", "Dist Lo"];
+
+/// Composable-AND-filtered, sorted display order over `items` — indices
+/// into `items` (not a cloned Vec) so row click handling can still address
+/// the original `ScreenerItem`.
+fn screener_visible_indices(
+    items: &[ScreenerItem],
+    filters: &ScreenerFilters,
+    sort_key: ScreenerSortKey,
+    sort_asc: bool,
+) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..items.len()).filter(|&i| filters.matches(&items[i])).collect();
+    idx.sort_by(|&a, &b| {
+        let ord = screener_cmp(&items[a], &items[b], sort_key);
+        if sort_asc { ord } else { ord.reverse() }
+    });
+    idx
+}
+
+fn screener_cmp(a: &ScreenerItem, b: &ScreenerItem, key: ScreenerSortKey) -> std::cmp::Ordering {
+    let cmp_f64 = |x: f64, y: f64| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal);
+    match key {
+        ScreenerSortKey::Symbol => a.symbol.cmp(&b.symbol),
+        ScreenerSortKey::Last => cmp_f64(a.last_price, b.last_price),
+        ScreenerSortKey::Change24h => cmp_f64(a.change_percent, b.change_percent),
+        ScreenerSortKey::Volume24h => cmp_f64(a.volume_24h_quote, b.volume_24h_quote),
+        ScreenerSortKey::Rsi14 => cmp_f64(a.rsi14.unwrap_or(f64::MIN), b.rsi14.unwrap_or(f64::MIN)),
+        ScreenerSortKey::AtrPct14 => cmp_f64(a.atr_pct14.unwrap_or(f64::MIN), b.atr_pct14.unwrap_or(f64::MIN)),
+        ScreenerSortKey::DistHigh => cmp_f64(a.dist_high_pct.unwrap_or(f64::MIN), b.dist_high_pct.unwrap_or(f64::MIN)),
+        ScreenerSortKey::DistLow => cmp_f64(a.dist_low_pct.unwrap_or(f64::MIN), b.dist_low_pct.unwrap_or(f64::MIN)),
+    }
+}
+
+fn screener_chip_label_change_pct(v: Option<(bool, f64)>) -> String {
+    match v {
+        None => "24h%".to_string(),
+        Some((true, t)) => format!("24h% \u{2265} {:.0}%", t),
+        Some((false, t)) => format!("24h% \u{2264} -{:.0}%", t),
+    }
+}
+
+fn screener_chip_label_rsi_above(v: Option<f64>) -> String {
+    match v {
+        None => "RSI \u{2265}".to_string(),
+        Some(t) => format!("RSI \u{2265} {:.0}", t),
+    }
+}
+
+fn screener_chip_label_rsi_below(v: Option<f64>) -> String {
+    match v {
+        None => "RSI \u{2264}".to_string(),
+        Some(t) => format!("RSI \u{2264} {:.0}", t),
+    }
+}
+
+fn screener_chip_label_vol(v: Option<f64>) -> String {
+    match v {
+        None => "Vol \u{2265}".to_string(),
+        Some(t) => format!("Vol \u{2265} {}", format_volume(t)),
+    }
+}
+
+fn screener_chip_label_atr(v: Option<f64>) -> String {
+    match v {
+        None => "ATR% \u{2265}".to_string(),
+        Some(t) => format!("ATR% \u{2265} {}", t),
+    }
+}
+
+/// Render the pinned filter-chip row + sortable column header for the
+/// Screener panel (drawn OUTSIDE the scroll clip, fixed at the top — same
+/// treatment as [`render_watchlist_column_header`]).
+fn render_screener_header_rows(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    header_y: f64,
+    content_width: f64,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) {
+    let item_padding = 8.0;
+    let filters = &state.screener_filters;
+    let visible = screener_visible_indices(
+        &state.screener_items, filters, state.screener_sort_key, state.screener_sort_asc,
+    );
+
+    // ---- Filter chip row -------------------------------------------------
+    ctx.set_fill_color(&theme.background);
+    ctx.fill_rect(rect.x, header_y, content_width, SCREENER_FILTER_ROW_H);
+
+    let chip_h = 20.0;
+    let chip_y = header_y + (SCREENER_FILTER_ROW_H - chip_h) / 2.0;
+    let chip_gap = 6.0;
+    let mut chip_x = rect.x + item_padding;
+
+    let chips: [(&str, String, bool); 5] = [
+        ("screener_filter_change_pct", screener_chip_label_change_pct(filters.change_pct), filters.change_pct.is_some()),
+        ("screener_filter_rsi_above", screener_chip_label_rsi_above(filters.rsi_above), filters.rsi_above.is_some()),
+        ("screener_filter_rsi_below", screener_chip_label_rsi_below(filters.rsi_below), filters.rsi_below.is_some()),
+        ("screener_filter_vol_min", screener_chip_label_vol(filters.vol_min), filters.vol_min.is_some()),
+        ("screener_filter_atr_pct_min", screener_chip_label_atr(filters.atr_pct_min), filters.atr_pct_min.is_some()),
+    ];
+
+    ctx.set_font("10px sans-serif");
+    for (id, label, active) in chips.iter() {
+        let w = ctx.measure_text(label) + 12.0;
+        let chip_rect = WidgetRect::new(chip_x, chip_y, w, chip_h);
+        let hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(*id));
+        let bg: Option<&str> = if *active {
+            Some(if hovered { theme.accent.as_str() } else { theme.item_bg_active.as_str() })
+        } else if hovered {
+            Some(theme.item_bg_hover.as_str())
+        } else {
+            None
+        };
+        if let Some(bg) = bg {
+            ctx.set_fill_color(bg);
+            ctx.fill_rounded_rect(chip_rect.x, chip_rect.y, chip_rect.width, chip_rect.height, 4.0);
+        }
+        ctx.set_fill_color(if *active { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, chip_x + w / 2.0, chip_y + chip_h / 2.0);
+        input_coordinator.register(*id, chip_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((id.to_string(), chip_rect));
+        chip_x += w + chip_gap;
+    }
+
+    // "N of M match" — right-aligned in the filter row.
+    let match_label = format!("{} of {} match", visible.len(), state.screener_items.len());
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color(&theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&match_label, rect.x + content_width - item_padding, chip_y + chip_h / 2.0);
+
+    ctx.set_fill_color(&theme.separator);
+    ctx.fill_rect(rect.x, header_y + SCREENER_FILTER_ROW_H - 1.0, content_width, 1.0);
+
+    // ---- Sortable column header row --------------------------------------
+    let col_header_y = header_y + SCREENER_FILTER_ROW_H;
+    ctx.set_fill_color(&theme.background);
+    ctx.fill_rect(rect.x, col_header_y, content_width, SCREENER_COL_HEADER_H);
+
+    let n_cols = SCREENER_COL_LABELS.len();
+    let usable_w = content_width - item_padding * 2.0;
+    let col_w = usable_w / n_cols as f64;
+    ctx.set_font("10px sans-serif");
+    ctx.set_text_baseline(TextBaseline::Middle);
+    for (i, label) in SCREENER_COL_LABELS.iter().enumerate() {
+        let col_x = rect.x + item_padding + col_w * i as f64;
+        let is_active = state.screener_sort_key == screener_sort_key_for_col(i);
+        let arrow = if is_active {
+            if state.screener_sort_asc { " \u{25B2}" } else { " \u{25BC}" }
+        } else {
+            ""
+        };
+        let text = format!("{}{}", label, arrow);
+        let (align, tx) = if i == 0 {
+            (TextAlign::Left, col_x + 2.0)
+        } else {
+            (TextAlign::Center, col_x + col_w / 2.0)
+        };
+        ctx.set_fill_color(if is_active { &theme.item_text } else { &theme.item_text_muted });
+        ctx.set_text_align(align);
+        let display = truncate_to_width(ctx, &text, col_w - 2.0);
+        ctx.fill_text(&display, tx, col_header_y + SCREENER_COL_HEADER_H / 2.0);
+
+        let sort_id = format!("screener_sort:{}", i);
+        let hit_rect = WidgetRect::new(col_x, col_header_y, col_w, SCREENER_COL_HEADER_H);
+        input_coordinator.register(sort_id.as_str(), hit_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((sort_id, hit_rect));
+    }
+
+    ctx.set_fill_color(&theme.separator);
+    ctx.fill_rect(rect.x, col_header_y + SCREENER_COL_HEADER_H - 1.0, content_width, 1.0);
+}
+
+/// Render the screener's data rows (inside the scroll clip). Returns the
+/// total content height (for the scrollbar).
+fn render_screener_rows(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    content_y: f64,
+    content_width: f64,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) -> f64 {
+    if state.screener_items.is_empty() {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("No symbols in watchlist", rect.x + content_width / 2.0, content_y);
+        ctx.fill_text("Add symbols to the watchlist, then Scan", rect.x + content_width / 2.0, content_y + 20.0);
+        return 60.0;
+    }
+
+    let visible = screener_visible_indices(
+        &state.screener_items, &state.screener_filters, state.screener_sort_key, state.screener_sort_asc,
+    );
+    if visible.is_empty() {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("No symbols match the active filters", rect.x + content_width / 2.0, content_y);
+        return 40.0;
+    }
+
+    let item_padding = 8.0;
+    let data_row_h = 32.0;
+    let n_cols = SCREENER_COL_LABELS.len();
+    let usable_w = content_width - item_padding * 2.0;
+    let col_w = usable_w / n_cols as f64;
+    let mut current_y = content_y;
+
+    for &i in &visible {
+        let item = &state.screener_items[i];
+        let row_id = format!("screener_row:{}:{}:{}", item.symbol, item.exchange, item.account_type);
+        let row_rect = WidgetRect::new(rect.x, current_y, content_width, data_row_h);
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(row_id.as_str()));
+        input_coordinator.register(row_id.as_str(), row_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push((row_id, row_rect));
+
+        if is_hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+            ctx.fill_rect(row_rect.x, row_rect.y, row_rect.width, row_rect.height);
+        }
+
+        // Column 0: Symbol (top) + venue:account_type tag (bottom, muted).
+        {
+            let col_x = rect.x + item_padding;
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&theme.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let sym_display = truncate_to_width(ctx, &item.symbol, col_w - 4.0);
+            ctx.fill_text(&sym_display, col_x, current_y + 3.0);
+
+            ctx.set_font("9px sans-serif");
+            ctx.set_fill_color(&theme.item_text_muted);
+            let tag = format!("{}:{}", item.exchange, item.account_type);
+            let tag_display = truncate_to_width(ctx, &tag, col_w - 4.0);
+            ctx.fill_text(&tag_display, col_x, current_y + 17.0);
+        }
+
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let mid_y = current_y + data_row_h / 2.0;
+        let col_center = |col_i: usize| rect.x + item_padding + col_w * col_i as f64 + col_w / 2.0;
+
+        ctx.set_fill_color(&theme.item_text);
+        ctx.fill_text(&format_price_compact(item.last_price), col_center(1), mid_y);
+
+        {
+            let color = if item.change_percent > 0.0 {
+                theme.success.as_str()
+            } else if item.change_percent < 0.0 {
+                theme.danger.as_str()
+            } else {
+                theme.item_text_muted.as_str()
+            };
+            ctx.set_fill_color(color);
+            ctx.fill_text(&format!("{:+.1}%", item.change_percent), col_center(2), mid_y);
+        }
+
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.fill_text(&format_volume(item.volume_24h_quote), col_center(3), mid_y);
+
+        match item.rsi14 {
+            Some(v) => {
+                let color = if v >= 70.0 {
+                    theme.danger.as_str()
+                } else if v <= 30.0 {
+                    theme.success.as_str()
+                } else {
+                    theme.item_text.as_str()
+                };
+                ctx.set_fill_color(color);
+                ctx.fill_text(&format!("{:.0}", v), col_center(4), mid_y);
+            }
+            None => {
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.fill_text("\u{2026}", col_center(4), mid_y);
+            }
+        }
+
+        ctx.set_fill_color(&theme.item_text_muted);
+        match item.atr_pct14 {
+            Some(v) => ctx.fill_text(&format!("{:.2}%", v), col_center(5), mid_y),
+            None => ctx.fill_text("\u{2026}", col_center(5), mid_y),
+        }
+        match item.dist_high_pct {
+            Some(v) => ctx.fill_text(&format!("{:.1}%", v), col_center(6), mid_y),
+            None => ctx.fill_text("\u{2026}", col_center(6), mid_y),
+        }
+        match item.dist_low_pct {
+            Some(v) => ctx.fill_text(&format!("{:.1}%", v), col_center(7), mid_y),
+            None => ctx.fill_text("\u{2026}", col_center(7), mid_y),
+        }
+
+        ctx.set_fill_color(&theme.separator);
+        ctx.fill_rect(rect.x, current_y + data_row_h - 1.0, content_width, 1.0);
+
+        current_y += data_row_h;
+    }
+
+    current_y - content_y
 }
 
 // =============================================================================

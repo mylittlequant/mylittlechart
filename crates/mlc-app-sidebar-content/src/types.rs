@@ -406,6 +406,192 @@ pub struct TickerSectionData {
 }
 
 // =============================================================================
+// Screener (plan F v1 — watchlist mode, owner spec 2026-08-01)
+// =============================================================================
+
+/// A single row in the Screener panel table.
+///
+/// Populated once per frame from the SAME watchlist + mini-ticker data as
+/// `WatchlistItem` (Symbol/Last/24h%/Vol are always live) plus a cached
+/// [`ScreenerMetrics`]-derived snapshot (RSI/ATR%/dist-to-high-low), which
+/// stays `None` until the symbol's history has been scanned at least once.
+#[derive(Clone, Debug, Default)]
+pub struct ScreenerItem {
+    /// Trading symbol (e.g. "BTCUSDT").
+    pub symbol: String,
+    /// Exchange name (e.g. "binance").
+    pub exchange: String,
+    /// Account type short label (e.g. "S", "F"). Empty string for Spot.
+    pub account_type: String,
+    /// Canonical instrument identity (row-click apply-to-chart target).
+    pub address: mlc_core::InstrumentAddress,
+    /// Live last trade price (from `mini_ticker`).
+    pub last_price: f64,
+    /// Live 24h percent change (from `mini_ticker`).
+    pub change_percent: f64,
+    /// Approximate 24h QUOTE volume (`base_volume_24h * last_price` —
+    /// `mini_ticker` exposes only base-asset volume; see
+    /// `mlc-app/src/frame_lifecycle/prepare.rs`'s screener block for why
+    /// this is an approximation rather than a native quote-volume field).
+    pub volume_24h_quote: f64,
+    /// RSI(14) over 1h closes, Wilder smoothing. `None` until scanned.
+    pub rsi14: Option<f64>,
+    /// ATR(14) / last_close * 100, computed on 1h bars. `None` until scanned.
+    pub atr_pct14: Option<f64>,
+    /// Distance from the scanned series' last close UP to the highest high
+    /// of its last 24 (1h) bars, as a percentage. `None` until scanned.
+    pub dist_high_pct: Option<f64>,
+    /// Distance from the scanned series' last close DOWN to the lowest low
+    /// of its last 24 (1h) bars, as a percentage. `None` until scanned.
+    pub dist_low_pct: Option<f64>,
+}
+
+/// Composable-AND filter thresholds for the Screener panel (owner spec
+/// 2026-08-01, plan F v1). Each field is a click-to-cycle chip; `None` =
+/// inactive. RAM-only — never persisted (owner spec: "filters/sort are
+/// RAM-only" in v1).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScreenerFilters {
+    /// 24h% chip: `Some((is_gain, threshold))`. `is_gain == true` requires
+    /// `change_percent >= threshold`; `is_gain == false` requires
+    /// `change_percent <= -threshold`. Cycles off/+1/+3/+5/+10/-1/-3/-5/-10.
+    pub change_pct: Option<(bool, f64)>,
+    /// RSI >= X chip. Cycles off/60/70/80.
+    pub rsi_above: Option<f64>,
+    /// RSI <= X chip. Cycles off/40/30/20.
+    pub rsi_below: Option<f64>,
+    /// 24h quote-volume >= X chip. Cycles off/1e6/1e7/1e8.
+    pub vol_min: Option<f64>,
+    /// ATR% >= X chip. Cycles off/0.5/1/2/5.
+    pub atr_pct_min: Option<f64>,
+}
+
+/// Cycle a simple `off -> steps[0] -> steps[1] -> ... -> off` chip.
+fn cycle_threshold(current: Option<f64>, steps: &[f64]) -> Option<f64> {
+    match current {
+        None => steps.first().copied(),
+        Some(v) => match steps.iter().position(|&s| (s - v).abs() < f64::EPSILON) {
+            Some(i) if i + 1 < steps.len() => Some(steps[i + 1]),
+            _ => None,
+        },
+    }
+}
+
+impl ScreenerFilters {
+    /// 24h% chip cycle order: off -> +1% -> +3% -> +5% -> +10% -> -1% ->
+    /// -3% -> -5% -> -10% -> off (owner spec: "24h% ≥ X / ≤ -X, off/1/3/5/10").
+    pub fn cycle_change_pct(&mut self) {
+        const STEPS: [f64; 4] = [1.0, 3.0, 5.0, 10.0];
+        self.change_pct = match self.change_pct {
+            None => Some((true, STEPS[0])),
+            Some((true, t)) => match STEPS.iter().position(|&s| (s - t).abs() < f64::EPSILON) {
+                Some(i) if i + 1 < STEPS.len() => Some((true, STEPS[i + 1])),
+                _ => Some((false, STEPS[0])),
+            },
+            Some((false, t)) => match STEPS.iter().position(|&s| (s - t).abs() < f64::EPSILON) {
+                Some(i) if i + 1 < STEPS.len() => Some((false, STEPS[i + 1])),
+                _ => None,
+            },
+        };
+    }
+
+    /// RSI >= chip cycle: off/60/70/80.
+    pub fn cycle_rsi_above(&mut self) {
+        self.rsi_above = cycle_threshold(self.rsi_above, &[60.0, 70.0, 80.0]);
+    }
+
+    /// RSI <= chip cycle: off/40/30/20.
+    pub fn cycle_rsi_below(&mut self) {
+        self.rsi_below = cycle_threshold(self.rsi_below, &[40.0, 30.0, 20.0]);
+    }
+
+    /// Vol >= chip cycle: off/1M/10M/100M.
+    pub fn cycle_vol_min(&mut self) {
+        self.vol_min = cycle_threshold(self.vol_min, &[1.0e6, 1.0e7, 1.0e8]);
+    }
+
+    /// ATR% >= chip cycle: off/0.5/1/2/5.
+    pub fn cycle_atr_pct_min(&mut self) {
+        self.atr_pct_min = cycle_threshold(self.atr_pct_min, &[0.5, 1.0, 2.0, 5.0]);
+    }
+
+    /// `true` when `item` passes every ACTIVE filter (composable AND).
+    ///
+    /// A row whose metrics haven't been scanned yet (`rsi14`/`atr_pct14 ==
+    /// None`) fails any active RSI/ATR filter — there is no data to confirm
+    /// a match against, so v1 hides it rather than guessing. Rows are only
+    /// hidden by filters that are actually turned on; with no filters
+    /// active every row (scanned or not) shows.
+    pub fn matches(&self, item: &ScreenerItem) -> bool {
+        if let Some((is_gain, threshold)) = self.change_pct {
+            let ok = if is_gain {
+                item.change_percent >= threshold
+            } else {
+                item.change_percent <= -threshold
+            };
+            if !ok {
+                return false;
+            }
+        }
+        if let Some(threshold) = self.rsi_above {
+            if !matches!(item.rsi14, Some(v) if v >= threshold) {
+                return false;
+            }
+        }
+        if let Some(threshold) = self.rsi_below {
+            if !matches!(item.rsi14, Some(v) if v <= threshold) {
+                return false;
+            }
+        }
+        if let Some(threshold) = self.vol_min {
+            if item.volume_24h_quote < threshold {
+                return false;
+            }
+        }
+        if let Some(threshold) = self.atr_pct_min {
+            if !matches!(item.atr_pct14, Some(v) if v >= threshold) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Sortable columns for the Screener panel. Exactly one is active at a time
+/// (owner spec: "Sortable by clicking a column header, toggle asc/desc, one
+/// active sort key").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ScreenerSortKey {
+    #[default]
+    Symbol,
+    Last,
+    Change24h,
+    Volume24h,
+    Rsi14,
+    AtrPct14,
+    DistHigh,
+    DistLow,
+}
+
+/// Map a screener column index (0..=7, matching the render-side column
+/// order `["Symbol","Last","24h%","Vol","RSI","ATR%","Dist Hi","Dist Lo"]`)
+/// to its sort key. Shared by `render.rs` (drawing the sort arrow) and
+/// `mlc-app`'s click handler (`"screener_sort:{col}"`) so both sides can
+/// never drift apart.
+pub fn screener_sort_key_for_col(col: usize) -> ScreenerSortKey {
+    match col {
+        0 => ScreenerSortKey::Symbol,
+        1 => ScreenerSortKey::Last,
+        2 => ScreenerSortKey::Change24h,
+        3 => ScreenerSortKey::Volume24h,
+        4 => ScreenerSortKey::Rsi14,
+        5 => ScreenerSortKey::AtrPct14,
+        6 => ScreenerSortKey::DistHigh,
+        _ => ScreenerSortKey::DistLow,
+    }
+}
+
+// =============================================================================
 // Connectors
 // =============================================================================
 

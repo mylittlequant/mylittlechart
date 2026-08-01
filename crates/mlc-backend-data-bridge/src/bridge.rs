@@ -982,6 +982,95 @@ impl DataBridge {
         self.wire_symbol(exchange_id, account_type, requested)
     }
 
+    /// Fetch a page of historical klines for `symbol` as a pure READ-ONLY
+    /// REST call — no bubble/window state touched, no `LiveUpdate` broadcast
+    /// emitted. Used by the screener's background history scan (plan F,
+    /// owner spec 2026-08-01, `docs/mlc/plans/orderflow-panels-arc2-2026-08-01.md`
+    /// §F): the screener needs raw OHLC bars for symbols that may not have
+    /// any open chart window at all, so it cannot route through
+    /// `request_bars` (which is bubble/broadcast-coupled by design).
+    ///
+    /// Reuses the SAME REST path as `request_bars`'s Phase A
+    /// (`digdigdig3_station::backfill::fetch_history`, i.e. `get_klines`
+    /// under the hood) — no new connector call is introduced. `on_done` is
+    /// invoked exactly once, from the background task, never synchronously.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn fetch_history_readonly(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        interval: &str,
+        limit: u16,
+        on_done: impl FnOnce(Result<Vec<Bar>, String>) + Send + 'static,
+    ) {
+        let hub = self.station.hub();
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
+        let interval_owned = interval.to_string();
+        self.spawn_bg(async move {
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX);
+            let result = digdigdig3_station::backfill::fetch_history(
+                &hub,
+                exchange_id,
+                &wire_sym,
+                account_type,
+                &KlineInterval::new(&interval_owned),
+                now_ms,
+                limit,
+            ).await;
+            match result {
+                Ok(points) => {
+                    let bars: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
+                    on_done(Ok(bars));
+                }
+                Err(e) => on_done(Err(e.to_string())),
+            }
+        });
+    }
+
+    /// Wasm counterpart of [`Self::fetch_history_readonly`] — no `Send`
+    /// bound on `on_done` (wasm is single-threaded; `spawn_bg`'s wasm arm
+    /// uses `spawn_local`, same split as [`Self::spawn_bg_pub`]).
+    #[cfg(target_arch = "wasm32")]
+    pub fn fetch_history_readonly(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        interval: &str,
+        limit: u16,
+        on_done: impl FnOnce(Result<Vec<Bar>, String>) + 'static,
+    ) {
+        let hub = self.station.hub();
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
+        let interval_owned = interval.to_string();
+        self.spawn_bg(async move {
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX);
+            let result = digdigdig3_station::backfill::fetch_history(
+                &hub,
+                exchange_id,
+                &wire_sym,
+                account_type,
+                &KlineInterval::new(&interval_owned),
+                now_ms,
+                limit,
+            ).await;
+            match result {
+                Ok(points) => {
+                    let bars: Vec<Bar> = points.iter().map(bar_point_to_bar).collect();
+                    on_done(Ok(bars));
+                }
+                Err(e) => on_done(Err(e.to_string())),
+            }
+        });
+    }
+
     /// Shared [`crate::backfill_engine::BackfillEngine`] registry — one
     /// instance per bridge, threaded into every `ensure_kline_backfill`/
     /// `on_kline_scroll_pressure`/`ensure_trade_backfill`/

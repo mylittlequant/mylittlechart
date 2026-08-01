@@ -1535,6 +1535,16 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
+            ChartOutEvent::ToggleScreener => {
+                let result = self.sidebar_state.toggle_right_panel(
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Screener,
+                );
+                if let Some((opening, _width)) = result {
+                    eprintln!("[ChartApp] Screener panel: {}", if opening { "opened" } else { "closed" });
+                }
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
+            }
             ChartOutEvent::ToggleAlerts => {
                 let result = self.sidebar_state.toggle_right_panel(
                     mlc_app_sidebar_content::state::RightSidebarPanel::Alerts,

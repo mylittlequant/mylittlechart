@@ -1013,6 +1013,7 @@ impl ChartToolbarState {
             // === App-level: expand/suppress panel ===
             "expand" | "expand_chart" => vec![ChartOutEvent::ExpandPanel],
             "watchlist" => vec![ChartOutEvent::ToggleWatchlist],
+            "screener" => vec![ChartOutEvent::ToggleScreener],
             "alerts" => vec![ChartOutEvent::ToggleAlerts],
             "layers" | "object_tree" => vec![ChartOutEvent::ToggleObjectTree],
             "signals" => vec![ChartOutEvent::ToggleSignals],

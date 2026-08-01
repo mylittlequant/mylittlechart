@@ -11197,6 +11197,7 @@ impl ChartApp {
             RightSidebarPanel::SlotL2 => Some("slot_l2".to_string()),
             RightSidebarPanel::SlotBigTrades => Some("slot_big_trades".to_string()),
             RightSidebarPanel::SlotLiq => Some("slot_liq".to_string()),
+            RightSidebarPanel::Screener => Some("screener".to_string()),
         }
     }
 
@@ -11226,6 +11227,7 @@ impl ChartApp {
             "slot_l2" | "slot4" => RightSidebarPanel::SlotL2,
             "slot_big_trades" => RightSidebarPanel::SlotBigTrades,
             "slot_liq" => RightSidebarPanel::SlotLiq,
+            "screener" => RightSidebarPanel::Screener,
             _ => RightSidebarPanel::None,
         }
     }

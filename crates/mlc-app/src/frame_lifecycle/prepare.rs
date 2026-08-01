@@ -861,6 +861,45 @@ impl ChartApp {
                 }
             }
 
+            // --- Screener: mirror the watchlist rows just built above +
+            // attach cached RSI/ATR/dist metrics (plan F v1, owner spec
+            // 2026-08-01). Symbol/Last/24h%/Vol are the SAME live
+            // `watchlist_items` data (zero new subscriptions — mini_ticker
+            // is already streaming for every watchlist symbol). RSI/ATR%/
+            // dist-to-24h-high-low come from `BackendCore::screener_metrics`,
+            // populated only by a manual Scan (see the "screener_scan" /
+            // "screener_row:" click handlers in `panel_click.rs`); `None`
+            // until the symbol has been scanned at least once — rendered as
+            // "…" by `mlc-app-sidebar-content::render`.
+            {
+                use mlc_app_sidebar_content::types::ScreenerItem;
+
+                self.sidebar_state.screener_items = self.sidebar_state.watchlist_items.iter().map(|w| {
+                    let key = format!("{}:{}:{}", w.symbol, w.exchange, w.account_type);
+                    let metrics = self.core.screener_metrics.get(&key);
+                    let (rsi14, atr_pct14, dist_high_pct, dist_low_pct) = match metrics {
+                        Some(m) => (m.rsi14, m.atr_pct14, m.dist_high_pct, m.dist_low_pct),
+                        None => (None, None, None, None),
+                    };
+                    ScreenerItem {
+                        symbol: w.symbol.clone(),
+                        exchange: w.exchange.clone(),
+                        account_type: w.account_type.clone(),
+                        address: w.address.clone(),
+                        last_price: w.last_price,
+                        change_percent: w.change_percent,
+                        // mini_ticker exposes only base-asset volume; approximate
+                        // quote volume as base_volume * last_price — see
+                        // `ScreenerItem::volume_24h_quote`'s doc comment.
+                        volume_24h_quote: w.volume_24h * w.last_price,
+                        rsi14,
+                        atr_pct14,
+                        dist_high_pct,
+                        dist_low_pct,
+                    }
+                }).collect();
+            }
+
             // --- Watchlist TICKER section (TapeSurf Ticker widget borrow,
             // owner order 2026-07-31): extended info for the ACTIVE
             // chart's instrument, pinned to the watchlist bottom.

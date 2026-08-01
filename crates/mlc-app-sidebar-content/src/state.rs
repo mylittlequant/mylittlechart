@@ -127,6 +127,13 @@ pub enum RightSidebarPanel {
     /// Liquidations slot — hosts `LiqTape` panels (all-venue liquidation
     /// stream; plan D, owner 2026-08-01).
     SlotLiq,
+    /// Crypto screener v1 — WATCHLIST mode (plan F, owner spec 2026-08-01,
+    /// `docs/mlc/plans/orderflow-panels-arc2-2026-08-01.md` §F). A plain
+    /// panel — NOT a typed free slot — same class as Watchlist/Alerts/
+    /// ObjectTree/Signals/Monitoring. Scans the ACTIVE watchlist's symbols
+    /// only (Mode 1, the primary/default mode; Mode 2 "global scanner" is a
+    /// future optional module, never the default).
+    Screener,
 }
 
 impl RightSidebarPanel {
@@ -154,6 +161,7 @@ impl RightSidebarPanel {
             RightSidebarPanel::SlotL2        => "slot_l2",
             RightSidebarPanel::SlotBigTrades => "slot_big_trades",
             RightSidebarPanel::SlotLiq       => "slot_liq",
+            RightSidebarPanel::Screener      => "screener",
         }
     }
 
@@ -226,6 +234,19 @@ pub struct SidebarState {
     /// instrument (populated by app before render; `None` = no active
     /// chart / no ticker yet).
     pub ticker_section: Option<crate::types::TickerSectionData>,
+
+    /// Rows for the Screener panel (plan F v1, owner spec 2026-08-01).
+    /// Populated by the app each frame from the active watchlist's live
+    /// mini-ticker data plus `BackendCore::screener_metrics` (RSI/ATR/dist
+    /// — cached, only refreshed by a manual Scan).
+    pub screener_items: Vec<crate::types::ScreenerItem>,
+    /// Active composable-AND filter thresholds for the Screener panel.
+    /// RAM-only (owner spec: filters/sort are never persisted in v1).
+    pub screener_filters: crate::types::ScreenerFilters,
+    /// Active sort column for the Screener panel.
+    pub screener_sort_key: crate::types::ScreenerSortKey,
+    /// Screener sort direction — `true` = ascending.
+    pub screener_sort_asc: bool,
     /// Items for rendering in the Object Tree sidebar (populated by app before render).
     pub object_tree_items: Vec<ObjectTreeItem>,
     /// Alert items for the Alerts panel (populated by app before render).
@@ -805,6 +826,10 @@ impl Default for SidebarState {
             right_sidebar_width: RIGHT_SIDEBAR_WIDTH,
             watchlist_items: Vec::new(),
             ticker_section: None,
+            screener_items: Vec::new(),
+            screener_filters: crate::types::ScreenerFilters::default(),
+            screener_sort_key: crate::types::ScreenerSortKey::default(),
+            screener_sort_asc: true,
             object_tree_items: Vec::new(),
             alert_items: Vec::new(),
             connector_items: Vec::new(),
@@ -1074,6 +1099,7 @@ mod typed_slot_tests {
             RightSidebarPanel::Signals,
             RightSidebarPanel::Monitoring,
             RightSidebarPanel::Agents,
+            RightSidebarPanel::Screener,
         ];
         for panel in non_slots {
             assert_eq!(panel.slot_index(), None, "{:?} must not report a slot index", panel);

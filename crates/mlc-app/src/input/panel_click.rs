@@ -29,6 +29,126 @@ pub(crate) enum RiskCalculatorTarget {
 }
 
 impl ChartApp {
+    /// Apply an instrument (symbol/exchange/account_type) to the active
+    /// chart — the shared body behind BOTH the watchlist row click
+    /// (`"watchlist_{index}"`) and the screener row click
+    /// (`"screener_row:{symbol}:{exchange}:{account_type}"`, plan F v1,
+    /// owner spec 2026-08-01). Extracted verbatim from the pre-existing
+    /// watchlist click handler so both call sites share identical
+    /// symbol-switch semantics (drawing snapshot swap, trade-stream
+    /// resubscribe, sync-group propagation) with zero duplicated logic.
+    fn apply_instrument_from_sidebar_click(&mut self, symbol: String, item_exchange: String, item_account_type: String) {
+        // Resolve ExchangeId from the item's exchange string.
+        let resolved_exchange = self.core.exchange_symbols()
+            .find_by_label(&item_exchange)
+            .unwrap_or(self.active_exchange);
+
+        // S2.7.1e: read prev instrument fields via branch_meta (B1).
+        let wl_active_cid = self.panel_app.panel_grid.active_container_id();
+        let prev_symbol: Option<String> = wl_active_cid
+            .and_then(|cid| self.symbol_for_chart(cid))
+            .map(String::from);
+        let prev_exchange: Option<String> = wl_active_cid
+            .and_then(|cid| self.exchange_for_chart(cid))
+            .map(String::from);
+        let prev_account_type: Option<String> = wl_active_cid
+            .and_then(|cid| self.account_type_for_chart(cid))
+            .map(|at| at.to_string());
+        if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
+            // Capture old trade-stream identity BEFORE mutating window state.
+            // Per-container venue, NOT the app-global `active_exchange`
+            // (2026-07-15 wrong-venue bug: unsubscribing the OLD stream
+            // at the global venue leaked the container's real stream and
+            // decremented a foreign forwarder's refcount).
+            let old_trade_exchange = wl_active_cid
+                .map(|cid| self.exchange_id_for_chart(cid))
+                .unwrap_or(self.active_exchange);
+            let old_trade_symbol: String = wl_active_cid
+                .and_then(|cid| self.symbol_for_chart(cid))
+                .map(String::from)
+                .unwrap_or_default();
+            let old_trade_at = wl_active_cid
+                .and_then(|cid| self.account_type_for_chart(cid))
+                .map(mlc_backend_data_bridge::account_type_to_dig3)
+                .unwrap_or(digdigdig3::AccountType::Spot);
+            let timeframe = wl_active_cid
+                .and_then(|cid| self.timeframe_for_chart(cid))
+                .unwrap_or_default();
+            let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
+            // Phase 4 B: capture chart_id BEFORE the mutating block.
+            let active_chart_id = self.panel_app.panel_grid.active_container_id();
+            let old_sym_pc = active_chart_id
+                .and_then(|cid| self.symbol_for_chart(cid))
+                .map(String::from)
+                .unwrap_or_default();
+            let old_exch_pc = active_chart_id
+                .and_then(|cid| self.exchange_for_chart(cid))
+                .map(String::from)
+                .unwrap_or_default();
+            let old_at_pc = active_chart_id
+                .and_then(|cid| self.account_type_for_chart(cid))
+                .map(|at| at.to_string())
+                .unwrap_or_else(|| "S".to_string());
+            let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                if let Some(bid) = active_bid_pc {
+                    let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
+                    let new_address = mlc_core::instrument::InstrumentAddress::new(
+                        item_exchange.clone(),
+                        symbol.clone(),
+                        item_account_type.parse().unwrap_or_default(),
+                    );
+                    let result = self.core.drawings_mut().swap_symbol(
+                        bid, &new_address, restore_snaps.as_deref(),
+                    );
+                    let old_key = format!("{}:{}:{}", old_sym_pc, old_exch_pc, old_at_pc);
+                    if result.old_primitives.is_empty() {
+                        window.symbol_drawings.remove(&old_key);
+                    } else {
+                        window.symbol_drawings.insert(old_key, result.old_primitives);
+                    }
+                }
+                window.begin_fresh_load();
+            }
+            if let Some(chart_id) = active_chart_id {
+                if let Some(bid) = self.bubble_for_chart(chart_id) {
+                    self.core.bubbles_mut().set_bid_instrument_full(
+                        bid,
+                        symbol.clone(),
+                        item_exchange.clone(),
+                        item_account_type.clone(),
+                        timeframe.clone(),
+                    );
+                }
+            }
+            self.active_exchange = resolved_exchange;
+            // Unsubscribe only the old symbol's trade stream, leaving other
+            // windows' streams intact.
+            if !old_trade_symbol.is_empty() {
+                self.core.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
+            }
+            let eid_str = resolved_exchange.as_str();
+            if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
+                eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (sidebar click)", eid_str);
+            } else {
+                let item_at = crate::account_type_from_label(&item_account_type);
+                self.core.ensure_connector(resolved_exchange);
+                // force=true — an explicit user symbol switch from the
+                // sidebar; non-force is silently dedup-L2-skipped when this
+                // instrument's kline subscriber is still alive (see the
+                // ApplySymbol handler's matching comment).
+                self.core.request_kline(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
+            }
+            // Propagate the new symbol+exchange+account_type to all other windows
+            // in the same sync group so the full instrument key is consistent.
+            if let Some(leaf) = active_leaf {
+                self.propagate_symbol_to_sync_group(leaf, &symbol, &item_exchange, &item_account_type);
+            }
+            self.sidebar_data_dirty = true;
+            self.autosave_snapshot();
+        }
+    }
+
     /// Dispatch a click that landed on a registered widget.
     ///
     /// Handles toolbar clicks and dropdown item selections by forwarding to
@@ -428,118 +548,84 @@ impl ChartApp {
                     let item_exchange = item.exchange.clone();
                     let item_account_type = item.account_type.clone();
                     eprintln!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
-
-                    // Resolve ExchangeId from the item's exchange string.
-                    let resolved_exchange = self.core.exchange_symbols()
-                        .find_by_label(&item_exchange)
-                        .unwrap_or(self.active_exchange);
-
-                    // S2.7.1e: read prev instrument fields via branch_meta (B1).
-                    let wl_active_cid = self.panel_app.panel_grid.active_container_id();
-                    let prev_symbol: Option<String> = wl_active_cid
-                        .and_then(|cid| self.symbol_for_chart(cid))
-                        .map(String::from);
-                    let prev_exchange: Option<String> = wl_active_cid
-                        .and_then(|cid| self.exchange_for_chart(cid))
-                        .map(String::from);
-                    let prev_account_type: Option<String> = wl_active_cid
-                        .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(|at| at.to_string());
-                    if prev_symbol.as_deref() != Some(&symbol) || prev_exchange.as_deref() != Some(&item_exchange) || prev_account_type.as_deref() != Some(&item_account_type) {
-                        // Capture old trade-stream identity BEFORE mutating window state.
-                        // Per-container venue, NOT the app-global `active_exchange`
-                        // (2026-07-15 wrong-venue bug: unsubscribing the OLD stream
-                        // at the global venue leaked the container's real stream and
-                        // decremented a foreign forwarder's refcount).
-                        let old_trade_exchange = wl_active_cid
-                            .map(|cid| self.exchange_id_for_chart(cid))
-                            .unwrap_or(self.active_exchange);
-                        let old_trade_symbol: String = wl_active_cid
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_trade_at = wl_active_cid
-                            .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(mlc_backend_data_bridge::account_type_to_dig3)
-                            .unwrap_or(digdigdig3::AccountType::Spot);
-                        let timeframe = wl_active_cid
-                            .and_then(|cid| self.timeframe_for_chart(cid))
-                            .unwrap_or_default();
-                        let active_leaf = self.panel_app.panel_grid.docking().active_leaf();
-                        // Phase 4 B: capture chart_id BEFORE the mutating block.
-                        let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                        let old_sym_pc = active_chart_id
-                            .and_then(|cid| self.symbol_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_exch_pc = active_chart_id
-                            .and_then(|cid| self.exchange_for_chart(cid))
-                            .map(String::from)
-                            .unwrap_or_default();
-                        let old_at_pc = active_chart_id
-                            .and_then(|cid| self.account_type_for_chart(cid))
-                            .map(|at| at.to_string())
-                            .unwrap_or_else(|| "S".to_string());
-                        let active_bid_pc = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-                        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                            if let Some(bid) = active_bid_pc {
-                                let restore_snaps = window.take_drawings_snapshot_for_symbol(&symbol, &item_exchange, &item_account_type);
-                                let new_address = mlc_core::instrument::InstrumentAddress::new(
-                                    item_exchange.clone(),
-                                    symbol.clone(),
-                                    item_account_type.parse().unwrap_or_default(),
-                                );
-                                let result = self.core.drawings_mut().swap_symbol(
-                                    bid, &new_address, restore_snaps.as_deref(),
-                                );
-                                let old_key = format!("{}:{}:{}", old_sym_pc, old_exch_pc, old_at_pc);
-                                if result.old_primitives.is_empty() {
-                                    window.symbol_drawings.remove(&old_key);
-                                } else {
-                                    window.symbol_drawings.insert(old_key, result.old_primitives);
-                                }
-                            }
-                            window.begin_fresh_load();
-                        }
-                        if let Some(chart_id) = active_chart_id {
-                            if let Some(bid) = self.bubble_for_chart(chart_id) {
-                                self.core.bubbles_mut().set_bid_instrument_full(
-                                    bid,
-                                    symbol.clone(),
-                                    item_exchange.clone(),
-                                    item_account_type.clone(),
-                                    timeframe.clone(),
-                                );
-                            }
-                        }
-                        self.active_exchange = resolved_exchange;
-                        // Unsubscribe only the old symbol's trade stream, leaving other
-                        // windows' streams intact.
-                        if !old_trade_symbol.is_empty() {
-                            self.core.unsubscribe_trades(old_trade_exchange, &old_trade_symbol, old_trade_at);
-                        }
-                        let eid_str = resolved_exchange.as_str();
-                        if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                            eprintln!("[ChartApp] Exchange {} is disabled, skipping connector call (watchlist sidebar click)", eid_str);
-                        } else {
-                            let item_at = crate::account_type_from_label(&item_account_type);
-                            self.core.ensure_connector(resolved_exchange);
-                            // force=true — watchlist-click is an explicit
-                            // user symbol switch; non-force is silently
-                            // dedup-L2-skipped when this instrument's kline
-                            // subscriber is still alive (see the ApplySymbol
-                            // handler's matching comment).
-                            self.core.request_kline(resolved_exchange, &symbol, &timeframe, item_at, None, Some(self.core.user().profile().domain.bar_count as usize), true);
-                        }
-                        // Propagate the new symbol+exchange+account_type to all other windows
-                        // in the same sync group so the full instrument key is consistent.
-                        if let Some(leaf) = active_leaf {
-                            self.propagate_symbol_to_sync_group(leaf, &symbol, &item_exchange, &item_account_type);
-                        }
-                        self.sidebar_data_dirty = true;
-                        self.autosave_snapshot();
-                    }
+                    self.apply_instrument_from_sidebar_click(symbol, item_exchange, item_account_type);
                 }
+            }
+            return;
+        }
+
+        // Pattern: "screener_row:{symbol}:{exchange}:{account_type}" — row
+        // click (apply instrument to the active chart, plan F v1, owner
+        // spec 2026-08-01 — same behavior as the watchlist row click above).
+        if let Some(rest) = widget_id.strip_prefix("screener_row:") {
+            let parts: Vec<&str> = rest.splitn(3, ':').collect();
+            if let [symbol, item_exchange, item_account_type] = parts[..] {
+                eprintln!("[Sidebar] Screener click: {} @ {}", symbol, item_exchange);
+                self.apply_instrument_from_sidebar_click(
+                    symbol.to_string(), item_exchange.to_string(), item_account_type.to_string(),
+                );
+            }
+            return;
+        }
+
+        // Screener filter chips — click-to-cycle thresholds (plan F v1).
+        if widget_id == "screener_filter_change_pct" {
+            self.sidebar_state.screener_filters.cycle_change_pct();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        if widget_id == "screener_filter_rsi_above" {
+            self.sidebar_state.screener_filters.cycle_rsi_above();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        if widget_id == "screener_filter_rsi_below" {
+            self.sidebar_state.screener_filters.cycle_rsi_below();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        if widget_id == "screener_filter_vol_min" {
+            self.sidebar_state.screener_filters.cycle_vol_min();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+        if widget_id == "screener_filter_atr_pct_min" {
+            self.sidebar_state.screener_filters.cycle_atr_pct_min();
+            self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // Screener sortable column header — "screener_sort:{col}". Clicking
+        // the ACTIVE column toggles asc/desc; clicking a different column
+        // switches to it (ascending first — one active sort key, owner spec).
+        if let Some(col_str) = widget_id.strip_prefix("screener_sort:") {
+            if let Ok(col) = col_str.parse::<usize>() {
+                let key = mlc_app_sidebar_content::types::screener_sort_key_for_col(col);
+                if self.sidebar_state.screener_sort_key == key {
+                    self.sidebar_state.screener_sort_asc = !self.sidebar_state.screener_sort_asc;
+                } else {
+                    self.sidebar_state.screener_sort_key = key;
+                    self.sidebar_state.screener_sort_asc = true;
+                }
+            }
+            return;
+        }
+
+        // Screener "Scan" button — background history fetch for every
+        // watchlist symbol (plan F v1). Fire-and-forget: results land in
+        // `BackendCore::screener_metrics` over the following frames.
+        if widget_id == "screener_scan" {
+            let addresses: Vec<mlc_core::InstrumentAddress> = self.sidebar_state.screener_items
+                .iter()
+                .map(|item| item.address.clone())
+                .collect();
+            eprintln!("[Screener] Scan requested for {} symbols", addresses.len());
+            for address in addresses {
+                let resolved_exchange = self.core.exchange_symbols()
+                    .find_by_label(&address.exchange)
+                    .unwrap_or(self.active_exchange);
+                let account_type = mlc_backend_data_bridge::account_type_to_dig3(address.account_type);
+                self.core.scan_screener_symbol(resolved_exchange, &address.symbol, account_type);
             }
             return;
         }
