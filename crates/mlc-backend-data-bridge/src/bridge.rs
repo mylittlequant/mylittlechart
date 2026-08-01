@@ -2312,10 +2312,17 @@ impl DataBridge {
         let station_ob = station.clone();
 
         let handle = self.spawn_bg_join(async move {
-            // Task 1 — OrderBook snapshots → DomHeatmapSnapshot
+            // Task 1 — live book → DomHeatmapSnapshot.
+            //
+            // `Stream::OrderbookDelta`, NOT `Stream::Orderbook`: the latter
+            // delivers ONE snapshot and then goes quiet, which is exactly
+            // what the heat overlay showed — a single column frozen at the
+            // minute it was enabled. The delta stream is the live one (it is
+            // what the DOM panel has always used) and opens with a snapshot
+            // of its own.
             let ob_set = digdigdig3_station::SubscriptionSet::new().add(
                 exchange_id, sym_ob.clone(), account_type,
-                [digdigdig3_station::Stream::Orderbook],
+                [digdigdig3_station::Stream::OrderbookDelta],
             );
             let mut ob_report = match station_ob.subscribe(ob_set).await {
                 Ok(r) => r,
@@ -2364,44 +2371,78 @@ impl DataBridge {
                 }
             });
 
+            // The heat grid needs the RESTING book, so this task reconstructs
+            // it: a delta carries only the levels that changed, and forwarding
+            // those raw would paint the churn instead of the liquidity. Book
+            // state is held here as price→qty ladders; a zero quantity is a
+            // removal, which is why deltas cannot simply be max-merged
+            // downstream.
+            //
+            // Emission is throttled to one full book per `EMIT_EVERY_MS` —
+            // the consumer folds snapshots into a bar cell by maximum, so a
+            // faster rate buys nothing but CPU.
+            const EMIT_EVERY_MS: i64 = 250;
+            let mut book_bids: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
+            let mut book_asks: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
+            // Zero, not `i64::MIN`: the throttle compares `ts_ms - last_emit_ms`,
+            // and a sentinel that far below a real epoch overflows the
+            // subtraction — which silently killed every emission.
+            let mut last_emit_ms: i64 = 0;
+            // Price → integer key. Ladders must be keyed exactly, and f64 is
+            // not `Ord`; 1e-8 resolution is finer than any listed tick.
+            let key_of = |p: f64| -> i64 { (p * 1e8).round() as i64 };
+
+            let apply = |side: &mut std::collections::BTreeMap<i64, f64>, levels: &[(f64, f64)]| {
+                for &(price, qty) in levels {
+                    if price <= 0.0 {
+                        continue;
+                    }
+                    if qty > 0.0 {
+                        side.insert(key_of(price), qty);
+                    } else {
+                        side.remove(&key_of(price));
+                    }
+                }
+            };
+
             // Drive the order-book stream; cancel trade task when ob exits.
             while let Some(ev) = ob_report.handle.recv().await {
-                match ev {
+                let ts_ms = match &ev {
                     digdigdig3_station::Event::OrderbookSnapshot { point, .. } => {
-                        // bids/asks are already Vec<(f64, f64)> in dig3-station.
-                        let bids_f: Vec<(f64, f64)> = point.bids.iter()
-                            .map(|(p, q)| (*p, *q))
-                            .collect();
-                        let asks_f: Vec<(f64, f64)> = point.asks.iter()
-                            .map(|(p, q)| (*p, *q))
-                            .collect();
-                        let _ = tx_clone.send(LiveUpdate::DomHeatmapSnapshot {
-                            exchange_id, account_type,
-                            symbol: sym_ob.clone(),
-                            ts_ms: point.ts_ms,
-                            bids: bids_f,
-                            asks: asks_f,
-                        });
+                        book_bids.clear();
+                        book_asks.clear();
+                        apply(&mut book_bids, &strip_ob_padding(&point.bids));
+                        apply(&mut book_asks, &strip_ob_padding(&point.asks));
+                        point.ts_ms
                     }
                     digdigdig3_station::Event::OrderbookDelta { point, .. } => {
-                        // Treat deltas as thin snapshots — the consumer's buffer
-                        // coalesces them into the current bucket.
-                        let bids_f: Vec<(f64, f64)> = point.bid_changes.iter()
-                            .map(|(p, q)| (*p, *q))
-                            .collect();
-                        let asks_f: Vec<(f64, f64)> = point.ask_changes.iter()
-                            .map(|(p, q)| (*p, *q))
-                            .collect();
-                        let _ = tx_clone.send(LiveUpdate::DomHeatmapSnapshot {
-                            exchange_id, account_type,
-                            symbol: sym_ob.clone(),
-                            ts_ms: point.ts_ms,
-                            bids: bids_f,
-                            asks: asks_f,
-                        });
+                        apply(&mut book_bids, &strip_ob_padding(&point.bid_changes));
+                        apply(&mut book_asks, &strip_ob_padding(&point.ask_changes));
+                        point.ts_ms
                     }
-                    _ => {}
+                    _ => continue,
+                };
+
+                if ts_ms - last_emit_ms < EMIT_EVERY_MS {
+                    continue;
                 }
+                last_emit_ms = ts_ms;
+                let bids_f: Vec<(f64, f64)> = book_bids.iter()
+                    .map(|(k, q)| (*k as f64 / 1e8, *q))
+                    .collect();
+                let asks_f: Vec<(f64, f64)> = book_asks.iter()
+                    .map(|(k, q)| (*k as f64 / 1e8, *q))
+                    .collect();
+                if bids_f.is_empty() && asks_f.is_empty() {
+                    continue;
+                }
+                let _ = tx_clone.send(LiveUpdate::DomHeatmapSnapshot {
+                    exchange_id, account_type,
+                    symbol: sym_ob.clone(),
+                    ts_ms,
+                    bids: bids_f,
+                    asks: asks_f,
+                });
             }
             trade_handle.abort();
             crate::dlog!("[Bridge::dom-heatmap-ob exited] {:?} {}", exchange_id, sym_ob);

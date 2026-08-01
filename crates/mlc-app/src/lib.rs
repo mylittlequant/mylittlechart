@@ -212,7 +212,6 @@ pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::
         "overlay_tpo_profile" => Some(ChartOutEvent::ToggleTpoProfileOverlay),
         "overlay_oi_delta" => Some(ChartOutEvent::ToggleOpenInterestOverlay),
         "overlay_funding_rate" => Some(ChartOutEvent::ToggleFundingRateStrip),
-        "overlay_dom_heatmap" => Some(ChartOutEvent::ToggleDomHeatmapOverlay),
         _ => None,
     }
 }
@@ -1671,10 +1670,11 @@ impl ChartApp {
     /// hiding it with the eye icon turns the render off, deleting the row
     /// turns it off and drops the subscription.
     ///
-    /// The remaining five opaque overlays (Volume Profile / TPO Profile /
-    /// OI Delta / Funding Rate / DOM Heatmap) still ride their own window
-    /// bools — they are converted one at a time, and this is the first
-    /// (plan item G, "add + stand-test ONE overlay at a time").
+    /// The remaining four opaque overlays (Volume Profile / TPO Profile /
+    /// OI Delta / Funding Rate) still ride their own window bools — they
+    /// are converted one at a time (plan item G, "add + stand-test ONE
+    /// overlay at a time"). DOM Heatmap was converted second, alongside
+    /// re-keying its grid to the chart's bars.
     pub fn liq_overlay_active(&self, bid: mlc_core::ids::BubbleId) -> bool {
         self.core.indicators().instances_for_bubble(bid)
             .into_iter()
@@ -1703,6 +1703,46 @@ impl ChartApp {
             .and_then(|inst| inst.params.get("sensitivity"))
             .and_then(|v| v.as_float())
             .unwrap_or(DEFAULT_SENSITIVITY)
+    }
+
+    /// Catalog id of the DOM Heatmap overlay indicator.
+    pub const DOM_HEATMAP_TYPE_ID: &'static str = "overlay_dom_heatmap";
+
+    /// Whether the DOM Heatmap overlay is on for `bid`'s bubble. Derived,
+    /// same doctrine as [`Self::liq_overlay_active`]: a visible
+    /// `overlay_dom_heatmap` instance IS the on/off state.
+    pub fn dom_overlay_active(&self, bid: mlc_core::ids::BubbleId) -> bool {
+        self.core.indicators().instances_for_bubble(bid)
+            .into_iter()
+            .any(|inst| inst.type_id == Self::DOM_HEATMAP_TYPE_ID && inst.visible)
+    }
+
+    /// [`Self::dom_overlay_active`] keyed by chart instead of bubble.
+    pub fn dom_overlay_active_for_chart(&self, chart_id: mlc_core::state::ChartId) -> bool {
+        self.bubble_for_chart(chart_id)
+            .map(|bid| self.dom_overlay_active(bid))
+            .unwrap_or(false)
+    }
+
+    /// `(sensitivity, opacity, row_ticks)` for the DOM Heatmap overlay on
+    /// `bid`'s bubble, falling back to the catalog defaults when no
+    /// instance exists. `row_ticks` is grid GEOMETRY — changing it
+    /// invalidates the buffer, which the ingest arm rebuilds.
+    #[inline]
+    pub fn dom_heatmap_params(&self, bid: mlc_core::ids::BubbleId) -> (f64, f64, i64) {
+        const DEFAULTS: (f64, f64, i64) = (1.0, 0.55, 10);
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::DOM_HEATMAP_TYPE_ID)
+        else { return DEFAULTS };
+        let f = |k: &str, d: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(d);
+        (
+            f("sensitivity", DEFAULTS.0),
+            f("opacity", DEFAULTS.1),
+            f("row_ticks", DEFAULTS.2 as f64).round().max(1.0) as i64,
+        )
     }
 
     /// Resolve a "real" sync group for this chart — returns `Some(BubbleId)`
@@ -4710,6 +4750,8 @@ impl ChartApp {
                 let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let overlay_trade_archive_available = self.trade_archive_available_for(&overlay_bubble_mgr, window.current_tag_id);
                 let overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let overlay_dom = self.dom_heatmap_params(window.current_tag_id);
+                let overlay_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
@@ -4722,7 +4764,9 @@ impl ChartApp {
                     tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    dom_heatmap_show: window.dom_heatmap_show,
+                    dom_heatmap_show: overlay_dom_active,
+                    dom_sensitivity: overlay_dom.0,
+                    dom_opacity: overlay_dom.1,
                     liq_heatmap_show: overlay_liq_active,
                     liq_sensitivity: overlay_liq_sensitivity,
                     footprint_display: overlay_panel.footprint_display,
@@ -4824,6 +4868,8 @@ impl ChartApp {
             let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
             let single_overlay_trade_archive_available = self.trade_archive_available_for(&single_overlay_bubble_mgr, window.current_tag_id);
             let single_overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+            let single_dom = self.dom_heatmap_params(window.current_tag_id);
+            let single_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
             let single_overlay_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                 viewport: window.viewport(),
@@ -4836,7 +4882,9 @@ impl ChartApp {
                 tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
                 oi_show: window.oi_show,
                 funding_show: window.funding_show,
-                dom_heatmap_show: window.dom_heatmap_show,
+                dom_heatmap_show: single_dom_active,
+                dom_sensitivity: single_dom.0,
+                dom_opacity: single_dom.1,
                 liq_heatmap_show: single_overlay_liq_active,
                 liq_sensitivity: single_overlay_liq_sensitivity,
                 footprint_display: single_panel.footprint_display,
@@ -5122,6 +5170,8 @@ impl ChartApp {
                 let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let split_trade_archive_available = self.trade_archive_available_for(&split_bubble_mgr, window.current_tag_id);
                 let split_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let split_dom = self.dom_heatmap_params(window.current_tag_id);
+                let split_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let split_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let split_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
@@ -5134,7 +5184,9 @@ impl ChartApp {
                     tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    dom_heatmap_show: window.dom_heatmap_show,
+                    dom_heatmap_show: split_dom_active,
+                    dom_sensitivity: split_dom.0,
+                    dom_opacity: split_dom.1,
                     liq_heatmap_show: split_liq_active,
                     liq_sensitivity: split_liq_sensitivity,
                     footprint_display: split_panel.footprint_display,
@@ -5775,6 +5827,8 @@ impl ChartApp {
                 let single_window_chart_type_for_wicks = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let single_window_trade_archive_available = self.trade_archive_available_for(&single_window_bubble_mgr, window.current_tag_id);
                 let single_window_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let single_window_dom = self.dom_heatmap_params(window.current_tag_id);
+                let single_window_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_window_liq_active = self.liq_overlay_active(window.current_tag_id);
                 let single_window_inputs = mlc_backend::bubble::ChartWindowRenderInputs {
                     viewport: window.viewport(),
@@ -5787,7 +5841,9 @@ impl ChartApp {
                     tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
                     oi_show: window.oi_show,
                     funding_show: window.funding_show,
-                    dom_heatmap_show: window.dom_heatmap_show,
+                    dom_heatmap_show: single_window_dom_active,
+                    dom_sensitivity: single_window_dom.0,
+                    dom_opacity: single_window_dom.1,
                     liq_heatmap_show: single_window_liq_active,
                     liq_sensitivity: single_window_liq_sensitivity,
                     footprint_display: single_window_panel.footprint_display,

@@ -774,6 +774,17 @@ pub struct ChartRenderState<'a> {
     /// slider. Unused (but always populated) when `liq_heatmap_ref` is
     /// `None`.
     pub liq_sensitivity: f64,
+    /// DOM Heatmap gain — the `sensitivity` param on the
+    /// `overlay_dom_heatmap` `IndicatorInstance` (catalog default `1.0`
+    /// when no instance exists). Divides the ON-SCREEN depth maximum before
+    /// cell alpha is normalised, so a higher value brightens thin
+    /// liquidity; mirrors the reference's SENSITIVITY slider. Unused (but
+    /// always populated) when `dom_heatmap_ref` is `None`.
+    pub dom_sensitivity: f64,
+    /// DOM Heatmap fill alpha at full depth — the `opacity` param on the
+    /// same instance (catalog default `0.55`). The heat paints under the
+    /// candles, so this is what keeps them readable through it.
+    pub dom_opacity: f64,
     /// True when the chart type is non-temporal (renko / pnf / kagi /
     /// three_line_break). These types render on a derived series whose
     /// `bars` shadow carries each element's real open timestamp but no

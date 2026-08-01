@@ -1383,53 +1383,10 @@ impl ChartApp {
                 }
                 state_mutated = true;
             }
-            // === DOM Heatmap overlay (C12; chart-type → overlay migration) ===
-            // Mirrors ToggleOpenInterestOverlay/ToggleFundingRateStrip above —
-            // same per-window bool flag + subscribe/unsubscribe pair, but the
-            // ring-buffer state (`bubble.dom_heatmap`/`dom_trade_dots`) and
-            // subscribe/clear-slot fns are the SAME ones `dom_heatmap` used
-            // as a chart_type; only the trigger moved.
-            ChartOutEvent::ToggleDomHeatmapOverlay => {
-                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                if let Some(cid) = cid_opt {
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            // Per-container venue (2026-07-15 wrong-venue bug).
-                            let chart_eid = self.exchange_id_for_chart(cid);
-                            let eid_str = chart_eid.as_str();
-                            let connector_enabled = self.sidebar_state.connector_enabled
-                                .get(eid_str).copied().unwrap_or(true);
-                            if connector_enabled {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let dom_show_now = {
-                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                        w.dom_heatmap_show = !w.dom_heatmap_show;
-                                        eprintln!("[ChartApp] dom_heatmap_show toggled -> {}", w.dom_heatmap_show);
-                                        w.dom_heatmap_show
-                                    } else { false }
-                                };
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| {
-                                        mlc_backend::chart_type::clear_slot_dom_heatmap(bubble);
-                                    });
-                                }
-                                if dom_show_now {
-                                    self.core.subscribe_dom_heatmap(
-                                        chart_eid, &symbol, at,
-                                    );
-                                } else {
-                                    self.core.unsubscribe_dom_heatmap(
-                                        chart_eid, &symbol, at,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                state_mutated = true;
-            }
+            // `ToggleDomHeatmapOverlay` and its per-window `dom_heatmap_show`
+            // bool are gone (2026-08-02): the DOM Heatmap overlay is a real
+            // `IndicatorInstance` now, so its presence IS the on/off state and
+            // `ensure_bubble_indicator_feeds` owns the book subscription.
             ChartOutEvent::ToggleCrosshair => {
                 let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     w.toggle_crosshair();
@@ -3081,7 +3038,11 @@ impl ChartApp {
         let dom_targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> =
             self.panel_app.panel_grid.containers().iter()
                 .filter_map(|(cid, w)| {
-                    if !w.dom_heatmap_show { return None; }
+                    let _ = w;
+                    // Instance-driven, same as the liquidation half below: a
+                    // restored preset carrying a visible `overlay_dom_heatmap`
+                    // instance is what re-arms the book feed.
+                    if !self.dom_overlay_active_for_chart(*cid) { return None; }
                     let sym = self.symbol_for_chart(*cid)?;
                     if sym.is_empty() { return None; }
                     let exch = self.exchange_for_chart(*cid)?;

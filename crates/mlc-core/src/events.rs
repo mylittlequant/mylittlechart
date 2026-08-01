@@ -234,8 +234,6 @@ pub enum ChartOutEvent {
     // overlay migration: both were `chart_type` registry entries, now
     // builtin overlay indicators that draw under the main series of ANY
     // chart type. Mirrors the OI Delta / Funding Rate toggle shape above. ===
-    /// Toggle the DOM Heatmap background overlay on the active chart.
-    ToggleDomHeatmapOverlay,
 
     // === Theme (app-global) ===
     SetTheme(&'static str),

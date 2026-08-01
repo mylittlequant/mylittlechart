@@ -1443,7 +1443,8 @@ impl ChartApp {
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !win.dom_heatmap_show { return None; }
+                            let _ = win;
+                            if !self.dom_overlay_active_for_chart(*cid) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }
@@ -1452,12 +1453,40 @@ impl ChartApp {
                 };
                 let bubble_ids: std::collections::HashSet<mlc_core::ids::BubbleId> =
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
-                for b in &bubble_ids {
-                    self.core.bubbles_mut().with_bubble_mut(*b, |bubble| {
+                // Grid geometry is (bar duration, row grouping): the bar comes
+                // from the bubble's timeframe, the grouping from the overlay's
+                // `row_ticks` param. Resolved before the write borrow — and a
+                // change in either invalidates the grid, so the buffer is
+                // rebuilt rather than fed cells of a second grain.
+                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64)> = bubble_ids
+                    .iter()
+                    .map(|b| {
+                        let (_, _, row_ticks) = self.dom_heatmap_params(*b);
+                        let bar_ms = self
+                            .core
+                            .bubbles()
+                            .timeframe(*b)
+                            .map(|tf| tf.interval_ms)
+                            .filter(|ms| *ms > 0)
+                            .unwrap_or(60_000);
+                        (*b, bar_ms, row_ticks)
+                    })
+                    .collect();
+                for (b, bar_ms, row_ticks) in dom_geometry {
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
-                        bubble.dom_heatmap_mut()
-                            .get_or_insert_with(|| mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(DEFAULT_TICK))
-                            .push_snapshot(*ts_ms, bids, asks);
+                        let slot = bubble.dom_heatmap_mut();
+                        let stale = slot
+                            .as_ref()
+                            .map_or(true, |buf| !buf.matches_geometry(bar_ms, row_ticks));
+                        if stale {
+                            *slot = Some(mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(
+                                DEFAULT_TICK, bar_ms, row_ticks,
+                            ));
+                        }
+                        if let Some(buf) = slot.as_mut() {
+                            buf.push_snapshot(*ts_ms, bids, asks);
+                        }
                     });
                 }
                 let dom_bubble_bars: Vec<mlc_core::Bar> = {
@@ -1475,13 +1504,14 @@ impl ChartApp {
                 }
             }
 
-            // Gate on `win.dom_heatmap_show` (G1 fix — see the snapshot arm above).
+            // Gate on the overlay's indicator instance — see the snapshot arm above.
             BubbleEvent::DomTradeDotPassthrough { exchange_id: _, account_type, symbol, dot } => {
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> = {
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !win.dom_heatmap_show { return None; }
+                            let _ = win;
+                            if !self.dom_overlay_active_for_chart(*cid) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }

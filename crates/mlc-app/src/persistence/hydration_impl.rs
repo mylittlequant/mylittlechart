@@ -858,25 +858,14 @@ impl ChartApp {
                     eprintln!("[ChartApp] restored {} indicators", preset.indicators.len());
                     let indicators_us = _t_indicators.elapsed().as_micros();
 
-                    // DOM heatmap render gate: forced FALSE post-load — it is
-                    // RAM-only view state with no durable form, so only an
-                    // explicit in-session toggle can arm it. The Liquidation
-                    // Heatmap needs no reconcile at all anymore: its on/off
-                    // state IS the restored `overlay_liquidation_heatmap`
-                    // instance (owner doctrine 2026-08-01), read live by
-                    // `ChartApp::liq_overlay_active` — there is no window bool
-                    // left to re-derive. `ignite_legacy_heatmap_overlays`
-                    // (called later in this LoadPreset flow) subscribes the
-                    // feed for exactly those instance-backed windows.
-                    {
-                        let cids: Vec<mlc_core::state::ChartId> =
-                            self.panel_app.panel_grid.containers().keys().copied().collect();
-                        for cid in cids {
-                            if let Some(window) = self.panel_app.panel_grid.containers_mut().get_mut(&cid) {
-                                window.dom_heatmap_show = false;
-                            }
-                        }
-                    }
+                    // Neither heatmap overlay needs a post-load reconcile:
+                    // both on/off states ARE the restored
+                    // `overlay_dom_heatmap` / `overlay_liquidation_heatmap`
+                    // instances, read live by `ChartApp::dom_overlay_active` /
+                    // `liq_overlay_active`. No window bool is left to
+                    // re-derive, and `ignite_legacy_heatmap_overlays` (called
+                    // later in this LoadPreset flow) subscribes the feeds for
+                    // exactly those instance-backed windows.
 
                     // ----------------------------------------------------------------
                     // Step 6b: Immediately recalculate indicators for every window that

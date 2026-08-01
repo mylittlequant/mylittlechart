@@ -1,34 +1,57 @@
-//! DOM Heatmap data types for the Bookmap-style chart-type (C12).
+//! DOM Heatmap data — resting order-book depth as a time-by-price grid,
+//! drawn as a chart OVERLAY (Bookmap / TapeSurf "Order Book heatmap").
 //!
-//! Stores a rolling 2D buffer of resting order-book depth keyed by
-//! `(time_bucket, price_tick)`.  A companion `DomTradeDot` vector
-//! provides the trade-circle overlay.
+//! ## The grid is keyed to the chart's BARS (2026-08-02)
 //!
-//! Design: **virtual-index axis**.  Each 250 ms bucket is treated as one
-//! virtual "bar" so the chart can reuse the existing index-axis viewport
-//! geometry without touching the time_axis path that was reverted in C4.
-//! The timestamp field is stored for crosshair labels and future upgrade.
+//! It used to be keyed to fixed 250 ms buckets, each treated as one virtual
+//! "bar" so the renderer could reuse the index-axis geometry. That was
+//! coherent while this was its own `chart_type` — the viewport's bars WERE
+//! the buckets. As an overlay on candles it cannot work: one heat column is
+//! 250 ms while one chart column is a whole bar (240× wider on a 1-minute
+//! chart), and a 10 k-cell ring at 4 snapshots/s held about two minutes of
+//! history where the reference shows hours.
+//!
+//! So a cell is now `(bar_start_ms, price_row)`, with `bar_ms` taken from
+//! the bubble's timeframe. The heat columns line up with the candles, which
+//! is exactly what the reference does — its `1m 5m 15m 30m 1h` buttons
+//! re-grain the heat together with the series.
+//!
+//! **A cell holds the MAXIMUM depth seen at that price during the bar**, not
+//! the last snapshot: the question a liquidity heatmap answers is "how much
+//! was resting here", and a wall that is pulled a moment before the close
+//! still mattered.
+//!
+//! `price_row` groups `row_ticks` instrument ticks together, so one row is a
+//! few pixels tall instead of a sub-pixel hairline, and the ring holds a
+//! screenful of bars instead of a screenful of ticks.
 
 use std::collections::VecDeque;
 
-/// Default bucket width in milliseconds — 4 buckets/s matches Bookmap.
-pub const DEFAULT_BUCKET_MS: i64 = 250;
+/// Maximum cells retained in the rolling ring — about 300 bar columns of
+/// ~120 price rows, i.e. a full screen of history at any normal zoom.
+pub const MAX_CELLS: usize = 40_000;
 
-/// Maximum cells retained in the rolling ring.
-/// 250 ms × 40 min × (typical 20 price ticks/column) ≈ 10 k cells visible.
-pub const MAX_CELLS: usize = 10_000;
+/// Default price ticks folded into one heat row.
+pub const DEFAULT_ROW_TICKS: i64 = 10;
 
-/// One cell in the 2-D heatmap grid.
+/// One cell in the 2-D heatmap grid: one bar column × one price row.
 #[derive(Clone, Copy, Debug)]
 pub struct DomHeatmapCell {
-    /// Bucket start time (ms, wall clock from the exchange event).
+    /// Start time of the bar this cell belongs to (ms).
     pub ts_ms: i64,
-    /// `price / tick_size` rounded to i64 — identifies the price row.
-    pub price_tick: i64,
-    /// Resting bid depth at this tick during this bucket.
+    /// `price / (tick_size * row_ticks)` rounded — identifies the price row.
+    pub price_row: i64,
+    /// Peak resting bid depth seen at this row during this bar.
     pub bid_depth: f64,
-    /// Resting ask depth at this tick during this bucket.
+    /// Peak resting ask depth seen at this row during this bar.
     pub ask_depth: f64,
+}
+
+impl DomHeatmapCell {
+    /// Price at the centre of this row, given the buffer's geometry.
+    pub fn price(&self, tick_size: f64, row_ticks: i64) -> f64 {
+        self.price_row as f64 * tick_size * row_ticks.max(1) as f64
+    }
 }
 
 /// Rolling ring buffer of `DomHeatmapCell` values.
@@ -36,88 +59,118 @@ pub struct DomHeatmapCell {
 pub struct DomHeatmapBuffer {
     /// Instrument tick size (e.g. 0.1 for BTCUSDT on Binance).
     pub tick_size: f64,
-    /// Time bucket width in ms.
-    pub time_bucket_ms: i64,
-    /// Cell ring — newest at back.
+    /// Column width in ms — the bubble's bar duration. A timeframe change
+    /// invalidates the whole grid; the writer rebuilds instead of mixing
+    /// two grains.
+    pub bar_ms: i64,
+    /// Instrument ticks folded into one price row.
+    pub row_ticks: i64,
+    /// Cell ring — newest bar at back.
     pub cells: VecDeque<DomHeatmapCell>,
     /// Maximum cells before oldest are evicted.
     pub max_cells: usize,
-    /// Running maximum of (bid_depth + ask_depth) across all cells.
-    /// Used for color-intensity normalisation.  Decays via EMA (α = 0.99 per push).
-    pub max_depth_seen: f64,
+    /// Bar the tail cells belong to, and how many of them there are — the
+    /// merge window for the snapshot being folded in. Snapshots arrive in
+    /// time order, so everything mergeable is at the tail.
+    cur_bar_ms: i64,
+    cur_bar_len: usize,
 }
 
 impl DomHeatmapBuffer {
-    /// Create an empty buffer with the given tick size.
-    pub fn new(tick_size: f64) -> Self {
-        let ts = if tick_size > 0.0 { tick_size } else { 1.0 };
+    /// Create an empty buffer for a given instrument tick, bar duration and
+    /// row grouping.
+    pub fn new(tick_size: f64, bar_ms: i64, row_ticks: i64) -> Self {
         Self {
-            tick_size: ts,
-            time_bucket_ms: DEFAULT_BUCKET_MS,
+            tick_size: if tick_size > 0.0 { tick_size } else { 1.0 },
+            bar_ms: bar_ms.max(1),
+            row_ticks: row_ticks.max(1),
             cells: VecDeque::new(),
             max_cells: MAX_CELLS,
-            max_depth_seen: 0.0,
+            cur_bar_ms: i64::MIN,
+            cur_bar_len: 0,
         }
     }
 
-    /// Snap `ts_ms` to the nearest bucket boundary.
-    fn bucket_of(&self, ts_ms: i64) -> i64 {
-        (ts_ms / self.time_bucket_ms) * self.time_bucket_ms
+    /// Whether this buffer's geometry still matches what the caller wants.
+    /// A mismatch means the grid must be rebuilt, not appended to.
+    pub fn matches_geometry(&self, bar_ms: i64, row_ticks: i64) -> bool {
+        self.bar_ms == bar_ms.max(1) && self.row_ticks == row_ticks.max(1)
     }
 
-    /// Quantise `price` to a price_tick integer.
-    fn price_tick_of(&self, price: f64) -> i64 {
-        (price / self.tick_size).round() as i64
+    /// Height of one price row in instrument price units.
+    pub fn row_size(&self) -> f64 {
+        self.tick_size * self.row_ticks as f64
     }
 
-    /// Push a full order-book snapshot.
+    /// Snap `ts_ms` to the start of its bar.
+    fn bar_of(&self, ts_ms: i64) -> i64 {
+        ts_ms.div_euclid(self.bar_ms) * self.bar_ms
+    }
+
+    /// Quantise `price` to a price-row index.
+    fn row_of(&self, price: f64) -> i64 {
+        (price / self.row_size()).round() as i64
+    }
+
+    /// Fold a full order-book snapshot into the grid.
     ///
-    /// All `bids` and `asks` slices are `(price, qty)` pairs.
-    /// Bucketing: all cells for this snapshot share the same bucket ts.
+    /// `bids` / `asks` are `(price, qty)` pairs. Depth is summed across the
+    /// ticks that share a row within this snapshot, then merged into the
+    /// bar's cell by MAXIMUM — see the module doc.
     pub fn push_snapshot(&mut self, ts_ms: i64, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
-        let bucket = self.bucket_of(ts_ms);
+        let bar = self.bar_of(ts_ms);
+        if bar != self.cur_bar_ms {
+            self.cur_bar_ms = bar;
+            self.cur_bar_len = 0;
+        }
+
         use std::collections::HashMap;
-        // Aggregate by price_tick within this snapshot.
-        let mut by_tick: HashMap<i64, (f64, f64)> = HashMap::new();
+        let mut by_row: HashMap<i64, (f64, f64)> = HashMap::new();
         for &(price, qty) in bids {
             if qty > 0.0 {
-                by_tick.entry(self.price_tick_of(price)).or_insert((0.0, 0.0)).0 += qty;
+                by_row.entry(self.row_of(price)).or_insert((0.0, 0.0)).0 += qty;
             }
         }
         for &(price, qty) in asks {
             if qty > 0.0 {
-                by_tick.entry(self.price_tick_of(price)).or_insert((0.0, 0.0)).1 += qty;
+                by_row.entry(self.row_of(price)).or_insert((0.0, 0.0)).1 += qty;
             }
         }
-        for (price_tick, (bid_depth, ask_depth)) in by_tick {
-            let total = bid_depth + ask_depth;
-            // EMA decay on max_depth_seen so one fat snapshot doesn't
-            // permanently suppress all subsequent colours (α = 0.99 per push).
-            self.max_depth_seen = self.max_depth_seen * 0.99 + total * 0.01;
-            if total > self.max_depth_seen {
-                self.max_depth_seen = total;
+
+        for (price_row, (bid_depth, ask_depth)) in by_row {
+            let tail_start = self.cells.len() - self.cur_bar_len;
+            let existing = self
+                .cells
+                .iter_mut()
+                .skip(tail_start)
+                .find(|c| c.price_row == price_row);
+            match existing {
+                Some(cell) => {
+                    cell.bid_depth = cell.bid_depth.max(bid_depth);
+                    cell.ask_depth = cell.ask_depth.max(ask_depth);
+                }
+                None => {
+                    self.cells.push_back(DomHeatmapCell {
+                        ts_ms: bar,
+                        price_row,
+                        bid_depth,
+                        ask_depth,
+                    });
+                    self.cur_bar_len += 1;
+                    while self.cells.len() > self.max_cells {
+                        self.cells.pop_front();
+                        // The evicted cell is the oldest bar's, never the
+                        // current one, unless the ring is smaller than a
+                        // single bar's row count — guard anyway.
+                        self.cur_bar_len = self.cur_bar_len.min(self.cells.len());
+                    }
+                }
             }
-            self.push_cell(DomHeatmapCell { ts_ms: bucket, price_tick, bid_depth, ask_depth });
         }
     }
 
-    /// Push a single cell, enforcing the ring cap.
-    fn push_cell(&mut self, cell: DomHeatmapCell) {
-        self.cells.push_back(cell);
-        while self.cells.len() > self.max_cells {
-            self.cells.pop_front();
-        }
-    }
-
-    /// Iterate cells within a time range (inclusive).
-    pub fn visible_cells(&self, t_start_ms: i64, t_end_ms: i64) -> impl Iterator<Item = &DomHeatmapCell> {
-        self.cells.iter().filter(move |c| c.ts_ms >= t_start_ms && c.ts_ms <= t_end_ms)
-    }
-
-    /// Number of distinct time buckets stored.
-    ///
-    /// Used to calculate how many virtual "bars" worth of data exist so
-    /// the caller can set `viewport.bar_count` appropriately.
+    /// Number of distinct bar columns stored. Reported as
+    /// `dom_heatmap_columns` by the agent API / test harness.
     pub fn bucket_count(&self) -> usize {
         let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for c in &self.cells {
@@ -126,12 +179,12 @@ impl DomHeatmapBuffer {
         seen.len()
     }
 
-    /// Oldest bucket timestamp stored, or 0 if empty.
+    /// Oldest bar timestamp stored, or 0 if empty.
     pub fn oldest_bucket_ms(&self) -> i64 {
         self.cells.front().map(|c| c.ts_ms).unwrap_or(0)
     }
 
-    /// Newest bucket timestamp stored, or 0 if empty.
+    /// Newest bar timestamp stored, or 0 if empty.
     pub fn newest_bucket_ms(&self) -> i64 {
         self.cells.back().map(|c| c.ts_ms).unwrap_or(0)
     }

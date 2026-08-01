@@ -62,6 +62,24 @@ impl<'a> BubbleView<'a> {
     pub fn kline_layer_points(&self) -> usize {
         self.bubble.kline_layers.values().map(|l| l.len()).sum()
     }
+
+    /// DOM-heatmap ring diagnostics: cells, distinct bar columns, grid
+    /// geometry, and the span it covers. The overlay is silent both when no
+    /// snapshot has landed and when the writer stalled — these tell them
+    /// apart.
+    pub fn dom_probe(&self) -> (usize, usize, i64, i64, i64, i64) {
+        match self.bubble.dom_heatmap.as_ref() {
+            Some(b) => (
+                b.cells.len(),
+                b.bucket_count(),
+                b.bar_ms,
+                b.row_ticks,
+                b.oldest_bucket_ms(),
+                b.newest_bucket_ms(),
+            ),
+            None => (0, 0, 0, 0, 0, 0),
+        }
+    }
     pub fn bars(&self) -> &[mlc_core::Bar] {
         &self.bubble.bars
     }

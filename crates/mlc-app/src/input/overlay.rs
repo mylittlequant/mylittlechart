@@ -901,9 +901,9 @@ impl ChartApp {
             None => return,
         };
 
-        // Liquidation Heatmap: the ONE opaque-overlay id that backs a REAL
+        // DOM / Liquidation Heatmap: the two overlay ids that back a REAL
         // `IndicatorInstance` (see overlay_catalog.rs doc comment).
-        if type_id == Self::LIQ_HEATMAP_TYPE_ID {
+        if type_id == Self::LIQ_HEATMAP_TYPE_ID || type_id == Self::DOM_HEATMAP_TYPE_ID {
             // Nothing to do by hand: removing the legend row removes the
             // instance, and the bubble's per-tick feed reconcile
             // (`ensure_bubble_indicator_feeds`) drops the feed nobody
@@ -911,7 +911,7 @@ impl ChartApp {
         } else if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
             // Symmetric guard for the add-side intercept in modals.rs: the
             // remaining opaque host-driven overlays (Volume Profile / TPO
-            // Profile / OI Delta / Funding Rate / DOM Heatmap) never become
+            // Profile / OI Delta / Funding Rate) never become
             // a real `IndicatorInstance`, so this branch is not reachable
             // in the current UI flow — kept for correctness if a caller
             // ever passes one of their backing ids. CVD is NOT one of

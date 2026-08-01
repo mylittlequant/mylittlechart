@@ -3206,6 +3206,8 @@ pub fn render_full_chart_panel(
         liq_heatmap_ref: data.state.liq_heatmap_ref,
         liq_dots_ref: data.state.liq_dots_ref,
         liq_sensitivity: data.state.liq_sensitivity,
+        dom_sensitivity: data.state.dom_sensitivity,
+        dom_opacity: data.state.dom_opacity,
         non_temporal_axis: data.state.non_temporal_axis,
         hide_time_grid: data.state.hide_time_grid,
         history_depth: data.state.history_depth,
@@ -3283,6 +3285,15 @@ pub fn render_full_chart_panel(
         // the LIVE web render path; the single-pane render_chart path has
         // its own call.
         draw_data_gaps(ctx, &corrected_state, data.config.chart_type);
+
+        // 2c. DOM Heatmap — resting book depth UNDER the series, as in the
+        // reference (candles stay readable through the heat). No-ops unless
+        // the `overlay_dom_heatmap` instance exists and a snapshot has
+        // landed. This call was missing entirely: the C12/C13 chart-type →
+        // overlay migration left the draw wired only into the dead
+        // `render_chart` pipeline, so the overlay could never paint on the
+        // surface the app actually renders.
+        draw_dom_heatmap_conditional(ctx, &corrected_state);
 
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
@@ -3648,6 +3659,8 @@ pub fn render_chart_crosshair_layer(
         liq_heatmap_ref: state.liq_heatmap_ref,
         liq_dots_ref: state.liq_dots_ref,
         liq_sensitivity: state.liq_sensitivity,
+        dom_sensitivity: state.dom_sensitivity,
+        dom_opacity: state.dom_opacity,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
         history_depth: state.history_depth,
@@ -3849,6 +3862,8 @@ pub fn render_chart_overlay(
         liq_heatmap_ref: state.liq_heatmap_ref,
         liq_dots_ref: state.liq_dots_ref,
         liq_sensitivity: state.liq_sensitivity,
+        dom_sensitivity: state.dom_sensitivity,
+        dom_opacity: state.dom_opacity,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
         history_depth: state.history_depth,
