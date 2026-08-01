@@ -563,6 +563,14 @@ pub struct ChartApp {
     /// `WatchlistManager` (backend owns domain: lists/groups/color_flags).
     pub watchlist_ui: watchlist_ui::WatchlistUiState,
 
+    /// Symbol the watchlist market-counters block (funding rate + OI Δ%,
+    /// owner spec 2026-08-01) is currently subscribed for, across every
+    /// `KNOWN_EXCHANGES` venue — `None` when there is no active chart
+    /// instrument. RAM-only (never persisted): re-derived from the active
+    /// container every frame in `prepare_frame`, which also drives the
+    /// subscribe/unsubscribe transition when this changes.
+    pub(crate) counters_symbol: Option<String>,
+
     /// Right sidebar render result from the last frame (hit zones for click dispatch).
     pub last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult>,
 
@@ -2361,6 +2369,7 @@ impl ChartApp {
             // `active_container_id()` fallback — see field doc.
             workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
+            counters_symbol: None,
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -2768,6 +2777,7 @@ impl ChartApp {
             // `active_container_id()` fallback — see field doc.
             workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
+            counters_symbol: None,
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,
@@ -3248,6 +3258,7 @@ impl ChartApp {
                         "change_abs"   => list_ui.column_config.show_change_abs   = !list_ui.column_config.show_change_abs,
                         "spark"        => list_ui.column_config.show_spark        = !list_ui.column_config.show_spark,
                         "ticker"       => list_ui.column_config.show_ticker_section = !list_ui.column_config.show_ticker_section,
+                        "counters"     => list_ui.column_config.show_market_counters = !list_ui.column_config.show_market_counters,
                         "volume"       => list_ui.column_config.show_volume       = !list_ui.column_config.show_volume,
                         "high_low"     => list_ui.column_config.show_high_low     = !list_ui.column_config.show_high_low,
                         "account_type" => list_ui.column_config.show_account_type = !list_ui.column_config.show_account_type,
@@ -3333,6 +3344,7 @@ impl ChartApp {
             // `active_container_id()` fallback — see field doc.
             workspace_focus: focus::WorkspaceFocus::Chart(mlc_core::ChartId(0)),
             watchlist_ui: watchlist_ui::WatchlistUiState::default(),
+            counters_symbol: None,
             last_sidebar_result: None,
             sidebar_separator_drag_active: false,
             split_without_group: false,

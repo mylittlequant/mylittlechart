@@ -785,7 +785,14 @@ pub fn render_right_sidebar(
     // -------------------------------------------------------------------------
     if panel == RightSidebarPanel::Watchlist && watchlist_column_config.show_ticker_section {
         if let Some(ref t) = sidebar_state.ticker_section {
-            render_watchlist_ticker_section(ctx, rect, toolbar_theme, t);
+            render_watchlist_ticker_section(
+                ctx,
+                rect,
+                toolbar_theme,
+                t,
+                watchlist_column_config.show_market_counters,
+                &sidebar_state.counter_rows,
+            );
         }
     }
 
@@ -829,22 +836,48 @@ pub fn render_right_sidebar(
 /// Height of the watchlist-bottom TICKER section.
 pub const WATCHLIST_TICKER_SECTION_H: f64 = 96.0;
 
+/// Height of one market-counters row (funding/OI block, owner spec 2026-08-01).
+const COUNTERS_ROW_H: f64 = 15.0;
+/// Header + top/bottom padding reserved by the market-counters block on top
+/// of `COUNTERS_ROW_H * rows.len()`.
+const COUNTERS_CHROME_H: f64 = 16.0 + 4.0;
+
 /// The TICKER section pinned to the watchlist bottom: instrument line,
 /// big price with a direction arrow, change % + abs, area sparkline
-/// (TapeSurf Ticker widget: "big price + spark").
+/// (TapeSurf Ticker widget: "big price + spark"). When `show_counters` and
+/// `counter_rows` is non-empty, a funding-rate/OI-Δ% block (one row per
+/// venue, owner spec 2026-08-01) is stacked ABOVE the ticker content inside
+/// the SAME combined backdrop.
 fn render_watchlist_ticker_section(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
     theme: &ToolbarTheme,
     t: &crate::types::TickerSectionData,
+    show_counters: bool,
+    counter_rows: &[crate::types::CounterRowData],
 ) {
+    let counters_h = if show_counters && !counter_rows.is_empty() {
+        COUNTERS_CHROME_H + COUNTERS_ROW_H * counter_rows.len() as f64
+    } else {
+        0.0
+    };
     let h = WATCHLIST_TICKER_SECTION_H;
-    let y0 = rect.y + rect.height - h;
-    // Opaque backdrop over the scrolled rows + top separator.
+    let total_h = h + counters_h;
+    let block_y0 = rect.y + rect.height - total_h;
+
+    // Opaque backdrop over the WHOLE combined block (counters + ticker) + top separator.
     ctx.set_fill_color(&theme.background);
-    ctx.fill_rect(rect.x, y0, rect.width, h);
+    ctx.fill_rect(rect.x, block_y0, rect.width, total_h);
     ctx.set_fill_color(&theme.separator);
-    ctx.fill_rect(rect.x, y0, rect.width, 1.0);
+    ctx.fill_rect(rect.x, block_y0, rect.width, 1.0);
+
+    if counters_h > 0.0 {
+        render_watchlist_counters_block(ctx, rect, theme, block_y0, counter_rows);
+    }
+
+    // Ticker content occupies the bottom `h` px of the combined block —
+    // unaffected by `counters_h` other than the shared backdrop above.
+    let y0 = block_y0 + counters_h;
 
     let up = t.change_pct >= 0.0;
     let chg_color = if up { &theme.success } else { &theme.danger };
@@ -892,6 +925,112 @@ fn render_watchlist_ticker_section(
     }
 }
 
+/// Market-counters block (funding rate + OI Δ%, owner spec 2026-08-01): one
+/// row per venue with at least one live value, for the active chart's
+/// instrument. Pure paint — no click zones. Column set degrades with
+/// `rect.width` (narrow sidebar hides the countdown column below 240px and
+/// the 24h column below 200px) so the block never overflows a minimum
+/// ~160px sidebar.
+fn render_watchlist_counters_block(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    theme: &ToolbarTheme,
+    block_y0: f64,
+    rows: &[crate::types::CounterRowData],
+) {
+    let left = rect.x + 10.0;
+    let right = rect.x + rect.width - 10.0;
+    let show_next = rect.width >= 240.0;
+    let show_24h = rect.width >= 200.0;
+
+    let mut headers: Vec<&str> = vec!["VENUE", "FUND"];
+    if show_next {
+        headers.push("NEXT");
+    }
+    headers.push("OI 1H");
+    if show_24h {
+        headers.push("OI 24H");
+    }
+    let n_cols = headers.len() as f64;
+    let col_w = (right - left) / n_cols;
+    let col_x = |i: usize| left + col_w * i as f64;
+
+    // Header row.
+    ctx.set_font("9px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&theme.item_text_muted);
+    let header_y = block_y0 + 8.0;
+    for (i, label) in headers.iter().enumerate() {
+        ctx.fill_text(label, col_x(i), header_y);
+    }
+
+    // Data rows.
+    ctx.set_font("10px monospace");
+    for (r, row) in rows.iter().enumerate() {
+        let row_y = block_y0 + COUNTERS_CHROME_H - 4.0 + COUNTERS_ROW_H * r as f64 + COUNTERS_ROW_H / 2.0;
+        let mut ci = 0usize;
+
+        ctx.set_fill_color(&theme.item_text_muted);
+        let tag: String = row.venue.chars().take(3).collect::<String>().to_uppercase();
+        ctx.fill_text(&tag, col_x(ci), row_y);
+        ci += 1;
+
+        match row.funding_rate {
+            Some(rate) => {
+                let pct = rate * 100.0;
+                ctx.set_fill_color(if pct >= 0.0 { &theme.success } else { &theme.danger });
+                ctx.fill_text(&format!("{:.4}%", pct), col_x(ci), row_y);
+            }
+            None => {
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.fill_text("—", col_x(ci), row_y);
+            }
+        }
+        ci += 1;
+
+        if show_next {
+            ctx.set_fill_color(&theme.item_text_muted);
+            match row.countdown_secs {
+                Some(secs) => {
+                    let secs = secs.max(0);
+                    let hh = secs / 3600;
+                    let mm = (secs % 3600) / 60;
+                    let ss = secs % 60;
+                    ctx.fill_text(&format!("-{:02}:{:02}:{:02}", hh, mm, ss), col_x(ci), row_y);
+                }
+                None => ctx.fill_text("—", col_x(ci), row_y),
+            }
+            ci += 1;
+        }
+
+        match row.d1h_pct {
+            Some(v) => {
+                ctx.set_fill_color(if v >= 0.0 { &theme.success } else { &theme.danger });
+                ctx.fill_text(&format!("{}{:.2}%", if v >= 0.0 { "+" } else { "" }, v), col_x(ci), row_y);
+            }
+            None => {
+                ctx.set_fill_color(&theme.item_text_muted);
+                ctx.fill_text("—", col_x(ci), row_y);
+            }
+        }
+        ci += 1;
+
+        if show_24h {
+            match row.d24h_pct {
+                Some(v) => {
+                    ctx.set_fill_color(if v >= 0.0 { &theme.success } else { &theme.danger });
+                    ctx.fill_text(&format!("{}{:.2}%", if v >= 0.0 { "+" } else { "" }, v), col_x(ci), row_y);
+                }
+                None => {
+                    ctx.set_fill_color(&theme.item_text_muted);
+                    ctx.fill_text("—", col_x(ci), row_y);
+                }
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Watchlist column-config dropdown
 // =============================================================================
@@ -929,6 +1068,7 @@ fn render_watchlist_config_dropdown(
         ("show_volume",       "Volume",        col_cfg.show_volume),
         ("show_high_low",     "High / Low",    col_cfg.show_high_low),
         ("show_ticker",       "Ticker",        col_cfg.show_ticker_section),
+        ("show_counters",     "Fund/OI",       col_cfg.show_market_counters),
         ("show_align_columns","Align columns", col_cfg.align_columns),
     ];
 

@@ -2520,6 +2520,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             "change_abs"   => list_ui.column_config.show_change_abs   = !list_ui.column_config.show_change_abs,
                             "spark"        => list_ui.column_config.show_spark        = !list_ui.column_config.show_spark,
                             "ticker"       => list_ui.column_config.show_ticker_section = !list_ui.column_config.show_ticker_section,
+                            "counters"     => list_ui.column_config.show_market_counters = !list_ui.column_config.show_market_counters,
                             "volume"       => list_ui.column_config.show_volume       = !list_ui.column_config.show_volume,
                             "high_low"     => list_ui.column_config.show_high_low     = !list_ui.column_config.show_high_low,
                             "account_type" => list_ui.column_config.show_account_type = !list_ui.column_config.show_account_type,

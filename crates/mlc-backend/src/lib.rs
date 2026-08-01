@@ -38,6 +38,7 @@ pub mod user;
 pub mod trading;
 pub mod exchange_symbols;
 pub mod screener;
+pub mod market_counters;
 
 pub use alert::{Alerts, AlertsMut};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
@@ -715,6 +716,15 @@ pub struct BackendCore {
     /// own lifetime.
     pub screener_metrics: Arc<DashMap<String, crate::screener::ScreenerMetrics>>,
 
+    /// Funding-rate + open-interest counters for the watchlist TICKER
+    /// section's active-instrument block (owner spec 2026-08-01). Keyed the
+    /// same way as `mini_ticker` (`"{symbol}:{exchange}:{account_type}"`,
+    /// always `"F"` for the account-type slot — counters are always
+    /// subscribed at Futures). Written synchronously from `&self` inside
+    /// `tick_writers` (the `FundingCounterUpdate`/`OiCounterUpdate` arms) —
+    /// no `Arc` needed, same rung-4 shape as `mini_ticker`.
+    pub market_counters: DashMap<String, crate::market_counters::MarketCounters>,
+
     /// Synchronous [`BubbleEvent`]s queued by facade calls that mutate the
     /// bubble store OUTSIDE the broadcast-driven `tick_writers` loop and
     /// have no per-bubble caller in hand to hand the event to directly
@@ -888,6 +898,7 @@ impl BackendCore {
             mini_ticker: DashMap::new(),
             trade_store: TradeStore::new(),
             screener_metrics: Arc::new(DashMap::new()),
+            market_counters: DashMap::new(),
             pending_bubble_events: std::sync::Mutex::new(Vec::new()),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
             trading: trading.map(std::sync::Mutex::new),
@@ -2138,6 +2149,46 @@ impl BackendCore {
                     });
                 }
 
+                // ── FundingCounterUpdate (watchlist TICKER-section counters,
+                // 2026-08-01) — always-on cache write, distinct from the
+                // `FundingRateUpdate` overlay passthrough above. The bridge
+                // forwarder already filters degenerate/past
+                // `next_funding_time_ms` before emitting; merge as-is.
+                LiveUpdate::FundingCounterUpdate { exchange_id, account_type, symbol, rate, next_funding_time_ms } => {
+                    let cache_key = crate::market_counters::market_counters_key(
+                        &symbol, exchange_id.as_str(), account_type.short_label(),
+                    );
+                    let now_ms = web_time::SystemTime::now()
+                        .duration_since(web_time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    let mut entry = self.market_counters.entry(cache_key).or_default();
+                    entry.funding_rate = Some(rate);
+                    entry.next_funding_time_ms = next_funding_time_ms;
+                    entry.funding_updated_ms = now_ms;
+                }
+
+                // ── OiCounterUpdate (watchlist TICKER-section counters,
+                // 2026-08-01) — always-on cache write, distinct from the
+                // `OpenInterestUpdate` overlay passthrough above. The bridge
+                // forwarder already guards against stale/out-of-order replay
+                // rows before emitting; merge as-is.
+                LiveUpdate::OiCounterUpdate { exchange_id, account_type, symbol, oi, oi_value, d1h_pct, d24h_pct } => {
+                    let cache_key = crate::market_counters::market_counters_key(
+                        &symbol, exchange_id.as_str(), account_type.short_label(),
+                    );
+                    let now_ms = web_time::SystemTime::now()
+                        .duration_since(web_time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    let mut entry = self.market_counters.entry(cache_key).or_default();
+                    entry.oi = Some(oi);
+                    entry.oi_value = oi_value;
+                    entry.oi_d1h_pct = d1h_pct;
+                    entry.oi_d24h_pct = d24h_pct;
+                    entry.oi_updated_ms = now_ms;
+                }
+
                 // ── DomHeatmapSnapshot — pass-through ───────────────────────────
                 // Write target depends on per-app `dom_heatmap_show` overlay flag.
                 LiveUpdate::DomHeatmapSnapshot { exchange_id, account_type: at, symbol: sym, ts_ms, bids, asks } => {
@@ -2443,6 +2494,20 @@ impl BackendCore {
     /// Cancel the Funding Rate overlay subscription for an instrument.
     pub fn unsubscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         self.bridge.unsubscribe_funding_rate(exchange_id, symbol, account_type);
+    }
+
+    /// Subscribe the always-on funding-rate + open-interest counters for
+    /// the watchlist TICKER section's active-instrument block (owner spec
+    /// 2026-08-01). Distinct from `subscribe_open_interest`/
+    /// `subscribe_funding_rate` (per-chart overlays) — see
+    /// `market_counters` field doc.
+    pub fn subscribe_market_counters(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.subscribe_market_counters(exchange_id, symbol, account_type);
+    }
+
+    /// Cancel the market-counters subscription for an instrument.
+    pub fn unsubscribe_market_counters(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        self.bridge.unsubscribe_market_counters(exchange_id, symbol, account_type);
     }
 
     /// Trigger a background scan for one screener row (plan F, owner spec

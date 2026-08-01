@@ -937,6 +937,76 @@ impl ChartApp {
                     });
             }
 
+            // --- Watchlist market-counters block (funding rate + OI Δ%,
+            // owner spec 2026-08-01): cross-venue rows for the ACTIVE
+            // chart's instrument, stacked above the TICKER section.
+            // Subscription is ALWAYS Futures, independent of the active
+            // chart's own account type/exchange — see
+            // `docs/mlc/research/oi-funding-mlc-wiring-2026-08-01.md`.
+            {
+                use mlc_app_panels::trading::order_flow::multi_dom::KNOWN_EXCHANGES;
+                use mlc_app_sidebar_content::types::CounterRowData;
+
+                let desired_symbol = self
+                    .panel_app
+                    .panel_grid
+                    .active_container_id()
+                    .and_then(|cid| self.symbol_for_chart(cid))
+                    .filter(|s| !s.is_empty());
+
+                if desired_symbol != self.counters_symbol {
+                    if let Some(old_symbol) = self.counters_symbol.take() {
+                        for venue in KNOWN_EXCHANGES {
+                            if let Some(eid) = digdigdig3::ExchangeId::from_str(venue) {
+                                self.core.unsubscribe_market_counters(
+                                    eid, &old_symbol, digdigdig3::AccountType::FuturesCross,
+                                );
+                            }
+                        }
+                    }
+                    if let Some(ref new_symbol) = desired_symbol {
+                        for venue in KNOWN_EXCHANGES {
+                            if let Some(eid) = digdigdig3::ExchangeId::from_str(venue) {
+                                self.core.subscribe_market_counters(
+                                    eid, new_symbol, digdigdig3::AccountType::FuturesCross,
+                                );
+                            }
+                        }
+                    }
+                    self.counters_symbol = desired_symbol;
+                }
+
+                self.sidebar_state.counter_rows = match &self.counters_symbol {
+                    Some(symbol) => {
+                        let now_ms = web_time::SystemTime::now()
+                            .duration_since(web_time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        KNOWN_EXCHANGES.iter().filter_map(|venue| {
+                            let key = mlc_backend::market_counters::market_counters_key(symbol, venue, "F");
+                            let mc = self.core.market_counters.get(&key)?;
+                            if mc.funding_rate.is_none() && mc.oi.is_none() {
+                                return None;
+                            }
+                            // Clamp to 0 rather than go negative when the
+                            // countdown target has just elapsed (render
+                            // shows "-00:00:00" for one frame, not an
+                            // underflow/garbage duration).
+                            let countdown_secs = mc.next_funding_time_ms
+                                .map(|t| ((t - now_ms) / 1000).max(0));
+                            Some(CounterRowData {
+                                venue: (*venue).to_string(),
+                                funding_rate: mc.funding_rate,
+                                countdown_secs,
+                                d1h_pct: mc.oi_d1h_pct,
+                                d24h_pct: mc.oi_d24h_pct,
+                            })
+                        }).collect()
+                    }
+                    None => Vec::new(),
+                };
+            }
+
             // --- Connectors: populate from active hub ---
             {
                 use mlc_app_sidebar_content::types::ConnectorStatusItem;

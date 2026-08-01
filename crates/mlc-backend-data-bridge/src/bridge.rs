@@ -25,7 +25,7 @@
 //! which needs no runtime context — `runtime_handle` does not exist on
 //! that target.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -365,6 +365,45 @@ pub enum LiveUpdate {
         point: mlc_core::types::FundingRateCell,
     },
 
+    /// Always-on funding-rate counter for the watchlist TICKER section
+    /// (2026-08-01) — distinct from `FundingRateUpdate`'s per-chart overlay
+    /// passthrough, routed into `BackendCore::market_counters` instead of a
+    /// bubble's ring buffer.
+    ///
+    /// `next_funding_time_ms` is `None` unless the point's countdown target
+    /// is strictly in the future: dig3's warm-start replay re-emits
+    /// historical rows through the SAME event stream before live rows
+    /// arrive, and those historical rows carry a degenerate countdown
+    /// target (Bybit: `next_funding_time_ms == 0`; Binance: `== ts_ms`, i.e.
+    /// already past) — forwarding either would flash an expired/zero
+    /// countdown for a few seconds before the first live row corrects it.
+    /// `rate` has no such issue and is forwarded from every row (history
+    /// rows are a harmless seed; live rows overwrite within seconds).
+    FundingCounterUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        rate: f64,
+        next_funding_time_ms: Option<i64>,
+    },
+
+    /// Always-on open-interest counter for the watchlist TICKER section
+    /// (2026-08-01) — same station `Stream::OpenInterest` source as
+    /// `OpenInterestUpdate`, routed into `BackendCore::market_counters`
+    /// instead of a bubble's ring buffer. `d1h_pct`/`d24h_pct` are computed
+    /// by the forwarder from a rolling OI history ring (REST-seeded when the
+    /// venue declares `has_open_interest_history`, self-built from WS
+    /// samples otherwise) — `None` until enough history has accumulated.
+    OiCounterUpdate {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        oi: f64,
+        oi_value: Option<f64>,
+        d1h_pct: Option<f64>,
+        d24h_pct: Option<f64>,
+    },
+
     /// DOM heatmap snapshot for `chart_type == "dom_heatmap"` (C12).
     ///
     /// Sourced from an `OrderBook` station stream: each full book snapshot
@@ -683,6 +722,14 @@ pub struct DataBridge {
     /// to live here too; it now folds client-side (unified-data-plane Stage
     /// Э5, see `BackendCore::subscribe_cvd_fold`) and never touches this map.
     overlay_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType, OverlayKind), BgJoinHandle>>>,
+    /// Always-on funding-rate + open-interest counter task handles for the
+    /// watchlist TICKER section's active-instrument block (2026-08-01).
+    /// Keyed by `(ExchangeId, symbol, AccountType)` — deliberately SEPARATE
+    /// from `overlay_subs`: a chart's own `request_open_interest`/
+    /// `request_funding_rate` overlay toggle must never be torn down (or
+    /// replaced) by the counters subscribe path, and vice versa. Abort-and-
+    /// replace per key, same idiom as `abort_overlay_sub`.
+    counter_subs: Arc<Mutex<HashMap<(ExchangeId, String, AccountType), BgJoinHandle>>>,
     /// Tracks which `(ExchangeId, AccountType, symbol, timeframe)` keys already
     /// have a live `Stream::Kline` forwarder spawned by `request_bars`.
     ///
@@ -892,6 +939,7 @@ impl DataBridge {
             connector_retry: Arc::new(Mutex::new(HashMap::new())),
             derived_subs: Arc::new(Mutex::new(HashMap::new())),
             overlay_subs: Arc::new(Mutex::new(HashMap::new())),
+            counter_subs: Arc::new(Mutex::new(HashMap::new())),
             station_kline_subscribed: Arc::new(Mutex::new(HashSet::new())),
             wire_symbol_cache: Arc::new(Mutex::new(HashMap::new())),
             wire_symbol_prewarmed_count: Arc::new(Mutex::new(HashMap::new())),
@@ -2671,6 +2719,207 @@ impl DataBridge {
         })
     }
 
+    /// Subscribe the always-on funding-rate + open-interest counters for
+    /// the watchlist TICKER section's active-instrument block (2026-08-01,
+    /// see `docs/mlc/research/oi-funding-mlc-wiring-2026-08-01.md`).
+    /// Abort-and-replace per key — same idiom as `request_open_interest`/
+    /// `request_funding_rate` — but stored in the SEPARATE `counter_subs`
+    /// registry so this never touches a chart's own overlay subscription.
+    pub fn subscribe_market_counters(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_counter_sub(exchange_id, symbol, account_type);
+        // NOT `wire_symbol` — on Futures it can resolve DATED contracts
+        // ("BTCUSDT_261225") from the REST catalogue; the counters must
+        // query the perp. `station_series_symbol` = canonical parse +
+        // `SymbolNormalizer::to_exchange`, i.e. the venue-native perp form
+        // (same trap as the liq-tape series-key lookup, 2026-08-01).
+        let symbol_native = Self::station_series_symbol(exchange_id, account_type, symbol);
+        let sub_key = (exchange_id, symbol.to_string(), account_type);
+        let handle = self.spawn_market_counters_sub(
+            exchange_id, account_type, symbol.to_string(), symbol_native,
+        );
+        if let Ok(mut subs) = self.counter_subs.lock() {
+            subs.insert(sub_key, handle);
+        }
+    }
+
+    /// Cancel the market-counters subscription for an instrument — an
+    /// honest teardown (unlike `unsubscribe_mini_ticker`'s no-op stub):
+    /// aborts the forwarder task so switching the active chart's instrument
+    /// does not leave a stale counter forwarder running.
+    pub fn unsubscribe_market_counters(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+    ) {
+        self.abort_counter_sub(exchange_id, symbol, account_type);
+    }
+
+    /// Abort the active market-counters subscription for an instrument, if
+    /// any. Cheap idempotent no-op when the slot is empty.
+    fn abort_counter_sub(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if let Ok(mut subs) = self.counter_subs.lock() {
+            if let Some(h) = subs.remove(&(exchange_id, symbol.to_string(), account_type)) {
+                h.abort();
+            }
+        }
+    }
+
+    /// Spawn the combined funding-rate + open-interest counter forwarder
+    /// for one (venue, symbol) pair (2026-08-01). Subscribes BOTH
+    /// `Stream::FundingRate` and `Stream::OpenInterest` in one continue-on-
+    /// error `SubscriptionSet` — a venue missing one of the two streams
+    /// still gets the other (e.g. Binance has funding WS but not OI WS).
+    ///
+    /// Also runs a REST `get_open_interest_history` refresh every 300s,
+    /// raced against `report.handle.recv()` via `tokio::select!` in the
+    /// SAME loop (no separate spawned task, so one `BgJoinHandle` covers
+    /// both), when the venue declares `has_open_interest_history`: this
+    /// seeds the 1h/24h OI Δ% baseline, and on venues whose WS OpenInterest
+    /// feed is confirmed absent (Binance/KuCoin/HTX-shaped) it is the ONLY
+    /// source of a live OI reading. Venues with a live WS OI feed but no
+    /// REST history (Bitget) instead self-build the ring from WS samples.
+    fn spawn_market_counters_sub(
+        &self,
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol_canonical: String,
+        symbol_native: String,
+    ) -> BgJoinHandle {
+        let station = self.station.clone();
+        let tx = self.tx.clone();
+        let hub = self.station.hub();
+        self.spawn_bg_join(async move {
+            let has_oi_history = hub
+                .capabilities(exchange_id)
+                .map(|c| c.has_open_interest_history)
+                .unwrap_or(false);
+
+            // OI history ring feeding the 1h/24h Δ% baseline — rebuilt
+            // wholesale by the REST refresh when `has_oi_history`;
+            // otherwise grown sample-by-sample from the live WS feed.
+            let mut oi_ring: VecDeque<(i64, f64)> = VecDeque::new();
+            // Guards a warm-start replay row (older `ts_ms`) from rolling
+            // back a "current" OI value already advanced by a later live
+            // row across a respawn cycle (live-fact note 2026-08-01).
+            let mut last_oi_ts_ms: i64 = i64::MIN;
+            // Deadline-based REST refresh bookkeeping: a `sleep_ms(300s)`
+            // arm inside `select!` would be RECREATED (and thus reset) by
+            // every received event — on a venue with a ~1s funding stream
+            // (Binance markPrice) it would never fire and the OI baseline
+            // would freeze at its seed. The deadline persists across
+            // respawn cycles, which also bounds REST calls on a flapping
+            // stream to the same cadence.
+            let mut next_refresh_ms: i64 = 0;
+            let mut respawn_n: u32 = 0;
+
+            loop {
+                let sub_set = digdigdig3_station::SubscriptionSet::new().add(
+                    exchange_id, symbol_canonical.clone(), account_type,
+                    [digdigdig3_station::Stream::FundingRate, digdigdig3_station::Stream::OpenInterest],
+                );
+                let mut report = match station.subscribe(sub_set).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Transient subscribe failure (transport hiccup,
+                        // venue briefly unreachable) must NOT kill the
+                        // venue's counters until the next symbol change —
+                        // retry with a capped backoff.
+                        crate::dlog!("[Bridge::counters subscribe Err] respawn={} {:?} {} native={}: {:?}",
+                            respawn_n, exchange_id, symbol_canonical, symbol_native, e);
+                        let backoff = 5_000u64.saturating_mul(1 << respawn_n.min(4)).min(60_000);
+                        respawn_n = respawn_n.wrapping_add(1);
+                        sleep_ms(backoff).await;
+                        continue;
+                    }
+                };
+                // Wire-absent for BOTH streams → exit (e.g. BingX has
+                // neither). A partial failure (one stream absent, the
+                // other ok) is expected and handled per-stream below.
+                if !report.failed.is_empty() && report.ok.is_empty() {
+                    crate::dlog!("[Bridge::counters wire-absent] {:?} {} — exiting (failed={:?})",
+                        exchange_id, symbol_canonical, report.failed);
+                    return;
+                }
+                let ws_oi_ok = report.ok.iter().any(|k| k.kind == StationKind::OpenInterest);
+
+                loop {
+                    // Refresh when due — checked once per loop turn, i.e.
+                    // after every event AND on the idle tick, so neither a
+                    // busy stream (arm-reset trap, see `next_refresh_ms`
+                    // doc above) nor a silent one can starve the refresh.
+                    if has_oi_history {
+                        let now = crate::backfill_engine::now_ms();
+                        if now >= next_refresh_ms {
+                            refresh_oi_history(
+                                &hub, &tx, exchange_id, account_type,
+                                &symbol_canonical, &symbol_native, !ws_oi_ok, &mut oi_ring,
+                            ).await;
+                            next_refresh_ms = now + OI_HISTORY_REFRESH_MS;
+                        }
+                    }
+                    tokio::select! {
+                        ev = report.handle.recv() => {
+                            let Some(ev) = ev else { break };
+                            match ev {
+                                digdigdig3_station::Event::FundingRate { point, .. } => {
+                                    let now = crate::backfill_engine::now_ms();
+                                    let next_funding_time_ms = (point.next_funding_time_ms > now)
+                                        .then_some(point.next_funding_time_ms);
+                                    let _ = tx.send(LiveUpdate::FundingCounterUpdate {
+                                        exchange_id, account_type,
+                                        symbol: symbol_canonical.clone(),
+                                        rate: point.rate,
+                                        next_funding_time_ms,
+                                    });
+                                }
+                                digdigdig3_station::Event::OpenInterest { point, .. } => {
+                                    if point.ts_ms < last_oi_ts_ms {
+                                        // Stale replay row (respawn re-emitted warm-start
+                                        // history behind the already-advanced live head) —
+                                        // never roll the displayed value backwards.
+                                        continue;
+                                    }
+                                    last_oi_ts_ms = point.ts_ms;
+                                    let oi = point.open_interest;
+                                    let oi_value = (!point.open_interest_value.is_nan())
+                                        .then_some(point.open_interest_value);
+                                    // ALWAYS accumulate WS samples — when the REST
+                                    // refresh works it rebuilds the ring wholesale
+                                    // (authoritative), but on wasm several venues'
+                                    // history endpoints are CORS-blocked (OKX rubik,
+                                    // live-probed 2026-08-01) and the WS ring is
+                                    // then the only Δ% baseline source.
+                                    push_oi_sample(&mut oi_ring, point.ts_ms, oi);
+                                    let d1h_pct = oi_delta_pct(&oi_ring, point.ts_ms, oi, OI_1H_WINDOW_MS, OI_1H_TOL_MS);
+                                    let d24h_pct = oi_delta_pct(&oi_ring, point.ts_ms, oi, OI_24H_WINDOW_MS, OI_24H_TOL_MS);
+                                    let _ = tx.send(LiveUpdate::OiCounterUpdate {
+                                        exchange_id, account_type,
+                                        symbol: symbol_canonical.clone(),
+                                        oi, oi_value, d1h_pct, d24h_pct,
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Idle tick only — the actual refresh runs at the
+                        // top of the loop against `next_refresh_ms`.
+                        _ = sleep_ms(COUNTERS_IDLE_TICK_MS), if has_oi_history => {}
+                    }
+                }
+                crate::dlog!("[Bridge::counters cycle ended] respawn={} {:?} {}, respawning in 1s",
+                    respawn_n, exchange_id, symbol_canonical);
+                respawn_n = respawn_n.wrapping_add(1);
+                sleep_ms(1000).await;
+            }
+        })
+    }
+
     /// Request the full list of trading symbols from an exchange.
     ///
     /// Non-blocking — spawns an async task. On completion, sends
@@ -4024,6 +4273,124 @@ fn station_read_bars(station: &digdigdig3_station::Station, key: &StationSeriesK
     };
     drop(arc);
     result
+}
+
+// ── Market counters (funding rate + open interest) helpers ──────────────────
+// Watchlist TICKER section's active-instrument block (2026-08-01). Free
+// functions (no `&self` needed) called from `DataBridge::spawn_market_counters_sub`.
+
+/// REST OI-history refresh cadence (deadline arithmetic — i64 ms).
+const OI_HISTORY_REFRESH_MS: i64 = 300_000;
+/// Idle wake-up for the counters select loop so a silent stream still
+/// reaches the deadline check at the top of the loop.
+const COUNTERS_IDLE_TICK_MS: u64 = 5_000;
+/// Minimum spacing between self-built WS OI ring samples — bounds ring
+/// growth to ~1500 samples over 25h instead of one per WS tick.
+const OI_RING_MIN_GAP_MS: i64 = 60_000;
+/// OI ring retention window (25h) — margin past the 24h Δ% lookback.
+const OI_RING_CAP_MS: i64 = 25 * 60 * 60 * 1000;
+/// 1h Δ% lookback window + tolerance for the nearest-sample search. REST
+/// OI-history rows are HOURLY buckets aligned to :00 (live-probed
+/// 2026-08-01 on all 4 wired venues), so the `now - 1h` target can land up
+/// to ~30 min from the nearest bucket — the tolerance must cover half a
+/// bucket or d1h stays None most of every hour.
+const OI_1H_WINDOW_MS: i64 = 60 * 60 * 1000;
+const OI_1H_TOL_MS: i64 = 31 * 60 * 1000;
+/// 24h Δ% lookback window + tolerance (±90 min) for the nearest-sample search.
+const OI_24H_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
+const OI_24H_TOL_MS: i64 = 90 * 60 * 1000;
+
+/// Push a self-built WS OI sample onto the ring (used only for venues with
+/// a live WS OpenInterest feed but no REST history, e.g. Bitget) — skips
+/// samples closer than `OI_RING_MIN_GAP_MS` to the last one, evicts samples
+/// older than `OI_RING_CAP_MS` behind the newest.
+fn push_oi_sample(ring: &mut VecDeque<(i64, f64)>, ts_ms: i64, oi: f64) {
+    let gap_ok = ring.back().map(|(ts, _)| ts_ms - ts >= OI_RING_MIN_GAP_MS).unwrap_or(true);
+    if !gap_ok {
+        return;
+    }
+    ring.push_back((ts_ms, oi));
+    while ring.front().map(|(ts, _)| ts_ms - ts > OI_RING_CAP_MS).unwrap_or(false) {
+        ring.pop_front();
+    }
+}
+
+/// Nearest OI ring sample to `target_ms` within `tol_ms`, or `None` if no
+/// sample falls that close (insufficient history yet — never fabricated
+/// from a distant/absent sample).
+fn nearest_oi_sample(ring: &VecDeque<(i64, f64)>, target_ms: i64, tol_ms: i64) -> Option<f64> {
+    ring.iter()
+        .filter(|(ts, _)| (*ts - target_ms).abs() <= tol_ms)
+        .min_by_key(|(ts, _)| (*ts - target_ms).abs())
+        .map(|(_, oi)| *oi)
+}
+
+/// OI Δ% of `current_oi` against the ring sample nearest `now_ms -
+/// window_ms` (±`tol_ms`) — `None` when no base sample falls in the
+/// window; the delta appears honestly once the ring accumulates enough
+/// history.
+fn oi_delta_pct(
+    ring: &VecDeque<(i64, f64)>,
+    now_ms: i64,
+    current_oi: f64,
+    window_ms: i64,
+    tol_ms: i64,
+) -> Option<f64> {
+    let base = nearest_oi_sample(ring, now_ms - window_ms, tol_ms)?;
+    if base.abs() <= f64::EPSILON {
+        return None;
+    }
+    Some((current_oi - base) / base * 100.0)
+}
+
+/// One REST `get_open_interest_history` pull (period `"1h"`, limit 30 ≈ 25
+/// hourly points + margin — all 4 wired venues (Binance/Bybit/OKX/GateIO)
+/// accept the generic `"1h"` period string and translate it internally, see
+/// `docs/mlc/research/oi-funding-dig3-inventory-2026-08-01.md` §3). Rebuilds
+/// `ring` wholesale (fresh REST snapshot, no dedup needed against stale
+/// entries) and, when the venue's WS OpenInterest stream is confirmed
+/// absent (`emit_current == true`), forwards the latest row as the
+/// counter's live OI value — the only source of a current OI reading on
+/// Binance/KuCoin/HTX-shaped venues.
+async fn refresh_oi_history(
+    hub: &ExchangeHub,
+    tx: &broadcast::Sender<LiveUpdate>,
+    exchange_id: ExchangeId,
+    account_type: AccountType,
+    symbol_canonical: &str,
+    symbol_native: &str,
+    emit_current: bool,
+    ring: &mut VecDeque<(i64, f64)>,
+) {
+    let Some(connector) = hub.rest(exchange_id) else { return };
+    let rows = match connector.get_open_interest_history(
+        digdigdig3::core::types::SymbolInput::Raw(symbol_native),
+        "1h", None, None, Some(30), account_type,
+    ).await {
+        Ok(rows) if !rows.is_empty() => rows,
+        _ => return,
+    };
+    ring.clear();
+    for row in &rows {
+        ring.push_back((row.timestamp, row.open_interest));
+    }
+    if !emit_current {
+        return;
+    }
+    // Row order is venue-dependent (live-probed 2026-08-01: Binance/GateIO
+    // oldest-first, Bybit/OKX NEWEST-first) — never trust `.last()`.
+    let Some(newest) = rows.iter().max_by_key(|r| r.timestamp) else { return };
+    let d1h_pct = oi_delta_pct(ring, newest.timestamp, newest.open_interest, OI_1H_WINDOW_MS, OI_1H_TOL_MS);
+    let d24h_pct = oi_delta_pct(ring, newest.timestamp, newest.open_interest, OI_24H_WINDOW_MS, OI_24H_TOL_MS);
+    let _ = tx.send(LiveUpdate::OiCounterUpdate {
+        exchange_id,
+        account_type,
+        symbol: symbol_canonical.to_string(),
+        oi: newest.open_interest,
+        oi_value: newest.open_interest_value,
+        d1h_pct,
+        d24h_pct,
+    });
 }
 
 // ── Trading / Account / Position bridge methods ─────────────────────────────

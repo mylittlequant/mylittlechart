@@ -338,6 +338,11 @@ pub struct WatchlistColumnConfig {
     /// area spark for the ACTIVE chart's instrument. Default true.
     #[serde(default = "default_true_column_config")]
     pub show_ticker_section: bool,
+    /// Funding-rate + OI counters block, one row per venue, for the ACTIVE
+    /// chart's instrument (owner spec 2026-08-01). Stacked above the TICKER
+    /// section at the watchlist bottom. Default true.
+    #[serde(default = "default_true_column_config")]
+    pub show_market_counters: bool,
 
     /// Custom separator X positions as offsets from the left edge of the usable area.
     ///
@@ -378,6 +383,7 @@ impl Default for WatchlistColumnConfig {
             show_account_type: false,
             show_spark: true,
             show_ticker_section: true,
+            show_market_counters: true,
             separator_offsets: None,
             align_columns: true,
         }
@@ -403,6 +409,27 @@ pub struct TickerSectionData {
     pub change_abs: f64,
     /// Rolling last-price history, newest last (miniTicker cadence).
     pub spark: Vec<f64>,
+}
+
+/// One venue's row in the watchlist-bottom market-counters block (funding
+/// rate + OI Δ%, owner spec 2026-08-01) — always the ACTIVE chart's
+/// instrument, always Futures, one row per `KNOWN_EXCHANGES` venue that has
+/// at least one live value. Built per frame in `prepare.rs` from
+/// `BackendCore::market_counters`.
+#[derive(Clone, Debug, Default)]
+pub struct CounterRowData {
+    /// Venue slug (e.g. `"binance"`) — rendered as an uppercase short tag.
+    pub venue: String,
+    /// Dimensionless funding rate (0.0001 = 0.01%). `None` = no funding data yet.
+    pub funding_rate: Option<f64>,
+    /// Seconds remaining until the next funding settlement, clamped to 0.
+    /// `None` when the venue has not reported a live (future) countdown
+    /// target yet.
+    pub countdown_secs: Option<i64>,
+    /// OI Δ% over the trailing 1h. `None` until enough history has accumulated.
+    pub d1h_pct: Option<f64>,
+    /// OI Δ% over the trailing 24h. Same honesty rule as `d1h_pct`.
+    pub d24h_pct: Option<f64>,
 }
 
 // =============================================================================

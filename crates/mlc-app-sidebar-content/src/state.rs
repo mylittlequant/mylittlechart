@@ -235,6 +235,12 @@ pub struct SidebarState {
     /// chart / no ticker yet).
     pub ticker_section: Option<crate::types::TickerSectionData>,
 
+    /// Watchlist-bottom market-counters rows (funding rate + OI Δ%, owner
+    /// spec 2026-08-01) for the ACTIVE chart's instrument — one entry per
+    /// venue with at least one live value. Empty when there is no active
+    /// instrument or no venue has reported yet.
+    pub counter_rows: Vec<crate::types::CounterRowData>,
+
     /// Rows for the Screener panel (plan F v1, owner spec 2026-08-01).
     /// Populated by the app each frame from the active watchlist's live
     /// mini-ticker data plus `BackendCore::screener_metrics` (RSI/ATR/dist
@@ -826,6 +832,7 @@ impl Default for SidebarState {
             right_sidebar_width: RIGHT_SIDEBAR_WIDTH,
             watchlist_items: Vec::new(),
             ticker_section: None,
+            counter_rows: Vec::new(),
             screener_items: Vec::new(),
             screener_filters: crate::types::ScreenerFilters::default(),
             screener_sort_key: crate::types::ScreenerSortKey::default(),
