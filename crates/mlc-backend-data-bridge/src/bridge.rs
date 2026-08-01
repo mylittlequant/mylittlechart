@@ -1253,13 +1253,34 @@ impl DataBridge {
             // uppercased) — this is what mlc passes when the preset's
             // bubble carries the canonical form. wire_symbol case (2) /
             // (3) would otherwise pay the linear scan on first use.
-            if !base_asset.is_empty() && !quote_asset.is_empty() {
+            //
+            // Two guards, both load-bearing (live incident 2026-08-01 —
+            // the F-chart "two price bands"): binance USD-M lists
+            // `BTCUSDT`, `BTCUSDT_260925` and `BTCUSDT_261225` with the
+            // SAME base/quote and the same account_type, so all three
+            // compute canonical == "BTCUSDT".
+            //   1. A DATED contract must never own an expiry-less
+            //      canonical key. It used to: the perp's own row is
+            //      skipped here (its canonical EQUALS its symbol, already
+            //      seeded by the identity insert above), so the quarterlies
+            //      were the only writers of "BTCUSDT" and the last one in
+            //      catalogue order took the key. Every later
+            //      `wire_symbol("BTCUSDT")` hit that cache entry and the
+            //      backfill ramp fetched QUARTERLY klines under the perp's
+            //      label — same 1m timestamps, +1.65% contango prices,
+            //      merged straight into the perp's kline layer.
+            //   2. Never clobber an existing mapping: the identity insert
+            //      above is the authoritative one, and alias seeding must
+            //      not overwrite it regardless of catalogue order.
+            if !base_asset.is_empty()
+                && !quote_asset.is_empty()
+                && !is_dated_contract_symbol(symbol)
+            {
                 let canonical = format!("{base_asset}{quote_asset}").to_uppercase();
                 if canonical != *symbol {
-                    cache.insert(
-                        (exchange_id, *account_type, canonical),
-                        symbol.clone(),
-                    );
+                    cache
+                        .entry((exchange_id, *account_type, canonical))
+                        .or_insert_with(|| symbol.clone());
                 }
             }
         }
@@ -3975,6 +3996,7 @@ impl DataBridge {
         // `station.symbols()` (deep-clones every `extra` raw-JSON record)
         // and scanned it 2-3 times; 130-170ms per miss on Binance.
         let req_upper = requested.to_uppercase();
+        let req_is_dated = is_dated_contract_symbol(requested);
         let mut exact = false;
         let mut with_at_count = 0usize;
         let mut with_at_first: Option<String> = None;
@@ -3983,6 +4005,11 @@ impl DataBridge {
         self.station.for_each_symbol(exchange_id, |s| {
             if s.symbol == requested {
                 exact = true;
+            }
+            // A dated/delivery contract shares base+quote with the perp —
+            // never a valid answer for a request without an expiry.
+            if !req_is_dated && is_dated_contract_symbol(&s.symbol) {
+                return;
             }
             if !s.base_asset.is_empty()
                 && !s.quote_asset.is_empty()
@@ -4059,6 +4086,26 @@ impl DataBridge {
 
 }
 
+/// True when `symbol` is a DATED (delivery / quarterly) contract rather
+/// than the perpetual or spot instrument — the trailing segment after the
+/// last separator is a bare 6- or 8-digit expiry date (binance
+/// `BTCUSDT_261225`, okx `BTC-USD-260925`, bybit `BTCUSDT-27JUN25` is
+/// alphanumeric and stays out by construction).
+///
+/// Live incident 2026-08-01: binance USD-M lists `BTCUSDT`,
+/// `BTCUSDT_260925` and `BTCUSDT_261225` with IDENTICAL
+/// `base_asset`/`quote_asset` (BTC/USDT) and the same `account_type`, so a
+/// canonical→native scan keyed on base+quote alone can answer a plain
+/// "BTCUSDT" request with a quarterly. That page then flows under the
+/// perp's own label: same 1m timestamps, prices carrying the contango
+/// premium (+1.65% measured), merged straight into the perp's kline layer
+/// — the F-chart "two price bands" breakage. A dated contract is NEVER a
+/// valid answer for a request that does not itself carry an expiry.
+fn is_dated_contract_symbol(symbol: &str) -> bool {
+    let tail = symbol.rsplit(['_', '-']).next().unwrap_or("");
+    matches!(tail.len(), 6 | 8) && tail.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Parse a canonical concatenated symbol string ("BTCUSD", "BTC-USDT",
 /// "MU/USDC") into a dig3 `Symbol` — byte-for-byte the same heuristic
 /// `digdigdig3-station`'s private `parse_symbol` uses for the WS subscribe
@@ -4098,6 +4145,7 @@ pub(crate) fn try_resolve_wire_symbol(
     // Single lean pass — see `wire_symbol`'s miss-path comment (avoids the
     // deep `extra` clone of the whole catalogue per call).
     let req_upper = requested.to_uppercase();
+    let req_is_dated = is_dated_contract_symbol(requested);
     let mut catalogue_empty = true;
     let mut exact = false;
     let mut with_at_count = 0usize;
@@ -4108,6 +4156,11 @@ pub(crate) fn try_resolve_wire_symbol(
         catalogue_empty = false;
         if s.symbol == requested {
             exact = true;
+        }
+        // Dated/delivery contracts are never a valid answer for an
+        // expiry-less request — see `is_dated_contract_symbol`.
+        if !req_is_dated && is_dated_contract_symbol(&s.symbol) {
+            return;
         }
         if !s.base_asset.is_empty()
             && !s.quote_asset.is_empty()
@@ -4641,3 +4694,29 @@ fn ob_delta_point_to_orderbook_delta(
     }
 }
 
+
+#[cfg(test)]
+mod dated_contract_tests {
+    use super::is_dated_contract_symbol;
+
+    /// Live incident 2026-08-01: binance USD-M lists the perp and its
+    /// quarterlies with identical base/quote, so anything keyed on
+    /// base+quote alone can answer a perp request with a dated contract.
+    #[test]
+    fn dated_contracts_are_recognized_perps_and_spot_are_not() {
+        // Dated / delivery — must be excluded from expiry-less resolution.
+        assert!(is_dated_contract_symbol("BTCUSDT_261225"));
+        assert!(is_dated_contract_symbol("BTCUSDT_260925"));
+        assert!(is_dated_contract_symbol("BTCUSD_240329"));
+        assert!(is_dated_contract_symbol("BTC-USD-260925"));
+        assert!(is_dated_contract_symbol("ETHUSDT_20261225"));
+
+        // Perps / spot / coin-M perp — must stay resolvable.
+        assert!(!is_dated_contract_symbol("BTCUSDT"));
+        assert!(!is_dated_contract_symbol("BTCUSD_PERP"));
+        assert!(!is_dated_contract_symbol("BTC-USDT"));
+        assert!(!is_dated_contract_symbol("BTC-USDT-SWAP"));
+        assert!(!is_dated_contract_symbol("BTC_USDT"));
+        assert!(!is_dated_contract_symbol("1000PEPEUSDT"));
+    }
+}

@@ -761,7 +761,7 @@ impl ChartApp {
             BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar: _bar } => {
                 let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
-                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool, bool)> = {
+                let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool, bool, String)> = {
                     self.panel_app.panel_grid.containers().keys()
                         .filter_map(|cid| {
                             let sym = self.symbol_for_chart(*cid)?;
@@ -791,7 +791,8 @@ impl ChartApp {
                             let is_trade_built = self.core.tags().tag_for_chart(*cid)
                                 .and_then(|bid| self.core.bubbles().with_bubble(bid, |b| b.active_trade_built_kline.is_some()))
                                 .unwrap_or(false);
-                            Some((*cid, (sym, at, is_derived, is_trade_built)))
+                            let exch = self.exchange_for_chart(*cid)?;
+                            Some((*cid, (sym, at, is_derived, is_trade_built, exch)))
                         })
                         .collect()
                 };
@@ -844,7 +845,7 @@ impl ChartApp {
                 // `is_new_bar_for_window` and drive the per-window viewport.
 
                 for (cid_bu, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
-                    let (win_sym, win_at, is_derived, is_trade_built) = match instrument_by_cid_bu.get(cid_bu) {
+                    let (win_sym, win_at, is_derived, is_trade_built, win_exch) = match instrument_by_cid_bu.get(cid_bu) {
                         Some(t) => t,
                         None => continue,
                     };
@@ -856,7 +857,14 @@ impl ChartApp {
                     if !*is_derived && !*is_trade_built {
                         continue;
                     }
-                    if win_sym.as_str() != bar_symbol || *win_at != bar_event_at {
+                    // Exchange belongs to the instrument identity — without
+                    // it a same-symbol window on a DIFFERENT venue consumed
+                    // this event's viewport bookkeeping (same defect class as
+                    // the trade-fold match below).
+                    if win_sym.as_str() != bar_symbol
+                        || win_exch.as_str() != _bar_exch.as_str()
+                        || *win_at != bar_event_at
+                    {
                         continue;
                     }
                     if window.pending_symbol_load {
@@ -983,14 +991,39 @@ impl ChartApp {
                         .collect()
                 };
 
+                // A trade whose price is not a positive finite number is
+                // garbage — folding it into the live candle sets `close`
+                // to it and drives `low` to it permanently (min is
+                // sticky), which blows the auto-scale down to ~0 and
+                // renders as a full-height drop candle at the live edge
+                // (owner-visible F-chart breakage, live-caught 2026-08-01:
+                // `i=2000 o=62946.7 h=62947.1 l=0 c=0`). Drop it here and
+                // name the venue once so the parser side can be chased.
+                if !(*price > 0.0) || !price.is_finite() {
+                    crate::sglog!(
+                        "[trade] dropped non-positive price {} qty {} from {} {}:{} ts={}",
+                        price, quantity, exchange_id.as_str(), symbol, account_type, timestamp,
+                    );
+                    return;
+                }
+
                 let mut bubble_periods: std::collections::HashMap<mlc_core::ids::BubbleId, i64> = std::collections::HashMap::new();
                 for (cid_tu, _window) in self.panel_app.panel_grid.containers().iter() {
                     if derived_cids_tu.contains(cid_tu) { continue; }
-                    let (win_sym_tu, win_tf_tu, _win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
+                    let (win_sym_tu, win_tf_tu, win_exch_tu, win_at_tu) = match instrument_by_cid_tu.get(cid_tu) {
                         Some(t) => t,
                         None => continue,
                     };
-                    if win_sym_tu.as_str() != symbol || *win_at_tu != trade_event_at {
+                    // Exchange is part of the instrument identity — matching
+                    // on (symbol, account_type) alone folded a BTCUSDT:F
+                    // trade from ANY venue into this window's live candle
+                    // (every multi-venue tape and the LIQ roster subscribe
+                    // the same base symbol across venues), so a foreign
+                    // venue's tick moved a binance chart's close/volume.
+                    if win_sym_tu.as_str() != symbol
+                        || win_exch_tu.as_str() != exchange_id.as_str()
+                        || *win_at_tu != trade_event_at
+                    {
                         continue;
                     }
                     let period_secs = win_tf_tu.interval_ms / 1000;
