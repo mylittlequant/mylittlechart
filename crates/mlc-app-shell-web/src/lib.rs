@@ -692,7 +692,10 @@ fn run_render_loop(
                     .map(|bid| st.chart.core.indicators()
                         .instances_for_bubble(bid)
                         .iter()
-                        .map(|i| format!("{}#{}", i.type_id, i.id))
+                        // `!` marks a HIDDEN instance — visibility is
+                        // persisted state, and a probe that cannot show it
+                        // cannot prove whether a reload kept it.
+                        .map(|i| format!("{}#{}{}", i.type_id, i.id, if i.visible { "" } else { "!" }))
                         .collect::<Vec<_>>()
                         .join(","))
                     .unwrap_or_default();
@@ -927,6 +930,19 @@ fn run_render_loop(
                     })
                     .unwrap_or((0, 0.0, 0.0, 0, 0));
                 let _ = js_sys::Reflect::set(&dbg, &"oi_points".into(), &(oi_points as f64).into());
+                let oi_hist = active_cid
+                    .and_then(|cid| st.chart.bubble_for_chart(cid))
+                    .map(|bid| {
+                        st.chart
+                            .core
+                            .bubbles()
+                            .oi_hist_shape(bid)
+                            .into_iter()
+                            .map(|(v, n)| format!("{}={}", v, n))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"oi_hist".into(), &oi_hist.join(",").into());
                 // Per-venue OI HISTORY shape — the projection's real input,
                 // distinct from the OI Delta pane's websocket series above.
                 let oi_hist = active_cid

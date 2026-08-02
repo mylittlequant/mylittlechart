@@ -158,9 +158,16 @@ pub fn fold_oi(
 
 /// Row key: quantised price plus side, so long and short pressure at the
 /// same price stay distinct (they are opposite forces, not one pool).
+///
+/// `grid` is ONE absolute step for the whole projection, derived from a
+/// reference price rather than from each contributing price. A per-point
+/// step made the index unrecoverable — two points at different prices
+/// produced different steps, so the same index meant two different prices
+/// and rows collapsed into each other (2026-08-02: 500 open-interest rows
+/// yielded 10 levels).
 #[inline]
-fn row_key(price: f64, row: f64, side: u8) -> (i64, u8) {
-    ((price / row).round() as i64, side)
+fn row_key(price: f64, grid: f64, side: u8) -> (i64, u8) {
+    ((price / grid).round() as i64, side)
 }
 
 /// Build the projected levels for `bars` from the open-interest series.
@@ -180,6 +187,15 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
         return Vec::new();
     }
 
+    // ONE absolute row step for the whole projection, taken from the last
+    // bar's close: the grid has to be invertible, so `row_idx × grid` must
+    // name exactly one price no matter which bar contributed to it.
+    let reference_price = bars.last().map(|b| b.close).unwrap_or(0.0);
+    if !(reference_price > 0.0) {
+        return Vec::new();
+    }
+    let grid = (reference_price * row_pct).max(f64::MIN_POSITIVE);
+
     // (row, side) → (notional, earliest ts)
     let mut rows: std::collections::HashMap<(i64, u8), (f64, i64)> = std::collections::HashMap::new();
 
@@ -198,8 +214,6 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
         if !notional.is_finite() || notional <= 0.0 {
             continue;
         }
-        let row = (price * row_pct).max(f64::MIN_POSITIVE);
-
         for tier in &params.tiers {
             let l = tier.leverage;
             let w = tier.weight.max(0.0);
@@ -218,7 +232,7 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
                 if part <= 0.0 || !(p_liq > 0.0) {
                     continue;
                 }
-                let e = rows.entry(row_key(p_liq, row, side)).or_insert((0.0, point.ts_ms));
+                let e = rows.entry(row_key(p_liq, grid, side)).or_insert((0.0, point.ts_ms));
                 e.0 += notional * share * part;
                 if point.ts_ms < e.1 {
                     e.1 = point.ts_ms;
@@ -233,10 +247,7 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
             if notional < params.min_usd {
                 return None;
             }
-            // Recover the row centre from the index: the grid step is a
-            // fraction of price, so derive it from a representative price
-            // rather than storing it per row.
-            let price = price_at(bars, from_ts)? * row_pct * row_idx as f64;
+            let price = row_idx as f64 * grid;
             if !(price > 0.0) {
                 return None;
             }

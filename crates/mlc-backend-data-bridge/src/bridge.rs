@@ -3264,13 +3264,15 @@ impl DataBridge {
             .unwrap_or_else(|_| symbol.to_string())
     }
 
-    /// Venues that serve open-interest HISTORY over REST, asked of the
-    /// connector layer rather than listed here.
+    /// Venues to ask for open-interest HISTORY.
     ///
-    /// `has_open_interest_history` is the capability the venue declares, and
-    /// it is the only honest source: a hardcoded roster drifts the moment a
-    /// connector gains or loses the endpoint, and the liquidation arc spent
-    /// hours on exactly that class of stale list.
+    /// The capability flag decides — but only once the connector exists.
+    /// `hub.capabilities` answers `None` for a venue that has not been
+    /// dialled yet, and filtering that out left the fold with ONE venue on
+    /// a cold start (measured 2026-08-02: `oi_hist: binance=500` with
+    /// aggregate on). An undialled candidate is therefore KEPT: the caller
+    /// dials it and the REST call is the real test. A venue that answers
+    /// `false` is dropped for good.
     pub fn oi_history_venues(&self) -> Vec<ExchangeId> {
         [
             ExchangeId::Binance,
@@ -3285,8 +3287,7 @@ impl DataBridge {
         .filter(|eid| {
             self.hub
                 .capabilities(*eid)
-                .map(|c| c.has_open_interest_history)
-                .unwrap_or(false)
+                .map_or(true, |c| c.has_open_interest_history)
         })
         .collect()
     }
