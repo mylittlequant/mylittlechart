@@ -38,8 +38,6 @@ mod tpo;
 mod tpo_profile;
 mod three_line_break;
 mod volume_profile;
-mod oi_delta;
-mod funding_rate;
 mod dom_heatmap;
 mod liquidations;
 mod liquidation_projection;
@@ -55,8 +53,6 @@ pub use tpo::draw_tpo;
 pub use tpo_profile::draw_tpo_profile_overlay;
 pub use three_line_break::draw_three_line_break;
 pub use volume_profile::draw_volume_profile_overlay;
-pub use oi_delta::draw_oi_delta;
-pub use funding_rate::draw_funding_rate_strip;
 pub use dom_heatmap::{draw_dom_heatmap, draw_dom_heatmap_conditional};
 pub use liquidation_projection::{
     draw_liquidation_projection, draw_liquidation_projection_conditional,

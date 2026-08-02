@@ -29,7 +29,6 @@ use crate::chart_render::{
     ChartRenderState, ChartTheme, ChartRect,
     draw_grid, draw_grid_extended, draw_data_gaps, draw_candles, draw_volume_profile_overlay,
     draw_tpo_profile_overlay,
-    draw_oi_delta, draw_funding_rate_strip,
     draw_dom_heatmap_conditional, draw_liquidation_levels_conditional,
     draw_liquidation_projection_conditional,
     draw_liquidation_prints_conditional,
@@ -1030,6 +1029,56 @@ pub fn draw_alert_lines(
 // =============================================================================
 
 /// Draw a line indicator in a sub-pane
+/// Tint the area between a sub-pane series and its zero line — one colour
+/// above, another below.
+///
+/// A signed series (open-interest change, funding) reads as "which side is
+/// it on" long before it reads as a value, and a single-colour line hides
+/// that. Drawn UNDER the line as translucent columns, one per bar, so the
+/// line itself stays the precise reading.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_sub_pane_zero_zones(
+    ctx: &mut dyn RenderContext,
+    state: &ChartRenderState,
+    values: &[f64],
+    pane_x: f64,
+    pane_y: f64,
+    pane_height: f64,
+    pane_min: f64,
+    pane_max: f64,
+    up_color: &str,
+    down_color: &str,
+) {
+    if pane_max <= pane_min {
+        return;
+    }
+    let visible = state.viewport.visible_range();
+    let (start_bar, end_bar) = (visible.0.max(0), visible.1.min(values.len()));
+    if start_bar >= end_bar {
+        return;
+    }
+    let y_for = |v: f64| pane_y + pane_height * (1.0 - (v - pane_min) / (pane_max - pane_min));
+    // Zero may sit outside the pane's range (an all-positive window); clamp
+    // so the fill still means "distance from zero" rather than inverting.
+    let zero_y = y_for(0.0).clamp(pane_y, pane_y + pane_height);
+    let bar_w = state.viewport.bar_spacing.max(1.0);
+    for (i, &v) in values.iter().enumerate().take(end_bar).skip(start_bar) {
+        if !v.is_finite() {
+            continue;
+        }
+        let bar_ts_ms = state.bars.get(i).map(|b| b.ts_ms()).unwrap_or(0);
+        let x = pane_x + state.viewport.x_for_bar(i, bar_ts_ms);
+        let vy = y_for(v).clamp(pane_y, pane_y + pane_height);
+        let (top, h) = if vy < zero_y { (vy, zero_y - vy) } else { (zero_y, vy - zero_y) };
+        if h < 0.5 {
+            continue;
+        }
+        let base = if v >= 0.0 { up_color } else { down_color };
+        ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(base, 0.28));
+        ctx.fill_rect(x - bar_w * 0.5, top, bar_w, h);
+    }
+}
+
 pub fn draw_sub_pane_line(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
@@ -1299,26 +1348,12 @@ pub fn render_sub_pane(
     ctx.set_fill_color(&state.theme.sub_pane_bg);
     ctx.fill_rect(content.x, content.y, content.width, content.height);
 
-    // Host-rendered sub-panes: these two carry no `IndicatorOutput` series,
-    // so the generic output loop below has nothing to draw for them. They
-    // own their own renderers and are handed THIS pane's rectangle.
-    {
-        let area = mlc_core::chart::render_data::ChartRect {
-            x: content.x,
-            y: content.y,
-            width: content.width,
-            height: content.height,
-        };
-        if instance.type_id.eq_ignore_ascii_case("overlay_oi_delta") {
-            if let Some(oi) = state.oi_delta_ref {
-                draw_oi_delta(ctx, state, oi, &area);
-            }
-        } else if instance.type_id.eq_ignore_ascii_case("overlay_funding_rate") {
-            if let Some(fr) = state.funding_rate_ref {
-                draw_funding_rate_strip(ctx, state, fr, &area);
-            }
-        }
-    }
+    // OI Delta and Funding Rate draw through the ORDINARY output loop below:
+    // the host resamples their bubble data onto the bar grid and publishes it
+    // as a normal series (`frame_lifecycle::subpane_series`), so they are a
+    // line like any other sub-pane indicator. They used to be painted here by
+    // bespoke renderers — cells and a histogram — which is why they looked
+    // nothing like the rest of the sub-pane family.
 
     let (visible_start, visible_end_raw) = state.viewport.visible_range();
     let visible_end = visible_end_raw.min(state.bars.len());
@@ -1402,6 +1437,15 @@ pub fn render_sub_pane(
                 // falling red (parity with the retired hand-drawn strip;
                 // owner report 2026-07-05 #4: single-color CVD is a
                 // regression). Every other line keeps its flat color.
+                // Optional signed-zone tint, under the line.
+                if instance.bool_params.get("zones").copied().unwrap_or(false) {
+                    draw_sub_pane_zero_zones(
+                        ctx, state, values,
+                        content.x, content.y, content.height,
+                        pane_min, pane_max,
+                        &state.theme.candle_up, &state.theme.candle_down,
+                    );
+                }
                 if instance.type_id.eq_ignore_ascii_case("cvd") {
                     draw_sub_pane_line_directional(
                         ctx, state, values,

@@ -504,6 +504,9 @@ impl ChartApp {
         // per venue, so nothing is lost to a frame that did not run.
         self.pump_liquidations();
         self.refresh_liq_projection();
+        // Bar-aligned series for the host-rendered sub-panes, so they draw
+        // through the ordinary output path instead of a bespoke painter.
+        self.refresh_subpane_series();
 
         for state in self.panels_store.l2_tape.values_mut() {
             if state.multi_mode {

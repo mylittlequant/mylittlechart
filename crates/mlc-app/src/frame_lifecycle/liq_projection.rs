@@ -51,7 +51,15 @@ impl crate::ChartApp {
                     if !seen.insert(bid) {
                         return None;
                     }
-                    if !self.liq_projection_active(bid) {
+                    // Open-interest history feeds TWO consumers: the
+                    // projection models from it, and the OI Delta sub-pane
+                    // resamples it into its line. Gating the fetch on the
+                    // projection alone left the sub-pane permanently empty
+                    // whenever the projection was hidden — measured
+                    // 2026-08-03.
+                    let wants_oi = self.liq_projection_active(bid)
+                        || self.overlay_instance_active(bid, Self::OI_DELTA_TYPE_ID);
+                    if !wants_oi {
                         return None;
                     }
                     let symbol = self.symbol_for_chart(cid)?;
@@ -81,7 +89,9 @@ impl crate::ChartApp {
 
         for (bid, symbol, own_venue, aggregate, bar_ms) in targets {
             self.ensure_oi_history(bid, &symbol, own_venue, aggregate, bar_ms, now_ms);
-            self.rebuild_liq_projection(bid, own_venue, aggregate, bar_ms);
+            if self.liq_projection_active(bid) {
+                self.rebuild_liq_projection(bid, own_venue, aggregate, bar_ms);
+            }
         }
     }
 

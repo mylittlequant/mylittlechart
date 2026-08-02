@@ -512,6 +512,24 @@ impl<'a> IndicatorsMut<'a> {
         true
     }
 
+    /// Publish a host-computed series onto an instance's output.
+    ///
+    /// The host-rendered entries carry `machine_id: None`, so the compute
+    /// pass produces nothing for them. Their data arrives on the bubble
+    /// (open interest, funding) and is resampled onto the bar grid by the
+    /// caller; writing it here lets them render through the ORDINARY output
+    /// path — a line, like any other sub-pane indicator — instead of a
+    /// bespoke painter.
+    pub fn publish_values(&mut self, id: u64, output: &str, values: Vec<f64>) -> bool {
+        match self.mgr.get_instance_mut(id) {
+            Some(inst) => {
+                inst.set_values(output, values);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Remove an instance by id.
     pub fn remove(&mut self, id: u64) -> Option<IndicatorInstance> {
         self.mgr.remove_instance(id)
