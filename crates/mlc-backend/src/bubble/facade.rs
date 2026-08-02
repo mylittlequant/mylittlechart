@@ -80,6 +80,20 @@ impl<'a> BubbleView<'a> {
             None => (0, 0, 0, 0, 0, 0),
         }
     }
+
+    /// Price span the heat ring actually covers, `(low, high)` — the answer
+    /// to "is the layer missing rows, or are they there and invisible".
+    pub fn dom_price_span(&self) -> (f64, f64) {
+        let Some(b) = self.bubble.dom_heatmap.as_ref() else { return (0.0, 0.0) };
+        let mut lo = f64::MAX;
+        let mut hi = f64::MIN;
+        for c in b.cells.iter().chain(b.live.iter()) {
+            let p = c.price(b.tick_size, b.row_ticks);
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        if lo > hi { (0.0, 0.0) } else { (lo, hi) }
+    }
     pub fn bars(&self) -> &[mlc_core::Bar] {
         &self.bubble.bars
     }

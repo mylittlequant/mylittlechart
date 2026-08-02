@@ -1739,6 +1739,7 @@ impl ChartApp {
         let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
         DomHeatmapInk {
             sensitivity: f("sensitivity", d.sensitivity),
+            norm_pct: f("norm_pct", d.norm_pct),
             contrast: f("contrast", d.contrast),
             opacity: f("opacity", d.opacity),
             wall_x: f("wall_x", d.wall_x),

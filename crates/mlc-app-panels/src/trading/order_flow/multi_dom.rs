@@ -1140,12 +1140,28 @@ impl MultiDomState {
             // numbers + big-order marker.
             let cx = (x + PRICE_COL_WIDTH) as f64;
             let cell_w = (w - PRICE_COL_WIDTH - 4.0) as f64;
+            // A row can carry BOTH sides at once. Across venues the best bid
+            // of one can sit at or above the best ask of another, so the
+            // combined book overlaps around the touch — a crossed market
+            // between exchanges. The reference draws that zone with both
+            // colours present; picking a side by position relative to mid
+            // would hide the one fact only an aggregated ladder can show.
+            let ask_here = ask_combined.get(&idx);
+            let bid_here = bid_combined.get(&idx);
+            let crossed = ask_here.is_some() && bid_here.is_some();
             let (combined, cum) = if is_ask {
                 let k = (idx - mid_idx) as usize;
-                (ask_combined.get(&idx), ask_cum.get(k).copied().unwrap_or(0.0))
+                (ask_here, ask_cum.get(k).copied().unwrap_or(0.0))
             } else {
                 let k = (mid_idx - idx) as usize;
-                (bid_combined.get(&idx), bid_cum.get(k).copied().unwrap_or(0.0))
+                (bid_here, bid_cum.get(k).copied().unwrap_or(0.0))
+            };
+            // The opposite side of a crossed row, drawn as a half-height
+            // band under the primary one.
+            let other = if crossed {
+                if is_ask { bid_here } else { ask_here }
+            } else {
+                None
             };
 
             if cum > 0.0 {
@@ -1213,6 +1229,29 @@ impl MultiDomState {
                 }
             }
 
+            // Crossed row: the opposite side as a half-height band beneath
+            // the primary bar, in its own hue, no digits — the point is that
+            // the level is contested, not how much sits on each side.
+            if let Some((other_total, other_parts)) = other {
+                if *other_total > 0.0 {
+                    let other_ask = !is_ask;
+                    let frac = (*other_total / max_level).powf(0.6).clamp(0.04, 1.0);
+                    let bw = cell_w * frac;
+                    let by = row_y + ROW_HEIGHT as f64 * 0.55;
+                    let bh = ROW_HEIGHT as f64 * 0.40;
+                    let mut seg_x = cx + 2.0;
+                    for &part in other_parts.iter() {
+                        if part <= 0.0 { continue; }
+                        let seg_w = bw * (part / *other_total);
+                        let seg_frac = (part / max_level).powf(0.6).clamp(0.04, 1.0);
+                        let g = (seg_frac * (GRAD_STEPS - 1) as f64).round() as usize;
+                        ctx.set_fill_color(if other_ask { &ask_grad[g] } else { &bid_grad[g] });
+                        ctx.fill_rect(seg_x, by, seg_w, bh);
+                        seg_x += seg_w;
+                    }
+                }
+            }
+
             // Mid separator line under the mid row.
             if is_mid {
                 ctx.set_stroke_color(&theme.current_price);
@@ -1233,8 +1272,12 @@ impl MultiDomState {
         if !matches!(theme.style.bar_texture, BarTexture::Cells | BarTexture::Mosaic) {
             let cx = (x + PRICE_COL_WIDTH) as f64 + 2.0;
             let cell_w = (w - PRICE_COL_WIDTH - 4.0) as f64;
-            let ask_line = mlc_core::apply_opacity(&theme.sell, 0.55);
-            let bid_line = mlc_core::apply_opacity(&theme.buy, 0.55);
+            // The reference draws this silhouette BRIGHTER than the bars it
+            // traces — amber over the asks, green over the bids — so it reads
+            // as the outline of the whole book rather than as another bar. The
+            // secondary token is that hot endpoint.
+            let ask_line = mlc_core::apply_opacity(&theme.sell_bright, 0.9);
+            let bid_line = mlc_core::apply_opacity(&theme.buy_bright, 0.9);
             for side_ask in [true, false] {
                 ctx.set_stroke_color(if side_ask { &ask_line } else { &bid_line });
                 ctx.set_stroke_width(1.0);

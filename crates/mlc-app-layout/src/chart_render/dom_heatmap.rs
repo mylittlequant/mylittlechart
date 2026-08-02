@@ -134,7 +134,6 @@ pub fn draw_dom_heatmap(
     // peak and would freeze the newest column at whatever passed through it
     // first. Its cell takes over the moment the bar closes.
     let mut placed: Vec<(f64, f64, f64, f64, bool)> = Vec::with_capacity(buf.cells.len());
-    let mut max_depth = 1e-9_f64;
     let frozen = buf.cells.iter().filter(|c| c.ts_ms != buf.live_bar_ms);
     for cell in frozen.chain(buf.live.iter()) {
         let Some(bar_idx) = bar_index_at(bars, cell.ts_ms) else { continue };
@@ -148,7 +147,6 @@ pub fn draw_dom_heatmap(
         }
         let norm_y = (ps.price_max - price) / price_range;
         let cy = rect.y + norm_y * rect.height - row_px * 0.5;
-        max_depth = max_depth.max(cell.bid_depth).max(cell.ask_depth);
         // Digits are suppressed wherever the candle covers the cell: half a
         // number sticking out from under a body reads as noise. The heat
         // itself still paints — under the candle there is just no text.
@@ -169,6 +167,16 @@ pub fn draw_dom_heatmap(
     }
 
     let ink = state.dom_params;
+    // Normalise against a PERCENTILE of what is on screen, not the maximum.
+    // The maximum is by definition the biggest wall in view, so scaling by it
+    // pushed every ordinary level under the alpha cut — the field looked
+    // empty until price came close enough for a level to grow, which is what
+    // read as the layer loading in late rather than being there already.
+    let mut depths: Vec<f64> = placed.iter().map(|(_, _, b, a, _)| b.max(*a)).collect();
+    depths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let pct = ink.norm_pct.clamp(10.0, 100.0) / 100.0;
+    let pick = ((depths.len() as f64 - 1.0) * pct).round().max(0.0) as usize;
+    let max_depth = depths.get(pick).copied().unwrap_or(1e-9).max(1e-9);
     let norm = max_depth / ink.sensitivity.max(0.1);
     let opacity = ink.opacity.clamp(0.05, 1.0);
     // `contrast` is the exponent of depth→alpha. The reference reads as a
@@ -178,10 +186,10 @@ pub fn draw_dom_heatmap(
     // A wall is measured against the visible MEAN, not the maximum: the
     // maximum IS the wall, so normalising by it would mark every frame's
     // biggest cell no matter how ordinary.
-    let mean_depth = if placed.is_empty() {
+    let mean_depth = if depths.is_empty() {
         0.0
     } else {
-        placed.iter().map(|(_, _, b, a, _)| b.max(*a)).sum::<f64>() / placed.len() as f64
+        depths.iter().sum::<f64>() / depths.len() as f64
     };
     let wall_at = mean_depth * ink.wall_x.max(1.0);
 

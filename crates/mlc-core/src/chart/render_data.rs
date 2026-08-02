@@ -674,6 +674,12 @@ pub enum HistoryDepthDisplay {
 pub struct DomHeatmapInk {
     /// Gain on the on-screen depth normaliser.
     pub sensitivity: f64,
+    /// Percentile of the visible depths used AS that normaliser, instead of
+    /// the plain maximum. With the maximum, a single wall sets the scale and
+    /// every ordinary level sinks under the alpha cut — they only surfaced
+    /// as price approached and their size grew, which read as the layer
+    /// loading in late. 100 restores max-normalisation.
+    pub norm_pct: f64,
     /// Exponent of the depth→alpha curve. `<1` lifts weak cells, `>1` sinks
     /// them into the background so only walls stand out.
     pub contrast: f64,
@@ -692,8 +698,9 @@ impl Default for DomHeatmapInk {
     fn default() -> Self {
         Self {
             sensitivity: 1.0,
+            norm_pct: 90.0,
             contrast: 1.7,
-            opacity: 0.55,
+            opacity: 0.38,
             wall_x: 5.0,
             show_values: true,
             value_size: 1.0,

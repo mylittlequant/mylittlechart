@@ -729,13 +729,14 @@ fn run_render_loop(
                 let mut total_bars = 0f64;
                 let mut total_layer_bars = 0f64;
                 let mut dom_probe = (0usize, 0usize, 0i64, 0i64, 0i64, 0i64);
+                let mut dom_span = (0.0f64, 0.0f64);
                 let bm = st.chart.core.bubbles();
                 bm.each_bubble(|b| {
                     bubble_count += 1.0;
                     total_bars += b.bars_len() as f64;
                     total_layer_bars += b.kline_layer_points() as f64;
                     let p = b.dom_probe();
-                    if p.0 > dom_probe.0 { dom_probe = p; }
+                    if p.0 > dom_probe.0 { dom_probe = p; dom_span = b.dom_price_span(); }
                 });
                 let _ = js_sys::Reflect::set(&dbg, &"dom_cells".into(), &(dom_probe.0 as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_cols".into(), &(dom_probe.1 as f64).into());
@@ -743,6 +744,8 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"dom_row_ticks".into(), &(dom_probe.3 as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_oldest".into(), &(dom_probe.4 as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_newest".into(), &(dom_probe.5 as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"dom_lo".into(), &dom_span.0.into());
+                let _ = js_sys::Reflect::set(&dbg, &"dom_hi".into(), &dom_span.1.into());
                 let (trade_total, trade_instruments) = st.chart.core.trade_store.totals();
                 let _ = js_sys::Reflect::set(&dbg, &"bubble_count".into(), &bubble_count.into());
                 let _ = js_sys::Reflect::set(&dbg, &"total_bars".into(), &total_bars.into());
