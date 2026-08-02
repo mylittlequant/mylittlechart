@@ -279,6 +279,9 @@ impl IndicatorBridge {
             // The 6 opaque host-driven overlays (overlay_catalog.rs) —
             // previously fell into the `Custom` catch-all below.
             CatalogCategory::Overlay => IndicatorCategory::TotalOverlay,
+            // Same opaque shape, own pane below the price plot (OI Delta,
+            // Funding Rate) — see mli's `IndicatorCategory::Subpane`.
+            CatalogCategory::Subpane => IndicatorCategory::Subpane,
             // Catch-all for any new categories
             CatalogCategory::Custom | CatalogCategory::Composite |
             CatalogCategory::Experimental | CatalogCategory::Unknown => IndicatorCategory::Custom,
