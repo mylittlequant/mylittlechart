@@ -302,6 +302,17 @@ impl ChartApp {
             self.panel_app.panel_grid.containers().keys()
                 .map(|cid| (*cid, self.chart_type_for_chart(*cid) == Some("heikin_ashi")))
                 .collect();
+        // Overlay on/off is DERIVED from a visible instance (owner doctrine
+        // 2026-08-01) and the loop below holds `containers_mut()`, so it is
+        // resolved up front — same shape as the Heikin-Ashi memo above.
+        let vp_on_by_chart: std::collections::HashMap<ChartId, bool> =
+            self.panel_app.panel_grid.containers().keys()
+                .map(|cid| (*cid, self.overlay_instance_active_for_chart(*cid, Self::VOLUME_PROFILE_TYPE_ID)))
+                .collect();
+        let tpo_on_by_chart: std::collections::HashMap<ChartId, bool> =
+            self.panel_app.panel_grid.containers().keys()
+                .map(|cid| (*cid, self.overlay_instance_active_for_chart(*cid, Self::TPO_PROFILE_TYPE_ID)))
+                .collect();
         for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             // Refresh the Heikin Ashi memo if the chart panel is on
             // chart_type == "heikin_ashi" AND `bars` mutated since the
@@ -320,7 +331,7 @@ impl ChartApp {
 
             // Volume Profile prepass — recompute when the visible slice, mode,
             // or bars change. Cheap when the stamp matches (one tuple comparison).
-            if window.vp_show {
+            if vp_on_by_chart.get(cid).copied().unwrap_or(false) {
                 let (vis_start, vis_end) = window.viewport().visible_range();
                 let vis_end_clamped = vis_end.min(bubble_bars.len());
                 let visible_owned: Vec<mlc_core::Bar> = if vis_start <= vis_end_clamped {
@@ -340,7 +351,7 @@ impl ChartApp {
             // per-instrument tick lookup, which nothing at this layer
             // exposes today — same simplification VP's own fixed
             // `bucket_count = 24` already makes) is sufficient.
-            if window.tpo_profile_show {
+            if tpo_on_by_chart.get(cid).copied().unwrap_or(false) {
                 let (vis_start, vis_end) = window.viewport().visible_range();
                 let vis_end_clamped = vis_end.min(bubble_bars.len());
                 let visible_owned: Vec<mlc_core::Bar> = if vis_start <= vis_end_clamped {

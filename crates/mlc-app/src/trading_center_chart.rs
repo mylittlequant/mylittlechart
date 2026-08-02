@@ -352,14 +352,14 @@ impl ChartApp {
             crosshair: &window.crosshair,
             scale_settings: &window.scale_settings,
             ha_cache: window.ha_cache.as_deref(),
-            vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
+            vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
             tpo_profile_overlay: if window.tpo_profile_show {
                 window.tpo_profile_overlay.as_ref()
             } else {
                 None
             },
-            oi_show: window.oi_show,
-            funding_show: window.funding_show,
+            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+            funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
             dom_heatmap_show: dom_active,
             dom_params: dom_ink,
             liq_heatmap_show: liq_active,

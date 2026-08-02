@@ -12,12 +12,6 @@ use mlc_core::render::RenderContext;
 use mlc_core::types::OiDeltaBar;
 use super::ChartRenderState;
 
-/// Height of the OI Delta sub-pane as a fraction of total chart height.
-const PANE_HEIGHT_FRACTION: f64 = 0.15;
-/// Minimum chart height required before the pane is drawn (avoid tiny slivers).
-const MIN_CHART_HEIGHT_FOR_PANE_PX: f64 = 220.0;
-/// Minimum pane height in absolute pixels.
-const MIN_PANE_HEIGHT_PX: f64 = 40.0;
 
 /// Color for positive Δ bars (positions added).
 const COLOR_POSITIVE: &str = "#26a69a";
@@ -30,21 +24,23 @@ const COLOR_BG: &str = "rgba(0, 0, 0, 0.18)";
 
 /// Draw the OI Delta sub-pane.
 ///
-/// Allocates `PANE_HEIGHT_FRACTION` of `state.chart_rect.height` at the
-/// bottom of the chart area (above the time scale). Returns the pane height
-/// actually consumed (0.0 when skipped).
+/// Draws into `area` — the rectangle the sub-pane system hands out. Returns
+/// the height consumed (0.0 when there is nothing to draw).
 pub fn draw_oi_delta(
     ctx: &mut dyn RenderContext,
     state: &ChartRenderState,
     bars: &[OiDeltaBar],
+    area: &mlc_core::chart::render_data::ChartRect,
 ) -> f64 {
     if bars.is_empty() { return 0.0; }
 
-    let rect = &state.chart_rect;
-    if rect.height < MIN_CHART_HEIGHT_FOR_PANE_PX { return 0.0; }
-
-    let pane_h = (rect.height * PANE_HEIGHT_FRACTION).max(MIN_PANE_HEIGHT_PX);
-    let pane_y = rect.y + rect.height - pane_h;
+    // The caller owns the geometry. This used to carve the bottom 15% out of
+    // `state.chart_rect` — out of the PRICE PLOT — which is what made a
+    // sub-pane indicator paint over the volume histogram instead of getting
+    // a pane of its own.
+    let rect = area;
+    let pane_h = rect.height;
+    let pane_y = rect.y;
 
     // Background tint.
     ctx.set_fill_color(COLOR_BG);

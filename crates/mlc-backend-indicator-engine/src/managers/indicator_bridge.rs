@@ -48,19 +48,22 @@ impl IndicatorBridge {
 
         // Get rendering properties with defaults
         //
-        // The opaque overlays never have rendering metadata (their
-        // `machine_id` is `None`, so `UnifiedIndicatorCatalog::get` never
-        // resolves a `RenderingMetadata` — see `unified.rs`), which would
-        // default them to `overlay = false` (sub-pane). They ARE overlays —
-        // each paints on the main chart under the series, never in a
-        // sub-pane — and this matters as they are promoted to real
-        // `IndicatorInstance`s: `IndicatorInstance::new` derives
-        // `pane = if definition.overlay { 0 } else { 1 }`, and a `pane = 1`
-        // instance would spawn a phantom empty sub-pane.
-        let overlay = if info.id().starts_with("overlay_") {
-            true
-        } else {
-            rendering.map(|r| r.overlay).unwrap_or(false)
+        // The host-rendered entries never have rendering metadata (their
+        // `machine_id` is `None`, so `UnifiedIndicatorCatalog::get` resolves
+        // no `RenderingMetadata` — see `unified.rs`), so the fallback below
+        // would put every one of them in a pane. They must say for
+        // themselves where they paint.
+        //
+        // `overlay` is the VISUALISATION SPACE: true = paint on the price
+        // plot (pane 0), false = a pane of its own (pane 1). It is NOT the
+        // category — the host-rendered entries all share one category and
+        // differ only in where they paint, which each signature states as
+        // `metadata("kind")`. The `overlay_` id prefix exists to avoid
+        // colliding with compute-indicator ids and says nothing about space.
+        let overlay = match info.signature.metadata.get("kind").map(String::as_str) {
+            Some("opaque_subpane") => false,
+            Some("opaque_overlay") => true,
+            _ => rendering.map(|r| r.overlay).unwrap_or(false),
         };
         let bounds = rendering.and_then(|r| r.bounds);
         let zero_baseline = rendering.map(|r| r.zero_baseline).unwrap_or(false);
@@ -279,9 +282,6 @@ impl IndicatorBridge {
             // The 6 opaque host-driven overlays (overlay_catalog.rs) —
             // previously fell into the `Custom` catch-all below.
             CatalogCategory::Overlay => IndicatorCategory::TotalOverlay,
-            // Same opaque shape, own pane below the price plot (OI Delta,
-            // Funding Rate) — see mli's `IndicatorCategory::Subpane`.
-            CatalogCategory::Subpane => IndicatorCategory::Subpane,
             // Catch-all for any new categories
             CatalogCategory::Custom | CatalogCategory::Composite |
             CatalogCategory::Experimental | CatalogCategory::Unknown => IndicatorCategory::Custom,

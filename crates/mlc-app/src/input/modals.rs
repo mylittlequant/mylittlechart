@@ -818,20 +818,19 @@ impl ChartApp {
                         // instead of falling through to the regular add() path
                         // below.
                         //
-                        // `overlay_liquidation_heatmap` is the ONE exception (wave
-                        // 1, 2026-08-01): it is deliberately NOT intercepted here
-                        // anymore — it falls through to the regular add() path so
-                        // it becomes a real `IndicatorInstance` (legend row + gear
-                        // + a `sensitivity` param in the Indicator Settings modal).
-                        // The render gate itself is turned on right after a
-                        // successful add, below.
-                        if item_id != "overlay_liquidation_heatmap" {
-                            if let Some(event) = crate::overlay_toggle_for_catalog_id(item_id) {
-                                self.process_chart_out_event(event);
-                                self.modal_state.close();
-                                return;
-                            }
-                        }
+                        // Nothing is intercepted here anymore (2026-08-03).
+                        // Every host-rendered catalog entry falls through to
+                        // the regular add() path and becomes an ordinary
+                        // `IndicatorInstance`: legend row, object-tree node,
+                        // gear, and — for the two sub-panes — a pane of its
+                        // own. The intercept added in `adc5506d` dispatched a
+                        // Toggle event "in place of the regular
+                        // `IndicatorManager::add` path", which is exactly why
+                        // picking Volume Profile / TPO Profile / OI Delta /
+                        // Funding Rate out of the indicator list never
+                        // produced an indicator. Liquidation Heatmap was
+                        // freed first (wave 1, 2026-08-01), DOM Heatmap
+                        // second; these four close the set.
                         // Trading-panel focus (chart-in-container arc,
                         // 2026-07-26): the picked indicator lands on the
                         // embedded center chart's bubble, not the active

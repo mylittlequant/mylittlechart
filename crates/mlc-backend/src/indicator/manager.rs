@@ -225,8 +225,29 @@ impl IndicatorManager {
             ids.retain(|&i| i != id);
         }
         self.by_bubble_id.entry(new_key).or_default().push(id);
+        // Stamp a display order the first time the instance lands on a real
+        // bubble. Without this every instance carried `order = 0` and the
+        // legend's sequence was whatever the storage happened to yield —
+        // it reshuffled across reloads, and hiding a row could move it.
+        // Order is the ADD ORDER and nothing else: it is assigned once here
+        // and persisted, so visibility never touches it.
+        let next_order = self
+            .by_bubble_id
+            .get(&new_key)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|i| self.instances.get(i))
+                    .map(|inst| inst.order)
+                    .max()
+                    .unwrap_or(-1)
+                    + 1
+            })
+            .unwrap_or(0);
         if let Some(inst) = self.instances.get_mut(&id) {
             inst.bubble_id = bubble_id;
+            if inst.order == 0 {
+                inst.order = next_order;
+            }
         }
     }
 
@@ -312,14 +333,19 @@ impl IndicatorManager {
     /// Only returns instances whose `bubble_id` exactly matches `bubble_id`.
     /// Instances with `bubble_id = None` are NOT included to prevent cross-tab leakage.
     pub fn get_instances_for_bubble(&self, bubble_id: u64) -> Vec<&IndicatorInstance> {
-        self.by_bubble_id
+        let mut out: Vec<&IndicatorInstance> = self
+            .by_bubble_id
             .get(&bubble_id)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.instances.get(id))
-                    .collect()
-            })
-            .unwrap_or_default()
+            .map(|ids| ids.iter().filter_map(|id| self.instances.get(id)).collect())
+            .unwrap_or_default();
+        // ADD ORDER, always — the legend, the object tree and the sub-pane
+        // stack all read this list, and the owner's contract is that the
+        // sequence is the order things were added and survives a reload.
+        // `id` breaks ties so instances restored from a workspace written
+        // before `order` was stamped still come out in a stable sequence
+        // rather than a different one each run.
+        out.sort_by_key(|inst| (inst.order, inst.id));
+        out
     }
 
     /// Swap the display order of two sub-pane indicator instances within a bubble.

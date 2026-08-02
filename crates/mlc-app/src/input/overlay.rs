@@ -908,25 +908,14 @@ impl ChartApp {
             None => return,
         };
 
-        // DOM / Liquidation Heatmap: the two overlay ids that back a REAL
-        // `IndicatorInstance` (see overlay_catalog.rs doc comment).
-        if type_id == Self::LIQ_HEATMAP_TYPE_ID || type_id == Self::DOM_HEATMAP_TYPE_ID {
-            // Nothing to do by hand: removing the legend row removes the
-            // instance, and the bubble's per-tick feed reconcile
-            // (`ensure_bubble_indicator_feeds`) drops the feed nobody
-            // declares anymore. Fall through to the generic removal.
-        } else if let Some(event) = crate::overlay_toggle_for_catalog_id(&type_id) {
-            // Symmetric guard for the add-side intercept in modals.rs: the
-            // remaining opaque host-driven overlays (Volume Profile / TPO
-            // Profile / OI Delta / Funding Rate) never become
-            // a real `IndicatorInstance`, so this branch is not reachable
-            // in the current UI flow — kept for correctness if a caller
-            // ever passes one of their backing ids. CVD is NOT one of
-            // these — it is a real `IndicatorInstance` and is removed below
-            // like any other indicator.
-            self.process_chart_out_event(event);
-            return;
-        }
+        // No special case remains: EVERY host-rendered overlay is a real
+        // `IndicatorInstance` now, so removing the legend row removes the
+        // instance, the render gate (derived from a visible instance) goes
+        // false by itself, and the bubble's per-tick feed reconcile
+        // (`ensure_bubble_indicator_feeds`) drops the feed nobody declares
+        // anymore. The symmetric intercept that used to live here turned a
+        // delete into a Toggle event, which is why these ids could never be
+        // deleted like an ordinary indicator either.
 
         self.push_undo_command(mlc_core::Command::RemoveIndicator {
             instance_id: id,
@@ -1100,6 +1089,15 @@ impl ChartApp {
                         self.core.ensure_connector(eid);
                         self.core.bridge_handle().request_open_interest(eid, &symbol, at_dig3);
                         crate::sglog!("[bubble {:?}] OI feed up ({} {:?})", bid, symbol, eid);
+                    }
+                    StreamKind::Funding => {
+                        // The Funding Rate sub-pane declares this stream, and
+                        // without an arm here it fell into the catch-all
+                        // below: the pane appeared, correctly, and stayed
+                        // empty forever because nothing ever subscribed.
+                        self.core.ensure_connector(eid);
+                        self.core.bridge_handle().request_funding_rate(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] funding feed up ({} {:?})", bid, symbol, eid);
                     }
                     StreamKind::Liquidation => {
                         self.core.bubbles_mut().with_bubble_mut(bid, |b| {

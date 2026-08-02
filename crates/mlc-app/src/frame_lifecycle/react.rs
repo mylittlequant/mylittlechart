@@ -1396,7 +1396,7 @@ impl ChartApp {
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !win.oi_show { return None; }
+                            if !self.overlay_instance_active(win.current_tag_id, Self::OI_DELTA_TYPE_ID) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }
@@ -1438,7 +1438,7 @@ impl ChartApp {
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !win.funding_show { return None; }
+                            if !self.overlay_instance_active(win.current_tag_id, Self::FUNDING_RATE_TYPE_ID) { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }

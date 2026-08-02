@@ -1299,6 +1299,27 @@ pub fn render_sub_pane(
     ctx.set_fill_color(&state.theme.sub_pane_bg);
     ctx.fill_rect(content.x, content.y, content.width, content.height);
 
+    // Host-rendered sub-panes: these two carry no `IndicatorOutput` series,
+    // so the generic output loop below has nothing to draw for them. They
+    // own their own renderers and are handed THIS pane's rectangle.
+    {
+        let area = mlc_core::chart::render_data::ChartRect {
+            x: content.x,
+            y: content.y,
+            width: content.width,
+            height: content.height,
+        };
+        if instance.type_id.eq_ignore_ascii_case("overlay_oi_delta") {
+            if let Some(oi) = state.oi_delta_ref {
+                draw_oi_delta(ctx, state, oi, &area);
+            }
+        } else if instance.type_id.eq_ignore_ascii_case("overlay_funding_rate") {
+            if let Some(fr) = state.funding_rate_ref {
+                draw_funding_rate_strip(ctx, state, fr, &area);
+            }
+        }
+    }
+
     let (visible_start, visible_end_raw) = state.viewport.visible_range();
     let visible_end = visible_end_raw.min(state.bars.len());
 
@@ -3341,15 +3362,9 @@ pub fn render_full_chart_panel(
             draw_volume_profile_overlay(ctx, &corrected_state, vp);
         }
 
-        // 3c. OI Delta sub-pane (C15 — below main chart, above time scale).
-        if let Some(oi) = corrected_state.oi_delta_ref {
-            draw_oi_delta(ctx, &corrected_state, oi);
-        }
-
-        // 3d. Funding Rate strip (C15 — thin strip at bottom of chart area).
-        if let Some(fr) = corrected_state.funding_rate_ref {
-            draw_funding_rate_strip(ctx, &corrected_state, fr);
-        }
+        // OI Delta and the Funding Rate strip used to be drawn here, inside
+        // the price plot. They are sub-pane INDICATORS and now render from
+        // `render_sub_pane` into the pane the layout gives them.
 
         // CVD is a first-class indicator instance (mli `BarIndicatorId::
         // Cvd`, catalog id "CVD") rendered through the normal indicator

@@ -1835,6 +1835,51 @@ impl ChartApp {
     }
 
     /// Catalog id of the DOM Heatmap overlay indicator.
+    /// The last four opaque entries, converted 2026-08-03 (plan item G).
+    ///
+    /// Until then they rode per-window bools and their catalog ids were
+    /// INTERCEPTED before `IndicatorManager::add` (`adc5506d`, 2026-07-04),
+    /// so picking one from the indicator list never produced an indicator:
+    /// no legend row, no object-tree node, no settings, and — for the two
+    /// sub-panes — no pane either, just a strip carved out of the price
+    /// plot. They are now ordinary instances like every other overlay.
+    pub const VOLUME_PROFILE_TYPE_ID: &'static str = "overlay_volume_profile";
+    pub const TPO_PROFILE_TYPE_ID: &'static str = "overlay_tpo_profile";
+    pub const OI_DELTA_TYPE_ID: &'static str = "overlay_oi_delta";
+    pub const FUNDING_RATE_TYPE_ID: &'static str = "overlay_funding_rate";
+
+    /// Every catalog id in this file that is host-rendered rather than
+    /// computed. Kept as one list so a new one cannot be added without
+    /// deciding where it draws.
+    pub const HOST_RENDERED_TYPE_IDS: &'static [&'static str] = &[
+        Self::VOLUME_PROFILE_TYPE_ID,
+        Self::TPO_PROFILE_TYPE_ID,
+        Self::OI_DELTA_TYPE_ID,
+        Self::FUNDING_RATE_TYPE_ID,
+        Self::DOM_HEATMAP_TYPE_ID,
+        Self::LIQ_HEATMAP_TYPE_ID,
+        Self::LIQ_PROJECTION_TYPE_ID,
+    ];
+
+    /// Whether a visible instance of `type_id` sits on `bid`'s bubble —
+    /// the one gate shape every converted overlay uses.
+    pub fn overlay_instance_active(&self, bid: mlc_core::ids::BubbleId, type_id: &str) -> bool {
+        self.core.indicators().instances_for_bubble(bid)
+            .into_iter()
+            .any(|inst| inst.type_id == type_id && inst.visible)
+    }
+
+    /// [`Self::overlay_instance_active`] keyed by chart.
+    pub fn overlay_instance_active_for_chart(
+        &self,
+        chart_id: mlc_core::state::ChartId,
+        type_id: &str,
+    ) -> bool {
+        self.bubble_for_chart(chart_id)
+            .map(|bid| self.overlay_instance_active(bid, type_id))
+            .unwrap_or(false)
+    }
+
     pub const DOM_HEATMAP_TYPE_ID: &'static str = "overlay_dom_heatmap";
 
     /// Whether the DOM Heatmap overlay is on for `bid`'s bubble. Derived,
@@ -4971,10 +5016,10 @@ impl ChartApp {
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
                     ha_cache: window.ha_cache.as_deref(),
-                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
-                    tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: window.oi_show,
-                    funding_show: window.funding_show,
+                    vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
+                    tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: overlay_dom_active,
                     dom_params: overlay_dom,
                     liq_heatmap_show: overlay_liq_active,
@@ -5090,10 +5135,10 @@ impl ChartApp {
                 crosshair: &window.crosshair,
                 scale_settings: &window.scale_settings,
                 ha_cache: window.ha_cache.as_deref(),
-                vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
-                tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
-                oi_show: window.oi_show,
-                funding_show: window.funding_show,
+                vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
+                tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
+                oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                 dom_heatmap_show: single_dom_active,
                 dom_params: single_dom,
                 liq_heatmap_show: single_overlay_liq_active,
@@ -5393,10 +5438,10 @@ impl ChartApp {
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
                     ha_cache: window.ha_cache.as_deref(),
-                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
-                    tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: window.oi_show,
-                    funding_show: window.funding_show,
+                    vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
+                    tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: split_dom_active,
                     dom_params: split_dom,
                     liq_heatmap_show: split_liq_active,
@@ -6051,10 +6096,10 @@ impl ChartApp {
                     crosshair: &window.crosshair,
                     scale_settings: &window.scale_settings,
                     ha_cache: window.ha_cache.as_deref(),
-                    vp_overlay: if window.vp_show { window.vp_overlay.as_ref() } else { None },
-                    tpo_profile_overlay: if window.tpo_profile_show { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: window.oi_show,
-                    funding_show: window.funding_show,
+                    vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
+                    tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: single_window_dom_active,
                     dom_params: single_window_dom,
                     liq_heatmap_show: single_window_liq_active,

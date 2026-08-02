@@ -19,13 +19,6 @@ use mlc_core::render::RenderContext;
 use mlc_core::types::FundingRateCell;
 use super::ChartRenderState;
 
-/// Strip height as a fraction of total chart height.
-const STRIP_HEIGHT_FRACTION: f64 = 0.04;
-/// Absolute clamp: never taller than 20 px, never shorter than 12 px.
-const STRIP_HEIGHT_MAX_PX: f64 = 20.0;
-const STRIP_HEIGHT_MIN_PX: f64 = 12.0;
-/// Minimum chart height before the strip is skipped.
-const MIN_CHART_HEIGHT_FOR_STRIP_PX: f64 = 160.0;
 /// Minimum cell width in pixels (cells never shrink below this).
 const MIN_CELL_WIDTH_PX: f64 = 40.0;
 
@@ -45,17 +38,20 @@ const COLOR_NEGATIVE: (u8, u8, u8) = (239, 83, 80); // #ef5350 (red)
 /// Returns the strip height consumed (0.0 when skipped).
 pub fn draw_funding_rate_strip(
     ctx: &mut dyn RenderContext,
-    state: &ChartRenderState,
+    // Kept for signature parity with the other pane renderers; the strip
+    // needs no viewport or theme lookup of its own.
+    _state: &ChartRenderState,
     cells: &[FundingRateCell],
+    area: &mlc_core::chart::render_data::ChartRect,
 ) -> f64 {
     if cells.is_empty() { return 0.0; }
 
-    let rect = &state.chart_rect;
-    if rect.height < MIN_CHART_HEIGHT_FOR_STRIP_PX { return 0.0; }
-
-    let strip_h = (rect.height * STRIP_HEIGHT_FRACTION)
-        .clamp(STRIP_HEIGHT_MIN_PX, STRIP_HEIGHT_MAX_PX);
-    let strip_y = rect.y + rect.height - strip_h;
+    // The caller owns the geometry. This used to take a 4% slice off the
+    // bottom of `state.chart_rect` — of the PRICE PLOT itself — so the strip
+    // landed on top of the volume histogram instead of in a pane.
+    let rect = area;
+    let strip_h = rect.height;
+    let strip_y = rect.y;
 
     // Determine how many cells fit given min width and total rect width.
     let max_cells = ((rect.width / MIN_CELL_WIDTH_PX) as usize).max(1);

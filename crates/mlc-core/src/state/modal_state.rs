@@ -126,12 +126,6 @@ pub enum IndicatorCategory {
     /// fell into before this variant existed (`IndicatorBridge::
     /// map_category` catch-all).
     TotalOverlay,
-    /// Opaque host-driven layers drawn in their OWN pane below the price
-    /// plot rather than over it — OI Delta and the Funding Rate strip. Same
-    /// shape as TotalOverlay, different place on the chart, and the category
-    /// is what the picker labels by (owner 2026-08-03: a sub-pane filed
-    /// under "Overlays" says something untrue about where it will appear).
-    Subpane,
     Custom,
 }
 
@@ -145,7 +139,6 @@ impl IndicatorCategory {
             IndicatorCategory::Volume => "Volume",
             IndicatorCategory::Oscillator => "Oscillator",
             IndicatorCategory::TotalOverlay => "Total Overlay",
-            IndicatorCategory::Subpane => "Sub-pane",
             IndicatorCategory::Custom => "Custom",
         }
     }
@@ -159,7 +152,6 @@ impl IndicatorCategory {
             IndicatorCategory::Volume,
             IndicatorCategory::Oscillator,
             IndicatorCategory::TotalOverlay,
-            IndicatorCategory::Subpane,
             IndicatorCategory::Custom,
         ]
     }
@@ -409,9 +401,6 @@ pub enum IndicatorCategoryFilter {
     /// Funding Rate / DOM Heatmap / Liquidation Heatmap) — mirrors
     /// `IndicatorCategory::TotalOverlay`.
     TotalOverlay,
-    /// Host-driven layers with their own pane below the price plot
-    /// (OI Delta, Funding Rate) — mirrors `IndicatorCategory::Subpane`.
-    Subpane,
     /// Other/Custom indicators
     Other,
 }
@@ -428,7 +417,6 @@ impl IndicatorCategoryFilter {
             Self::Oscillator => "Oscillators",
             Self::Average => "Averages",
             Self::TotalOverlay => "Overlays",
-            Self::Subpane => "Sub-panes",
             Self::Other => "Other",
         }
     }
@@ -444,7 +432,6 @@ impl IndicatorCategoryFilter {
             Self::Oscillator => "sine_wave",
             Self::Average => "line_chart",
             Self::TotalOverlay => "volume_profile",
-            Self::Subpane => "histogram",
             Self::Other => "more_horizontal",
         }
     }
@@ -460,7 +447,6 @@ impl IndicatorCategoryFilter {
             Self::Oscillator,
             Self::Average,
             Self::TotalOverlay,
-            Self::Subpane,
             Self::Other,
         ]
     }
@@ -489,7 +475,6 @@ impl IndicatorCategoryFilter {
             Self::Oscillator => matches!(category, IndicatorCategory::Oscillator),
             Self::Average => matches!(category, IndicatorCategory::Trend), // MAs are usually in Trend
             Self::TotalOverlay => matches!(category, IndicatorCategory::TotalOverlay),
-            Self::Subpane => matches!(category, IndicatorCategory::Subpane),
             Self::Other => matches!(category, IndicatorCategory::Custom),
         }
     }
