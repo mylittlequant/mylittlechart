@@ -3,10 +3,12 @@
 //!
 //! All-venue merged stream of forced closes in the BT-Aggregated grammar:
 //! ONE column, newest at top, per-print venue identity in a trailing
-//! EXCHANGE column. Liquidations are a futures-market concept — the
-//! roster is every known venue's Futures feed; venues without a
-//! liquidation stream simply never deliver (the feed self-heal keeps a
-//! muted retry with backoff, same as every other tape).
+//! EXCHANGE column. Liquidations are a futures-market concept — the roster
+//! is `multi_dom::LIQ_EXCHANGES` × Futures, the venues that actually
+//! publish a channel. Venues that do not are not rostered at all (owner
+//! order 2026-08-02): rostering them cost nothing in bandwidth but made a
+//! mute venue look exactly like a rare one, and the feed self-heal spent
+//! its retries on a channel that does not exist.
 //!
 //! Feed: per-venue `SharedTradeSeries` rings filled by the bridge's
 //! liquidation forwarder (`subscribe_liquidations` — same
@@ -151,9 +153,12 @@ impl LiqTapeState {
 
     /// Seed/refresh the roster for `symbol` PER MODE. Idempotent — called
     /// on spawn, mode switches, and the late symbol sync (BoundToChart
-    /// panels hydrate with an empty symbol). Agg → every known Futures
-    /// venue; Single → the bound venue's Futures feed only; Multi → the
-    /// user-edited roster is kept (seeded with the bound venue when empty).
+    /// panels hydrate with an empty symbol). Agg → every
+    /// [`multi_dom::LIQ_EXCHANGES`](super::multi_dom::LIQ_EXCHANGES) venue
+    /// on Futures; Single → the bound venue's Futures feed only; Multi →
+    /// the user-edited roster is kept (seeded with the bound venue when
+    /// empty). In every mode a venue with no liquidation channel is
+    /// dropped.
     pub fn ensure_roster(&mut self, symbol: &str) {
         if !self.multi.symbol.eq_ignore_ascii_case(symbol) {
             self.multi.reset_for_symbol(symbol);
@@ -161,14 +166,34 @@ impl LiqTapeState {
             self.scroll_offset = 0.0;
             self.max_qty_seen = 0.0;
         }
+        // A venue with no liquidation channel is dropped in EVERY mode, not
+        // just filtered out of the picker: a workspace persisted before
+        // 2026-08-02 hydrates a roster that still holds the mute venues,
+        // and `add_entry` alone would never remove them. In the tape they
+        // read as venues that simply never print — indistinguishable from
+        // a quiet one, which is the confusion the roster must not create.
+        let stale: Vec<String> = self
+            .multi
+            .entries
+            .iter()
+            .filter(|e| !super::multi_dom::venue_has_liquidations(super::multi_dom::col_exchange(e)))
+            .cloned()
+            .collect();
+        for e in &stale {
+            self.multi.remove_entry(e);
+        }
         if self.agg_mode {
-            for ex in super::multi_dom::KNOWN_EXCHANGES {
+            for ex in super::multi_dom::LIQ_EXCHANGES {
                 self.multi.add_entry(&super::multi_dom::col_entry(ex, "F"));
             }
         } else if !self.multi_mode {
             // Single: exactly the bound venue (Futures — liquidations
-            // don't exist on Spot).
-            let own = if self.exchange.is_empty() {
+            // don't exist on Spot). A chart bound to a venue with no feed
+            // leaves the roster EMPTY rather than seeding a column that
+            // can never fill.
+            let own = if self.exchange.is_empty()
+                || !super::multi_dom::venue_has_liquidations(&self.exchange)
+            {
                 return;
             } else {
                 super::multi_dom::col_entry(&self.exchange, "F")
@@ -189,7 +214,9 @@ impl LiqTapeState {
                 self.scroll_offset = 0.0;
                 self.max_qty_seen = 0.0;
             }
-        } else if self.multi.entries.is_empty() && !self.exchange.is_empty() {
+        } else if self.multi.entries.is_empty()
+            && super::multi_dom::venue_has_liquidations(&self.exchange)
+        {
             self.multi
                 .add_entry(&super::multi_dom::col_entry(&self.exchange, "F"));
         }

@@ -1089,12 +1089,13 @@ impl ChartApp {
                         self.core.bubbles_mut().with_bubble_mut(bid, |b| {
                             mlc_backend::chart_type::clear_slot_liq_heatmap(b);
                         });
-                        self.core.ensure_connector(eid);
-                        // Arms the SHARED station ring — the same one the LIQ
-                        // panel reads and the overlay's pump drains. The
-                        // overlay no longer owns a channel of its own.
-                        let _ = self.core.subscribe_liquidations(eid, &symbol, at_dig3);
-                        crate::sglog!("[bubble {:?}] liquidation feed up ({} {:?})", bid, symbol, eid);
+                        // The subscription itself is armed by
+                        // `ensure_liquidation_roster` (frame_lifecycle/
+                        // liq_pump.rs), which knows the overlay's aggregate
+                        // flag and coerces to Futures. Arming here too would
+                        // open the chart's OWN market — Spot on a spot chart,
+                        // where no venue has a liquidation channel at all.
+                        crate::sglog!("[bubble {:?}] liquidation slot cleared ({} {:?})", bid, symbol, eid);
                     }
                     _ => {}
                 }

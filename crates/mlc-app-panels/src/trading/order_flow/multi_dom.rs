@@ -34,6 +34,52 @@ pub const KNOWN_EXCHANGES: &[&str] = &[
     "binance", "bybit", "okx", "bitget", "kucoin", "gateio",
 ];
 
+/// Venues that actually deliver a PUBLIC liquidation stream for a normal
+/// USDT-perp symbol. Every liquidation roster and every liquidation venue
+/// picker draws from this list and nothing else (owner order 2026-08-02:
+/// «которые не работают не должны быть в поиске»). A venue that cannot
+/// deliver is indistinguishable in the UI from one that is merely quiet —
+/// that ambiguity is what this list removes.
+///
+/// Derived from the connector layer, one entry per registered channel
+/// (`digdigdig3/src/l3/open/crypto/cex/<venue>/protocol.rs`, `StreamKind::
+/// Liquidation`):
+///
+/// | venue   | channel |
+/// |---------|---------|
+/// | binance | `!forceOrder@arr` |
+/// | bybit   | `allLiquidation.{symbol}` |
+/// | okx     | `liquidation-orders` |
+/// | gateio  | `<prefix>.public_liquidates` (FuturesCross only) |
+/// | kucoin  | `/contractMarket/liquidationOrders:*` |
+///
+/// Excluded and why — the exclusions are the point of the list:
+/// * `bitget` · `bingx` · `mexc` · `deribit` · `kraken` · `coinbase` —
+///   the connector answers `WireAbsent`: no public channel exists (Deribit
+///   withdrew its feed in Oct 2023, BingX's returns code 80015).
+/// * `htx` — the channel is REGISTERED but dead. Live 2026-08-02 the
+///   station answers `StreamNotSupported("HTX liquidation_orders WS
+///   channel is offline (deprecated) — use REST GET
+///   /linear-swap-api/v1/swap_liquidation_orders")`. HTX returns to this
+///   list when someone wires that REST poll, not before.
+/// * `hyperliquid` — the feed is wallet-scoped, not public.
+/// * `bitmex` · `bitfinex` — a channel exists, but the symbol grammar does
+///   not survive the round trip: BitMEX has no `SymbolNormalizer` arm at
+///   all (the station key would fall back to `BTCUSDT` while the wire says
+///   `XBTUSDT`), and Bitfinex's venue-wide `status:liq:global` reports
+///   derivative symbols (`tBTCF0:USTF0`) that its normalizer never
+///   produces. Both would key a ring nothing ever writes to — the exact
+///   silent-venue failure this list exists to prevent. Adding either means
+///   fixing the normalizer first, not editing this line.
+pub const LIQ_EXCHANGES: &[&str] = &[
+    "binance", "bybit", "okx", "gateio", "kucoin",
+];
+
+/// Whether `slug` publishes liquidations — see [`LIQ_EXCHANGES`].
+pub fn venue_has_liquidations(slug: &str) -> bool {
+    LIQ_EXCHANGES.iter().any(|v| slug.eq_ignore_ascii_case(v))
+}
+
 /// Grid size (tick coalescence) presets, cycled by click.
 pub const GRID_PRESETS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0];
 

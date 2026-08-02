@@ -3062,33 +3062,13 @@ impl ChartApp {
             eprintln!("[ChartApp] ignited DOM heatmap overlay for restored window {:?}", cid);
         }
 
-        let liq_targets: Vec<(mlc_core::state::ChartId, String, String, mlc_core::instrument::AccountType)> =
-            self.panel_app.panel_grid.containers().iter()
-                .filter_map(|(cid, w)| {
-                    let _ = w;
-                    // Instance-driven (owner doctrine 2026-08-01): a restored
-                    // preset carrying a visible `overlay_liquidation_heatmap`
-                    // instance is what re-arms the feed — there is no window
-                    // bool to consult.
-                    if !self.liq_overlay_active_for_chart(*cid) { return None; }
-                    let sym = self.symbol_for_chart(*cid)?;
-                    if sym.is_empty() { return None; }
-                    let exch = self.exchange_for_chart(*cid)?;
-                    let at = self.account_type_for_chart(*cid)?;
-                    Some((*cid, sym.to_string(), exch.to_string(), at))
-                })
-                .collect();
-        for (cid, sym, exch, at) in liq_targets {
-            let eid = digdigdig3::ExchangeId::from_str(&exch)
-                .unwrap_or(digdigdig3::ExchangeId::Binance);
-            if !self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
-                continue;
-            }
-            let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
-            self.core.ensure_connector(eid);
-            let _ = self.core.subscribe_liquidations(eid, &sym, at_dig3);
-            eprintln!("[ChartApp] ignited Liquidation heatmap overlay for restored window {:?}", cid);
-        }
+        // The liquidation twin of the block above is deliberately absent:
+        // `ensure_liquidation_roster` (frame_lifecycle/liq_pump.rs) arms the
+        // feed from the live overlay state every frame, so a restored window
+        // is already covered — and it arms the AGGREGATE roster on Futures,
+        // which this path could not do (it only knew the chart's own venue
+        // and its own market, Spot included, where no liquidation channel
+        // exists on any venue).
     }
 
     /// Run the default-companion reconcile for EVERY open window.

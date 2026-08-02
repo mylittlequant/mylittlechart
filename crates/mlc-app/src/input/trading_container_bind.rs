@@ -576,6 +576,15 @@ impl ChartApp {
                     // coerced to its :F feed. Handles land via the feed
                     // self-heal (subscribe_liquidations is repair-driven),
                     // so no trade/book subscription work here.
+                    //
+                    // A venue with no liquidation channel is refused at the
+                    // commit, not only hidden in the picker: the picker is
+                    // one of several ways a roster entry can arrive (a
+                    // persisted workspace, an agent call), and a column that
+                    // can never fill must not be reachable from any of them.
+                    if !multi_dom::venue_has_liquidations(exchange_id) {
+                        return;
+                    }
                     let entry_f = multi_dom::col_entry(exchange_id, "F");
                     let _ = toggle(&mut s.multi, symbol, exchange_id, "F", &entry_f);
                     Some((false, None))

@@ -446,6 +446,15 @@ pub struct ChartApp {
     /// up by the next one instead of losing what arrived in between.
     pub(crate) liq_cursors: std::collections::HashMap<(mlc_core::ids::BubbleId, String), i64>,
 
+    /// The (symbol, aggregate, armed-at-ms) the liquidation overlay last
+    /// armed feeds for, per bubble. RAM-only, and it exists so the arming
+    /// runs on a CHANGE — plus a throttled repair while a venue is missing —
+    /// rather than every frame: `subscribe_liquidations` is idempotent, but
+    /// calling it per venue per frame would take the bridge's gate mutex
+    /// hundreds of times a second to learn nothing.
+    pub(crate) liq_armed:
+        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, i64)>,
+
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
 
@@ -2286,6 +2295,22 @@ impl ChartApp {
             self.core.watchlists().find(self.watchlist_ui.active_list_id),
             self.core.exchange_symbols().as_map(),
         );
+        // A liquidation panel's picker offers ONLY venues that publish a
+        // liquidation channel (owner order 2026-08-02). Every other venue
+        // would add a column that can never fill, and a column that never
+        // fills is read as a quiet market rather than an absent feed —
+        // this session lost time to exactly that reading.
+        if let crate::SymbolQuickEditTarget::MultiTapeRoster(pid)
+        | crate::SymbolQuickEditTarget::SectionPanel(pid) = edit.target
+        {
+            if self.panels_store.liq_tape.contains_key(&pid) {
+                results.retain(|r| {
+                    mlc_app_panels::trading::order_flow::multi_dom::venue_has_liquidations(
+                        &r.exchange_id,
+                    )
+                });
+            }
+        }
         // Multi-DOM roster target (owner spec 2026-07-30): the already-added
         // columns are PINNED as the first block (always present regardless of
         // the query; the dropdown builder draws a separator after them),
@@ -2509,6 +2534,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            liq_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -2919,6 +2945,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            liq_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3488,6 +3515,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            liq_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),

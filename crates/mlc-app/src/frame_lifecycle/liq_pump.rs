@@ -10,13 +10,26 @@
 //! the DOM heat lost whole minutes whenever the tab sat in the background
 //! (measured 2026-08-02: eight hidden minutes, eight missing columns).
 //!
-//! ## Why it opens nothing
+//! ## What it subscribes
 //!
-//! `liq_series_for_symbol` ENUMERATES what the workspace already streams —
-//! the same rings the LIQ tape panel reads. The overlay's own venue is armed
-//! by `ensure_bubble_indicator_feeds`; every other venue in the fold is one
-//! some panel opened. Aggregation cannot add a channel, which is exactly the
-//! property that makes it safe to leave on by default.
+//! An aggregated liquidation overlay ARMS the whole liquidation roster —
+//! `multi_dom::LIQ_EXCHANGES` × Futures — for its symbol, and then reads
+//! back through `liq_series_for_symbol`.
+//!
+//! This is a deliberate reversal of the 2026-08-02 first cut, which only
+//! enumerated rings other panels had opened (the DOM heat's contract, where
+//! folding books nobody asked for would be real bandwidth). It was wrong
+//! here for a simple reason: with no LIQ panel on screen the overlay saw
+//! ONE venue, and a single venue's forced closes on a 1-minute chart are a
+//! dot every few minutes — the layer looked broken because it had almost
+//! nothing to draw. Liquidations are also cheap in a way books are not:
+//! one event per forced close, nothing to reconstruct, no depth to
+//! maintain, and the ring is shared with the LIQ panel when both are open.
+//!
+//! Venues with no public channel are never armed — see [`LIQ_EXCHANGES`]
+//! for the roster and the reasoning behind each exclusion.
+//!
+//! [`LIQ_EXCHANGES`]: mlc_app_panels::trading::order_flow::multi_dom::LIQ_EXCHANGES
 
 use mlc_core::chart::liquidations::LiquidationPrint;
 use mlc_core::ids::BubbleId;
@@ -59,8 +72,14 @@ impl crate::ChartApp {
         };
 
         for (bid, symbol, own_venue, own_at, aggregate) in targets {
+            self.ensure_liquidation_roster(bid, &symbol, own_venue, own_at, aggregate);
+            let _ = own_at;
             for (venue, at, handle) in self.core.liq_series_for_symbol(&symbol) {
-                if !aggregate && (venue != own_venue || at != own_at) {
+                // Venue only, never the market type: liquidations exist on
+                // Futures alone, so "own venue" already names the one ring
+                // a non-aggregated overlay wants — matching the chart's own
+                // account type would drop it on every Spot chart.
+                if !aggregate && venue != own_venue {
                     continue;
                 }
                 let label = format!("{}:{:?}", venue.as_str(), at);
@@ -115,5 +134,93 @@ impl crate::ChartApp {
                 });
             }
         }
+    }
+
+    /// Arm the liquidation feeds this bubble's overlay wants — the whole
+    /// publisher roster on Futures when aggregating, its own venue alone
+    /// otherwise. Runs on a change of (symbol, aggregate) and, while a
+    /// venue is missing, on a throttled repair tick — never every frame.
+    ///
+    /// `subscribe_liquidations` is idempotent per (venue, market, symbol)
+    /// and the ring is shared with the LIQ tape panel, so an overlay and a
+    /// panel on the same symbol cost one subscription between them — which
+    /// is why arming here does not fight the panel's own self-heal.
+    ///
+    /// The repair tick matters because a venue can fail its subscribe once
+    /// and stay absent for the whole session otherwise: KuCoin's WS needs a
+    /// REST-issued token and loses it to CORS in the browser, and any venue
+    /// can lose a dial to a transient. Bounded by `LIQ_REPAIR_MS` so a
+    /// permanently-dead venue costs one retry every 30s, not a dial storm.
+    fn ensure_liquidation_roster(
+        &mut self,
+        bid: BubbleId,
+        symbol: &str,
+        own_venue: digdigdig3::ExchangeId,
+        own_at: digdigdig3::AccountType,
+        aggregate: bool,
+    ) {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+
+        /// Minimum gap between repair passes for a roster missing a venue.
+        const LIQ_REPAIR_MS: i64 = 30_000;
+
+        let now_ms = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        if let Some((armed_symbol, armed_agg, last_ms)) = self.liq_armed.get(&bid) {
+            if armed_symbol == symbol && *armed_agg == aggregate {
+                let want = if aggregate { multi_dom::LIQ_EXCHANGES.len() } else { 1 };
+                let have = self.core.liq_series_for_symbol(symbol).len();
+                if have >= want || now_ms - *last_ms < LIQ_REPAIR_MS {
+                    return;
+                }
+                crate::sglog!(
+                    "[bubble {:?}] liquidation roster repair ({} of {} venues live)",
+                    bid, have, want
+                );
+            }
+        }
+
+        if aggregate {
+            for slug in multi_dom::LIQ_EXCHANGES {
+                let Some(eid) = digdigdig3::ExchangeId::from_str(slug) else { continue };
+                // A connector the owner switched off in the sidebar stays
+                // off here too — the overlay is not a way around that.
+                if !self
+                    .sidebar_state
+                    .connector_enabled
+                    .get(*slug)
+                    .copied()
+                    .unwrap_or(true)
+                {
+                    continue;
+                }
+                self.core.ensure_connector(eid);
+                let _ = self
+                    .core
+                    .subscribe_liquidations(eid, symbol, digdigdig3::AccountType::FuturesCross);
+            }
+        } else if multi_dom::venue_has_liquidations(own_venue.as_str()) {
+            // Futures regardless of the chart's own market: a Spot chart
+            // still means "this venue's forced closes", and a Spot
+            // liquidation subscription is rejected by every venue that has
+            // the feed at all.
+            let _ = own_at;
+            self.core.ensure_connector(own_venue);
+            let _ = self.core.subscribe_liquidations(
+                own_venue,
+                symbol,
+                digdigdig3::AccountType::FuturesCross,
+            );
+        }
+
+        crate::sglog!(
+            "[bubble {:?}] liquidation roster armed ({} aggregate={})",
+            bid, symbol, aggregate
+        );
+        self.liq_armed
+            .insert(bid, (symbol.to_string(), aggregate, now_ms));
     }
 }
