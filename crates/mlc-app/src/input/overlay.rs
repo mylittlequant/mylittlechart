@@ -775,6 +775,12 @@ impl ChartApp {
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
                     self.core.indicators_mut().toggle_visibility(id);
+                    // Visibility is PERSISTED state (`IndicatorSnapshot.visible`),
+                    // so the toggle has to reach disk like every other edit in
+                    // this handler — without this the eye icon reset on reload
+                    // (owner report 2026-08-02). The save and restore paths were
+                    // both already correct; nothing was writing the snapshot.
+                    self.autosave_snapshot();
                     eprintln!("[ChartApp] indicator {} visibility toggled", id);
                 }
             }
@@ -839,6 +845,7 @@ impl ChartApp {
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
                     self.core.indicators_mut().toggle_visibility(id);
+                    self.autosave_snapshot();
                     eprintln!("[ChartApp] indicator {} visibility toggled (leaf {})", id, leaf_id.0);
                 }
             }

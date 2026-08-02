@@ -1000,6 +1000,7 @@ impl ChartApp {
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
                     self.core.indicators_mut().toggle_visibility(id);
+                    self.autosave_snapshot();
                 }
             }
             _ if action.starts_with("settings:") => {

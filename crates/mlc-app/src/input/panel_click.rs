@@ -2790,6 +2790,7 @@ impl ChartApp {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 self.core.indicators_mut().toggle_visibility(id);
                 self.sidebar_data_dirty = true;
+                self.autosave_snapshot();
                 eprintln!("[Sidebar] Indicator visibility toggled: {}", id);
             }
             return;
