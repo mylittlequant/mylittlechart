@@ -1502,10 +1502,13 @@ impl MultiDomState {
             if on_ladder {
                 // Dashed, not solid: the ladder is a dense stack of rows and
                 // a solid rule at a row boundary reads as one more level.
-                ctx.set_fill_color(&mlc_core::apply_opacity(
-                    if is_ask { &theme.sell } else { &theme.buy },
-                    0.5,
-                ));
+                //
+                // Neutral, NOT the side's own hue: a red edge over red asks
+                // and a green edge over green bids is the one place the line
+                // cannot be seen, which is exactly where it matters. The
+                // skin's primary text colour is the contrast the rest of the
+                // panel is already built around.
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.85));
                 let mut sx = dash_x0;
                 while sx < right {
                     ctx.fill_rect(sx, y - 0.5, 4.0, 1.0);
@@ -1534,7 +1537,9 @@ impl MultiDomState {
             ctx.set_fill_color(&mlc_core::apply_opacity(&theme.panel_bg, 0.85));
             ctx.fill_rect(right - tw - 4.0, chip_y, tw + 6.0, chip_h);
             ctx.set_text_baseline(baseline);
-            ctx.set_fill_color(&theme.text_muted);
+            // Same neutral as the edge it rides — the figure and its line are
+            // one reading, and a muted grey lost against the bars underneath.
+            ctx.set_fill_color(&theme.text_primary);
             ctx.fill_text(&label, right, label_y);
         }
     }
