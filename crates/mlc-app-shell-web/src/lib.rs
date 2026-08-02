@@ -643,7 +643,27 @@ fn run_render_loop(
                     w.viewport().bar_count as f64,
                 ))
                 .unwrap_or((0.0, 0.0, 0.0, 0.0));
+            // Crosshair exactly as the renderers receive it. `x`/`y` are
+            // PANE-LOCAL — the crosshair renderer draws them as `rect.x + x`
+            // — while chart overlays resolve their own geometry in ABSOLUTE
+            // coordinates. Every hover-lands-in-the-wrong-place defect is one
+            // of those two spaces used where the other was meant, and this is
+            // the probe that tells them apart instead of guessing from a
+            // screenshot. `cross_pane` is -1 for the main pane.
+            let (cross_vis, cross_pane, cross_x, cross_y) = active_cid
+                .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                .map(|w| (
+                    w.crosshair.visible,
+                    w.crosshair.pane_index.map(|p| p as f64).unwrap_or(-1.0),
+                    w.crosshair.x,
+                    w.crosshair.y,
+                ))
+                .unwrap_or((false, -1.0, 0.0, 0.0));
             let dbg = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&dbg, &"cross_vis".into(), &cross_vis.into());
+            let _ = js_sys::Reflect::set(&dbg, &"cross_pane".into(), &cross_pane.into());
+            let _ = js_sys::Reflect::set(&dbg, &"cross_x".into(), &cross_x.into());
+            let _ = js_sys::Reflect::set(&dbg, &"cross_y".into(), &cross_y.into());
             let _ = js_sys::Reflect::set(&dbg, &"symbol".into(), &sym.into());
             let _ = js_sys::Reflect::set(&dbg, &"bars".into(), &count.into());
             let _ = js_sys::Reflect::set(&dbg, &"last_ts".into(), &last_ts.into());

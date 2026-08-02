@@ -206,8 +206,17 @@ pub fn draw_dom_heatmap(
     // laid over everything else afterwards. Hovering also forces the number
     // on: the aspect and under-candle rules hide digits for readability, and
     // pointing at a cell is the user asking for that one value anyway.
-    let cursor = if state.crosshair.visible {
-        Some((state.crosshair.x, state.crosshair.y))
+    //
+    // `Crosshair.x/y` are PANE-LOCAL — the crosshair renderer draws them as
+    // `rect.x + x` / `rect.y + y` — while the cell rects resolved above are
+    // absolute. Comparing the two put the highlight above and left of the
+    // pointer by exactly the chart rect's origin.
+    //
+    // The pane test is part of the same fix: a cursor sitting in a sub-pane
+    // carries THAT pane's local y, which would land on an unrelated row of
+    // the main pane's grid. Only a cursor on the main pane can hover heat.
+    let cursor = if state.crosshair.visible && state.crosshair.pane_index.is_none() {
+        Some((rect.x + state.crosshair.x, rect.y + state.crosshair.y))
     } else {
         None
     };
