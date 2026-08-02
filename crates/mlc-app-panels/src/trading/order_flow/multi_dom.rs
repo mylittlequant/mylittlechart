@@ -40,8 +40,6 @@ pub const GRID_PRESETS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0];
 /// Depth (rows per side) presets, cycled by click.
 pub const DEPTH_PRESETS: &[usize] = &[10, 25, 50, 100];
 
-/// Depth-bounds band-width presets (percent of mid), cycled by click.
-/// 0.3% matches the TapeSurf reference reading (ref 11/12).
 /// Exchange identifier — opaque label so the panel doesn't pull a hard
 /// dep on the `digdigdig3` crate. Wire up to `digdigdig3::ExchangeId`
 /// at the app layer with `format!("{:?}", ex)`.
@@ -729,6 +727,11 @@ impl MultiDomState {
         let strip_h = if self.config.show_imbalance { IMB_STRIP_H } else { 0.0 };
         let ladder_h = (body_h - strip_h).max(0.0);
         let rows = (ladder_h / ROW_HEIGHT).floor() as i64;
+        // Report the row count for the AUTO depth band, exactly as
+        // `draw_combined_book` does — only the render pass knows the height.
+        // Without this the M/D ladder's AUTO band read whatever the AD
+        // ladder last set, or the 0.3 fallback if AD had never rendered.
+        self.last_rows.set(rows);
         if rows < 3 { return; }
         let half = rows / 2;
         let mid_idx = (self.mid_price / grid).floor() as i64;
@@ -1045,17 +1048,11 @@ impl MultiDomState {
             }
         }
 
-        // ── Depth-bounds readout (TapeSurf ref 11/12): total resting size
-        // within the configured band, pinned at the ladder's right edge —
-        // ask figure at the top, bid figure at the bottom. Drawn before the
-        // early return below so it still renders with the imbalance strip
+        // ── Depth-bounds band (TapeSurf ref 11/12): a dashed edge at each of
+        // `mid * (1 ± pct/100)` with its side's total riding it. Drawn before
+        // the early return below so it still renders with the imbalance strip
         // switched off.
-        self.draw_depth_bounds_readout(
-            ctx, x, w,
-            (body_y + ROW_HEIGHT * 0.75) as f64,
-            (body_y + ladder_h - ROW_HEIGHT * 0.75) as f64,
-            theme,
-        );
+        self.draw_depth_bounds(ctx, x, w, body_y, ladder_h, half, center_idx, grid, theme);
 
         // ── Bottom strip: ±2% / ±10% bid-liquidity share per exchange ────
         if !self.config.show_imbalance {
@@ -1431,47 +1428,115 @@ impl MultiDomState {
             }
         }
 
-        // ── Depth-bounds readout (TapeSurf ref 11/12), same figures as
+        // ── Depth-bounds band (TapeSurf ref 11/12), same figures as
         // `draw_book` over the combined book it already folds — no separate
         // computation, `tick()` already sums across every venue.
-        self.draw_depth_bounds_readout(
-            ctx, x, w,
-            (body_y + ROW_HEIGHT * 0.75) as f64,
-            (body_y + body_h - ROW_HEIGHT * 0.75) as f64,
-            theme,
-        );
+        self.draw_depth_bounds(ctx, x, w, body_y, body_h, half, center_idx, grid, theme);
     }
 
-    /// Depth-bounds figures (TapeSurf ref 11/12): total resting size within
-    /// `± config.depth_bounds_pct %` of mid, right-aligned at the ladder's
-    /// right edge — ask at `top_y`, bid at `bottom_y`. Shared by
-    /// [`Self::draw_book`] and [`Self::draw_combined_book`] since both read
-    /// the SAME combined `depth_bounds` total (per-side sum across every
-    /// configured exchange, refreshed once per tick).
-    fn draw_depth_bounds_readout(
+    /// Y of `price` in the ladder's own continuous coordinate space.
+    ///
+    /// Row `r` renders grid bucket `center_idx + (half - r)`, and that
+    /// bucket spans `[idx*grid, (idx+1)*grid)` with the HIGHER price at the
+    /// row's top edge. So the mapping is linear in `price / grid`:
+    ///
+    /// `y = body_y + ROW_HEIGHT * (half + center_idx + 1 - price/grid)`
+    ///
+    /// Continuous on purpose — a band edge lands wherever it lands, including
+    /// inside a row, instead of being snapped to a row boundary that would
+    /// make small band changes invisible.
+    fn ladder_y(body_y: f32, half: i64, center_idx: i64, grid: f64, price: f64) -> f64 {
+        body_y as f64 + ROW_HEIGHT as f64 * ((half + center_idx + 1) as f64 - price / grid)
+    }
+
+    /// Depth-bounds band (TapeSurf ref 11/12): total resting size within
+    /// `± config.depth_bounds_pct %` of mid, drawn AT the prices that band
+    /// covers — `mid * (1 ± pct/100)` — with each side's figure riding its
+    /// own edge. Shared by [`Self::draw_book`] and
+    /// [`Self::draw_combined_book`] since both read the SAME combined
+    /// `depth_bounds` total (per-side sum across every configured exchange,
+    /// refreshed once per tick).
+    ///
+    /// The previous revision pinned both figures to the ladder's top and
+    /// bottom edge, so only their VALUE moved when the band changed and the
+    /// band read as doing nothing at all — the owner typed `0.01` and saw
+    /// the same two lines of text in the same two places.
+    ///
+    /// An edge outside the visible ladder is NOT clamped silently: it pins
+    /// to the nearest edge and carries an arrow saying the real boundary is
+    /// off-screen in that direction. A band wider than the ladder is the
+    /// normal case at AUTO, and it has to look different from one that fits.
+    fn draw_depth_bounds(
         &self,
         ctx: &mut dyn RenderContext,
         x: f32,
         w: f32,
-        top_y: f64,
-        bottom_y: f64,
+        body_y: f32,
+        ladder_h: f32,
+        half: i64,
+        center_idx: i64,
+        grid: f64,
         theme: &crate::panel_theme::PanelTheme,
     ) {
-        if !self.config.show_depth_bounds {
+        if !self.config.show_depth_bounds || ladder_h <= 0.0 || self.mid_price <= 0.0 {
             return;
         }
         let (bid_sum, ask_sum) = self.depth_bounds;
         let pct = self.depth_bounds_effective_pct;
+        let band = (pct / 100.0).max(0.0);
+        let top_y = body_y as f64;
+        let bot_y = (body_y + ladder_h) as f64;
         let right = (x + w - 4.0) as f64;
-        ctx.set_font("10px monospace");
-        ctx.set_text_align(TextAlign::Right);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.set_fill_color(&theme.text_muted);
+        let dash_x0 = (x + PRICE_COL_WIDTH) as f64;
         // Two decimals under a tenth of a percent — an AUTO band on a fine
         // grid lands there and "0.0%" would say nothing.
         let pct_txt = if pct < 0.1 { format!("{pct:.2}%") } else { format!("{pct:.1}%") };
-        ctx.fill_text(&format!("{} {}", fmt_depth_qty(ask_sum), pct_txt), right, top_y);
-        ctx.fill_text(&format!("{} {}", fmt_depth_qty(bid_sum), pct_txt), right, bottom_y);
+
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+
+        for (is_ask, sum) in [(true, ask_sum), (false, bid_sum)] {
+            let price = self.mid_price * if is_ask { 1.0 + band } else { 1.0 - band };
+            let y = Self::ladder_y(body_y, half, center_idx, grid, price);
+            let on_ladder = y >= top_y && y <= bot_y;
+            if on_ladder {
+                // Dashed, not solid: the ladder is a dense stack of rows and
+                // a solid rule at a row boundary reads as one more level.
+                ctx.set_fill_color(&mlc_core::apply_opacity(
+                    if is_ask { &theme.sell } else { &theme.buy },
+                    0.5,
+                ));
+                let mut sx = dash_x0;
+                while sx < right {
+                    ctx.fill_rect(sx, y - 0.5, 4.0, 1.0);
+                    sx += 7.0;
+                }
+            }
+            // The figure rides its edge. Off the ladder it pins to the
+            // nearest border with an arrow — the number is still true, its
+            // boundary just isn't in view.
+            let (label_y, baseline, prefix) = match (on_ladder, is_ask) {
+                (true, true) => (y - 2.0, TextBaseline::Bottom, ""),
+                (true, false) => (y + 2.0, TextBaseline::Top, ""),
+                (false, true) => (top_y + 2.0, TextBaseline::Top, "\u{25b2} "),
+                (false, false) => (bot_y - 2.0, TextBaseline::Bottom, "\u{25bc} "),
+            };
+            // The figure lands on top of the ladder's own cumulative column,
+            // so it carries a chip of panel background — without it the two
+            // numbers overprint each other and neither is readable.
+            let label = format!("{prefix}{} {pct_txt}", fmt_depth_qty(sum));
+            let tw = ctx.measure_text(&label);
+            let chip_h = 11.0;
+            let chip_y = match baseline {
+                TextBaseline::Bottom => label_y - chip_h,
+                _ => label_y,
+            };
+            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.panel_bg, 0.85));
+            ctx.fill_rect(right - tw - 4.0, chip_y, tw + 6.0, chip_h);
+            ctx.set_text_baseline(baseline);
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.fill_text(&label, right, label_y);
+        }
     }
 
     /// Header when no exchanges are configured yet.
