@@ -161,13 +161,26 @@ pub fn draw_liquidations(
     }
 
     if ink.show_dots && layer == Layer::Prints {
-        // Marker area tracks notional, so a 10× bigger forced close reads as
-        // 10× the ink rather than 10× the radius.
+        // A forced close is a PRICE that got taken out, so it draws as a
+        // horizontal mark at that price — a line spanning bars either side
+        // of the bar it fired on, with the firing point accented (owner
+        // spec 2026-08-02: «это как минимум линия должна быть, на несколько
+        // баров вправо и влево ... с акцентом на точке где она
+        // активировалась»). A bare dot said nothing about the level; the
+        // line is what makes a cluster of closes at one price visible as a
+        // level rather than as scattered marks.
+        //
+        // Reach scales with notional, sub-linearly: a 100× bigger close
+        // reaches 10× further, so one outlier cannot span the whole screen
+        // while everything else collapses to a tick.
         let max_print = tape
             .prints
             .iter()
             .map(|p| p.value_usd)
             .fold(1e-9_f64, f64::max);
+        let bar_px = state.viewport.bar_spacing.max(0.5);
+        let scale = ink.dot_scale.clamp(0.2, 4.0);
+        ctx.set_line_dash(&[]);
         for p in tape.prints.iter() {
             if p.ts_ms < from_ts || p.ts_ms > to_ts {
                 continue;
@@ -176,28 +189,44 @@ pub fn draw_liquidations(
                 continue;
             }
             let Some(x) = x_for_ts(state, p.ts_ms) else { continue };
-            if x < rect.x || x > right_edge {
+            let norm = (p.value_usd / max_print).clamp(0.0, 1.0).sqrt();
+            // Half-reach in BARS, not pixels: the mark keeps its meaning
+            // ("this many bars either side") across every zoom level.
+            let half_px = ((0.8 + norm * ink.span_bars.clamp(0.5, 40.0)) * bar_px).min(rect.width);
+            let x0 = (x - half_px).max(rect.x);
+            let x1 = (x + half_px).min(right_edge);
+            if x1 <= rect.x || x0 >= right_edge {
                 continue;
             }
-            let r = ((p.value_usd / max_print).sqrt() * 6.0 * ink.dot_scale.clamp(0.2, 4.0))
-                .clamp(1.5, 14.0);
             let color = if p.side == 1 { &theme.candle_down } else { &theme.candle_up };
             let cy = y_for(p.price);
-            ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(color, 0.9));
+            let alpha = ((0.45 + 0.55 * norm) * ink.opacity.clamp(0.05, 1.0)).clamp(0.05, 1.0);
+
+            // The level itself.
+            ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(color, alpha));
+            ctx.set_stroke_width((1.0 + norm * 2.0) * scale);
             ctx.begin_path();
-            ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
-            ctx.close_path();
-            ctx.fill();
-            // A ring in the background colour: over a candle of the same
-            // hue the fill alone has no edge, and a liquidation on the bar
-            // that caused it is precisely the case that must read.
-            ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(&theme.background, 0.9));
-            ctx.set_stroke_width(1.0);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
-            ctx.close_path();
+            ctx.move_to(x0, cy);
+            ctx.line_to(x1, cy);
             ctx.stroke();
+
+            // The accent: where it actually fired. Ringed in the background
+            // colour because over a candle of its own hue a bare fill has no
+            // edge at all.
+            if x >= rect.x && x <= right_edge {
+                let r = ((2.0 + norm * 4.0) * scale).clamp(1.5, 12.0);
+                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(color, (alpha + 0.25).min(1.0)));
+                ctx.begin_path();
+                ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.fill();
+                ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(&theme.background, 0.9));
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.stroke();
+            }
         }
     }
 }

@@ -730,8 +730,12 @@ pub struct LiquidationInk {
     pub show_levels: bool,
     /// Individual prints on/off.
     pub show_dots: bool,
-    /// Scale on the auto-fitted print marker.
+    /// Scale on the print mark — line weight and accent radius together.
     pub dot_scale: f64,
+    /// Half-reach of a print's price line, in BARS, at the largest print in
+    /// view. Bars rather than pixels so the mark keeps its meaning across
+    /// zoom levels; smaller prints reach proportionally less.
+    pub span_bars: f64,
     /// Fill alpha of the level bars at full intensity.
     pub opacity: f64,
 }
@@ -745,6 +749,7 @@ impl Default for LiquidationInk {
             show_levels: true,
             show_dots: true,
             dot_scale: 1.0,
+            span_bars: 6.0,
             opacity: 0.55,
         }
     }

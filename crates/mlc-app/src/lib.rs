@@ -1726,6 +1726,7 @@ impl ChartApp {
             show_levels: b("show_levels", d.show_levels),
             show_dots: b("show_dots", d.show_dots),
             dot_scale: f("dot_scale", d.dot_scale),
+            span_bars: f("span_bars", d.span_bars),
             opacity: f("opacity", d.opacity),
         }
     }
