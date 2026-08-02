@@ -183,21 +183,15 @@ pub fn draw_liquidation_projection(
         // evidence. The two halves are painted by different rules.
         let now_x = x1.min(series_right);
 
-        // ── Elapsed half: leans INTO the present, never fades. The far end
-        // is where the level still stands and that is the end worth looking
-        // at; dimming it would bury the layer's actual claim.
+        // ── Elapsed half: FLAT. It carries one fact — this level stood, at
+        // this weight, from here to here — and a fact does not have a
+        // gradient. The earlier three-step ramp meant to lean into the
+        // present, but at three steps it read as three blocks with two hard
+        // seams down every band, which is what made the layer look cheap.
         let wh = now_x - x0;
         if wh > 0.0 {
-            if wh < 24.0 {
-                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, alpha));
-                ctx.fill_rect(x0, y, wh, band_px);
-            } else {
-                let step = wh / 3.0;
-                for (i, k) in [0.62_f64, 0.82, 1.0].into_iter().enumerate() {
-                    ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, alpha * k));
-                    ctx.fill_rect(x0 + step * i as f64, y, step + 0.5, band_px);
-                }
-            }
+            ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, alpha));
+            ctx.fill_rect(x0, y, wh, band_px);
         }
 
         // ── Future half: only exists when the owner asked for it, which is
@@ -214,22 +208,29 @@ pub fn draw_liquidation_projection(
             ctx.fill_rect(now_x, y, wf, band_px);
             continue;
         }
-        // Dissolve across the extension. Stepped alpha rather than a real
-        // blur: a canvas filter costs a full-layer composite per frame, and
-        // a fine enough ramp reads as a fade. Segment count follows width so
-        // a long extension dissolves smoothly and a short one does not pay
-        // for segments nobody can see.
-        let n = ((wf / 10.0).round() as usize).clamp(3, 24);
-        let step = wf / n as f64;
-        for i in 0..n {
-            // Ease out: full where it leaves the last bar, gone at the tip.
-            let t = i as f64 / n as f64;
-            let a = alpha * (1.0 - t).powf(1.6);
-            if a <= 0.01 {
-                break;
-            }
-            ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, a));
-            ctx.fill_rect(now_x + step * i as f64, y, step + 0.5, band_px);
-        }
+        // Dissolve across the extension with ONE gradient fill.
+        //
+        // The first cut stepped the alpha by hand and looked like a picket
+        // fence (owner: "полосками такими шакальными вместо плавного
+        // перехода"). Semi-transparent fills COMPOSITE, so wherever two
+        // segments overlapped the tone was drawn twice and the seam came
+        // out brighter than either side — a hand-stepped ramp cannot be
+        // made clean, only less obviously dirty.
+        //
+        // `GradientPainter` is part of the RenderContext trait and every
+        // backend implements it, canvas2d (the browser build) included, so
+        // there was never a reason to approximate one.
+        //
+        // Five stops trace the same ease-out curve the steps did — full
+        // where the band leaves the last bar, gone at the tip.
+        let ramp: [(f32, f64); 5] = [(0.0, 1.0), (0.25, 0.665), (0.5, 0.33), (0.75, 0.116), (1.0, 0.0)];
+        let owned: Vec<(f32, String)> = ramp
+            .iter()
+            .map(|(o, k)| (*o, mlc_core::utils::color::apply_opacity(tone, alpha * k)))
+            .collect();
+        let stops: Vec<(f32, &str)> = owned.iter().map(|(o, c)| (*o, c.as_str())).collect();
+        ctx.begin_path();
+        ctx.rect(now_x, y, wf, band_px);
+        ctx.fill_linear_gradient(&stops, now_x, y, now_x + wf, y);
     }
 }
