@@ -572,8 +572,18 @@ pub fn draw_volume_overlay(
             up_color
         };
 
+        let (bx, by, bw, bh) = (x - bar_width / 2.0, base_y - bar_height, bar_width, bar_height);
+        // Volume bars wear the skin's texture layer like the candles do — a
+        // glow-on skin that lights the bodies but leaves the volume flat
+        // reads as two different charts stacked.
+        if state.theme.candle_glow {
+            for (grow, alpha) in [(2.0_f64, 0.16_f64), (4.0, 0.07)] {
+                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(color, alpha));
+                ctx.fill_rect(bx - grow, by - grow, bw + grow * 2.0, bh + grow * 2.0);
+            }
+        }
         ctx.set_fill_color(color);
-        ctx.fill_rect(x - bar_width / 2.0, base_y - bar_height, bar_width, bar_height);
+        ctx.fill_rect(bx, by, bw, bh);
     }
 }
 
@@ -655,9 +665,12 @@ pub fn draw_overlay_indicators(
                         .get("color_by_direction")
                         .copied()
                         .unwrap_or(true);
-                    // Build theme-aware fallback colors (candle theme color + 50% alpha).
-                    let up_fallback = format!("{}80", state.theme.candle_up);
-                    let down_fallback = format!("{}80", state.theme.candle_down);
+                    // The skin's own volume colours. This used to paste a
+                    // `80` alpha suffix onto the candle colour, i.e. hard-code
+                    // 50% transparency — the bars read as washed-out next to
+                    // the candles and the panels the same skin paints.
+                    let up_fallback = state.theme.volume_up.clone();
+                    let down_fallback = state.theme.volume_down.clone();
                     let up_color = instance.color_params
                         .get("up_color")
                         .map(|s| s.as_str())

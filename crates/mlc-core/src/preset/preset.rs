@@ -152,6 +152,10 @@ pub enum PersistedFreeItemKind {
         /// single-ladder mode.
         #[serde(default)]
         multi_mode: bool,
+        /// Aggregated sub-mode (one combined ladder, owner 2026-08-02).
+        /// Defaulted so older presets restore in plain Multi-DOM.
+        #[serde(default)]
+        agg_mode: bool,
         #[serde(default)]
         multi_exchanges: Vec<String>,
         #[serde(default = "default_multi_dom_grid_size")]

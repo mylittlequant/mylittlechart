@@ -153,10 +153,12 @@ pub fn render_dom_settings_modal(
     let mut row_y = my + HEADER_H + PAD;
     let btn_w = 90.0;
 
+    let mode = dom.mode_index();
     caption(ctx, tt, left, row_y, "Mode");
     row_y += CAPTION_H;
-    modal_btn(ctx, coord, &layer_id, tt, "mode:dom", left, row_y, btn_w, "DOM", !dom.multi_mode);
-    modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + btn_w + 8.0, row_y, btn_w + 10.0, "Multi-DOM", dom.multi_mode);
+    modal_btn(ctx, coord, &layer_id, tt, "mode:dom", left, row_y, btn_w, "DOM", mode == 0);
+    modal_btn(ctx, coord, &layer_id, tt, "mode:multi", left + btn_w + 8.0, row_y, btn_w + 10.0, "Multi-DOM", mode == 1);
+    modal_btn(ctx, coord, &layer_id, tt, "mode:agg", left + (btn_w + 8.0) * 2.0 + 10.0, row_y, btn_w + 10.0, "Aggregated", mode == 2);
     row_y += BTN_H + ROW_GAP;
 
     // Bar texture (skin texture layer manual switch — edits the live

@@ -1029,7 +1029,7 @@ impl ChartApp {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm, dom_depth_wave, dom_big_markers } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, agg_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm, dom_depth_wave, dom_big_markers } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1059,6 +1059,7 @@ impl ChartApp {
                                             );
                                         }
                                         s.multi_mode = *multi_mode;
+                                        s.agg_mode = *agg_mode;
                                         // Subscribe to the shared orderbook + trade series if we have a concrete symbol.
                                         if !s.symbol.is_empty() {
                                             if let Some(eid) = digdigdig3::ExchangeId::from_str(&s.exchange) {

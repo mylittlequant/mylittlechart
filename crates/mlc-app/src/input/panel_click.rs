@@ -3191,8 +3191,10 @@ impl ChartApp {
                         if let Some(mlc_core::state::Panel::Dom(pid)) = section_item {
                             match item_id.as_str() {
                                 "sec_mx" => {
+                                    // 3-way cycle: Single → Multi → Aggregated → Single.
                                     let sub_info = self.panels_store.dom.get_mut(&pid).map(|state| {
-                                        state.set_multi_mode(!state.multi_mode);
+                                        let next_mode = if state.agg_mode { 0 } else if state.multi_mode { 2 } else { 1 };
+                                        state.set_mode(next_mode);
                                         (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
                                     });
                                     if let Some((on, sym, exchanges)) = sub_info {
@@ -4290,12 +4292,14 @@ impl ChartApp {
             });
             let Some(pid) = dom_pid else { return };
             match rest {
-                "mode:dom" | "mode:multi" => {
-                    let want_multi = rest == "mode:multi";
+                "mode:dom" | "mode:multi" | "mode:agg" => {
+                    let mode = match rest {
+                        "mode:agg" => 2,
+                        "mode:multi" => 1,
+                        _ => 0,
+                    };
                     let sub_info = self.panels_store.dom.get_mut(&pid).map(|state| {
-                        if state.multi_mode != want_multi {
-                            state.set_multi_mode(want_multi);
-                        }
+                        state.set_mode(mode);
                         (state.multi_mode, state.multi.symbol.clone(), state.multi.config.exchanges.clone())
                     });
                     if let Some((on, sym, exchanges)) = sub_info {

@@ -204,6 +204,12 @@ pub struct ChartTheme {
     /// Ask side of the same pair.
     pub heat_ask: String,
     pub heat_ask_hot: String,
+    /// Volume-bar colours straight from the skin. The volume overlay used
+    /// to synthesise its own by pasting a 50%-alpha suffix onto the candle
+    /// colour, which is why it read as washed-out next to everything else
+    /// the same skin paints.
+    pub volume_up: String,
+    pub volume_down: String,
 }
 
 impl Default for ChartTheme {
@@ -254,6 +260,8 @@ impl Default for ChartTheme {
             heat_bid_hot: "#30ff76".to_string(),
             heat_ask: "#dc352b".to_string(),
             heat_ask_hot: "#ffd311".to_string(),
+            volume_up: "#26a69a".to_string(),
+            volume_down: "#ef5350".to_string(),
         }
     }
 }

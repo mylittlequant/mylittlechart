@@ -7157,10 +7157,11 @@ impl ChartApp {
                         let (s_sym, s_ex, s_at) = self.section_symbol_triplet(&item);
                         let dom_chips = if let mlc_core::state::Panel::Dom(id) = &item {
                             self.panels_store.dom.get(id).map(|s| if s.multi_mode {
-                                // Multi mode: F = multi level filter, the
-                                // tick chip = the multi GRID.
+                                // Multi/Aggregated mode: F = multi level
+                                // filter, the tick chip = the multi GRID.
                                 mlc_core::toolbar::SectionDomChips {
                                     multi_mode: true,
+                                    agg_mode: s.agg_mode,
                                     locked: s.multi.locked,
                                     min_volume_filter: s.multi.min_level_qty,
                                     tick_size: s.multi.config.grid_size,
@@ -7169,6 +7170,7 @@ impl ChartApp {
                             } else {
                                 mlc_core::toolbar::SectionDomChips {
                                     multi_mode: false,
+                                    agg_mode: false,
                                     locked: s.auto_center,
                                     min_volume_filter: s.min_volume_filter,
                                     tick_size: s.tick_size,
@@ -8069,6 +8071,7 @@ impl ChartApp {
                         self.panels_store.dom.get(id).map(|s| if s.multi_mode {
                             mlc_core::toolbar::SectionDomChips {
                                 multi_mode: true,
+                                agg_mode: s.agg_mode,
                                 locked: s.multi.locked,
                                 min_volume_filter: s.multi.min_level_qty,
                                 tick_size: s.multi.config.grid_size,
@@ -8077,6 +8080,7 @@ impl ChartApp {
                         } else {
                             mlc_core::toolbar::SectionDomChips {
                                 multi_mode: false,
+                                agg_mode: false,
                                 locked: s.auto_center,
                                 min_volume_filter: s.min_volume_filter,
                                 tick_size: s.tick_size,

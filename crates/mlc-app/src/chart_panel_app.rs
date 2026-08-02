@@ -304,6 +304,8 @@ impl ChartPanelApp {
             heat_bid_hot: rt.series.heat_bid_hot.clone(),
             heat_ask: rt.series.heat_ask.clone(),
             heat_ask_hot: rt.series.heat_ask_hot.clone(),
+            volume_up: rt.series.volume_up.clone(),
+            volume_down: rt.series.volume_down.clone(),
         }
     }
 

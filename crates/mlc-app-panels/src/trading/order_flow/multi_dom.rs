@@ -553,6 +553,79 @@ impl TradingPanel for MultiDomState {
 }
 
 impl MultiDomState {
+    /// Aggregated-mode entry point (TapeSurf parity, ui-dissection §2, refs
+    /// 11/12): same header/body split as [`Self::render`], but the body is
+    /// ONE combined ladder (see [`Self::draw_combined_book`]) instead of
+    /// `n` per-venue columns — the owner flips DOM ↔ Multi ↔ Aggregated on
+    /// the same panel without losing the shared roster, grid or handles.
+    pub fn render_aggregated(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        coordinator: &mut uzor::InputCoordinator,
+        slot_prefix: &str,
+    ) {
+        use uzor::input::{Sense, WidgetKind, LayerId};
+
+        let body_id = format!("{}:multi_dom:body", slot_prefix);
+        coordinator.register_composite(
+            body_id,
+            WidgetKind::BlackboxPanel,
+            uzor::Rect::new(x as f64, (y + HEADER_HEIGHT) as f64, w as f64, (h - HEADER_HEIGHT) as f64),
+            Sense::SCROLL | Sense::HOVER | Sense::DRAG,
+            &LayerId::main(),
+        );
+
+        ctx.set_fill_color(&theme.panel_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, h as f64);
+
+        let n = self.config.exchanges.len();
+        if n == 0 {
+            self.draw_empty_header(ctx, x, y, w, theme);
+            return;
+        }
+
+        // Header: one combined column, labeled by market count instead of
+        // per-exchange names — the reference's "Aggregated N markets" chip.
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(x as f64, y as f64, w as f64, HEADER_HEIGHT as f64);
+        ctx.set_fill_color(&theme.text_primary);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Price", (x + 4.0) as f64, (y + HEADER_HEIGHT * 0.5) as f64);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(
+            &format!("Aggregated {} market{}", n, if n == 1 { "" } else { "s" }),
+            (x + PRICE_COL_WIDTH + (w - PRICE_COL_WIDTH) * 0.5) as f64,
+            (y + HEADER_HEIGHT * 0.5) as f64,
+        );
+
+        let body_y = y + HEADER_HEIGHT;
+        let body_h = (h - HEADER_HEIGHT).max(0.0);
+
+        if self.mid_price <= 0.0 {
+            ctx.set_fill_color(&theme.text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(
+                "Waiting for orderbook data…",
+                (x + w * 0.5) as f64,
+                (body_y + body_h * 0.5) as f64,
+            );
+        } else {
+            self.draw_combined_book(ctx, x, body_y, w, body_h, theme, n);
+        }
+
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+    }
+
     /// Ladder + big-order markers + bottom imbalance strip.
     #[allow(clippy::too_many_arguments)]
     fn draw_book(
@@ -919,6 +992,279 @@ impl MultiDomState {
                     cx + cw * 0.5,
                     ry + 8.0,
                 );
+            }
+        }
+    }
+
+    /// Combined ladder body for Aggregated mode: same price grid / row
+    /// height / header height as [`Self::draw_book`], but every row folds
+    /// every venue's qty at that level into ONE bar — painted as
+    /// per-venue stacked segments (each segment's width = its share of
+    /// the row total) so the split stays visible, per the reference's
+    /// "one combined book, segmented by market". Reuses
+    /// `books_by_exchange` (already refreshed by [`Self::tick`]) — no
+    /// second data path, no extra tracker reads.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_combined_book(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32, body_y: f32, w: f32, body_h: f32,
+        theme: &crate::panel_theme::PanelTheme,
+        n: usize,
+    ) {
+        let grid = self.config.grid_size.max(1e-9);
+        let rows = (body_h / ROW_HEIGHT).floor() as i64;
+        if rows < 3 { return; }
+        let half = rows / 2;
+        let mid_idx = (self.mid_price / grid).floor() as i64;
+        // View anchor: mid while Locked; the user's absolute scroll price in
+        // Free — same semantics as `draw_book`.
+        let anchor = if self.locked || self.view_center_price <= 0.0 {
+            self.mid_price
+        } else {
+            self.view_center_price
+        };
+        let center_idx = (anchor / grid).floor() as i64;
+
+        // Fold every venue's already-bucketed book into ONE combined
+        // ladder, keeping the per-venue shares (`parts`, index = venue,
+        // same order as `config.exchanges`) for the stacked bar segments
+        // drawn below. Grid keys are venue-independent (see `tick`), so
+        // this is a straight per-key fold — no re-bucketing, no second
+        // read of the live tracker handles.
+        let mut bid_combined: BTreeMap<i64, (f64, Vec<f64>)> = BTreeMap::new();
+        let mut ask_combined: BTreeMap<i64, (f64, Vec<f64>)> = BTreeMap::new();
+        for (i, (bmap, amap)) in self.books_by_exchange.iter().enumerate() {
+            for (&idx, &q) in bmap.iter() {
+                if q <= 0.0 { continue; }
+                let entry = bid_combined.entry(idx).or_insert_with(|| (0.0, vec![0.0; n]));
+                entry.0 += q;
+                entry.1[i] = q;
+            }
+            for (&idx, &q) in amap.iter() {
+                if q <= 0.0 { continue; }
+                let entry = ask_combined.entry(idx).or_insert_with(|| (0.0, vec![0.0; n]));
+                entry.0 += q;
+                entry.1[i] = q;
+            }
+        }
+        let max_level = bid_combined
+            .values()
+            .chain(ask_combined.values())
+            .map(|(total, _)| *total)
+            .fold(0.0_f64, f64::max)
+            .max(1e-9);
+
+        // Cumulative depth from mid outward over the COMBINED ladder — the
+        // same "wave" shape as `draw_book`, one series instead of one per
+        // exchange.
+        let up = (center_idx + half - mid_idx).max(0) as usize;
+        let down = (mid_idx - (center_idx - (rows - 1 - half)) + 1).max(0) as usize;
+        let mut ask_cum = vec![0.0_f64; up + 1];
+        let mut bid_cum = vec![0.0_f64; down + 1];
+        let mut c = 0.0;
+        for k in 1..=up {
+            c += ask_combined.get(&(mid_idx + k as i64)).map(|(t, _)| *t).unwrap_or(0.0);
+            ask_cum[k] = c;
+        }
+        let mut max_cum = c;
+        let mut c = 0.0;
+        for k in 0..=down.saturating_sub(1) {
+            c += bid_combined.get(&(mid_idx - k as i64)).map(|(t, _)| *t).unwrap_or(0.0);
+            bid_cum[k] = c;
+        }
+        if c > max_cum { max_cum = c; }
+        let max_cum = max_cum.max(1e-9);
+
+        // System colors only (owner spec, same tokens `draw_book` uses).
+        let ask_stripe = mlc_core::apply_opacity(&theme.sell, 0.04);
+        let bid_stripe = mlc_core::apply_opacity(&theme.buy, 0.04);
+        let mid_stripe = mlc_core::apply_opacity(&theme.current_price, 0.12);
+        let ask_wave = mlc_core::apply_opacity(&theme.sell, 0.13);
+        let bid_wave = mlc_core::apply_opacity(&theme.buy, 0.13);
+        // Volume-intensity bar gradient (skin doctrine 2026-07-31): same
+        // side primary → "bright" secondary ramp `draw_book` uses — no new
+        // hardcoded colors, Aggregated just paints it per venue segment
+        // instead of per whole cell.
+        const GRAD_STEPS: usize = 8;
+        let flat_bars = theme.style.bar_texture == BarTexture::Flat;
+        let mut ask_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        let mut bid_grad: Vec<String> = Vec::with_capacity(GRAD_STEPS);
+        for k in 0..GRAD_STEPS {
+            let t = if flat_bars { 0.0 } else { k as f64 / (GRAD_STEPS - 1) as f64 };
+            let a = 0.45 + 0.35 * t;
+            ask_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.sell, &theme.sell_bright, t), a));
+            bid_grad.push(mlc_core::apply_opacity(
+                &mlc_core::mix_colors(&theme.buy, &theme.buy_bright, t), a));
+        }
+
+        ctx.set_font("10px monospace");
+        for r in 0..rows {
+            let idx = center_idx + (half - r);
+            let price = idx as f64 * grid;
+            if price <= 0.0 { continue; }
+            let row_y = (body_y + ROW_HEIGHT * r as f32) as f64;
+            let is_ask = idx > mid_idx;
+            let is_mid = idx == mid_idx;
+
+            // Zebra underlay (skin texture layer) — under the side stripe.
+            if theme.style.row_zebra && r % 2 == 1 {
+                ctx.set_fill_color(&theme.row_bg_alt);
+                ctx.fill_rect(x as f64, row_y, w as f64, ROW_HEIGHT as f64);
+            }
+
+            // Faint side stripe across the full row.
+            let stripe = if is_ask {
+                &ask_stripe
+            } else if is_mid {
+                &mid_stripe
+            } else {
+                &bid_stripe
+            };
+            ctx.set_fill_color(stripe);
+            ctx.fill_rect(x as f64, row_y, w as f64, ROW_HEIGHT as f64);
+
+            // Price column.
+            ctx.set_fill_color(if is_mid { &theme.current_price } else { &theme.text_muted });
+            ctx.set_text_align(TextAlign::Right);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let decimals = if grid >= 1.0 { 0 } else if grid >= 0.1 { 1 } else { 2 };
+            ctx.fill_text(
+                &format!("{:.*}", decimals, price),
+                (x + PRICE_COL_WIDTH - 4.0) as f64,
+                row_y + ROW_HEIGHT as f64 * 0.5,
+            );
+
+            // Combined cell: cumulative wave underlay + stacked bar +
+            // numbers + big-order marker.
+            let cx = (x + PRICE_COL_WIDTH) as f64;
+            let cell_w = (w - PRICE_COL_WIDTH - 4.0) as f64;
+            let (combined, cum) = if is_ask {
+                let k = (idx - mid_idx) as usize;
+                (ask_combined.get(&idx), ask_cum.get(k).copied().unwrap_or(0.0))
+            } else {
+                let k = (mid_idx - idx) as usize;
+                (bid_combined.get(&idx), bid_cum.get(k).copied().unwrap_or(0.0))
+            };
+
+            if cum > 0.0 {
+                let wf = (cum / max_cum).clamp(0.0, 1.0);
+                ctx.set_fill_color(if is_ask { &ask_wave } else { &bid_wave });
+                ctx.fill_rect(cx + 2.0, row_y, cell_w * wf, ROW_HEIGHT as f64);
+            }
+
+            if let Some((total, parts)) = combined {
+                if *total > 0.0 && *total >= self.min_level_qty {
+                    let frac = (*total / max_level).powf(0.6).clamp(0.04, 1.0);
+                    let big = *total >= max_level * BIG_ORDER_FRAC;
+                    let bw = cell_w * frac;
+
+                    // Stacked per-venue segments, in roster order (TapeSurf
+                    // ref 11/12: "one combined book, segmented by market").
+                    // Each segment's width is its own share of the
+                    // (already length-compressed) bar; a thin divider marks
+                    // every boundary except the last.
+                    let nonzero = parts.iter().filter(|&&p| p > 0.0).count();
+                    let mut seen = 0usize;
+                    let mut seg_x = cx + 2.0;
+                    for &part in parts.iter() {
+                        if part <= 0.0 { continue; }
+                        seen += 1;
+                        let seg_w = bw * (part / *total);
+                        let seg_frac = (part / max_level).powf(0.6).clamp(0.04, 1.0);
+                        let g = (seg_frac * (GRAD_STEPS - 1) as f64).round() as usize;
+                        ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
+                        ctx.fill_rect(seg_x, row_y + 1.0, seg_w, (ROW_HEIGHT - 2.0) as f64);
+                        seg_x += seg_w;
+                        if seen < nonzero {
+                            ctx.set_stroke_color(&theme.separator);
+                            ctx.set_stroke_width(1.0);
+                            ctx.begin_path();
+                            ctx.move_to(seg_x, row_y + 1.0);
+                            ctx.line_to(seg_x, row_y + ROW_HEIGHT as f64 - 1.0);
+                            ctx.stroke();
+                        }
+                    }
+
+                    if big {
+                        // Bright edge marker at the bar tip (Multi-DOM parity).
+                        ctx.set_fill_color(if is_ask { &theme.sell_bright } else { &theme.buy_bright });
+                        ctx.fill_rect(cx + 2.0 + bw - 2.0, row_y + 1.0, 2.0, (ROW_HEIGHT - 2.0) as f64);
+                    }
+
+                    // Numbers: combined qty (left) + cumulative (right,
+                    // muted) when the column is wide enough, big levels
+                    // always.
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.set_font("10px monospace");
+                    if cell_w >= 64.0 {
+                        ctx.set_fill_color(if big { &theme.text_primary } else { &theme.text_muted });
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.fill_text(&fmt_qty(*total), cx + 4.0, row_y + ROW_HEIGHT as f64 * 0.5);
+                        ctx.set_fill_color(&theme.text_muted);
+                        ctx.set_text_align(TextAlign::Right);
+                        ctx.fill_text(&fmt_qty(cum), cx + cell_w - 2.0, row_y + ROW_HEIGHT as f64 * 0.5);
+                    } else if big {
+                        ctx.set_fill_color(&theme.text_primary);
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.fill_text(&fmt_qty(*total), cx + 4.0, row_y + ROW_HEIGHT as f64 * 0.5);
+                    }
+                }
+            }
+
+            // Mid separator line under the mid row.
+            if is_mid {
+                ctx.set_stroke_color(&theme.current_price);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(x as f64, row_y + ROW_HEIGHT as f64);
+                ctx.line_to((x + w) as f64, row_y + ROW_HEIGHT as f64);
+                ctx.stroke();
+            }
+        }
+
+        // ── Stepped cumulative outline ───────────────────────────────────
+        // The wave fill alone reads as a soft edge; the reference draws its
+        // silhouette as a crisp staircase over the bars. Same shape as
+        // `draw_book`'s outline, over the COMBINED ladder instead of one
+        // series per exchange. Skipped in the compressed textures along with
+        // the fill.
+        if !matches!(theme.style.bar_texture, BarTexture::Cells | BarTexture::Mosaic) {
+            let cx = (x + PRICE_COL_WIDTH) as f64 + 2.0;
+            let cell_w = (w - PRICE_COL_WIDTH - 4.0) as f64;
+            let ask_line = mlc_core::apply_opacity(&theme.sell, 0.55);
+            let bid_line = mlc_core::apply_opacity(&theme.buy, 0.55);
+            for side_ask in [true, false] {
+                ctx.set_stroke_color(if side_ask { &ask_line } else { &bid_line });
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                let mut started = false;
+                for r in 0..rows {
+                    let idx = center_idx + (half - r);
+                    if idx as f64 * grid <= 0.0 { continue; }
+                    let cum = if idx > mid_idx {
+                        if !side_ask { continue; }
+                        ask_cum.get((idx - mid_idx) as usize).copied().unwrap_or(0.0)
+                    } else {
+                        if side_ask { continue; }
+                        bid_cum.get((mid_idx - idx) as usize).copied().unwrap_or(0.0)
+                    };
+                    if cum <= 0.0 && !started { continue; }
+                    let wf = (cum / max_cum).clamp(0.0, 1.0);
+                    let xe = cx + cell_w * wf;
+                    let y0 = body_y as f64 + ROW_HEIGHT as f64 * r as f64;
+                    if started {
+                        ctx.line_to(xe, y0);
+                    } else {
+                        ctx.move_to(xe, y0);
+                        started = true;
+                    }
+                    ctx.line_to(xe, y0 + ROW_HEIGHT as f64);
+                }
+                if started {
+                    ctx.stroke();
+                }
             }
         }
     }

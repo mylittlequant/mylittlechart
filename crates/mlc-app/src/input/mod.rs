@@ -8161,6 +8161,7 @@ impl ChartApp {
                                 levels_displayed: state.levels_displayed,
                                 center_price: state.center_price,
                                 multi_mode: state.multi_mode,
+                                agg_mode: state.agg_mode,
                                 multi_exchanges: state.multi.config.exchanges.clone(),
                                 multi_grid_size: state.multi.config.grid_size,
                                 multi_depth: state.multi.config.depth_per_side,

@@ -220,8 +220,15 @@ pub struct DomState {
     /// Multi-exchange consolidated mode (merged Multi-DOM, global-docking
     /// Stage A 2026-07-30). When ON, render + input delegate to `multi`;
     /// the single-exchange ladder state above is untouched and survives
-    /// toggling back.
+    /// toggling back. True for BOTH the per-venue-column Multi-DOM AND
+    /// Aggregated mode (`agg_mode`) — they share the same embedded book.
     pub multi_mode: bool,
+    /// Aggregated DOM (TapeSurf parity, ui-dissection §2, refs 11/12): ONE
+    /// combined ladder folding every roster venue's qty per price level,
+    /// drawn as per-venue stacked bar segments, instead of Multi-DOM's `n`
+    /// side-by-side columns. A THIRD mode alongside single-ladder and
+    /// Multi-DOM (`set_mode`/`mode_index`), sharing the same `multi` book.
+    pub agg_mode: bool,
     /// Embedded multi-exchange book state (per-exchange books, merged grid,
     /// config editor). Fed by `OrderbookDeltaForMultiDom` events in tick.
     pub multi: super::multi_dom::MultiDomState,
@@ -310,6 +317,7 @@ impl DomState {
             show_big_markers: true,
             skin_menu_open: false,
             multi_mode: false,
+            agg_mode: false,
             multi,
         }
     }
@@ -339,6 +347,29 @@ impl DomState {
                 }
             }
         }
+    }
+
+    /// Mode switch (0 = Single, 1 = Multi, 2 = Aggregated) — the tri-state
+    /// precedent already used by `BigTradesState`/`LiqTapeState`. Multi and
+    /// Aggregated are both `multi_mode = true` (they share the SAME
+    /// embedded book); `set_multi_mode` already handles the symbol resync
+    /// + default-trio seeding needed for either.
+    pub fn set_mode(&mut self, mode: u8) {
+        let (multi, agg) = match mode {
+            2 => (true, true),
+            1 => (true, false),
+            _ => (false, false),
+        };
+        if self.multi_mode == multi && self.agg_mode == agg {
+            return;
+        }
+        self.agg_mode = agg;
+        self.set_multi_mode(multi);
+    }
+
+    /// Current mode index for the settings modal / toolbar chip (0/1/2).
+    pub fn mode_index(&self) -> u8 {
+        if self.agg_mode { 2 } else if self.multi_mode { 1 } else { 0 }
     }
 
     /// Get sync data for propagating to linked panels
@@ -1004,8 +1035,14 @@ impl TradingPanel for DomState {
     ) {
         // Multi-exchange mode: the merged Multi-DOM view replaces the single
         // ladder wholesale — its own header/body widgets take over input.
+        // Aggregated shares the SAME embedded book, just a different render
+        // path (one combined ladder vs `n` per-venue columns).
         if self.multi_mode {
-            self.multi.render(ctx, x, y, w, h, theme, coordinator, slot_prefix);
+            if self.agg_mode {
+                self.multi.render_aggregated(ctx, x, y, w, h, theme, coordinator, slot_prefix);
+            } else {
+                self.multi.render(ctx, x, y, w, h, theme, coordinator, slot_prefix);
+            }
             return;
         }
 

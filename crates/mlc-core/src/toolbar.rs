@@ -398,7 +398,12 @@ pub fn trading_header_toolbar(center_label: &str, chart_mode: bool, free_mode: b
 /// leaf control strip into the section header.
 #[derive(Clone, Copy, Debug)]
 pub struct SectionDomChips {
+    /// True for BOTH Multi-DOM and Aggregated — they share the same
+    /// embedded book/roster; `agg_mode` picks which of the two.
     pub multi_mode: bool,
+    /// Aggregated sub-mode (one combined ladder) vs plain per-venue-column
+    /// Multi-DOM. Ignored when `multi_mode` is false.
+    pub agg_mode: bool,
     /// Locked (ladder centered on mid) vs Free (user-scrolled) — the L/F
     /// chip; per toggle semantics the label shows the CURRENT mode.
     pub locked: bool,
@@ -451,14 +456,17 @@ pub fn section_header_toolbar(dom_chips: Option<SectionDomChips>) -> PanelToolba
     );
     if let Some(c) = dom_chips {
         // Mode toggle — the label states what is CURRENTLY on (owner spec
-        // 2026-07-30): "DOM" = single ladder, "M/D" = multi-exchange.
-        // Clicking flips. The thematic chips stay in BOTH modes.
-        // In multi mode the caller feeds `min_volume_filter` = the multi
-        // level filter and `tick_size` = the multi GRID. The L/F chip lives
-        // in BOTH modes: Locked = ladder centered on mid, Free = scrolled.
+        // 2026-07-30, widened to a 3-way cycle for Aggregated): "DOM" =
+        // single ladder, "M/D" = per-venue-column Multi-DOM, "AD" =
+        // Aggregated (one combined ladder). Clicking cycles Single → Multi
+        // → Aggregated → Single. The thematic chips stay in ALL modes.
+        // In multi/agg mode the caller feeds `min_volume_filter` = the
+        // multi level filter and `tick_size` = the multi GRID. The L/F
+        // chip lives in every mode: Locked = ladder centered on mid, Free
+        // = scrolled.
         let mut items = vec![
             ToolbarItemDef::button("sec_mx")
-                .with_text(if c.multi_mode { "M/D" } else { "DOM" }),
+                .with_text(if c.agg_mode { "AD" } else if c.multi_mode { "M/D" } else { "DOM" }),
             ToolbarItemDef::button("sec_am")
                 .with_text(if c.locked { "L" } else { "F" }),
         ];
