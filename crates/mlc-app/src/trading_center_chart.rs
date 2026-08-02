@@ -480,6 +480,9 @@ impl ChartApp {
                 let im = self.core.indicators();
                 im.instances_for_bubble(window.current_tag_id)
                     .iter()
+                    // Chart legend = price-plot indicators only; sub-panes
+                    // caption themselves.
+                    .filter(|inst| inst.pane == 0)
                     .map(|inst| mlc_app_layout::layout::render_ui::IndicatorOverlayInfo {
                         id: inst.id,
                         display_name: Self::format_indicator_display_name(&im, inst),

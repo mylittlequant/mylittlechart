@@ -5786,8 +5786,15 @@ impl ChartApp {
                         let mut indicators: Vec<IndicatorOverlayInfo> = {
                             let im = self.core.indicators();
                             let instances = im.instances_for_bubble(window.current_tag_id);
+                            // The chart legend lists CHART indicators only —
+                            // the ones painting on the price plot. A sub-pane
+                            // indicator is captioned inside its own pane and
+                            // reached from the object tree; listing it here
+                            // too was a duplicate that also let the chevron
+                            // act on a row that does not live on the chart.
                             instances
                                 .iter()
+                                .filter(|inst| inst.pane == 0)
                                 .map(|inst| {
                                     let display_name = Self::format_indicator_display_name(
                                         &im, inst,
@@ -6504,6 +6511,9 @@ impl ChartApp {
                     };
                     instances
                         .iter()
+                        // Chart legend = price-plot indicators only; sub-panes
+                        // caption themselves.
+                        .filter(|inst| inst.pane == 0)
                         .map(|inst| {
                             let display_name = Self::format_indicator_display_name(
                                 &im, inst,
