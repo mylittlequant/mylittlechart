@@ -6,7 +6,7 @@ use uzor::types::Rect as WidgetRect;
 use crate::layout::render_frame::ModalSearchResult;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::modal_state::{ModalState, OpenModal, IndicatorCatalogItem, IndicatorCategoryFilter, SearchResult};
+use crate::ui::modal_state::{ModalState, OpenModal, IndicatorCatalogItem, IndicatorCategory, IndicatorCategoryFilter, SearchResult};
 use crate::ui::modal_settings::ChartScreenArea;
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
@@ -565,7 +565,16 @@ fn render_indicator_search_results_scrollable_filtered(
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted });
         ctx.fill_text(&item.name, x + 12.0, current_y + 28.0);
-        let category_text = if item.overlay {
+        // `item.overlay` is a LAYOUT flag — "do not give me a pane of my
+        // own" — and the host-driven sub-panes carry it for exactly that
+        // reason: they paint themselves and must not spawn a phantom empty
+        // pane. Reading it as "draws over the price plot" printed
+        // "[overlay] Sub-pane" on OI Delta and the Funding Rate strip, which
+        // contradicts itself on one line. The Sub-pane category already says
+        // where the thing lands, so the badge stays off for it.
+        let category_text = if item.overlay
+            && !matches!(item.category, IndicatorCategory::Subpane)
+        {
             format!("[overlay] {}", item.category.display_name())
         } else {
             item.category.display_name().to_string()
