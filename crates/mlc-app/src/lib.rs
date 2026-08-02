@@ -2305,9 +2305,14 @@ impl ChartApp {
         {
             if self.panels_store.liq_tape.contains_key(&pid) {
                 results.retain(|r| {
-                    mlc_app_panels::trading::order_flow::multi_dom::venue_has_liquidations(
-                        &r.exchange_id,
-                    )
+                    // Futures only, on top of the publisher filter. A
+                    // liquidation is a derivatives event — a SPOT row in
+                    // this list can never deliver one, and the owner read
+                    // the spot rows as venues that were simply switched off.
+                    r.account_type.eq_ignore_ascii_case("F")
+                        && mlc_app_panels::trading::order_flow::multi_dom::venue_has_liquidations(
+                            &r.exchange_id,
+                        )
                 });
             }
         }
@@ -2352,11 +2357,19 @@ impl ChartApp {
                 .dom
                 .get(&pid)
                 .map(|s| (s.multi.symbol.clone(), s.multi.config.exchanges.clone())),
-            crate::SymbolQuickEditTarget::MultiTapeRoster(pid) => {
+            crate::SymbolQuickEditTarget::MultiTapeRoster(pid)
+            | crate::SymbolQuickEditTarget::SectionPanel(pid) => {
                 let ps = &self.panels_store;
                 ps.trade_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone()))
                     .or_else(|| ps.l2_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
                     .or_else(|| ps.big_trades.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
+                    // LIQ was missing from this chain, so its picker had no
+                    // pinned block at all: the connected venues were not
+                    // hoisted above the separator and the list read as a
+                    // plain search with a few rows lit at random (owner
+                    // report 2026-08-02). Its roster is the same
+                    // `multi.entries` every other tape uses.
+                    .or_else(|| ps.liq_tape.get(&pid).map(|s| (s.multi.symbol.clone(), s.multi.entries.clone())))
             }
             _ => None,
         };
