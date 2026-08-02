@@ -491,6 +491,11 @@ impl ChartApp {
                 state.tick();
             }
         }
+        // Realized liquidations for every chart carrying the overlay —
+        // pulled from the same station rings the LIQ panel reads, one cursor
+        // per venue, so nothing is lost to a frame that did not run.
+        self.pump_liquidations();
+
         for state in self.panels_store.l2_tape.values_mut() {
             if state.multi_mode {
                 state.tick();

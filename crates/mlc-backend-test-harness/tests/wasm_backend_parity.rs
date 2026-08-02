@@ -70,17 +70,7 @@ async fn stream_funding_rate_passthrough() {
     unwrap(scenarios::body_stream_funding_rate_passthrough(&mut h));
 }
 
-#[wasm_bindgen_test]
-async fn stream_liquidation_event_passthrough() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_liquidation_event_passthrough(&mut h));
-}
 
-#[wasm_bindgen_test]
-async fn stream_liquidation_bucket_passthrough() {
-    let mut h = fresh().await;
-    unwrap(scenarios::body_stream_liquidation_bucket_passthrough(&mut h));
-}
 
 #[wasm_bindgen_test]
 async fn stream_dom_heatmap_snapshot_passthrough() {

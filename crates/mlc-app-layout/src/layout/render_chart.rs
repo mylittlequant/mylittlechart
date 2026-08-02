@@ -30,7 +30,7 @@ use crate::chart_render::{
     draw_grid, draw_grid_extended, draw_data_gaps, draw_candles, draw_volume_profile_overlay,
     draw_tpo_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
-    draw_dom_heatmap_conditional, draw_liquidation_heatmap_conditional,
+    draw_dom_heatmap_conditional, draw_liquidations_conditional,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
@@ -2611,7 +2611,7 @@ pub fn render_chart(
     // `build_chart_render_state` already gates on the window's
     // `dom_heatmap_show`/`liq_heatmap_show` flags.
     draw_dom_heatmap_conditional(ctx, state);
-    draw_liquidation_heatmap_conditional(ctx, state);
+    draw_liquidations_conditional(ctx, state);
 
     // 4. Series (candles, bars, line, area, etc.)
     draw_series(ctx, state, config.chart_type);
@@ -3216,9 +3216,8 @@ pub fn render_full_chart_panel(
         funding_rate_ref: data.state.funding_rate_ref,
         dom_heatmap_ref: data.state.dom_heatmap_ref,
         dom_trade_dots_ref: data.state.dom_trade_dots_ref,
-        liq_heatmap_ref: data.state.liq_heatmap_ref,
-        liq_dots_ref: data.state.liq_dots_ref,
-        liq_sensitivity: data.state.liq_sensitivity,
+        liq_tape_ref: data.state.liq_tape_ref,
+        liq_ink: data.state.liq_ink,
         dom_params: data.state.dom_params,
         non_temporal_axis: data.state.non_temporal_axis,
         hide_time_grid: data.state.hide_time_grid,
@@ -3668,9 +3667,8 @@ pub fn render_chart_crosshair_layer(
         funding_rate_ref: state.funding_rate_ref,
         dom_heatmap_ref: state.dom_heatmap_ref,
         dom_trade_dots_ref: state.dom_trade_dots_ref,
-        liq_heatmap_ref: state.liq_heatmap_ref,
-        liq_dots_ref: state.liq_dots_ref,
-        liq_sensitivity: state.liq_sensitivity,
+        liq_tape_ref: state.liq_tape_ref,
+        liq_ink: state.liq_ink,
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
@@ -3870,9 +3868,8 @@ pub fn render_chart_overlay(
         funding_rate_ref: state.funding_rate_ref,
         dom_heatmap_ref: state.dom_heatmap_ref,
         dom_trade_dots_ref: state.dom_trade_dots_ref,
-        liq_heatmap_ref: state.liq_heatmap_ref,
-        liq_dots_ref: state.liq_dots_ref,
-        liq_sensitivity: state.liq_sensitivity,
+        liq_tape_ref: state.liq_tape_ref,
+        liq_ink: state.liq_ink,
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,

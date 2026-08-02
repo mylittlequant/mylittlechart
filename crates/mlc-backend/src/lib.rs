@@ -309,29 +309,7 @@ pub enum BubbleEvent {
         account_type: String,
         symbol: String,
         dot: mlc_core::chart::dom_heatmap::DomTradeDot,
-    },
-    /// Liquidation per-event — write target depends on per-app `liq_heatmap_show`
-    /// flag (chart-type → overlay migration; mirrors `oi_show`/`funding_show`).
-    /// Pass-through.
-    LiquidationEventPassthrough {
-        exchange_id: ExchangeId,
-        account_type: String,
-        symbol: String,
-        ts_ms: i64,
-        price: f64,
-        value_usd: f64,
-        side: u8,
-    },
-    /// Liquidation bucket update — write target depends on per-app `liq_heatmap_show` flag.
-    /// Pass-through.
-    LiquidationBucketPassthrough {
-        exchange_id: ExchangeId,
-        account_type: String,
-        symbol: String,
-        ts_ms: i64,
-        long_liq_usd: f64,
-        short_liq_usd: f64,
-    },
+    },
     /// History depth report landed for `bid`'s currently-active chart_type
     /// (hybrid-data-modes-plan-2026-07-08, Step 1). The bubble write
     /// (`DataBubble::set_history_depth`) already happened in `tick_writers`
@@ -582,30 +560,7 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("quantity", &dot.quantity)?;
                 m.serialize_entry("side", &dot.side)?;
                 m.end()
-            }
-            Self::LiquidationEventPassthrough { exchange_id, account_type, symbol, ts_ms, price, value_usd, side } => {
-                let mut m = s.serialize_map(Some(8))?;
-                m.serialize_entry("type", "LiquidationEventPassthrough")?;
-                m.serialize_entry("exchange_id", ex!(exchange_id))?;
-                m.serialize_entry("account_type", account_type)?;
-                m.serialize_entry("symbol", symbol)?;
-                m.serialize_entry("ts_ms", ts_ms)?;
-                m.serialize_entry("price", price)?;
-                m.serialize_entry("value_usd", value_usd)?;
-                m.serialize_entry("side", side)?;
-                m.end()
-            }
-            Self::LiquidationBucketPassthrough { exchange_id, account_type, symbol, ts_ms, long_liq_usd, short_liq_usd } => {
-                let mut m = s.serialize_map(Some(7))?;
-                m.serialize_entry("type", "LiquidationBucketPassthrough")?;
-                m.serialize_entry("exchange_id", ex!(exchange_id))?;
-                m.serialize_entry("account_type", account_type)?;
-                m.serialize_entry("symbol", symbol)?;
-                m.serialize_entry("ts_ms", ts_ms)?;
-                m.serialize_entry("long_liq_usd", long_liq_usd)?;
-                m.serialize_entry("short_liq_usd", short_liq_usd)?;
-                m.end()
-            }
+            }
             Self::HistoryDepthReported { bid, exchange_id, symbol, account_type, chart_type, depth } => {
                 let mut m = s.serialize_map(Some(6))?;
                 m.serialize_entry("type", "HistoryDepthReported")?;
@@ -2230,33 +2185,6 @@ impl BackendCore {
                     });
                 }
 
-                // ── LiquidationEvent — pass-through ─────────────────────────────
-                // Write target depends on per-app `liq_heatmap_show` overlay flag.
-                LiveUpdate::LiquidationEvent { exchange_id, account_type: at, symbol: sym, ts_ms, price, value_usd, side } => {
-                    events.push(BubbleEvent::LiquidationEventPassthrough {
-                        exchange_id,
-                        account_type: at.short_label().to_string(),
-                        symbol: sym,
-                        ts_ms,
-                        price,
-                        value_usd,
-                        side,
-                    });
-                }
-
-                // ── LiquidationBucketUpdate — pass-through ───────────────────────
-                // Write target depends on per-app `liq_heatmap_show` overlay flag.
-                LiveUpdate::LiquidationBucketUpdate { exchange_id, account_type: at, symbol: sym, ts_ms, long_liq_usd, short_liq_usd, .. } => {
-                    events.push(BubbleEvent::LiquidationBucketPassthrough {
-                        exchange_id,
-                        account_type: at.short_label().to_string(),
-                        symbol: sym,
-                        ts_ms,
-                        long_liq_usd,
-                        short_liq_usd,
-                    });
-                }
-
                 // ── HistoryDepthReported ───────────────────────────────────────
                 // Bubble-storage write (hybrid-data-modes-plan-2026-07-08,
                 // Step 1) — `DataBubble::set_history_depth` (via the facade)
@@ -2572,16 +2500,6 @@ impl BackendCore {
         self.bridge.unsubscribe_dom_heatmap(exchange_id, symbol, account_type);
     }
 
-    /// Subscribe to the Liquidation Heatmap overlay stream for an instrument
-    /// (chart-type → overlay migration — was a chart_type subscribe).
-    pub fn subscribe_liquidation_heatmap(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        self.bridge.request_liquidation_heatmap(exchange_id, symbol, account_type);
-    }
-
-    /// Cancel the Liquidation Heatmap overlay subscription for an instrument.
-    pub fn unsubscribe_liquidation_heatmap(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
-        self.bridge.unsubscribe_liquidation_heatmap(exchange_id, symbol, account_type);
-    }
 
     /// Ensure a connector for `exchange_id` is connected, spawning it if needed.
     pub fn ensure_connector(&self, exchange_id: ExchangeId) {
@@ -2858,6 +2776,15 @@ impl BackendCore {
     pub fn lag_stats(&self) -> (u64, u64) {
         use std::sync::atomic::Ordering::Relaxed;
         (self.lag_events.load(Relaxed), self.lag_dropped.load(Relaxed))
+    }
+
+    /// Every live liquidation ring for `symbol` — see
+    /// [`DataBridge::liq_series_for_symbol`].
+    pub fn liq_series_for_symbol(
+        &self,
+        symbol: &str,
+    ) -> Vec<(ExchangeId, AccountType, SharedLiquidationSeries)> {
+        self.bridge.liq_series_for_symbol(symbol)
     }
 
     /// Every live book tracker for `symbol`, whatever venue and market type

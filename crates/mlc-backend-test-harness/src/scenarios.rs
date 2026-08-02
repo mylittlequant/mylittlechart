@@ -1092,56 +1092,7 @@ pub fn stream_funding_rate_passthrough() -> HarnessResult<()> {
     body_stream_funding_rate_passthrough(&mut h)
 }
 
-pub fn body_stream_liquidation_event_passthrough(h: &mut BackendHarness) -> HarnessResult<()> {
-    h.inject(LiveUpdate::LiquidationEvent {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::FuturesCross,
-        symbol: "BTCUSDT".to_string(),
-        ts_ms: 1_700_000_000_000,
-        price: 50_000.0,
-        value_usd: 250_000.0,
-        side: 1,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::LiquidationEventPassthrough { symbol, value_usd, side, .. }
-            if symbol == "BTCUSDT" && (*value_usd - 250_000.0).abs() < 1e-3 && *side == 1));
-    if !hit {
-        return Err(err("liq", "no LiquidationEventPassthrough emitted"));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_liquidation_event_passthrough() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_liquidation_event_passthrough(&mut h)
-}
 
-pub fn body_stream_liquidation_bucket_passthrough(h: &mut BackendHarness) -> HarnessResult<()> {
-    h.inject(LiveUpdate::LiquidationBucketUpdate {
-        exchange_id: ExchangeId::Binance,
-        account_type: AccountType::FuturesCross,
-        symbol: "BTCUSDT".to_string(),
-        ts_ms: 1_700_000_000_000,
-        long_liq_usd: 100_000.0,
-        short_liq_usd: 50_000.0,
-    })?;
-    let events = h.tick(16);
-    let hit = events.iter().any(|e| matches!(e,
-        BubbleEvent::LiquidationBucketPassthrough { symbol, long_liq_usd, short_liq_usd, .. }
-            if symbol == "BTCUSDT"
-            && (*long_liq_usd - 100_000.0).abs() < 1e-3
-            && (*short_liq_usd - 50_000.0).abs() < 1e-3));
-    if !hit {
-        return Err(err("liq-bucket", "no LiquidationBucketPassthrough emitted"));
-    }
-    Ok(())
-}
-#[cfg(not(target_arch = "wasm32"))]
-pub fn stream_liquidation_bucket_passthrough() -> HarnessResult<()> {
-    let mut h = BackendHarness::fresh();
-    body_stream_liquidation_bucket_passthrough(&mut h)
-}
 
 pub fn body_stream_dom_heatmap_snapshot_passthrough(h: &mut BackendHarness) -> HarnessResult<()> {
     let bids = vec![(50_000.0, 1.0)];
@@ -1435,8 +1386,6 @@ pub fn sync_scenarios() -> Vec<(&'static str, fn() -> HarnessResult<()>)> {
         ("stream_orderbook_delta_emits_event", stream_orderbook_delta_emits_event),
         ("stream_open_interest_passthrough", stream_open_interest_passthrough),
         ("stream_funding_rate_passthrough", stream_funding_rate_passthrough),
-        ("stream_liquidation_event_passthrough", stream_liquidation_event_passthrough),
-        ("stream_liquidation_bucket_passthrough", stream_liquidation_bucket_passthrough),
         ("stream_dom_heatmap_snapshot_passthrough", stream_dom_heatmap_snapshot_passthrough),
         // Multi-symbol isolation
         ("multi_symbol_bars_isolation", multi_symbol_bars_isolation),

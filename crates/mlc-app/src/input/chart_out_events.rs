@@ -3086,7 +3086,7 @@ impl ChartApp {
             }
             let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
             self.core.ensure_connector(eid);
-            self.core.subscribe_liquidation_heatmap(eid, &sym, at_dig3);
+            let _ = self.core.subscribe_liquidations(eid, &sym, at_dig3);
             eprintln!("[ChartApp] ignited Liquidation heatmap overlay for restored window {:?}", cid);
         }
     }

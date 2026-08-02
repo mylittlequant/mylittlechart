@@ -269,8 +269,7 @@ pub fn clear_slot_dom_heatmap(bubble: &mut DataBubble) {
 /// Clear the Liquidation Heatmap overlay's bubble ring-buffer state.
 /// See [`clear_slot_dom_heatmap`] doc comment — same migration, same shape.
 pub fn clear_slot_liq_heatmap(bubble: &mut DataBubble) {
-    bubble.clear_liq_heatmap();
-    bubble.clear_liq_dots();
+    bubble.clear_liq_tape();
 }
 
 // ---------------------------------------------------------------------------

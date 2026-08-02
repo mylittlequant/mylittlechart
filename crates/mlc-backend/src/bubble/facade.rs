@@ -81,8 +81,6 @@ impl<'a> BubbleView<'a> {
         }
     }
 
-    /// Price span the heat ring actually covers, `(low, high)` — the answer
-    /// to "is the layer missing rows, or are they there and invisible".
     /// Total resting size in the live (forming) heat column, bids + asks.
     ///
     /// The one number that says WHOSE book is in the grid: folding four
@@ -91,6 +89,14 @@ impl<'a> BubbleView<'a> {
     pub fn dom_live_sum(&self) -> f64 {
         let Some(b) = self.bubble.dom_heatmap.as_ref() else { return 0.0 };
         b.live.iter().map(|c| c.bid_depth + c.ask_depth).sum()
+    }
+
+    /// Realized-liquidation tape: `(prints, venues, total notional)`.
+    pub fn liq_probe(&self) -> (usize, usize, f64) {
+        match self.bubble.liq_tape.as_ref() {
+            Some(t) => (t.prints.len(), t.venues.len(), t.total_usd()),
+            None => (0, 0, 0.0),
+        }
     }
 
     /// Presence mask over the last `n` bar columns, oldest character first:
@@ -117,6 +123,8 @@ impl<'a> BubbleView<'a> {
             .collect()
     }
 
+    /// Price span the heat ring actually covers, `(low, high)` — the answer
+    /// to "is the layer missing rows, or are they there and invisible".
     pub fn dom_price_span(&self) -> (f64, f64) {
         let Some(b) = self.bubble.dom_heatmap.as_ref() else { return (0.0, 0.0) };
         let mut lo = f64::MAX;
@@ -258,12 +266,8 @@ impl<'a> Bubbles<'a> {
         self.store.dom_trade_dots(bid)
     }
 
-    pub fn liq_heatmap(&self, bid: BubbleId) -> Option<&mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
-        self.store.liq_heatmap(bid)
-    }
-
-    pub fn liq_dots(&self, bid: BubbleId) -> Option<&[mlc_core::chart::liquidation_heatmap::LiquidationDot]> {
-        self.store.liq_dots(bid)
+    pub fn liq_tape(&self, bid: BubbleId) -> Option<&mlc_core::chart::liquidations::LiquidationTape> {
+        self.store.liq_tape(bid)
     }
 
     /// Raw kline layer for timeframe `tf` (unified-data-plane Stage Э1).

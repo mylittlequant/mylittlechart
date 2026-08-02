@@ -296,12 +296,11 @@ pub struct DataBubble {
     /// DOM trade-circle ring overlay. Written by `DomTradeDot`.
     pub dom_trade_dots: Option<Vec<mlc_core::chart::dom_heatmap::DomTradeDot>>,
 
-    /// Liquidation heatmap ring buffer. Written by `LiquidationBucketUpdate`
-    /// (and aggregated from `LiquidationEvent`).
-    pub liq_heatmap: Option<mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
-
-    /// Liquidation dot overlay. Written by `LiquidationEvent`.
-    pub liq_dots: Option<Vec<mlc_core::chart::liquidation_heatmap::LiquidationDot>>,
+    /// Realized-liquidation tape — prints at their real (ts, price), folded
+    /// into levels at render time. Filled by the app's per-frame pull over
+    /// the shared station rings, one cursor per venue, so an aggregated
+    /// overlay and the LIQ panel read the same prints from the same source.
+    pub liq_tape: Option<mlc_core::chart::liquidations::LiquidationTape>,
 
     // =========================================================================
     // === Alert storage (Step 3.0 doctrine cutover) ===========================
@@ -525,8 +524,7 @@ impl DataBubble {
             funding_rate: None,
             dom_heatmap: None,
             dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
+            liq_tape: None,
             alerts: snap.alerts.clone(),
             alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
             scroll_fetch_in_flight: false,
@@ -734,18 +732,10 @@ impl DataBubble {
     }
     pub fn clear_dom_trade_dots(&mut self) { self.dom_trade_dots = None; }
 
-    pub fn liq_heatmap_mut(&mut self) -> &mut Option<mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
-        &mut self.liq_heatmap
+    pub fn liq_tape_mut(&mut self) -> &mut Option<mlc_core::chart::liquidations::LiquidationTape> {
+        &mut self.liq_tape
     }
-    pub fn clear_liq_heatmap(&mut self) { self.liq_heatmap = None; }
-
-    pub fn append_liq_dot(&mut self, dot: mlc_core::chart::liquidation_heatmap::LiquidationDot) {
-        self.liq_dots.get_or_insert_with(Vec::new).push(dot);
-    }
-    pub fn liq_dots_mut(&mut self) -> Option<&mut Vec<mlc_core::chart::liquidation_heatmap::LiquidationDot>> {
-        self.liq_dots.as_mut()
-    }
-    pub fn clear_liq_dots(&mut self) { self.liq_dots = None; }
+    pub fn clear_liq_tape(&mut self) { self.liq_tape = None; }
 
     /// Clear every per-kind derived-series slot except the one belonging to
     /// `keep` (a chart_type string, or `None` to clear all of them).
@@ -784,7 +774,7 @@ impl DataBubble {
     /// `ChartApp::unsubscribe_cvd_line_if_last`, called when the last CVD
     /// instance for the bubble is removed.
     ///
-    /// `dom_heatmap`/`liq_heatmap` are ALSO deliberately NOT in this list
+    /// `dom_heatmap`/`liq_tape` are ALSO deliberately NOT in this list
     /// (chart-type → overlay migration, mirrors the CVD/OI/Funding
     /// precedent above) — their lifecycle is independent of `chart_type`,
     /// owned by `ChartOutEvent::Toggle{Dom,Liquidation}HeatmapOverlay`'s
@@ -996,8 +986,7 @@ impl Clone for DataBubble {
             funding_rate: self.funding_rate.clone(),
             dom_heatmap: self.dom_heatmap.clone(),
             dom_trade_dots: self.dom_trade_dots.clone(),
-            liq_heatmap: self.liq_heatmap.clone(),
-            liq_dots: self.liq_dots.clone(),
+            liq_tape: self.liq_tape.clone(),
             alerts: self.alerts.clone(),
             alert_next_id: self.alert_next_id,
             scroll_fetch_in_flight: self.scroll_fetch_in_flight,

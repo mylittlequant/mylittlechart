@@ -767,6 +767,23 @@ fn run_render_loop(
                 });
                 let _ = js_sys::Reflect::set(&dbg, &"dom_mask".into(), &dom_mask.into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_live_sum".into(), &dom_live_sum.into());
+                // Realized-liquidation tape: prints held and how many venues
+                // they came from. A sparse feed and a broken pump look the
+                // same on the chart — these tell them apart.
+                let mut liq_prints = 0f64;
+                let mut liq_venues = 0f64;
+                let mut liq_usd = 0f64;
+                bm.each_bubble(|b| {
+                    let (p, v, u) = b.liq_probe();
+                    if p as f64 > liq_prints {
+                        liq_prints = p as f64;
+                        liq_venues = v as f64;
+                        liq_usd = u;
+                    }
+                });
+                let _ = js_sys::Reflect::set(&dbg, &"liq_prints".into(), &liq_prints.into());
+                let _ = js_sys::Reflect::set(&dbg, &"liq_venues".into(), &liq_venues.into());
+                let _ = js_sys::Reflect::set(&dbg, &"liq_usd".into(), &liq_usd.round().into());
                 // How many venues' books this workspace actually holds for the
                 // active chart's instrument. The aggregated heat can only fold
                 // what is in this registry, so a source toggle that changes
@@ -779,6 +796,17 @@ fn run_render_loop(
                     })
                     .unwrap_or(0);
                 let _ = js_sys::Reflect::set(&dbg, &"book_venues".into(), &(book_venues as f64).into());
+                // Same question for the liquidation side: how many rings the
+                // workspace holds for this symbol. A silent overlay is either
+                // a sparse feed or an empty enumeration, and only this
+                // separates them.
+                let liq_rings = active_cid
+                    .and_then(|cid| {
+                        let sym = st.chart.symbol_for_chart(cid)?;
+                        Some(st.chart.core.liq_series_for_symbol(&sym).len())
+                    })
+                    .unwrap_or(0);
+                let _ = js_sys::Reflect::set(&dbg, &"liq_rings".into(), &(liq_rings as f64).into());
                 let (lag_events, lag_dropped) = st.chart.core.lag_stats();
                 let _ = js_sys::Reflect::set(&dbg, &"lag_events".into(), &(lag_events as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"lag_dropped".into(), &(lag_dropped as f64).into());

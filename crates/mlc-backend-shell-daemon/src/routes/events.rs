@@ -58,8 +58,6 @@ fn event_type_name(e: &BubbleEvent) -> &'static str {
         BubbleEvent::FundingRatePassthrough { .. } => "FundingRatePassthrough",
         BubbleEvent::DomHeatmapSnapshotPassthrough { .. } => "DomHeatmapSnapshotPassthrough",
         BubbleEvent::DomTradeDotPassthrough { .. } => "DomTradeDotPassthrough",
-        BubbleEvent::LiquidationEventPassthrough { .. } => "LiquidationEventPassthrough",
-        BubbleEvent::LiquidationBucketPassthrough { .. } => "LiquidationBucketPassthrough",
         BubbleEvent::HistoryDepthReported { .. } => "HistoryDepthReported",
     }
 }

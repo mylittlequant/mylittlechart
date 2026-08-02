@@ -341,7 +341,7 @@ impl ChartApp {
         let chart_type = bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
         let trade_archive_available =
             self.trade_archive_available_for(&bubble_mgr, window.current_tag_id);
-        let liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+        let liq_ink = self.liq_ink(window.current_tag_id);
         let dom_ink = self.dom_heatmap_ink(window.current_tag_id);
         let dom_active = self.dom_overlay_active(window.current_tag_id);
         let liq_active = self.liq_overlay_active(window.current_tag_id);
@@ -363,7 +363,7 @@ impl ChartApp {
             dom_heatmap_show: dom_active,
             dom_params: dom_ink,
             liq_heatmap_show: liq_active,
-            liq_sensitivity,
+            liq_ink,
             footprint_display: panel.footprint_display,
             tick_intensity: panel.tick_intensity,
             tpo_display: panel.tpo_display,

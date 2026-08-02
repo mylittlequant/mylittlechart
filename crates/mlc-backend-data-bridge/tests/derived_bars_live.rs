@@ -201,18 +201,19 @@ dual_test!(derived_live_dom_trade_dot, async {
 // Liquidation (sparse — `#[ignore]` so it's not a flake gate)
 // ════════════════════════════════════════════════════════════════════════════
 
-dual_test!(ignore derived_live_liquidation_event_bybit, async {
-    let (bridge, mut probe) = boot_for(ExchangeId::Bybit).await;
-    bridge.request_liquidation_heatmap(ExchangeId::Bybit, "BTCUSDT", AccountType::FuturesCross);
-    let ev = wait_for(&mut probe, 120, |u| {
-        matches!(u, LiveUpdate::LiquidationEvent { symbol, .. } if symbol == "BTCUSDT")
-    }).await;
-    let Some(LiveUpdate::LiquidationEvent { symbol, ts_ms, price, value_usd, side, .. }) = ev else {
-        panic!("no LiquidationEvent within 120s on Bybit — liq dispatch broken \
-               (sparse stream; rerun if you suspect timing not code)");
-    };
-    assert_eq!(symbol, "BTCUSDT");
-    assert!(price > 0.0, "liq event must carry positive price");
-    log(&format!("[derived-live liq-event(bybit)] OK ts={} px={} usd={} side={:?}",
-        ts_ms, price, value_usd, side));
+dual_test!(ignore derived_live_liquidation_ring_bybit, async {
+    // Liquidations no longer travel on the broadcast: the overlay pulls the
+    // shared station ring the LIQ panel already fills, so there is no
+    // `LiveUpdate` variant left to wait on. What this used to prove — that a
+    // venue's forced-close stream reaches us — is now proved by the ring
+    // existing and being enumerable, which is exactly what the overlay folds.
+    let (bridge, _probe) = boot_for(ExchangeId::Bybit).await;
+    let handle = bridge.subscribe_liquidations(ExchangeId::Bybit, "BTCUSDT", AccountType::FuturesCross);
+    assert!(handle.is_some(), "station must hand back a liquidation ring for a subscribed key");
+    let series = bridge.liq_series_for_symbol("BTCUSDT");
+    assert!(
+        series.iter().any(|(ex, _, _)| *ex == ExchangeId::Bybit),
+        "the subscribed venue must be enumerable — the overlay folds exactly this list"
+    );
+    log(&format!("[derived-live liq-ring(bybit)] OK venues={}", series.len()));
 });

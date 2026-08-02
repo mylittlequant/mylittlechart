@@ -39,13 +39,11 @@ pub struct ChartWindowRenderInputs<'a> {
     /// Liquidation Heatmap overlay display gate (window-local view state,
     /// chart-type → overlay migration — mirrors `oi_show`/`funding_show`).
     pub liq_heatmap_show: bool,
-    /// Liquidation Heatmap gain (wave 1, 2026-08-01) — resolved by the
-    /// caller (`mlc-app`, which holds the indicators facade this
-    /// bubble-scoped struct deliberately has no access to) from the
-    /// `overlay_liquidation_heatmap` `IndicatorInstance`'s `sensitivity`
-    /// param, or `1.0` when no instance exists yet. Forwarded 1:1 onto
-    /// `ChartRenderState::liq_sensitivity`.
-    pub liq_sensitivity: f64,
+    /// Liquidation-layer ink — resolved by the caller (`mlc-app`, which
+    /// holds the indicators facade this bubble-scoped struct deliberately
+    /// has no access to) from the `overlay_liquidation_heatmap`
+    /// `IndicatorInstance`, or the catalog defaults when none exists.
+    pub liq_ink: mlc_core::chart::render_data::LiquidationInk,
     /// DOM Heatmap ink settings — resolved by the caller (`mlc-app`, which
     /// holds the indicators facade this bubble-scoped struct deliberately
     /// has no access to) from the `overlay_dom_heatmap` `IndicatorInstance`,
@@ -204,9 +202,8 @@ pub fn build_chart_render_state<'a>(
         funding_rate_ref: if window.funding_show { bubble.funding_rate.as_deref() } else { None },
         dom_heatmap_ref: if window.dom_heatmap_show { bubble.dom_heatmap.as_ref() } else { None },
         dom_trade_dots_ref: if window.dom_heatmap_show { bubble.dom_trade_dots.as_deref() } else { None },
-        liq_heatmap_ref: if window.liq_heatmap_show { bubble.liq_heatmap.as_ref() } else { None },
-        liq_dots_ref: if window.liq_heatmap_show { bubble.liq_dots.as_deref() } else { None },
-        liq_sensitivity: window.liq_sensitivity,
+        liq_tape_ref: if window.liq_heatmap_show { bubble.liq_tape.as_ref() } else { None },
+        liq_ink: window.liq_ink,
         dom_params: window.dom_params,
         // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
         // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)

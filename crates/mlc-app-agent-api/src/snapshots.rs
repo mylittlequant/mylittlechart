@@ -130,8 +130,8 @@ pub fn update_terminal_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
                     funding_rate:        b.funding_rate.as_ref().map(|v| v.len()).unwrap_or(0),
                     dom_heatmap_columns: b.dom_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
                     dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
-                    liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
-                    liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+                    liq_prints: b.liq_tape.as_ref().map(|t| t.prints.len()).unwrap_or(0),
+                    liq_venues:            b.liq_tape.as_ref().map(|t| t.venues.len()).unwrap_or(0),
                 })).unwrap_or_default();
 
                 Some(ChartSnapshot {

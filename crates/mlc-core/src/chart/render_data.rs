@@ -713,6 +713,43 @@ impl Default for DomHeatmapInk {
     }
 }
 
+/// How the realized-liquidation layer is INKED — same rule as
+/// [`DomHeatmapInk`]: every value comes from the overlay's
+/// `IndicatorInstance`, none of it a constant.
+#[derive(Clone, Copy, Debug)]
+pub struct LiquidationInk {
+    /// Gain on the normaliser for level intensity.
+    pub sensitivity: f64,
+    /// Price grouping for levels, in PERCENT of price. A fraction of price
+    /// rather than a tick count, so the grouping means the same thing at
+    /// 60k as at 0.6.
+    pub row_pct: f64,
+    /// Notional a price row must collect before it is drawn as a level.
+    pub min_usd: f64,
+    /// Level bars on/off.
+    pub show_levels: bool,
+    /// Individual prints on/off.
+    pub show_dots: bool,
+    /// Scale on the auto-fitted print marker.
+    pub dot_scale: f64,
+    /// Fill alpha of the level bars at full intensity.
+    pub opacity: f64,
+}
+
+impl Default for LiquidationInk {
+    fn default() -> Self {
+        Self {
+            sensitivity: 1.0,
+            row_pct: 0.02,
+            min_usd: 25_000.0,
+            show_levels: true,
+            show_dots: true,
+            dot_scale: 1.0,
+            opacity: 0.55,
+        }
+    }
+}
+
 /// State needed for chart rendering
 ///
 /// This struct aggregates all the data needed to render a chart frame.
@@ -829,21 +866,12 @@ pub struct ChartRenderState<'a> {
     pub dom_heatmap_ref: Option<&'a crate::chart::dom_heatmap::DomHeatmapBuffer>,
     /// DOM Heatmap trade-circle overlay (C12). Same gate as `dom_heatmap_ref`.
     pub dom_trade_dots_ref: Option<&'a [crate::chart::dom_heatmap::DomTradeDot]>,
-    /// Liquidation Heatmap background overlay buffer (C13; chart-type →
-    /// overlay migration). `None` when the `liq_heatmap_show` window flag
-    /// is off or no data has arrived yet — mirrors `oi_delta_ref`/`funding_rate_ref`.
-    pub liq_heatmap_ref: Option<&'a crate::chart::liquidation_heatmap::LiquidationHeatmapBuffer>,
-    /// Liquidation Heatmap dot overlay (C13). Same gate as `liq_heatmap_ref`.
-    pub liq_dots_ref: Option<&'a [crate::chart::liquidation_heatmap::LiquidationDot]>,
-    /// Liquidation Heatmap gain (wave 1, 2026-08-01) — the `sensitivity`
-    /// param on the `overlay_liquidation_heatmap` `IndicatorInstance`
-    /// (default `1.0` when no instance exists, or the instance's own
-    /// param value otherwise). `draw_liquidation_heatmap` divides
-    /// `max_volume_seen` by this before normalizing cell alpha — higher
-    /// sensitivity brightens weaker clusters, mirroring TapeSurf's "gain"
-    /// slider. Unused (but always populated) when `liq_heatmap_ref` is
-    /// `None`.
-    pub liq_sensitivity: f64,
+    /// Realized-liquidation tape (prints + the levels they fold into).
+    /// `None` when the overlay instance is absent or nothing has landed.
+    pub liq_tape_ref: Option<&'a crate::chart::liquidations::LiquidationTape>,
+    /// How the liquidation layer reads — every knob a parameter on the
+    /// `overlay_liquidation_heatmap` instance, never a constant.
+    pub liq_ink: LiquidationInk,
     /// DOM Heatmap ink settings, read off the `overlay_dom_heatmap`
     /// `IndicatorInstance` (catalog defaults when no instance exists).
     /// Unused (but always populated) when `dom_heatmap_ref` is `None`.

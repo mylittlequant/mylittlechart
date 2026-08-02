@@ -178,8 +178,8 @@ impl HeadlessChartApp {
             funding_rate:        b.funding_rate.as_ref().map(|v| v.len()).unwrap_or(0),
             dom_heatmap_columns: b.dom_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
             dom_trade_dots:      b.dom_trade_dots.as_ref().map(|v| v.len()).unwrap_or(0),
-            liq_heatmap_columns: b.liq_heatmap.as_ref().map(|h| h.bucket_count()).unwrap_or(0),
-            liq_dots:            b.liq_dots.as_ref().map(|v| v.len()).unwrap_or(0),
+            liq_prints: b.liq_tape.as_ref().map(|t| t.prints.len()).unwrap_or(0),
+            liq_venues:            b.liq_tape.as_ref().map(|t| t.venues.len()).unwrap_or(0),
         }).unwrap_or_default()
     }
 }
@@ -200,8 +200,8 @@ pub struct DerivedCounts {
     pub funding_rate: usize,
     pub dom_heatmap_columns: usize,
     pub dom_trade_dots: usize,
-    pub liq_heatmap_columns: usize,
-    pub liq_dots: usize,
+    pub liq_prints: usize,
+    pub liq_venues: usize,
 }
 
 /// Flat summary of one bubble for test assertions / debug dumps.

@@ -440,6 +440,12 @@ pub struct ChartApp {
         std::collections::HashSet<mlc_backend_indicator_engine::StreamKind>,
     >,
 
+    /// Per-(bubble, venue) read position in the shared liquidation rings.
+    /// RAM-only: the rings hold the prints, this only records how far this
+    /// bubble's tape has consumed them, so a frame that never ran is caught
+    /// up by the next one instead of losing what arrived in between.
+    pub(crate) liq_cursors: std::collections::HashMap<(mlc_core::ids::BubbleId, String), i64>,
+
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
 
@@ -1688,21 +1694,44 @@ impl ChartApp {
             .unwrap_or(false)
     }
 
-    /// Current `sensitivity` param value for the Liquidation Heatmap
-    /// overlay — read off the `overlay_liquidation_heatmap`
-    /// `IndicatorInstance` bound to `bid`'s bubble, if one exists. Falls
-    /// back to the catalog default (`1.0`) when the overlay was never
-    /// added. Forwarded onto `ChartWindowRenderInputs::liq_sensitivity` at
-    /// every render-input call site.
+    /// How the realized-liquidation layer reads, from the
+    /// `overlay_liquidation_heatmap` instance bound to `bid`'s bubble.
+    /// Catalog defaults when the overlay was never added — the same rule
+    /// [`Self::dom_heatmap_ink`] follows, so neither layer carries a
+    /// rendering constant the owner cannot reach.
     #[inline]
-    pub fn liq_heatmap_sensitivity(&self, bid: mlc_core::ids::BubbleId) -> f64 {
-        const DEFAULT_SENSITIVITY: f64 = 1.0;
+    pub fn liq_ink(&self, bid: mlc_core::ids::BubbleId) -> mlc_core::chart::render_data::LiquidationInk {
+        let d = mlc_core::chart::render_data::LiquidationInk::default();
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::LIQ_HEATMAP_TYPE_ID)
+        else { return d };
+        let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
+        let b = |k: &str, fallback: bool| inst.params.get(k).and_then(|v| v.as_bool()).unwrap_or(fallback);
+        mlc_core::chart::render_data::LiquidationInk {
+            sensitivity: f("sensitivity", d.sensitivity),
+            row_pct: f("row_pct", d.row_pct),
+            min_usd: f("min_usd", d.min_usd),
+            show_levels: b("show_levels", d.show_levels),
+            show_dots: b("show_dots", d.show_dots),
+            dot_scale: f("dot_scale", d.dot_scale),
+            opacity: f("opacity", d.opacity),
+        }
+    }
+
+    /// Whether the liquidation overlay on `bid` folds every venue the
+    /// workspace streams for this symbol, or only its own — same contract as
+    /// [`Self::dom_heatmap_aggregate`], and the same reason: aggregation is a
+    /// READ of rings other panels opened, never a subscription.
+    #[inline]
+    pub fn liq_aggregate(&self, bid: mlc_core::ids::BubbleId) -> bool {
         self.core.indicators().instances_for_bubble(bid)
             .into_iter()
             .find(|inst| inst.type_id == Self::LIQ_HEATMAP_TYPE_ID)
-            .and_then(|inst| inst.params.get("sensitivity"))
-            .and_then(|v| v.as_float())
-            .unwrap_or(DEFAULT_SENSITIVITY)
+            .and_then(|inst| inst.params.get("aggregate").and_then(|v| v.as_bool()))
+            .unwrap_or(true)
     }
 
     /// Catalog id of the DOM Heatmap overlay indicator.
@@ -2479,6 +2508,7 @@ impl ChartApp {
 
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
+            liq_cursors: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -2888,6 +2918,7 @@ impl ChartApp {
     pub fn new_empty(core: std::sync::Arc<mlc_backend::BackendCore>) -> Self {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
+            liq_cursors: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3456,6 +3487,7 @@ impl ChartApp {
     ) -> Self {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
+            liq_cursors: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -4793,7 +4825,7 @@ impl ChartApp {
                 let overlay_bubble_mgr = self.core.bubbles();
                 let overlay_chart_type = overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let overlay_trade_archive_available = self.trade_archive_available_for(&overlay_bubble_mgr, window.current_tag_id);
-                let overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let overlay_liq_ink = self.liq_ink(window.current_tag_id);
                 let overlay_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let overlay_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
@@ -4811,7 +4843,7 @@ impl ChartApp {
                     dom_heatmap_show: overlay_dom_active,
                     dom_params: overlay_dom,
                     liq_heatmap_show: overlay_liq_active,
-                    liq_sensitivity: overlay_liq_sensitivity,
+                    liq_ink: overlay_liq_ink,
                     footprint_display: overlay_panel.footprint_display,
                     tick_intensity: overlay_panel.tick_intensity,
                     tpo_display: overlay_panel.tpo_display,
@@ -4910,7 +4942,7 @@ impl ChartApp {
             let single_overlay_bubble_mgr = self.core.bubbles();
             let single_chart_type = single_overlay_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
             let single_overlay_trade_archive_available = self.trade_archive_available_for(&single_overlay_bubble_mgr, window.current_tag_id);
-            let single_overlay_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+            let single_overlay_liq_ink = self.liq_ink(window.current_tag_id);
             let single_dom = self.dom_heatmap_ink(window.current_tag_id);
             let single_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_overlay_liq_active = self.liq_overlay_active(window.current_tag_id);
@@ -4928,7 +4960,7 @@ impl ChartApp {
                 dom_heatmap_show: single_dom_active,
                 dom_params: single_dom,
                 liq_heatmap_show: single_overlay_liq_active,
-                liq_sensitivity: single_overlay_liq_sensitivity,
+                liq_ink: single_overlay_liq_ink,
                 footprint_display: single_panel.footprint_display,
                 tick_intensity: single_panel.tick_intensity,
                 tpo_display: single_panel.tpo_display,
@@ -5211,7 +5243,7 @@ impl ChartApp {
                 let split_bubble_mgr = self.core.bubbles();
                 let split_chart_type = split_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let split_trade_archive_available = self.trade_archive_available_for(&split_bubble_mgr, window.current_tag_id);
-                let split_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let split_liq_ink = self.liq_ink(window.current_tag_id);
                 let split_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let split_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let split_liq_active = self.liq_overlay_active(window.current_tag_id);
@@ -5229,7 +5261,7 @@ impl ChartApp {
                     dom_heatmap_show: split_dom_active,
                     dom_params: split_dom,
                     liq_heatmap_show: split_liq_active,
-                    liq_sensitivity: split_liq_sensitivity,
+                    liq_ink: split_liq_ink,
                     footprint_display: split_panel.footprint_display,
                     tick_intensity: split_panel.tick_intensity,
                     tpo_display: split_panel.tpo_display,
@@ -5867,7 +5899,7 @@ impl ChartApp {
                 );
                 let single_window_chart_type_for_wicks = single_window_bubble_mgr.chart_type(window.current_tag_id).unwrap_or("candles");
                 let single_window_trade_archive_available = self.trade_archive_available_for(&single_window_bubble_mgr, window.current_tag_id);
-                let single_window_liq_sensitivity = self.liq_heatmap_sensitivity(window.current_tag_id);
+                let single_window_liq_ink = self.liq_ink(window.current_tag_id);
                 let single_window_dom = self.dom_heatmap_ink(window.current_tag_id);
                 let single_window_dom_active = self.dom_overlay_active(window.current_tag_id);
                 let single_window_liq_active = self.liq_overlay_active(window.current_tag_id);
@@ -5885,7 +5917,7 @@ impl ChartApp {
                     dom_heatmap_show: single_window_dom_active,
                     dom_params: single_window_dom,
                     liq_heatmap_show: single_window_liq_active,
-                    liq_sensitivity: single_window_liq_sensitivity,
+                    liq_ink: single_window_liq_ink,
                     footprint_display: single_window_panel.footprint_display,
                     tick_intensity: single_window_panel.tick_intensity,
                     tpo_display: single_window_panel.tpo_display,

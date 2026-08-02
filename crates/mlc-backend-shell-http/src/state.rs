@@ -218,9 +218,9 @@ pub struct DerivedSeriesCounts {
     /// DOM trade dot ring length.
     pub dom_trade_dots: usize,
     /// Liquidation heatmap column count.
-    pub liq_heatmap_columns: usize,
+    pub liq_prints: usize,
     /// Liquidation dot ring length.
-    pub liq_dots: usize,
+    pub liq_venues: usize,
 }
 
 /// Viewport state of a chart.

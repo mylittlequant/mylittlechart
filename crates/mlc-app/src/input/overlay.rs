@@ -1090,7 +1090,10 @@ impl ChartApp {
                             mlc_backend::chart_type::clear_slot_liq_heatmap(b);
                         });
                         self.core.ensure_connector(eid);
-                        self.core.subscribe_liquidation_heatmap(eid, &symbol, at_dig3);
+                        // Arms the SHARED station ring — the same one the LIQ
+                        // panel reads and the overlay's pump drains. The
+                        // overlay no longer owns a channel of its own.
+                        let _ = self.core.subscribe_liquidations(eid, &symbol, at_dig3);
                         crate::sglog!("[bubble {:?}] liquidation feed up ({} {:?})", bid, symbol, eid);
                     }
                     _ => {}
@@ -1103,8 +1106,10 @@ impl ChartApp {
                         crate::sglog!("[bubble {:?}] book feed down", bid);
                     }
                     StreamKind::Liquidation => {
-                        self.core.unsubscribe_liquidation_heatmap(eid, &symbol, at_dig3);
-                        crate::sglog!("[bubble {:?}] liquidation feed down", bid);
+                        // Nothing to tear down: the ring is shared station
+                        // state with its own grace window, and the tape panel
+                        // may still be reading it.
+                        crate::sglog!("[bubble {:?}] liquidation feed released", bid);
                     }
                     _ => {}
                 }

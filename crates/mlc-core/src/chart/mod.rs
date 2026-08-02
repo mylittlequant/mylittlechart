@@ -40,7 +40,7 @@
 
 pub mod annotations;
 pub mod dom_heatmap;
-pub mod liquidation_heatmap;
+pub mod liquidations;
 pub mod render_data;
 pub mod series;
 pub mod tpo_profile;

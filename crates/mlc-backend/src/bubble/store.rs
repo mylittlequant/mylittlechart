@@ -106,8 +106,7 @@ impl BubbleStore {
             funding_rate: None,
             dom_heatmap: None,
             dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
+            liq_tape: None,
             alerts: Vec::new(),
             alert_next_id: 1,
             scroll_fetch_in_flight: false,
@@ -168,8 +167,7 @@ impl BubbleStore {
             funding_rate: None,
             dom_heatmap: None,
             dom_trade_dots: None,
-            liq_heatmap: None,
-            liq_dots: None,
+            liq_tape: None,
             alerts: Vec::new(),
             alert_next_id: 1,
             scroll_fetch_in_flight: false,
@@ -673,14 +671,9 @@ impl BubbleStore {
         self.bubbles.get(&bid)?.dom_trade_dots.as_deref()
     }
 
-    /// Liquidation heatmap ring buffer, if any has been written.
-    pub fn liq_heatmap(&self, bid: BubbleId) -> Option<&mlc_core::chart::liquidation_heatmap::LiquidationHeatmapBuffer> {
-        self.bubbles.get(&bid)?.liq_heatmap.as_ref()
-    }
-
-    /// Liquidation dot overlay, if any has been written.
-    pub fn liq_dots(&self, bid: BubbleId) -> Option<&[mlc_core::chart::liquidation_heatmap::LiquidationDot]> {
-        self.bubbles.get(&bid)?.liq_dots.as_deref()
+    /// Realized-liquidation tape, if any prints have landed.
+    pub fn liq_tape(&self, bid: BubbleId) -> Option<&mlc_core::chart::liquidations::LiquidationTape> {
+        self.bubbles.get(&bid)?.liq_tape.as_ref()
     }
 
     /// Raw kline layer for timeframe `tf`, if any data has been written for
