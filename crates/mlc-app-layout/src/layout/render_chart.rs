@@ -3306,6 +3306,15 @@ pub fn render_full_chart_panel(
         // surface the app actually renders.
         draw_dom_heatmap_conditional(ctx, &corrected_state);
 
+        // 2d. Realized liquidations — prints + levels, UNDER the series for
+        // the same reason. This call was missing while the twin above was
+        // present: the layer painted only into `render_chart`, the pipeline
+        // with no callers, so the overlay could be on, the tape could be
+        // filling, and the chart still showed nothing. Exactly the defect the
+        // DOM heat had before 2026-08-02 — when a layer is silent, check that
+        // the LIVE pipeline draws it before touching anything else.
+        draw_liquidations_conditional(ctx, &corrected_state);
+
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
 
