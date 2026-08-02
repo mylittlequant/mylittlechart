@@ -69,6 +69,76 @@ impl ExchangeSymbolsManager {
             .and_then(|s| s.tick_size)
     }
 
+    /// Base units per contract for `symbol` on the venue identified by
+    /// `label`. `1.0` whenever the venue quotes sizes in base units already,
+    /// or when the catalogue cannot answer.
+    ///
+    /// Several venues report derivative sizes in CONTRACTS, not coin: Gate's
+    /// BTC_USDT perp contract is 0.0001 BTC, OKX's BTC-USDT-SWAP is 0.01 BTC,
+    /// KuCoin's XBTUSDTM is 0.001 BTC. Read as coin, a 369-contract Gate
+    /// liquidation prices out at $23M instead of $2.3k — a factor of ten
+    /// thousand, which is enough for one bad print to set the scale for
+    /// every real one (owner report 2026-08-02: the liquidation overlay drew
+    /// every genuine print at minimum radius).
+    ///
+    /// The multiplier is read from the venue's own exchange-info record —
+    /// `SymbolInfo.extra` keeps it verbatim — under the key that venue uses.
+    /// The key table is per-venue on purpose: a blind search for "any field
+    /// that looks like a multiplier" would find one on venues that quote in
+    /// base units and silently rescale correct data.
+    pub fn contract_size_for(&self, label: &str, symbol: &str, futures: bool) -> f64 {
+        if !futures {
+            return 1.0;
+        }
+        let Some(key) = contract_size_key(label) else { return 1.0 };
+        let Some(syms) = self.by_exchange.iter().find(|(eid, _)| eid.as_str() == label).map(|(_, v)| v)
+        else { return 1.0 };
+        let req = canonical_form(symbol);
+        // The primary match is the venue's OWN id for this instrument,
+        // derived with the same normalizer the subscription path uses.
+        // Neither typed-field path is reliable on a derivative record:
+        // OKX leaves `baseCcy`/`quoteCcy` EMPTY on SWAP rows (they are spot
+        // fields) so base+quote is "", and Gate puts `underlying:
+        // "BTC_USDT"` in the base and `settle: "usdt"` in the quote so
+        // base+quote reads "BTC_USDTUSDT". The normalizer knows both, plus
+        // KuCoin's XBT alias and its `M` suffix.
+        let native = native_futures_id(label, symbol);
+        let matches_symbol = |s: &SymbolInfo| {
+            s.symbol == symbol
+                || native.as_deref() == Some(s.symbol.as_str())
+                || (req.is_some()
+                    && (canonical_form(&s.symbol) == req || canonical_form_of(s) == req))
+        };
+        let multiplier_of = |s: &SymbolInfo| {
+            s.extra
+                .get(key)
+                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok())))
+                .filter(|m| m.is_finite() && *m > 0.0)
+        };
+        let is_futures = |s: &SymbolInfo| {
+            !matches!(s.account_type, digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin)
+        };
+        // Prefer a futures record, but do not require one: only a
+        // derivative record carries the multiplier field at all, so a
+        // catalogue that mislabels the market type still resolves.
+        syms.iter()
+            .find(|s| is_futures(s) && matches_symbol(s) && multiplier_of(s).is_some())
+            .or_else(|| syms.iter().find(|s| matches_symbol(s) && multiplier_of(s).is_some()))
+            .and_then(multiplier_of)
+            .unwrap_or(1.0)
+    }
+
+    /// Whether this venue quotes derivative sizes in CONTRACTS — i.e.
+    /// whether [`Self::contract_size_for`] returning `1.0` means "one base
+    /// unit per contract" or "the catalogue has not answered yet".
+    ///
+    /// A caller that cannot tell those apart will price a Gate print at
+    /// 10 000× while the symbol list is still loading, and that single
+    /// print then sets the scale for every later one.
+    pub fn quotes_contracts(&self, label: &str) -> bool {
+        contract_size_key(label).is_some()
+    }
+
     /// Replace the whole catalogue for one exchange (`SymbolsLoaded` write
     /// site).
     pub fn set_symbols(&mut self, exchange_id: ExchangeId, symbols: Vec<SymbolInfo>) {
@@ -78,6 +148,58 @@ impl ExchangeSymbolsManager {
     /// Replace the whole catalogue wholesale (startup seed).
     pub fn replace_all(&mut self, by_exchange: HashMap<ExchangeId, Vec<SymbolInfo>>) {
         self.by_exchange = by_exchange;
+    }
+}
+
+/// The venue's own perpetual-futures id for a canonical symbol, e.g.
+/// `("okx", "BTCUSDT") -> "BTC-USDT-SWAP"`, `("kucoin", "BTCUSDT") ->
+/// "XBTUSDTM"`. `None` when the venue label or the pair does not resolve.
+///
+/// Same derivation the subscription path uses, so a catalogue lookup and a
+/// stream key agree on which record describes the instrument.
+fn native_futures_id(label: &str, symbol: &str) -> Option<String> {
+    let eid = digdigdig3::ExchangeId::from_str(label)?;
+    let canonical = if let Some((b, q)) = symbol.split_once(['-', '/', '_']) {
+        digdigdig3::Symbol::new(b, q)
+    } else {
+        let upper = symbol.to_uppercase();
+        ["USDT", "USDC", "USD", "BTC", "ETH", "BUSD", "EUR", "JPY"]
+            .into_iter()
+            .find_map(|q| {
+                upper
+                    .strip_suffix(q)
+                    .filter(|base| !base.is_empty())
+                    .map(|base| digdigdig3::Symbol::new(base, q))
+            })?
+    };
+    digdigdig3::core::utils::SymbolNormalizer::to_exchange(
+        eid,
+        &canonical,
+        digdigdig3::AccountType::FuturesCross,
+    )
+    .ok()
+}
+
+/// The exchange-info field a venue reports its contract multiplier under,
+/// or `None` when the venue quotes derivative sizes in base units.
+///
+/// Verified against each venue's own raw record (`SymbolInfo.extra`):
+/// Gate `quanto_multiplier` ("0.0001" for BTC_USDT), OKX `ctVal` ("0.01"
+/// for BTC-USDT-SWAP), KuCoin `multiplier` (0.001 for XBTUSDTM), HTX
+/// `contract_size`. Binance and Bybit report base units on their USDⓈ-M
+/// perps and are deliberately absent.
+///
+/// INVERSE (coin-margined) contracts are a different question — there the
+/// size is quoted in QUOTE currency and a base-unit multiplier does not
+/// apply. Nothing here subscribes them today; a caller that starts to must
+/// handle that case rather than reuse this.
+fn contract_size_key(label: &str) -> Option<&'static str> {
+    match label {
+        "gateio" => Some("quanto_multiplier"),
+        "okx" => Some("ctVal"),
+        "kucoin" => Some("multiplier"),
+        "htx" => Some("contract_size"),
+        _ => None,
     }
 }
 
@@ -141,6 +263,51 @@ mod tests {
 
         assert!(mgr.symbols_for(ExchangeId::Binance).is_none());
         assert!(mgr.symbols_for(ExchangeId::Bybit).is_some());
+    }
+
+    /// Gate's futures record is the reason `contract_size_for` matches on
+    /// the canonicalised NATIVE symbol and not only on base+quote: the
+    /// venue reports `underlying` as the base asset and `settle` as the
+    /// quote, so the base+quote key is "BTC_USDTUSDT".
+    #[test]
+    fn contract_size_reads_gate_quanto_multiplier() {
+        let mut mgr = ExchangeSymbolsManager::new();
+        let gate_btc = SymbolInfo {
+            symbol: "BTC_USDT".to_string(),
+            base_asset: "BTC_USDT".to_string(),
+            quote_asset: "usdt".to_string(),
+            account_type: digdigdig3::AccountType::FuturesCross,
+            extra: serde_json::json!({ "name": "BTC_USDT", "quanto_multiplier": "0.0001" }),
+            ..Default::default()
+        };
+        mgr.set_symbols(ExchangeId::GateIO, vec![gate_btc]);
+
+        assert_eq!(mgr.contract_size_for("gateio", "BTCUSDT", true), 0.0001);
+        assert_eq!(mgr.contract_size_for("gateio", "BTC_USDT", true), 0.0001);
+        // Spot never carries a contract multiplier.
+        assert_eq!(mgr.contract_size_for("gateio", "BTCUSDT", false), 1.0);
+        // A venue that quotes base units has no key and must stay at 1.
+        assert_eq!(mgr.contract_size_for("binance", "BTCUSDT", true), 1.0);
+    }
+
+    /// OKX leaves `baseCcy`/`quoteCcy` EMPTY on SWAP records — they are
+    /// spot-only fields — so neither typed path can match and the
+    /// normalizer-derived native id is the only thing that resolves it.
+    #[test]
+    fn contract_size_reads_okx_ctval() {
+        let mut mgr = ExchangeSymbolsManager::new();
+        let okx_btc = SymbolInfo {
+            symbol: "BTC-USDT-SWAP".to_string(),
+            base_asset: String::new(),
+            quote_asset: String::new(),
+            account_type: digdigdig3::AccountType::FuturesCross,
+            extra: serde_json::json!({ "instId": "BTC-USDT-SWAP", "ctVal": "0.01" }),
+            ..Default::default()
+        };
+        mgr.set_symbols(ExchangeId::OKX, vec![okx_btc]);
+
+        assert_eq!(mgr.contract_size_for("okx", "BTCUSDT", true), 0.01);
+        assert_eq!(mgr.contract_size_for("okx", "BTC-USDT-SWAP", true), 0.01);
     }
 
     /// Dash-native venue (OKX) — `tick_size_for` must resolve regardless of

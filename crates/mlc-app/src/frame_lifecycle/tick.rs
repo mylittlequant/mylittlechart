@@ -105,6 +105,10 @@ impl ChartApp {
         // path. The startup symbol flood (thousands of symbols × N exchanges) is
         // a freeze suspect — this attributes it precisely.
         let (mut n_symbols, mut n_symbols_total, mut symbols_insert_us) = (0u32, 0usize, 0u64);
+        // Set when any exchange catalogue landed this tick — the LIQ
+        // tapes hold their venues' contract multipliers by value and can
+        // only resolve an unknown one once the records exist.
+        let mut symbols_loaded_any = false;
         let mut trading_updates: Vec<LiveUpdate> = Vec::new();
         // Coalesce orderbook panel updates: collect per-(symbol,exchange,account_type)
         // delta events for L2-tape (which needs per-event timestamps) and force_rebuild
@@ -157,6 +161,10 @@ impl ChartApp {
                     let t0 = web_time::Instant::now();
                     n_symbols += 1;
                     n_symbols_total += count;
+                    // A catalogue landing is the only event that can turn an
+                    // unknown contract multiplier into a known one, and a
+                    // LIQ tape holds its venues' multipliers by value.
+                    symbols_loaded_any = true;
                     symbols_insert_us += t0.elapsed().as_micros() as u64;
                 }
                 _ => n_other += 1,
@@ -1278,6 +1286,14 @@ impl ChartApp {
                 self.last_tick_us, self.last_event_process_us, _drain_count,
                 self.panel_app.panel_grid.containers().is_empty(),
             );
+        }
+
+        // ── LIQ contract multipliers ─────────────────────────────────────────
+        // A venue that quotes contracts carries `0.0` (unknown) until its
+        // catalogue lands; its prints are held back rather than ingested at
+        // the wrong scale, so this is what releases them.
+        if symbols_loaded_any {
+            self.refresh_liq_contract_sizes();
         }
 
         // ── Indicator heal ───────────────────────────────────────────────────

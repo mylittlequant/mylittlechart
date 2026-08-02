@@ -83,6 +83,27 @@ impl crate::ChartApp {
                     continue;
                 }
                 let label = format!("{}:{:?}", venue.as_str(), at);
+                // Contracts → base units. Gate/OKX/KuCoin/HTX quote a
+                // derivative size in contracts, so a raw `price × size` is
+                // out by the contract multiplier — 10 000× on Gate's BTC
+                // perp. One such print sets the scale for the whole layer,
+                // which is how a working overlay reads as an empty one.
+                let futures =
+                    !matches!(at, digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin);
+                let (contract_size, quotes_contracts) = {
+                    let syms = self.core.exchange_symbols();
+                    (
+                        syms.contract_size_for(venue.as_str(), &symbol, futures),
+                        futures && syms.quotes_contracts(venue.as_str()),
+                    )
+                };
+                // Catalogue not in yet. Leave the cursor where it is and
+                // come back: a print ingested at the wrong scale would
+                // outlive the load and set the normaliser's maximum for
+                // hours, which is worse than showing it a second late.
+                if quotes_contracts && contract_size == 1.0 {
+                    continue;
+                }
                 let cursor = self
                     .liq_cursors
                     .get(&(bid, label.clone()))
@@ -98,14 +119,12 @@ impl crate::ChartApp {
                     if p.ts_ms > new_cursor {
                         new_cursor = p.ts_ms;
                     }
-                    // Venues that report no notional still report size and
-                    // price, and a print with no size is the one thing the
-                    // level fold cannot weigh — derive rather than drop.
-                    let value = if p.value.is_finite() && p.value > 0.0 {
-                        p.value
-                    } else {
-                        p.price * p.quantity
-                    };
+                    // Always derive from price × base size, never from the
+                    // wire's own `value`: the venues that report one derive
+                    // it the same way from the SAME contract-denominated
+                    // size (OKX sends `price × sz` with `sz` in contracts),
+                    // so trusting it just imports the error.
+                    let value = p.price * p.quantity * contract_size;
                     fresh.push(LiquidationPrint {
                         ts_ms: p.ts_ms,
                         price: p.price,
@@ -198,6 +217,12 @@ impl crate::ChartApp {
                     continue;
                 }
                 self.core.ensure_connector(eid);
+                // The venue's symbol catalogue is what carries its contract
+                // multiplier, and it is loaded lazily — a venue we only
+                // fold liquidations from is never otherwise requested, so
+                // its records stay empty and every size reads as coin.
+                // Idempotent: the station caches the exchange-info fetch.
+                self.core.bridge_handle().request_symbols(eid);
                 let _ = self
                     .core
                     .subscribe_liquidations(eid, symbol, digdigdig3::AccountType::FuturesCross);

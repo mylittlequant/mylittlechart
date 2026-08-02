@@ -479,6 +479,64 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+    /// Base units per contract for a LIQ roster venue, or `0.0` when the
+    /// venue quotes contracts and its symbol catalogue has not loaded yet.
+    ///
+    /// The zero is load-bearing: `contract_size_for` cannot distinguish
+    /// "one base unit per contract" from "no catalogue", and a consumer
+    /// that reads the second as the first prices a Gate print at 10 000×.
+    pub(crate) fn liq_contract_size(
+        &self,
+        ex_slug: &str,
+        symbol: &str,
+        at: digdigdig3::AccountType,
+    ) -> f64 {
+        let futures =
+            !matches!(at, digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin);
+        let syms = self.core.exchange_symbols();
+        let cs = syms.contract_size_for(ex_slug, symbol, futures);
+        if futures && syms.quotes_contracts(ex_slug) && cs == 1.0 {
+            0.0
+        } else {
+            cs
+        }
+    }
+
+    /// Re-resolve every LIQ panel's per-venue contract multiplier. Cheap
+    /// and event-driven: called when a symbol catalogue lands, which is the
+    /// only thing that can turn an unknown multiplier into a known one.
+    pub(crate) fn refresh_liq_contract_sizes(&mut self) {
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        let resolved: Vec<(mlc_core::state::PanelId, Vec<f64>)> = self
+            .panels_store
+            .liq_tape
+            .iter()
+            .filter(|(_, s)| !s.multi.symbol.is_empty())
+            .map(|(pid, s)| {
+                let sizes = s
+                    .multi
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        let at = crate::account_type_from_label(multi_dom::col_at(e));
+                        self.liq_contract_size(multi_dom::col_exchange(e), &s.multi.symbol, at)
+                    })
+                    .collect();
+                (*pid, sizes)
+            })
+            .collect();
+        for (pid, sizes) in resolved {
+            if let Some(s) = self.panels_store.liq_tape.get_mut(&pid) {
+                s.multi.sync_len();
+                for (i, cs) in sizes.into_iter().enumerate() {
+                    if i < s.multi.venue_contract_size.len() {
+                        s.multi.venue_contract_size[i] = cs;
+                    }
+                }
+            }
+        }
+    }
+
     /// Subscribe multi-tape roster entries: trades feed for TT/BT, book
     /// for L2 (`book = true`). Same idempotent contract as
     /// [`Self::subscribe_multi_roster`].
@@ -970,10 +1028,18 @@ impl ChartApp {
                     }
                     TapeKind::Liq => {
                         let h = self.core.subscribe_liquidations(eid, &sym, at);
+                        // The venue's contract multiplier travels with the
+                        // handle: the panel cannot reach the symbol
+                        // catalogue itself, and a size read in contracts is
+                        // wrong by up to four orders of magnitude.
+                        let cs = self.liq_contract_size(&ex_slug, &sym, at);
                         if let Some(s) = self.panels_store.liq_tape.get_mut(&pid) {
                             s.multi.sync_len();
                             if i < s.multi.liq_handles.len() {
                                 s.multi.liq_handles[i] = h;
+                            }
+                            if i < s.multi.venue_contract_size.len() {
+                                s.multi.venue_contract_size[i] = cs;
                             }
                         }
                     }

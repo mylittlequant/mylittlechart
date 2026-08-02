@@ -36,6 +36,17 @@ pub struct MultiTapeState {
     pub liq_handles: Vec<Option<SharedLiquidationSeries>>,
     /// Per-venue orderbook handles (L2), parallel to `entries`.
     pub book_handles: Vec<Option<SharedOrderBookTracker>>,
+    /// Per-venue base units per contract, parallel to `entries`. `1.0` for
+    /// venues that quote sizes in coin; the app layer fills the rest from
+    /// the venue's own exchange-info record. **`0.0` means NOT YET KNOWN** —
+    /// the venue quotes contracts and its symbol catalogue has not loaded —
+    /// and a consumer must skip that venue rather than assume 1.
+    ///
+    /// Without it a Gate liquidation of 369 contracts (0.0369 BTC) reads as
+    /// 369 BTC and prices at $23M — the SIZE and NOTIONAL columns are then
+    /// both wrong by four orders of magnitude, and a size-scaled bar makes
+    /// every other print in the ring invisible.
+    pub venue_contract_size: Vec<f64>,
     /// Per-venue previous bucketed book `tick → (bid_qty, ask_qty)` —
     /// the L2 diff/classify state, parallel to `entries`.
     pub prev_books: Vec<std::collections::HashMap<i64, (f64, f64)>>,
@@ -97,6 +108,7 @@ impl MultiTapeState {
         self.trade_cursors.push(0);
         self.liq_handles.push(None);
         self.book_handles.push(None);
+        self.venue_contract_size.push(1.0);
         self.prev_books.push(std::collections::HashMap::new());
         self.book_uids.push(None);
         self.book_last_diff_ms.push(0);
@@ -113,6 +125,7 @@ impl MultiTapeState {
             if i < self.trade_cursors.len() { self.trade_cursors.remove(i); }
             if i < self.liq_handles.len() { self.liq_handles.remove(i); }
             if i < self.book_handles.len() { self.book_handles.remove(i); }
+            if i < self.venue_contract_size.len() { self.venue_contract_size.remove(i); }
             if i < self.prev_books.len() { self.prev_books.remove(i); }
             if i < self.book_uids.len() { self.book_uids.remove(i); }
             if i < self.book_last_diff_ms.len() { self.book_last_diff_ms.remove(i); }
@@ -129,6 +142,10 @@ impl MultiTapeState {
         for c in &mut self.trade_cursors { *c = 0; }
         for h in &mut self.liq_handles { *h = None; }
         for h in &mut self.book_handles { *h = None; }
+        // Contract size is a property of (venue, SYMBOL) — a symbol switch
+        // invalidates it, so it resets with the handles rather than
+        // carrying the old instrument's multiplier into the new one.
+        for m in &mut self.venue_contract_size { *m = 1.0; }
         for b in &mut self.prev_books { b.clear(); }
         for u in &mut self.book_uids { *u = None; }
         for d in &mut self.book_last_diff_ms { *d = 0; }
@@ -145,6 +162,7 @@ impl MultiTapeState {
         if self.trade_cursors.len() != n { self.trade_cursors.resize(n, 0); }
         if self.liq_handles.len() != n { self.liq_handles.resize_with(n, || None); }
         if self.book_handles.len() != n { self.book_handles.resize_with(n, || None); }
+        if self.venue_contract_size.len() != n { self.venue_contract_size.resize(n, 1.0); }
         if self.prev_books.len() != n {
             self.prev_books.resize_with(n, std::collections::HashMap::new);
         }

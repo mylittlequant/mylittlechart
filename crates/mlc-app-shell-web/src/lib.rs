@@ -839,6 +839,71 @@ fn run_render_loop(
                     })
                     .unwrap_or_default();
                 let _ = js_sys::Reflect::set(&dbg, &"liq_armed".into(), &liq_armed.join(",").into());
+                // Base units per contract per armed venue. A venue that
+                // quotes contracts and resolves to 1.0 here is a catalogue
+                // miss, not a coin-quoting venue — and it would silently
+                // put that venue's prints four orders of magnitude out.
+                let liq_contract = active_cid
+                    .and_then(|cid| {
+                        let sym = st.chart.symbol_for_chart(cid)?;
+                        let syms = st.chart.core.exchange_symbols();
+                        Some(
+                            st.chart
+                                .core
+                                .liq_subscribed_for_symbol(&sym)
+                                .into_iter()
+                                .map(|(ex, at)| {
+                                    let futures = !matches!(
+                                        at,
+                                        digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin
+                                    );
+                                    format!(
+                                        "{}={}",
+                                        ex.as_str(),
+                                        syms.contract_size_for(ex.as_str(), &sym, futures)
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(
+                    &dbg,
+                    &"liq_contract_size".into(),
+                    &liq_contract.join(",").into(),
+                );
+                // Why a multiplier resolved to 1: how many records the
+                // catalogue holds for the venue, how many are derivative
+                // records, and how many carry ANY `extra` payload at all.
+                // "0 with extra" is a loader problem, not a lookup one.
+                let cat = {
+                    let syms = st.chart.core.exchange_symbols();
+                    ["gateio", "okx", "kucoin"]
+                        .iter()
+                        .map(|label| {
+                            let (total, fut, with_extra) = syms
+                                .find_by_label(label)
+                                .and_then(|eid| syms.symbols_for(eid))
+                                .map(|v| {
+                                    let fut = v
+                                        .iter()
+                                        .filter(|s| {
+                                            !matches!(
+                                                s.account_type,
+                                                digdigdig3::AccountType::Spot
+                                                    | digdigdig3::AccountType::Margin
+                                            )
+                                        })
+                                        .count();
+                                    let ex = v.iter().filter(|s| !s.extra.is_null()).count();
+                                    (v.len(), fut, ex)
+                                })
+                                .unwrap_or((0, 0, 0));
+                            format!("{}:{}/{}f/{}x", label, total, fut, with_extra)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let _ = js_sys::Reflect::set(&dbg, &"sym_catalog".into(), &cat.join(" ").into());
                 let liq_probe = active_cid
                     .and_then(|cid| {
                         let sym = st.chart.symbol_for_chart(cid)?;

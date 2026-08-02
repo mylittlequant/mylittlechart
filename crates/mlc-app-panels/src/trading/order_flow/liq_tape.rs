@@ -271,23 +271,38 @@ impl LiqTapeState {
             let snapshot = guard.snapshot();
             drop(guard);
             let cursor = self.multi.trade_cursors[i];
+            // Contracts → base units. Gate/OKX/KuCoin/HTX quote a
+            // derivative size in contracts, so the wire number is not coin:
+            // Gate's BTC_USDT contract is 0.0001 BTC, and 369 of them shown
+            // as 369 BTC priced at $23M against real prints of a few
+            // thousand. Both the SIZE column and every notional below read
+            // base units from here on.
+            let contract_size = self.multi.venue_contract_size.get(i).copied().unwrap_or(1.0);
+            // 0.0 = the venue quotes contracts and its catalogue has not
+            // landed. Skip WITHOUT advancing the cursor — a print ingested
+            // at the wrong scale would set `max_qty_seen` for the rest of
+            // the session and flatten every size bar after it.
+            if contract_size <= 0.0 {
+                continue;
+            }
             let mut new_max_ts = cursor;
             for p in snapshot.iter().filter(|p| p.ts_ms > cursor) {
                 if p.ts_ms > new_max_ts {
                     new_max_ts = p.ts_ms;
                 }
-                if p.quantity < self.size_threshold {
+                let quantity = p.quantity * contract_size;
+                if quantity < self.size_threshold {
                     continue;
                 }
                 if let Some(notional_min) = self.notional_threshold {
-                    if p.price * p.quantity < notional_min {
+                    if p.price * quantity < notional_min {
                         continue;
                     }
                 }
                 merged.push(LiqPrint {
                     timestamp: p.ts_ms,
                     price: p.price,
-                    quantity: p.quantity,
+                    quantity,
                     // MLC's shipped side convention (liq-heatmap chain,
                     // consistent bridge→core→render): side==0 → SHORT
                     // liquidated, side==1 → LONG. The dig3-core struct

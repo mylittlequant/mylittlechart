@@ -49,6 +49,18 @@ impl<'a> ExchangeSymbols<'a> {
     pub fn tick_size_for(&self, label: &str, symbol: &str) -> Option<f64> {
         self.mgr.tick_size_for(label, symbol)
     }
+
+    /// Base units per contract — see
+    /// [`ExchangeSymbolsManager::contract_size_for`].
+    pub fn contract_size_for(&self, label: &str, symbol: &str, futures: bool) -> f64 {
+        self.mgr.contract_size_for(label, symbol, futures)
+    }
+
+    /// Whether this venue quotes derivative sizes in contracts — see
+    /// [`ExchangeSymbolsManager::quotes_contracts`].
+    pub fn quotes_contracts(&self, label: &str) -> bool {
+        self.mgr.quotes_contracts(label)
+    }
 }
 
 /// Mutable facade over `ExchangeSymbolsManager`.
