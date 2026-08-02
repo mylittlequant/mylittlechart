@@ -160,7 +160,8 @@ impl ChartApp {
         // `matches!` literal. First (and, as of this migration, only)
         // prefix/suffix-match precedent in this dispatcher.
         let is_dynamic_trading_field = focused_id.as_str().ends_with(":oe_field")
-            || focused_id.as_str().ends_with(":rc_field");
+            || focused_id.as_str().ends_with(":rc_field")
+            || focused_id.as_str().starts_with(DOM_DEPTH_PCT_PREFIX);
 
         let is_late_field = is_dynamic_trading_field || matches!(
             focused_id.as_str(),
@@ -206,6 +207,21 @@ impl ChartApp {
 
     fn apply_text_action(&mut self, id: &WidgetId, ch: char, action: TextAction) {
         use crate::text_input::*;
+        // Per-panel field: the id carries the panel, so it is matched by
+        // prefix before the table of fixed ids.
+        if let Some(rest) = id.as_str().strip_prefix(DOM_DEPTH_PCT_PREFIX) {
+            if let Ok(raw) = rest.parse::<u64>() {
+                let pid = mlc_core::state::PanelId(raw);
+                match action {
+                    TextAction::Commit(text) => self.commit_dom_depth_pct(pid, &text),
+                    TextAction::Cancel => {
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         match id.as_str() {
             HEX_COLOR                        => self.text_action_hex_color(action),
             CHART_BROWSER_SEARCH             => self.text_action_chart_browser(action),

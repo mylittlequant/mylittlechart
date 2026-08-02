@@ -84,6 +84,7 @@ pub fn render_dom_settings_modal(
     screen_w: f64,
     screen_h: f64,
     pos: Option<(f64, f64)>,
+    pid: mlc_core::state::PanelId,
     dom: &DomState,
     style: mlc_core::theme::PanelStyleParams,
 ) {
@@ -218,14 +219,29 @@ pub fn render_dom_settings_modal(
         let db_on = dom.multi.config.show_depth_bounds;
         modal_btn(ctx, coord, &layer_id, tt, "depth_bounds", left, row_y, 110.0,
             if db_on { "Depth: on" } else { "Depth: off" }, db_on);
-        modal_btn(ctx, coord, &layer_id, tt, "depth_pct", left + 118.0, row_y, 90.0,
-            &if dom.multi.config.depth_bounds_pct > 0.0 {
-                format!("\u{b1}{:.1}%", dom.multi.config.depth_bounds_pct)
-            } else {
-                // AUTO tracks the ladder; show what it resolved to so the
-                // button still names a number.
-                format!("Auto \u{b1}{:.2}%", dom.multi.depth_bounds_effective_pct)
-            }, false);
+        // Stepper + typed field. The number carries NO unit \u2014 it is a bare
+        // percent and the caption already says what the row is; a "%" in the
+        // box only gets in the way of typing over it. Arrows walk the preset
+        // ladder, clicking the number opens the field, and a typed value is
+        // not limited to the ladder.
+        let pct_wid = uzor::WidgetId::from(
+            format!("{}{}", crate::text_input::DOM_DEPTH_PCT_PREFIX, pid.0),
+        );
+        let editing = coord.text_fields().is_focused(&pct_wid);
+        let pct = dom.multi.config.depth_bounds_pct;
+        let pct_label = if editing {
+            format!("{}|", coord.text_fields().text(&pct_wid))
+        } else if pct > 0.0 {
+            format!("{pct}")
+        } else {
+            format!("auto {:.2}", dom.multi.depth_bounds_effective_pct)
+        };
+        let mut bx = left + 118.0;
+        modal_btn(ctx, coord, &layer_id, tt, "depth_dec", bx, row_y, 24.0, "\u{25c2}", false);
+        bx += 26.0;
+        modal_btn(ctx, coord, &layer_id, tt, "depth_pct", bx, row_y, 76.0, &pct_label, editing);
+        bx += 78.0;
+        modal_btn(ctx, coord, &layer_id, tt, "depth_inc", bx, row_y, 24.0, "\u{25b8}", false);
     }
 
     if !multi {

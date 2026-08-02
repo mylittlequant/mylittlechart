@@ -42,12 +42,6 @@ pub const DEPTH_PRESETS: &[usize] = &[10, 25, 50, 100];
 
 /// Depth-bounds band-width presets (percent of mid), cycled by click.
 /// 0.3% matches the TapeSurf reference reading (ref 11/12).
-/// Band widths the readout cycles through. `0.0` is AUTO: the band then
-/// matches what the ladder is actually showing, so the figure answers "how
-/// much is resting in view" without the user having to keep a percentage in
-/// step with the grid and the panel's height.
-pub const DEPTH_BOUNDS_PCT_PRESETS: &[f64] = &[0.0, 0.1, 0.3, 0.5, 1.0, 2.0, 5.0];
-
 /// Exchange identifier — opaque label so the panel doesn't pull a hard
 /// dep on the `digdigdig3` crate. Wire up to `digdigdig3::ExchangeId`
 /// at the app layer with `format!("{:?}", ex)`.
@@ -273,20 +267,31 @@ impl MultiDomState {
         self.set_depth_per_side(next);
     }
 
-    /// Change the depth-bounds band width (percent of mid).
-    pub fn set_depth_bounds_pct(&mut self, v: f64) {
-        if v <= 0.0 { return; }
-        self.config.depth_bounds_pct = v;
+    /// Band widths the ◂ / ▸ stepper walks. `0.0` is AUTO — the band then
+    /// matches what the ladder is showing. Typing a value is the other way in
+    /// and is NOT limited to these.
+    pub const DEPTH_BOUNDS_PCT_STEPS: &'static [f64] =
+        &[0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0];
+
+    /// Move the band one step along [`Self::DEPTH_BOUNDS_PCT_STEPS`]. A typed
+    /// value between two steps lands on the neighbour in the direction of
+    /// travel instead of snapping backwards.
+    pub fn step_depth_bounds_pct(&mut self, up: bool) {
+        let cur = self.config.depth_bounds_pct;
+        let next = if up {
+            Self::DEPTH_BOUNDS_PCT_STEPS.iter().find(|&&p| p > cur + 1e-9).copied()
+        } else {
+            Self::DEPTH_BOUNDS_PCT_STEPS.iter().rev().find(|&&p| p < cur - 1e-9).copied()
+        };
+        if let Some(v) = next {
+            self.config.depth_bounds_pct = v;
+        }
     }
 
-    /// Cycle the depth-bounds band width to the next preset value.
-    pub fn cycle_depth_bounds_pct(&mut self) {
-        let current = self.config.depth_bounds_pct;
-        let next = DEPTH_BOUNDS_PCT_PRESETS.iter()
-            .find(|&&p| p > current + f64::EPSILON)
-            .copied()
-            .unwrap_or(DEPTH_BOUNDS_PCT_PRESETS[0]);
-        self.set_depth_bounds_pct(next);
+    /// Change the depth-bounds band width (percent of mid). `0.0` is AUTO.
+    pub fn set_depth_bounds_pct(&mut self, v: f64) {
+        if v < 0.0 { return; }
+        self.config.depth_bounds_pct = v;
     }
 
     /// Add the next unknown exchange from KNOWN_EXCHANGES (cycle-add).

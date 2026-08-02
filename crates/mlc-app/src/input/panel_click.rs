@@ -4350,11 +4350,18 @@ impl ChartApp {
                     }
                     self.autosave_snapshot();
                 }
-                "depth_pct" => {
+                "depth_dec" | "depth_inc" => {
                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
-                        state.multi.cycle_depth_bounds_pct();
+                        state.multi.step_depth_bounds_pct(rest == "depth_inc");
                     }
                     self.autosave_snapshot();
+                }
+                "depth_pct" => {
+                    // Typed, not cycled: canned percentages overshoot what the
+                    // ladder shows (0.3% of 62 800 is ±188 while a 40-row
+                    // ladder at grid 5 spans ±100), so the figure counted
+                    // liquidity that was nowhere on screen.
+                    self.start_dom_depth_pct_edit(pid);
                 }
                 // Solo-ladder depth-wave / big-marker toggles (Multi-DOM
                 // parity), persisted.
@@ -6728,6 +6735,53 @@ impl ChartApp {
     /// `update_field` call); re-seeding here on every subsequent click would
     /// silently discard it (owner-reported regression: caret always
     /// snapping to text end, selection invisible).
+    /// Widget id of a DOM panel's depth-bounds percent field.
+    pub(crate) fn dom_depth_pct_widget_id(pid: mlc_core::state::PanelId) -> WidgetId {
+        WidgetId::from(format!("{}{}", crate::text_input::DOM_DEPTH_PCT_PREFIX, pid.0))
+    }
+
+    /// Focus the depth-bounds percent field for `pid`, seeded with the value
+    /// in force. AUTO seeds empty so the first keystroke starts a number, and
+    /// committing empty goes back to AUTO.
+    fn start_dom_depth_pct_edit(&mut self, pid: mlc_core::state::PanelId) {
+        let wid = Self::dom_depth_pct_widget_id(pid);
+        let seed = self
+            .panels_store
+            .dom
+            .get(&pid)
+            .map(|s| s.multi.config.depth_bounds_pct)
+            .filter(|v| *v > 0.0)
+            .map(|v| format!("{v}"))
+            .unwrap_or_default();
+        let mut coord = self.input_coordinator.borrow_mut();
+        coord.text_fields_mut().register(
+            wid.clone(),
+            TextFieldConfig::text().with_filter(|ch| ch.is_ascii_digit() || ch == '.'),
+        );
+        coord.text_fields_mut().set_text(&wid, &seed);
+        coord.text_fields_mut().focus(wid.clone());
+        if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
+            fs.selection_start = Some(0);
+        }
+    }
+
+    /// Commit the depth-bounds percent field: a number is clamped to a band
+    /// the ladder can actually be asked about, empty means AUTO, and junk
+    /// leaves the value alone rather than storing a NaN.
+    pub(crate) fn commit_dom_depth_pct(&mut self, pid: mlc_core::state::PanelId, text: &str) {
+        let t = text.trim();
+        let next = if t.is_empty() {
+            Some(0.0)
+        } else {
+            t.parse::<f64>().ok().filter(|v| v.is_finite()).map(|v| v.clamp(0.01, 10.0))
+        };
+        if let (Some(v), Some(state)) = (next, self.panels_store.dom.get_mut(&pid)) {
+            state.multi.config.depth_bounds_pct = v;
+            self.autosave_snapshot();
+        }
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+    }
+
     fn start_oe_field_edit(
         &mut self,
         target: OrderEntryTarget,

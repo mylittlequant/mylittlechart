@@ -8938,7 +8938,7 @@ impl ChartApp {
                     if let Some(dom) = self.panels_store.dom.get(&pid) {
                         crate::dom_settings_modal::render_dom_settings_modal(
                             ctx, coord, &frame_theme, &toolbar_theme,
-                            w, h, self.dom_modal.position, dom,
+                            w, h, self.dom_modal.position, pid, dom,
                             self.panel_app.theme_manager.current().panel_style,
                         );
                     }

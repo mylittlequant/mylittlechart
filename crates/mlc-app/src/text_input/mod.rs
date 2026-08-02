@@ -30,6 +30,11 @@ pub const AGENT_CHAT: &str = "agent_chat";
 /// `ChartOutEvent::UpdateBarModeParam` is emitted.
 pub const BAR_MODE_PARAM: &str = "bar_mode_param";
 
+/// Per-panel DOM depth-bounds band, in percent. Dynamic id — the panel id is
+/// appended, so the field belongs to the ladder being edited and survives the
+/// modal being reopened on another panel.
+pub const DOM_DEPTH_PCT_PREFIX: &str = "dom_depth_pct:";
+
 /// Symbol search overlay search input.
 pub const SYMBOL_SEARCH: &str = "symbol_search";
 
