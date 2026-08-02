@@ -9,9 +9,11 @@
 //! through it. Same shape, one measured and one modelled, so the two read as
 //! the same kind of statement about a price.
 //!
-//! A band that has NOT been eaten runs to the right edge — that is the whole
+//! A band that has NOT been eaten runs to the NEWEST BAR — that is the whole
 //! point of the layer: standing liquidation liquidity ahead of price. An
-//! eaten one stops at the bar that ate it.
+//! eaten one stops at the bar that ate it. Neither runs into the empty space
+//! right of the series: that gap is time that has not elapsed, and a band
+//! crossing it asserts the level survived bars that do not exist yet.
 
 use mlc_core::chart::liquidation_projection::ProjectedLevel;
 use mlc_core::render::RenderContext;
@@ -85,17 +87,39 @@ pub fn draw_liquidation_projection(
     let right_edge = rect.x + rect.width;
     let y_for = |price: f64| rect.y + ((ps.price_max - price) / price_range) * rect.height;
 
-    // Normalise against the heaviest row IN VIEW: the layer's claim is
-    // relative ("more pressure sits here than there"), and a row far off
-    // screen must not set the scale for what the owner is looking at.
-    let max_notional = levels
+    // A standing band runs to the last BAR, never to the right edge of the
+    // panel. The gap past the newest candle is unelapsed time: a band drawn
+    // across it claims the level survived hours that have not happened yet
+    // (owner report 2026-08-02 — "он двигается бесконечно в будущее").
+    let series_right = (state.viewport.bar_to_x_f64(state.bars.len() as f64) + rect.x)
+        .min(right_edge);
+
+    // Normalise against a HIGH PERCENTILE of the rows in view, not the
+    // maximum. The layer's claim is relative ("more pressure sits here than
+    // there"), and the distribution is heavy-tailed: a row that stood for
+    // days accumulates orders of magnitude more than a fresh one, so
+    // dividing by the single heaviest row pushed everything else to
+    // invisible. The top decile saturates and the rest keeps its spread.
+    // Sensitivity divides the CEILING rather than multiplying the alpha —
+    // multiplying drove every mid-sized row to full opacity instead.
+    let mut visible: Vec<f64> = levels
         .iter()
         .filter(|l| l.price >= ps.price_min && l.price <= ps.price_max)
         .map(|l| l.notional)
-        .fold(1e-9_f64, f64::max);
+        .collect();
+    if visible.is_empty() {
+        return;
+    }
+    visible.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let ceiling = visible[(visible.len() as f64 * 0.9) as usize % visible.len()].max(1e-9)
+        / ink.sensitivity.clamp(0.1, 10.0);
 
-    let band_px = (rect.height * (ps.price_max * (ink.row_pct / 100.0)) / price_range)
-        .max(MIN_BAND_PX);
+    // Rows are drawn SHORT of their true height, leaving a lane between
+    // neighbours. Filling the full row height makes a cluster close into one
+    // solid block — the layer stops reading as levels and starts reading as
+    // a stain over the series, which is what the owner saw.
+    let row_px = rect.height * (ps.price_max * (ink.row_pct / 100.0)) / price_range;
+    let band_px = (row_px * 0.72).clamp(MIN_BAND_PX, (row_px - 1.0).max(MIN_BAND_PX));
 
     for l in levels {
         if l.price < ps.price_min || l.price > ps.price_max {
@@ -107,30 +131,58 @@ pub fn draw_liquidation_projection(
             continue;
         }
         let Some(x0) = x_for_ts(state, l.from_ts) else { continue };
-        // Uneaten runs to the right edge — the standing liquidity ahead of
+        // Uneaten runs to the newest bar — the standing liquidity ahead of
         // price IS the layer. Eaten stops where price took it.
         let x1 = match l.consumed_ts {
-            Some(ts) => x_for_ts(state, ts).unwrap_or(right_edge),
-            None => right_edge,
+            Some(ts) => x_for_ts(state, ts).unwrap_or(series_right),
+            None => series_right,
         };
         let x0 = x0.max(rect.x);
-        let x1 = x1.min(right_edge);
+        let x1 = x1.min(series_right);
         if x1 <= x0 {
             continue;
         }
-        let heat = (l.notional / max_notional).clamp(0.0, 1.0).powf(0.5);
-        let mut alpha = heat * ink.opacity.clamp(0.02, 1.0) * ink.sensitivity.clamp(0.1, 10.0);
+        // Steeper than linear, with only a whisper of a floor. A heatmap is
+        // readable because MOST of it is nearly dark and the clusters carry
+        // the ink — a compressive curve (sqrt) plus a generous floor lifts
+        // every row to mid-opacity, and 1100 mid-opacity rows are a wash,
+        // not a picture.
+        let heat = (l.notional / ceiling).clamp(0.0, 1.0).powf(1.3).max(0.04);
+        let mut alpha = heat * ink.opacity.clamp(0.02, 1.0);
         if l.consumed() {
-            alpha *= 0.35;
+            alpha *= 0.5;
         }
         let alpha = alpha.clamp(0.0, 1.0);
         if alpha <= 0.01 {
             continue;
         }
         // Longs die below price and shorts above, so the colour says which
-        // side gets hurt — the same convention the realized layer uses.
-        let base = if l.side == 1 { &theme.candle_down } else { &theme.candle_up };
-        ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(base, alpha));
-        ctx.fill_rect(x0, y_for(l.price) - band_px * 0.5, x1 - x0, band_px);
+        // side gets hurt. The tokens are the skin's own bid/ask pair — the
+        // same ones the DOM ladder and the on-chart depth heat use — so the
+        // layer belongs to the skin instead of competing with the series at
+        // the candles' saturation.
+        //
+        // Weight rides the ALPHA only, never a lean toward the `_hot` token:
+        // in the shipped skin `heat_ask_hot` is yellow, so leaning turned a
+        // heavy long-liquidation row olive and the side it names stopped
+        // being legible as a side.
+        let tone = if l.side == 1 { &theme.heat_ask } else { &theme.heat_bid };
+        let y = y_for(l.price) - band_px * 0.5;
+
+        // Along its length a band FADES IN toward the present: the far end
+        // is where the level still stands, and that end is the one worth
+        // looking at. Only wide enough bands get the ramp — below that it
+        // costs three fills to say nothing.
+        let w = x1 - x0;
+        if w >= 24.0 {
+            let step = w / 3.0;
+            for (i, k) in [0.62_f64, 0.82, 1.0].into_iter().enumerate() {
+                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, alpha * k));
+                ctx.fill_rect(x0 + step * i as f64, y, step, band_px);
+            }
+        } else {
+            ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(tone, alpha));
+            ctx.fill_rect(x0, y, w, band_px);
+        }
     }
 }

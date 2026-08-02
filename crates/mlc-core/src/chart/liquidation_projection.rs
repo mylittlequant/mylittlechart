@@ -26,7 +26,9 @@
 //! 5. A row is CONSUMED the first time a later bar trades through it: those
 //!    positions are gone. That is why the reference's bands END rather than
 //!    wash the whole chart — an uneaten band is standing liquidity, an eaten
-//!    one is history.
+//!    one is history. Consumption ENDS the row, so exposure that rebuilds at
+//!    the same price afterwards is a NEW band with its own start: a level is
+//!    a segment in time, not a permanent property of a price.
 //!
 //! ## What it is honestly not
 //!
@@ -170,11 +172,69 @@ fn row_key(price: f64, grid: f64, side: u8) -> (i64, u8) {
     ((price / grid).round() as i64, side)
 }
 
+/// Release every standing row this bar's range trades through.
+///
+/// A row is eaten by the FIRST bar whose `[low, high]` contains it: those
+/// positions are liquidated and the row stops existing. It is removed from
+/// the live set, so exposure that arrives at the same price afterwards opens
+/// a NEW row with its own start — that is the difference between "this level
+/// was standing from here to here" and one band smeared across the window.
+fn eat_bar(
+    live: &mut std::collections::BTreeMap<(i64, u8), (f64, i64)>,
+    out: &mut Vec<ProjectedLevel>,
+    bar: &Bar,
+    grid: f64,
+    min_usd: f64,
+) {
+    if live.is_empty() || !(bar.low > 0.0) || !(bar.high >= bar.low) {
+        return;
+    }
+    // Rows whose CENTRE the bar traded through — the same test the row grid
+    // is built with (`row_key` rounds, so row `i` is centred on `i × grid`).
+    let lo = (bar.low / grid).ceil() as i64;
+    let hi = (bar.high / grid).floor() as i64;
+    if hi < lo {
+        return;
+    }
+    let ts = bar.ts_ms();
+    let keys: Vec<(i64, u8)> = live.range((lo, 0u8)..=(hi, u8::MAX)).map(|(k, _)| *k).collect();
+    for k in keys {
+        let Some((notional, from_ts)) = live.remove(&k) else { continue };
+        if notional < min_usd {
+            continue;
+        }
+        let price = k.0 as f64 * grid;
+        if !(price > 0.0) {
+            continue;
+        }
+        out.push(ProjectedLevel {
+            price,
+            from_ts,
+            consumed_ts: Some(ts),
+            notional,
+            side: k.1,
+        });
+    }
+}
+
 /// Build the projected levels for `bars` from the open-interest series.
 ///
-/// `oi` must be time-ordered; bars likewise. Cost is
-/// `O(oi × tiers + rows × bars_after_creation)` — the consumption scan is
-/// the expensive half, and it stops at the first bar that eats the row.
+/// Walks open interest and bars TOGETHER on one clock. Exposure that arrives
+/// at a point in time opens rows; every bar that closes after them eats the
+/// rows it trades through and ends them there. A row is therefore a SEGMENT
+/// — it starts when its exposure was opened and stops where price took it —
+/// and the same price can hold several segments over the window.
+///
+/// The previous revision folded every contribution to one price into a
+/// single row stamped with the EARLIEST contributing timestamp, then asked
+/// once whether price had ever traded through it. Two defects followed and
+/// both were visible on screen (owner report 2026-08-02): every band began
+/// at the left edge of the window regardless of when its exposure actually
+/// appeared, and a level eaten early was marked consumed forever, so
+/// exposure rebuilt at that price afterwards was invisible.
+///
+/// `oi` must be time-ordered; bars likewise. Cost is `O(oi × tiers × log r +
+/// bars × log r)` — one pass over each, no rescan per row.
 pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Vec<ProjectedLevel> {
     if bars.is_empty() || oi.len() < 2 || params.tiers.is_empty() {
         return Vec::new();
@@ -196,10 +256,19 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
     }
     let grid = (reference_price * row_pct).max(f64::MIN_POSITIVE);
 
-    // (row, side) → (notional, earliest ts)
-    let mut rows: std::collections::HashMap<(i64, u8), (f64, i64)> = std::collections::HashMap::new();
+    // Rows currently STANDING: (row, side) → (notional, opened at).
+    let mut live: std::collections::BTreeMap<(i64, u8), (f64, i64)> =
+        std::collections::BTreeMap::new();
+    let mut out: Vec<ProjectedLevel> = Vec::new();
+    let mut cursor = 0usize;
 
     for point in oi.iter() {
+        // Bars that closed at or before this point eat first: exposure opened
+        // now cannot be liquidated by a candle that is already history.
+        while cursor < bars.len() && bars[cursor].ts_ms() <= point.ts_ms {
+            eat_bar(&mut live, &mut out, &bars[cursor], grid, params.min_usd);
+            cursor += 1;
+        }
         // Only exposure that ARRIVED creates future liquidations. Exposure
         // leaving is a position closed — it takes its own level with it, and
         // we cannot know which one, so it is not modelled as a negative.
@@ -232,34 +301,31 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
                 if part <= 0.0 || !(p_liq > 0.0) {
                     continue;
                 }
-                let e = rows.entry(row_key(p_liq, grid, side)).or_insert((0.0, point.ts_ms));
+                let e = live.entry(row_key(p_liq, grid, side)).or_insert((0.0, point.ts_ms));
                 e.0 += notional * share * part;
-                if point.ts_ms < e.1 {
-                    e.1 = point.ts_ms;
-                }
             }
         }
     }
 
-    let mut out: Vec<ProjectedLevel> = rows
-        .into_iter()
-        .filter_map(|((row_idx, side), (notional, from_ts))| {
-            if notional < params.min_usd {
-                return None;
-            }
-            let price = row_idx as f64 * grid;
-            if !(price > 0.0) {
-                return None;
-            }
-            Some(ProjectedLevel {
-                price,
-                from_ts,
-                consumed_ts: consumed_at(bars, price, from_ts),
-                notional,
-                side,
-            })
-        })
-        .collect();
+    // Bars after the last open-interest point still eat.
+    while cursor < bars.len() {
+        eat_bar(&mut live, &mut out, &bars[cursor], grid, params.min_usd);
+        cursor += 1;
+    }
+
+    // Whatever survived every bar is STANDING liquidity — the half of the
+    // layer that is a statement about where price is going.
+    for ((row_idx, side), (notional, from_ts)) in live {
+        if notional < params.min_usd {
+            continue;
+        }
+        let price = row_idx as f64 * grid;
+        if !(price > 0.0) {
+            continue;
+        }
+        out.push(ProjectedLevel { price, from_ts, consumed_ts: None, notional, side });
+    }
+
     out.sort_by(|a, b| b.notional.partial_cmp(&a.notional).unwrap_or(std::cmp::Ordering::Equal));
     out
 }
@@ -269,16 +335,6 @@ pub fn project(bars: &[Bar], oi: &[OiDeltaBar], params: &ProjectionParams) -> Ve
 fn price_at(bars: &[Bar], ts_ms: i64) -> Option<f64> {
     let idx = bar_index_at(bars, ts_ms)?;
     Some(bars[idx].close)
-}
-
-/// The timestamp of the first bar AFTER `from_ts` whose range contains
-/// `price` — the moment the level was eaten. `None` while it stands.
-fn consumed_at(bars: &[Bar], price: f64, from_ts: i64) -> Option<i64> {
-    let start = bar_index_at(bars, from_ts).map(|i| i + 1).unwrap_or(0);
-    bars.get(start..)?
-        .iter()
-        .find(|b| b.low <= price && price <= b.high)
-        .map(|b| b.ts_ms())
 }
 
 /// Index of the last bar at or before `ts_ms`.
@@ -352,6 +408,40 @@ mod tests {
         let levels = project(&bars, &oi, &params_single(10.0));
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].consumed_ts, Some(60_000));
+    }
+
+    /// Exposure rebuilt at a price price has ALREADY traded through is a
+    /// second, separate band — not an invisible addition to a row that was
+    /// marked consumed once and stayed that way.
+    ///
+    /// This is the defect that put every band at the left edge of the window
+    /// (owner report 2026-08-02): the old fold stamped a row with its
+    /// earliest contribution and asked about consumption once.
+    #[test]
+    fn a_level_rebuilt_after_being_eaten_is_a_second_segment() {
+        // Price opens at 100, dives through 90 (eating the first level),
+        // returns to 100 and the second wave of exposure opens there.
+        let bars = vec![
+            bar(0, 100.0, 100.0, 100.0, 100.0),
+            bar(60, 100.0, 100.0, 89.0, 89.5),
+            bar(120, 90.0, 100.0, 90.0, 100.0),
+            bar(180, 100.0, 100.5, 99.5, 100.0),
+        ];
+        let oi = vec![
+            OiDeltaBar { ts_ms: 0, oi: 100.0, delta: 0.0 },
+            OiDeltaBar { ts_ms: 0, oi: 200.0, delta: 100.0 },
+            OiDeltaBar { ts_ms: 180_000, oi: 300.0, delta: 100.0 },
+        ];
+        let levels = project(&bars, &oi, &params_single(10.0));
+        assert_eq!(levels.len(), 2, "one eaten segment + one standing, got {levels:?}");
+        let eaten = levels.iter().find(|l| l.consumed()).expect("first wave was eaten");
+        let standing = levels.iter().find(|l| !l.consumed()).expect("second wave still stands");
+        assert_eq!(eaten.consumed_ts, Some(60_000));
+        assert_eq!(eaten.from_ts, 0);
+        // The second segment starts when ITS exposure arrived, not at the
+        // window's left edge.
+        assert_eq!(standing.from_ts, 180_000);
+        assert!((standing.price - 90.0).abs() < 0.5, "got {}", standing.price);
     }
 
     /// Open interest LEAVING creates nothing: a closed position takes its
