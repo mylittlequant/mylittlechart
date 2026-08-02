@@ -769,11 +769,33 @@ pub struct LiquidationProjectionInk {
     /// standing liquidity, which is the trading question; on shows where
     /// the pressure has already been spent.
     pub show_consumed: bool,
+    /// How many bar-widths past the newest bar a STANDING band may extend.
+    ///
+    /// `0` stops every band at the last bar. Above zero it runs on into the
+    /// empty right-hand margin — the level is ahead of price, so drawing it
+    /// ahead of the series reads naturally. It is a display length only: no
+    /// bar exists there and the model says nothing about those bars.
+    pub future_bars: f64,
+    /// Dissolve the FUTURE extension of a band toward its tip.
+    ///
+    /// Acts only on what `future_bars` draws past the newest bar, so it does
+    /// nothing at `future_bars == 0`. That part is the one place the layer
+    /// draws where no bar exists, so letting it fall away says "this is the
+    /// model reaching, not something that happened" — while the elapsed part
+    /// of the band, which is the layer's actual claim, stays at full weight.
+    pub fade: bool,
 }
 
 impl Default for LiquidationProjectionInk {
     fn default() -> Self {
-        Self { sensitivity: 1.0, row_pct: 0.05, opacity: 0.5, show_consumed: true }
+        Self {
+            sensitivity: 1.0,
+            row_pct: 0.05,
+            opacity: 0.3,
+            show_consumed: true,
+            future_bars: 0.0,
+            fade: false,
+        }
     }
 }
 

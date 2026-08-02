@@ -1796,6 +1796,8 @@ impl ChartApp {
             row_pct: f("row_pct", d.row_pct),
             opacity: f("opacity", d.opacity),
             show_consumed: b("show_consumed", d.show_consumed),
+            future_bars: f("future_bars", d.future_bars),
+            fade: b("fade", d.fade),
         }
     }
 
