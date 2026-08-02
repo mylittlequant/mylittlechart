@@ -254,6 +254,19 @@ impl<'a> Bubbles<'a> {
         self.store.oi_delta(bid)
     }
 
+    /// Per-venue open-interest history rows, `venue -> row count`.
+    pub fn oi_hist_shape(&self, bid: BubbleId) -> Vec<(String, usize)> {
+        self.store.oi_hist_shape(bid)
+    }
+
+    /// Projected liquidation levels cached on the bubble.
+    pub fn liq_projection(
+        &self,
+        bid: BubbleId,
+    ) -> Option<&[mlc_core::chart::liquidation_projection::ProjectedLevel]> {
+        self.store.liq_projection(bid)
+    }
+
     pub fn funding_rate(&self, bid: BubbleId) -> Option<&[mlc_core::types::FundingRateCell]> {
         self.store.funding_rate(bid)
     }

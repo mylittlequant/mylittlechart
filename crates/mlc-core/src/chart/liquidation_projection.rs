@@ -108,6 +108,54 @@ impl ProjectedLevel {
     }
 }
 
+/// Fold per-venue open-interest histories into ONE series of deltas.
+///
+/// Aggregating open interest is the default question, not a variant of it:
+/// a position opened on one venue is liquidated on that venue, but price is
+/// one market, and a projection built from a single venue's OI understates
+/// every level by whatever share that venue holds. Summing is only valid on
+/// a COMMON time grid — venues publish on the same ladder (5m/15m/1h/…) but
+/// not at identical timestamps, so rows are bucketed to `grid_ms` first and
+/// a venue missing a bucket carries its previous value forward rather than
+/// dropping to zero (which would read as a mass close that never happened).
+pub fn fold_oi(
+    per_venue: &[(String, Vec<(i64, f64)>)],
+    grid_ms: i64,
+) -> Vec<OiDeltaBar> {
+    let grid = grid_ms.max(1);
+    let mut buckets: std::collections::BTreeMap<i64, Vec<(usize, f64)>> =
+        std::collections::BTreeMap::new();
+    for (vi, (_, rows)) in per_venue.iter().enumerate() {
+        for (ts, oi) in rows {
+            if !oi.is_finite() || *oi <= 0.0 {
+                continue;
+            }
+            buckets.entry((ts / grid) * grid).or_default().push((vi, *oi));
+        }
+    }
+    let mut last: Vec<Option<f64>> = vec![None; per_venue.len()];
+    let mut out: Vec<OiDeltaBar> = Vec::with_capacity(buckets.len());
+    let mut prev_total: Option<f64> = None;
+    for (ts, samples) in buckets {
+        for (vi, oi) in samples {
+            last[vi] = Some(oi);
+        }
+        // Only venues that have reported at least once contribute; a venue
+        // that never answers is absent, not zero.
+        let total: f64 = last.iter().filter_map(|v| *v).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        let delta = match prev_total {
+            Some(p) => total - p,
+            None => 0.0,
+        };
+        prev_total = Some(total);
+        out.push(OiDeltaBar { ts_ms: ts, oi: total, delta });
+    }
+    out
+}
+
 /// Row key: quantised price plus side, so long and short pressure at the
 /// same price stay distinct (they are opposite forces, not one pool).
 #[inline]

@@ -904,6 +904,48 @@ fn run_render_loop(
                         .collect::<Vec<_>>()
                 };
                 let _ = js_sys::Reflect::set(&dbg, &"sym_catalog".into(), &cat.join(" ").into());
+                // Projected-liquidation inputs and output, side by side: the
+                // layer draws nothing when EITHER the open-interest series is
+                // empty or the model produced no rows, and those are
+                // completely different repairs.
+                let (oi_points, oi_first, oi_last, proj_levels, proj_standing) = active_cid
+                    .and_then(|cid| st.chart.bubble_for_chart(cid))
+                    .map(|bid| {
+                        let bubbles = st.chart.core.bubbles();
+                        let oi = bubbles.oi_delta(bid).unwrap_or(&[]);
+                        let proj = bubbles
+                            .liq_projection(bid)
+                            .map(|v| (v.len(), v.iter().filter(|l| !l.consumed()).count()))
+                            .unwrap_or((0, 0));
+                        (
+                            oi.len(),
+                            oi.first().map(|p| p.oi).unwrap_or(0.0),
+                            oi.last().map(|p| p.oi).unwrap_or(0.0),
+                            proj.0,
+                            proj.1,
+                        )
+                    })
+                    .unwrap_or((0, 0.0, 0.0, 0, 0));
+                let _ = js_sys::Reflect::set(&dbg, &"oi_points".into(), &(oi_points as f64).into());
+                // Per-venue OI HISTORY shape — the projection's real input,
+                // distinct from the OI Delta pane's websocket series above.
+                let oi_hist = active_cid
+                    .and_then(|cid| st.chart.bubble_for_chart(cid))
+                    .map(|bid| {
+                        st.chart
+                            .core
+                            .bubbles()
+                            .oi_hist_shape(bid)
+                            .into_iter()
+                            .map(|(v, n)| format!("{}={}", v, n))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"oi_hist".into(), &oi_hist.join(",").into());
+                let _ = js_sys::Reflect::set(&dbg, &"oi_first".into(), &oi_first.into());
+                let _ = js_sys::Reflect::set(&dbg, &"oi_last".into(), &oi_last.into());
+                let _ = js_sys::Reflect::set(&dbg, &"proj_levels".into(), &(proj_levels as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"proj_standing".into(), &(proj_standing as f64).into());
                 let liq_probe = active_cid
                     .and_then(|cid| {
                         let sym = st.chart.symbol_for_chart(cid)?;

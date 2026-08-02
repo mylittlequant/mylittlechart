@@ -192,7 +192,13 @@ pub fn draw_liquidations(
             let norm = (p.value_usd / max_print).clamp(0.0, 1.0).sqrt();
             // Half-reach in BARS, not pixels: the mark keeps its meaning
             // ("this many bars either side") across every zoom level.
-            let half_px = ((0.8 + norm * ink.span_bars.clamp(0.5, 40.0)) * bar_px).min(rect.width);
+            // Base reach is a floor, not a starting point: the smallest
+            // print still has to be a LINE. Below a couple of bars — or a
+            // dozen pixels on a tight zoom — a mark reads as a speck and
+            // the level it names is unreadable.
+            let half_px = ((1.8 + norm * ink.span_bars.clamp(0.5, 40.0)) * bar_px)
+                .max(14.0)
+                .min(rect.width);
             let x0 = (x - half_px).max(rect.x);
             let x1 = (x + half_px).min(right_edge);
             if x1 <= rect.x || x0 >= right_edge {
@@ -204,27 +210,29 @@ pub fn draw_liquidations(
 
             // The level itself.
             ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(color, alpha));
-            ctx.set_stroke_width((1.0 + norm * 2.0) * scale);
+            ctx.set_stroke_width((1.8 + norm * 2.2) * scale);
             ctx.begin_path();
             ctx.move_to(x0, cy);
             ctx.line_to(x1, cy);
             ctx.stroke();
 
-            // The accent: where it actually fired. Ringed in the background
-            // colour because over a candle of its own hue a bare fill has no
-            // edge at all.
+            // The accent: where it actually fired. A short TICK across the
+            // line, not a disc — a disc big enough to see swallowed the bar
+            // it sat on, and the mark only has to say "here", not restate
+            // the size the line already carries. It takes the skin's text
+            // colour rather than the side's: over a candle of its own hue a
+            // same-colour mark has no contrast exactly where it matters, and
+            // the side is already written in the line.
             if x >= rect.x && x <= right_edge {
-                let r = ((2.0 + norm * 4.0) * scale).clamp(1.5, 12.0);
-                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(color, (alpha + 0.25).min(1.0)));
+                let h = ((3.0 + norm * 2.5) * scale).clamp(2.5, 9.0);
+                ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(
+                    &theme.text,
+                    (alpha + 0.35).min(1.0),
+                ));
+                ctx.set_stroke_width((1.4 * scale).clamp(1.0, 3.0));
                 ctx.begin_path();
-                ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
-                ctx.close_path();
-                ctx.fill();
-                ctx.set_stroke_color(&mlc_core::utils::color::apply_opacity(&theme.background, 0.9));
-                ctx.set_stroke_width(1.0);
-                ctx.begin_path();
-                ctx.arc(x, cy, r, 0.0, std::f64::consts::TAU);
-                ctx.close_path();
+                ctx.move_to(x, cy - h);
+                ctx.line_to(x, cy + h);
                 ctx.stroke();
             }
         }

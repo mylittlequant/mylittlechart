@@ -55,6 +55,7 @@ fn event_type_name(e: &BubbleEvent) -> &'static str {
         BubbleEvent::TpoSessionUpdated { .. } => "TpoSessionUpdated",
         BubbleEvent::TlbLineAppended { .. } => "TlbLineAppended",
         BubbleEvent::OiUpdatePassthrough { .. } => "OiUpdatePassthrough",
+        BubbleEvent::OiHistoryPassthrough { .. } => "OiHistoryPassthrough",
         BubbleEvent::FundingRatePassthrough { .. } => "FundingRatePassthrough",
         BubbleEvent::DomHeatmapSnapshotPassthrough { .. } => "DomHeatmapSnapshotPassthrough",
         BubbleEvent::DomTradeDotPassthrough { .. } => "DomTradeDotPassthrough",

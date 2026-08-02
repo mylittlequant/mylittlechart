@@ -103,6 +103,7 @@ impl BubbleStore {
             cvd_line: None,
             tpo_sessions: None,
             oi_delta: None,
+            oi_hist: std::collections::BTreeMap::new(),
             liq_projection: None,
             liq_projection_key: (0, 0, 0),
             funding_rate: None,
@@ -166,6 +167,7 @@ impl BubbleStore {
             cvd_line: None,
             tpo_sessions: None,
             oi_delta: None,
+            oi_hist: std::collections::BTreeMap::new(),
             liq_projection: None,
             liq_projection_key: (0, 0, 0),
             funding_rate: None,
@@ -658,6 +660,22 @@ impl BubbleStore {
     /// Open Interest Δ bars, if any have been written.
     pub fn oi_delta(&self, bid: BubbleId) -> Option<&[mlc_core::types::OiDeltaBar]> {
         self.bubbles.get(&bid)?.oi_delta.as_deref()
+    }
+
+    /// Per-venue open-interest history row counts.
+    pub fn oi_hist_shape(&self, bid: BubbleId) -> Vec<(String, usize)> {
+        self.bubbles
+            .get(&bid)
+            .map(|b| b.oi_hist.iter().map(|(v, r)| (v.clone(), r.len())).collect())
+            .unwrap_or_default()
+    }
+
+    /// Projected liquidation levels, if the model has run.
+    pub fn liq_projection(
+        &self,
+        bid: BubbleId,
+    ) -> Option<&[mlc_core::chart::liquidation_projection::ProjectedLevel]> {
+        self.bubbles.get(&bid)?.liq_projection.as_deref()
     }
 
     /// Funding Rate cells, if any have been written.

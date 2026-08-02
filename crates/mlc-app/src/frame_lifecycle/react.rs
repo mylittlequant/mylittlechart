@@ -1409,6 +1409,30 @@ impl ChartApp {
                 }
             }
 
+            BubbleEvent::OiHistoryPassthrough { exchange_id, account_type: _, symbol, rows } => {
+                // Account type is deliberately NOT matched: open interest is
+                // a futures quantity, and a spot chart asking for the
+                // projection wants that instrument's futures OI, not
+                // nothing. Venue is the map key, so a fold sees every venue
+                // that answered and a solo read picks its own.
+                let venue = exchange_id.as_str().to_string();
+                let bids: std::collections::HashSet<mlc_core::ids::BubbleId> = self
+                    .panel_app
+                    .panel_grid
+                    .containers()
+                    .keys()
+                    .filter(|cid| self.symbol_for_chart(**cid).as_deref() == Some(symbol.as_str()))
+                    .filter_map(|cid| self.bubble_for_chart(*cid))
+                    .collect();
+                for b in bids {
+                    let venue = venue.clone();
+                    let rows = rows.clone();
+                    self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
+                        bubble.oi_hist.insert(venue, rows);
+                    });
+                }
+            }
+
             BubbleEvent::FundingRatePassthrough { exchange_id: _, account_type, symbol, point } => {
                 let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =

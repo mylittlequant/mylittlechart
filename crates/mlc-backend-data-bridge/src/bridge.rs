@@ -403,6 +403,23 @@ pub enum LiveUpdate {
         d24h_pct: Option<f64>,
     },
 
+    /// Bar-aligned OPEN-INTEREST HISTORY for one instrument, oldest first.
+    ///
+    /// The projected-liquidation overlay models from ΔOI, and open interest
+    /// on the venues that matter is a REST-history series, not a websocket
+    /// stream: Binance, KuCoin and HTX have no public WS OpenInterest
+    /// channel at all (the station reports the subscribe as wire-absent and
+    /// the forwarder exits). A layer fed only by the live stream therefore
+    /// had NO input on the venue most charts sit on, and drew nothing —
+    /// measured 2026-08-02, `oi_points: 0` on Binance BTCUSDT.
+    OiHistory {
+        exchange_id: ExchangeId,
+        account_type: AccountType,
+        symbol: String,
+        /// `(timestamp_ms, open_interest)`, ascending.
+        rows: Vec<(i64, f64)>,
+    },
+
     /// DOM heatmap snapshot for `chart_type == "dom_heatmap"` (C12).
     ///
     /// Sourced from an `OrderBook` station stream: each full book snapshot
@@ -3247,6 +3264,97 @@ impl DataBridge {
             .unwrap_or_else(|_| symbol.to_string())
     }
 
+    /// Venues that serve open-interest HISTORY over REST, asked of the
+    /// connector layer rather than listed here.
+    ///
+    /// `has_open_interest_history` is the capability the venue declares, and
+    /// it is the only honest source: a hardcoded roster drifts the moment a
+    /// connector gains or loses the endpoint, and the liquidation arc spent
+    /// hours on exactly that class of stale list.
+    pub fn oi_history_venues(&self) -> Vec<ExchangeId> {
+        [
+            ExchangeId::Binance,
+            ExchangeId::Bybit,
+            ExchangeId::OKX,
+            ExchangeId::GateIO,
+            ExchangeId::HTX,
+            ExchangeId::Bitget,
+            ExchangeId::KuCoin,
+        ]
+        .into_iter()
+        .filter(|eid| {
+            self.hub
+                .capabilities(*eid)
+                .map(|c| c.has_open_interest_history)
+                .unwrap_or(false)
+        })
+        .collect()
+    }
+
+    /// Pull bar-aligned open-interest history for one instrument and emit it
+    /// as [`LiveUpdate::OiHistory`].
+    ///
+    /// REST, not a subscription: on Binance, KuCoin and HTX there IS no
+    /// public WS open-interest channel, so a consumer that only subscribes
+    /// gets nothing at all on the venue most charts sit on.
+    pub fn request_oi_history(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        period: &'static str,
+        limit: u32,
+    ) {
+        let hub = self.hub.clone();
+        let tx = self.tx.clone();
+        let symbol_canonical = symbol.to_string();
+        let symbol_native = self.wire_symbol(exchange_id, account_type, symbol);
+        self.spawn_bg(async move {
+            let Some(connector) = hub.rest(exchange_id) else { return };
+            let rows = match connector
+                .get_open_interest_history(
+                    digdigdig3::core::types::SymbolInput::Raw(&symbol_native),
+                    period,
+                    None,
+                    None,
+                    Some(limit),
+                    account_type,
+                )
+                .await
+            {
+                Ok(rows) if !rows.is_empty() => rows,
+                Ok(_) => return,
+                Err(e) => {
+                    crate::dlog!(
+                        "[Bridge::oi-history] {:?} {} period={}: {:?}",
+                        exchange_id, symbol_native, period, e
+                    );
+                    return;
+                }
+            };
+            // Row order is venue-dependent (Binance/GateIO oldest-first,
+            // Bybit/OKX newest-first) — sort rather than trust it, the same
+            // trap `refresh_oi_history` documents.
+            let mut points: Vec<(i64, f64)> = rows
+                .iter()
+                .filter(|r| r.open_interest.is_finite() && r.open_interest > 0.0)
+                .map(|r| (r.timestamp, r.open_interest))
+                .collect();
+            points.sort_by_key(|(ts, _)| *ts);
+            points.dedup_by_key(|(ts, _)| *ts);
+            crate::dlog!(
+                "[Bridge::oi-history] {:?} {} period={} rows={}",
+                exchange_id, symbol_native, period, points.len()
+            );
+            let _ = tx.send(LiveUpdate::OiHistory {
+                exchange_id,
+                account_type,
+                symbol: symbol_canonical,
+                rows: points,
+            });
+        });
+    }
+
     /// Cancel the liquidation forwarder for this key — same contract as
     /// [`Self::unsubscribe_trades`] (no mlc-side refcount; the caller is
     /// responsible for being the last consumer).
@@ -4415,6 +4523,23 @@ fn oi_delta_pct(
         return None;
     }
     Some((current_oi - base) / base * 100.0)
+}
+
+/// The finest open-interest history period a venue serves that is not
+/// finer than the chart's own bar. Venues publish OI on a fixed ladder
+/// (`5m/15m/30m/1h/2h/4h/6h/12h/1d`) — asking for a period below the ladder
+/// is an error, and asking far above it throws away the resolution the
+/// projection needs to place a band at the price OI actually arrived at.
+pub fn oi_history_period(bar_ms: i64) -> &'static str {
+    match bar_ms {
+        ms if ms <= 5 * 60_000 => "5m",
+        ms if ms <= 15 * 60_000 => "15m",
+        ms if ms <= 30 * 60_000 => "30m",
+        ms if ms <= 60 * 60_000 => "1h",
+        ms if ms <= 4 * 60 * 60_000 => "4h",
+        ms if ms <= 12 * 60 * 60_000 => "12h",
+        _ => "1d",
+    }
 }
 
 /// One REST `get_open_interest_history` pull (period `"1h"`, limit 30 ≈ 25

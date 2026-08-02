@@ -283,6 +283,15 @@ pub enum BubbleEvent {
         symbol: String,
         point: mlc_core::types::OiDeltaBar,
     },
+    /// Bar-aligned open-interest history for one venue. Pass-through for the
+    /// same reason the OI/funding updates are: which bubble owns a symbol is
+    /// window state the data plane deliberately cannot see.
+    OiHistoryPassthrough {
+        exchange_id: ExchangeId,
+        account_type: String,
+        symbol: String,
+        rows: Vec<(i64, f64)>,
+    },
     /// Funding rate update — write target depends on per-app `funding_show` flag.
     /// Pass-through: reactor finds matching window bubbles and does the write.
     FundingRatePassthrough {
@@ -517,6 +526,15 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("exchange_id", ex!(exchange_id))?;
                 m.serialize_entry("symbol", symbol)?;
                 m.serialize_entry("account_type", account_type)?;
+                m.end()
+            }
+            Self::OiHistoryPassthrough { exchange_id, account_type, symbol, rows } => {
+                let mut m = s.serialize_map(Some(5))?;
+                m.serialize_entry("type", "OiHistoryPassthrough")?;
+                m.serialize_entry("exchange_id", ex!(exchange_id))?;
+                m.serialize_entry("account_type", account_type)?;
+                m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("rows", &rows.len())?;
                 m.end()
             }
             Self::OiUpdatePassthrough { exchange_id, account_type, symbol, point } => {
@@ -2107,6 +2125,20 @@ impl BackendCore {
                         account_type: at.short_label().to_string(),
                         symbol: sym,
                         point,
+                    });
+                }
+
+                // ── OiHistory ───────────────────────────────────────────────────
+                // Per-venue REST rows, written straight onto every bubble on
+                // this symbol. Keyed by venue so one fetch serves both the
+                // solo and the aggregated read — the overlay decides which
+                // venues to fold, the store just keeps what answered.
+                LiveUpdate::OiHistory { exchange_id, account_type: at, symbol: sym, rows } => {
+                    events.push(BubbleEvent::OiHistoryPassthrough {
+                        exchange_id,
+                        account_type: at.short_label().to_string(),
+                        symbol: sym,
+                        rows,
                     });
                 }
 

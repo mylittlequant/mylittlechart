@@ -287,6 +287,15 @@ pub struct DataBubble {
     /// Open Interest Δ bars. Written by `OpenInterestUpdate`.
     pub oi_delta: Option<Vec<mlc_core::types::OiDeltaBar>>,
 
+    /// Open-interest HISTORY per venue, `venue -> [(ts_ms, oi)]` ascending.
+    /// The projected-liquidation overlay's input, kept per venue so the
+    /// same rows serve both its modes: solo reads the chart's own venue,
+    /// aggregated folds every venue that answered.
+    ///
+    /// Distinct from `oi_delta`, which is the OI Delta sub-pane's live WS
+    /// series — that stream does not exist on Binance/KuCoin/HTX at all.
+    pub oi_hist: std::collections::BTreeMap<String, Vec<(i64, f64)>>,
+
     /// Projected liquidation levels, modelled from `oi_delta` + bars by
     /// `ChartApp::refresh_liq_projection`. CACHED rather than derived at
     /// render time: the consumption scan is O(rows × bars) and would run
@@ -532,6 +541,7 @@ impl DataBubble {
             cvd_line: None,
             tpo_sessions: None,
             oi_delta: None,
+            oi_hist: std::collections::BTreeMap::new(),
             liq_projection: None,
             liq_projection_key: (0, 0, 0),
             funding_rate: None,
@@ -996,6 +1006,7 @@ impl Clone for DataBubble {
             cvd_line: self.cvd_line.clone(),
             tpo_sessions: self.tpo_sessions.clone(),
             oi_delta: self.oi_delta.clone(),
+            oi_hist: self.oi_hist.clone(),
             liq_projection: self.liq_projection.clone(),
             liq_projection_key: self.liq_projection_key,
             funding_rate: self.funding_rate.clone(),

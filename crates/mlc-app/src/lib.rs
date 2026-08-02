@@ -455,6 +455,13 @@ pub struct ChartApp {
     pub(crate) liq_armed:
         std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, i64)>,
 
+    /// The (symbol, aggregate, requested-at-ms) the projection overlay last
+    /// pulled open-interest history for. RAM-only. Open interest moves on
+    /// the venue's own ladder — 5m at the finest — so re-pulling faster than
+    /// the refresh tick only burns rate limit.
+    pub(crate) oi_hist_armed:
+        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, i64)>,
+
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
 
@@ -1731,6 +1738,20 @@ impl ChartApp {
         }
     }
 
+    /// Whether the projected-liquidation overlay folds every venue that
+    /// serves open-interest history, or reads only the chart's own. Default
+    /// ON, and for the same reason the liquidation fold is: price is one
+    /// market, so a projection from a single venue understates every level
+    /// by whatever share the others hold.
+    #[inline]
+    pub fn liq_projection_aggregate(&self, bid: mlc_core::ids::BubbleId) -> bool {
+        self.core.indicators().instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::LIQ_PROJECTION_TYPE_ID)
+            .and_then(|inst| inst.params.get("aggregate").and_then(|v| v.as_bool()))
+            .unwrap_or(true)
+    }
+
     /// Whether the liquidation overlay on `bid` folds every venue the
     /// workspace streams for this symbol, or only its own — same contract as
     /// [`Self::dom_heatmap_aggregate`], and the same reason: aggregation is a
@@ -2616,6 +2637,7 @@ impl ChartApp {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
+            oi_hist_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3027,6 +3049,7 @@ impl ChartApp {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
+            oi_hist_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3597,6 +3620,7 @@ impl ChartApp {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
+            oi_hist_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),

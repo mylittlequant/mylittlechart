@@ -53,7 +53,7 @@ pub mod zip_coverage;
 pub use bridge::{
     DataBridge, LiveUpdate, OrderbookSource, account_type_from_short_label,
     SharedTradeSeries, SharedOrderBookTracker, SharedLiquidationSeries,
-    HistoryDepthWire, RawTradeWire,
+    HistoryDepthWire, RawTradeWire, oi_history_period,
 };
 pub use backfill_engine::{BackfillEngine, BackfillKey, LayerId, RampState, TradeDemand, TradeLadderStage};
 pub use kline_agg::{
