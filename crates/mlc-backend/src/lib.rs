@@ -2778,6 +2778,18 @@ impl BackendCore {
         (self.lag_events.load(Relaxed), self.lag_dropped.load(Relaxed))
     }
 
+    /// Every armed liquidation subscription for `symbol` — see
+    /// [`DataBridge::liq_subscribed_for_symbol`].
+    pub fn liq_subscribed_for_symbol(&self, symbol: &str) -> Vec<(ExchangeId, AccountType)> {
+        self.bridge.liq_subscribed_for_symbol(symbol)
+    }
+
+    /// Per-key liquidation ring lookup diagnostic — see
+    /// [`DataBridge::liq_ring_probe`].
+    pub fn liq_ring_probe(&self, symbol: &str) -> Vec<String> {
+        self.bridge.liq_ring_probe(symbol)
+    }
+
     /// Every live liquidation ring for `symbol` — see
     /// [`DataBridge::liq_series_for_symbol`].
     pub fn liq_series_for_symbol(

@@ -800,13 +800,52 @@ fn run_render_loop(
                 // workspace holds for this symbol. A silent overlay is either
                 // a sparse feed or an empty enumeration, and only this
                 // separates them.
-                let liq_rings = active_cid
+                let liq_ring_keys = active_cid
                     .and_then(|cid| {
                         let sym = st.chart.symbol_for_chart(cid)?;
-                        Some(st.chart.core.liq_series_for_symbol(&sym).len())
+                        Some(
+                            st.chart
+                                .core
+                                .liq_series_for_symbol(&sym)
+                                .into_iter()
+                                .map(|(ex, at, _)| format!("{}:{:?}", ex.as_str(), at))
+                                .collect::<Vec<_>>(),
+                        )
                     })
-                    .unwrap_or(0);
-                let _ = js_sys::Reflect::set(&dbg, &"liq_rings".into(), &(liq_rings as f64).into());
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"liq_rings".into(), &(liq_ring_keys.len() as f64).into());
+                // WHICH venues, not just how many: a roster that arms six and
+                // resolves four is a different defect from one that arms four,
+                // and the count alone cannot tell them apart.
+                let _ = js_sys::Reflect::set(
+                    &dbg,
+                    &"liq_ring_keys".into(),
+                    &liq_ring_keys.join(",").into(),
+                );
+                // What was ARMED, before the series lookup — the gate set.
+                // `liq_armed` minus `liq_ring_keys` is exactly the set of
+                // venues we subscribed and cannot read back.
+                let liq_armed = active_cid
+                    .and_then(|cid| {
+                        let sym = st.chart.symbol_for_chart(cid)?;
+                        Some(
+                            st.chart
+                                .core
+                                .liq_subscribed_for_symbol(&sym)
+                                .into_iter()
+                                .map(|(ex, at)| format!("{}:{:?}", ex.as_str(), at))
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"liq_armed".into(), &liq_armed.join(",").into());
+                let liq_probe = active_cid
+                    .and_then(|cid| {
+                        let sym = st.chart.symbol_for_chart(cid)?;
+                        Some(st.chart.core.liq_ring_probe(&sym))
+                    })
+                    .unwrap_or_default();
+                let _ = js_sys::Reflect::set(&dbg, &"liq_ring_probe".into(), &liq_probe.join(" | ").into());
                 let (lag_events, lag_dropped) = st.chart.core.lag_stats();
                 let _ = js_sys::Reflect::set(&dbg, &"lag_events".into(), &(lag_events as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"lag_dropped".into(), &(lag_dropped as f64).into());

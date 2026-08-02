@@ -3538,6 +3538,68 @@ impl DataBridge {
         self.ob_trackers.get(&key).map(|r| r.clone())
     }
 
+    /// Every (venue, market) whose liquidation forwarder is ARMED for
+    /// `symbol` — the gate set itself, before the station-series lookup.
+    ///
+    /// [`Self::liq_series_for_symbol`] answers a strictly narrower question:
+    /// it drops any key whose `Series` handle does not resolve. Comparing the
+    /// two separates "the subscription was never made" from "the subscription
+    /// was made and the station keyed the ring under a symbol form we do not
+    /// reproduce" — two defects that look identical from a count of rings.
+    pub fn liq_subscribed_for_symbol(&self, symbol: &str) -> Vec<(ExchangeId, AccountType)> {
+        let subs = self
+            .station_liquidation_subscribed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        subs.iter()
+            .filter(|(_, _, s)| s == symbol)
+            .map(|(ex, at, _)| (*ex, *at))
+            .collect()
+    }
+
+    /// Per armed key: the station-series symbol we look the ring up under,
+    /// and whether that lookup hits. `venue:market:keysym:hit|miss`.
+    ///
+    /// Exists because "armed but no ring" has two very different causes —
+    /// the station never created the series (subscribe died after the gate
+    /// was set), or it created it under a symbol form this side does not
+    /// reproduce — and neither a count nor a key list can tell them apart.
+    pub fn liq_ring_probe(&self, symbol: &str) -> Vec<String> {
+        self.liq_subscribed_for_symbol(symbol)
+            .into_iter()
+            .map(|(ex, at)| {
+                let key_symbol = Self::station_series_symbol(ex, at, symbol);
+                let probe_one = |s: &str| {
+                    let key = StationSeriesKey::new(
+                        ex,
+                        at,
+                        s.to_string(),
+                        StationKind::Liquidation,
+                    );
+                    self.station.series::<LiquidationPoint>(&key).is_some()
+                };
+                if probe_one(&key_symbol) {
+                    return format!("{}:{:?}:{}:hit", ex.as_str(), at, key_symbol);
+                }
+                // On a miss, say whether ANY plausible symbol form holds the
+                // ring. A hit on an alternate is a key-grammar bug on this
+                // side; a miss on every form means the station holds no
+                // series at all and the subscription died after the gate was
+                // set — two different repairs.
+                let alts = [
+                    symbol.to_string(),
+                    symbol.replace("USDT", "-USDT"),
+                    format!("{}-SWAP", symbol.replace("USDT", "-USDT")),
+                ];
+                let alt_hit = alts.iter().find(|s| probe_one(s));
+                match alt_hit {
+                    Some(s) => format!("{}:{:?}:{}:miss(alt={})", ex.as_str(), at, key_symbol, s),
+                    None => format!("{}:{:?}:{}:absent", ex.as_str(), at, key_symbol),
+                }
+            })
+            .collect()
+    }
+
     /// Every live liquidation ring for `symbol`, whatever venue and market
     /// type opened it — the same rings the LIQ tape panel reads.
     ///
