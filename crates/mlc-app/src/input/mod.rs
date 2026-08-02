@@ -8167,6 +8167,8 @@ impl ChartApp {
                                 multi_depth: state.multi.config.depth_per_side,
                                 multi_show_imbalance: state.multi.config.show_imbalance,
                                 multi_per_column_norm: state.multi.config.per_column_norm,
+                                multi_show_depth_bounds: state.multi.config.show_depth_bounds,
+                                multi_depth_bounds_pct: state.multi.config.depth_bounds_pct,
                                 dom_depth_wave: state.show_depth_wave,
                                 dom_big_markers: state.show_big_markers,
                             }

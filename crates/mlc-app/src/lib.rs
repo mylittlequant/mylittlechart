@@ -1745,6 +1745,7 @@ impl ChartApp {
             wall_x: f("wall_x", d.wall_x),
             show_values: inst.params.get("show_values").and_then(|v| v.as_bool()).unwrap_or(d.show_values),
             value_size: f("value_size", d.value_size),
+            value_aspect: f("value_aspect", d.value_aspect),
         }
     }
 

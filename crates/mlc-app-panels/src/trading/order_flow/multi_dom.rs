@@ -40,6 +40,10 @@ pub const GRID_PRESETS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0];
 /// Depth (rows per side) presets, cycled by click.
 pub const DEPTH_PRESETS: &[usize] = &[10, 25, 50, 100];
 
+/// Depth-bounds band-width presets (percent of mid), cycled by click.
+/// 0.3% matches the TapeSurf reference reading (ref 11/12).
+pub const DEPTH_BOUNDS_PCT_PRESETS: &[f64] = &[0.1, 0.3, 0.5, 1.0, 2.0, 5.0];
+
 /// Exchange identifier — opaque label so the panel doesn't pull a hard
 /// dep on the `digdigdig3` crate. Wire up to `digdigdig3::ExchangeId`
 /// at the app layer with `format!("{:?}", ex)`.
@@ -58,6 +62,11 @@ pub struct MultiDomConfig {
     /// (TapeSurf Heatmap Mode `Individual` — a weak venue stays readable),
     /// `false` = shared cross-exchange max (`Cross Exchange`, historical).
     pub per_column_norm: bool,
+    /// Depth-bounds readout toggle (TapeSurf ref 11/12): the total resting
+    /// size within `± depth_bounds_pct %` of mid, one figure per side.
+    pub show_depth_bounds: bool,
+    /// Band half-width, in percent of mid, for the depth-bounds readout.
+    pub depth_bounds_pct: f64,
 }
 
 impl Default for MultiDomConfig {
@@ -68,6 +77,8 @@ impl Default for MultiDomConfig {
             depth_per_side: 25,
             show_imbalance: true,
             per_column_norm: false,
+            show_depth_bounds: false,
+            depth_bounds_pct: 0.3,
         }
     }
 }
@@ -87,6 +98,9 @@ pub struct MultiDomState {
     pub books_by_exchange: Vec<(BTreeMap<i64, f64>, BTreeMap<i64, f64>)>,
     /// `(bid_share_2pct, bid_share_10pct)` per exchange — refreshed by tick.
     pub imbalance: Vec<(f64, f64)>,
+    /// `(bid_sum, ask_sum)` resting size within `± config.depth_bounds_pct %`
+    /// of mid, summed across ALL configured exchanges — refreshed by tick.
+    pub depth_bounds: (f64, f64),
     pub mid_price: f64,
     /// Largest single bucketed level across all exchanges (bar scaling).
     pub max_level_qty: f64,
@@ -172,6 +186,7 @@ impl MultiDomState {
             handles: (0..n).map(|_| None).collect(),
             books_by_exchange: (0..n).map(|_| (BTreeMap::new(), BTreeMap::new())).collect(),
             imbalance: vec![(0.5, 0.5); n],
+            depth_bounds: (0.0, 0.0),
             mid_price: 0.0,
             max_level_qty: 0.0,
             min_level_qty: 0.0,
@@ -243,6 +258,22 @@ impl MultiDomState {
             .copied()
             .unwrap_or(DEPTH_PRESETS[0]);
         self.set_depth_per_side(next);
+    }
+
+    /// Change the depth-bounds band width (percent of mid).
+    pub fn set_depth_bounds_pct(&mut self, v: f64) {
+        if v <= 0.0 { return; }
+        self.config.depth_bounds_pct = v;
+    }
+
+    /// Cycle the depth-bounds band width to the next preset value.
+    pub fn cycle_depth_bounds_pct(&mut self) {
+        let current = self.config.depth_bounds_pct;
+        let next = DEPTH_BOUNDS_PCT_PRESETS.iter()
+            .find(|&&p| p > current + f64::EPSILON)
+            .copied()
+            .unwrap_or(DEPTH_BOUNDS_PCT_PRESETS[0]);
+        self.set_depth_bounds_pct(next);
     }
 
     /// Add the next unknown exchange from KNOWN_EXCHANGES (cycle-add).
@@ -330,6 +361,13 @@ impl MultiDomState {
         }
 
         // Pass 2: bucket onto the grid + imbalance windows + bar-scale max.
+        // Depth-bounds band (owner spec, TapeSurf ref 11/12): resting size
+        // within `± depth_bounds_pct %` of mid, summed across every
+        // configured exchange — one combined total per side, independent of
+        // grid bucketing so a changed band width takes effect next tick with
+        // no re-bucket.
+        let band = (self.config.depth_bounds_pct / 100.0).max(0.0);
+        let (mut bid_band, mut ask_band) = (0.0_f64, 0.0_f64);
         let mut max_q = 0.0_f64;
         for (i, (bids, asks)) in raw.iter().enumerate() {
             let (bmap, amap) = &mut self.books_by_exchange[i];
@@ -342,6 +380,7 @@ impl MultiDomState {
                 *bmap.entry(idx).or_insert(0.0) += q;
                 if p >= mid * 0.98 { b2 += q; }
                 if p >= mid * 0.90 { b10 += q; }
+                if p >= mid * (1.0 - band) { bid_band += q; }
             }
             for &(p, q) in asks {
                 if q <= 0.0 || p <= 0.0 { continue; }
@@ -349,6 +388,7 @@ impl MultiDomState {
                 *amap.entry(idx).or_insert(0.0) += q;
                 if p <= mid * 1.02 { a2 += q; }
                 if p <= mid * 1.10 { a10 += q; }
+                if p <= mid * (1.0 + band) { ask_band += q; }
             }
             for q in bmap.values().chain(amap.values()) {
                 if *q > max_q { max_q = *q; }
@@ -357,6 +397,7 @@ impl MultiDomState {
             self.imbalance[i] = (share(b2, a2), share(b10, a10));
         }
         self.max_level_qty = max_q;
+        self.depth_bounds = (bid_band, ask_band);
     }
 }
 
@@ -368,6 +409,7 @@ impl Clone for MultiDomState {
             handles: self.handles.clone(),
             books_by_exchange: self.books_by_exchange.clone(),
             imbalance: self.imbalance.clone(),
+            depth_bounds: self.depth_bounds,
             mid_price: self.mid_price,
             max_level_qty: self.max_level_qty,
             min_level_qty: self.min_level_qty,
@@ -418,6 +460,19 @@ fn fmt_qty(q: f64) -> String {
         format!("{:.0}", q)
     } else {
         format!("{:.2}", q)
+    }
+}
+
+/// Depth-bounds readout formatting (TapeSurf ref 11/12): unlike `fmt_qty`
+/// this keeps one decimal at every magnitude below 1K — the reference reads
+/// "412.7", not "413".
+fn fmt_depth_qty(q: f64) -> String {
+    if q >= 1_000_000.0 {
+        format!("{:.2}M", q / 1_000_000.0)
+    } else if q >= 1_000.0 {
+        format!("{:.1}K", q / 1_000.0)
+    } else {
+        format!("{:.1}", q)
     }
 }
 
@@ -956,6 +1011,18 @@ impl MultiDomState {
             }
         }
 
+        // ── Depth-bounds readout (TapeSurf ref 11/12): total resting size
+        // within the configured band, pinned at the ladder's right edge —
+        // ask figure at the top, bid figure at the bottom. Drawn before the
+        // early return below so it still renders with the imbalance strip
+        // switched off.
+        self.draw_depth_bounds_readout(
+            ctx, x, w,
+            (body_y + ROW_HEIGHT * 0.75) as f64,
+            (body_y + ladder_h - ROW_HEIGHT * 0.75) as f64,
+            theme,
+        );
+
         // ── Bottom strip: ±2% / ±10% bid-liquidity share per exchange ────
         if !self.config.show_imbalance {
             return;
@@ -1229,16 +1296,19 @@ impl MultiDomState {
                 }
             }
 
-            // Crossed row: the opposite side as a half-height band beneath
-            // the primary bar, in its own hue, no digits — the point is that
-            // the level is contested, not how much sits on each side.
+            // Crossed row: the opposite side NESTED inside the primary bar,
+            // not stacked under it. The reference draws one bar at the
+            // overlap with the other sitting within it — two separate bands
+            // read as two rows, the nesting reads as one contested level.
+            // No digits: the point is that the level is contested, not how
+            // much sits on each side.
             if let Some((other_total, other_parts)) = other {
                 if *other_total > 0.0 {
                     let other_ask = !is_ask;
                     let frac = (*other_total / max_level).powf(0.6).clamp(0.04, 1.0);
                     let bw = cell_w * frac;
-                    let by = row_y + ROW_HEIGHT as f64 * 0.55;
-                    let bh = ROW_HEIGHT as f64 * 0.40;
+                    let by = row_y + ROW_HEIGHT as f64 * 0.28;
+                    let bh = ROW_HEIGHT as f64 * 0.44;
                     let mut seg_x = cx + 2.0;
                     for &part in other_parts.iter() {
                         if part <= 0.0 { continue; }
@@ -1310,6 +1380,45 @@ impl MultiDomState {
                 }
             }
         }
+
+        // ── Depth-bounds readout (TapeSurf ref 11/12), same figures as
+        // `draw_book` over the combined book it already folds — no separate
+        // computation, `tick()` already sums across every venue.
+        self.draw_depth_bounds_readout(
+            ctx, x, w,
+            (body_y + ROW_HEIGHT * 0.75) as f64,
+            (body_y + body_h - ROW_HEIGHT * 0.75) as f64,
+            theme,
+        );
+    }
+
+    /// Depth-bounds figures (TapeSurf ref 11/12): total resting size within
+    /// `± config.depth_bounds_pct %` of mid, right-aligned at the ladder's
+    /// right edge — ask at `top_y`, bid at `bottom_y`. Shared by
+    /// [`Self::draw_book`] and [`Self::draw_combined_book`] since both read
+    /// the SAME combined `depth_bounds` total (per-side sum across every
+    /// configured exchange, refreshed once per tick).
+    fn draw_depth_bounds_readout(
+        &self,
+        ctx: &mut dyn RenderContext,
+        x: f32,
+        w: f32,
+        top_y: f64,
+        bottom_y: f64,
+        theme: &crate::panel_theme::PanelTheme,
+    ) {
+        if !self.config.show_depth_bounds {
+            return;
+        }
+        let (bid_sum, ask_sum) = self.depth_bounds;
+        let pct = self.config.depth_bounds_pct;
+        let right = (x + w - 4.0) as f64;
+        ctx.set_font("10px monospace");
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_fill_color(&theme.text_muted);
+        ctx.fill_text(&format!("{} {:.1}%", fmt_depth_qty(ask_sum), pct), right, top_y);
+        ctx.fill_text(&format!("{} {:.1}%", fmt_depth_qty(bid_sum), pct), right, bottom_y);
     }
 
     /// Header when no exchanges are configured yet.

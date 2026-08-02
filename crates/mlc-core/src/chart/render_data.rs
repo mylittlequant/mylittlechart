@@ -692,6 +692,10 @@ pub struct DomHeatmapInk {
     pub show_values: bool,
     /// Scale on the auto-fitted digit size.
     pub value_size: f64,
+    /// Aspect ratio (height ÷ width) past which a cell stops printing its
+    /// number. A square or landscape cell carries digits fine; a portrait
+    /// one crowds them between its own edges. Default 70/30.
+    pub value_aspect: f64,
 }
 
 impl Default for DomHeatmapInk {
@@ -704,6 +708,7 @@ impl Default for DomHeatmapInk {
             wall_x: 5.0,
             show_values: true,
             value_size: 1.0,
+            value_aspect: 70.0 / 30.0,
         }
     }
 }

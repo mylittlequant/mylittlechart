@@ -4342,6 +4342,20 @@ impl ChartApp {
                     }
                     self.autosave_snapshot();
                 }
+                // Depth-bounds readout (TapeSurf ref 11/12): on/off + click-
+                // cycled band width, shared by Multi-DOM and Aggregated.
+                "depth_bounds" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.config.show_depth_bounds = !state.multi.config.show_depth_bounds;
+                    }
+                    self.autosave_snapshot();
+                }
+                "depth_pct" => {
+                    if let Some(state) = self.panels_store.dom.get_mut(&pid) {
+                        state.multi.cycle_depth_bounds_pct();
+                    }
+                    self.autosave_snapshot();
+                }
                 // Solo-ladder depth-wave / big-marker toggles (Multi-DOM
                 // parity), persisted.
                 "wave" => {

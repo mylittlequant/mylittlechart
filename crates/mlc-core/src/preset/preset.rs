@@ -169,6 +169,12 @@ pub enum PersistedFreeItemKind {
         /// (TapeSurf Individual vs Cross Exchange, 2026-07-31).
         #[serde(default)]
         multi_per_column_norm: bool,
+        /// Depth-bounds readout toggle (TapeSurf ref 11/12, 2026-08-02).
+        #[serde(default)]
+        multi_show_depth_bounds: bool,
+        /// Depth-bounds band half-width, percent of mid.
+        #[serde(default = "default_depth_bounds_pct")]
+        multi_depth_bounds_pct: f64,
         /// Solo-ladder depth wave + stepped outline toggle (Multi-DOM
         /// parity, 2026-07-31).
         #[serde(default = "default_true")]
@@ -378,6 +384,7 @@ fn default_bar_spacing() -> f64 { 8.0 }
 fn default_height_ratio() -> f32 { 1.0 }
 fn default_multi_dom_grid_size() -> f64 { 0.5 }
 fn default_multi_dom_depth() -> usize { 25 }
+fn default_depth_bounds_pct() -> f64 { 0.3 }
 // TradingContainer v1 region-ratio defaults — mirror
 // `TradingContainerState::new()` / its `TC_*_DEFAULT` constants so a preset
 // missing these fields (saved before W1) restores identically to a

@@ -1029,7 +1029,7 @@ impl ChartApp {
                             let pid = mlc_core::state::PanelId(pl.panel_id);
                             use mlc_core::preset::preset::PersistedFreeItemKind;
                             match &pl.kind {
-                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, agg_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm, dom_depth_wave, dom_big_markers } => {
+                                PersistedFreeItemKind::Dom { source, tick_size, levels_displayed, center_price, multi_mode, agg_mode, multi_exchanges, multi_grid_size, multi_depth, multi_show_imbalance, multi_per_column_norm, multi_show_depth_bounds, multi_depth_bounds_pct, dom_depth_wave, dom_big_markers } => {
                                     if !self.panels_store.dom.contains_key(&pid) {
                                         let symbol = match source {
                                             mlc_core::preset::preset::PersistedSymbolSource::Fixed { symbol, .. } => symbol.clone(),
@@ -1055,6 +1055,8 @@ impl ChartApp {
                                                     depth_per_side: *multi_depth,
                                                     show_imbalance: *multi_show_imbalance,
                                                     per_column_norm: *multi_per_column_norm,
+                                                    show_depth_bounds: *multi_show_depth_bounds,
+                                                    depth_bounds_pct: *multi_depth_bounds_pct,
                                                 },
                                             );
                                         }
@@ -1459,6 +1461,7 @@ impl ChartApp {
                                                 depth_per_side: *depth_per_side,
                                                 show_imbalance: true,
                                                 per_column_norm: false,
+                                                ..Default::default()
                                             },
                                         );
                                         s.multi_mode = true;

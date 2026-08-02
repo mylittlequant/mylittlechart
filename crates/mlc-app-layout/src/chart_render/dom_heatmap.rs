@@ -39,12 +39,8 @@ const MIN_ROW_PX: f64 = 2.0;
 /// dropped, leaving the texture — the reference behaves the same way.
 const MIN_TEXT_ROW_PX: f64 = 7.0;
 const MIN_TEXT_COL_PX: f64 = 16.0;
-/// Aspect ratio (height ÷ width) past which a cell is too narrow for its
-/// height to carry digits comfortably: a square or a landscape cell reads
-/// fine, a portrait one crowds the number between its own edges. The golden
-/// ratio is the cut — it is where the eye stops calling a rectangle
-/// "roughly square".
-const MAX_TEXT_ASPECT: f64 = 1.618_033_988_749_9;
+// The aspect past which a cell stops printing its number is a parameter,
+// not a constant — see `DomHeatmapInk::value_aspect`.
 
 /// Compact book size, matching the reference's ladder grammar: whole units
 /// once past a hundred, one decimal in the teens, two below that.
@@ -200,7 +196,7 @@ pub fn draw_dom_heatmap(
     let show_text = ink.show_values
         && row_px >= MIN_TEXT_ROW_PX
         && col_w >= MIN_TEXT_COL_PX
-        && row_px / col_w <= MAX_TEXT_ASPECT;
+        && row_px / col_w <= ink.value_aspect.max(0.2);
     // Bounded by BOTH cell dimensions: a wide short cell and a tall narrow
     // one both have to hold four monospace characters.
     let font_px = ((row_px * 0.46).min(col_w * 0.22) * ink.value_size.clamp(0.3, 3.0)).clamp(6.0, 14.0);

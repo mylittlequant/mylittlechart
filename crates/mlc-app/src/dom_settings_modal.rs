@@ -95,7 +95,8 @@ pub fn render_dom_settings_modal(
     let modal_h = if multi {
         HEADER_H + PAD
             + (CAPTION_H + BTN_H + ROW_GAP) * 2.0        // mode / texture
-            + CAPTION_H + BTN_H                          // book (no trailing gap)
+            + CAPTION_H + BTN_H + ROW_GAP                // book
+            + CAPTION_H + BTN_H                          // depth bounds (no trailing gap)
             + PAD
     } else {
         HEADER_H + PAD
@@ -205,6 +206,20 @@ pub fn render_dom_settings_modal(
             bx += 70.0 + 6.0;
         }
         modal_btn(ctx, coord, &layer_id, tt, "zebra", bx, row_y, 70.0, "Zebra", style.row_zebra);
+    }
+
+    // Depth-bounds readout (multi only — Multi-DOM + Aggregated share this
+    // `dom.multi` config): total resting size within a configurable band
+    // around mid, TapeSurf ref 11/12 parity.
+    if multi {
+        row_y += BTN_H + ROW_GAP;
+        caption(ctx, tt, left, row_y, "Depth bounds");
+        row_y += CAPTION_H;
+        let db_on = dom.multi.config.show_depth_bounds;
+        modal_btn(ctx, coord, &layer_id, tt, "depth_bounds", left, row_y, 110.0,
+            if db_on { "Depth: on" } else { "Depth: off" }, db_on);
+        modal_btn(ctx, coord, &layer_id, tt, "depth_pct", left + 118.0, row_y, 90.0,
+            &format!("\u{b1}{:.1}%", dom.multi.config.depth_bounds_pct), false);
     }
 
     if !multi {
