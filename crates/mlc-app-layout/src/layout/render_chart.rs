@@ -3406,6 +3406,16 @@ pub fn render_full_chart_panel(
             draw_volume_profile_overlay(ctx, &corrected_state, vp);
         }
 
+        // 3c. TPO Profile overlay. It was drawn ONLY from `render_chart`
+        // while Volume Profile was drawn from both there and here — and
+        // THIS is the path the app actually renders through, so TPO never
+        // appeared no matter how much data it had (measured 2026-08-03:
+        // `tpo_rows: 53`, instance visible, nothing on screen). Same
+        // right-edge strip as VP; enabling both layers them.
+        if let Some(tpo_profile) = corrected_state.tpo_profile_overlay {
+            draw_tpo_profile_overlay(ctx, &corrected_state, tpo_profile);
+        }
+
         // OI Delta and the Funding Rate strip used to be drawn here, inside
         // the price plot. They are sub-pane INDICATORS and now render from
         // `render_sub_pane` into the pane the layout gives them.

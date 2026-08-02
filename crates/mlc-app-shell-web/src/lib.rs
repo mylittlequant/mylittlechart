@@ -930,6 +930,21 @@ fn run_render_loop(
                     })
                     .unwrap_or((0, 0.0, 0.0, 0, 0));
                 let _ = js_sys::Reflect::set(&dbg, &"oi_points".into(), &(oi_points as f64).into());
+                // The two bar-window profiles: `rows` is what the prepass
+                // produced, so an empty one means the compute never ran while
+                // a full one with nothing on screen means the draw is at
+                // fault. Different repairs, same symptom.
+                let (vp_rows, tpo_rows) = active_cid
+                    .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                    .map(|w| {
+                        (
+                            w.vp_overlay.as_ref().map(|v| v.rows.len()).unwrap_or(0),
+                            w.tpo_profile_overlay.as_ref().map(|v| v.rows.len()).unwrap_or(0),
+                        )
+                    })
+                    .unwrap_or((0, 0));
+                let _ = js_sys::Reflect::set(&dbg, &"vp_rows".into(), &(vp_rows as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"tpo_rows".into(), &(tpo_rows as f64).into());
                 let oi_hist = active_cid
                     .and_then(|cid| st.chart.bubble_for_chart(cid))
                     .map(|bid| {
