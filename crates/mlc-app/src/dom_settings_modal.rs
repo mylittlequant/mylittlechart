@@ -219,7 +219,13 @@ pub fn render_dom_settings_modal(
         modal_btn(ctx, coord, &layer_id, tt, "depth_bounds", left, row_y, 110.0,
             if db_on { "Depth: on" } else { "Depth: off" }, db_on);
         modal_btn(ctx, coord, &layer_id, tt, "depth_pct", left + 118.0, row_y, 90.0,
-            &format!("\u{b1}{:.1}%", dom.multi.config.depth_bounds_pct), false);
+            &if dom.multi.config.depth_bounds_pct > 0.0 {
+                format!("\u{b1}{:.1}%", dom.multi.config.depth_bounds_pct)
+            } else {
+                // AUTO tracks the ladder; show what it resolved to so the
+                // button still names a number.
+                format!("Auto \u{b1}{:.2}%", dom.multi.depth_bounds_effective_pct)
+            }, false);
     }
 
     if !multi {

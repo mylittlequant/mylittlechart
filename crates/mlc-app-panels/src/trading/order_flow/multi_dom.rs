@@ -42,7 +42,11 @@ pub const DEPTH_PRESETS: &[usize] = &[10, 25, 50, 100];
 
 /// Depth-bounds band-width presets (percent of mid), cycled by click.
 /// 0.3% matches the TapeSurf reference reading (ref 11/12).
-pub const DEPTH_BOUNDS_PCT_PRESETS: &[f64] = &[0.1, 0.3, 0.5, 1.0, 2.0, 5.0];
+/// Band widths the readout cycles through. `0.0` is AUTO: the band then
+/// matches what the ladder is actually showing, so the figure answers "how
+/// much is resting in view" without the user having to keep a percentage in
+/// step with the grid and the panel's height.
+pub const DEPTH_BOUNDS_PCT_PRESETS: &[f64] = &[0.0, 0.1, 0.3, 0.5, 1.0, 2.0, 5.0];
 
 /// Exchange identifier — opaque label so the panel doesn't pull a hard
 /// dep on the `digdigdig3` crate. Wire up to `digdigdig3::ExchangeId`
@@ -98,6 +102,13 @@ pub struct MultiDomState {
     pub books_by_exchange: Vec<(BTreeMap<i64, f64>, BTreeMap<i64, f64>)>,
     /// `(bid_share_2pct, bid_share_10pct)` per exchange — refreshed by tick.
     pub imbalance: Vec<(f64, f64)>,
+    /// Rows the ladder last drew — a render-time observation the AUTO band
+    /// reads, since only the render pass knows how tall the panel is.
+    pub last_rows: std::cell::Cell<i64>,
+    /// The band actually used on the last tick, in percent. Equals
+    /// `config.depth_bounds_pct` unless that is AUTO, in which case it is
+    /// what the ladder covers. The readout prints THIS, never the sentinel.
+    pub depth_bounds_effective_pct: f64,
     /// `(bid_sum, ask_sum)` resting size within `± config.depth_bounds_pct %`
     /// of mid, summed across ALL configured exchanges — refreshed by tick.
     pub depth_bounds: (f64, f64),
@@ -187,6 +198,8 @@ impl MultiDomState {
             books_by_exchange: (0..n).map(|_| (BTreeMap::new(), BTreeMap::new())).collect(),
             imbalance: vec![(0.5, 0.5); n],
             depth_bounds: (0.0, 0.0),
+            last_rows: std::cell::Cell::new(0),
+            depth_bounds_effective_pct: 0.3,
             mid_price: 0.0,
             max_level_qty: 0.0,
             min_level_qty: 0.0,
@@ -366,7 +379,21 @@ impl MultiDomState {
         // configured exchange — one combined total per side, independent of
         // grid bucketing so a changed band width takes effect next tick with
         // no re-bucket.
-        let band = (self.config.depth_bounds_pct / 100.0).max(0.0);
+        // AUTO band: half of what the ladder shows, i.e. `rows/2` grid steps
+        // measured against mid. Falls back to the middle preset before the
+        // first render has reported a row count.
+        let pct = if self.config.depth_bounds_pct > 0.0 {
+            self.config.depth_bounds_pct
+        } else {
+            let rows = self.last_rows.get();
+            if rows > 1 && mid > 0.0 {
+                ((rows as f64 * 0.5 * grid) / mid * 100.0).clamp(0.02, 10.0)
+            } else {
+                0.3
+            }
+        };
+        self.depth_bounds_effective_pct = pct;
+        let band = (pct / 100.0).max(0.0);
         let (mut bid_band, mut ask_band) = (0.0_f64, 0.0_f64);
         let mut max_q = 0.0_f64;
         for (i, (bids, asks)) in raw.iter().enumerate() {
@@ -410,6 +437,8 @@ impl Clone for MultiDomState {
             books_by_exchange: self.books_by_exchange.clone(),
             imbalance: self.imbalance.clone(),
             depth_bounds: self.depth_bounds,
+            last_rows: self.last_rows.clone(),
+            depth_bounds_effective_pct: self.depth_bounds_effective_pct,
             mid_price: self.mid_price,
             max_level_qty: self.max_level_qty,
             min_level_qty: self.min_level_qty,
@@ -1081,6 +1110,9 @@ impl MultiDomState {
     ) {
         let grid = self.config.grid_size.max(1e-9);
         let rows = (body_h / ROW_HEIGHT).floor() as i64;
+        // Report the row count so the AUTO depth band can match what is
+        // actually on screen; only the render pass knows the panel height.
+        self.last_rows.set(rows);
         if rows < 3 { return; }
         let half = rows / 2;
         let mid_idx = (self.mid_price / grid).floor() as i64;
@@ -1412,14 +1444,17 @@ impl MultiDomState {
             return;
         }
         let (bid_sum, ask_sum) = self.depth_bounds;
-        let pct = self.config.depth_bounds_pct;
+        let pct = self.depth_bounds_effective_pct;
         let right = (x + w - 4.0) as f64;
         ctx.set_font("10px monospace");
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.set_fill_color(&theme.text_muted);
-        ctx.fill_text(&format!("{} {:.1}%", fmt_depth_qty(ask_sum), pct), right, top_y);
-        ctx.fill_text(&format!("{} {:.1}%", fmt_depth_qty(bid_sum), pct), right, bottom_y);
+        // Two decimals under a tenth of a percent — an AUTO band on a fine
+        // grid lands there and "0.0%" would say nothing.
+        let pct_txt = if pct < 0.1 { format!("{pct:.2}%") } else { format!("{pct:.1}%") };
+        ctx.fill_text(&format!("{} {}", fmt_depth_qty(ask_sum), pct_txt), right, top_y);
+        ctx.fill_text(&format!("{} {}", fmt_depth_qty(bid_sum), pct_txt), right, bottom_y);
     }
 
     /// Header when no exchanges are configured yet.
