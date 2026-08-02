@@ -30,7 +30,8 @@ use crate::chart_render::{
     draw_grid, draw_grid_extended, draw_data_gaps, draw_candles, draw_volume_profile_overlay,
     draw_tpo_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
-    draw_dom_heatmap_conditional, draw_liquidations_conditional,
+    draw_dom_heatmap_conditional, draw_liquidation_levels_conditional,
+    draw_liquidation_prints_conditional,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
     draw_crosshair, draw_pane_crosshair,
@@ -2611,10 +2612,14 @@ pub fn render_chart(
     // `build_chart_render_state` already gates on the window's
     // `dom_heatmap_show`/`liq_heatmap_show` flags.
     draw_dom_heatmap_conditional(ctx, state);
-    draw_liquidations_conditional(ctx, state);
+    draw_liquidation_levels_conditional(ctx, state);
 
     // 4. Series (candles, bars, line, area, etc.)
     draw_series(ctx, state, config.chart_type);
+
+    // 4a. Realized-liquidation prints — over the series (see the twin in
+    // `render_full_chart_panel`, which is the pipeline with callers).
+    draw_liquidation_prints_conditional(ctx, state);
 
     // 5. Volume Profile overlay (when enabled).
     if let Some(vp) = state.vp_overlay {
@@ -3313,10 +3318,15 @@ pub fn render_full_chart_panel(
         // filling, and the chart still showed nothing. Exactly the defect the
         // DOM heat had before 2026-08-02 — when a layer is silent, check that
         // the LIVE pipeline draws it before touching anything else.
-        draw_liquidations_conditional(ctx, &corrected_state);
+        draw_liquidation_levels_conditional(ctx, &corrected_state);
 
         // 3. Series (candles, bars, line, etc.)
         draw_series(ctx, &corrected_state, data.config.chart_type);
+
+        // 3a. Realized-liquidation PRINTS — over the series. A forced close
+        // is an event at a price, and the one that matters most sits at the
+        // current price, where its own candle would cover it.
+        draw_liquidation_prints_conditional(ctx, &corrected_state);
 
         // 3b. Volume Profile overlay (when enabled).
         if let Some(vp) = corrected_state.vp_overlay {
