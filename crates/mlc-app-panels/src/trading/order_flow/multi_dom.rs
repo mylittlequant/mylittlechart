@@ -1215,20 +1215,23 @@ impl MultiDomState {
             // would hide the one fact only an aggregated ladder can show.
             let ask_here = ask_combined.get(&idx);
             let bid_here = bid_combined.get(&idx);
-            let crossed = ask_here.is_some() && bid_here.is_some();
-            let (combined, cum) = if is_ask {
-                let k = (idx - mid_idx) as usize;
-                (ask_here, ask_cum.get(k).copied().unwrap_or(0.0))
+            let cum = if is_ask {
+                ask_cum.get((idx - mid_idx) as usize).copied().unwrap_or(0.0)
             } else {
-                let k = (mid_idx - idx) as usize;
-                (bid_here, bid_cum.get(k).copied().unwrap_or(0.0))
+                bid_cum.get((mid_idx - idx) as usize).copied().unwrap_or(0.0)
             };
-            // The opposite side of a crossed row, drawn as a half-height
-            // band under the primary one.
-            let other = if crossed {
-                if is_ask { bid_here } else { ask_here }
-            } else {
-                None
+            // On a crossed row the LONGER bar is drawn first and the shorter
+            // one over it, both full height from the same left edge — the
+            // reference nests them lengthwise, so the row reads as one bar
+            // whose first stretch belongs to the smaller side. Ordering by
+            // size is what makes the nesting work; ordering by mid would let
+            // the longer bar bury the shorter one.
+            let (combined, primary_ask, other, other_ask) = match (ask_here, bid_here) {
+                (Some(a), Some(b)) if a.0 >= b.0 => (Some(a), true, Some(b), false),
+                (Some(a), Some(b)) => (Some(b), false, Some(a), true),
+                (Some(a), None) => (Some(a), true, None, false),
+                (None, Some(b)) => (Some(b), false, None, true),
+                (None, None) => (None, is_ask, None, false),
             };
 
             if cum > 0.0 {
@@ -1257,7 +1260,7 @@ impl MultiDomState {
                         let seg_w = bw * (part / *total);
                         let seg_frac = (part / max_level).powf(0.6).clamp(0.04, 1.0);
                         let g = (seg_frac * (GRAD_STEPS - 1) as f64).round() as usize;
-                        ctx.set_fill_color(if is_ask { &ask_grad[g] } else { &bid_grad[g] });
+                        ctx.set_fill_color(if primary_ask { &ask_grad[g] } else { &bid_grad[g] });
                         ctx.fill_rect(seg_x, row_y + 1.0, seg_w, (ROW_HEIGHT - 2.0) as f64);
                         seg_x += seg_w;
                         if seen < nonzero {
@@ -1272,7 +1275,7 @@ impl MultiDomState {
 
                     if big {
                         // Bright edge marker at the bar tip (Multi-DOM parity).
-                        ctx.set_fill_color(if is_ask { &theme.sell_bright } else { &theme.buy_bright });
+                        ctx.set_fill_color(if primary_ask { &theme.sell_bright } else { &theme.buy_bright });
                         ctx.fill_rect(cx + 2.0 + bw - 2.0, row_y + 1.0, 2.0, (ROW_HEIGHT - 2.0) as f64);
                     }
 
@@ -1296,19 +1299,17 @@ impl MultiDomState {
                 }
             }
 
-            // Crossed row: the opposite side NESTED inside the primary bar,
-            // not stacked under it. The reference draws one bar at the
-            // overlap with the other sitting within it — two separate bands
-            // read as two rows, the nesting reads as one contested level.
-            // No digits: the point is that the level is contested, not how
-            // much sits on each side.
+            // The shorter side of a crossed row, painted OVER the longer one
+            // at full height from the same left edge: the row then reads as a
+            // single bar whose opening stretch is the contested side and
+            // whose tail is what is left of the other. No digits — the point
+            // is that the level is contested, not how much sits on each side.
             if let Some((other_total, other_parts)) = other {
                 if *other_total > 0.0 {
-                    let other_ask = !is_ask;
                     let frac = (*other_total / max_level).powf(0.6).clamp(0.04, 1.0);
                     let bw = cell_w * frac;
-                    let by = row_y + ROW_HEIGHT as f64 * 0.28;
-                    let bh = ROW_HEIGHT as f64 * 0.44;
+                    let by = row_y + 1.0;
+                    let bh = (ROW_HEIGHT - 2.0) as f64;
                     let mut seg_x = cx + 2.0;
                     for &part in other_parts.iter() {
                         if part <= 0.0 { continue; }
