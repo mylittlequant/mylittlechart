@@ -309,7 +309,7 @@ pub enum BubbleEvent {
         account_type: String,
         symbol: String,
         dot: mlc_core::chart::dom_heatmap::DomTradeDot,
-    },
+    },
     /// History depth report landed for `bid`'s currently-active chart_type
     /// (hybrid-data-modes-plan-2026-07-08, Step 1). The bubble write
     /// (`DataBubble::set_history_depth`) already happened in `tick_writers`
@@ -560,7 +560,7 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("quantity", &dot.quantity)?;
                 m.serialize_entry("side", &dot.side)?;
                 m.end()
-            }
+            }
             Self::HistoryDepthReported { bid, exchange_id, symbol, account_type, chart_type, depth } => {
                 let mut m = s.serialize_map(Some(6))?;
                 m.serialize_entry("type", "HistoryDepthReported")?;

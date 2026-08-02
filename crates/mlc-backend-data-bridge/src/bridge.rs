@@ -427,8 +427,8 @@ pub enum LiveUpdate {
         symbol: String,
         dot: mlc_core::chart::dom_heatmap::DomTradeDot,
     },
-
-
+
+
 
     /// Trade-history depth for a `DeepTrades` chart_type's active series,
     /// derived from a station seed/deepen outcome (dig3 0.3.27
