@@ -21,6 +21,9 @@ uuid = { version = "1", features = ["v4"] }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 digdigdig3 = "=0.3.31"
+# Book levels come off the shared station trackers as `Decimal` — the same
+# conversion the DOM panels do on their side of the handle.
+rust_decimal = "1"
 tokio = { version = "1", features = ["sync"] }
 dashmap = "6"
 serde = { version = "1", features = ["derive"] }

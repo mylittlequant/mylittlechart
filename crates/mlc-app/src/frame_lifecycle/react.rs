@@ -1458,7 +1458,7 @@ impl ChartApp {
                 // `row_ticks` param. Resolved before the write borrow — and a
                 // change in either invalidates the grid, so the buffer is
                 // rebuilt rather than fed cells of a second grain.
-                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64, f64)> = bubble_ids
+                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64, f64, bool)> = bubble_ids
                     .iter()
                     .map(|b| {
                         let (row_ticks, band) = self.dom_heatmap_grid(*b);
@@ -1469,19 +1469,55 @@ impl ChartApp {
                             .map(|tf| tf.interval_ms)
                             .filter(|ms| *ms > 0)
                             .unwrap_or(60_000);
-                        (*b, bar_ms, row_ticks, band)
+                        (*b, bar_ms, row_ticks, band, self.dom_heatmap_aggregate(*b))
                     })
                     .collect();
-                for (b, bar_ms, row_ticks, band) in dom_geometry {
+                // Aggregated source (owner 2026-08-02): fold in every OTHER
+                // venue whose book this workspace already streams — the same
+                // shared trackers the M/D and AD ladders read. This event is
+                // only the CLOCK; the overlay subscribes nothing for the sake
+                // of aggregation, so the toggle costs nothing and shows
+                // nothing extra until some panel opens those books. Folded
+                // once per event, not per bubble — every aggregating bubble
+                // on this instrument sees the same combined book.
+                let folded: Option<(Vec<(f64, f64)>, Vec<(f64, f64)>)> =
+                    if dom_geometry.iter().any(|(_, _, _, _, agg)| *agg) {
+                        use rust_decimal::prelude::ToPrimitive;
+                        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
+                        let mut sources = vec![(bids.clone(), asks.clone())];
+                        for (venue, tracker) in self.core.ob_trackers_for_symbol(symbol, at_dig3) {
+                            // The host venue is already in `sources` from the
+                            // event itself — folding its tracker too would
+                            // double every level it quotes.
+                            if venue == *exchange_id {
+                                continue;
+                            }
+                            let g = tracker.blocking_read();
+                            let side = |v: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)>| {
+                                v.into_iter()
+                                    .map(|(p, q)| (p.to_f64().unwrap_or(0.0), q.to_f64().unwrap_or(0.0)))
+                                    .collect::<Vec<_>>()
+                            };
+                            sources.push((side(g.top_bids(500)), side(g.top_asks(500))));
+                        }
+                        Some(mlc_core::chart::dom_heatmap::fold_books(&sources))
+                    } else {
+                        None
+                    };
+                for (b, bar_ms, row_ticks, band, aggregate) in dom_geometry {
+                    let (bids, asks): (&[(f64, f64)], &[(f64, f64)]) = match (aggregate, &folded) {
+                        (true, Some((fb, fa))) => (fb, fa),
+                        _ => (bids, asks),
+                    };
                     self.core.bubbles_mut().with_bubble_mut(b, |bubble| {
                         const DEFAULT_TICK: f64 = 0.5;
                         let slot = bubble.dom_heatmap_mut();
-                        let stale = slot
-                            .as_ref()
-                            .map_or(true, |buf| !buf.matches_geometry(bar_ms, row_ticks, band));
+                        let stale = slot.as_ref().map_or(true, |buf| {
+                            !buf.matches_geometry(bar_ms, row_ticks, band, aggregate)
+                        });
                         if stale {
                             *slot = Some(mlc_core::chart::dom_heatmap::DomHeatmapBuffer::new(
-                                DEFAULT_TICK, bar_ms, row_ticks, band,
+                                DEFAULT_TICK, bar_ms, row_ticks, band, aggregate,
                             ));
                         }
                         if let Some(buf) = slot.as_mut() {

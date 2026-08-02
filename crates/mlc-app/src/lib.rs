@@ -1770,6 +1770,25 @@ impl ChartApp {
         )
     }
 
+    /// Whether the DOM Heatmap on `bid`'s bubble folds every venue the
+    /// workspace already streams, or reads only the bubble's own.
+    ///
+    /// Aggregation is a READ of the shared book registry, never a
+    /// subscription: the venues it can see are exactly the ones some DOM
+    /// ladder opened. With no other panel open it sees one book and looks
+    /// identical to single-venue mode, which is the honest answer rather than
+    /// a promise of breadth the workspace is not paying for.
+    #[inline]
+    pub fn dom_heatmap_aggregate(&self, bid: mlc_core::ids::BubbleId) -> bool {
+        let indicators = self.core.indicators();
+        indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::DOM_HEATMAP_TYPE_ID)
+            .and_then(|inst| inst.params.get("aggregate").and_then(|v| v.as_bool()))
+            .unwrap_or(false)
+    }
+
     /// Resolve a "real" sync group for this chart — returns `Some(BubbleId)`
     /// only when the group has more than one member or was created explicitly
     /// (not via auto-mono).  Auto-mono groups exist for every freshly seeded

@@ -74,6 +74,13 @@ pub struct DomHeatmapBuffer {
     /// Half-width of the kept price band around the book's mid, as a
     /// fraction of price — see [`BAND_FRACTION`].
     pub band_fraction: f64,
+    /// Whether the cells were folded across venues or came from one book.
+    ///
+    /// Part of the grid's identity, not decoration: an aggregated column
+    /// carries several venues' size and a single-venue column carries one, so
+    /// mixing them in a ring that is normalised as a whole would make the
+    /// older half of the history read as empty. Flipping the source rebuilds.
+    pub aggregated: bool,
     /// Cell ring — newest bar at back.
     pub cells: VecDeque<DomHeatmapCell>,
     /// Maximum cells before oldest are evicted.
@@ -83,6 +90,10 @@ pub struct DomHeatmapBuffer {
     /// time order, so everything mergeable is at the tail.
     cur_bar_ms: i64,
     cur_bar_len: usize,
+    /// Timestamp of the last folded snapshot, or 0 when none has landed.
+    /// A writer throttles against this instead of keeping its own clock, so
+    /// the rate is a property of the grid rather than of whoever fills it.
+    pub last_push_ms: i64,
     /// The bar currently forming.
     pub live_bar_ms: i64,
     /// The book as it stands RIGHT NOW, replaced wholesale on every
@@ -96,16 +107,18 @@ pub struct DomHeatmapBuffer {
 impl DomHeatmapBuffer {
     /// Create an empty buffer for a given instrument tick, bar duration and
     /// row grouping.
-    pub fn new(tick_size: f64, bar_ms: i64, row_ticks: i64, band_fraction: f64) -> Self {
+    pub fn new(tick_size: f64, bar_ms: i64, row_ticks: i64, band_fraction: f64, aggregated: bool) -> Self {
         Self {
             tick_size: if tick_size > 0.0 { tick_size } else { 1.0 },
             bar_ms: bar_ms.max(1),
             row_ticks: row_ticks.max(1),
             band_fraction: if band_fraction > 0.0 { band_fraction } else { BAND_FRACTION },
+            aggregated,
             cells: VecDeque::new(),
             max_cells: MAX_CELLS,
             cur_bar_ms: i64::MIN,
             cur_bar_len: 0,
+            last_push_ms: 0,
             live_bar_ms: i64::MIN,
             live: Vec::new(),
         }
@@ -113,10 +126,17 @@ impl DomHeatmapBuffer {
 
     /// Whether this buffer's geometry still matches what the caller wants.
     /// A mismatch means the grid must be rebuilt, not appended to.
-    pub fn matches_geometry(&self, bar_ms: i64, row_ticks: i64, band_fraction: f64) -> bool {
+    pub fn matches_geometry(
+        &self,
+        bar_ms: i64,
+        row_ticks: i64,
+        band_fraction: f64,
+        aggregated: bool,
+    ) -> bool {
         self.bar_ms == bar_ms.max(1)
             && self.row_ticks == row_ticks.max(1)
             && (self.band_fraction - band_fraction).abs() < 1e-9
+            && self.aggregated == aggregated
     }
 
     /// Height of one price row in instrument price units.
@@ -140,6 +160,7 @@ impl DomHeatmapBuffer {
     /// ticks that share a row within this snapshot, then merged into the
     /// bar's cell by MAXIMUM — see the module doc.
     pub fn push_snapshot(&mut self, ts_ms: i64, bids: &[(f64, f64)], asks: &[(f64, f64)]) {
+        self.last_push_ms = ts_ms;
         let bar = self.bar_of(ts_ms);
         if bar != self.cur_bar_ms {
             self.cur_bar_ms = bar;
@@ -234,6 +255,41 @@ impl DomHeatmapBuffer {
     pub fn newest_bucket_ms(&self) -> i64 {
         self.cells.back().map(|c| c.ts_ms).unwrap_or(0)
     }
+}
+
+/// Merge several venues' books into one, summing quantity at every price
+/// that more than one of them quotes.
+///
+/// Prices are folded on an exact key (1e-8 resolution — finer than any listed
+/// tick), so this is venue-independent by construction: two venues quoting the
+/// same price land on the same level, and one quoting a price nobody else does
+/// keeps its own.
+///
+/// The merged book can be CROSSED — across venues the best bid of one can sit
+/// at or above the best ask of another. That is a real property of an
+/// aggregated market, not an error to clean up: [`DomHeatmapBuffer::
+/// push_snapshot`] takes the midpoint of the two, which stays at the touch.
+pub fn fold_books(sources: &[(Vec<(f64, f64)>, Vec<(f64, f64)>)]) -> (Vec<(f64, f64)>, Vec<(f64, f64)>) {
+    use std::collections::BTreeMap;
+    let key_of = |p: f64| -> i64 { (p * 1e8).round() as i64 };
+    let mut bids: BTreeMap<i64, f64> = BTreeMap::new();
+    let mut asks: BTreeMap<i64, f64> = BTreeMap::new();
+    for (b, a) in sources {
+        for &(price, qty) in b {
+            if price > 0.0 && qty > 0.0 {
+                *bids.entry(key_of(price)).or_insert(0.0) += qty;
+            }
+        }
+        for &(price, qty) in a {
+            if price > 0.0 && qty > 0.0 {
+                *asks.entry(key_of(price)).or_insert(0.0) += qty;
+            }
+        }
+    }
+    let out = |m: BTreeMap<i64, f64>| -> Vec<(f64, f64)> {
+        m.into_iter().map(|(k, q)| (k as f64 / 1e8, q)).collect()
+    };
+    (out(bids), out(asks))
 }
 
 /// One executed trade positioned at its real (ts, price).
