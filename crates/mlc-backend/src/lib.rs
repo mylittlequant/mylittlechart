@@ -691,6 +691,18 @@ pub struct BackendCore {
     /// takes `&self` (so multiple callers can coexist without `&mut BackendCore`).
     broadcast_rx: std::sync::Mutex<LiveUpdateReceiver>,
 
+    /// Broadcast-lag telemetry: how many times `tick_writers` saw `Lagged`,
+    /// and how many updates that dropped in total.
+    ///
+    /// A lagged drop is invisible at every layer above — the data simply
+    /// never arrives, which reads exactly like "the exchange sent nothing".
+    /// The `Lagged` arm already dlogs, but a log line is gone the moment the
+    /// console scrolls; these counters survive and answer the only question
+    /// that matters when a live layer has holes in it: were the updates
+    /// dropped here, or never produced?
+    lag_events: std::sync::atomic::AtomicU64,
+    lag_dropped: std::sync::atomic::AtomicU64,
+
     /// Lock-free per-symbol mini-ticker cache. Read every frame by the
     /// watchlist + by the `LiquidationBucketUpdate` writer arm for mark price.
     /// Writes only from the `MiniTickerUpdate` arm. Using `DashMap` so all
@@ -894,6 +906,8 @@ impl BackendCore {
             alert: std::sync::RwLock::new(AlertManager::default()),
             indicators: std::sync::RwLock::new(IndicatorManager::new()),
             broadcast_rx: std::sync::Mutex::new(broadcast_rx),
+            lag_events: std::sync::atomic::AtomicU64::new(0),
+            lag_dropped: std::sync::atomic::AtomicU64::new(0),
             bridge,
             mini_ticker: DashMap::new(),
             trade_store: TradeStore::new(),
@@ -1325,6 +1339,9 @@ impl BackendCore {
                     // the kline self-heal below (raw BarUpdates have no
                     // refold to resynthesize from; owner defect 2026-07-30).
                     mlc_backend_data_bridge::dlog!("[tick_writers] broadcast Lagged: {} updates dropped", n);
+                    use std::sync::atomic::Ordering::Relaxed;
+                    self.lag_events.fetch_add(1, Relaxed);
+                    self.lag_dropped.fetch_add(n, Relaxed);
                     self.bubbles_mut().mark_all_refold_dirty();
                     lagged = true;
                     continue;
@@ -2834,6 +2851,23 @@ impl BackendCore {
         account_type: AccountType,
     ) -> Option<SharedLiquidationSeries> {
         self.bridge.subscribe_liquidations(exchange_id, symbol, account_type)
+    }
+
+    /// `(lag_events, updates_dropped)` since process start — see the fields'
+    /// doc. Read it before blaming a feed for a hole in a live layer.
+    pub fn lag_stats(&self) -> (u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.lag_events.load(Relaxed), self.lag_dropped.load(Relaxed))
+    }
+
+    /// Every live book tracker for `(symbol, account_type)`, whatever venue
+    /// opened it — see [`DataBridge::ob_trackers_for_symbol`].
+    pub fn ob_trackers_for_symbol(
+        &self,
+        symbol: &str,
+        account_type: AccountType,
+    ) -> Vec<(ExchangeId, SharedOrderBookTracker)> {
+        self.bridge.ob_trackers_for_symbol(symbol, account_type)
     }
 
     /// Narrow escape hatch to the raw `DataBridge` for the handful of

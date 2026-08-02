@@ -750,14 +750,23 @@ fn run_render_loop(
                 let mut total_layer_bars = 0f64;
                 let mut dom_probe = (0usize, 0usize, 0i64, 0i64, 0i64, 0i64);
                 let mut dom_span = (0.0f64, 0.0f64);
+                let mut dom_mask = String::new();
                 let bm = st.chart.core.bubbles();
                 bm.each_bubble(|b| {
                     bubble_count += 1.0;
                     total_bars += b.bars_len() as f64;
                     total_layer_bars += b.kline_layer_points() as f64;
                     let p = b.dom_probe();
-                    if p.0 > dom_probe.0 { dom_probe = p; dom_span = b.dom_price_span(); }
+                    if p.0 > dom_probe.0 {
+                        dom_probe = p;
+                        dom_span = b.dom_price_span();
+                        dom_mask = b.dom_column_mask(120);
+                    }
                 });
+                let _ = js_sys::Reflect::set(&dbg, &"dom_mask".into(), &dom_mask.into());
+                let (lag_events, lag_dropped) = st.chart.core.lag_stats();
+                let _ = js_sys::Reflect::set(&dbg, &"lag_events".into(), &(lag_events as f64).into());
+                let _ = js_sys::Reflect::set(&dbg, &"lag_dropped".into(), &(lag_dropped as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_cells".into(), &(dom_probe.0 as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_cols".into(), &(dom_probe.1 as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"dom_bar_ms".into(), &(dom_probe.2 as f64).into());

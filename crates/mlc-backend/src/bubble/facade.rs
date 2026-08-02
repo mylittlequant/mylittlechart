@@ -83,6 +83,30 @@ impl<'a> BubbleView<'a> {
 
     /// Price span the heat ring actually covers, `(low, high)` — the answer
     /// to "is the layer missing rows, or are they there and invisible".
+    /// Presence mask over the last `n` bar columns, oldest character first:
+    /// `1` = that bar has cells, `0` = the bar was never written.
+    ///
+    /// A cell count cannot show this — 30k cells spread over 201 of 427
+    /// possible columns and a full 427 look identical in the total. The
+    /// SHAPE of the holes is the diagnosis: evenly spaced means something
+    /// periodic (a resubscribe, a resync), a ragged run means the writer was
+    /// starved in bursts.
+    pub fn dom_column_mask(&self, n: usize) -> String {
+        let Some(b) = self.bubble.dom_heatmap.as_ref() else { return String::new() };
+        if b.cells.is_empty() || b.bar_ms <= 0 {
+            return String::new();
+        }
+        let newest = b.cells.back().map(|c| c.ts_ms).unwrap_or(0);
+        let present: std::collections::HashSet<i64> = b.cells.iter().map(|c| c.ts_ms).collect();
+        (0..n)
+            .rev()
+            .map(|i| {
+                let ts = newest - (i as i64) * b.bar_ms;
+                if present.contains(&ts) { '1' } else { '0' }
+            })
+            .collect()
+    }
+
     pub fn dom_price_span(&self) -> (f64, f64) {
         let Some(b) = self.bubble.dom_heatmap.as_ref() else { return (0.0, 0.0) };
         let mut lo = f64::MAX;
