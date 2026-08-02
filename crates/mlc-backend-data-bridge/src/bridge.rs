@@ -905,7 +905,7 @@ impl DataBridge {
             wasm_bindgen_futures::spawn_local(fwd_task);
         }
 
-        (Self {
+        let bridge = Self {
             hub,
             tx,
             connector_ready_tx,
@@ -937,7 +937,17 @@ impl DataBridge {
             // because it is being driven by the caller's runtime.
             #[cfg(not(target_arch = "wasm32"))]
             runtime_handle: tokio::runtime::Handle::current(),
-        }, rx, connector_ready_rx)
+        };
+
+        // Before ANY dial. The hub reads the override map when it constructs
+        // a connector, so a venue reached even once beforehand keeps its
+        // direct base for the whole session — and the warm-up wave starts
+        // dialling within the first frames.
+        for eid in Self::CORS_BLOCKED_REST {
+            bridge.apply_cors_rest_override(*eid);
+        }
+
+        (bridge, rx, connector_ready_rx)
     }
 
     // ── spawn helpers (centralised tokio runtime entry, see crate-top doc) ──
@@ -1523,6 +1533,71 @@ impl DataBridge {
         });
     }
 
+    /// Venues whose REST a browser refuses to fetch cross-origin.
+    ///
+    /// Measured from the stand's own origin 2026-08-02, not assumed: OKX,
+    /// Gate.io (spot AND futures), HTX and KuCoin (spot AND futures) all fail
+    /// with `TypeError: Failed to fetch` — no response, no status, so the
+    /// failure is indistinguishable from "the venue has no such endpoint"
+    /// unless you go and look. The same URLs answer HTTP 200 from curl, and
+    /// Binance, Bybit and Bitget answer 200 in the browser too, so this is a
+    /// property of those four venues' CORS headers and nothing else.
+    ///
+    /// The consequence was not confined to one feature: the projected-
+    /// liquidation fold saw 2 of its 7 candidate venues, and Gate's and
+    /// KuCoin's `get_exchange_info` never landed, which held back their
+    /// liquidation prints for want of a contract multiplier.
+    const CORS_BLOCKED_REST: &'static [ExchangeId] = &[
+        ExchangeId::OKX,
+        ExchangeId::GateIO,
+        ExchangeId::HTX,
+        ExchangeId::KuCoin,
+    ];
+
+    /// Route a CORS-blocked venue's REST through the proxy the archive
+    /// fetches already use. Native builds do nothing — there is no
+    /// same-origin policy off-browser, and the direct call is one hop
+    /// shorter.
+    fn apply_cors_rest_override(&self, exchange_id: ExchangeId) {
+        if cfg!(not(target_arch = "wasm32")) {
+            return;
+        }
+        if !Self::CORS_BLOCKED_REST.contains(&exchange_id) {
+            return;
+        }
+        // Falls back to the profile's DEFAULT rather than giving up when no
+        // profile has been applied yet. The first dial can happen while the
+        // workspace is still loading, and the hub reads the override map when
+        // it CONSTRUCTS the connector — a venue dialled one tick too early
+        // keeps its direct base for the rest of the session. Measured
+        // 2026-08-02: OKX (dialled late) picked the override up and loaded
+        // its 1771-symbol catalogue; Gate and KuCoin (dialled during load)
+        // silently kept the direct base and stayed at zero symbols.
+        let base = crate::archive_proxy_base()
+            .unwrap_or_else(mlc_core::user_profile::default_archive_proxy_base);
+        let base = base.trim_end_matches('/');
+        if base.is_empty() {
+            return;
+        }
+        // `{base}` (host-prefix mode) rather than a literal prefix: Gate and
+        // HTX serve spot and futures from DIFFERENT hosts, and the override
+        // map is keyed by exchange alone — a literal prefix would route one
+        // of the two families to the other's host.
+        let override_url = format!("{base}/{{base}}");
+        // BOTH hubs. The bridge holds a raw hub AND the station holds its own,
+        // and they do not share an override map: REST history and the station's
+        // warm-up dial through `station.hub()`, while other calls go through
+        // `self.hub`. Setting only the raw one is why the first cut of this fix
+        // proxied OKX (dialled on the raw hub) and left KuCoin's bullet-public
+        // and HTX's symbols going direct — caught by recording the actual URLs
+        // the page fetched, not by reading the code.
+        self.hub
+            .set_rest_base_override(exchange_id, override_url.clone());
+        self.station
+            .hub()
+            .set_rest_base_override(exchange_id, override_url);
+    }
+
     /// Ensure a connector is initialized for the given exchange.
     ///
     /// Non-blocking — spawns an async task. On completion, sends either
@@ -1531,6 +1606,9 @@ impl DataBridge {
         if self.hub.is_connected(exchange_id) {
             return;
         }
+        // Must run BEFORE the dial: the hub reads the override map when it
+        // CONSTRUCTS the connector, not per request.
+        self.apply_cors_rest_override(exchange_id);
         // Dial backoff: a venue that just refused a connect (rate-limit ban,
         // network down) must not be re-dialed on every repair tick — the
         // storm itself keeps the ban alive (wasm incident 2026-07-30: 409
@@ -3336,10 +3414,18 @@ impl DataBridge {
             // Row order is venue-dependent (Binance/GateIO oldest-first,
             // Bybit/OKX newest-first) — sort rather than trust it, the same
             // trap `refresh_oi_history` documents.
+            // BASE units where the venue reports them. `open_interest` is
+            // denominated in whatever the venue counts in — CONTRACTS on
+            // OKX/Gate/HTX/KuCoin, coin on Binance/Bybit — so summing the
+            // raw field across venues adds 3.1 million to 108 thousand and
+            // calls the result open interest. `open_interest_ccy` is the
+            // venue's own base-denominated column (OKX `oiCcy`, HTX
+            // `amount`); prefer it, and fall back only where the venue
+            // publishes a single figure that is already in coin.
             let mut points: Vec<(i64, f64)> = rows
                 .iter()
-                .filter(|r| r.open_interest.is_finite() && r.open_interest > 0.0)
-                .map(|r| (r.timestamp, r.open_interest))
+                .map(|r| (r.timestamp, r.open_interest_ccy.unwrap_or(r.open_interest)))
+                .filter(|(_, oi)| oi.is_finite() && *oi > 0.0)
                 .collect();
             points.sort_by_key(|(ts, _)| *ts);
             points.dedup_by_key(|(ts, _)| *ts);

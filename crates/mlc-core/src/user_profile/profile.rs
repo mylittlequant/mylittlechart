@@ -915,7 +915,13 @@ fn default_derived_trade_target() -> u32 {
     10_000
 }
 
-fn default_archive_proxy_base() -> String {
+/// Public because the CORS proxy is needed BEFORE a profile has been applied:
+/// the first connector dial can happen while the workspace is still loading,
+/// and a venue dialled without the override keeps its direct base for the
+/// life of the connector (the hub reads the override map at construction).
+/// Callers that need the base early take this default and let a loaded
+/// profile override it afterwards.
+pub fn default_archive_proxy_base() -> String {
     "http://127.0.0.1:17800".to_string()
 }
 
