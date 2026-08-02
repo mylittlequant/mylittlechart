@@ -3678,23 +3678,29 @@ impl DataBridge {
         self.ob_trackers.get(&key).map(|r| r.clone())
     }
 
-    /// Every live book tracker for `(symbol, account_type)`, whatever venue
-    /// opened it.
+    /// Every live book tracker for `symbol`, whatever venue and whatever
+    /// market type opened it.
     ///
     /// This is the registry the DOM panels already populate — `subscribe_depth`
     /// is idempotent per key — so a consumer that folds these reads the SAME
     /// reconstructed books the M/D and AD ladders read. It cannot open a second
     /// channel for a venue that is already streaming, and it opens nothing at
     /// all for a venue nobody asked for.
+    ///
+    /// Account type is deliberately NOT part of the filter: an aggregated
+    /// ladder rosters spot and perp side by side (that is what "4 markets"
+    /// means in the AD header), and a consumer that folded only its own market
+    /// type would silently see one book while the ladder beside it shows four.
+    /// Distinct instruments stay distinct anyway — a quarterly carries its own
+    /// symbol.
     pub fn ob_trackers_for_symbol(
         &self,
         symbol: &str,
-        account_type: AccountType,
-    ) -> Vec<(ExchangeId, SharedOrderBookTracker)> {
+    ) -> Vec<(ExchangeId, AccountType, SharedOrderBookTracker)> {
         self.ob_trackers
             .iter()
-            .filter(|kv| kv.key().1 == account_type && kv.key().2 == symbol)
-            .map(|kv| (kv.key().0, kv.value().clone()))
+            .filter(|kv| kv.key().2 == symbol)
+            .map(|kv| (kv.key().0, kv.key().1, kv.value().clone()))
             .collect()
     }
 

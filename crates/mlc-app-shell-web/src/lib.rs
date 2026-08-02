@@ -751,6 +751,7 @@ fn run_render_loop(
                 let mut dom_probe = (0usize, 0usize, 0i64, 0i64, 0i64, 0i64);
                 let mut dom_span = (0.0f64, 0.0f64);
                 let mut dom_mask = String::new();
+                let mut dom_live_sum = 0.0f64;
                 let bm = st.chart.core.bubbles();
                 bm.each_bubble(|b| {
                     bubble_count += 1.0;
@@ -761,9 +762,23 @@ fn run_render_loop(
                         dom_probe = p;
                         dom_span = b.dom_price_span();
                         dom_mask = b.dom_column_mask(120);
+                        dom_live_sum = b.dom_live_sum();
                     }
                 });
                 let _ = js_sys::Reflect::set(&dbg, &"dom_mask".into(), &dom_mask.into());
+                let _ = js_sys::Reflect::set(&dbg, &"dom_live_sum".into(), &dom_live_sum.into());
+                // How many venues' books this workspace actually holds for the
+                // active chart's instrument. The aggregated heat can only fold
+                // what is in this registry, so a source toggle that changes
+                // nothing is answered here first: one book means there was
+                // nothing to fold, not that the fold is broken.
+                let book_venues = active_cid
+                    .and_then(|cid| {
+                        let sym = st.chart.symbol_for_chart(cid)?;
+                        Some(st.chart.core.ob_trackers_for_symbol(&sym).len())
+                    })
+                    .unwrap_or(0);
+                let _ = js_sys::Reflect::set(&dbg, &"book_venues".into(), &(book_venues as f64).into());
                 let (lag_events, lag_dropped) = st.chart.core.lag_stats();
                 let _ = js_sys::Reflect::set(&dbg, &"lag_events".into(), &(lag_events as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"lag_dropped".into(), &(lag_dropped as f64).into());

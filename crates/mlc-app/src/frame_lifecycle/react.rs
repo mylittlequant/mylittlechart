@@ -1485,11 +1485,13 @@ impl ChartApp {
                         use rust_decimal::prelude::ToPrimitive;
                         let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
                         let mut sources = vec![(bids.clone(), asks.clone())];
-                        for (venue, tracker) in self.core.ob_trackers_for_symbol(symbol, at_dig3) {
-                            // The host venue is already in `sources` from the
+                        for (venue, venue_at, tracker) in self.core.ob_trackers_for_symbol(symbol) {
+                            // The host market is already in `sources` from the
                             // event itself — folding its tracker too would
-                            // double every level it quotes.
-                            if venue == *exchange_id {
+                            // double every level it quotes. Both halves of the
+                            // key matter: the same venue's spot and perp books
+                            // are different markets and both belong in the fold.
+                            if venue == *exchange_id && venue_at == at_dig3 {
                                 continue;
                             }
                             let g = tracker.blocking_read();

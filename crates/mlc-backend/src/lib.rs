@@ -2860,14 +2860,13 @@ impl BackendCore {
         (self.lag_events.load(Relaxed), self.lag_dropped.load(Relaxed))
     }
 
-    /// Every live book tracker for `(symbol, account_type)`, whatever venue
+    /// Every live book tracker for `symbol`, whatever venue and market type
     /// opened it — see [`DataBridge::ob_trackers_for_symbol`].
     pub fn ob_trackers_for_symbol(
         &self,
         symbol: &str,
-        account_type: AccountType,
-    ) -> Vec<(ExchangeId, SharedOrderBookTracker)> {
-        self.bridge.ob_trackers_for_symbol(symbol, account_type)
+    ) -> Vec<(ExchangeId, AccountType, SharedOrderBookTracker)> {
+        self.bridge.ob_trackers_for_symbol(symbol)
     }
 
     /// Narrow escape hatch to the raw `DataBridge` for the handful of

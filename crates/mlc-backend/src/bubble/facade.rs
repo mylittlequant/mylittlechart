@@ -83,6 +83,16 @@ impl<'a> BubbleView<'a> {
 
     /// Price span the heat ring actually covers, `(low, high)` — the answer
     /// to "is the layer missing rows, or are they there and invisible".
+    /// Total resting size in the live (forming) heat column, bids + asks.
+    ///
+    /// The one number that says WHOSE book is in the grid: folding four
+    /// venues has to move it, and a source toggle that leaves it unchanged
+    /// did nothing regardless of what the picture looks like.
+    pub fn dom_live_sum(&self) -> f64 {
+        let Some(b) = self.bubble.dom_heatmap.as_ref() else { return 0.0 };
+        b.live.iter().map(|c| c.bid_depth + c.ask_depth).sum()
+    }
+
     /// Presence mask over the last `n` bar columns, oldest character first:
     /// `1` = that bar has cells, `0` = the bar was never written.
     ///
