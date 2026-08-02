@@ -41,6 +41,7 @@
 pub mod annotations;
 pub mod dom_heatmap;
 pub mod liquidations;
+pub mod liquidation_projection;
 pub mod render_data;
 pub mod series;
 pub mod tpo_profile;

@@ -287,6 +287,17 @@ pub struct DataBubble {
     /// Open Interest Δ bars. Written by `OpenInterestUpdate`.
     pub oi_delta: Option<Vec<mlc_core::types::OiDeltaBar>>,
 
+    /// Projected liquidation levels, modelled from `oi_delta` + bars by
+    /// `ChartApp::refresh_liq_projection`. CACHED rather than derived at
+    /// render time: the consumption scan is O(rows × bars) and would run
+    /// every frame for a picture that only changes when a bar closes or
+    /// open interest moves.
+    pub liq_projection: Option<Vec<mlc_core::chart::liquidation_projection::ProjectedLevel>>,
+    /// Signature of the inputs `liq_projection` was built from
+    /// (bars, oi points, params fingerprint) — recompute exactly when it
+    /// changes.
+    pub liq_projection_key: (usize, usize, u64),
+
     /// Funding Rate cells. Written by `FundingRateUpdate`.
     pub funding_rate: Option<Vec<mlc_core::types::FundingRateCell>>,
 
@@ -521,6 +532,8 @@ impl DataBubble {
             cvd_line: None,
             tpo_sessions: None,
             oi_delta: None,
+            liq_projection: None,
+            liq_projection_key: (0, 0, 0),
             funding_rate: None,
             dom_heatmap: None,
             dom_trade_dots: None,
@@ -983,6 +996,8 @@ impl Clone for DataBubble {
             cvd_line: self.cvd_line.clone(),
             tpo_sessions: self.tpo_sessions.clone(),
             oi_delta: self.oi_delta.clone(),
+            liq_projection: self.liq_projection.clone(),
+            liq_projection_key: self.liq_projection_key,
             funding_rate: self.funding_rate.clone(),
             dom_heatmap: self.dom_heatmap.clone(),
             dom_trade_dots: self.dom_trade_dots.clone(),

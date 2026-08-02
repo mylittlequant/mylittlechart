@@ -1085,6 +1085,15 @@ impl ChartApp {
                         self.core.subscribe_dom_heatmap(eid, &symbol, at_dig3);
                         crate::sglog!("[bubble {:?}] book feed up ({} {:?})", bid, symbol, eid);
                     }
+                    StreamKind::OpenInterest => {
+                        // The projected-liquidation overlay models FROM open
+                        // interest, so it raises the same feed the OI Delta
+                        // pane uses — one subscription, and a chart showing
+                        // both cannot disagree with itself about what OI did.
+                        self.core.ensure_connector(eid);
+                        self.core.bridge_handle().request_open_interest(eid, &symbol, at_dig3);
+                        crate::sglog!("[bubble {:?}] OI feed up ({} {:?})", bid, symbol, eid);
+                    }
                     StreamKind::Liquidation => {
                         self.core.bubbles_mut().with_bubble_mut(bid, |b| {
                             mlc_backend::chart_type::clear_slot_liq_heatmap(b);

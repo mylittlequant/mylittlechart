@@ -755,6 +755,28 @@ impl Default for LiquidationInk {
     }
 }
 
+/// How the projected-liquidation layer reads.
+#[derive(Clone, Copy, Debug)]
+pub struct LiquidationProjectionInk {
+    /// Gain on the band normaliser.
+    pub sensitivity: f64,
+    /// Band height as a PERCENT of price — must match the grouping the
+    /// model used, or the bands overlap or leave gaps.
+    pub row_pct: f64,
+    /// Fill alpha at full intensity.
+    pub opacity: f64,
+    /// Keep bands price already traded through, dimmed. Off leaves only
+    /// standing liquidity, which is the trading question; on shows where
+    /// the pressure has already been spent.
+    pub show_consumed: bool,
+}
+
+impl Default for LiquidationProjectionInk {
+    fn default() -> Self {
+        Self { sensitivity: 1.0, row_pct: 0.05, opacity: 0.5, show_consumed: true }
+    }
+}
+
 /// State needed for chart rendering
 ///
 /// This struct aggregates all the data needed to render a chart frame.
@@ -877,6 +899,11 @@ pub struct ChartRenderState<'a> {
     /// How the liquidation layer reads — every knob a parameter on the
     /// `overlay_liquidation_heatmap` instance, never a constant.
     pub liq_ink: LiquidationInk,
+    /// Projected liquidation levels (`overlay_liquidation_projection`), or
+    /// `None` when that overlay is off / has no open-interest series yet.
+    pub liq_projection_ref: Option<&'a [crate::chart::liquidation_projection::ProjectedLevel]>,
+    /// How the projected layer reads.
+    pub liq_projection_ink: LiquidationProjectionInk,
     /// DOM Heatmap ink settings, read off the `overlay_dom_heatmap`
     /// `IndicatorInstance` (catalog defaults when no instance exists).
     /// Unused (but always populated) when `dom_heatmap_ref` is `None`.

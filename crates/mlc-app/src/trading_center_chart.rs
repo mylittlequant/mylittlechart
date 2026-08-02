@@ -364,6 +364,8 @@ impl ChartApp {
             dom_params: dom_ink,
             liq_heatmap_show: liq_active,
             liq_ink,
+            liq_projection_show: self.liq_projection_active(window.current_tag_id),
+            liq_projection_ink: self.liq_projection_ink(window.current_tag_id),
             footprint_display: panel.footprint_display,
             tick_intensity: panel.tick_intensity,
             tpo_display: panel.tpo_display,

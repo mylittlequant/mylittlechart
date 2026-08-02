@@ -44,6 +44,10 @@ pub struct ChartWindowRenderInputs<'a> {
     /// has no access to) from the `overlay_liquidation_heatmap`
     /// `IndicatorInstance`, or the catalog defaults when none exists.
     pub liq_ink: mlc_core::chart::render_data::LiquidationInk,
+    /// Projected-liquidation overlay display gate.
+    pub liq_projection_show: bool,
+    /// Projected-layer ink — same resolution contract as `liq_ink`.
+    pub liq_projection_ink: mlc_core::chart::render_data::LiquidationProjectionInk,
     /// DOM Heatmap ink settings — resolved by the caller (`mlc-app`, which
     /// holds the indicators facade this bubble-scoped struct deliberately
     /// has no access to) from the `overlay_dom_heatmap` `IndicatorInstance`,
@@ -204,6 +208,12 @@ pub fn build_chart_render_state<'a>(
         dom_trade_dots_ref: if window.dom_heatmap_show { bubble.dom_trade_dots.as_deref() } else { None },
         liq_tape_ref: if window.liq_heatmap_show { bubble.liq_tape.as_ref() } else { None },
         liq_ink: window.liq_ink,
+        liq_projection_ref: if window.liq_projection_show {
+            bubble.liq_projection.as_deref()
+        } else {
+            None
+        },
+        liq_projection_ink: window.liq_projection_ink,
         dom_params: window.dom_params,
         // Default false — flipped to true by the caller (`mlc-app::lib.rs`)
         // only when a non-temporal ts-shadow (renko/pnf/kagi/three_line_break)

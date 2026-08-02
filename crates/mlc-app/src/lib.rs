@@ -1744,6 +1744,73 @@ impl ChartApp {
             .unwrap_or(true)
     }
 
+    /// Catalog id of the projected-liquidation overlay.
+    pub const LIQ_PROJECTION_TYPE_ID: &'static str = "overlay_liquidation_projection";
+
+    /// Is the projected-liquidation overlay live for `bid`'s bubble? Derived
+    /// from the instance, same doctrine as [`Self::liq_overlay_active`].
+    pub fn liq_projection_active(&self, bid: mlc_core::ids::BubbleId) -> bool {
+        self.core.indicators().instances_for_bubble(bid)
+            .into_iter()
+            .any(|inst| inst.type_id == Self::LIQ_PROJECTION_TYPE_ID && inst.visible)
+    }
+
+    /// How the projected layer reads, from its instance params.
+    #[inline]
+    pub fn liq_projection_ink(
+        &self,
+        bid: mlc_core::ids::BubbleId,
+    ) -> mlc_core::chart::render_data::LiquidationProjectionInk {
+        let d = mlc_core::chart::render_data::LiquidationProjectionInk::default();
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::LIQ_PROJECTION_TYPE_ID)
+        else { return d };
+        let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
+        let b = |k: &str, fallback: bool| inst.params.get(k).and_then(|v| v.as_bool()).unwrap_or(fallback);
+        mlc_core::chart::render_data::LiquidationProjectionInk {
+            sensitivity: f("sensitivity", d.sensitivity),
+            row_pct: f("row_pct", d.row_pct),
+            opacity: f("opacity", d.opacity),
+            show_consumed: b("show_consumed", d.show_consumed),
+        }
+    }
+
+    /// The model's inputs, from the same instance. The leverage
+    /// distribution is five weights rather than one preset: it is the knob
+    /// the whole picture is tuned with, and a venue's clientele is not a
+    /// constant we get to bake in.
+    pub fn liq_projection_params(
+        &self,
+        bid: mlc_core::ids::BubbleId,
+    ) -> mlc_core::chart::liquidation_projection::ProjectionParams {
+        use mlc_core::chart::liquidation_projection::{LeverageTier, ProjectionParams};
+        let d = ProjectionParams::default();
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::LIQ_PROJECTION_TYPE_ID)
+        else { return d };
+        let f = |k: &str, fallback: f64| inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback);
+        let w = |k: &str, i: usize| f(k, d.tiers.get(i).map(|t| t.weight).unwrap_or(0.0));
+        ProjectionParams {
+            tiers: vec![
+                LeverageTier { leverage: 5.0, weight: w("lev_5", 0) },
+                LeverageTier { leverage: 10.0, weight: w("lev_10", 1) },
+                LeverageTier { leverage: 25.0, weight: w("lev_25", 2) },
+                LeverageTier { leverage: 50.0, weight: w("lev_50", 3) },
+                LeverageTier { leverage: 100.0, weight: w("lev_100", 4) },
+            ],
+            mmr: f("mmr", d.mmr) / 100.0,
+            row_pct: f("row_pct", d.row_pct),
+            long_share: f("long_share", d.long_share),
+            min_usd: f("min_usd", d.min_usd),
+        }
+    }
+
     /// Catalog id of the DOM Heatmap overlay indicator.
     pub const DOM_HEATMAP_TYPE_ID: &'static str = "overlay_dom_heatmap";
 
@@ -4886,6 +4953,8 @@ impl ChartApp {
                     dom_params: overlay_dom,
                     liq_heatmap_show: overlay_liq_active,
                     liq_ink: overlay_liq_ink,
+                    liq_projection_show: self.liq_projection_active(window.current_tag_id),
+                    liq_projection_ink: self.liq_projection_ink(window.current_tag_id),
                     footprint_display: overlay_panel.footprint_display,
                     tick_intensity: overlay_panel.tick_intensity,
                     tpo_display: overlay_panel.tpo_display,
@@ -5003,6 +5072,8 @@ impl ChartApp {
                 dom_params: single_dom,
                 liq_heatmap_show: single_overlay_liq_active,
                 liq_ink: single_overlay_liq_ink,
+                liq_projection_show: self.liq_projection_active(window.current_tag_id),
+                liq_projection_ink: self.liq_projection_ink(window.current_tag_id),
                 footprint_display: single_panel.footprint_display,
                 tick_intensity: single_panel.tick_intensity,
                 tpo_display: single_panel.tpo_display,
@@ -5304,6 +5375,8 @@ impl ChartApp {
                     dom_params: split_dom,
                     liq_heatmap_show: split_liq_active,
                     liq_ink: split_liq_ink,
+                    liq_projection_show: self.liq_projection_active(window.current_tag_id),
+                    liq_projection_ink: self.liq_projection_ink(window.current_tag_id),
                     footprint_display: split_panel.footprint_display,
                     tick_intensity: split_panel.tick_intensity,
                     tpo_display: split_panel.tpo_display,
@@ -5960,6 +6033,8 @@ impl ChartApp {
                     dom_params: single_window_dom,
                     liq_heatmap_show: single_window_liq_active,
                     liq_ink: single_window_liq_ink,
+                    liq_projection_show: self.liq_projection_active(window.current_tag_id),
+                    liq_projection_ink: self.liq_projection_ink(window.current_tag_id),
                     footprint_display: single_window_panel.footprint_display,
                     tick_intensity: single_window_panel.tick_intensity,
                     tpo_display: single_window_panel.tpo_display,

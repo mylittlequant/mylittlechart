@@ -31,6 +31,7 @@ use crate::chart_render::{
     draw_tpo_profile_overlay,
     draw_oi_delta, draw_funding_rate_strip,
     draw_dom_heatmap_conditional, draw_liquidation_levels_conditional,
+    draw_liquidation_projection_conditional,
     draw_liquidation_prints_conditional,
     draw_price_scale, draw_time_scale,
     draw_price_scale_cursor_label, draw_time_scale_cursor_label,
@@ -2612,6 +2613,7 @@ pub fn render_chart(
     // `build_chart_render_state` already gates on the window's
     // `dom_heatmap_show`/`liq_heatmap_show` flags.
     draw_dom_heatmap_conditional(ctx, state);
+    draw_liquidation_projection_conditional(ctx, state);
     draw_liquidation_levels_conditional(ctx, state);
 
     // 4. Series (candles, bars, line, area, etc.)
@@ -3223,6 +3225,8 @@ pub fn render_full_chart_panel(
         dom_trade_dots_ref: data.state.dom_trade_dots_ref,
         liq_tape_ref: data.state.liq_tape_ref,
         liq_ink: data.state.liq_ink,
+        liq_projection_ref: data.state.liq_projection_ref,
+        liq_projection_ink: data.state.liq_projection_ink,
         dom_params: data.state.dom_params,
         non_temporal_axis: data.state.non_temporal_axis,
         hide_time_grid: data.state.hide_time_grid,
@@ -3318,6 +3322,10 @@ pub fn render_full_chart_panel(
         // filling, and the chart still showed nothing. Exactly the defect the
         // DOM heat had before 2026-08-02 — when a layer is silent, check that
         // the LIVE pipeline draws it before touching anything else.
+        // 2c-bis. Projected liquidation bands — modelled standing
+        // liquidity, under everything else it shares the chart with.
+        draw_liquidation_projection_conditional(ctx, &corrected_state);
+
         draw_liquidation_levels_conditional(ctx, &corrected_state);
 
         // 3. Series (candles, bars, line, etc.)
@@ -3688,6 +3696,8 @@ pub fn render_chart_crosshair_layer(
         dom_trade_dots_ref: state.dom_trade_dots_ref,
         liq_tape_ref: state.liq_tape_ref,
         liq_ink: state.liq_ink,
+        liq_projection_ref: state.liq_projection_ref,
+        liq_projection_ink: state.liq_projection_ink,
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
@@ -3889,6 +3899,8 @@ pub fn render_chart_overlay(
         dom_trade_dots_ref: state.dom_trade_dots_ref,
         liq_tape_ref: state.liq_tape_ref,
         liq_ink: state.liq_ink,
+        liq_projection_ref: state.liq_projection_ref,
+        liq_projection_ink: state.liq_projection_ink,
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,

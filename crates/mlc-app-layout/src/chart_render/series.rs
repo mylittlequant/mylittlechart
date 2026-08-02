@@ -976,6 +976,8 @@ fn draw_compare_series_bar_family(
         dom_trade_dots_ref: None,
         liq_tape_ref: None,
         liq_ink: Default::default(),
+        liq_projection_ref: None,
+        liq_projection_ink: Default::default(),
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,
