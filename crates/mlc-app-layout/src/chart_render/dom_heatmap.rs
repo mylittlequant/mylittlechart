@@ -202,7 +202,23 @@ pub fn draw_dom_heatmap(
     let font_px = ((row_px * 0.46).min(col_w * 0.22) * ink.value_size.clamp(0.3, 3.0)).clamp(6.0, 14.0);
 
     let theme = state.theme;
+    // The cell under the cursor, resolved while drawing so the outline can be
+    // laid over everything else afterwards. Hovering also forces the number
+    // on: the aspect and under-candle rules hide digits for readability, and
+    // pointing at a cell is the user asking for that one value anyway.
+    let cursor = if state.crosshair.visible {
+        Some((state.crosshair.x, state.crosshair.y))
+    } else {
+        None
+    };
+    let mut hovered: Option<(f64, f64, f64, bool)> = None;
+
     for (cx, cy, bid_depth, ask_depth, covered) in placed {
+        if let Some((mx, my)) = cursor {
+            if mx >= cx && mx < cx + col_w && my >= cy && my < cy + row_px {
+                hovered = Some((cx, cy, bid_depth.max(ask_depth), ask_depth > bid_depth));
+            }
+        }
         let depth = bid_depth.max(ask_depth);
         let is_wall = wall_at > 0.0 && depth >= wall_at;
         let bid_heat = (bid_depth / norm).clamp(0.0, 1.0);
@@ -217,7 +233,8 @@ pub fn draw_dom_heatmap(
             ctx.set_fill_color(&heat_color(&theme.heat_ask, &theme.heat_ask_hot, ask_heat, ask_alpha));
             ctx.fill_rect(cx, cy, col_w, row_px);
         }
-        if show_text && !covered && depth > 0.0 && (is_wall || bid_alpha.max(ask_alpha) > 0.02) {
+        let is_hovered = hovered.map_or(false, |(hx, hy, _, _)| hx == cx && hy == cy);
+        if show_text && !covered && !is_hovered && depth > 0.0 && (is_wall || bid_alpha.max(ask_alpha) > 0.02) {
             // Dark digits on a solid wall, muted grey on the field — the
             // reference's contrast trick, and the reason a wall reads at a
             // glance.
@@ -230,6 +247,26 @@ pub fn draw_dom_heatmap(
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&format_depth(depth), cx + col_w * 0.5, cy + row_px * 0.5);
+        }
+    }
+
+    // ── Hover marker ────────────────────────────────────────────────
+    // A crisp frame in the side's own hot colour plus the value, always
+    // legible — the layer is a wash, so pointing at it has to be how you read
+    // an exact number off it.
+    if let Some((hx, hy, hdepth, hot_is_ask)) = hovered {
+        let edge = if hot_is_ask { &theme.heat_ask_hot } else { &theme.heat_bid_hot };
+        ctx.set_stroke_color(edge);
+        ctx.set_stroke_width(1.0);
+        ctx.set_line_dash(&[]);
+        ctx.stroke_rect(hx + 0.5, hy + 0.5, (col_w - 1.0).max(1.0), (row_px - 1.0).max(1.0));
+        if hdepth > 0.0 {
+            let fp = (row_px * 0.5).min(col_w * 0.24).clamp(7.0, 13.0);
+            ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(&theme.text, 0.95));
+            ctx.set_font(&format!("{fp:.0}px monospace"));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&format_depth(hdepth), hx + col_w * 0.5, hy + row_px * 0.5);
         }
     }
 

@@ -1147,12 +1147,24 @@ impl MultiDomState {
                 entry.1[i] = q;
             }
         }
-        let max_level = bid_combined
+        // Bar scale: the 95th percentile of the levels in the ladder, not
+        // their maximum. A single wall is by definition the maximum, and
+        // scaling by it collapsed every other level into the dark end of the
+        // gradient — one 726 print on the bids turned the whole ask side
+        // into flat dark red. Anything at or above the percentile simply
+        // saturates, which is what a wall should look like anyway.
+        let mut levels: Vec<f64> = bid_combined
             .values()
             .chain(ask_combined.values())
             .map(|(total, _)| *total)
-            .fold(0.0_f64, f64::max)
-            .max(1e-9);
+            .collect();
+        levels.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let max_level = if levels.is_empty() {
+            1e-9
+        } else {
+            let pick = ((levels.len() as f64 - 1.0) * 0.95).round() as usize;
+            levels[pick.min(levels.len() - 1)].max(1e-9)
+        };
 
         // Cumulative depth from mid outward over the COMBINED ladder — the
         // same "wave" shape as `draw_book`, one series instead of one per
