@@ -21,7 +21,6 @@ use uzor::types::Rect as WidgetRect;
 use uzor::InputCoordinator;
 
 pub const DOM_MODAL_W: f64 = 340.0;
-const HEADER_H: f64 = 44.0;
 const PAD: f64 = 16.0;
 const BTN_H: f64 = 26.0;
 const CAPTION_H: f64 = 26.0;
@@ -29,20 +28,13 @@ const ROW_GAP: f64 = 20.0;
 
 /// Sidebar modals all wear the toolbar's colours.
 fn shell_theme(frame_theme: &FrameTheme, tt: &ToolbarTheme) -> ModalTheme {
-    ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
-        &frame_theme.toolbar_border,
-        &tt.item_text,
-        &tt.item_text_active,
-        &frame_theme.toolbar_border,
-    )
+    ModalTheme::from_toolbar(&frame_theme.toolbar_bg, &frame_theme.toolbar_border, tt)
 }
 
 /// The shared spec: one id space (`dom_modal:*`), one remembered position,
 /// height from the rows the caller is about to draw.
 fn shell_spec<'a>(title: &'a str, rows_h: f64, pos: Option<(f64, f64)>) -> ModalShellSpec<'a> {
     ModalShellSpec {
-        header_height: HEADER_H,
         padding: PAD,
         ..ModalShellSpec::new("dom_modal", title, DOM_MODAL_W, rows_h)
             .placed(ModalPlacement::At(pos))

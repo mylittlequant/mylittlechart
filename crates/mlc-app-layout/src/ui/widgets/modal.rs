@@ -3,6 +3,7 @@
 //! Platform-agnostic modal dialog rendering using RenderContext.
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -23,6 +24,14 @@ pub struct ModalTheme {
     pub footer_border: String,
     pub close_button: String,
     pub close_button_hover: String,
+    /// Selected tab / primary button fill.
+    pub accent: String,
+    /// Text on top of `accent`.
+    pub accent_text: String,
+    /// Hover fill for a tab or a secondary button.
+    pub item_bg_hover: String,
+    /// Unselected tab label.
+    pub item_text_muted: String,
 }
 
 impl Default for ModalTheme {
@@ -39,11 +48,38 @@ impl Default for ModalTheme {
             footer_border: "#363a45".to_string(),
             close_button: "#9598a1".to_string(),
             close_button_hover: "#ffffff".to_string(),
+            accent: "#2962ff".to_string(),
+            accent_text: "#ffffff".to_string(),
+            item_bg_hover: "rgba(255,255,255,0.08)".to_string(),
+            item_text_muted: "#9598a1".to_string(),
         }
     }
 }
 
 impl ModalTheme {
+    /// The one every modal in the app should use: the toolbar owns these
+    /// colours already, and passing five loose strings to `from_frame_theme`
+    /// is how two modals ended up with different tab and button tints.
+    pub fn from_toolbar(toolbar_bg: &str, toolbar_border: &str, tt: &ToolbarTheme) -> Self {
+        Self {
+            backdrop: "rgba(0,0,0,0.6)".to_string(),
+            background: toolbar_bg.to_string(),
+            border: toolbar_border.to_string(),
+            shadow: "rgba(0,0,0,0.4)".to_string(),
+            header_bg: toolbar_bg.to_string(),
+            header_text: tt.item_text.clone(),
+            header_border: toolbar_border.to_string(),
+            footer_bg: toolbar_bg.to_string(),
+            footer_border: toolbar_border.to_string(),
+            close_button: tt.item_text.clone(),
+            close_button_hover: tt.item_text_active.clone(),
+            accent: tt.accent.clone(),
+            accent_text: tt.item_text_active.clone(),
+            item_bg_hover: tt.item_bg_hover.clone(),
+            item_text_muted: tt.item_text_muted.clone(),
+        }
+    }
+
     /// Create ModalTheme from FrameTheme and ToolbarTheme
     ///
     /// This is a convenience function for migrating existing modals that use
@@ -71,6 +107,7 @@ impl ModalTheme {
             footer_border: separator.to_string(),
             close_button: item_text.to_string(),
             close_button_hover: item_text_hover.to_string(),
+            ..Default::default()
         }
     }
 }
@@ -151,6 +188,64 @@ pub enum ModalPlacement {
     Anchor(f64, f64),
 }
 
+/// One entry in a modal's section switch.
+#[derive(Clone, Copy, Debug)]
+pub struct ModalTab<'a> {
+    pub id: &'a str,
+    pub label: &'a str,
+    /// Rails draw the icon when there is one and the label when there is not.
+    pub icon: Option<Icon>,
+}
+
+impl<'a> ModalTab<'a> {
+    pub fn new(id: &'a str, label: &'a str) -> Self {
+        Self { id, label, icon: None }
+    }
+
+    pub fn with_icon(id: &'a str, label: &'a str, icon: Icon) -> Self {
+        Self { id, label, icon: Some(icon) }
+    }
+}
+
+/// A modal's section switch. Orientation is a real choice and both are kept:
+/// a rail down the side carries many sections in icons, a bar under the
+/// header carries a few and spells them out. What is NOT a choice is their
+/// size or their colours.
+#[derive(Clone, Copy, Debug)]
+pub enum ModalTabs<'a> {
+    /// Rail down the left. `TAB_RAIL_W` for icons, `TAB_LIST_W` for labels.
+    Vertical { width: f64, items: &'a [ModalTab<'a>], active: usize },
+    /// Bar under the header, equal widths.
+    Horizontal { items: &'a [ModalTab<'a>], active: usize },
+}
+
+/// What sits along the bottom.
+#[derive(Clone, Copy, Debug)]
+pub enum ModalFooter<'a> {
+    /// No bar. For pickers, menus and popovers — those are not dialogs.
+    None,
+    /// The object already exists and every edit applies as it is made, so
+    /// the only action left is to leave: one OK, in the same place in every
+    /// modal. `template` carries the current template name where the modal
+    /// belongs to a template family, and nothing where it does not.
+    Editor { template: Option<&'a str> },
+    /// The object does not exist yet — this button is what brings it into
+    /// existence, and the ✕ aborts.
+    Creator { label: &'a str },
+}
+
+/// Chrome sizes. They live here so that two modals cannot disagree about
+/// them, which is exactly what happened while each one carried its own
+/// constants: headers of 36 / 40 / 44, rails of 48 / 80, bars of 32 / 40.
+pub const HEADER_H: f64 = 44.0;
+pub const FOOTER_H: f64 = 52.0;
+pub const TAB_RAIL_W: f64 = 48.0;
+pub const TAB_LIST_W: f64 = 80.0;
+pub const TAB_BAR_H: f64 = 32.0;
+const TAB_ITEM_H: f64 = 44.0;
+const BTN_H: f64 = 28.0;
+const OK_W: f64 = 80.0;
+
 /// What the shell needs to draw a modal. Note what is NOT here: total height.
 /// It is derived from `content_height`, which is the one number the body can
 /// actually measure — a modal that sizes itself from an enum cannot host a
@@ -158,15 +253,16 @@ pub enum ModalPlacement {
 #[derive(Clone, Debug)]
 pub struct ModalShellSpec<'a> {
     /// Widget-id namespace. The shell names its layer `{ns}` and registers
-    /// `{ns}:header`, `{ns}:modal_bg` and `{ns}:close`; the body registers
-    /// ids of its own on the same layer.
+    /// `{ns}:header`, `{ns}:modal_bg`, `{ns}:close`, `{ns}:tab:{id}`,
+    /// `{ns}:ok` / `{ns}:template` / `{ns}:create`; the body registers ids of
+    /// its own on the same layer.
     pub ns: &'a str,
     pub title: &'a str,
     pub width: f64,
-    /// Height of the body between header and footer, padding excluded.
+    /// Height of the body between tabs and footer, padding excluded.
     pub content_height: f64,
-    /// `0.0` = no footer.
-    pub footer_height: f64,
+    pub tabs: Option<ModalTabs<'a>>,
+    pub footer: ModalFooter<'a>,
     pub placement: ModalPlacement,
     pub layer: ZLayer,
     pub header_height: f64,
@@ -179,18 +275,19 @@ pub struct ModalShellSpec<'a> {
 }
 
 impl<'a> ModalShellSpec<'a> {
-    /// A draggable, centred, closable settings surface — what nearly every
-    /// modal in this codebase is.
+    /// A draggable, centred settings surface whose only action is to leave —
+    /// what nearly every modal in this codebase is.
     pub fn new(ns: &'a str, title: &'a str, width: f64, content_height: f64) -> Self {
         Self {
             ns,
             title,
             width,
             content_height,
-            footer_height: 0.0,
+            tabs: None,
+            footer: ModalFooter::Editor { template: None },
             placement: ModalPlacement::Center,
             layer: ZLayer::Modal,
-            header_height: 44.0,
+            header_height: HEADER_H,
             padding: 16.0,
             radius: 0.0,
             draggable: true,
@@ -208,27 +305,63 @@ impl<'a> ModalShellSpec<'a> {
         self
     }
 
-    pub fn with_footer(mut self, height: f64) -> Self {
-        self.footer_height = height;
+    pub fn with_tabs(mut self, tabs: ModalTabs<'a>) -> Self {
+        self.tabs = Some(tabs);
         self
     }
 
-    /// An anchored surface: no drag, and it hugs the control that opened it.
+    pub fn with_footer(mut self, footer: ModalFooter<'a>) -> Self {
+        self.footer = footer;
+        self
+    }
+
+    /// An anchored surface: no drag, no footer, and it hugs the control that
+    /// opened it. A popover is not a dialog.
     pub fn anchored(mut self, x: f64, y: f64) -> Self {
         self.placement = ModalPlacement::Anchor(x, y);
         self.draggable = false;
+        self.footer = ModalFooter::None;
         self
+    }
+
+    fn tab_bar_h(&self) -> f64 {
+        match self.tabs {
+            Some(ModalTabs::Horizontal { .. }) => TAB_BAR_H,
+            _ => 0.0,
+        }
+    }
+
+    fn rail_w(&self) -> f64 {
+        match self.tabs {
+            Some(ModalTabs::Vertical { width, .. }) => width,
+            _ => 0.0,
+        }
+    }
+
+    fn footer_h(&self) -> f64 {
+        match self.footer {
+            ModalFooter::None => 0.0,
+            _ => FOOTER_H,
+        }
+    }
+
+    /// Total frame height: chrome plus whatever the body said it needs.
+    fn height(&self) -> f64 {
+        self.header_height
+            + self.tab_bar_h()
+            + self.padding * 2.0
+            + self.content_height
+            + self.footer_h()
     }
 }
 
-/// The geometry the shell settled on. The body draws inside `content`; a
-/// footer, when asked for, is the body's to fill — it gets the same layer, so
-/// its buttons register like any other row.
+/// The geometry the shell settled on. The body draws inside `content`.
 #[derive(Clone, Debug, Default)]
 pub struct ModalShell {
     pub frame: WidgetRect,
     pub header: WidgetRect,
     pub content: WidgetRect,
+    pub tabs: Option<WidgetRect>,
     pub footer: Option<WidgetRect>,
 }
 
@@ -236,8 +369,9 @@ pub struct ModalShell {
 ///
 /// This owns everything that used to be copied into every modal: the layer,
 /// the header-drag / background / close registrations, the on-screen clamp,
-/// the title, the separators. A body that uses it never names `ZLayer`,
-/// `Icon::Close` or a screen edge.
+/// the title, the separators, the tab strip and the footer. A body that uses
+/// it never names `ZLayer`, `Icon::Close` or a screen edge, and cannot end up
+/// with a header of its own height or an OK button in its own place.
 pub fn render_modal_shell<F>(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -250,14 +384,11 @@ where
     F: FnOnce(&mut dyn RenderContext, &mut InputCoordinator, &LayerId, &ModalShell),
 {
     let (screen_w, screen_h) = screen;
-    let height = shell_height(spec);
+    let height = spec.height();
 
     // Placement, then the clamp. Anchored surfaces keep a small margin so a
     // gear at the very edge still opens something fully visible.
-    let centre = (
-        (screen_w - spec.width) / 2.0,
-        (screen_h - height) / 2.0,
-    );
+    let centre = ((screen_w - spec.width) / 2.0, (screen_h - height) / 2.0);
     let (x, y) = match spec.placement {
         ModalPlacement::Center => centre,
         ModalPlacement::At(pos) => pos.unwrap_or(centre),
@@ -269,16 +400,31 @@ where
 
     let frame = WidgetRect::new(x, y, spec.width, height);
     let header = WidgetRect::new(x, y, spec.width, spec.header_height);
-    let footer = (spec.footer_height > 0.0).then(|| {
-        WidgetRect::new(x, frame.bottom() - spec.footer_height, spec.width, spec.footer_height)
-    });
+    let footer_h = spec.footer_h();
+    let footer = (footer_h > 0.0)
+        .then(|| WidgetRect::new(x, frame.bottom() - footer_h, spec.width, footer_h));
+
+    let rail_w = spec.rail_w();
+    let bar_h = spec.tab_bar_h();
+    let tabs_rect = match spec.tabs {
+        Some(ModalTabs::Vertical { width, .. }) => Some(WidgetRect::new(
+            x,
+            header.bottom(),
+            width,
+            frame.height - spec.header_height - footer_h,
+        )),
+        Some(ModalTabs::Horizontal { .. }) => {
+            Some(WidgetRect::new(x, header.bottom(), spec.width, bar_h))
+        }
+        None => None,
+    };
     let content = WidgetRect::new(
-        x + spec.padding,
-        header.bottom() + spec.padding,
-        spec.width - spec.padding * 2.0,
+        x + rail_w + spec.padding,
+        header.bottom() + bar_h + spec.padding,
+        spec.width - rail_w - spec.padding * 2.0,
         spec.content_height,
     );
-    let shell = ModalShell { frame, header, content, footer };
+    let shell = ModalShell { frame, header, content, tabs: tabs_rect, footer };
 
     let layer_id = spec.layer.push_named(coord, spec.ns);
     // The background swallows clicks that land on the modal but on nothing in
@@ -325,20 +471,15 @@ where
         );
     }
 
-    ctx.set_stroke_color(&theme.header_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(header.x, header.bottom());
-    ctx.line_to(header.right(), header.bottom());
-    ctx.stroke();
+    hairline(ctx, &theme.header_border, header.x, header.bottom(), header.right());
+
+    if let (Some(tabs), Some(rect)) = (spec.tabs, tabs_rect) {
+        draw_tabs(ctx, coord, &layer_id, spec.ns, tabs, rect, theme);
+    }
 
     if let Some(f) = footer {
-        ctx.set_stroke_color(&theme.footer_border);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(f.x, f.y);
-        ctx.line_to(f.right(), f.y);
-        ctx.stroke();
+        hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
+        draw_footer(ctx, coord, &layer_id, spec, f, theme);
     }
 
     body(ctx, coord, &layer_id, &shell);
@@ -347,9 +488,145 @@ where
     shell
 }
 
-/// Total frame height: chrome plus whatever the body said it needs.
-fn shell_height(spec: &ModalShellSpec<'_>) -> f64 {
-    spec.header_height + spec.padding * 2.0 + spec.content_height + spec.footer_height
+fn hairline(ctx: &mut dyn RenderContext, color: &str, x0: f64, y: f64, x1: f64) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x0, y);
+    ctx.line_to(x1, y);
+    ctx.stroke();
+}
+
+fn draw_tabs(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    ns: &str,
+    tabs: ModalTabs<'_>,
+    rect: WidgetRect,
+    theme: &ModalTheme,
+) {
+    let (items, active, vertical) = match tabs {
+        ModalTabs::Vertical { items, active, .. } => (items, active, true),
+        ModalTabs::Horizontal { items, active } => (items, active, false),
+    };
+    if items.is_empty() {
+        return;
+    }
+
+    let step = if vertical {
+        TAB_ITEM_H
+    } else {
+        rect.width / items.len() as f64
+    };
+
+    for (i, tab) in items.iter().enumerate() {
+        let r = if vertical {
+            WidgetRect::new(rect.x, rect.y + i as f64 * step, rect.width, TAB_ITEM_H)
+        } else {
+            WidgetRect::new(rect.x + i as f64 * step, rect.y, step, rect.height)
+        };
+        let id = format!("{}:tab:{}", ns, tab.id);
+        let is_active = i == active;
+        let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+
+        if is_active {
+            ctx.set_fill_color(&theme.accent);
+            if vertical {
+                ctx.fill_rounded_rect(r.x + 4.0, r.y + 2.0, r.width - 8.0, r.height - 4.0, 4.0);
+            } else {
+                ctx.fill_rect(r.x, r.bottom() - 2.0, r.width, 2.0);
+            }
+        } else if hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+            ctx.fill_rect(r.x, r.y, r.width, r.height);
+        }
+
+        let tint = if is_active && vertical {
+            &theme.accent_text
+        } else if is_active {
+            &theme.accent
+        } else if hovered {
+            &theme.header_text
+        } else {
+            &theme.item_text_muted
+        };
+
+        match tab.icon {
+            Some(icon) if vertical => {
+                const S: f64 = 18.0;
+                draw_svg_icon(ctx, icon.svg(), r.center_x() - S / 2.0, r.center_y() - S / 2.0, S, S, tint);
+            }
+            _ => {
+                ctx.set_font("11px sans-serif");
+                ctx.set_fill_color(tint);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(tab.label, r.center_x(), r.center_y());
+            }
+        }
+
+        coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
+    }
+
+    if vertical {
+        ctx.set_stroke_color(&theme.header_border);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(rect.right(), rect.y);
+        ctx.line_to(rect.right(), rect.bottom());
+        ctx.stroke();
+    }
+}
+
+fn draw_footer(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    spec: &ModalShellSpec<'_>,
+    footer: WidgetRect,
+    theme: &ModalTheme,
+) {
+    let btn_y = footer.center_y() - BTN_H / 2.0;
+
+    // The primary action always lands in the same place: hard against the
+    // right edge, where the eye already goes.
+    let (id, label, primary) = match spec.footer {
+        ModalFooter::None => return,
+        ModalFooter::Editor { template } => {
+            if let Some(name) = template {
+                let t_id = format!("{}:template", spec.ns);
+                let t_w = 150.0;
+                let t_r = WidgetRect::new(footer.x + spec.padding, btn_y, t_w, BTN_H);
+                let hovered = coord.is_hovered(&WidgetId::from(t_id.as_str()));
+                ctx.set_fill_color(if hovered { &theme.item_bg_hover } else { &theme.footer_bg });
+                ctx.fill_rounded_rect(t_r.x, t_r.y, t_r.width, t_r.height, 4.0);
+                ctx.set_stroke_color(&theme.footer_border);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(t_r.x, t_r.y, t_r.width, t_r.height, 4.0);
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(&theme.header_text);
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(name, t_r.center_x(), t_r.center_y());
+                coord.register_on_layer(t_id.as_str(), t_r, Sense::CLICK | Sense::HOVER, layer);
+            }
+            (format!("{}:ok", spec.ns), "OK".to_string(), true)
+        }
+        ModalFooter::Creator { label } => (format!("{}:create", spec.ns), label.to_string(), true),
+    };
+
+    let w = OK_W.max(label.chars().count() as f64 * 8.0 + 24.0);
+    let r = WidgetRect::new(footer.right() - spec.padding - w, btn_y, w, BTN_H);
+    let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+    ctx.set_fill_color(if primary && hovered { &theme.item_bg_hover } else { &theme.accent });
+    ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&theme.accent_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, r.center_x(), r.center_y());
+    coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
 }
 
 /// Keep an edge on screen. A surface taller than the screen is pinned to the
@@ -362,12 +639,30 @@ fn clamp_on_screen(pos: f64, size: f64, screen: f64, margin: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// Height comes from the body, not from a preset — the reason the old
-    /// widget could not host a real modal.
+    /// Height comes from the body plus the chrome the modal actually asked
+    /// for — the reason the old widget could not host a real modal.
     #[test]
     fn height_is_chrome_plus_body() {
-        let s = ModalShellSpec::new("t", "Title", 300.0, 100.0).with_footer(40.0);
-        assert_eq!(shell_height(&s), 44.0 + 32.0 + 100.0 + 40.0);
+        let plain = ModalShellSpec::new("t", "Title", 300.0, 100.0);
+        assert_eq!(plain.height(), HEADER_H + 32.0 + 100.0 + FOOTER_H);
+
+        // A rail costs width, not height; a bar costs height.
+        let rail = plain.clone().with_tabs(ModalTabs::Vertical {
+            width: TAB_RAIL_W,
+            items: &[],
+            active: 0,
+        });
+        assert_eq!(rail.height(), plain.height());
+
+        let bar = plain.clone().with_tabs(ModalTabs::Horizontal { items: &[], active: 0 });
+        assert_eq!(bar.height(), plain.height() + TAB_BAR_H);
+    }
+
+    /// A picker is not a dialog: no footer, so no footer height.
+    #[test]
+    fn a_footerless_surface_costs_no_footer_height() {
+        let s = ModalShellSpec::new("t", "Title", 300.0, 100.0).with_footer(ModalFooter::None);
+        assert_eq!(s.height(), HEADER_H + 32.0 + 100.0);
     }
 
     /// A remembered position that would hang the modal off an edge is pulled
@@ -386,12 +681,13 @@ mod tests {
         assert_eq!(clamp_on_screen(50.0, 900.0, 400.0, 0.0), 0.0);
     }
 
-    /// Anchoring turns dragging off: a surface pinned to a gear has nowhere
-    /// to be dragged to.
+    /// Anchoring turns dragging off and drops the footer: a surface pinned to
+    /// a gear has nowhere to be dragged to and nothing to confirm.
     #[test]
-    fn anchoring_disables_drag() {
+    fn anchoring_makes_a_popover_not_a_dialog() {
         let s = ModalShellSpec::new("t", "Title", 300.0, 100.0).anchored(10.0, 20.0);
         assert!(!s.draggable);
+        assert!(matches!(s.footer, ModalFooter::None));
         assert_eq!(s.placement, ModalPlacement::Anchor(10.0, 20.0));
     }
 }

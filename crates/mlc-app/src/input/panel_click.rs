@@ -4017,7 +4017,9 @@ impl ChartApp {
 
         // === DOM settings modal (Stage B, 2026-07-30) ===
         if let Some(rest) = widget_id.strip_prefix("dom_modal:") {
-            if rest == "close" {
+            // OK and the ✕ are the same exit — these settings apply as they
+            // are touched, so there is nothing for a button to confirm.
+            if rest == "close" || rest == "ok" {
                 self.dom_modal.close();
                 return;
             }
