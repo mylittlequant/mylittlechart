@@ -1299,7 +1299,7 @@ pub fn render_wl_group_name_input(
     // "Save" button (primary)
     let save_rect = WidgetRect::new(save_x, btns_y, btn_w, btn_h);
     result.save_btn_rect = save_rect;
-    ctx.set_fill_color("#2962ff");
+    ctx.set_fill_color(&toolbar_theme.accent);
     ctx.fill_rounded_rect(save_rect.x, save_rect.y, save_rect.width, save_rect.height, 4.0);
     ctx.set_font("13px sans-serif");
     ctx.set_fill_color("#ffffff");

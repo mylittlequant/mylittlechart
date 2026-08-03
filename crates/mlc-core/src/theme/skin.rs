@@ -284,7 +284,23 @@ impl SkinTokens {
         s.hollow_up = self.bids.to_string();
         s.hollow_down = self.asks.to_string();
 
-        // ── Trading panels ───────────────────────────────────────────────
+        self.apply_trading(rt);
+    }
+
+    /// The trading-panel block on its own.
+    ///
+    /// A UI preset owns its chrome and its chart colours but has never owned
+    /// PANEL colours: before this it inherited `RuntimeTradingColors::default()`,
+    /// a hardcoded GitHub-dark set, so the Light theme drew a near-black panel
+    /// with a blue-grey header on a white app. Presets now run the same
+    /// derivation skins do, over their own bg and text.
+    pub fn apply_trading(&self, rt: &mut RuntimeTheme) {
+        let bg_dim = self.bg_dimmed();
+        let bg_vdim = self.bg_very_dimmed();
+        let bg_raised = self.bg_raised();
+        let hairline = self.hairline();
+        let t_vdim = self.text_very_dimmed();
+
         let tr = &mut rt.trading;
         tr.panel_bg = self.bg.to_string();
         tr.row_bg_alt = mix_colors(self.bg, self.text, 0.03);
@@ -337,6 +353,24 @@ impl SkinTokens {
         tr.tc_bg = self.bg.to_string();
         tr.tc_inner_bg = mix_colors(self.bg, self.text, 0.05);
         tr.tc_separator = hairline;
+    }
+
+    /// Read a preset's own eight colours so the panel derivation can run
+    /// over them. The pairs come from the candle body/wick, which is where a
+    /// preset already states what its bid and ask sides look like.
+    pub fn from_ui_theme(theme: &super::preset::UITheme) -> Self {
+        Self {
+            name: theme.name,
+            bg: theme.colors.toolbar_bg,
+            text: theme.colors.text_primary,
+            bids: theme.series.candle_up_body,
+            bids_secondary: theme.series.candle_up_wick,
+            asks: theme.series.candle_down_body,
+            asks_secondary: theme.series.candle_down_wick,
+            accent: theme.colors.accent,
+            accent_secondary: theme.colors.accent_hover,
+            style: PanelStyleParams::default(),
+        }
     }
 
     // ── Presets (token values from the TapeSurf dissection table) ────────

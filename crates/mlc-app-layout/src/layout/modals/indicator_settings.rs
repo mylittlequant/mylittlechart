@@ -1289,7 +1289,7 @@ pub fn render_indicator_settings_modal(
 
     result.footer_buttons.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
 
-    // ── "OK" button (right side, filled #2962ff) ─────────────────────────────
+    // ── "OK" button (right side, accent-filled) ──────────────────────────────
     //
     // There is no Cancel next to it, and there was nothing for one to do:
     // every control in this modal applies to the live instance the moment it
@@ -1302,7 +1302,7 @@ pub fn render_indicator_settings_modal(
     let ok_btn_width = 70.0;
     let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
     let ok_hovered = hovered_btn == Some("ok");
-    ctx.set_fill_color(if ok_hovered { "#4080ff" } else { "#2962ff" });
+    ctx.set_fill_color(if ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
     ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
     ctx.set_fill_color("#ffffff");
     ctx.set_font("13px sans-serif");

@@ -321,7 +321,7 @@ pub fn render_settings_modal(
 
     // "OK" button
     let is_ok_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("ok");
-    ctx.set_fill_color(if is_ok_hovered { "#4080ff" } else { "#2962ff" });
+    ctx.set_fill_color(if is_ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
     ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
     ctx.set_fill_color("#ffffff");
     ctx.set_font("13px sans-serif");

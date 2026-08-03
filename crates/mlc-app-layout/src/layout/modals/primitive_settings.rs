@@ -1727,12 +1727,12 @@ pub fn render_primitive_settings_modal(
 
         result.content_items.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
 
-        // ── "OK" button (right side, filled #2962ff) ─────────────────────────
+        // ── "OK" button (right side, accent-filled) ──────────────────────────
         let ok_btn_width = 70.0;
         let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
 
         let is_ok_hovered = state.hovered_item_id.as_deref() == Some("ok");
-        ctx.set_fill_color(if is_ok_hovered { "#4080ff" } else { "#2962ff" });
+            ctx.set_fill_color(if is_ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
         ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
         ctx.set_fill_color("#ffffff");
         ctx.set_font("13px sans-serif");

@@ -474,7 +474,7 @@ impl Default for RuntimeTradingColors {
 
 impl From<&UITheme> for RuntimeTheme {
     fn from(theme: &UITheme) -> Self {
-        Self {
+        let mut rt = Self {
             name: theme.name.to_string(),
             colors: RuntimeUIColors {
                 toolbar_bg: theme.colors.toolbar_bg.to_string(),
@@ -624,7 +624,13 @@ impl From<&UITheme> for RuntimeTheme {
             style_params: StyleParams::default(),
             trading: RuntimeTradingColors::default(),
             panel_style: super::skin::PanelStyleParams::default(),
-        }
+        };
+        // Panel colours derive from the preset's OWN bg and text, the same
+        // way a skin derives them. Left at their defaults they are a
+        // hardcoded GitHub-dark set — which is why the Light theme drew a
+        // near-black tape panel with a blue-grey header on a white app.
+        super::skin::SkinTokens::from_ui_theme(theme).apply_trading(&mut rt);
+        rt
     }
 }
 
@@ -887,5 +893,38 @@ mod tests {
         let restored: RuntimeTheme = serde_json::from_value(value).unwrap();
         assert_eq!(restored.series.step_line_color, "#26a69a");
         assert_eq!(restored.series.line_markers_color, "#26a69a");
+    }
+
+    /// Panel colours follow the theme, not a constant. Before this, every
+    /// non-skin preset inherited a hardcoded GitHub-dark set, so the Light
+    /// theme drew a near-black tape panel with a blue-grey header on a white
+    /// app.
+    #[test]
+    fn a_preset_derives_its_panel_colours_from_its_own_background() {
+        for name in ["dark", "light", "high_contrast", "mascot"] {
+            let rt = RuntimeTheme::from_preset(name);
+            assert_eq!(
+                rt.trading.panel_bg, rt.colors.toolbar_bg,
+                "{name}: the panel surface is the app surface"
+            );
+            assert_ne!(
+                rt.trading.header_bg, "#161b22ff",
+                "{name}: still on the hardcoded default"
+            );
+        }
+
+        // A light theme's raised header must be a LIGHT surface. The old
+        // constant was darker than its own background by ~180 luma.
+        let light = RuntimeTheme::from_preset("light");
+        let luma = |hex: &str| {
+            let h = hex.trim_start_matches('#');
+            let v = |i: usize| u32::from_str_radix(&h[i..i + 2], 16).unwrap();
+            v(0) + v(2) + v(4)
+        };
+        assert!(
+            luma(&light.trading.header_bg) > 3 * 128,
+            "light header_bg is dark: {}",
+            light.trading.header_bg
+        );
     }
 }

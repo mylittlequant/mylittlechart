@@ -139,6 +139,7 @@ fn draw_buttons(
     y: f64,
     editing: bool,
     state: &AlertSettingsState,
+    toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
 ) {
@@ -146,11 +147,11 @@ fn draw_buttons(
     {
         let save_x = content_x + content_w - BTN_W;
         let save_hovered = state.hovered_item_id.as_deref() == Some("alert_set:save");
-        let save_bg = if save_hovered { "#1e88e5" } else { "#2962ff" };
+        let save_bg = if save_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent };
         ctx.set_fill_color(save_bg);
         ctx.fill_rounded_rect(save_x, y, BTN_W, BTN_H, 4.0);
 
-        ctx.set_fill_color("#ffffff");
+        ctx.set_fill_color(&toolbar_theme.item_text_active);
         ctx.set_font("bold 12px sans-serif");
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
@@ -621,7 +622,7 @@ fn render_settings_tab(
     let btn_y = y + PADDING / 2.0;
     draw_buttons(
         ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state,
+        state.editing_alert_id.is_some(), state, toolbar_theme,
         input_coordinator, layer_id,
     );
 
@@ -1126,7 +1127,7 @@ fn render_notifications_tab(
     let btn_y = y + PADDING / 2.0;
     draw_buttons(
         ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state,
+        state.editing_alert_id.is_some(), state, toolbar_theme,
         input_coordinator, layer_id,
     );
 }
