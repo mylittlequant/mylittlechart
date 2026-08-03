@@ -1677,17 +1677,10 @@ pub struct CompareSettingsState {
     /// Cached timeframe visibility config (loaded from series at open time).
     /// `None` means visible on all timeframes.
     pub cached_timeframe_visibility: Option<TimeframeVisibilityConfig>,
-    // ---- Original values saved at open time (for Cancel revert) ----
-    /// Original line color before any edits.
-    pub original_color: String,
-    /// Original line width before any edits.
-    pub original_line_width: f32,
-    /// Original line style before any edits.
-    pub original_line_style: String,
-    /// Original chart type before any edits.
-    pub original_chart_type: String,
-    /// Original timeframe visibility (for Cancel revert).
-    pub original_timeframe_visibility: Option<TimeframeVisibilityConfig>,
+    // The `original_*` snapshot that used to live here fed one thing: the
+    // Cancel button's revert. Both are gone (owner ruling 2026-08-03) — this
+    // modal edits a series that already exists, so its edits apply live and
+    // there is one exit, not two outcomes.
     // ---- Inline text editing for tf min/max number fields ----
     /// Which sub-field is currently being edited inside this modal.
     /// Text/cursor/selection live in TextFieldStore under `COMPARE_SETTINGS_FIELD`.
@@ -1730,11 +1723,6 @@ impl Default for CompareSettingsState {
             cached_bar_count: 0,
             cached_base_price: 0.0,
             cached_timeframe_visibility: None,
-            original_color: "#2196F3".to_string(),
-            original_line_width: 2.0,
-            original_line_style: "solid".to_string(),
-            original_chart_type: "line".to_string(),
-            original_timeframe_visibility: None,
             active_field_id: None,
             active_render: ActiveFieldRender::default(),
             text_select_dragging: false,
@@ -1788,12 +1776,6 @@ impl CompareSettingsState {
         self.cached_bar_count = bar_count;
         self.cached_base_price = base_price;
         self.cached_timeframe_visibility = timeframe_visibility.clone();
-        // Save originals for Cancel revert.
-        self.original_color = color.to_string();
-        self.original_line_width = line_width;
-        self.original_line_style = line_style.to_string();
-        self.original_chart_type = chart_type.to_string();
-        self.original_timeframe_visibility = timeframe_visibility;
         // Don't reset position — keep last for convenience.
     }
 

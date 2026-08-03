@@ -19,7 +19,7 @@ use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{draw_input, draw_input_cursor, render_modal_frame_only, InputConfig, ModalTheme, WidgetTheme};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::z_order::ZLayer;
-use mlc_core::i18n::{ModalKey, TextKey, t_modal, t_text};
+use mlc_core::i18n::{ModalKey, t_modal};
 use crate::ui::Icon;
 use uzor::input::Sense;
 use uzor::types::Rect as WidgetRect;
@@ -37,7 +37,6 @@ const ITEM_PADDING: f64 = 8.0;
 const RADIUS: f64 = 6.0;
 const BTN_H: f64 = 32.0;
 const BTN_W: f64 = 100.0;
-const BTN_GAP: f64 = 8.0;
 const LABEL_W: f64 = 110.0;
 
 // =============================================================================
@@ -126,7 +125,11 @@ fn draw_dropdown_field(
     draw_svg_icon(ctx, Icon::ChevronDown.svg(), arrow_x, arrow_y, arrow_size, arrow_size, &toolbar_theme.item_text_muted);
 }
 
-/// Draw Cancel + Create/Save buttons at the bottom of the modal.
+/// Draw the Create/Save button at the bottom of the modal.
+///
+/// One button, because there is only one action: the alert does not exist
+/// until it is pressed. The ✕ is the abort — the Cancel that used to sit
+/// beside it was the same exit under another label.
 #[allow(clippy::too_many_arguments)]
 fn draw_buttons(
     ctx: &mut dyn RenderContext,
@@ -136,36 +139,12 @@ fn draw_buttons(
     y: f64,
     editing: bool,
     state: &AlertSettingsState,
-    toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
 ) {
-    let buttons_x = content_x + content_w - BTN_W * 2.0 - BTN_GAP;
-
-    // Cancel
-    {
-        let cancel_hovered = state.hovered_item_id.as_deref() == Some("alert_set:cancel");
-        let cancel_bg = if cancel_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
-        ctx.set_fill_color(cancel_bg);
-        ctx.fill_rounded_rect(buttons_x, y, BTN_W, BTN_H, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(buttons_x, y, BTN_W, BTN_H, 4.0);
-
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_text(TextKey::Cancel), buttons_x + BTN_W / 2.0, y + BTN_H / 2.0);
-
-        let r = WidgetRect::new(buttons_x, y, BTN_W, BTN_H);
-        result.content_items.push(("alert_set:cancel".to_string(), r));
-        input_coordinator.register_on_layer("alert_set:cancel", r, Sense::CLICK, layer_id);
-    }
-
     // Create / Save
     {
-        let save_x = buttons_x + BTN_W + BTN_GAP;
+        let save_x = content_x + content_w - BTN_W;
         let save_hovered = state.hovered_item_id.as_deref() == Some("alert_set:save");
         let save_bg = if save_hovered { "#1e88e5" } else { "#2962ff" };
         ctx.set_fill_color(save_bg);
@@ -642,7 +621,7 @@ fn render_settings_tab(
     let btn_y = y + PADDING / 2.0;
     draw_buttons(
         ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state, toolbar_theme,
+        state.editing_alert_id.is_some(), state,
         input_coordinator, layer_id,
     );
 
@@ -1147,7 +1126,7 @@ fn render_notifications_tab(
     let btn_y = y + PADDING / 2.0;
     draw_buttons(
         ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state, toolbar_theme,
+        state.editing_alert_id.is_some(), state,
         input_coordinator, layer_id,
     );
 }

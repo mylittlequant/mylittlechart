@@ -4840,10 +4840,10 @@ impl ChartApp {
                     self.standalone_panels.wl_group_name_input.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                "cancel" | "close" => {
+                "close" => {
                     self.standalone_panels.wl_group_name_input.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    eprintln!("[WatchlistGroupName] cancelled");
+                    eprintln!("[WatchlistGroupName] aborted");
                 }
                 "input" => {
                     // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
@@ -4982,12 +4982,6 @@ impl ChartApp {
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[ChartApp] preset name input committed via Save button");
-                }
-                "cancel" => {
-                    self.panel_app.preset_name_input.close();
-                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    eprintln!("[ChartApp] preset name input closed via Cancel button");
                 }
                 "close" => {
                     self.panel_app.preset_name_input.close();

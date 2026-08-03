@@ -89,7 +89,10 @@ impl ChartApp {
             _ if rest.starts_with("footer:") => {
                 let btn_id = &rest["footer:".len()..];
                 match btn_id {
-                    "ok" | "cancel" => {
+                    // No "cancel": this modal edits a chart that already
+                    // exists and every control applies as it is touched, so
+                    // OK, the ✕ and Escape are one and the same exit.
+                    "ok" => {
                         self.panel_app.chart_settings_state.close();
                         eprintln!("[ChartApp] chart_settings closed via footer: {}", btn_id);
                     }
@@ -1615,8 +1618,8 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.open_select_dropdown = None;
         }
 
-        // ── Footer: OK / Cancel ───────────────────────────────────────────────
-        if item_id == "ok" || item_id == "cancel" {
+        // ── Footer: OK (an exit, not a confirmation) ──────────────────────────
+        if item_id == "ok" {
             self.panel_app.primitive_settings_state.close();
             eprintln!("[ChartApp] prim_settings closed via: {}", item_id);
             return;
@@ -2414,7 +2417,7 @@ impl ChartApp {
             "modal_bg" | "input" => {
                 // No-op — click inside the modal is absorbed.
             }
-            "close" | "cancel" => {
+            "close" => {
                 self.panel_app.primitive_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] prim_tmpl modal cancelled");
@@ -2453,7 +2456,7 @@ impl ChartApp {
     pub(crate) fn handle_ind_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {}
-            "close" | "cancel" => {
+            "close" => {
                 self.panel_app.indicator_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] ind_tmpl modal cancelled");
@@ -2499,7 +2502,7 @@ impl ChartApp {
     pub(crate) fn handle_cmp_tmpl_modal_click(&mut self, rest: &str) {
         match rest {
             "modal_bg" | "input" => {}
-            "close" | "cancel" => {
+            "close" => {
                 self.panel_app.compare_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] cmp_tmpl modal cancelled");
@@ -2532,7 +2535,7 @@ impl ChartApp {
             "modal_bg" | "input" => {
                 // No-op — click inside the modal is absorbed.
             }
-            "close" | "cancel" => {
+            "close" => {
                 self.panel_app.chart_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] chart_tmpl modal cancelled");
@@ -2558,7 +2561,9 @@ impl ChartApp {
     /// Handle clicks on widgets registered with the "alert_set:" prefix.
     pub(super) fn handle_alert_settings_click(&mut self, rest: &str) {
         match rest {
-            "close" | "cancel" => {
+            // Creator: `save` writes the alert, the ✕ aborts. There is no
+            // Cancel — it was a second ✕ under another name.
+            "close" => {
                 self.panel_app.alert_settings_state.close();
             }
             "modal_bg" | "header" => {

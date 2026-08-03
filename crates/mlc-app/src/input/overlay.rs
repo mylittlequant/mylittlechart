@@ -310,32 +310,12 @@ impl ChartApp {
                 self.autosave_snapshot();
                 eprintln!("[ChartApp] cmp_settings closed ({})", rest);
             }
-            "cancel" => {
-                // Revert all changes to original values before closing.
-                let idx = self.panel_app.compare_settings_state.series_index;
-                let orig_color = self.panel_app.compare_settings_state.original_color.clone();
-                let orig_width = self.panel_app.compare_settings_state.original_line_width;
-                let orig_style = self.panel_app.compare_settings_state.original_line_style.clone();
-                let orig_chart_type = self.panel_app.compare_settings_state.original_chart_type.clone();
-                let orig_tf = self.panel_app.compare_settings_state.original_timeframe_visibility.clone();
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.compare_overlay.set_series_color_by_index(idx, &orig_color);
-                    window.compare_overlay.set_series_line_width_by_index(idx, orig_width);
-                    window.compare_overlay.set_series_line_style_by_index(idx, &orig_style);
-                    window.compare_overlay.set_series_chart_type_by_index(idx, &orig_chart_type);
-                    if let Some(tf) = orig_tf.clone() {
-                        window.compare_overlay.set_series_timeframe_visibility(idx, tf);
-                    }
-                }
-                self.panel_app.compare_settings_state.cached_color = orig_color;
-                self.panel_app.compare_settings_state.cached_line_width = orig_width;
-                self.panel_app.compare_settings_state.cached_line_style = orig_style;
-                self.panel_app.compare_settings_state.cached_chart_type = orig_chart_type;
-                self.panel_app.compare_settings_state.cached_timeframe_visibility = orig_tf;
-                self.panel_app.compare_settings_state.close();
-                self.autosave_snapshot();
-                eprintln!("[ChartApp] cmp_settings cancelled and reverted");
-            }
+            // The Cancel that used to sit here reverted colour, width, style,
+            // chart type and TF visibility from a snapshot taken on open. It is
+            // gone with the button (owner ruling 2026-08-03): a compare series
+            // already exists and its edits apply live, so this modal is an
+            // EDITOR — one exit, no confirmation. Undo/redo deliberately does
+            // not cover presentation settings; templates are how a look is kept.
             "modal_bg" => {
                 // Click inside modal body — close template dropdown if open
                 self.panel_app.compare_settings_state.template_dropdown_open = false;

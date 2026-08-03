@@ -1729,9 +1729,7 @@ pub fn render_primitive_settings_modal(
 
         // ── "OK" button (right side, filled #2962ff) ─────────────────────────
         let ok_btn_width = 70.0;
-        let cancel_btn_width = 80.0;
         let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-        let cancel_btn_x = ok_btn_x - button_padding - cancel_btn_width;
 
         let is_ok_hovered = state.hovered_item_id.as_deref() == Some("ok");
         ctx.set_fill_color(if is_ok_hovered { "#4080ff" } else { "#2962ff" });
@@ -1743,23 +1741,6 @@ pub fn render_primitive_settings_modal(
         ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
 
         result.content_items.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
-
-        // ── "Отмена" button (before OK, outline only) ────────────────────────
-        let is_cancel_hovered = state.hovered_item_id.as_deref() == Some("cancel");
-        if is_cancel_hovered {
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-        }
-        ctx.set_stroke_color(if is_cancel_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_font("13px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
-
-        result.content_items.push(("cancel".to_string(), WidgetRect::new(cancel_btn_x, button_y, cancel_btn_width, button_height)));
 
         // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────
         if state.template_dropdown_open {

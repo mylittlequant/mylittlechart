@@ -196,8 +196,9 @@ pub fn render_preset_name_input(
 
     // Footer buttons — right-aligned
     let btns_y = footer_y + (footer_h - btn_h) / 2.0;
-    let cancel_x = modal_x + modal_w - padding - btn_w;
-    let save_x = cancel_x - btn_gap - btn_w;
+    // Save takes the right-hand slot; the ✕ is the abort.
+    let save_x = modal_x + modal_w - padding - btn_w;
+    let _ = btn_gap;
 
     // "Save" button (primary)
     let save_rect = WidgetRect::new(save_x, btns_y, btn_w, btn_h);
@@ -213,25 +214,6 @@ pub fn render_preset_name_input(
     input_coordinator.register_on_layer(
         "preset_name_input:save",
         uzor::types::Rect::new(save_rect.x, save_rect.y, save_rect.width, save_rect.height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // "Cancel" button (secondary — themed border + text)
-    let cancel_rect = WidgetRect::new(cancel_x, btns_y, btn_w, btn_h);
-    result.cancel_btn_rect = cancel_rect;
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(cancel_rect.x, cancel_rect.y, cancel_rect.width, cancel_rect.height, 4.0);
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(TextKey::Cancel.get(current_language()), cancel_rect.center_x(), cancel_rect.center_y());
-
-    input_coordinator.register_on_layer(
-        "preset_name_input:cancel",
-        uzor::types::Rect::new(cancel_rect.x, cancel_rect.y, cancel_rect.width, cancel_rect.height),
         uzor::input::Sense::CLICK,
         &layer_id,
     );

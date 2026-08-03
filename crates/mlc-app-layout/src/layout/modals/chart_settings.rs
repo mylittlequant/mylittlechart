@@ -298,7 +298,6 @@ pub fn render_settings_modal(
 
     let button_height = 32.0;
     let button_y = footer_y + (footer_height - button_height) / 2.0;
-    let button_padding = 12.0;
 
     // "Шаблон" button (left side)
     let template_btn_width = 80.0;
@@ -315,10 +314,10 @@ pub fn render_settings_modal(
 
     // Right side buttons
     let ok_btn_width = 70.0;
-    let cancel_btn_width = 80.0;
+
 
     let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-    let cancel_btn_x = ok_btn_x - button_padding - cancel_btn_width;
+
 
     // "OK" button
     let is_ok_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("ok");
@@ -329,21 +328,6 @@ pub fn render_settings_modal(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
-
-    // "Отмена" button
-    let is_cancel_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("cancel");
-    if is_cancel_hovered {
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-        ctx.fill_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-    }
-    ctx.set_stroke_color(if is_cancel_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-    ctx.set_fill_color(text_color);
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
 
     // Populate result
     result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
@@ -376,7 +360,6 @@ pub fn render_settings_modal(
     // Footer buttons
     let footer_btns = [
         ("template", template_btn_x, template_btn_width),
-        ("cancel", cancel_btn_x, cancel_btn_width),
         ("ok", ok_btn_x, ok_btn_width),
     ];
     for (btn_id, btn_x, btn_width) in &footer_btns {

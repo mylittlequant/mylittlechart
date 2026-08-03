@@ -17,7 +17,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
-use mlc_core::i18n::{ModalKey, TextKey, t_modal, t_text};
+use mlc_core::i18n::{ModalKey, t_modal};
 
 /// Hit-test rectangles returned from a `render_template_name_modal` call.
 #[derive(Clone, Debug, Default)]
@@ -194,8 +194,10 @@ pub fn render_template_name_modal(
 
     // --- Footer buttons (right-aligned) ---
     let btns_y = footer_y + (footer_h - btn_h) / 2.0;
-    let cancel_x = modal_x + modal_w - padding - btn_w;
-    let save_x = cancel_x - btn_gap - btn_w;
+    // Save takes the right-hand slot the Cancel used to hold: the ✕ is the
+    // abort, so the primary action belongs where the eye already goes.
+    let save_x = modal_x + modal_w - padding - btn_w;
+    let _ = btn_gap;
 
     // "Сохранить" button (primary).
     let save_rect = WidgetRect::new(save_x, btns_y, btn_w, btn_h);
@@ -211,25 +213,6 @@ pub fn render_template_name_modal(
     input_coordinator.register_on_layer(
         format!("{}:save", ns_prefix),
         save_rect,
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // "Отмена" button (secondary).
-    let cancel_rect = WidgetRect::new(cancel_x, btns_y, btn_w, btn_h);
-    result.cancel_btn_rect = cancel_rect;
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(cancel_rect.x, cancel_rect.y, cancel_rect.width, cancel_rect.height, 4.0);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_text(TextKey::Cancel), cancel_rect.center_x(), cancel_rect.center_y());
-
-    input_coordinator.register_on_layer(
-        format!("{}:cancel", ns_prefix),
-        cancel_rect,
         uzor::input::Sense::CLICK,
         &layer_id,
     );

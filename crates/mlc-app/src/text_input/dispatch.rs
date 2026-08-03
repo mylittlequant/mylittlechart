@@ -1083,15 +1083,17 @@ impl ChartApp {
                     self.handle_chart_tmpl_modal_click("save");
                 }
             }
+            // Escape in the name field takes the same exit the ✕ does — the
+            // dialogs no longer have a Cancel to route it through.
             TextAction::Cancel => {
                 if id == PRIMITIVE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_prim_tmpl_modal_click("cancel");
+                    self.handle_prim_tmpl_modal_click("close");
                 } else if id == INDICATOR_SETTINGS_TEMPLATE_NAME {
-                    self.handle_ind_tmpl_modal_click("cancel");
+                    self.handle_ind_tmpl_modal_click("close");
                 } else if id == COMPARE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_cmp_tmpl_modal_click("cancel");
+                    self.handle_cmp_tmpl_modal_click("close");
                 } else if id == CHART_SETTINGS_TEMPLATE_NAME {
-                    self.handle_chart_tmpl_modal_click("cancel");
+                    self.handle_chart_tmpl_modal_click("close");
                 }
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
