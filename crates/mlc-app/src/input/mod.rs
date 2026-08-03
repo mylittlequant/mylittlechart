@@ -6636,6 +6636,17 @@ impl ChartApp {
             return;
         }
 
+        // Everything else that is open: OK, the ✕ and Escape are one exit
+        // (owner ruling 2026-08-03), so Escape closes whatever the backdrop
+        // click would close — the sidebar settings modals, overlay settings,
+        // user settings, the watchlist, the colour pickers. Before this the
+        // two paths kept separate hand-written lists and Escape simply did
+        // nothing on five of them. An unmatched layer falls through to the
+        // tool-deselect below rather than wiping the modal stack.
+        if self.close_topmost_known_modal_layer() {
+            return;
+        }
+
         // Deselect drawing tool.
         self.panel_app.toolbar_state.deselect_tool();
         let active_bid_key = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);

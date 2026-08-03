@@ -1891,6 +1891,19 @@ impl ChartApp {
     /// Z-order — so that clicking outside a colour-picker dismisses only the
     /// picker and leaves the parent settings modal open.
     pub(super) fn close_topmost_modal_layer(&mut self) {
+        if !self.close_topmost_known_modal_layer() {
+            // Unknown layer — fall back to closing everything so the UI never
+            // gets stuck in an unrecoverable state.
+            self.close_open_modals();
+        }
+    }
+
+    /// Close the topmost modal layer IF we know what it is; report whether we
+    /// did. Escape uses this and the backdrop click uses the wrapper above:
+    /// "get me out of here" may close everything on an unknown layer, but a
+    /// keystroke that missed a match must fall through to the chart, not wipe
+    /// the modal stack.
+    pub(super) fn close_topmost_known_modal_layer(&mut self) -> bool {
         // Borrow, clone the layer id, then drop the RefMut before calling any
         // &mut self methods that would conflict with the borrow.
         let layer_id_opt = self.input_coordinator.borrow_mut().topmost_modal_layer().cloned();
@@ -1980,14 +1993,18 @@ impl ChartApp {
                     self.tc_modal.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
                 }
+                // Standalone panel-settings surface (the gear popover).
+                "pset" => {
+                    self.panel_settings_open = None;
+                }
                 _ => {
-                    // Unknown layer — fall back to closing everything so the UI
-                    // never gets stuck in an unrecoverable state.
-                    eprintln!("[ChartApp] close_topmost_modal_layer: unknown layer '{}', closing all", name);
-                    self.close_open_modals();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: unknown layer '{}'", name);
+                    return false;
                 }
             }
+            return true;
         }
+        false
     }
 
     /// Close all open modals (state lives inside panel_app at checkpoint).
