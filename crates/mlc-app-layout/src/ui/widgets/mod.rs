@@ -10,9 +10,8 @@ pub mod radio_group;
 pub use types::{WidgetState, WidgetTheme};
 pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_text_to_width, layout_btn_row};
 pub use modal::{
-    ModalSize, ModalConfig, ModalTheme, ModalResult, ModalTab,
-    draw_modal_backdrop, draw_modal_frame, draw_close_icon,
-    draw_modal_tabs, render_modal_frame_only, render_modal,
+    render_modal_frame_only, render_modal_shell,
+    ModalPlacement, ModalShell, ModalShellSpec, ModalTheme,
 };
 pub use input::{InputConfig, InputType, InputResult, draw_input, draw_input_cursor, input_position_to_cursor, cursor_from_char_positions};
 pub use slider::{

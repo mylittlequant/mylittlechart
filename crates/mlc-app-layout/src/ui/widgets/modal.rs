@@ -2,150 +2,12 @@
 //!
 //! Platform-agnostic modal dialog rendering using RenderContext.
 
-use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
-use crate::ui::widgets::types::WidgetTheme;
+use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use crate::ui::z_order::ZLayer;
+use crate::ui::Icon;
+use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
-use uzor::types::IconId;
-
-/// Modal size preset
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ModalSize {
-    Small,
-    #[default]
-    Medium,
-    Large,
-    FullScreen,
-    Custom { width: u32, height: u32 },
-}
-
-impl ModalSize {
-    pub fn dimensions(&self) -> (f64, f64) {
-        match self {
-            Self::Small => (400.0, 300.0),
-            Self::Medium => (600.0, 450.0),
-            Self::Large => (800.0, 600.0),
-            Self::FullScreen => (0.0, 0.0), // Will use screen size
-            Self::Custom { width, height } => (*width as f64, *height as f64),
-        }
-    }
-}
-
-/// Modal configuration
-#[derive(Clone, Debug)]
-pub struct ModalConfig {
-    /// Modal title
-    pub title: String,
-    /// Modal size
-    pub size: ModalSize,
-    /// Show close button
-    pub show_close: bool,
-    /// Show overlay backdrop
-    pub show_backdrop: bool,
-    /// Backdrop opacity (0.0 - 1.0)
-    pub backdrop_opacity: f64,
-    /// Close on backdrop click
-    pub close_on_backdrop: bool,
-    /// Corner radius
-    pub radius: f64,
-    /// Header height
-    pub header_height: f64,
-    /// Footer height (0 if no footer)
-    pub footer_height: f64,
-    /// Padding
-    pub padding: f64,
-}
-
-impl Default for ModalConfig {
-    fn default() -> Self {
-        Self {
-            title: String::new(),
-            size: ModalSize::Medium,
-            show_close: true,
-            show_backdrop: true,
-            backdrop_opacity: 0.5,
-            close_on_backdrop: true,
-            radius: 8.0,
-            header_height: 48.0,
-            footer_height: 0.0,
-            padding: 16.0,
-        }
-    }
-}
-
-impl ModalConfig {
-    pub fn new(title: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// Create a confirmation dialog preset (small, simple)
-    pub fn confirmation(title: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            size: ModalSize::Small,
-            radius: 0.0, // No rounded corners for minimal style
-            header_height: 36.0,
-            padding: 12.0,
-            ..Default::default()
-        }
-    }
-
-    /// Create a settings modal preset (medium-large, with tabs)
-    pub fn settings(title: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            size: ModalSize::Custom { width: 620, height: 580 },
-            radius: 0.0, // No rounded corners for minimal style
-            header_height: 44.0,
-            padding: 16.0,
-            footer_height: 52.0,
-            ..Default::default()
-        }
-    }
-
-    /// Create a search overlay preset (centered, medium size)
-    pub fn search(title: &str) -> Self {
-        Self {
-            title: title.to_string(),
-            size: ModalSize::Medium,
-            radius: 0.0, // No rounded corners for minimal style
-            header_height: 36.0,
-            padding: 12.0,
-            show_backdrop: false, // Search overlays don't block everything
-            ..Default::default()
-        }
-    }
-
-    pub fn with_size(mut self, size: ModalSize) -> Self {
-        self.size = size;
-        self
-    }
-
-    pub fn with_footer(mut self, height: f64) -> Self {
-        self.footer_height = height;
-        self
-    }
-
-    pub fn without_close(mut self) -> Self {
-        self.show_close = false;
-        self
-    }
-
-    /// Set custom content height (adjusts modal height dynamically)
-    pub fn with_content_height(mut self, content_height: f64) -> Self {
-        let total_height = self.header_height + content_height + self.footer_height + self.padding * 2.0;
-        self.size = match self.size {
-            ModalSize::Custom { width, .. } => ModalSize::Custom { width, height: total_height as u32 },
-            _ => {
-                let (width, _) = self.size.dimensions();
-                ModalSize::Custom { width: width as u32, height: total_height as u32 }
-            }
-        };
-        self
-    }
-}
+use uzor::WidgetId;
 
 /// Modal theme
 #[derive(Clone, Debug)]
@@ -213,310 +75,11 @@ impl ModalTheme {
     }
 }
 
-/// Modal rendering result
-#[derive(Clone, Debug, Default)]
-pub struct ModalResult {
-    /// Whether close button was clicked
-    pub close_clicked: bool,
-    /// Whether backdrop was clicked
-    pub backdrop_clicked: bool,
-    /// Modal frame rectangle
-    pub frame_rect: WidgetRect,
-    /// Content area rectangle
-    pub content_rect: WidgetRect,
-    /// Header rectangle
-    pub header_rect: WidgetRect,
-    /// Footer rectangle (if any)
-    pub footer_rect: Option<WidgetRect>,
-    /// Close button rectangle
-    pub close_rect: Option<WidgetRect>,
-}
-
-/// Draw a modal backdrop overlay
-///
-/// Should be called before draw_modal_frame
-pub fn draw_modal_backdrop(
-    ctx: &mut dyn RenderContext,
-    screen_rect: WidgetRect,
-    theme: &ModalTheme,
-    opacity: f64,
-) {
-    // Parse backdrop color and apply opacity
-    let backdrop_color = if opacity < 1.0 {
-        format!("rgba(0,0,0,{})", opacity)
-    } else {
-        theme.backdrop.clone()
-    };
-
-    ctx.set_fill_color(&backdrop_color);
-    ctx.fill_rect(screen_rect.x, screen_rect.y, screen_rect.width, screen_rect.height);
-}
-
-/// Draw a modal dialog frame
-///
-/// # Parameters
-/// - `ctx` - Render context
-/// - `config` - Modal configuration
-/// - `screen_rect` - Full screen rectangle (for centering)
-/// - `theme` - Modal theme
-/// - `close_hovered` - Whether close button is hovered
-/// - `draw_close_icon` - Callback to draw close icon
-///
-/// # Returns
-/// Modal result with content rectangle for placing inner content
-pub fn draw_modal_frame<F>(
-    ctx: &mut dyn RenderContext,
-    config: &ModalConfig,
-    screen_rect: WidgetRect,
-    theme: &ModalTheme,
-    close_hovered: bool,
-    draw_close_icon: F,
-) -> ModalResult
-where
-    F: FnOnce(&mut dyn RenderContext, WidgetRect, &str),
-{
-    let mut result = ModalResult::default();
-
-    // Calculate modal dimensions
-    let (modal_width, modal_height) = if matches!(config.size, ModalSize::FullScreen) {
-        (screen_rect.width * 0.9, screen_rect.height * 0.9)
-    } else {
-        config.size.dimensions()
-    };
-
-    // Center modal
-    let modal_x = screen_rect.x + (screen_rect.width - modal_width) / 2.0;
-    let modal_y = screen_rect.y + (screen_rect.height - modal_height) / 2.0;
-
-    let frame_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.frame_rect = frame_rect;
-
-    // Draw shadow
-    ctx.set_fill_color("rgba(0,0,0,0.3)");
-    ctx.fill_rounded_rect(
-        frame_rect.x + 4.0,
-        frame_rect.y + 8.0,
-        frame_rect.width,
-        frame_rect.height,
-        config.radius,
-    );
-
-    // Draw background
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height, config.radius);
-
-    // Draw border
-    ctx.set_stroke_color(&theme.border);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height, config.radius);
-
-    // Draw header
-    let header_rect = WidgetRect::new(
-        frame_rect.x,
-        frame_rect.y,
-        frame_rect.width,
-        config.header_height,
-    );
-    result.header_rect = header_rect;
-
-    // Header background (with rounded top corners)
-    ctx.set_fill_color(&theme.header_bg);
-    // Simplified: draw full rounded rect then cover bottom with regular rect
-    ctx.fill_rounded_rect(header_rect.x, header_rect.y, header_rect.width, header_rect.height, config.radius);
-    ctx.fill_rect(header_rect.x, header_rect.y + config.radius, header_rect.width, header_rect.height - config.radius);
-
-    // Header bottom border
-    ctx.set_stroke_color(&theme.header_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(header_rect.x, header_rect.bottom());
-    ctx.line_to(header_rect.right(), header_rect.bottom());
-    ctx.stroke();
-
-    // Draw title
-    ctx.set_font("bold 16px sans-serif");
-    ctx.set_fill_color(&theme.header_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&config.title, header_rect.x + config.padding, header_rect.center_y());
-
-    // Draw close button
-    if config.show_close {
-        let close_size = 24.0;
-        let close_rect = WidgetRect::new(
-            header_rect.right() - config.padding - close_size,
-            header_rect.center_y() - close_size / 2.0,
-            close_size,
-            close_size,
-        );
-        result.close_rect = Some(close_rect);
-
-        let close_color = if close_hovered {
-            &theme.close_button_hover
-        } else {
-            &theme.close_button
-        };
-
-        // Draw close button background on hover
-        if close_hovered {
-            ctx.set_fill_color("rgba(255,255,255,0.1)");
-            ctx.fill_rounded_rect(close_rect.x, close_rect.y, close_rect.width, close_rect.height, 4.0);
-        }
-
-        draw_close_icon(ctx, close_rect, close_color);
-    }
-
-    // Draw footer if present
-    if config.footer_height > 0.0 {
-        let footer_rect = WidgetRect::new(
-            frame_rect.x,
-            frame_rect.bottom() - config.footer_height,
-            frame_rect.width,
-            config.footer_height,
-        );
-        result.footer_rect = Some(footer_rect);
-
-        // Footer top border
-        ctx.set_stroke_color(&theme.footer_border);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(footer_rect.x, footer_rect.y);
-        ctx.line_to(footer_rect.right(), footer_rect.y);
-        ctx.stroke();
-    }
-
-    // Calculate content rect
-    let content_y = header_rect.bottom();
-    let content_height = if config.footer_height > 0.0 {
-        frame_rect.height - config.header_height - config.footer_height
-    } else {
-        frame_rect.height - config.header_height
-    };
-
-    result.content_rect = WidgetRect::new(
-        frame_rect.x + config.padding,
-        content_y + config.padding,
-        frame_rect.width - config.padding * 2.0,
-        content_height - config.padding * 2.0,
-    );
-
-    result
-}
-
-/// Draw a simple close icon (X)
-pub fn draw_close_icon(
-    ctx: &mut dyn RenderContext,
-    rect: WidgetRect,
-    color: &str,
-) {
-    let padding = 6.0;
-    let x1 = rect.x + padding;
-    let y1 = rect.y + padding;
-    let x2 = rect.right() - padding;
-    let y2 = rect.bottom() - padding;
-
-    ctx.set_stroke_color(color);
-    ctx.set_stroke_width(2.0);
-    ctx.set_line_dash(&[]);
-
-    ctx.begin_path();
-    ctx.move_to(x1, y1);
-    ctx.line_to(x2, y2);
-    ctx.stroke();
-
-    ctx.begin_path();
-    ctx.move_to(x2, y1);
-    ctx.line_to(x1, y2);
-    ctx.stroke();
-}
-
-/// Tab configuration for tabbed modals
-#[derive(Clone, Debug)]
-pub struct ModalTab {
-    pub id: String,
-    pub label: String,
-    pub icon: Option<IconId>,
-}
-
-/// Draw modal tabs
-///
-/// # Parameters
-/// - `ctx` - Render context
-/// - `tabs` - Tab configurations
-/// - `rect` - Tab bar rectangle
-/// - `active_id` - Currently active tab ID
-/// - `hovered_id` - Currently hovered tab ID
-/// - `theme` - Widget theme
-///
-/// # Returns
-/// Vector of (tab_id, tab_rect) for hit testing
-pub fn draw_modal_tabs(
-    ctx: &mut dyn RenderContext,
-    tabs: &[ModalTab],
-    rect: WidgetRect,
-    active_id: &str,
-    hovered_id: Option<&str>,
-    theme: &WidgetTheme,
-) -> Vec<(String, WidgetRect)> {
-    let mut result = Vec::new();
-
-    if tabs.is_empty() {
-        return result;
-    }
-
-    let tab_width = rect.width / tabs.len() as f64;
-
-    for (i, tab) in tabs.iter().enumerate() {
-        let tab_rect = WidgetRect::new(
-            rect.x + i as f64 * tab_width,
-            rect.y,
-            tab_width,
-            rect.height,
-        );
-
-        let is_active = tab.id == active_id;
-        let is_hovered = hovered_id == Some(tab.id.as_str());
-
-        // Draw tab background
-        if is_active {
-            ctx.set_fill_color(&theme.accent);
-        } else if is_hovered {
-            ctx.set_fill_color(&theme.bg_hover);
-        }
-
-        if is_active || is_hovered {
-            ctx.fill_rect(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height);
-        }
-
-        // Draw tab label
-        let text_color = if is_active {
-            &theme.text_hover
-        } else {
-            &theme.text_normal
-        };
-
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&tab.label, tab_rect.center_x(), tab_rect.center_y());
-
-        // Draw active indicator
-        if is_active {
-            ctx.set_fill_color(&theme.accent);
-            ctx.fill_rect(tab_rect.x, tab_rect.bottom() - 2.0, tab_rect.width, 2.0);
-        }
-
-        result.push((tab.id.clone(), tab_rect));
-    }
-
-    result
-}
-
 /// Render modal frame (shadow, blur, background, border) without header/footer
 ///
-/// This is a low-level helper for complex modals that need custom layouts.
-/// Use `render_modal()` for standard modals with header/footer.
+/// The bare surface, for modals whose whole layout is bespoke. Anything with
+/// a title bar wants [`render_modal_shell`] instead — it draws this frame and
+/// owns the chrome around it.
 ///
 /// # Parameters
 /// - `ctx` - Render context
@@ -571,225 +134,264 @@ pub fn render_modal_frame_only(
     }
 }
 
-/// Unified modal rendering function with content callback
+// =============================================================================
+// The modal shell
+// =============================================================================
+
+/// Where a modal sits on screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ModalPlacement {
+    /// Centred.
+    Center,
+    /// A remembered top-left corner — what a dragged modal carries between
+    /// frames. `None` falls back to centred, which is the shape every caller
+    /// already had as `pos.unwrap_or(centre)`.
+    At(Option<(f64, f64)>),
+    /// Under the control that opened it (its bottom-left corner).
+    Anchor(f64, f64),
+}
+
+/// What the shell needs to draw a modal. Note what is NOT here: total height.
+/// It is derived from `content_height`, which is the one number the body can
+/// actually measure — a modal that sizes itself from an enum cannot host a
+/// list whose length it does not know.
+#[derive(Clone, Debug)]
+pub struct ModalShellSpec<'a> {
+    /// Widget-id namespace. The shell names its layer `{ns}` and registers
+    /// `{ns}:header`, `{ns}:modal_bg` and `{ns}:close`; the body registers
+    /// ids of its own on the same layer.
+    pub ns: &'a str,
+    pub title: &'a str,
+    pub width: f64,
+    /// Height of the body between header and footer, padding excluded.
+    pub content_height: f64,
+    /// `0.0` = no footer.
+    pub footer_height: f64,
+    pub placement: ModalPlacement,
+    pub layer: ZLayer,
+    pub header_height: f64,
+    pub padding: f64,
+    pub radius: f64,
+    /// Register the header as a drag handle. Off for anchored surfaces —
+    /// a dropdown pinned to a gear has nowhere to be dragged to.
+    pub draggable: bool,
+    pub show_close: bool,
+}
+
+impl<'a> ModalShellSpec<'a> {
+    /// A draggable, centred, closable settings surface — what nearly every
+    /// modal in this codebase is.
+    pub fn new(ns: &'a str, title: &'a str, width: f64, content_height: f64) -> Self {
+        Self {
+            ns,
+            title,
+            width,
+            content_height,
+            footer_height: 0.0,
+            placement: ModalPlacement::Center,
+            layer: ZLayer::Modal,
+            header_height: 44.0,
+            padding: 16.0,
+            radius: 0.0,
+            draggable: true,
+            show_close: true,
+        }
+    }
+
+    pub fn placed(mut self, placement: ModalPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    pub fn on_layer(mut self, layer: ZLayer) -> Self {
+        self.layer = layer;
+        self
+    }
+
+    pub fn with_footer(mut self, height: f64) -> Self {
+        self.footer_height = height;
+        self
+    }
+
+    /// An anchored surface: no drag, and it hugs the control that opened it.
+    pub fn anchored(mut self, x: f64, y: f64) -> Self {
+        self.placement = ModalPlacement::Anchor(x, y);
+        self.draggable = false;
+        self
+    }
+}
+
+/// The geometry the shell settled on. The body draws inside `content`; a
+/// footer, when asked for, is the body's to fill — it gets the same layer, so
+/// its buttons register like any other row.
+#[derive(Clone, Debug, Default)]
+pub struct ModalShell {
+    pub frame: WidgetRect,
+    pub header: WidgetRect,
+    pub content: WidgetRect,
+    pub footer: Option<WidgetRect>,
+}
+
+/// Draw a modal and hand its body the layer to register on.
 ///
-/// Renders a complete modal dialog with:
-/// - Optional backdrop overlay
-/// - Shadow and blur background (FrostedGlass/LiquidGlass effect)
-/// - Modal frame with border
-/// - Header with title and close button
-/// - Content area (rendered by callback)
-/// - Optional footer
-///
-/// # Parameters
-/// - `ctx` - Render context
-/// - `config` - Modal configuration
-/// - `screen_rect` - Full screen rectangle (for centering)
-/// - `theme` - Modal theme
-/// - `close_hovered` - Whether close button is hovered
-/// - `content_fn` - Callback to render content area, receives content_rect
-///
-/// # Returns
-/// Modal result with rectangles for hit testing
-///
-/// # Example
-/// ```ignore
-/// let config = ModalConfig::confirmation("Confirm Action")
-///     .with_content_height(150.0);
-/// let result = render_modal(ctx, &config, screen_rect, theme, false, |content_rect| {
-///     // Render your content here
-///     ctx.set_fill_color("#ffffff");
-///     ctx.fill_text("Are you sure?", content_rect.center_x(), content_rect.center_y());
-/// });
-/// ```
-pub fn render_modal<F>(
+/// This owns everything that used to be copied into every modal: the layer,
+/// the header-drag / background / close registrations, the on-screen clamp,
+/// the title, the separators. A body that uses it never names `ZLayer`,
+/// `Icon::Close` or a screen edge.
+pub fn render_modal_shell<F>(
     ctx: &mut dyn RenderContext,
-    config: &ModalConfig,
-    screen_rect: WidgetRect,
+    coord: &mut InputCoordinator,
+    spec: &ModalShellSpec<'_>,
     theme: &ModalTheme,
-    close_hovered: bool,
-    content_fn: F,
-) -> ModalResult
+    screen: (f64, f64),
+    body: F,
+) -> ModalShell
 where
-    F: FnOnce(&mut dyn RenderContext, WidgetRect),
+    F: FnOnce(&mut dyn RenderContext, &mut InputCoordinator, &LayerId, &ModalShell),
 {
-    let mut result = ModalResult::default();
+    let (screen_w, screen_h) = screen;
+    let height = shell_height(spec);
 
-    // Draw backdrop if configured
-    if config.show_backdrop {
-        draw_modal_backdrop(ctx, screen_rect, theme, config.backdrop_opacity);
-    }
-
-    // Calculate modal dimensions
-    let (modal_width, modal_height) = if matches!(config.size, ModalSize::FullScreen) {
-        (screen_rect.width * 0.9, screen_rect.height * 0.9)
-    } else {
-        config.size.dimensions()
-    };
-
-    // Center modal
-    let modal_x = screen_rect.x + (screen_rect.width - modal_width) / 2.0;
-    let modal_y = screen_rect.y + (screen_rect.height - modal_height) / 2.0;
-
-    let frame_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.frame_rect = frame_rect;
-
-    // Shadow (subtle, matching render_ui.rs pattern)
-    let shadow_offset = if config.radius > 0.0 { 4.0 } else { 3.0 };
-    ctx.set_fill_color("rgba(0, 0, 0, 0.4)");
-    if config.radius > 0.0 {
-        ctx.fill_rounded_rect(
-            frame_rect.x + shadow_offset,
-            frame_rect.y + shadow_offset,
-            frame_rect.width,
-            frame_rect.height,
-            config.radius,
-        );
-    } else {
-        ctx.fill_rect(
-            frame_rect.x + shadow_offset,
-            frame_rect.y + shadow_offset,
-            frame_rect.width,
-            frame_rect.height,
-        );
-    }
-
-    // Blur background (FrostedGlass/LiquidGlass effect)
-    ctx.draw_blur_background(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
-
-    // Background
-    ctx.set_fill_color(&theme.background);
-    if config.radius > 0.0 {
-        ctx.fill_rounded_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height, config.radius);
-    } else {
-        ctx.fill_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
-    }
-
-    // Border
-    ctx.set_stroke_color(&theme.border);
-    ctx.set_stroke_width(1.0);
-    if config.radius > 0.0 {
-        ctx.stroke_rounded_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height, config.radius);
-    } else {
-        ctx.stroke_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
-    }
-
-    // Header rectangle
-    let header_rect = WidgetRect::new(
-        frame_rect.x,
-        frame_rect.y,
-        frame_rect.width,
-        config.header_height,
+    // Placement, then the clamp. Anchored surfaces keep a small margin so a
+    // gear at the very edge still opens something fully visible.
+    let centre = (
+        (screen_w - spec.width) / 2.0,
+        (screen_h - height) / 2.0,
     );
-    result.header_rect = header_rect;
+    let (x, y) = match spec.placement {
+        ModalPlacement::Center => centre,
+        ModalPlacement::At(pos) => pos.unwrap_or(centre),
+        ModalPlacement::Anchor(ax, ay) => (ax, ay),
+    };
+    let margin = if matches!(spec.placement, ModalPlacement::Anchor(..)) { 4.0 } else { 0.0 };
+    let x = clamp_on_screen(x, spec.width, screen_w, margin);
+    let y = clamp_on_screen(y, height, screen_h, margin);
 
-    // Title
-    ctx.set_font("14px sans-serif");
+    let frame = WidgetRect::new(x, y, spec.width, height);
+    let header = WidgetRect::new(x, y, spec.width, spec.header_height);
+    let footer = (spec.footer_height > 0.0).then(|| {
+        WidgetRect::new(x, frame.bottom() - spec.footer_height, spec.width, spec.footer_height)
+    });
+    let content = WidgetRect::new(
+        x + spec.padding,
+        header.bottom() + spec.padding,
+        spec.width - spec.padding * 2.0,
+        spec.content_height,
+    );
+    let shell = ModalShell { frame, header, content, footer };
+
+    let layer_id = spec.layer.push_named(coord, spec.ns);
+    // The background swallows clicks that land on the modal but on nothing in
+    // particular — without it they reach whatever is underneath.
+    coord.register_on_layer(
+        format!("{}:modal_bg", spec.ns).as_str(),
+        frame,
+        Sense::CLICK,
+        &layer_id,
+    );
+    if spec.draggable {
+        coord.register_on_layer(
+            format!("{}:header", spec.ns).as_str(),
+            header,
+            Sense::DRAG,
+            &layer_id,
+        );
+    }
+
+    render_modal_frame_only(ctx, frame, theme, spec.radius);
+
+    // Header.
+    ctx.set_fill_color(&theme.header_bg);
+    ctx.fill_rect(header.x, header.y, header.width, header.height);
+    ctx.set_font("bold 13px sans-serif");
     ctx.set_fill_color(&theme.header_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&config.title, header_rect.x + config.padding, header_rect.center_y());
+    ctx.fill_text(spec.title, header.x + spec.padding, header.center_y());
 
-    // Close button
-    if config.show_close {
-        let close_size = 20.0;
-        let close_rect = WidgetRect::new(
-            header_rect.right() - close_size - config.padding,
-            header_rect.center_y() - close_size / 2.0,
-            close_size,
-            close_size,
+    if spec.show_close {
+        const CLOSE: f64 = 16.0;
+        let close_id = format!("{}:close", spec.ns);
+        let cx = header.right() - CLOSE - 12.0;
+        let cy = header.center_y() - CLOSE / 2.0;
+        let hovered = coord.is_hovered(&WidgetId::from(close_id.as_str()));
+        let tint = if hovered { &theme.close_button_hover } else { &theme.close_button };
+        draw_svg_icon(ctx, Icon::Close.svg(), cx, cy, CLOSE, CLOSE, tint);
+        coord.register_on_layer(
+            close_id.as_str(),
+            WidgetRect::new(cx - 4.0, cy - 4.0, CLOSE + 8.0, CLOSE + 8.0),
+            Sense::CLICK | Sense::HOVER,
+            &layer_id,
         );
-        result.close_rect = Some(close_rect);
-
-        let close_color = if close_hovered {
-            &theme.close_button_hover
-        } else {
-            &theme.close_button
-        };
-
-        draw_close_icon(ctx, close_rect, close_color);
     }
 
-    // Header bottom border
     ctx.set_stroke_color(&theme.header_border);
     ctx.set_stroke_width(1.0);
     ctx.begin_path();
-    ctx.move_to(header_rect.x, header_rect.bottom());
-    ctx.line_to(header_rect.right(), header_rect.bottom());
+    ctx.move_to(header.x, header.bottom());
+    ctx.line_to(header.right(), header.bottom());
     ctx.stroke();
 
-    // Footer (if present)
-    if config.footer_height > 0.0 {
-        let footer_rect = WidgetRect::new(
-            frame_rect.x,
-            frame_rect.bottom() - config.footer_height,
-            frame_rect.width,
-            config.footer_height,
-        );
-        result.footer_rect = Some(footer_rect);
-
-        // Footer top border
+    if let Some(f) = footer {
         ctx.set_stroke_color(&theme.footer_border);
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
-        ctx.move_to(footer_rect.x, footer_rect.y);
-        ctx.line_to(footer_rect.right(), footer_rect.y);
+        ctx.move_to(f.x, f.y);
+        ctx.line_to(f.right(), f.y);
         ctx.stroke();
     }
 
-    // Calculate content rect
-    let content_y = header_rect.bottom();
-    let content_height = frame_rect.height - config.header_height - config.footer_height;
+    body(ctx, coord, &layer_id, &shell);
 
-    let content_rect = WidgetRect::new(
-        frame_rect.x + config.padding,
-        content_y + config.padding,
-        frame_rect.width - config.padding * 2.0,
-        content_height - config.padding * 2.0,
-    );
-    result.content_rect = content_rect;
+    coord.pop_layer(&layer_id);
+    shell
+}
 
-    // Render content via callback
-    content_fn(ctx, content_rect);
+/// Total frame height: chrome plus whatever the body said it needs.
+fn shell_height(spec: &ModalShellSpec<'_>) -> f64 {
+    spec.header_height + spec.padding * 2.0 + spec.content_height + spec.footer_height
+}
 
-    result
+/// Keep an edge on screen. A surface taller than the screen is pinned to the
+/// margin rather than pushed off the top by a negative clamp bound.
+fn clamp_on_screen(pos: f64, size: f64, screen: f64, margin: f64) -> f64 {
+    pos.max(margin).min((screen - size - margin).max(margin))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Height comes from the body, not from a preset — the reason the old
+    /// widget could not host a real modal.
     #[test]
-    fn test_modal_size() {
-        let (w, h) = ModalSize::Medium.dimensions();
-        assert_eq!(w, 600.0);
-        assert_eq!(h, 450.0);
-
-        let (w, h) = ModalSize::Custom { width: 800, height: 600 }.dimensions();
-        assert_eq!(w, 800.0);
-        assert_eq!(h, 600.0);
+    fn height_is_chrome_plus_body() {
+        let s = ModalShellSpec::new("t", "Title", 300.0, 100.0).with_footer(40.0);
+        assert_eq!(shell_height(&s), 44.0 + 32.0 + 100.0 + 40.0);
     }
 
+    /// A remembered position that would hang the modal off an edge is pulled
+    /// back rather than trusted.
     #[test]
-    fn test_modal_config() {
-        let config = ModalConfig::new("Test Modal")
-            .with_size(ModalSize::Large)
-            .with_footer(56.0);
-
-        assert_eq!(config.title, "Test Modal");
-        assert_eq!(config.footer_height, 56.0);
+    fn a_dragged_position_is_clamped_on_screen() {
+        assert_eq!(clamp_on_screen(900.0, 300.0, 1000.0, 0.0), 700.0);
+        assert_eq!(clamp_on_screen(-40.0, 300.0, 1000.0, 0.0), 0.0);
+        assert_eq!(clamp_on_screen(10.0, 300.0, 1000.0, 4.0), 10.0);
     }
 
+    /// Taller than the screen: pinned to the margin, never above it.
     #[test]
-    fn test_modal_presets() {
-        let confirmation = ModalConfig::confirmation("Confirm");
-        assert_eq!(confirmation.size, ModalSize::Small);
-        assert_eq!(confirmation.radius, 0.0);
+    fn an_oversized_modal_stays_at_the_margin() {
+        assert_eq!(clamp_on_screen(50.0, 900.0, 400.0, 4.0), 4.0);
+        assert_eq!(clamp_on_screen(50.0, 900.0, 400.0, 0.0), 0.0);
+    }
 
-        let settings = ModalConfig::settings("Settings");
-        assert_eq!(settings.footer_height, 52.0);
-
-        let search = ModalConfig::search("Search");
-        assert_eq!(search.show_backdrop, false);
+    /// Anchoring turns dragging off: a surface pinned to a gear has nowhere
+    /// to be dragged to.
+    #[test]
+    fn anchoring_disables_drag() {
+        let s = ModalShellSpec::new("t", "Title", 300.0, 100.0).anchored(10.0, 20.0);
+        assert!(!s.draggable);
+        assert_eq!(s.placement, ModalPlacement::Anchor(10.0, 20.0));
     }
 }

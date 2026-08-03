@@ -10,8 +10,6 @@ pub mod chart_settings_color_picker;
 pub mod indicator_overlay_dropdown;
 pub mod indicator_overlay;
 pub mod panel_color_tag;
-pub mod simple_modal;
-pub mod hotkeys;
 pub mod search_overlay;
 pub mod chart_settings;
 pub mod overlay_settings;
@@ -51,8 +49,6 @@ pub use chart_settings_color_picker::*;
 pub use indicator_overlay_dropdown::*;
 pub use indicator_overlay::*;
 pub use panel_color_tag::*;
-pub use simple_modal::*;
-pub use hotkeys::*;
 pub use search_overlay::*;
 pub use chart_settings::{
     render_settings_modal, ChartSettingsData,
