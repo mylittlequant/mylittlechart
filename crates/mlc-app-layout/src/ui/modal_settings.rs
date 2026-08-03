@@ -1131,6 +1131,12 @@ pub struct IndicatorSettingsState {
     pub slider_drag: Option<SliderDragState>,
     /// Currently open parameter dropdown menu (param_name)
     pub open_param_dropdown: Option<String>,
+    /// Venues offered for a `Venues` parameter, in display order, each with
+    /// whether it is currently chosen. Populated by `ChartApp` before every
+    /// render while this modal is open — the list is HOST state (which
+    /// connectors serve this layer's declared stream), so it cannot live on
+    /// the indicator definition, which is static and shared.
+    pub venue_options: Vec<(String, bool)>,
     /// Whether the user is drag-selecting text in the active text input.
     pub text_select_dragging: bool,
     // ---- Template UI state ----

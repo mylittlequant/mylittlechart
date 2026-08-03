@@ -195,6 +195,14 @@ impl IndicatorBridge {
                     let display_name = Self::humanize_param_name(&constraint.name);
                     params.push(IndicatorParam::source(&constraint.name, &display_name));
                 }
+                CatalogParamType::StringList => {
+                    // The venue set of an aggregating overlay. The catalog
+                    // declares only that it exists — the offered venues come
+                    // from the host, filtered by this signature's own
+                    // `input_stream`, at the moment the picker opens.
+                    let display_name = Self::humanize_param_name(&constraint.name);
+                    params.push(IndicatorParam::venues(&constraint.name, &display_name));
+                }
                 _ => {
                     // Skip other types (String, etc.)
                 }

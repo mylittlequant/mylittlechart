@@ -363,6 +363,14 @@ impl ChartApp {
             }
         }
 
+        // Keep the indicator-settings modal's venue picker in sync. The
+        // offered venues are host state (which connectors serve this layer's
+        // declared stream), so they are resolved per frame rather than
+        // captured when the modal opened.
+        if self.panel_app.indicator_settings_state.is_open() {
+            self.refresh_indicator_venue_options();
+        }
+
         // Keep the alert-settings modal's alerts list always in sync.
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.all_alerts = self.core.alerts().items_all();

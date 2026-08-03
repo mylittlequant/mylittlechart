@@ -313,6 +313,49 @@ pub fn render_indicator_settings_modal(
                         let toggle_rect = WidgetRect::new(input_x, toggle_y, toggle_width, toggle_height);
                         result.content_items.push((format!("toggle:{}", param_name), toggle_rect));
                     }
+                    Some(IndicatorParamType::Venues) => {
+                        // A set, so the field shows the CHOICE, not one value:
+                        // "All" when nothing is narrowed (which folds every
+                        // venue serving this layer's stream), otherwise the
+                        // venues themselves while they fit and a count past
+                        // that. The whole field opens the picker — there is no
+                        // "cycle" half, because a set has no next value.
+                        let field_width = 150.0;
+                        let field_rect = WidgetRect::new(input_x, input_y, field_width, input_height);
+                        let chosen: Vec<&str> = indicator_state.venue_options.iter()
+                            .filter(|(_, on)| *on)
+                            .map(|(v, _)| v.as_str())
+                            .collect();
+                        let label = if chosen.is_empty() {
+                            "All".to_string()
+                        } else {
+                            let joined = chosen.join(", ");
+                            if joined.chars().count() <= 16 { joined } else { format!("{} venues", chosen.len()) }
+                        };
+
+                        let field_config = InputConfig::new(&label)
+                            .with_type(InputType::Text)
+                            .with_font_size(13.0)
+                            .with_padding(8.0)
+                            .with_radius(0.0);
+                        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+                        let widget_state = if is_hovered { WidgetState::Hovered } else { WidgetState::Normal };
+                        draw_input(ctx, &field_config, widget_state, field_rect, &widget_theme);
+
+                        let arrow_x = input_x + field_width - 14.0;
+                        let arrow_y = row_y + row_height / 2.0;
+                        ctx.set_fill_color(text_color);
+                        ctx.begin_path();
+                        ctx.move_to(arrow_x, arrow_y - 3.0);
+                        ctx.line_to(arrow_x + 6.0, arrow_y - 3.0);
+                        ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
+                        ctx.close_path();
+                        ctx.fill();
+
+                        // Same id the Select rows use for their menu half, so
+                        // the open/close handling is shared.
+                        result.content_items.push((format!("dropdown_menu:{}", param_name), field_rect));
+                    }
                     Some(IndicatorParamType::Source) | Some(IndicatorParamType::Select { .. }) => {
                         // Render split dropdown for source/select
                         let dropdown_width = 80.0;
@@ -1178,12 +1221,30 @@ pub fn render_indicator_settings_modal(
             // Find the parameter to get its options
             if let Some(def) = definition {
                 if let Some(param_def) = def.params.iter().find(|p| p.name == *open_param_name) {
-                    let options = param_def.get_options_as_strings();
+                    let is_venues = param_def.param_type == IndicatorParamType::Venues;
+                    // A venue row's options come from the HOST (which
+                    // connectors serve this layer's stream right now), not
+                    // from the static definition.
+                    let options: Vec<String> = if is_venues {
+                        indicator_state.venue_options.iter().map(|(v, _)| v.clone()).collect()
+                    } else {
+                        param_def.get_options_as_strings()
+                    };
                     if !options.is_empty() {
-                        // Build dropdown items from options
-                        let dropdown_items: Vec<DropdownItem> = options.iter()
-                            .map(|opt| DropdownItem::item(opt, opt))
-                            .collect();
+                        // Build dropdown items from options. A SET marks every
+                        // chosen row, where a single-value dropdown highlights
+                        // exactly one — `render_dropdown`'s selected-item
+                        // argument can only say "one", so the mark rides in
+                        // the label.
+                        let dropdown_items: Vec<DropdownItem> = if is_venues {
+                            indicator_state.venue_options.iter()
+                                .map(|(v, on)| {
+                                    DropdownItem::item(v, &format!("{} {}", if *on { "✓" } else { "·" }, v))
+                                })
+                                .collect()
+                        } else {
+                            options.iter().map(|opt| DropdownItem::item(opt, opt)).collect()
+                        };
 
                         let dropdown_config = DropdownConfig {
                             items: dropdown_items,

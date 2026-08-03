@@ -3269,6 +3269,17 @@ impl ChartApp {
             let param_name = parts.next().unwrap_or_default().to_string();
             let value = parts.next().unwrap_or_default().to_string();
 
+            // A venue row TOGGLES membership and leaves the list open — the
+            // same multi-click contract the Multi-DOM roster picker has, and
+            // for the same reason: choosing a set of five venues should not
+            // cost five trips through the menu.
+            if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
+                if self.is_venue_param(ind_id, &param_name) {
+                    self.toggle_indicator_venue(ind_id, &param_name, &value);
+                    return;
+                }
+            }
+
             self.panel_app.indicator_settings_state.open_param_dropdown = None;
 
             if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
@@ -3479,4 +3490,74 @@ impl ChartApp {
         eprintln!("[ChartApp] ind_settings item unhandled: {}", item_id);
     }
 
+    /// Is `param_name` on this instance the set-valued venue picker?
+    fn is_venue_param(&self, instance_id: u64, param_name: &str) -> bool {
+        use mlc_backend_indicator_engine::IndicatorParamType;
+        let indicators = self.core.indicators();
+        indicators
+            .type_id_of(instance_id)
+            .and_then(|tid| indicators.definition(&tid))
+            .and_then(|def| {
+                def.params
+                    .iter()
+                    .find(|p| p.name == param_name)
+                    .map(|p| matches!(p.param_type, IndicatorParamType::Venues))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Add or remove one venue from a set-valued parameter.
+    ///
+    /// The stored set is what the owner NARROWED to, so unticking the last
+    /// venue stores the empty set — which reads as "all of them" and is the
+    /// same state a fresh instance starts in. Unticking everything to mean
+    /// "fold nothing" would be a third state the aggregate flag already
+    /// expresses, and a picker that can silently blank a layer is a trap.
+    fn toggle_indicator_venue(&mut self, instance_id: u64, param_name: &str, venue: &str) {
+        use mlc_backend_indicator_engine::IndicatorParamValue as IndValue;
+
+        let mut chosen: Vec<String> = self
+            .core
+            .indicators()
+            .param_value(instance_id, param_name)
+            .and_then(|v| v.as_string_list().map(|s| s.to_vec()))
+            .unwrap_or_default();
+
+        // An empty set means "every offered venue", so the first click has
+        // to start from that full set and REMOVE one — otherwise unticking a
+        // venue in the default state would silently narrow the layer to the
+        // single venue just clicked, the exact opposite of the gesture.
+        if chosen.is_empty() {
+            chosen = self
+                .panel_app
+                .indicator_settings_state
+                .venue_options
+                .iter()
+                .map(|(v, _)| v.clone())
+                .collect();
+        }
+
+        if let Some(pos) = chosen.iter().position(|c| c.eq_ignore_ascii_case(venue)) {
+            chosen.remove(pos);
+        } else {
+            chosen.push(venue.to_string());
+        }
+
+        // Back to the empty set when everything is ticked: same picture,
+        // and it keeps following the offered list as connectors come and go.
+        let offered = self.panel_app.indicator_settings_state.venue_options.len();
+        if chosen.len() >= offered && offered > 0 {
+            chosen.clear();
+        }
+
+        self.core
+            .indicators_mut()
+            .set_param(instance_id, param_name, IndValue::StringList(chosen.clone()));
+        self.autosave_snapshot();
+        self.snapshot_indicator_settings_to_user_manager();
+        eprintln!(
+            "[ChartApp] ind_settings venue toggled: {} {} -> [{}]",
+            param_name, venue, chosen.join(",")
+        );
+    }
 }

@@ -37,7 +37,15 @@ impl crate::ChartApp {
     /// projection overlay, then recompute the levels when anything moved.
     pub(crate) fn refresh_liq_projection(&mut self) {
         // (bubble, symbol, own venue, aggregate, bar_ms)
-        let targets: Vec<(BubbleId, String, digdigdig3::ExchangeId, bool, i64)> = {
+        #[allow(clippy::type_complexity)]
+        let targets: Vec<(
+            BubbleId,
+            String,
+            digdigdig3::ExchangeId,
+            bool,
+            i64,
+            Vec<digdigdig3::ExchangeId>,
+        )> = {
             let mut seen: std::collections::HashSet<BubbleId> = std::collections::HashSet::new();
             self.panel_app
                 .panel_grid
@@ -71,12 +79,27 @@ impl crate::ChartApp {
                         .filter(|tf| !tf.is_tick())
                         .map(|tf| tf.interval_ms)
                         .unwrap_or(60_000);
+                    // The venue set of whichever consumer is live. The
+                    // sub-pane has no aggregate control of its own, so a
+                    // chart showing only the sub-pane reads the projection's
+                    // set if one exists and every OI venue otherwise.
+                    let venues = {
+                        let v = self.overlay_venues(bid, Self::LIQ_PROJECTION_TYPE_ID);
+                        if v.is_empty() {
+                            self.venues_for_stream(
+                                mlc_backend_indicator_engine::StreamKind::OpenInterest,
+                            )
+                        } else {
+                            v
+                        }
+                    };
                     Some((
                         bid,
                         symbol,
                         self.exchange_id_for_chart(cid),
                         self.liq_projection_aggregate(bid),
                         bar_ms,
+                        venues,
                     ))
                 })
                 .collect()
@@ -87,8 +110,8 @@ impl crate::ChartApp {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        for (bid, symbol, own_venue, aggregate, bar_ms) in targets {
-            self.ensure_oi_history(bid, &symbol, own_venue, aggregate, bar_ms, now_ms);
+        for (bid, symbol, own_venue, aggregate, bar_ms, venues) in targets {
+            self.ensure_oi_history(bid, &symbol, own_venue, aggregate, bar_ms, now_ms, &venues);
             if self.liq_projection_active(bid) {
                 self.rebuild_liq_projection(bid, own_venue, aggregate, bar_ms);
             }
@@ -107,18 +130,19 @@ impl crate::ChartApp {
         aggregate: bool,
         bar_ms: i64,
         now_ms: i64,
+        venues: &[digdigdig3::ExchangeId],
     ) {
-        let fresh = self
-            .oi_hist_armed
-            .get(&bid)
-            .is_some_and(|(s, a, at_ms)| s == symbol && *a == aggregate && now_ms - *at_ms < OI_REFRESH_MS);
+        let want_key: Vec<String> = venues.iter().map(|e| e.as_str().to_string()).collect();
+        let fresh = self.oi_hist_armed.get(&bid).is_some_and(|(s, a, v, at_ms)| {
+            s == symbol && *a == aggregate && *v == want_key && now_ms - *at_ms < OI_REFRESH_MS
+        });
         if fresh {
             return;
         }
 
         let period = mlc_backend_data_bridge::oi_history_period(bar_ms);
         let venues: Vec<digdigdig3::ExchangeId> = if aggregate {
-            self.core.bridge_handle().oi_history_venues()
+            venues.to_vec()
         } else {
             vec![own_venue]
         };
@@ -145,11 +169,11 @@ impl crate::ChartApp {
             );
         }
         crate::sglog!(
-            "[bubble {:?}] OI history requested ({} period={} aggregate={})",
-            bid, symbol, period, aggregate
+            "[bubble {:?}] OI history requested ({} period={} aggregate={} venues={})",
+            bid, symbol, period, aggregate, want_key.join(",")
         );
         self.oi_hist_armed
-            .insert(bid, (symbol.to_string(), aggregate, now_ms));
+            .insert(bid, (symbol.to_string(), aggregate, want_key, now_ms));
     }
 
     /// Recompute the cached levels when the inputs changed.

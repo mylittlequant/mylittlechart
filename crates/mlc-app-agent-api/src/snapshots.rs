@@ -217,6 +217,12 @@ pub fn update_indicator_snapshot<H: AgentHost>(host: &H, agent_state: &AgentStat
                         IndicatorParamValue::Bool(b)   => serde_json::Value::Bool(*b),
                         IndicatorParamValue::String(s) => serde_json::Value::String(s.clone()),
                         IndicatorParamValue::Color(c)  => serde_json::Value::String(c.clone()),
+                        // An array, not a joined string: an agent reading
+                        // this must be able to count the venues without
+                        // guessing a delimiter.
+                        IndicatorParamValue::StringList(v) => serde_json::Value::Array(
+                            v.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+                        ),
                     };
                     (k.clone(), json_val)
                 })

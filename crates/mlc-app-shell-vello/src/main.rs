@@ -764,6 +764,7 @@ impl App<'_> {
                             IndicatorParamType::Select { .. } => ("select".to_string(), None, None),
                             IndicatorParamType::Color => ("color".to_string(), None, None),
                             IndicatorParamType::Source => ("source".to_string(), None, None),
+                            IndicatorParamType::Venues => ("venues".to_string(), None, None),
                         };
 
                         let default_value = match &p.default_value {
@@ -782,6 +783,9 @@ impl App<'_> {
                             IndicatorParamValue::Color(s) => {
                                 serde_json::Value::String(s.clone())
                             }
+                            IndicatorParamValue::StringList(v) => serde_json::Value::Array(
+                                v.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+                            ),
                         };
 
                         CatalogParam {

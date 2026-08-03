@@ -39,8 +39,16 @@ impl crate::ChartApp {
     /// overlay. Cheap when idle: a ring with nothing past the cursor costs
     /// one read lock and a comparison.
     pub(crate) fn pump_liquidations(&mut self) {
-        // (bubble, symbol, own venue, own market, aggregate)
-        let targets: Vec<(BubbleId, String, digdigdig3::ExchangeId, digdigdig3::AccountType, bool)> = {
+        // (bubble, symbol, own venue, own market, aggregate, venue set)
+        #[allow(clippy::type_complexity)]
+        let targets: Vec<(
+            BubbleId,
+            String,
+            digdigdig3::ExchangeId,
+            digdigdig3::AccountType,
+            bool,
+            Vec<digdigdig3::ExchangeId>,
+        )> = {
             let mut seen: std::collections::HashSet<BubbleId> = std::collections::HashSet::new();
             self.panel_app
                 .panel_grid
@@ -66,13 +74,17 @@ impl crate::ChartApp {
                         self.exchange_id_for_chart(cid),
                         mlc_backend_data_bridge::account_type_to_dig3(at),
                         self.liq_aggregate(bid),
+                        // The instance's venue set, or every venue that
+                        // publishes forced closes when it has not been
+                        // narrowed.
+                        self.overlay_venues(bid, Self::LIQ_HEATMAP_TYPE_ID),
                     ))
                 })
                 .collect()
         };
 
-        for (bid, symbol, own_venue, own_at, aggregate) in targets {
-            self.ensure_liquidation_roster(bid, &symbol, own_venue, own_at, aggregate);
+        for (bid, symbol, own_venue, own_at, aggregate, venues) in targets {
+            self.ensure_liquidation_roster(bid, &symbol, own_venue, own_at, aggregate, &venues);
             let _ = own_at;
             for (venue, at, handle) in self.core.liq_series_for_symbol(&symbol) {
                 // Venue only, never the market type: liquidations exist on
@@ -80,6 +92,13 @@ impl crate::ChartApp {
                 // a non-aggregated overlay wants — matching the chart's own
                 // account type would drop it on every Spot chart.
                 if !aggregate && venue != own_venue {
+                    continue;
+                }
+                // Aggregating reads exactly the venues this instance armed —
+                // a ring some OTHER panel opened is not this layer's data,
+                // and folding it made the picture depend on what else the
+                // workspace happened to have open.
+                if aggregate && !venues.contains(&venue) {
                     continue;
                 }
                 let label = format!("{}:{:?}", venue.as_str(), at);
@@ -177,6 +196,7 @@ impl crate::ChartApp {
         own_venue: digdigdig3::ExchangeId,
         own_at: digdigdig3::AccountType,
         aggregate: bool,
+        venues: &[digdigdig3::ExchangeId],
     ) {
         use mlc_app_panels::trading::order_flow::multi_dom;
 
@@ -188,9 +208,14 @@ impl crate::ChartApp {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        if let Some((armed_symbol, armed_agg, last_ms)) = self.liq_armed.get(&bid) {
-            if armed_symbol == symbol && *armed_agg == aggregate {
-                let want = if aggregate { multi_dom::LIQ_EXCHANGES.len() } else { 1 };
+        // The armed key carries the venue SET, not just the aggregate flag:
+        // narrowing the set is a change of what must be live, and keying on
+        // the flag alone left the old subscriptions armed and the picker
+        // looking inert.
+        let want_key: Vec<String> = venues.iter().map(|e| e.as_str().to_string()).collect();
+        if let Some((armed_symbol, armed_agg, armed_venues, last_ms)) = self.liq_armed.get(&bid) {
+            if armed_symbol == symbol && *armed_agg == aggregate && *armed_venues == want_key {
+                let want = if aggregate { venues.len() } else { 1 };
                 let have = self.core.liq_series_for_symbol(symbol).len();
                 if have >= want || now_ms - *last_ms < LIQ_REPAIR_MS {
                     return;
@@ -203,14 +228,15 @@ impl crate::ChartApp {
         }
 
         if aggregate {
-            for slug in multi_dom::LIQ_EXCHANGES {
-                let Some(eid) = digdigdig3::ExchangeId::from_str(slug) else { continue };
+            for eid in venues {
+                let eid = *eid;
+                let slug = eid.as_str();
                 // A connector the owner switched off in the sidebar stays
                 // off here too — the overlay is not a way around that.
                 if !self
                     .sidebar_state
                     .connector_enabled
-                    .get(*slug)
+                    .get(slug)
                     .copied()
                     .unwrap_or(true)
                 {
@@ -242,10 +268,10 @@ impl crate::ChartApp {
         }
 
         crate::sglog!(
-            "[bubble {:?}] liquidation roster armed ({} aggregate={})",
-            bid, symbol, aggregate
+            "[bubble {:?}] liquidation roster armed ({} aggregate={} venues={})",
+            bid, symbol, aggregate, want_key.join(",")
         );
         self.liq_armed
-            .insert(bid, (symbol.to_string(), aggregate, now_ms));
+            .insert(bid, (symbol.to_string(), aggregate, want_key, now_ms));
     }
 }

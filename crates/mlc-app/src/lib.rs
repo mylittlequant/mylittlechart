@@ -446,21 +446,36 @@ pub struct ChartApp {
     /// up by the next one instead of losing what arrived in between.
     pub(crate) liq_cursors: std::collections::HashMap<(mlc_core::ids::BubbleId, String), i64>,
 
-    /// The (symbol, aggregate, armed-at-ms) the liquidation overlay last
-    /// armed feeds for, per bubble. RAM-only, and it exists so the arming
-    /// runs on a CHANGE — plus a throttled repair while a venue is missing —
-    /// rather than every frame: `subscribe_liquidations` is idempotent, but
-    /// calling it per venue per frame would take the bridge's gate mutex
-    /// hundreds of times a second to learn nothing.
+    /// The (symbol, aggregate, venues, armed-at-ms) the liquidation overlay
+    /// last armed feeds for, per bubble. RAM-only, and it exists so the
+    /// arming runs on a CHANGE — plus a throttled repair while a venue is
+    /// missing — rather than every frame: `subscribe_liquidations` is
+    /// idempotent, but calling it per venue per frame would take the
+    /// bridge's gate mutex hundreds of times a second to learn nothing.
+    ///
+    /// The venue list is PART of the key: narrowing the set changes what has
+    /// to be live, and a key that only watched the flag would leave the old
+    /// subscriptions armed and make the picker look like it did nothing.
     pub(crate) liq_armed:
-        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, i64)>,
+        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, Vec<String>, i64)>,
 
-    /// The (symbol, aggregate, requested-at-ms) the projection overlay last
-    /// pulled open-interest history for. RAM-only. Open interest moves on
-    /// the venue's own ladder — 5m at the finest — so re-pulling faster than
-    /// the refresh tick only burns rate limit.
+    /// The (symbol, aggregate, venues, requested-at-ms) the projection
+    /// overlay last pulled open-interest history for. RAM-only. Open
+    /// interest moves on the venue's own ladder — 5m at the finest — so
+    /// re-pulling faster than the refresh tick only burns rate limit.
     pub(crate) oi_hist_armed:
-        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, i64)>,
+        std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, Vec<String>, i64)>,
+
+    /// The (symbol, market, venues) whose ORDER BOOKS the DOM Heatmap
+    /// overlay currently holds, per bubble. RAM-only, and it is the roster's
+    /// memory: without it the reconcile could not tell a book it opened from
+    /// one it never had, which is the difference between releasing a
+    /// subscription and leaking it.
+    #[allow(clippy::type_complexity)]
+    pub(crate) dom_books_armed: std::collections::HashMap<
+        mlc_core::ids::BubbleId,
+        (String, digdigdig3::AccountType, Vec<digdigdig3::ExchangeId>),
+    >,
 
     /// The chart panel — owns ChartContainer, toolbar state, split grid, and modal state.
     pub panel_app: ChartPanelApp,
@@ -1880,6 +1895,121 @@ impl ChartApp {
             .unwrap_or(false)
     }
 
+    /// The venues that can serve `stream`, in a stable display order.
+    ///
+    /// This is HOST knowledge, not indicator knowledge: an overlay declares
+    /// the stream it eats and nothing else, and which exchanges publish that
+    /// stream is a property of the connectors — it changes as they gain and
+    /// lose endpoints. Keeping the mapping here means a layer that changes
+    /// its declared stream automatically gets the right venue list, and no
+    /// venue list is written down twice.
+    pub fn venues_for_stream(
+        &self,
+        stream: mlc_backend_indicator_engine::StreamKind,
+    ) -> Vec<digdigdig3::ExchangeId> {
+        use mlc_backend_indicator_engine::StreamKind;
+        use mlc_app_panels::trading::order_flow::multi_dom;
+        match stream {
+            // The WS forced-close channel, which is a shorter list than the
+            // REST liquidation-history capability: we consume the stream.
+            StreamKind::Liquidation => multi_dom::LIQ_EXCHANGES
+                .iter()
+                .filter_map(|slug| digdigdig3::ExchangeId::from_str(slug))
+                .collect(),
+            // Already capability-filtered by the bridge.
+            StreamKind::OpenInterest => self.core.bridge_handle().oi_history_venues(),
+            // Books and bars: everything the workspace can connect to. The
+            // sidebar's per-connector switch is applied at ARM time, not
+            // here — a venue the owner turned off should still be visible in
+            // the list as a venue, rather than vanishing without explanation.
+            StreamKind::OrderBook | StreamKind::Bar | StreamKind::Tick => {
+                multi_dom::KNOWN_EXCHANGES
+                    .iter()
+                    .filter_map(|slug| digdigdig3::ExchangeId::from_str(slug))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The venue set an instance folds: its `venues` param, or every venue
+    /// serving its declared stream when that set is empty.
+    ///
+    /// Empty means ALL — narrowing is a deliberate act, and a fresh overlay
+    /// should aggregate what it can rather than nothing.
+    pub fn instance_venues(&self, instance_id: u64) -> Vec<digdigdig3::ExchangeId> {
+        let indicators = self.core.indicators();
+        let Some(type_id) = indicators.type_id_of(instance_id) else { return Vec::new() };
+        let offered: Vec<digdigdig3::ExchangeId> = indicators
+            .definition_streams(&type_id)
+            .first()
+            .map(|s| self.venues_for_stream(*s))
+            .unwrap_or_default();
+        let chosen: Vec<String> = indicators
+            .param_value(instance_id, "venues")
+            .and_then(|v| v.as_string_list().map(|s| s.to_vec()))
+            .unwrap_or_default();
+        if chosen.is_empty() {
+            return offered;
+        }
+        offered
+            .into_iter()
+            .filter(|eid| chosen.iter().any(|c| c.eq_ignore_ascii_case(eid.as_str())))
+            .collect()
+    }
+
+    /// Same, for the single visible instance of `type_id` on `bid` — the
+    /// shape every overlay pump wants, since a pump is keyed by bubble.
+    pub fn overlay_venues(
+        &self,
+        bid: mlc_core::ids::BubbleId,
+        type_id: &str,
+    ) -> Vec<digdigdig3::ExchangeId> {
+        let id = self
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == type_id && inst.visible)
+            .map(|inst| inst.id);
+        id.map(|id| self.instance_venues(id)).unwrap_or_default()
+    }
+
+    /// Fill the settings modal's venue picker with what the host can serve
+    /// for the open instance. Called each frame the modal is open: the
+    /// offered list is live state, not a definition.
+    pub(crate) fn refresh_indicator_venue_options(&mut self) {
+        let Some(id) = self.panel_app.indicator_settings_state.indicator_id else {
+            self.panel_app.indicator_settings_state.venue_options.clear();
+            return;
+        };
+        let (offered, chosen): (Vec<digdigdig3::ExchangeId>, Vec<String>) = {
+            let indicators = self.core.indicators();
+            let Some(type_id) = indicators.type_id_of(id) else {
+                self.panel_app.indicator_settings_state.venue_options.clear();
+                return;
+            };
+            let offered = indicators
+                .definition_streams(&type_id)
+                .first()
+                .map(|s| self.venues_for_stream(*s))
+                .unwrap_or_default();
+            let chosen = indicators
+                .param_value(id, "venues")
+                .and_then(|v| v.as_string_list().map(|s| s.to_vec()))
+                .unwrap_or_default();
+            (offered, chosen)
+        };
+        self.panel_app.indicator_settings_state.venue_options = offered
+            .into_iter()
+            .map(|eid| {
+                let name = eid.as_str().to_uppercase();
+                let on = chosen.iter().any(|c| c.eq_ignore_ascii_case(&name));
+                (name, on)
+            })
+            .collect();
+    }
+
     pub const DOM_HEATMAP_TYPE_ID: &'static str = "overlay_dom_heatmap";
 
     /// Whether the DOM Heatmap overlay is on for `bid`'s bubble. Derived,
@@ -2685,6 +2815,7 @@ impl ChartApp {
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
+            dom_books_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3097,6 +3228,7 @@ impl ChartApp {
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
+            dom_books_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3668,6 +3800,7 @@ impl ChartApp {
             liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
+            dom_books_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),

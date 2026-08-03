@@ -98,6 +98,12 @@ pub enum IndicatorParamType {
     Color,
     /// Source selection (close, open, high, low, hl2, etc.)
     Source,
+    /// A SET of exchanges, chosen from what the host can actually serve for
+    /// this indicator's declared stream. Distinct from `Select`: multiple
+    /// values, and the options come from the host at open time rather than
+    /// from the definition — a venue list baked into a definition is stale
+    /// the moment a connector gains or loses an endpoint.
+    Venues,
 }
 
 impl IndicatorParamType {
@@ -178,6 +184,20 @@ impl IndicatorParam {
         }
     }
 
+    /// A set of exchanges this layer folds — see
+    /// [`IndicatorParamType::Venues`]. The options are NOT stored on the
+    /// definition: they depend on which connectors serve this indicator's
+    /// declared stream, which is host state and changes at runtime.
+    pub fn venues(name: &str, display: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            display_name: display.to_string(),
+            param_type: IndicatorParamType::Venues,
+            default_value: IndicatorValue::StringList(Vec::new()),
+            group: None,
+        }
+    }
+
     pub fn select(name: &str, display: &str, options: Vec<String>, default_index: usize) -> Self {
         let default_value = options.get(default_index).cloned().unwrap_or_else(|| options[0].clone());
         Self {
@@ -218,6 +238,10 @@ pub enum IndicatorValue {
     Bool(bool),
     String(String),
     Color(String),
+    /// A set of names — today the venues an aggregating overlay folds. Empty
+    /// means "everything that serves this layer's stream", not "nothing":
+    /// narrowing is a deliberate act.
+    StringList(Vec<String>),
 }
 
 impl IndicatorValue {
@@ -251,6 +275,14 @@ impl IndicatorValue {
         }
     }
 
+    /// The chosen names, for a set-valued parameter.
+    pub fn as_string_list(&self) -> Option<&[String]> {
+        match self {
+            IndicatorValue::StringList(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
     /// Convert to display string for UI
     pub fn to_display_string(&self) -> String {
         match self {
@@ -258,6 +290,11 @@ impl IndicatorValue {
             IndicatorValue::Float(v) => format!("{:.2}", v),
             IndicatorValue::Bool(v) => v.to_string(),
             IndicatorValue::String(v) | IndicatorValue::Color(v) => v.clone(),
+            // Comma-joined for display ONLY — the stored value stays a list.
+            // Empty reads as the word, not as blank, because blank looks like
+            // a control that failed to load.
+            IndicatorValue::StringList(v) if v.is_empty() => "All".to_string(),
+            IndicatorValue::StringList(v) => v.join(", "),
         }
     }
 }
@@ -517,6 +554,12 @@ impl IndicatorInstance {
                 IndicatorValue::Bool(v) => v.to_string(),
                 IndicatorValue::String(v) => format!("\"{}\"", v),
                 IndicatorValue::Color(v) => format!("\"{}\"", v),
+                // A real JSON array — this string is the undo/redo
+                // fingerprint, so it must change when the SET changes.
+                IndicatorValue::StringList(v) => {
+                    let items: Vec<String> = v.iter().map(|s| format!("\"{}\"", s)).collect();
+                    format!("[{}]", items.join(","))
+                }
             };
             parts.push(format!("\"{}\":{}", key, val_str));
         }

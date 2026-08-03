@@ -1077,9 +1077,14 @@ impl ChartApp {
                         self.core.bubbles_mut().with_bubble_mut(bid, |b| {
                             mlc_backend::chart_type::clear_slot_dom_heatmap(b);
                         });
-                        self.core.ensure_connector(eid);
-                        self.core.subscribe_dom_heatmap(eid, &symbol, at_dig3);
-                        crate::sglog!("[bubble {:?}] book feed up ({} {:?})", bid, symbol, eid);
+                        // The subscriptions themselves are armed by
+                        // `ensure_dom_book_rosters` (frame_lifecycle/
+                        // dom_books.rs), which knows the overlay's venue set.
+                        // Arming the chart's own book here as well would
+                        // leave it up when the roster later drops it — this
+                        // reconcile only fires on a change of the declared
+                        // STREAM set, and a venue edit is not one.
+                        crate::sglog!("[bubble {:?}] book slot cleared ({} {:?})", bid, symbol, eid);
                     }
                     StreamKind::OpenInterest => {
                         // The projected-liquidation overlay models FROM open
@@ -1117,8 +1122,12 @@ impl ChartApp {
             for stream in held.difference(&want) {
                 match stream {
                     StreamKind::OrderBook => {
-                        self.core.unsubscribe_dom_heatmap(eid, &symbol, at_dig3);
-                        crate::sglog!("[bubble {:?}] book feed down", bid);
+                        // Released by `ensure_dom_book_rosters` on the next
+                        // frame: with the overlay gone its wanted set is
+                        // empty, so every book it held comes down there.
+                        // Tearing one down here as well would race the
+                        // roster's own bookkeeping.
+                        crate::sglog!("[bubble {:?}] book feed released", bid);
                     }
                     StreamKind::Liquidation => {
                         // Nothing to tear down: the ring is shared station

@@ -1390,6 +1390,7 @@ impl IndicatorManager {
                         IndicatorValue::Bool(b) => b.to_string(),
                         IndicatorValue::String(s) => s.clone(),
                         IndicatorValue::Color(c) => c.clone(),
+                        IndicatorValue::StringList(_) => value.to_display_string(),
                     };
                     Some((param_def.name.clone(), value_str))
                 })
@@ -1404,6 +1405,7 @@ impl IndicatorManager {
                         IndicatorValue::Bool(b) => b.to_string(),
                         IndicatorValue::String(s) => s.clone(),
                         IndicatorValue::Color(c) => c.clone(),
+                        IndicatorValue::StringList(_) => v.to_display_string(),
                     };
                     (k.clone(), value_str)
                 })
@@ -1447,6 +1449,7 @@ impl IndicatorManager {
                         IndicatorParamType::Source => ChartParamType::Source,
                         IndicatorParamType::Select { options } => ChartParamType::Select { options: options.clone() },
                         IndicatorParamType::Color => ChartParamType::Color,
+                        IndicatorParamType::Venues => ChartParamType::Venues,
                     },
                 }).collect(),
                 outputs: def.outputs.iter().map(|o| IndicatorOutputDef {

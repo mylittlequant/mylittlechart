@@ -504,6 +504,9 @@ impl ChartApp {
         // per venue, so nothing is lost to a frame that did not run.
         self.pump_liquidations();
         self.refresh_liq_projection();
+        // Books for the DOM heat layer — its venue set decides which, the
+        // same way the liquidation roster works.
+        self.ensure_dom_book_rosters();
         // Bar-aligned series for the host-rendered sub-panes, so they draw
         // through the ordinary output path instead of a bespoke painter.
         self.refresh_subpane_series();

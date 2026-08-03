@@ -60,6 +60,10 @@ pub enum IndicatorParamType {
     Source,
     Select { options: Vec<String> },
     Color,
+    /// A SET of exchanges. The options are not carried here: they depend on
+    /// which connectors serve this indicator's declared stream, which is
+    /// host state — the modal asks for them when the picker opens.
+    Venues,
 }
 
 /// A single parameter definition for display in the indicator settings modal

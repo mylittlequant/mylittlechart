@@ -1482,7 +1482,15 @@ impl ChartApp {
                 // `row_ticks` param. Resolved before the write borrow — and a
                 // change in either invalidates the grid, so the buffer is
                 // rebuilt rather than fed cells of a second grain.
-                let dom_geometry: Vec<(mlc_core::ids::BubbleId, i64, i64, f64, bool)> = bubble_ids
+                #[allow(clippy::type_complexity)]
+                let dom_geometry: Vec<(
+                    mlc_core::ids::BubbleId,
+                    i64,
+                    i64,
+                    f64,
+                    bool,
+                    Vec<digdigdig3::ExchangeId>,
+                )> = bubble_ids
                     .iter()
                     .map(|b| {
                         let (row_ticks, band) = self.dom_heatmap_grid(*b);
@@ -1493,21 +1501,41 @@ impl ChartApp {
                             .map(|tf| tf.interval_ms)
                             .filter(|ms| *ms > 0)
                             .unwrap_or(60_000);
-                        (*b, bar_ms, row_ticks, band, self.dom_heatmap_aggregate(*b))
+                        (
+                            *b,
+                            bar_ms,
+                            row_ticks,
+                            band,
+                            self.dom_heatmap_aggregate(*b),
+                            self.overlay_venues(*b, Self::DOM_HEATMAP_TYPE_ID),
+                        )
                     })
                     .collect();
-                // Aggregated source (owner 2026-08-02): fold in every OTHER
-                // venue whose book this workspace already streams — the same
-                // shared trackers the M/D and AD ladders read. This event is
-                // only the CLOCK; the overlay subscribes nothing for the sake
-                // of aggregation, so the toggle costs nothing and shows
-                // nothing extra until some panel opens those books. Folded
-                // once per event, not per bubble — every aggregating bubble
-                // on this instrument sees the same combined book.
-                let folded: Option<(Vec<(f64, f64)>, Vec<(f64, f64)>)> =
-                    if dom_geometry.iter().any(|(_, _, _, _, agg)| *agg) {
-                        use rust_decimal::prelude::ToPrimitive;
-                        let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
+                // Aggregated source: fold the books of the venues THIS
+                // overlay armed (frame_lifecycle/dom_books.rs). It used to
+                // fold every book the workspace happened to have open, which
+                // made the picture depend on what other panels were showing
+                // and made the toggle a no-op with nothing else on screen.
+                //
+                // Keyed by the venue set, so two bubbles that fold the same
+                // venues share one pass and two that do not each get their
+                // own — the fold is per SET, not per event and not per
+                // bubble.
+                let mut folded_by_set: std::collections::HashMap<
+                    String,
+                    (Vec<(f64, f64)>, Vec<(f64, f64)>),
+                > = std::collections::HashMap::new();
+                {
+                    use rust_decimal::prelude::ToPrimitive;
+                    let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(event_account_type);
+                    for (_, _, _, _, aggregate, venues) in dom_geometry.iter() {
+                        if !*aggregate {
+                            continue;
+                        }
+                        let key = venues.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(",");
+                        if folded_by_set.contains_key(&key) {
+                            continue;
+                        }
                         let mut sources = vec![(bids.clone(), asks.clone())];
                         for (venue, venue_at, tracker) in self.core.ob_trackers_for_symbol(symbol) {
                             // The host market is already in `sources` from the
@@ -1518,6 +1546,9 @@ impl ChartApp {
                             if venue == *exchange_id && venue_at == at_dig3 {
                                 continue;
                             }
+                            if !venues.contains(&venue) {
+                                continue;
+                            }
                             let g = tracker.blocking_read();
                             let side = |v: Vec<(rust_decimal::Decimal, rust_decimal::Decimal)>| {
                                 v.into_iter()
@@ -1526,12 +1557,13 @@ impl ChartApp {
                             };
                             sources.push((side(g.top_bids(500)), side(g.top_asks(500))));
                         }
-                        Some(mlc_core::chart::dom_heatmap::fold_books(&sources))
-                    } else {
-                        None
-                    };
-                for (b, bar_ms, row_ticks, band, aggregate) in dom_geometry {
-                    let (bids, asks): (&[(f64, f64)], &[(f64, f64)]) = match (aggregate, &folded) {
+                        folded_by_set.insert(key, mlc_core::chart::dom_heatmap::fold_books(&sources));
+                    }
+                }
+                for (b, bar_ms, row_ticks, band, aggregate, venues) in dom_geometry {
+                    let key = venues.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(",");
+                    let folded = folded_by_set.get(&key);
+                    let (bids, asks): (&[(f64, f64)], &[(f64, f64)]) = match (aggregate, folded) {
                         (true, Some((fb, fa))) => (fb, fa),
                         _ => (bids, asks),
                     };
