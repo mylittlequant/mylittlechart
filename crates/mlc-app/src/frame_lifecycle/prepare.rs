@@ -333,6 +333,35 @@ impl ChartApp {
                 ))
             })
             .collect();
+        // Other venues' bars for the profiles that fold them, resolved
+        // before the `containers_mut()` borrow. Keyed by chart; empty for
+        // every chart whose profiles are single-venue, which is the default.
+        #[allow(clippy::type_complexity)]
+        let profile_foreign_by_chart: std::collections::HashMap<ChartId, (Vec<mlc_core::Bar>, Vec<mlc_core::Bar>)> =
+            self.panel_app.panel_grid.containers().keys()
+                .filter(|cid| {
+                    vp_on_by_chart.get(*cid).copied().unwrap_or(false)
+                        || tpo_on_by_chart.get(*cid).copied().unwrap_or(false)
+                })
+                .filter_map(|cid| {
+                    let bid = self.bubble_for_chart(*cid)?;
+                    let symbol = self.symbol_for_chart(*cid)?;
+                    let tf = self.timeframe_for_chart(*cid)?;
+                    let bars = bubble_snapshot.get(&bid).map(|(b,)| b.as_slice()).unwrap_or(&[]);
+                    // The whole loaded span: the mode picks its own window
+                    // out of this, and TPO clips to the visible slice.
+                    let t0 = bars.first().map(|b| b.ts_ms())?;
+                    let t1 = bars.last().map(|b| b.ts_ms())?;
+                    Some((
+                        *cid,
+                        (
+                            self.profile_foreign_bars(bid, Self::VOLUME_PROFILE_TYPE_ID, &symbol, &tf.name, t0, t1),
+                            self.profile_foreign_bars(bid, Self::TPO_PROFILE_TYPE_ID, &symbol, &tf.name, t0, t1),
+                        ),
+                    ))
+                })
+                .collect();
+
         for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             // Refresh the Heikin Ashi memo if the chart panel is on
             // chart_type == "heikin_ashi" AND `bars` mutated since the
@@ -363,7 +392,11 @@ impl ChartApp {
                     .get(cid)
                     .copied()
                     .unwrap_or(((24, 0.70), (60, 0.70), Default::default()));
-                window.ensure_vp_from_bars(bubble_bars, &visible_owned, rows, va, mode);
+                let foreign = profile_foreign_by_chart
+                    .get(cid)
+                    .map(|(vp, _)| vp.as_slice())
+                    .unwrap_or(&[]);
+                window.ensure_vp_from_bars(bubble_bars, &visible_owned, rows, va, mode, foreign);
             }
 
             // TPO Profile prepass (item D) — mirrors the Volume Profile
@@ -387,7 +420,25 @@ impl ChartApp {
                     .get(cid)
                     .copied()
                     .unwrap_or(((24, 0.70), (60, 0.70), Default::default()));
-                window.ensure_tpo_profile_from_bars(&visible_owned, 1e-8, rows as f64, va);
+                // TPO reads the VISIBLE slice, so the foreign bars are
+                // clipped to the same span rather than the whole series.
+                let (t0, t1) = (
+                    visible_owned.first().map(|b| b.ts_ms()).unwrap_or(i64::MIN),
+                    visible_owned.last().map(|b| b.ts_ms()).unwrap_or(i64::MAX),
+                );
+                let foreign: Vec<mlc_core::Bar> = profile_foreign_by_chart
+                    .get(cid)
+                    .map(|(_, tpo)| {
+                        tpo.iter()
+                            .filter(|b| {
+                                let ts = b.ts_ms();
+                                ts >= t0 && ts <= t1
+                            })
+                            .copied()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                window.ensure_tpo_profile_from_bars(&visible_owned, 1e-8, rows as f64, va, &foreign);
             }
         }
 

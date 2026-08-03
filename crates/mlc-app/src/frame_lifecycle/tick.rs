@@ -504,6 +504,10 @@ impl ChartApp {
         // per venue, so nothing is lost to a frame that did not run.
         self.pump_liquidations();
         self.refresh_liq_projection();
+        // Bars from other venues for the two profiles that fold them. Unlike
+        // the book and liquidation folds this one has to OPEN the feed: bars
+        // for a venue nobody charts exist nowhere until asked.
+        self.ensure_profile_kline_rosters();
         // Books for the DOM heat layer — its venue set decides which, the
         // same way the liquidation roster works.
         self.ensure_dom_book_rosters();

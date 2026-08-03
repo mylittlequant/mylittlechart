@@ -23,6 +23,12 @@ impl ChartApp {
             // ── BarsLoaded ─────────────────────────────────────────────────────
             BubbleEvent::BarsLoaded { bid, exchange_id, symbol, account_type, timeframe: tf_name, bars, prev_bars } => {
                 if bid.0 == 0 {
+                    // A venue no bubble charts — which is exactly what the
+                    // profile venue fold asked for. Anything else with a
+                    // zero id is ignored inside.
+                    self.absorb_profile_bars(*exchange_id, symbol, tf_name, bars);
+                }
+                if bid.0 == 0 {
                     // No registered bubble — reactor still needs to handle parked presets
                     // and initial bar delivery to newly-created windows.
                     // Falls through to the parked-preset path below.
@@ -758,7 +764,11 @@ impl ChartApp {
             }
 
             // ── BarUpdatePassthrough ────────────────────────────────────────────
-            BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, bar: _bar } => {
+            BubbleEvent::BarUpdatePassthrough { exchange_id: _bar_exch, account_type: bar_account_type, symbol: bar_symbol, timeframe: bar_tf, bar: _bar } => {
+                // A live tick for a venue the profiles fold. Cheap when
+                // nothing folds: one map probe keyed by the event's own
+                // (symbol, TF, venue).
+                self.absorb_profile_bar_update(*_bar_exch, bar_symbol, bar_tf, _bar);
                 let bar_event_at: mlc_core::instrument::AccountType = bar_account_type.parse().unwrap_or_default();
 
                 let instrument_by_cid_bu: std::collections::HashMap<mlc_core::state::ChartId, (String, mlc_core::instrument::AccountType, bool, bool, String)> = {

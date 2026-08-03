@@ -290,6 +290,9 @@ impl BackendCore {
                     drop(mgr);
                     BubbleEvent::BarUpdatePassthrough {
                         exchange_id, account_type: account_type_label.clone(), symbol: symbol.clone(),
+                        // A FOLDED bar belongs to the bubble's own timeframe,
+                        // not to the "1m" feed it was folded from.
+                        timeframe: self.bubbles().timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default(),
                         bar: self.bubbles().bars(bid).last().copied().unwrap_or(new_bar),
                     }
                 }
@@ -943,6 +946,9 @@ impl BackendCore {
                     drop(mgr);
                     BubbleEvent::BarUpdatePassthrough {
                         exchange_id, account_type: account_type_label.clone(), symbol: symbol.clone(),
+                        // A FOLDED bar belongs to the bubble's own timeframe,
+                        // not to the "1m" feed it was folded from.
+                        timeframe: self.bubbles().timeframe(bid).map(|tf| tf.name.clone()).unwrap_or_default(),
                         bar: self.bubbles().bars(bid).last().copied().unwrap_or(new_bar),
                     }
                 }
@@ -1284,6 +1290,7 @@ impl BackendCore {
             exchange_id,
             account_type: account_type.short_label().to_string(),
             symbol: symbol.to_string(),
+            timeframe: tf_name,
             bar: last_bar,
         })
     }

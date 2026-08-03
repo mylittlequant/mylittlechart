@@ -170,6 +170,11 @@ pub enum BubbleEvent {
         exchange_id: ExchangeId,
         account_type: String,
         symbol: String,
+        /// The kline interval this tick belongs to. Carried because a
+        /// consumer that keeps a per-(instrument, TF) series — the profile
+        /// venue fold — cannot tell which of its series to update without
+        /// it. The event already had the value; it was being dropped.
+        timeframe: String,
         bar: mlc_core::Bar,
     },
     /// TradeUpdate pass-through — the per-app reactor owns the OHLCV aggregation
@@ -387,12 +392,13 @@ impl Serialize for BubbleEvent {
                 m.serialize_entry("prepend_count", prepend_count)?;
                 m.end()
             }
-            Self::BarUpdatePassthrough { exchange_id, account_type, symbol, bar } => {
-                let mut m = s.serialize_map(Some(5))?;
+            Self::BarUpdatePassthrough { exchange_id, account_type, symbol, timeframe, bar } => {
+                let mut m = s.serialize_map(Some(6))?;
                 m.serialize_entry("type", "BarUpdatePassthrough")?;
                 m.serialize_entry("exchange_id", ex!(exchange_id))?;
                 m.serialize_entry("account_type", account_type)?;
                 m.serialize_entry("symbol", symbol)?;
+                m.serialize_entry("timeframe", timeframe)?;
                 m.serialize_entry("bar", bar)?;
                 m.end()
             }
@@ -1616,6 +1622,7 @@ impl BackendCore {
                         exchange_id,
                         account_type: bar_at.short_label().to_string(),
                         symbol: bar_sym,
+                        timeframe: bar_tf_name,
                         bar,
                     });
                 }

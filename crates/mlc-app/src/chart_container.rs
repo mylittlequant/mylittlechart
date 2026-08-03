@@ -120,7 +120,7 @@ pub struct ChartContainer {
     /// `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash, last_close_bits, last_high_bits, last_low_bits)`.
     /// The three `_bits` fields catch in-place last-bar OHLC mutations on the
     /// still-open bar (same len + ts but different close/high/low).
-    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64, usize, u64)>,
+    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64, usize, u64, usize)>,
     /// Which window of bars the VP aggregates over. Pushed here by the
     /// prepass from the instance's `mode` parameter — the prepass reads it
     /// under a `containers_mut()` borrow that cannot reach the indicators
@@ -137,7 +137,7 @@ pub struct ChartContainer {
     /// TPO Profile always aggregates the VISIBLE range (no mode selector),
     /// so the stamp is narrower than VP's — it catches a pan/zoom, an
     /// in-place last-bar mutation, or a change of the shape parameters.
-    pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64, u64, u64)>,
+    pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64, u64, u64, usize)>,
 
     // The four `*_show` display gates that used to sit here — `vp_show`,
     // `tpo_profile_show`, `oi_show`, `funding_show` — are gone (2026-08-03).
@@ -1034,6 +1034,13 @@ impl ChartContainer {
     /// instance — they were 24, 0.70 and "whatever the window field held"
     /// until 2026-08-03, and the mode's only switch had been deleted from
     /// the UI, so the layer was stuck on Visible Range.
+    /// `foreign` carries the same symbol's bars from OTHER venues, already
+    /// time-filtered by the caller. They are appended to whatever the mode
+    /// selected, which is exactly the sum of the per-venue profiles: both
+    /// profiles are histograms over price, so the union of the bars is the
+    /// union of their contributions and the shared bucket grid falls out of
+    /// the combined price range. It is deliberately NOT an averaged OHLC
+    /// series — there is no such thing as the market's candle.
     pub fn ensure_vp_from_bars(
         &mut self,
         bars: &[Bar],
@@ -1041,6 +1048,7 @@ impl ChartContainer {
         bucket_count: usize,
         value_area: f64,
         mode: mlc_core::chart::volume_profile::VpMode,
+        foreign: &[Bar],
     ) {
         use mlc_core::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
 
@@ -1069,6 +1077,7 @@ impl ChartContainer {
             vp_last.map(|b| b.low.to_bits()).unwrap_or(0),
             bucket_count,
             value_area.to_bits(),
+            foreign.len(),
         );
         if self.vp_overlay_stamp == Some(stamp) && self.vp_overlay.is_some() {
             return;
@@ -1085,7 +1094,18 @@ impl ChartContainer {
             return;
         }
 
-        let owned: Vec<Bar> = bars_to_profile.into_iter().copied().collect();
+        let mut owned: Vec<Bar> = bars_to_profile.into_iter().copied().collect();
+        if !foreign.is_empty() {
+            // Only the foreign bars inside the window this mode selected —
+            // the caller filtered by the VISIBLE range, which is wider than
+            // a Session or Composite window.
+            let t0 = owned.first().map(|b| b.ts_ms()).unwrap_or(i64::MIN);
+            let t1 = owned.last().map(|b| b.ts_ms()).unwrap_or(i64::MAX);
+            owned.extend(foreign.iter().filter(|b| {
+                let ts = b.ts_ms();
+                ts >= t0 && ts <= t1
+            }));
+        }
         self.vp_overlay = Some(VolumeProfileData::compute(&owned, mode, value_area, bucket_count));
         self.vp_overlay_stamp = Some(stamp);
     }
@@ -1107,6 +1127,7 @@ impl ChartContainer {
         min_tick: f64,
         target_rows: f64,
         value_area: f64,
+        foreign: &[Bar],
     ) {
         use mlc_core::chart::tpo_profile::TpoProfileData;
 
@@ -1120,13 +1141,21 @@ impl ChartContainer {
             last.map(|b| b.low.to_bits()).unwrap_or(0),
             target_rows.to_bits(),
             value_area.to_bits(),
+            foreign.len(),
         );
         if self.tpo_profile_overlay_stamp == Some(stamp) && self.tpo_profile_overlay.is_some() {
             return;
         }
 
+        let merged: Vec<Bar>;
+        let profile_bars: &[Bar] = if foreign.is_empty() {
+            visible_bars
+        } else {
+            merged = visible_bars.iter().chain(foreign.iter()).copied().collect();
+            &merged
+        };
         self.tpo_profile_overlay =
-            Some(TpoProfileData::compute(visible_bars, value_area, min_tick, target_rows));
+            Some(TpoProfileData::compute(profile_bars, value_area, min_tick, target_rows));
         self.tpo_profile_overlay_stamp = Some(stamp);
     }
 

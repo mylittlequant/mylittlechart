@@ -945,6 +945,45 @@ fn run_render_loop(
                     .unwrap_or((0, 0));
                 let _ = js_sys::Reflect::set(&dbg, &"vp_rows".into(), &(vp_rows as f64).into());
                 let _ = js_sys::Reflect::set(&dbg, &"tpo_rows".into(), &(tpo_rows as f64).into());
+                // The venue fold, as a number: which foreign series are held
+                // and how many bars each carries. A profile that folds
+                // nothing and one whose venues answered nothing look the
+                // same on screen — this separates them.
+                let profile_bars: String = {
+                    let mut parts: Vec<String> = st
+                        .chart
+                        .profile_bars
+                        .iter()
+                        .map(|((sym, tf, eid), bars)| {
+                            // Bar count AND mean volume: a venue that answers
+                            // in a different unit is invisible in the count
+                            // and obvious in the mean.
+                            let mean = if bars.is_empty() {
+                                0.0
+                            } else {
+                                bars.iter().map(|b| b.volume).sum::<f64>() / bars.len() as f64
+                            };
+                            format!("{}:{}:{}={}@{:.1}", sym, tf, eid.as_str(), bars.len(), mean)
+                        })
+                        .collect();
+                    parts.sort();
+                    parts.join(",")
+                };
+                let _ = js_sys::Reflect::set(&dbg, &"profile_bars".into(), &profile_bars.into());
+                // Row counts stay put when venues are folded — the grain is
+                // set by the price range, which barely moves. The TOTAL is
+                // what a fold changes, so that is what gets measured.
+                let (vp_total, tpo_total) = active_cid
+                    .and_then(|cid| st.chart.panel_app.panel_grid.containers().get(&cid))
+                    .map(|w| {
+                        (
+                            w.vp_overlay.as_ref().map(|v| v.rows.iter().map(|r| r.total_volume).sum::<f64>()).unwrap_or(0.0),
+                            w.tpo_profile_overlay.as_ref().map(|v| v.total_count as f64).unwrap_or(0.0),
+                        )
+                    })
+                    .unwrap_or((0.0, 0.0));
+                let _ = js_sys::Reflect::set(&dbg, &"vp_total".into(), &vp_total.into());
+                let _ = js_sys::Reflect::set(&dbg, &"tpo_total".into(), &tpo_total.into());
                 let oi_hist = active_cid
                     .and_then(|cid| st.chart.bubble_for_chart(cid))
                     .map(|bid| {

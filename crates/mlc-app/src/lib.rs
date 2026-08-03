@@ -431,6 +431,25 @@ pub struct ChartApp {
     pub(crate) oi_hist_armed:
         std::collections::HashMap<mlc_core::ids::BubbleId, (String, bool, Vec<String>, i64)>,
 
+    /// Bars of OTHER venues, for the profiles that fold them. Keyed
+    /// (symbol, timeframe name, venue) — deliberately not on a bubble: a
+    /// bubble is one instrument's series, and these are other instruments'
+    /// series that exist only as profile input. RAM-only, and pruned to what
+    /// some live roster still asks for.
+    #[allow(clippy::type_complexity)]
+    pub profile_bars: std::collections::HashMap<
+        (String, String, digdigdig3::ExchangeId),
+        Vec<mlc_core::Bar>,
+    >,
+
+    /// The (symbol, timeframe, venues, armed-at-ms) the profile folds last
+    /// subscribed klines for, per bubble. Same contract as `liq_armed`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) profile_klines_armed: std::collections::HashMap<
+        mlc_core::ids::BubbleId,
+        (String, String, Vec<String>, i64),
+    >,
+
     /// The (symbol, market, venues) whose ORDER BOOKS the DOM Heatmap
     /// overlay currently holds, per bubble. RAM-only, and it is the roster's
     /// memory: without it the reconcile could not tell a book it opened from
@@ -2867,6 +2886,8 @@ impl ChartApp {
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),
+            profile_bars: std::collections::HashMap::new(),
+            profile_klines_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(symbol),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3280,6 +3301,8 @@ impl ChartApp {
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),
+            profile_bars: std::collections::HashMap::new(),
+            profile_klines_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
@@ -3852,6 +3875,8 @@ impl ChartApp {
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),
+            profile_bars: std::collections::HashMap::new(),
+            profile_klines_armed: std::collections::HashMap::new(),
             panel_app: ChartPanelApp::new(""),
             input_coordinator: RefCell::new(InputCoordinator::new()),
             input_handler: DefaultChartInputHandler::new(),
