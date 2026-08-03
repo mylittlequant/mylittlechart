@@ -1259,6 +1259,198 @@ pub fn render_indicator_settings_modal(
     }
 
     // =========================================================================
+    // Footer — single 52px row: "Шаблон" left, "Отмена" + "OK" right
+    // =========================================================================
+    let footer_y = modal_y + modal_height - footer_height;
+
+    // Footer top border
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.begin_path();
+    ctx.move_to(modal_x, footer_y);
+    ctx.line_to(modal_x + modal_width, footer_y);
+    ctx.stroke();
+
+    let button_height = 32.0;
+    let button_y = footer_y + (footer_height - button_height) / 2.0;
+    let hovered_btn = indicator_state.hovered_footer_button.as_deref();
+
+    // ── "Шаблон" button (left side, outline only) ────────────────────────────
+    let template_btn_width = 80.0;
+    let template_btn_x = modal_x + 16.0;
+    let is_tmpl_hovered = hovered_btn == Some("template_dropdown");
+    ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_indicator(IndicatorKey::Template), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
+
+    result.footer_buttons.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
+
+    // ── "OK" button (right side, filled #2962ff) ─────────────────────────────
+    //
+    // There is no Cancel next to it, and there was nothing for one to do:
+    // every control in this modal applies to the live instance the moment it
+    // is touched, so `cancel` and `ok` both ran `close()` — the same thing
+    // the ✕ does. A button labelled "Отмена" that cancels nothing is worse
+    // than no button, because it invites the user to rely on it.
+    //
+    // If a real revert is ever wanted it has to snapshot the params on open
+    // and restore them here; the label alone was never the feature.
+    let ok_btn_width = 70.0;
+    let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
+    let ok_hovered = hovered_btn == Some("ok");
+    ctx.set_fill_color(if ok_hovered { "#4080ff" } else { "#2962ff" });
+    ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
+    ctx.set_fill_color("#ffffff");
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+
+    // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
+    if indicator_state.template_dropdown_open {
+        let opt_h = 28.0;
+        let sep_h = 1.0;
+        let delete_btn_w = 24.0;
+        let fixed_rows = 2_usize;
+        let tmpl_rows = templates.len().max(1); // at least 1 for "(нет шаблонов)"
+        let total_h = opt_h * (fixed_rows + tmpl_rows) as f64 + sep_h + 6.0;
+        let dd_x = template_btn_x;
+        let menu_w = template_btn_width.max(180.0);
+        let menu_y = button_y + button_height + 2.0;
+
+        ctx.set_fill_color(&toolbar_theme.dropdown_bg);
+        ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
+
+        // Register background FIRST with coordinator (last-registered wins, so
+        // items registered AFTER will override this in hit_test_at)
+        input_coordinator.register_on_layer(
+            "ind_settings:footer:template_dropdown_menu".to_string(),
+            uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
+            uzor::input::Sense::CLICK,
+            &layer_id,
+        );
+
+        let mut row_y = menu_y + 3.0;
+
+        // Row 1: "Сохранить как..."
+        let is_sa_hovered = indicator_state.hovered_item_id.as_deref() == Some("template_save_as");
+        if is_sa_hovered {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+        }
+        ctx.set_fill_color(text_color);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(t_indicator(IndicatorKey::SaveAs), dd_x + 8.0, row_y + opt_h / 2.0);
+        result.footer_buttons.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
+        row_y += opt_h;
+
+        // Row 2: "Применить по умолчанию"
+        let is_def_hovered = indicator_state.hovered_item_id.as_deref() == Some("template_default");
+        if is_def_hovered {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+        }
+        ctx.set_fill_color(text_color);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(t_indicator(IndicatorKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
+        result.footer_buttons.push(("template_default".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
+        row_y += opt_h;
+
+        // Separator
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(dd_x + 4.0, row_y);
+        ctx.line_to(dd_x + menu_w - 4.0, row_y);
+        ctx.stroke();
+        row_y += sep_h + 2.0;
+
+        // Saved templates list
+        if templates.is_empty() {
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
+        } else {
+            for tmpl in templates {
+                let row_id = format!("template_option:{}", tmpl.id);
+                let del_id = format!("template_delete:{}", tmpl.id);
+                let is_row_hovered = indicator_state.hovered_item_id.as_deref() == Some(row_id.as_str());
+                let is_del_hovered = indicator_state.hovered_item_id.as_deref() == Some(del_id.as_str());
+
+                if is_row_hovered || is_del_hovered {
+                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                    ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                }
+
+                ctx.set_fill_color(text_color);
+                ctx.set_font("11px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
+
+                let del_x = dd_x + menu_w - delete_btn_w - 4.0;
+                let del_y = row_y + (opt_h - 24.0) / 2.0;
+                let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
+                draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
+
+                let name_w = menu_w - delete_btn_w - 8.0;
+                result.footer_buttons.push((row_id, WidgetRect::new(dd_x, row_y, name_w, opt_h)));
+                result.footer_buttons.push((del_id, WidgetRect::new(del_x, del_y, delete_btn_w, 24.0)));
+
+                row_y += opt_h;
+            }
+        }
+
+        // Register dropdown background LAST so specific items win in hit-test
+        result.footer_buttons.push(("template_dropdown_menu".to_string(), WidgetRect::new(dd_x, menu_y, menu_w, total_h)));
+
+        let _ = is_sa_hovered;
+        let _ = is_def_hovered;
+    }
+
+    // Populate result for hit testing
+    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
+    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
+    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
+    result.content_rect = WidgetRect::new(content_x, content_y, content_width, content_height);
+
+    // Phase 6.1a: register scrollable content area for coordinator dispatch
+    input_coordinator.register_on_layer(
+        "ind_settings:scroll_viewport",
+        uzor::types::Rect::new(content_x, content_y, content_width, content_height),
+        uzor::input::Sense::SCROLL,
+        &layer_id,
+    );
+
+    // Tab rects
+    for (i, tab) in IndicatorSettingsTab::all().iter().enumerate() {
+        let tab_y = sidebar_y + i as f64 * tab_button_height;
+        result.tab_rects.push((tab.id().to_string(), WidgetRect::new(sidebar_x, tab_y, sidebar_width, tab_button_height)));
+    }
+
+    // Footer buttons
+    result.footer_buttons.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
+
+    // Painted LAST so it lands on top of the footer: an open list used to
+    // be drawn before the OK/Cancel row, which then covered its first
+    // items. Registration order is unchanged — the item rects go into
+    // `content_items`, registered below the footer's own, so a click on an
+    // overlapping row still reaches the list rather than the button under
+    // it.
+    // =========================================================================
     // Render dropdown menu if open (only for Inputs tab)
     // =========================================================================
     if indicator_state.active_tab == IndicatorSettingsTab::Inputs {
@@ -1393,201 +1585,6 @@ pub fn render_indicator_settings_modal(
         }
     }
 
-    // =========================================================================
-    // Footer — single 52px row: "Шаблон" left, "Отмена" + "OK" right
-    // =========================================================================
-    let footer_y = modal_y + modal_height - footer_height;
-
-    // Footer top border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, footer_y);
-    ctx.line_to(modal_x + modal_width, footer_y);
-    ctx.stroke();
-
-    let button_height = 32.0;
-    let button_y = footer_y + (footer_height - button_height) / 2.0;
-    let button_padding = 12.0;
-    let hovered_btn = indicator_state.hovered_footer_button.as_deref();
-
-    // ── "Шаблон" button (left side, outline only) ────────────────────────────
-    let template_btn_width = 80.0;
-    let template_btn_x = modal_x + 16.0;
-    let is_tmpl_hovered = hovered_btn == Some("template_dropdown");
-    ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_indicator(IndicatorKey::Template), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
-
-    result.footer_buttons.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
-
-    // ── "OK" button (right side, filled #2962ff) ─────────────────────────────
-    let ok_btn_width = 70.0;
-    let cancel_btn_width = 80.0;
-    let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-    let ok_hovered = hovered_btn == Some("ok");
-    ctx.set_fill_color(if ok_hovered { "#4080ff" } else { "#2962ff" });
-    ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
-    ctx.set_fill_color("#ffffff");
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
-
-    // ── "Отмена" button (before OK, outline only) ─────────────────────────────
-    let cancel_btn_x = ok_btn_x - button_padding - cancel_btn_width;
-    let cancel_hovered = hovered_btn == Some("cancel");
-    if cancel_hovered {
-        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-        ctx.fill_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-    }
-    ctx.set_stroke_color(if cancel_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(cancel_btn_x, button_y, cancel_btn_width, button_height);
-    ctx.set_fill_color(text_color);
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonCancel), cancel_btn_x + cancel_btn_width / 2.0, button_y + button_height / 2.0);
-
-    // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
-    if indicator_state.template_dropdown_open {
-        let opt_h = 28.0;
-        let sep_h = 1.0;
-        let delete_btn_w = 24.0;
-        let fixed_rows = 2_usize;
-        let tmpl_rows = templates.len().max(1); // at least 1 for "(нет шаблонов)"
-        let total_h = opt_h * (fixed_rows + tmpl_rows) as f64 + sep_h + 6.0;
-        let dd_x = template_btn_x;
-        let menu_w = template_btn_width.max(180.0);
-        let menu_y = button_y + button_height + 2.0;
-
-        ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-        ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
-
-        // Register background FIRST with coordinator (last-registered wins, so
-        // items registered AFTER will override this in hit_test_at)
-        input_coordinator.register_on_layer(
-            "ind_settings:footer:template_dropdown_menu".to_string(),
-            uzor::types::Rect::new(dd_x, menu_y, menu_w, total_h),
-            uzor::input::Sense::CLICK,
-            &layer_id,
-        );
-
-        let mut row_y = menu_y + 3.0;
-
-        // Row 1: "Сохранить как..."
-        let is_sa_hovered = indicator_state.hovered_item_id.as_deref() == Some("template_save_as");
-        if is_sa_hovered {
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-        }
-        ctx.set_fill_color(text_color);
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_indicator(IndicatorKey::SaveAs), dd_x + 8.0, row_y + opt_h / 2.0);
-        result.footer_buttons.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
-        row_y += opt_h;
-
-        // Row 2: "Применить по умолчанию"
-        let is_def_hovered = indicator_state.hovered_item_id.as_deref() == Some("template_default");
-        if is_def_hovered {
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-        }
-        ctx.set_fill_color(text_color);
-        ctx.set_font("11px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_indicator(IndicatorKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
-        result.footer_buttons.push(("template_default".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
-        row_y += opt_h;
-
-        // Separator
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(dd_x + 4.0, row_y);
-        ctx.line_to(dd_x + menu_w - 4.0, row_y);
-        ctx.stroke();
-        row_y += sep_h + 2.0;
-
-        // Saved templates list
-        if templates.is_empty() {
-            ctx.set_fill_color(&toolbar_theme.item_text_muted);
-            ctx.set_font("11px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
-        } else {
-            for tmpl in templates {
-                let row_id = format!("template_option:{}", tmpl.id);
-                let del_id = format!("template_delete:{}", tmpl.id);
-                let is_row_hovered = indicator_state.hovered_item_id.as_deref() == Some(row_id.as_str());
-                let is_del_hovered = indicator_state.hovered_item_id.as_deref() == Some(del_id.as_str());
-
-                if is_row_hovered || is_del_hovered {
-                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                    ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-                }
-
-                ctx.set_fill_color(text_color);
-                ctx.set_font("11px sans-serif");
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
-
-                let del_x = dd_x + menu_w - delete_btn_w - 4.0;
-                let del_y = row_y + (opt_h - 24.0) / 2.0;
-                let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
-                draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
-
-                let name_w = menu_w - delete_btn_w - 8.0;
-                result.footer_buttons.push((row_id, WidgetRect::new(dd_x, row_y, name_w, opt_h)));
-                result.footer_buttons.push((del_id, WidgetRect::new(del_x, del_y, delete_btn_w, 24.0)));
-
-                row_y += opt_h;
-            }
-        }
-
-        // Register dropdown background LAST so specific items win in hit-test
-        result.footer_buttons.push(("template_dropdown_menu".to_string(), WidgetRect::new(dd_x, menu_y, menu_w, total_h)));
-
-        let _ = is_sa_hovered;
-        let _ = is_def_hovered;
-    }
-
-    // Populate result for hit testing
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    result.content_rect = WidgetRect::new(content_x, content_y, content_width, content_height);
-
-    // Phase 6.1a: register scrollable content area for coordinator dispatch
-    input_coordinator.register_on_layer(
-        "ind_settings:scroll_viewport",
-        uzor::types::Rect::new(content_x, content_y, content_width, content_height),
-        uzor::input::Sense::SCROLL,
-        &layer_id,
-    );
-
-    // Tab rects
-    for (i, tab) in IndicatorSettingsTab::all().iter().enumerate() {
-        let tab_y = sidebar_y + i as f64 * tab_button_height;
-        result.tab_rects.push((tab.id().to_string(), WidgetRect::new(sidebar_x, tab_y, sidebar_width, tab_button_height)));
-    }
-
-    // Footer buttons
-    result.footer_buttons.push(("cancel".to_string(), WidgetRect::new(cancel_btn_x, button_y, cancel_btn_width, button_height)));
-    result.footer_buttons.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
 
     // Register footer buttons with coordinator (skip template_dropdown_menu —
     // already registered early so it has lowest priority in hit_test_at)

@@ -2996,7 +2996,10 @@ impl ChartApp {
             _ if rest.starts_with("footer:") => {
                 let btn_id = &rest["footer:".len()..];
                 match btn_id {
-                    "ok" | "cancel" => {
+                    // No "cancel" arm: the modal has no Cancel button, because
+                    // every control here applies live and there was nothing to
+                    // cancel. Escape and the ✕ close it the same way.
+                    "ok" => {
                         self.panel_app.indicator_settings_state.close();
                         self.autosave_snapshot();
                         eprintln!("[ChartApp] ind_settings closed via footer: {}", btn_id);
