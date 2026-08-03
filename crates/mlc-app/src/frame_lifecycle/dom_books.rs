@@ -86,6 +86,7 @@ impl crate::ChartApp {
                 if held_symbol != &symbol || held_at != &at {
                     for eid in held_venues {
                         self.core.unsubscribe_dom_heatmap(*eid, held_symbol, *held_at);
+                        self.core.unsubscribe_depth(*eid, held_symbol, *held_at);
                     }
                     self.dom_books_armed.remove(&bid);
                 }
@@ -102,6 +103,9 @@ impl crate::ChartApp {
 
             for eid in held_venues.iter().filter(|e| !venues.contains(e)) {
                 self.core.unsubscribe_dom_heatmap(*eid, &symbol, at);
+                // The tracker stays: it is shared station state a DOM ladder
+                // may also be reading, and the fold already ignores a venue
+                // that left the set.
                 crate::sglog!("[bubble {:?}] book feed down ({} {:?})", bid, symbol, eid);
             }
             for eid in venues.iter().filter(|e| !held_venues.contains(e)) {
@@ -117,7 +121,23 @@ impl crate::ChartApp {
                     continue;
                 }
                 self.core.ensure_connector(*eid);
+                // TWO subscriptions, because they feed two different things
+                // and measuring proved one is not enough (2026-08-03,
+                // `book_venues: 0` with five venues armed):
+                //
+                // * `subscribe_dom_heatmap` delivers this venue's book as
+                //   passthrough EVENTS — the layer's clock and its trade
+                //   dots. It creates no tracker.
+                // * `subscribe_depth` creates the shared `OrderBookTracker`,
+                //   and the tracker registry is what the fold reads. Without
+                //   it an armed venue contributes nothing: the aggregate
+                //   toggle looked live, the roster looked armed, and the
+                //   picture stayed single-venue.
+                //
+                // This is the same pair a DOM ladder opens, which is the
+                // cost of asking for another venue's depth.
                 self.core.subscribe_dom_heatmap(*eid, &symbol, at);
+                self.core.subscribe_depth(*eid, &symbol, at);
                 crate::sglog!("[bubble {:?}] book feed up ({} {:?})", bid, symbol, eid);
             }
 
