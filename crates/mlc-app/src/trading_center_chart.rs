@@ -353,7 +353,12 @@ impl ChartApp {
             scale_settings: &window.scale_settings,
             ha_cache: window.ha_cache.as_deref(),
             vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
-            tpo_profile_overlay: if window.tpo_profile_show {
+            // Derived from the instance, like every other layer here. It read
+            // `window.tpo_profile_show` until 2026-08-03 — a bool nothing can
+            // set any more (its toggle event lost its last emitter when the
+            // catalog intercept was removed), so TPO was dark in the trading
+            // container no matter what the object tree said.
+            tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) {
                 window.tpo_profile_overlay.as_ref()
             } else {
                 None
