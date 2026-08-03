@@ -1988,16 +1988,18 @@ impl ChartApp {
                 .collect(),
             // Already capability-filtered by the bridge.
             StreamKind::OpenInterest => self.core.bridge_handle().oi_history_venues(),
-            // Books and bars: everything the workspace can connect to. The
-            // sidebar's per-connector switch is applied at ARM time, not
-            // here — a venue the owner turned off should still be visible in
-            // the list as a venue, rather than vanishing without explanation.
-            StreamKind::OrderBook | StreamKind::Bar | StreamKind::Tick => {
-                multi_dom::KNOWN_EXCHANGES
-                    .iter()
-                    .filter_map(|slug| digdigdig3::ExchangeId::from_str(slug))
-                    .collect()
-            }
+            // Books, bars and trades come from the connector registry, which
+            // is where every venue DECLARES the feeds it serves. They were a
+            // hand-written six here until 2026-08-03 — the Multi-DOM ladder's
+            // cycle-add list, borrowed because it was nearby. Candles are the
+            // feed essentially every exchange publishes (17 of them), so a
+            // profile offered six was quietly hiding two thirds of the
+            // market. The sidebar's per-connector switch is applied at ARM
+            // time, not here: a venue the owner turned off stays visible as a
+            // venue rather than vanishing without explanation.
+            StreamKind::Bar => digdigdig3::connector_manager::kline_venues(),
+            StreamKind::OrderBook => digdigdig3::connector_manager::orderbook_venues(),
+            StreamKind::Tick => digdigdig3::connector_manager::trade_venues(),
             _ => Vec::new(),
         }
     }
@@ -2051,6 +2053,7 @@ impl ChartApp {
     pub(crate) fn refresh_indicator_venue_options(&mut self) {
         let Some(id) = self.panel_app.indicator_settings_state.indicator_id else {
             self.panel_app.indicator_settings_state.venue_options.clear();
+            self.panel_app.indicator_settings_state.venue_all = true;
             return;
         };
         let (offered, chosen): (Vec<digdigdig3::ExchangeId>, Vec<String>) = {
@@ -2070,11 +2073,16 @@ impl ChartApp {
                 .unwrap_or_default();
             (offered, chosen)
         };
+        // An EMPTY set means every offered venue, so every row is ticked.
+        // Showing them all unticked in that state was backwards — it read as
+        // "nothing selected" for the layer's default, which is "all of them".
+        let all = chosen.is_empty();
+        self.panel_app.indicator_settings_state.venue_all = all;
         self.panel_app.indicator_settings_state.venue_options = offered
             .into_iter()
             .map(|eid| {
                 let name = eid.as_str().to_uppercase();
-                let on = chosen.iter().any(|c| c.eq_ignore_ascii_case(&name));
+                let on = all || chosen.iter().any(|c| c.eq_ignore_ascii_case(&name));
                 (name, on)
             })
             .collect();

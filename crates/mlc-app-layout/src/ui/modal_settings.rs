@@ -1137,6 +1137,12 @@ pub struct IndicatorSettingsState {
     /// connectors serve this layer's declared stream), so it cannot live on
     /// the indicator definition, which is static and shared.
     pub venue_options: Vec<(String, bool)>,
+    /// True while the stored set is EMPTY, i.e. the layer follows every
+    /// offered venue. Every row is ticked in that state, so the ticks alone
+    /// cannot distinguish it from a set that happens to name all of them —
+    /// and the difference is real: the empty set keeps following the offered
+    /// list as connectors come and go.
+    pub venue_all: bool,
     /// Whether the user is drag-selecting text in the active text input.
     pub text_select_dragging: bool,
     // ---- Template UI state ----

@@ -48,6 +48,25 @@ use mlc_core::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
 /// * `frame_theme` - Frame theme
 /// * `toolbar_theme` - Toolbar theme
 /// * `input_coordinator` - Input coordinator for registering hit zones
+/// Height a parameter dropdown of `rows` items will take, matching the
+/// `DropdownConfig` below (item_height 28, padding 4 on both edges).
+fn param_dropdown_height(rows: usize) -> f64 {
+    rows as f64 * 28.0 + 8.0
+}
+
+/// Whether a dropdown anchored at `anchor_y` (height `anchor_h`) has to open
+/// UPWARD because it would otherwise run off the bottom of the window.
+///
+/// Both the chevron and the menu itself ask this, so they cannot disagree —
+/// an arrow pointing down at a menu that opened up is its own small lie, and
+/// a menu that opened down off the screen simply could not be used.
+fn dropdown_opens_upward(anchor_y: f64, anchor_h: f64, rows: usize, screen_h: f64) -> bool {
+    let h = param_dropdown_height(rows);
+    // Only flip when there is genuinely more room above — on a window too
+    // short for either side, downward at least keeps the first rows reachable.
+    anchor_y + anchor_h + 2.0 + h > screen_h && anchor_y - 2.0 - h > 0.0
+}
+
 pub fn render_indicator_settings_modal(
     ctx: &mut dyn RenderContext,
     screen_w: f64,
@@ -326,8 +345,11 @@ pub fn render_indicator_settings_modal(
                             .filter(|(_, on)| *on)
                             .map(|(v, _)| v.as_str())
                             .collect();
-                        let label = if chosen.is_empty() {
-                            "All".to_string()
+                        let label = if indicator_state.venue_all {
+                            // Following the offered list, whatever it becomes.
+                            format!("All ({})", chosen.len())
+                        } else if chosen.is_empty() {
+                            "None".to_string()
                         } else {
                             let joined = chosen.join(", ");
                             if joined.chars().count() <= 16 { joined } else { format!("{} venues", chosen.len()) }
@@ -344,11 +366,20 @@ pub fn render_indicator_settings_modal(
 
                         let arrow_x = input_x + field_width - 14.0;
                         let arrow_y = row_y + row_height / 2.0;
+                        let up = dropdown_opens_upward(
+                            input_y, input_height, indicator_state.venue_options.len(), screen_h,
+                        );
                         ctx.set_fill_color(text_color);
                         ctx.begin_path();
-                        ctx.move_to(arrow_x, arrow_y - 3.0);
-                        ctx.line_to(arrow_x + 6.0, arrow_y - 3.0);
-                        ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
+                        if up {
+                            ctx.move_to(arrow_x, arrow_y + 3.0);
+                            ctx.line_to(arrow_x + 6.0, arrow_y + 3.0);
+                            ctx.line_to(arrow_x + 3.0, arrow_y - 3.0);
+                        } else {
+                            ctx.move_to(arrow_x, arrow_y - 3.0);
+                            ctx.line_to(arrow_x + 6.0, arrow_y - 3.0);
+                            ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
+                        }
                         ctx.close_path();
                         ctx.fill();
 
@@ -386,14 +417,28 @@ pub fn render_indicator_settings_modal(
                         ctx.line_to(input_x + text_width, input_y + input_height);
                         ctx.stroke();
 
-                        // Dropdown arrow (chevron)
+                        // Dropdown arrow (chevron) — points the way the menu
+                        // will actually open.
                         let arrow_x = input_x + text_width + chevron_width / 2.0 - 3.0;
                         let arrow_y = row_y + row_height / 2.0;
+                        let option_rows = match param_type {
+                            Some(IndicatorParamType::Select { options }) => options.len(),
+                            // Source is the OHLCV field list, fixed length.
+                            Some(IndicatorParamType::Source) => 8,
+                            _ => 0,
+                        };
+                        let up = dropdown_opens_upward(input_y, input_height, option_rows, screen_h);
                         ctx.set_fill_color(text_color);
                         ctx.begin_path();
-                        ctx.move_to(arrow_x, arrow_y - 3.0);
-                        ctx.line_to(arrow_x + 6.0, arrow_y - 3.0);
-                        ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
+                        if up {
+                            ctx.move_to(arrow_x, arrow_y + 3.0);
+                            ctx.line_to(arrow_x + 6.0, arrow_y + 3.0);
+                            ctx.line_to(arrow_x + 3.0, arrow_y - 3.0);
+                        } else {
+                            ctx.move_to(arrow_x, arrow_y - 3.0);
+                            ctx.line_to(arrow_x + 6.0, arrow_y - 3.0);
+                            ctx.line_to(arrow_x + 3.0, arrow_y + 3.0);
+                        }
                         ctx.close_path();
                         ctx.fill();
 
@@ -1239,7 +1284,11 @@ pub fn render_indicator_settings_modal(
                         let dropdown_items: Vec<DropdownItem> = if is_venues {
                             indicator_state.venue_options.iter()
                                 .map(|(v, on)| {
-                                    DropdownItem::item(v, &format!("{} {}", if *on { "✓" } else { "·" }, v))
+                                    // A tick, or nothing. A second glyph on the
+                                    // unticked rows only competes with the tick
+                                    // it is meant to contrast with; the blank
+                                    // keeps the labels aligned.
+                                    DropdownItem::item(v, &format!("{} {}", if *on { "✓" } else { " " }, v))
                                 })
                                 .collect()
                         } else {
@@ -1264,7 +1313,11 @@ pub fn render_indicator_settings_modal(
                         };
 
                         let dropdown_theme = DropdownTheme {
-                            background: toolbar_theme.dropdown_bg.clone(),
+                            // The modal's OWN panel colour, forced opaque. It
+                            // used to take the toolbar's dropdown token, which
+                            // a skin may derive with an alpha — and a menu you
+                            // can read the chart through is not a menu.
+                            background: mlc_core::apply_opacity(&frame_theme.toolbar_bg, 1.0),
                             border: toolbar_theme.separator.clone(),
                             shadow: "rgba(0,0,0,0.5)".to_string(),
                             item_text: toolbar_theme.item_text.clone(),
@@ -1290,7 +1343,18 @@ pub fn render_indicator_settings_modal(
                             // button_rect.y is already in screen-space — use it directly.
                             let screen_button_y = button_rect.y;
                             let dropdown_x = button_rect.x;
-                            let dropdown_y = screen_button_y + button_rect.height + 2.0;
+                            // Open upward when there is no room below, so the
+                            // menu cannot run off the bottom of the window —
+                            // the failure the owner hit with the settings modal
+                            // parked low on screen.
+                            let rows = dropdown_config.items.len();
+                            let dropdown_y = if dropdown_opens_upward(
+                                screen_button_y, button_rect.height, rows, screen_h,
+                            ) {
+                                screen_button_y - 2.0 - param_dropdown_height(rows)
+                            } else {
+                                screen_button_y + button_rect.height + 2.0
+                            };
 
                             // Only render if the button is visible within the scroll viewport.
                             let viewport_top = tab_viewport_rect.y;
