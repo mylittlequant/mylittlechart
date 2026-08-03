@@ -203,8 +203,28 @@ impl IndicatorBridge {
                     let display_name = Self::humanize_param_name(&constraint.name);
                     params.push(IndicatorParam::venues(&constraint.name, &display_name));
                 }
+                // A string that names its allowed values IS a dropdown. Only
+                // `MaType` used to reach the modal as one, so any other
+                // enumerated setting had nowhere to live — which is why the
+                // Volume Profile's mode spent its life as an unreachable
+                // toolbar action instead of a parameter.
+                CatalogParamType::String if !constraint.options.is_empty() => {
+                    let display_name = Self::humanize_param_name(&constraint.name);
+                    let default = constraint.default.as_ref()
+                        .and_then(|v| v.as_string().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    let default_index = constraint.options.iter()
+                        .position(|o| *o == default)
+                        .unwrap_or(0);
+                    params.push(IndicatorParam::select(
+                        &constraint.name,
+                        &display_name,
+                        constraint.options.clone(),
+                        default_index,
+                    ));
+                }
                 _ => {
-                    // Skip other types (String, etc.)
+                    // Skip other types (a free-text String, etc.)
                 }
             }
         }

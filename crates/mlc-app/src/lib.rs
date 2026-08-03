@@ -1895,6 +1895,92 @@ impl ChartApp {
             .unwrap_or(false)
     }
 
+    /// How a profile strip reads, from its instance's params.
+    ///
+    /// One resolver for both profiles: they differ in what they count, not
+    /// in how the histogram draws, so a second copy would only be a second
+    /// place for the two to drift apart.
+    pub fn profile_ink(
+        &self,
+        bid: mlc_core::ids::BubbleId,
+        type_id: &str,
+    ) -> mlc_core::chart::render_data::ProfileInk {
+        let d = mlc_core::chart::render_data::ProfileInk::default();
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == type_id)
+        else {
+            return d;
+        };
+        let f = |k: &str, fallback: f64| {
+            inst.params.get(k).and_then(|v| v.as_float()).unwrap_or(fallback)
+        };
+        let b = |k: &str, fallback: bool| {
+            inst.params.get(k).and_then(|v| v.as_bool()).unwrap_or(fallback)
+        };
+        mlc_core::chart::render_data::ProfileInk {
+            // Declared in percent, which is how it reads in the modal.
+            width_ratio: (f("width_pct", 18.0) / 100.0).clamp(0.02, 0.9),
+            opacity: f("opacity", d.opacity).clamp(0.02, 1.0),
+            left_side: inst
+                .params
+                .get("side")
+                .and_then(|v| v.as_string())
+                .map(|s| s.eq_ignore_ascii_case("left"))
+                .unwrap_or(d.left_side),
+            show_poc: b("show_poc", d.show_poc),
+            show_value_area: b("show_value_area", d.show_value_area),
+            show_labels: b("show_labels", d.show_labels),
+        }
+    }
+
+    /// Row count and value-area share for a profile's PREPASS — the two
+    /// params that change the computed profile rather than its ink.
+    pub fn profile_shape(&self, bid: mlc_core::ids::BubbleId, type_id: &str) -> (usize, f64) {
+        let default_rows = if type_id == Self::TPO_PROFILE_TYPE_ID { 60.0 } else { 24.0 };
+        let indicators = self.core.indicators();
+        let Some(inst) = indicators
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == type_id)
+        else {
+            return (default_rows as usize, 0.70);
+        };
+        let rows = inst
+            .params
+            .get("rows")
+            .and_then(|v| v.as_float())
+            .unwrap_or(default_rows)
+            .clamp(4.0, 400.0) as usize;
+        let va = inst
+            .params
+            .get("value_area")
+            .and_then(|v| v.as_float())
+            .unwrap_or(70.0)
+            .clamp(10.0, 99.0)
+            / 100.0;
+        (rows, va)
+    }
+
+    /// The window a Volume Profile aggregates, from its `mode` param.
+    pub fn vp_mode(&self, bid: mlc_core::ids::BubbleId) -> mlc_core::chart::volume_profile::VpMode {
+        use mlc_core::chart::volume_profile::VpMode;
+        self.core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .find(|inst| inst.type_id == Self::VOLUME_PROFILE_TYPE_ID)
+            .and_then(|inst| inst.params.get("mode").and_then(|v| v.as_string().map(String::from)))
+            .map(|s| match s.as_str() {
+                "Session" => VpMode::Session,
+                "Composite" => VpMode::Composite,
+                _ => VpMode::VisibleRange,
+            })
+            .unwrap_or(VpMode::VisibleRange)
+    }
+
     /// The venues that can serve `stream`, in a stable display order.
     ///
     /// This is HOST knowledge, not indicator knowledge: an overlay declares
@@ -5151,7 +5237,9 @@ impl ChartApp {
                     ha_cache: window.ha_cache.as_deref(),
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
+            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: overlay_dom_active,
                     dom_params: overlay_dom,
@@ -5270,7 +5358,9 @@ impl ChartApp {
                 ha_cache: window.ha_cache.as_deref(),
                 vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                 tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
-                oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
+            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                 funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                 dom_heatmap_show: single_dom_active,
                 dom_params: single_dom,
@@ -5573,7 +5663,9 @@ impl ChartApp {
                     ha_cache: window.ha_cache.as_deref(),
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
+            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: split_dom_active,
                     dom_params: split_dom,
@@ -6238,7 +6330,9 @@ impl ChartApp {
                     ha_cache: window.ha_cache.as_deref(),
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
-                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
+            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: single_window_dom_active,
                     dom_params: single_window_dom,

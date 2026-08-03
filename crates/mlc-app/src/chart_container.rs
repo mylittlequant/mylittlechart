@@ -119,7 +119,7 @@ pub struct ChartContainer {
     /// `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash, last_close_bits, last_high_bits, last_low_bits)`.
     /// The three `_bits` fields catch in-place last-bar OHLC mutations on the
     /// still-open bar (same len + ts but different close/high/low).
-    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64)>,
+    pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64, usize, u64)>,
     /// Which window of bars the VP aggregates over.
     pub vp_mode: mlc_core::chart::volume_profile::VpMode,
     /// When `true` the VP histogram overlay is rendered on top of the chart.
@@ -136,7 +136,7 @@ pub struct ChartContainer {
     /// TPO Profile always aggregates the VISIBLE range (no mode selector),
     /// so the stamp is narrower than VP's — it only needs to catch a pan/
     /// zoom (visible window changed) or an in-place last-bar mutation.
-    pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64)>,
+    pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64, u64, u64)>,
     /// When `true` the TPO Profile block-histogram overlay is rendered on
     /// top of the chart. Opt-in: defaults to `false` so existing presets
     /// are unaffected. Mirrors `vp_show`.
@@ -1036,16 +1036,21 @@ impl ChartContainer {
     /// viewport's visible range (caller computes it via `viewport.visible_range()`).
     /// For Session / Composite modes the filtering is done inside `filter_bars_for_mode`.
     ///
-    /// `bucket_count` controls bucket granularity (24 is a reasonable default).
+    /// `bucket_count`, `value_area` and `mode` all come from the overlay's
+    /// instance — they were 24, 0.70 and "whatever the window field held"
+    /// until 2026-08-03, and the mode's only switch had been deleted from
+    /// the UI, so the layer was stuck on Visible Range.
     pub fn ensure_vp_from_bars(
         &mut self,
         bars: &[Bar],
         visible_bars: &[Bar],
         bucket_count: usize,
+        value_area: f64,
+        mode: mlc_core::chart::volume_profile::VpMode,
     ) {
         use mlc_core::chart::volume_profile::{VolumeProfileData, VpMode, filter_bars_for_mode};
 
-        let mode = self.vp_mode;
+        self.vp_mode = mode;
 
         let mode_hash: u64 = match mode {
             VpMode::VisibleRange => 0,
@@ -1056,6 +1061,9 @@ impl ChartContainer {
             VpMode::Composite => 3,
         };
         let vp_last = bars.last();
+        // The shape params ride in the stamp: changing rows or the value
+        // area changes the OUTPUT, so a stamp blind to them would keep
+        // serving the profile built with the old ones.
         let stamp = (
             bars.len(),
             vp_last.map(|b| b.ts_ms()).unwrap_or(0),
@@ -1065,6 +1073,8 @@ impl ChartContainer {
             vp_last.map(|b| b.close.to_bits()).unwrap_or(0),
             vp_last.map(|b| b.high.to_bits()).unwrap_or(0),
             vp_last.map(|b| b.low.to_bits()).unwrap_or(0),
+            bucket_count,
+            value_area.to_bits(),
         );
         if self.vp_overlay_stamp == Some(stamp) && self.vp_overlay.is_some() {
             return;
@@ -1076,13 +1086,13 @@ impl ChartContainer {
         };
 
         if bars_to_profile.is_empty() {
-            self.vp_overlay = Some(VolumeProfileData::compute(&[], mode, 0.70, bucket_count));
+            self.vp_overlay = Some(VolumeProfileData::compute(&[], mode, value_area, bucket_count));
             self.vp_overlay_stamp = Some(stamp);
             return;
         }
 
         let owned: Vec<Bar> = bars_to_profile.into_iter().copied().collect();
-        self.vp_overlay = Some(VolumeProfileData::compute(&owned, mode, 0.70, bucket_count));
+        self.vp_overlay = Some(VolumeProfileData::compute(&owned, mode, value_area, bucket_count));
         self.vp_overlay_stamp = Some(stamp);
     }
 
@@ -1097,22 +1107,32 @@ impl ChartContainer {
     /// `viewport.visible_range()`, same as `ensure_vp_from_bars`'s caller).
     /// `min_tick` floors the row step (see [`TpoProfileData::compute`]'s
     /// doc comment) — pass the instrument's price precision.
-    pub fn ensure_tpo_profile_from_bars(&mut self, visible_bars: &[Bar], min_tick: f64) {
+    pub fn ensure_tpo_profile_from_bars(
+        &mut self,
+        visible_bars: &[Bar],
+        min_tick: f64,
+        target_rows: f64,
+        value_area: f64,
+    ) {
         use mlc_core::chart::tpo_profile::TpoProfileData;
 
         let last = visible_bars.last();
+        // Shape params in the stamp — see `ensure_vp_from_bars`.
         let stamp = (
             visible_bars.len(),
             self.viewport.view_start_idx(),
             last.map(|b| b.close.to_bits()).unwrap_or(0),
             last.map(|b| b.high.to_bits()).unwrap_or(0),
             last.map(|b| b.low.to_bits()).unwrap_or(0),
+            target_rows.to_bits(),
+            value_area.to_bits(),
         );
         if self.tpo_profile_overlay_stamp == Some(stamp) && self.tpo_profile_overlay.is_some() {
             return;
         }
 
-        self.tpo_profile_overlay = Some(TpoProfileData::compute(visible_bars, 0.70, min_tick));
+        self.tpo_profile_overlay =
+            Some(TpoProfileData::compute(visible_bars, value_area, min_tick, target_rows));
         self.tpo_profile_overlay_stamp = Some(stamp);
     }
 

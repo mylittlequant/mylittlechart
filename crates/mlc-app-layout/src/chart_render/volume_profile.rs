@@ -17,8 +17,6 @@ use mlc_core::render::RenderContext;
 use mlc_core::chart::volume_profile::VolumeProfileData;
 use super::ChartRenderState;
 
-/// Fraction of chart width used for the histogram strip.
-const STRIP_WIDTH_RATIO: f64 = 0.18;
 /// Minimum chart width below which the strip is skipped.
 const MIN_CHART_WIDTH_FOR_VP: f64 = 120.0;
 /// Minimum chart height below which the strip is skipped.
@@ -40,15 +38,20 @@ pub fn draw_volume_profile_overlay(
     if price_range <= 0.0 || !price_range.is_finite() { return; }
     if rect.width < MIN_CHART_WIDTH_FOR_VP || rect.height < MIN_CHART_HEIGHT_FOR_VP { return; }
 
-    let strip_w = rect.width * STRIP_WIDTH_RATIO;
-    let strip_x = rect.x + rect.width - strip_w;
+    let ink = state.vp_ink;
+    let strip_w = rect.width * ink.width_ratio;
+    // Both sides grow the bars rightward from the strip's own origin, so a
+    // left-anchored profile reads as a mirror rather than as bars running
+    // backwards off the edge.
+    let strip_x = if ink.left_side { rect.x } else { rect.x + rect.width - strip_w };
+    let a = |alpha: f64| alpha * ink.opacity;
 
     // ── Value Area tinted background ─────────────────────────────────────────
     let va_y_top = rect.y + viewport_price_to_y(vp.vah_price, ps.price_min, ps.price_max, rect.height);
     let va_y_bot = rect.y + viewport_price_to_y(vp.val_price, ps.price_min, ps.price_max, rect.height);
     let va_height = (va_y_bot - va_y_top).max(0.0);
-    if va_height > 0.0 {
-        ctx.set_fill_color("rgba(41, 98, 255, 0.06)");
+    if ink.show_value_area && va_height > 0.0 {
+        ctx.set_fill_color(&rgba(41, 98, 255, a(0.06)));
         ctx.fill_rect(rect.x, va_y_top, rect.width, va_height);
     }
 
@@ -74,9 +77,9 @@ pub fn draw_volume_profile_overlay(
         // Total bar width proportional to volume.
         let total_bar_w = strip_w * (row.total_volume / vp.max_row_volume);
 
-        if is_va {
+        if is_va && ink.show_value_area {
             // Faint value-area bar background.
-            ctx.set_fill_color("rgba(41, 98, 255, 0.10)");
+            ctx.set_fill_color(&rgba(41, 98, 255, a(0.10)));
             ctx.fill_rect(strip_x, y_top, total_bar_w, row_h);
         }
 
@@ -91,17 +94,17 @@ pub fn draw_volume_profile_overlay(
 
         if is_poc {
             // POC: stronger single-color fill (gold).
-            ctx.set_fill_color("rgba(255, 235, 59, 0.55)");
+            ctx.set_fill_color(&rgba(255, 235, 59, a(0.55)));
             ctx.fill_rect(strip_x, y_top, total_bar_w, row_h);
         } else {
             // Buy (green, lower-alpha).
             if buy_w > 0.0 {
-                ctx.set_fill_color("rgba(38, 166, 154, 0.45)");
+                ctx.set_fill_color(&rgba(38, 166, 154, a(0.45)));
                 ctx.fill_rect(strip_x, y_top, buy_w, row_h);
             }
             // Sell (red, lower-alpha) stacked to the right of buy.
             if sell_w > 0.0 {
-                ctx.set_fill_color("rgba(239, 83, 80, 0.45)");
+                ctx.set_fill_color(&rgba(239, 83, 80, a(0.45)));
                 ctx.fill_rect(strip_x + buy_w, y_top, sell_w, row_h);
             }
         }
@@ -115,8 +118,8 @@ pub fn draw_volume_profile_overlay(
 
     // POC line — dashed, opaque.
     let poc_y = rect.y + viewport_price_to_y(vp.poc_price, ps.price_min, ps.price_max, rect.height);
-    if poc_y >= rect.y && poc_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(255, 235, 59, 0.80)");
+    if ink.show_poc && poc_y >= rect.y && poc_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&rgba(255, 235, 59, a(0.80)));
         ctx.set_stroke_width(1.5);
         ctx.set_line_dash(&[6.0, 4.0]);
         ctx.begin_path();
@@ -127,8 +130,8 @@ pub fn draw_volume_profile_overlay(
 
     // VAH line — thinner, more transparent.
     let vah_y = rect.y + viewport_price_to_y(vp.vah_price, ps.price_min, ps.price_max, rect.height);
-    if vah_y >= rect.y && vah_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(41, 98, 255, 0.55)");
+    if ink.show_value_area && vah_y >= rect.y && vah_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&rgba(41, 98, 255, a(0.55)));
         ctx.set_stroke_width(1.0);
         ctx.set_line_dash(&[4.0, 4.0]);
         ctx.begin_path();
@@ -139,8 +142,8 @@ pub fn draw_volume_profile_overlay(
 
     // VAL line.
     let val_y = rect.y + viewport_price_to_y(vp.val_price, ps.price_min, ps.price_max, rect.height);
-    if val_y >= rect.y && val_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(41, 98, 255, 0.55)");
+    if ink.show_value_area && val_y >= rect.y && val_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&rgba(41, 98, 255, a(0.55)));
         ctx.set_stroke_width(1.0);
         ctx.set_line_dash(&[4.0, 4.0]);
         ctx.begin_path();
@@ -154,24 +157,41 @@ pub fn draw_volume_profile_overlay(
     ctx.restore();
 
     // ── Right-side price labels ───────────────────────────────────────────────
-    ctx.set_font("10px sans-serif");
-    ctx.set_text_align(mlc_core::render::TextAlign::Right);
-    ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
+    if ink.show_labels {
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
+        // The labels sit on the strip's own edge, so a left-anchored profile
+        // does not print its prices across the chart from its bars.
+        let label_x = if ink.left_side {
+            ctx.set_text_align(mlc_core::render::TextAlign::Left);
+            rect.x + 2.0
+        } else {
+            ctx.set_text_align(mlc_core::render::TextAlign::Right);
+            rect.x + rect.width - 2.0
+        };
 
-    let label_x = rect.x + rect.width - 2.0;
+        if ink.show_poc && poc_y >= rect.y && poc_y <= rect.y + rect.height {
+            ctx.set_fill_color(&rgba(255, 235, 59, 0.90));
+            ctx.fill_text(&fmt_price(vp.poc_price), label_x, poc_y);
+        }
+        if ink.show_value_area {
+            if vah_y >= rect.y && vah_y <= rect.y + rect.height {
+                ctx.set_fill_color(&rgba(100, 149, 237, 0.90));
+                ctx.fill_text(&fmt_price(vp.vah_price), label_x, vah_y - 7.0);
+            }
+            if val_y >= rect.y && val_y <= rect.y + rect.height {
+                ctx.set_fill_color(&rgba(100, 149, 237, 0.90));
+                ctx.fill_text(&fmt_price(vp.val_price), label_x, val_y + 7.0);
+            }
+        }
+    }
+}
 
-    if poc_y >= rect.y && poc_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(255, 235, 59, 0.90)");
-        ctx.fill_text(&fmt_price(vp.poc_price), label_x, poc_y);
-    }
-    if vah_y >= rect.y && vah_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(100, 149, 237, 0.90)");
-        ctx.fill_text(&fmt_price(vp.vah_price), label_x, vah_y - 7.0);
-    }
-    if val_y >= rect.y && val_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(100, 149, 237, 0.90)");
-        ctx.fill_text(&fmt_price(vp.val_price), label_x, val_y + 7.0);
-    }
+/// `rgba()` with a computed alpha. The palette is fixed but the opacity is a
+/// parameter now, so these can no longer be string constants.
+#[inline]
+pub(super) fn rgba(r: u8, g: u8, b: u8, alpha: f64) -> String {
+    format!("rgba({}, {}, {}, {:.3})", r, g, b, alpha.clamp(0.0, 1.0))
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

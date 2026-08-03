@@ -978,6 +978,8 @@ fn draw_compare_series_bar_family(
         liq_ink: Default::default(),
         liq_projection_ref: None,
         liq_projection_ink: Default::default(),
+        vp_ink: Default::default(),
+        tpo_ink: Default::default(),
         dom_params: state.dom_params,
         non_temporal_axis: state.non_temporal_axis,
         hide_time_grid: state.hide_time_grid,

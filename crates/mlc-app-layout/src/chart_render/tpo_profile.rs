@@ -22,8 +22,6 @@ use mlc_core::render::RenderContext;
 use mlc_core::chart::tpo_profile::TpoProfileData;
 use super::ChartRenderState;
 
-/// Fraction of chart width used for the histogram strip (matches VP).
-const STRIP_WIDTH_RATIO: f64 = 0.18;
 /// Minimum chart width below which the strip is skipped.
 const MIN_CHART_WIDTH_FOR_TPO_PROFILE: f64 = 120.0;
 /// Minimum chart height below which the strip is skipped.
@@ -49,15 +47,17 @@ pub fn draw_tpo_profile_overlay(
     if price_range <= 0.0 || !price_range.is_finite() { return; }
     if rect.width < MIN_CHART_WIDTH_FOR_TPO_PROFILE || rect.height < MIN_CHART_HEIGHT_FOR_TPO_PROFILE { return; }
 
-    let strip_w = rect.width * STRIP_WIDTH_RATIO;
-    let strip_x = rect.x + rect.width - strip_w;
+    let ink = state.tpo_ink;
+    let strip_w = rect.width * ink.width_ratio;
+    let strip_x = if ink.left_side { rect.x } else { rect.x + rect.width - strip_w };
+    let a = |alpha: f64| alpha * ink.opacity;
 
     // ── Value Area tinted background ─────────────────────────────────────
     let va_y_top = rect.y + viewport_price_to_y(profile.vah_price, ps.price_min, ps.price_max, rect.height);
     let va_y_bot = rect.y + viewport_price_to_y(profile.val_price, ps.price_min, ps.price_max, rect.height);
     let va_height = (va_y_bot - va_y_top).max(0.0);
-    if va_height > 0.0 {
-        ctx.set_fill_color("rgba(255, 152, 0, 0.06)");
+    if ink.show_value_area && va_height > 0.0 {
+        ctx.set_fill_color(&super::volume_profile::rgba(255, 152, 0, a(0.06)));
         ctx.fill_rect(rect.x, va_y_top, rect.width, va_height);
     }
 
@@ -78,18 +78,18 @@ pub fn draw_tpo_profile_overlay(
 
         let bar_w = strip_w * (row.count as f64 / max_count);
 
-        if is_va {
-            ctx.set_fill_color("rgba(255, 152, 0, 0.10)");
+        if is_va && ink.show_value_area {
+            ctx.set_fill_color(&super::volume_profile::rgba(255, 152, 0, a(0.10)));
             ctx.fill_rect(strip_x, y_top, bar_w, row_h);
         }
 
         if is_poc {
             // POC: brightest solid block.
-            ctx.set_fill_color("rgba(255, 171, 0, 0.75)");
+            ctx.set_fill_color(&super::volume_profile::rgba(255, 171, 0, a(0.75)));
         } else {
             // Regular block — single amber tone (distinct from VP's green/red
             // buy/sell split; a bar "touch" has no directional meaning).
-            ctx.set_fill_color("rgba(255, 152, 0, 0.45)");
+            ctx.set_fill_color(&super::volume_profile::rgba(255, 152, 0, a(0.45)));
         }
         ctx.fill_rect(strip_x, y_top, bar_w, row_h);
     }
@@ -101,8 +101,8 @@ pub fn draw_tpo_profile_overlay(
     ctx.clip();
 
     let poc_y = rect.y + viewport_price_to_y(profile.poc_price, ps.price_min, ps.price_max, rect.height);
-    if poc_y >= rect.y && poc_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(255, 171, 0, 0.80)");
+    if ink.show_poc && poc_y >= rect.y && poc_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&super::volume_profile::rgba(255, 171, 0, a(0.80)));
         ctx.set_stroke_width(1.5);
         ctx.set_line_dash(&[6.0, 4.0]);
         ctx.begin_path();
@@ -112,8 +112,8 @@ pub fn draw_tpo_profile_overlay(
     }
 
     let vah_y = rect.y + viewport_price_to_y(profile.vah_price, ps.price_min, ps.price_max, rect.height);
-    if vah_y >= rect.y && vah_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(255, 152, 0, 0.55)");
+    if ink.show_value_area && vah_y >= rect.y && vah_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&super::volume_profile::rgba(255, 152, 0, a(0.55)));
         ctx.set_stroke_width(1.0);
         ctx.set_line_dash(&[4.0, 4.0]);
         ctx.begin_path();
@@ -123,8 +123,8 @@ pub fn draw_tpo_profile_overlay(
     }
 
     let val_y = rect.y + viewport_price_to_y(profile.val_price, ps.price_min, ps.price_max, rect.height);
-    if val_y >= rect.y && val_y <= rect.y + rect.height {
-        ctx.set_stroke_color("rgba(255, 152, 0, 0.55)");
+    if ink.show_value_area && val_y >= rect.y && val_y <= rect.y + rect.height {
+        ctx.set_stroke_color(&super::volume_profile::rgba(255, 152, 0, a(0.55)));
         ctx.set_stroke_width(1.0);
         ctx.set_line_dash(&[4.0, 4.0]);
         ctx.begin_path();
@@ -137,23 +137,31 @@ pub fn draw_tpo_profile_overlay(
     ctx.restore();
 
     // ── Right-side price labels ────────────────────────────────────────────
-    ctx.set_font("10px sans-serif");
-    ctx.set_text_align(mlc_core::render::TextAlign::Right);
-    ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
+    if ink.show_labels {
+        ctx.set_font("10px sans-serif");
+        ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
+        let label_x = if ink.left_side {
+            ctx.set_text_align(mlc_core::render::TextAlign::Left);
+            rect.x + 2.0
+        } else {
+            ctx.set_text_align(mlc_core::render::TextAlign::Right);
+            rect.x + rect.width - 2.0
+        };
 
-    let label_x = rect.x + rect.width - 2.0;
-
-    if poc_y >= rect.y && poc_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(255, 171, 0, 0.90)");
-        ctx.fill_text(&fmt_price(profile.poc_price), label_x, poc_y);
-    }
-    if vah_y >= rect.y && vah_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(255, 152, 0, 0.90)");
-        ctx.fill_text(&fmt_price(profile.vah_price), label_x, vah_y - 7.0);
-    }
-    if val_y >= rect.y && val_y <= rect.y + rect.height {
-        ctx.set_fill_color("rgba(255, 152, 0, 0.90)");
-        ctx.fill_text(&fmt_price(profile.val_price), label_x, val_y + 7.0);
+        if ink.show_poc && poc_y >= rect.y && poc_y <= rect.y + rect.height {
+            ctx.set_fill_color(&super::volume_profile::rgba(255, 171, 0, 0.90));
+            ctx.fill_text(&fmt_price(profile.poc_price), label_x, poc_y);
+        }
+        if ink.show_value_area {
+            if vah_y >= rect.y && vah_y <= rect.y + rect.height {
+                ctx.set_fill_color(&super::volume_profile::rgba(255, 152, 0, 0.90));
+                ctx.fill_text(&fmt_price(profile.vah_price), label_x, vah_y - 7.0);
+            }
+            if val_y >= rect.y && val_y <= rect.y + rect.height {
+                ctx.set_fill_color(&super::volume_profile::rgba(255, 152, 0, 0.90));
+                ctx.fill_text(&fmt_price(profile.val_price), label_x, val_y + 7.0);
+            }
+        }
     }
 }
 

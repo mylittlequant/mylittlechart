@@ -24,11 +24,17 @@ pub struct ChartWindowRenderInputs<'a> {
     pub scale_settings: &'a ScaleSettings,
     /// Heikin Ashi memo cache (window-local, viewport-coupled).
     pub ha_cache: Option<&'a [HaBar]>,
-    /// Volume Profile overlay, already gated by the window's `vp_show` flag.
+    /// Volume Profile overlay, already gated by its instance.
     pub vp_overlay: Option<&'a VolumeProfileData>,
-    /// TPO Profile overlay (item D), already gated by the window's
-    /// `tpo_profile_show` flag — mirrors `vp_overlay`.
+    /// TPO Profile overlay, already gated by its instance — mirrors
+    /// `vp_overlay`.
     pub tpo_profile_overlay: Option<&'a TpoProfileData>,
+    /// How the Volume Profile strip reads — same resolution contract as
+    /// `liq_ink`: the caller reads it off the instance, or the catalog
+    /// defaults when none exists.
+    pub vp_ink: mlc_core::chart::render_data::ProfileInk,
+    /// How the TPO Profile strip reads.
+    pub tpo_ink: mlc_core::chart::render_data::ProfileInk,
     /// OI Delta display gate (window-local view state).
     pub oi_show: bool,
     /// Funding Rate display gate (window-local view state).
@@ -200,6 +206,8 @@ pub fn build_chart_render_state<'a>(
         ha_cache: window.ha_cache,
         vp_overlay: window.vp_overlay,
         tpo_profile_overlay: window.tpo_profile_overlay,
+        vp_ink: window.vp_ink,
+        tpo_ink: window.tpo_ink,
         // Display gates (oi_show / funding_show) are per-window view state;
         // storage is unconditional on bubble.
         oi_delta_ref: if window.oi_show { bubble.oi_delta.as_deref() } else { None },

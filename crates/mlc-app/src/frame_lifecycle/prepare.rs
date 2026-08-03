@@ -313,6 +313,26 @@ impl ChartApp {
             self.panel_app.panel_grid.containers().keys()
                 .map(|cid| (*cid, self.overlay_instance_active_for_chart(*cid, Self::TPO_PROFILE_TYPE_ID)))
                 .collect();
+        // Shape params, resolved with the same up-front borrow as the gates:
+        // rows and value area change what the profile IS, not how it reads,
+        // so they belong to the prepass rather than to the ink.
+        #[allow(clippy::type_complexity)]
+        let profile_shape_by_chart: std::collections::HashMap<
+            ChartId,
+            ((usize, f64), (usize, f64), mlc_core::chart::volume_profile::VpMode),
+        > = self.panel_app.panel_grid.containers().keys()
+            .filter_map(|cid| {
+                let bid = self.bubble_for_chart(*cid)?;
+                Some((
+                    *cid,
+                    (
+                        self.profile_shape(bid, Self::VOLUME_PROFILE_TYPE_ID),
+                        self.profile_shape(bid, Self::TPO_PROFILE_TYPE_ID),
+                        self.vp_mode(bid),
+                    ),
+                ))
+            })
+            .collect();
         for (cid, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
             // Refresh the Heikin Ashi memo if the chart panel is on
             // chart_type == "heikin_ashi" AND `bars` mutated since the
@@ -339,7 +359,11 @@ impl ChartApp {
                 } else {
                     Vec::new()
                 };
-                window.ensure_vp_from_bars(bubble_bars, &visible_owned, 24);
+                let ((rows, va), _, mode) = profile_shape_by_chart
+                    .get(cid)
+                    .copied()
+                    .unwrap_or(((24, 0.70), (60, 0.70), Default::default()));
+                window.ensure_vp_from_bars(bubble_bars, &visible_owned, rows, va, mode);
             }
 
             // TPO Profile prepass (item D) — mirrors the Volume Profile
@@ -359,7 +383,11 @@ impl ChartApp {
                 } else {
                     Vec::new()
                 };
-                window.ensure_tpo_profile_from_bars(&visible_owned, 1e-8);
+                let (_, (rows, va), _) = profile_shape_by_chart
+                    .get(cid)
+                    .copied()
+                    .unwrap_or(((24, 0.70), (60, 0.70), Default::default()));
+                window.ensure_tpo_profile_from_bars(&visible_owned, 1e-8, rows as f64, va);
             }
         }
 

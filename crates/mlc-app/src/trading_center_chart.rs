@@ -363,6 +363,8 @@ impl ChartApp {
             } else {
                 None
             },
+            vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
+            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
             oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
             funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
             dom_heatmap_show: dom_active,

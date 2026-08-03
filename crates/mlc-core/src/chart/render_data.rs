@@ -755,6 +755,44 @@ impl Default for LiquidationInk {
     }
 }
 
+/// How a price-profile strip reads — Volume Profile and TPO Profile share
+/// it, because they differ in WHAT they count, not in how the histogram is
+/// drawn.
+///
+/// Every field here was a constant in the renderer until 2026-08-03: the
+/// strip was 18 % of the chart no matter how wide, always on the right, and
+/// the POC line, value-area band and labels were always on. Two layers with
+/// nine hardcoded decisions between them and no settings modal at all.
+#[derive(Clone, Copy, Debug)]
+pub struct ProfileInk {
+    /// Fraction of chart width the histogram may occupy (0.18 = 18 %).
+    pub width_ratio: f64,
+    /// Fill alpha for the histogram bodies.
+    pub opacity: f64,
+    /// Grow from the LEFT edge instead of the right. The right edge carries
+    /// the live price and its labels, so a busy chart often wants the left.
+    pub left_side: bool,
+    /// Point-of-control line across the chart.
+    pub show_poc: bool,
+    /// Value-area band and its VAH/VAL lines.
+    pub show_value_area: bool,
+    /// Numeric price labels at the right edge.
+    pub show_labels: bool,
+}
+
+impl Default for ProfileInk {
+    fn default() -> Self {
+        Self {
+            width_ratio: 0.18,
+            opacity: 1.0,
+            left_side: false,
+            show_poc: true,
+            show_value_area: true,
+            show_labels: true,
+        }
+    }
+}
+
 /// How the projected-liquidation layer reads.
 #[derive(Clone, Copy, Debug)]
 pub struct LiquidationProjectionInk {
@@ -903,6 +941,11 @@ pub struct ChartRenderState<'a> {
     /// Maintained by `ChartContainer::ensure_tpo_profile_from_bars` in the
     /// prepare prepass.
     pub tpo_profile_overlay: Option<&'a crate::chart::tpo_profile::TpoProfileData>,
+    /// How the Volume Profile strip reads — every knob a parameter on its
+    /// instance, never a constant.
+    pub vp_ink: ProfileInk,
+    /// How the TPO Profile strip reads.
+    pub tpo_ink: ProfileInk,
     /// Open Interest Δ bars for the OI Delta sub-pane renderer (C15).
     /// `None` when the toggle is off or no data has arrived yet.
     pub oi_delta_ref: Option<&'a [crate::types::OiDeltaBar]>,
