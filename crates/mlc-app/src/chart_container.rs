@@ -113,42 +113,40 @@ pub struct ChartContainer {
     pub ha_cache_stamp: Option<(usize, i64, u64, u64, u64)>,
 
     /// Volume Profile overlay data. Computed by `ensure_vp()` before each
-    /// frame when `vp_show == true`. Not serialized — recomputed on load.
+    /// frame while a visible `overlay_volume_profile` instance exists. Not
+    /// serialized — recomputed on load.
     pub vp_overlay: Option<mlc_core::chart::volume_profile::VolumeProfileData>,
     /// Stamp paired with `vp_overlay` —
     /// `(bars.len(), last_ts_ms, view_start_idx, visible_count, mode_hash, last_close_bits, last_high_bits, last_low_bits)`.
     /// The three `_bits` fields catch in-place last-bar OHLC mutations on the
     /// still-open bar (same len + ts but different close/high/low).
     pub vp_overlay_stamp: Option<(usize, i64, usize, usize, u64, u64, u64, u64, usize, u64)>,
-    /// Which window of bars the VP aggregates over.
+    /// Which window of bars the VP aggregates over. Pushed here by the
+    /// prepass from the instance's `mode` parameter — the prepass reads it
+    /// under a `containers_mut()` borrow that cannot reach the indicators
+    /// facade, so the resolved value rides on the window.
     pub vp_mode: mlc_core::chart::volume_profile::VpMode,
-    /// When `true` the VP histogram overlay is rendered on top of the chart.
-    /// Opt-in: defaults to `false` so existing presets are unaffected.
-    pub vp_show: bool,
 
     /// TPO Profile overlay data (item D — block-histogram time-at-price
     /// profile). Computed by `ensure_tpo_profile_from_bars()` before each
-    /// frame when `tpo_profile_show == true`. Not serialized — recomputed
-    /// on load. Mirrors `vp_overlay`'s role for Volume Profile.
+    /// frame while a visible `overlay_tpo_profile` instance exists. Not
+    /// serialized — recomputed on load. Mirrors `vp_overlay`.
     pub tpo_profile_overlay: Option<mlc_core::chart::tpo_profile::TpoProfileData>,
     /// Stamp paired with `tpo_profile_overlay` —
     /// `(visible_count, view_start_idx, last_close_bits, last_high_bits, last_low_bits)`.
     /// TPO Profile always aggregates the VISIBLE range (no mode selector),
-    /// so the stamp is narrower than VP's — it only needs to catch a pan/
-    /// zoom (visible window changed) or an in-place last-bar mutation.
+    /// so the stamp is narrower than VP's — it catches a pan/zoom, an
+    /// in-place last-bar mutation, or a change of the shape parameters.
     pub tpo_profile_overlay_stamp: Option<(usize, usize, u64, u64, u64, u64, u64)>,
-    /// When `true` the TPO Profile block-histogram overlay is rendered on
-    /// top of the chart. Opt-in: defaults to `false` so existing presets
-    /// are unaffected. Mirrors `vp_show`.
-    pub tpo_profile_show: bool,
 
-    /// When `true` the OI Delta sub-pane is rendered below the main chart.
-    /// (Per-window display gate; storage lives on the bubble — Phase X0.)
-    pub oi_show: bool,
-
-    /// When `true` the Funding Rate strip is rendered at the bottom of the chart.
-    /// (Per-window display gate; storage lives on the bubble — Phase X0.)
-    pub funding_show: bool,
+    // The four `*_show` display gates that used to sit here — `vp_show`,
+    // `tpo_profile_show`, `oi_show`, `funding_show` — are gone (2026-08-03).
+    // Every one of those layers is a real `IndicatorInstance` whose
+    // visibility IS the gate, and by the end the bools had no writer at all:
+    // their toggle events lost their last emitter, so `tpo_profile_show`
+    // held the TPO layer dark inside the trading container while the object
+    // tree showed it live. A second switch for one layer is a second answer
+    // to the same question.
 
 
     // === Viewport & Scales ===
@@ -433,12 +431,8 @@ impl ChartContainer {
             vp_overlay: None,
             vp_overlay_stamp: None,
             vp_mode: mlc_core::chart::volume_profile::VpMode::default(),
-            vp_show: false,
             tpo_profile_overlay: None,
             tpo_profile_overlay_stamp: None,
-            tpo_profile_show: false,
-            oi_show: false,
-            funding_show: false,
             viewport: Viewport::default(),
             price_scale: PriceScale::default(),
             time_scale: TimeScale::new(),
@@ -1173,12 +1167,8 @@ impl ChartContainer {
             vp_overlay: None,
             vp_overlay_stamp: None,
             vp_mode: self.vp_mode,
-            vp_show: self.vp_show,
             tpo_profile_overlay: None,
             tpo_profile_overlay_stamp: None,
-            tpo_profile_show: self.tpo_profile_show,
-            oi_show: self.oi_show,
-            funding_show: self.funding_show,
             viewport: self.viewport.clone(),
             price_scale: self.price_scale.clone(),
             time_scale: self.time_scale.clone(),

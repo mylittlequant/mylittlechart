@@ -929,17 +929,16 @@ pub struct ChartRenderState<'a> {
     /// instead of running the recursive HA formula from index 0 each
     /// frame. Window maintains the cache on `ChartContainer.ha_cache`.
     pub ha_cache: Option<&'a [crate::types::HaBar]>,
-    /// Pre-computed Volume Profile overlay. When `Some(_)` and
-    /// `vp_show == true` the VP renderer draws the right-side histogram.
-    /// Maintained by `ChartContainer::ensure_vp` in the prepare prepass.
+    /// Pre-computed Volume Profile overlay, already gated by its instance:
+    /// `Some(_)` means draw. Maintained by `ChartContainer::ensure_vp` in
+    /// the prepare prepass.
     pub vp_overlay: Option<&'a crate::chart::volume_profile::VolumeProfileData>,
     /// Pre-computed TPO Profile overlay (item D — block-histogram
     /// time-at-price profile, distinct from the letter-based
-    /// `tpo_sessions` TPO Market Profile chart type). When `Some(_)` and
-    /// `tpo_profile_show == true` the renderer draws a right-anchored
-    /// block histogram, styled like Volume Profile but with no letters.
-    /// Maintained by `ChartContainer::ensure_tpo_profile_from_bars` in the
-    /// prepare prepass.
+    /// `tpo_sessions` TPO Market Profile chart type). Already gated by its
+    /// instance: `Some(_)` means draw a block histogram, styled like Volume
+    /// Profile but with no letters. Maintained by
+    /// `ChartContainer::ensure_tpo_profile_from_bars` in the prepare prepass.
     pub tpo_profile_overlay: Option<&'a crate::chart::tpo_profile::TpoProfileData>,
     /// How the Volume Profile strip reads — every knob a parameter on its
     /// instance, never a constant.

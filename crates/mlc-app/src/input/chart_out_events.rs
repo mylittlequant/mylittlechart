@@ -1262,127 +1262,21 @@ impl ChartApp {
                 eprintln!("[ChartApp] grid toggled (all windows)");
                 state_mutated = true;
             }
-            ChartOutEvent::ToggleVolumeProfileOverlay => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.vp_show = !w.vp_show;
-                    if !w.vp_show {
-                        w.vp_overlay = None;
-                        w.vp_overlay_stamp = None;
-                    }
-                    Some(w.vp_show)
-                } else { None };
-                eprintln!("[ChartApp] vp_show toggled -> {:?}", new_val);
-                state_mutated = true;
-            }
-            ChartOutEvent::CycleVolumeProfileMode => {
-                use mlc_core::chart::volume_profile::VpMode;
-                if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.vp_mode = match w.vp_mode {
-                        VpMode::VisibleRange   => VpMode::Session,
-                        VpMode::Session        => VpMode::Composite,
-                        VpMode::Composite      => VpMode::VisibleRange,
-                        VpMode::FixedRange { .. } => VpMode::VisibleRange,
-                    };
-                    w.vp_overlay = None;
-                    w.vp_overlay_stamp = None;
-                    eprintln!("[ChartApp] vp_mode cycled -> {:?}", w.vp_mode);
-                }
-                state_mutated = true;
-            }
-            ChartOutEvent::ToggleTpoProfileOverlay => {
-                let new_val = if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                    w.tpo_profile_show = !w.tpo_profile_show;
-                    if !w.tpo_profile_show {
-                        w.tpo_profile_overlay = None;
-                        w.tpo_profile_overlay_stamp = None;
-                    }
-                    Some(w.tpo_profile_show)
-                } else { None };
-                eprintln!("[ChartApp] tpo_profile_show toggled -> {:?}", new_val);
-                state_mutated = true;
-            }
-            // === C15: OI Delta sub-pane ===
-            ChartOutEvent::ToggleOpenInterestOverlay => {
-                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                if let Some(cid) = cid_opt {
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            // Per-container venue (2026-07-15 wrong-venue bug).
-                            let chart_eid = self.exchange_id_for_chart(cid);
-                            let eid_str = chart_eid.as_str();
-                            let connector_enabled = self.sidebar_state.connector_enabled
-                                .get(eid_str).copied().unwrap_or(true);
-                            if connector_enabled {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let oi_show_now = {
-                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                        w.oi_show = !w.oi_show;
-                                        eprintln!("[ChartApp] oi_show toggled -> {}", w.oi_show);
-                                        w.oi_show
-                                    } else { false }
-                                };
-                                // Phase X0 / C5c: oi_delta storage lives on bubble.
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_oi());
-                                }
-                                if oi_show_now {
-                                    self.core.subscribe_open_interest(
-                                        chart_eid, &symbol, at,
-                                    );
-                                } else {
-                                    self.core.unsubscribe_open_interest(
-                                        chart_eid, &symbol, at,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                state_mutated = true;
-            }
-            // === C15: Funding Rate strip ===
-            ChartOutEvent::ToggleFundingRateStrip => {
-                let cid_opt = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                if let Some(cid) = cid_opt {
-                    let symbol_opt = self.symbol_for_chart(cid);
-                    let at_opt: Option<mlc_core::instrument::AccountType> = self.account_type_for_chart(cid);
-                    if let (Some(symbol), Some(at)) = (symbol_opt, at_opt) {
-                        if !symbol.is_empty() {
-                            // Per-container venue (2026-07-15 wrong-venue bug).
-                            let chart_eid = self.exchange_id_for_chart(cid);
-                            let eid_str = chart_eid.as_str();
-                            let connector_enabled = self.sidebar_state.connector_enabled
-                                .get(eid_str).copied().unwrap_or(true);
-                            if connector_enabled {
-                                let at = mlc_backend_data_bridge::account_type_to_dig3(at);
-                                let funding_show_now = {
-                                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                                        w.funding_show = !w.funding_show;
-                                        eprintln!("[ChartApp] funding_show toggled -> {}", w.funding_show);
-                                        w.funding_show
-                                    } else { false }
-                                };
-                                // Phase X0 / C5c: funding_rate storage lives on bubble.
-                                if let Some(bid) = self.bubble_for_chart(cid) {
-                                    self.core.bubbles_mut().with_bubble_mut(bid, |bubble| bubble.clear_funding());
-                                }
-                                if funding_show_now {
-                                    self.core.subscribe_funding_rate(
-                                        chart_eid, &symbol, at,
-                                    );
-                                } else {
-                                    self.core.unsubscribe_funding_rate(
-                                        chart_eid, &symbol, at,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                state_mutated = true;
-            }
+            // `ToggleVolumeProfileOverlay`, `CycleVolumeProfileMode`,
+            // `ToggleTpoProfileOverlay`, `ToggleOpenInterestOverlay` and
+            // `ToggleFundingRateStrip` are gone (2026-08-03), the same way
+            // `ToggleDomHeatmapOverlay` went a day earlier: all five layers
+            // are real `IndicatorInstance`s, so their presence IS the on/off
+            // state, and their four per-window `*_show` bools went with them.
+            //
+            // The handlers had already lost their last emitter — the settings
+            // submenu that dispatched them was deleted in the 2026-07-04
+            // taxonomy pass and the catalog intercept in a072b1c5 — so what
+            // remained was four switches nothing could flip, one of which
+            // (`tpo_profile_show`) was still being READ by the trading
+            // container and therefore held that layer dark. Volume Profile's
+            // mode moved to a `mode` parameter first; deleting the cycle
+            // action before that would have taken the feature with it.
             // `ToggleDomHeatmapOverlay` and its per-window `dom_heatmap_show`
             // bool are gone (2026-08-02): the DOM Heatmap overlay is a real
             // `IndicatorInstance` now, so its presence IS the on/off state and

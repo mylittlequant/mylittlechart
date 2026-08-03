@@ -182,41 +182,6 @@ pub fn account_type_to_label(at: digdigdig3::AccountType) -> &'static str {
 }
 
 // =============================================================================
-// Opaque overlay catalog ids
-// =============================================================================
-
-/// Map a catalog `type_id` chosen from the unified indicator picker to the
-/// [`mlc_core::events::ChartOutEvent`] Toggle variant that drives it, if it
-/// is one of the six opaque host-driven overlays (Volume Profile / TPO
-/// Profile / OI Delta / Funding Rate / DOM Heatmap / Liquidation Heatmap).
-/// These ids carry the `overlay_` prefix in mli's catalog
-/// (`mylittleindicators::bar_indicators::overlay::overlay_catalog`)
-/// specifically so they can never collide with a real compute-indicator id.
-/// Returns `None` for every other catalog id — callers fall through to the
-/// regular `IndicatorManager::add` path. CVD is NOT one of these — it is a
-/// real compute-catalog indicator (mli `BarIndicatorId::Cvd`, catalog id
-/// "CVD") that always goes through the regular `add` path.
-///
-/// `overlay_dom_heatmap`/`overlay_liquidation_heatmap` (chart-type →
-/// overlay migration) were previously `chart_type` registry entries; they
-/// now follow the exact same opaque-overlay shape as OI Delta/Funding Rate.
-/// `overlay_tpo_profile` (item D) is wired the same minimal way DOM/
-/// Liquidation Heatmap got their toggles — a per-window bool
-/// (`tpo_profile_show`) plus this catalog mapping, since VP's OWN toggle
-/// turned out to already be fully wired through this exact mechanism (no
-/// dead-toggle audit finding to repeat here).
-pub fn overlay_toggle_for_catalog_id(type_id: &str) -> Option<mlc_core::events::ChartOutEvent> {
-    use mlc_core::events::ChartOutEvent;
-    match type_id {
-        "overlay_volume_profile" => Some(ChartOutEvent::ToggleVolumeProfileOverlay),
-        "overlay_tpo_profile" => Some(ChartOutEvent::ToggleTpoProfileOverlay),
-        "overlay_oi_delta" => Some(ChartOutEvent::ToggleOpenInterestOverlay),
-        "overlay_funding_rate" => Some(ChartOutEvent::ToggleFundingRateStrip),
-        _ => None,
-    }
-}
-
-// =============================================================================
 // Timeframe parsing
 // =============================================================================
 
@@ -5238,8 +5203,8 @@ impl ChartApp {
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
                     vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
-            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
-            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: overlay_dom_active,
                     dom_params: overlay_dom,
@@ -5359,8 +5324,8 @@ impl ChartApp {
                 vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                 tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
                 vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
-            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
-            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+                oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                 funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                 dom_heatmap_show: single_dom_active,
                 dom_params: single_dom,
@@ -5664,8 +5629,8 @@ impl ChartApp {
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
                     vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
-            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
-            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: split_dom_active,
                     dom_params: split_dom,
@@ -6331,8 +6296,8 @@ impl ChartApp {
                     vp_overlay: if self.overlay_instance_active(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID) { window.vp_overlay.as_ref() } else { None },
                     tpo_profile_overlay: if self.overlay_instance_active(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID) { window.tpo_profile_overlay.as_ref() } else { None },
                     vp_ink: self.profile_ink(window.current_tag_id, Self::VOLUME_PROFILE_TYPE_ID),
-            tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
-            oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
+                    tpo_ink: self.profile_ink(window.current_tag_id, Self::TPO_PROFILE_TYPE_ID),
+                    oi_show: self.overlay_instance_active(window.current_tag_id, Self::OI_DELTA_TYPE_ID),
                     funding_show: self.overlay_instance_active(window.current_tag_id, Self::FUNDING_RATE_TYPE_ID),
                     dom_heatmap_show: single_window_dom_active,
                     dom_params: single_window_dom,

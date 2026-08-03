@@ -211,24 +211,12 @@ pub enum ChartOutEvent {
     },
 
     // === Overlays (C10 Volume Profile family) ===
-    /// Toggle the Volume Profile right-side overlay on the active chart.
-    ToggleVolumeProfileOverlay,
-    /// Cycle the Volume Profile aggregation mode
-    /// (VisibleRange → Session → Composite → VisibleRange).
-    CycleVolumeProfileMode,
 
     // === TPO Profile overlay (item D) — mirrors the Volume Profile toggle
     // shape above; block-histogram time-at-price profile, distinct from the
     // letter-based TPO Market Profile chart type. ===
-    /// Toggle the TPO Profile right-side block-histogram overlay on the
-    /// active chart.
-    ToggleTpoProfileOverlay,
 
     // === C15: OI Delta sub-pane + Funding Rate strip ===
-    /// Toggle the Open Interest Δ sub-pane on the active chart.
-    ToggleOpenInterestOverlay,
-    /// Toggle the Funding Rate strip at the bottom of the active chart.
-    ToggleFundingRateStrip,
 
     // === DOM Heatmap (C12) / Liquidation Heatmap (C13) — chart-type →
     // overlay migration: both were `chart_type` registry entries, now
