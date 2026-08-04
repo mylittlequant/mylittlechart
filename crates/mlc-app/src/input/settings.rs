@@ -2960,6 +2960,17 @@ impl ChartApp {
                 self.panel_app.indicator_settings_state.close();
                 self.autosave_snapshot();
             }
+            // The footer bar belongs to the modal shell now, so its two
+            // buttons arrive as `{ns}:ok` and `{ns}:template` rather than
+            // under this modal's own `footer:` prefix.
+            "ok" => {
+                self.panel_app.indicator_settings_state.close();
+                self.autosave_snapshot();
+            }
+            "template" => {
+                self.panel_app.indicator_settings_state.template_dropdown_open =
+                    !self.panel_app.indicator_settings_state.template_dropdown_open;
+            }
             "modal_bg" => {
                 // Click inside modal body — close template dropdown if open
                 self.panel_app.indicator_settings_state.template_dropdown_open = false;
@@ -3018,20 +3029,9 @@ impl ChartApp {
             }
             _ if rest.starts_with("footer:") => {
                 let btn_id = &rest["footer:".len()..];
+                // Only the template MENU still arrives under this prefix — the
+                // bar's own two buttons are the shell's and are handled above.
                 match btn_id {
-                    // No "cancel" arm: the modal has no Cancel button, because
-                    // every control here applies live and there was nothing to
-                    // cancel. Escape and the ✕ close it the same way.
-                    "ok" => {
-                        self.panel_app.indicator_settings_state.close();
-                        self.autosave_snapshot();
-                        eprintln!("[ChartApp] ind_settings closed via footer: {}", btn_id);
-                    }
-                    "template_dropdown" => {
-                        self.panel_app.indicator_settings_state.template_dropdown_open =
-                            !self.panel_app.indicator_settings_state.template_dropdown_open;
-                        eprintln!("[ChartApp] ind_settings template_dropdown toggled");
-                    }
                     "template_save_as" => {
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.save_template_mode = true;

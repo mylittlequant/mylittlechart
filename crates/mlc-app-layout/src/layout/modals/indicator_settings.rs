@@ -13,19 +13,19 @@ use crate::ui::modal_settings::{IndicatorSettingsState, IndicatorSettingsTab, In
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,
     render_dual_slider, SliderConfig, SliderEditingInfo,
-    render_modal_frame_only, ModalTheme,
+    begin_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
+    ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
 use crate::ui::Icon;
-use crate::ui::z_order::ZLayer;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use mlc_core::indicator_source::{SignalDisplayConfig, SignalShape};
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
-use mlc_core::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
+use mlc_core::i18n::{IndicatorKey, t_indicator};
 
 /// Render the indicator settings modal.
 ///
@@ -92,152 +92,67 @@ pub fn render_indicator_settings_modal(
         ..IndicatorSettingsModalResult::default()
     };
 
-    // Modal dimensions
+    // Modal dimensions. The size is fixed, so the shell is handed the body
+    // height that leaves the frame exactly where it was: chrome heights are
+    // the shell's constants now, not this file's.
     let modal_width = 500.0;
     let modal_height = 420.0;
-    let modal_x = if let Some((px, _py)) = indicator_state.position {
-        px.max(0.0).min(screen_w - modal_width)
-    } else {
-        chart_x + (screen_w - modal_width) / 2.0
-    };
-    let modal_y = if let Some((_, py)) = indicator_state.position {
-        py.max(0.0).min(screen_h - modal_height)
-    } else {
-        chart_y + (screen_h - modal_height) / 2.0
-    };
-
-    // Layout constants
-    let header_height = 44.0;
-    let sidebar_width = 48.0;
-    let footer_height = 52.0; // single row: Шаблон left, Отмена + OK right
+    let sidebar_width = TAB_RAIL_W;
     let content_width = modal_width - sidebar_width;
-    let content_height = modal_height - header_height - footer_height;
+    let content_height = modal_height - HEADER_H - FOOTER_H;
 
-    // Store modal rect for hit testing (MUST be set before rendering)
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
+    let text_color = &toolbar_theme.item_text;
+    let tab_items: Vec<ModalTab<'_>> = IndicatorSettingsTab::all()
+        .iter()
+        .map(|tab| {
+            let icon = match *tab {
+                IndicatorSettingsTab::Inputs => Icon::Settings,
+                IndicatorSettingsTab::Style => Icon::Palette,
+                IndicatorSettingsTab::Visibility => Icon::Eye,
+                IndicatorSettingsTab::Signals => Icon::Alert,
+                IndicatorSettingsTab::Info => Icon::Info,
+            };
+            ModalTab::with_icon(tab.id(), tab.label(), icon)
+        })
+        .collect();
 
-    // Push input layer for this modal
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "indicator_settings");
-
-    // Register header drag zone
-    input_coordinator.register_on_layer(
-        "ind_settings:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, header_height),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // Register modal background catch-all
-    input_coordinator.register_on_layer(
-        "ind_settings:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Render modal frame
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
+    let spec = ModalShellSpec {
+        // The body insets itself by `content_padding`, so the shell adds none.
+        padding: 0.0,
+        placement: ModalPlacement::At(Some(indicator_state.position.unwrap_or((
+            chart_x + (screen_w - modal_width) / 2.0,
+            chart_y + (screen_h - modal_height) / 2.0,
+        )))),
+        ..ModalShellSpec::new("ind_settings", indicator_name, modal_width, content_height)
+            // The layer keeps its old name: it is the key
+            // `close_topmost_known_modal_layer` matches on.
+            .layer_named("indicator_settings")
+            .with_tabs(ModalTabs::Vertical {
+                width: sidebar_width,
+                items: &tab_items,
+                active: indicator_state.active_tab.index(),
+            })
+            .with_footer(ModalFooter::Editor {
+                template: Some(t_indicator(IndicatorKey::Template)),
+            })
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // =========================================================================
-    // Header
-    // =========================================================================
-
-    // Title (indicator name)
-    let text_color = &toolbar_theme.item_text;
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(indicator_name, modal_x + 16.0, modal_y + header_height / 2.0);
-
-    // Close button
-    let close_size = 18.0;
-    let close_x = modal_x + modal_width - close_size - 12.0;
-    let close_y = modal_y + (header_height - close_size) / 2.0;
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, text_color);
-
-    // Register close button
-    input_coordinator.register_on_layer(
-        "ind_settings:close",
-        uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header bottom border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_height);
-    ctx.line_to(modal_x + modal_width, modal_y + header_height);
-    ctx.stroke();
-
-    // =========================================================================
-    // Left sidebar (vertical tabs)
-    // =========================================================================
-    let sidebar_x = modal_x;
-    let sidebar_y = modal_y + header_height;
-
-    // Sidebar right border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(sidebar_x + sidebar_width, sidebar_y);
-    ctx.line_to(sidebar_x + sidebar_width, sidebar_y + content_height);
-    ctx.stroke();
-
-    // Tab icons
-    let tab_icon_size = 20.0;
-    let tab_button_height = 44.0;
-    let active_tab_idx = indicator_state.active_tab.index();
-
-    for (i, tab) in IndicatorSettingsTab::all().iter().enumerate() {
-        let tab_y = sidebar_y + i as f64 * tab_button_height;
-        let is_active = i == active_tab_idx;
-
-        // Active indicator (left border + background)
-        if is_active {
-            ctx.draw_sidebar_active_item(
-                sidebar_x, tab_y, sidebar_width, tab_button_height,
-                &toolbar_theme.accent, &toolbar_theme.item_bg_active, 3.0
-            );
-        }
-
-        // Icon
-        let icon_x = sidebar_x + (sidebar_width - tab_icon_size) / 2.0;
-        let icon_y = tab_y + (tab_button_height - tab_icon_size) / 2.0;
-        let icon_color = if is_active { &toolbar_theme.item_text_active } else { text_color };
-
-        let icon = match *tab {
-            IndicatorSettingsTab::Inputs => Icon::Settings,
-            IndicatorSettingsTab::Style => Icon::Palette,
-            IndicatorSettingsTab::Visibility => Icon::Eye,
-            IndicatorSettingsTab::Signals => Icon::Alert,
-            IndicatorSettingsTab::Info => Icon::Info,
-        };
-        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, tab_icon_size, tab_icon_size, icon_color);
-
-        // Register tab with coordinator
-        input_coordinator.register_on_layer(
-            format!("ind_settings:tab:{}", tab.id()),
-            uzor::types::Rect::new(sidebar_x, tab_y, sidebar_width, tab_button_height),
-            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
-            &layer_id,
-        );
-    }
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
 
     // =========================================================================
     // Content area
     // =========================================================================
-    let content_x = modal_x + sidebar_width;
-    let content_y = modal_y + header_height;
+    let content_x = shell.content.x;
+    let content_y = shell.content.y;
     let content_padding = 20.0;
 
     // Content background
@@ -1259,56 +1174,20 @@ pub fn render_indicator_settings_modal(
     }
 
     // =========================================================================
-    // Footer — single 52px row: "Шаблон" left, "Отмена" + "OK" right
+    // Footer
     // =========================================================================
-    let footer_y = modal_y + modal_height - footer_height;
-
-    // Footer top border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, footer_y);
-    ctx.line_to(modal_x + modal_width, footer_y);
-    ctx.stroke();
-
-    let button_height = 32.0;
-    let button_y = footer_y + (footer_height - button_height) / 2.0;
-    let hovered_btn = indicator_state.hovered_footer_button.as_deref();
-
-    // ── "Шаблон" button (left side, outline only) ────────────────────────────
-    let template_btn_width = 80.0;
-    let template_btn_x = modal_x + 16.0;
-    let is_tmpl_hovered = hovered_btn == Some("template_dropdown");
-    ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_indicator(IndicatorKey::Template), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
-
-    result.footer_buttons.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
-
-    // ── "OK" button (right side, accent-filled) ──────────────────────────────
+    // The bar itself — separator, Template button, OK — is the shell's. There
+    // is no Cancel next to OK, and there was nothing for one to do: every
+    // control here applies to the live instance the moment it is touched, so
+    // `cancel` and `ok` both ran `close()`, the same thing the ✕ does. A
+    // button labelled "Отмена" that cancels nothing is worse than no button.
     //
-    // There is no Cancel next to it, and there was nothing for one to do:
-    // every control in this modal applies to the live instance the moment it
-    // is touched, so `cancel` and `ok` both ran `close()` — the same thing
-    // the ✕ does. A button labelled "Отмена" that cancels nothing is worse
-    // than no button, because it invites the user to rely on it.
-    //
-    // If a real revert is ever wanted it has to snapshot the params on open
-    // and restore them here; the label alone was never the feature.
-    let ok_btn_width = 70.0;
-    let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-    let ok_hovered = hovered_btn == Some("ok");
-    ctx.set_fill_color(if ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
-    ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
-    ctx.set_fill_color("#ffffff");
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+    // What is left below is the menu that hangs off the Template button.
+    let template_btn = shell.template_btn.unwrap_or_default();
+    let button_height = template_btn.height;
+    let button_y = template_btn.y;
+    let template_btn_width = template_btn.width;
+    let template_btn_x = template_btn.x;
 
     // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
     if indicator_state.template_dropdown_open {
@@ -1421,10 +1300,8 @@ pub fn render_indicator_settings_modal(
         let _ = is_def_hovered;
     }
 
-    // Populate result for hit testing
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
+    // Populate result for hit testing. Frame, header and ✕ came from the
+    // shell at the top; only the body rect is this file's to report.
     result.content_rect = WidgetRect::new(content_x, content_y, content_width, content_height);
 
     // Phase 6.1a: register scrollable content area for coordinator dispatch
@@ -1435,14 +1312,8 @@ pub fn render_indicator_settings_modal(
         &layer_id,
     );
 
-    // Tab rects
-    for (i, tab) in IndicatorSettingsTab::all().iter().enumerate() {
-        let tab_y = sidebar_y + i as f64 * tab_button_height;
-        result.tab_rects.push((tab.id().to_string(), WidgetRect::new(sidebar_x, tab_y, sidebar_width, tab_button_height)));
-    }
-
-    // Footer buttons
-    result.footer_buttons.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
+    // Tab rects — where the shell put them.
+    result.tab_rects = shell.tab_rects.clone();
 
     // Painted LAST so it lands on top of the footer: an open list used to
     // be drawn before the OK/Cancel row, which then covered its first
