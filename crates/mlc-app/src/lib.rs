@@ -12140,10 +12140,23 @@ impl ChartApp {
             // Remember this style (including extended style_properties) so the next
             // primitive of the same type is pre-populated with these settings.
             if let Some(bid) = active_bid_snap {
-                let mut drawings_snap = self.core.drawings_mut();
-                drawings_snap.save_last_style_for_primitive(bid, prim_id);
+                // The write guard MUST end before the read below. It used to
+                // be a plain `let` binding, which lives to the end of this
+                // block, so `self.core.drawings()` took a read on the same
+                // lock while the write was still held — on single-threaded
+                // wasm32 that overlap does not panic and does not raise a JS
+                // error, it just kills the frame loop where it stands. Live
+                // symptom: pick a colour for a drawing and the whole chart
+                // stops repainting, while the WS feed keeps running. Same
+                // trap as the one documented at `input/sync_group.rs`'s
+                // `sync_join_color_group`.
+                {
+                    let mut drawings_snap = self.core.drawings_mut();
+                    drawings_snap.save_last_style_for_primitive(bid, prim_id);
+                }
                 // Persist the last-used style globally so it survives app restarts.
-                if let Some(style) = self.core.drawings().last_style_for(bid, &type_id) {
+                let style = self.core.drawings().last_style_for(bid, &type_id);
+                if let Some(style) = style {
                     if let Ok(style_val) = serde_json::to_value(&style) {
                         self.snapshot_actions.push(SnapshotAction::DrawingStyle {
                             type_id,
