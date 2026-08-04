@@ -9,6 +9,7 @@ use mlc_core::engine::render::draw_svg_icon;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{IndicatorSettingsModalResult, SliderTrackInfo};
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::modal_settings::ResizableModal;
 use crate::ui::modal_settings::{IndicatorSettingsState, IndicatorSettingsTab, IndicatorDisplayInfo, IndicatorParamType, DualSliderHandle};
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,
@@ -98,7 +99,6 @@ pub fn render_indicator_settings_modal(
     let modal_width = 500.0;
     let modal_height = 420.0;
     let sidebar_width = TAB_RAIL_W;
-    let content_width = modal_width - sidebar_width;
     let content_height = modal_height - HEADER_H - FOOTER_H;
 
     let text_color = &toolbar_theme.item_text;
@@ -140,6 +140,7 @@ pub fn render_indicator_settings_modal(
             .with_footer(ModalFooter::Editor {
                 template: Some(t_indicator(IndicatorKey::Template)),
             })
+            .resizable(indicator_state.size, indicator_state.min_size())
     };
     let (shell, layer_id) =
         begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
@@ -153,6 +154,11 @@ pub fn render_indicator_settings_modal(
     // =========================================================================
     let content_x = shell.content.x;
     let content_y = shell.content.y;
+    // Re-bound to the VIEWPORT the shell settled on: a frame the user dragged
+    // bigger is bigger here too, and the natural size above was only ever the
+    // starting point.
+    let content_width = shell.content.width;
+    let content_height = shell.content.height;
     let content_padding = 20.0;
 
     // Content background

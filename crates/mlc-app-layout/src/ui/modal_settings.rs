@@ -7,9 +7,77 @@
 
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
+use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use uzor::app_context::TextInputState;
 use mlc_alert_delivery::NotificationSettings;
+
+/// A resize drag in flight: which edge has hold, where the pointer was when it
+/// took hold, and where and how big the frame was at that moment. Both are
+/// derived from the ORIGINAL each move rather than accumulated, so a drag that
+/// overshoots a limit and comes back lands where the pointer says.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResizeDrag {
+    pub edge: ResizeEdge,
+    pub origin: (f64, f64),
+    pub from_pos: (f64, f64),
+    pub from_size: (f64, f64),
+}
+
+/// The geometry a resizable modal keeps and the three moves the input side
+/// makes on it. Implemented by every settings modal that can be resized, so
+/// the drag dispatcher has one shape to call instead of one per modal.
+pub trait ResizableModal {
+    fn dragged_size(&self) -> Option<(f64, f64)>;
+    fn set_dragged_size(&mut self, size: Option<(f64, f64)>);
+    fn dragged_position(&self) -> Option<(f64, f64)>;
+    fn set_dragged_position(&mut self, pos: Option<(f64, f64)>);
+    fn resize_drag(&self) -> Option<ResizeDrag>;
+    fn set_resize_drag(&mut self, drag: Option<ResizeDrag>);
+    /// The floor this modal may be dragged down to. Lives next to the state so
+    /// the renderer and the drag handler cannot disagree about it.
+    fn min_size(&self) -> (f64, f64);
+
+    fn start_resize(
+        &mut self,
+        edge: ResizeEdge,
+        mouse: (f64, f64),
+        from_pos: (f64, f64),
+        from_size: (f64, f64),
+    ) {
+        self.set_resize_drag(Some(ResizeDrag { edge, origin: mouse, from_pos, from_size }));
+    }
+
+    fn update_resize(&mut self, mouse: (f64, f64)) {
+        let Some(drag) = self.resize_drag() else { return };
+        let delta = (mouse.0 - drag.origin.0, mouse.1 - drag.origin.1);
+        let (pos, size) = drag.edge.apply(drag.from_pos, drag.from_size, delta, self.min_size());
+        self.set_dragged_size(Some(size));
+        self.set_dragged_position(Some(pos));
+    }
+
+    /// Report whether a drag was in flight, so the caller knows to stop here
+    /// rather than pass the release on to the chart.
+    fn end_resize(&mut self) -> bool {
+        let was = self.resize_drag().is_some();
+        self.set_resize_drag(None);
+        was
+    }
+}
+
+macro_rules! impl_resizable_modal {
+    ($($t:ty => ($w:expr, $h:expr)),+ $(,)?) => { $(
+        impl ResizableModal for $t {
+            fn dragged_size(&self) -> Option<(f64, f64)> { self.size }
+            fn set_dragged_size(&mut self, size: Option<(f64, f64)>) { self.size = size; }
+            fn dragged_position(&self) -> Option<(f64, f64)> { self.position }
+            fn set_dragged_position(&mut self, pos: Option<(f64, f64)>) { self.position = pos; }
+            fn resize_drag(&self) -> Option<ResizeDrag> { self.resize_drag }
+            fn set_resize_drag(&mut self, drag: Option<ResizeDrag>) { self.resize_drag = drag; }
+            fn min_size(&self) -> (f64, f64) { ($w, $h) }
+        }
+    )+ };
+}
 
 // Pure-data types relocated to mlc-core — re-exported here for layout-side widget code.
 pub use mlc_core::state::modal_data::{
@@ -280,6 +348,11 @@ pub struct PrimitiveSettingsState {
     pub active_tab: PrimitiveSettingsTab,
     /// Modal position (for dragging)
     pub position: Option<(f64, f64)>,
+    /// Size the user dragged this modal to. RAM-only, like `position`: a
+    /// modal does not survive a reload, so neither does its geometry.
+    pub size: Option<(f64, f64)>,
+    /// Resize drag in flight, if the user has hold of an edge.
+    pub resize_drag: Option<ResizeDrag>,
     /// Is header being dragged?
     pub is_dragging: bool,
     /// Drag offset from modal top-left corner
@@ -692,6 +765,11 @@ pub struct ChartSettingsState {
     pub active_tab: ChartSettingsTab,
     /// Modal position (for dragging)
     pub position: Option<(f64, f64)>,
+    /// Size the user dragged this modal to. RAM-only, like `position`: a
+    /// modal does not survive a reload, so neither does its geometry.
+    pub size: Option<(f64, f64)>,
+    /// Resize drag in flight, if the user has hold of an edge.
+    pub resize_drag: Option<ResizeDrag>,
     /// Is header being dragged?
     pub is_dragging: bool,
     /// Drag offset from modal top-left corner
@@ -750,6 +828,8 @@ pub struct ChartSettingsState {
 impl Default for ChartSettingsState {
     fn default() -> Self {
         Self {
+            size: None,
+            resize_drag: None,
             is_open: false,
             active_tab: ChartSettingsTab::default(),
             position: None,
@@ -1102,6 +1182,11 @@ pub struct IndicatorSettingsState {
     pub active_tab: IndicatorSettingsTab,
     /// Modal position (for dragging)
     pub position: Option<(f64, f64)>,
+    /// Size the user dragged this modal to. RAM-only, like `position`: a
+    /// modal does not survive a reload, so neither does its geometry.
+    pub size: Option<(f64, f64)>,
+    /// Resize drag in flight, if the user has hold of an edge.
+    pub resize_drag: Option<ResizeDrag>,
     /// Is header being dragged?
     pub is_dragging: bool,
     /// Drag offset from modal top-left corner
@@ -1638,6 +1723,11 @@ pub struct CompareSettingsState {
     pub active_tab: CompareSettingsTab,
     /// Modal position (None = centered on screen).
     pub position: Option<(f64, f64)>,
+    /// Size the user dragged this modal to. RAM-only, like `position`: a
+    /// modal does not survive a reload, so neither does its geometry.
+    pub size: Option<(f64, f64)>,
+    /// Resize drag in flight, if the user has hold of an edge.
+    pub resize_drag: Option<ResizeDrag>,
     /// Whether the modal header is being dragged.
     pub is_dragging: bool,
     /// Drag offset from modal top-left corner.
@@ -1701,6 +1791,8 @@ pub struct CompareSettingsState {
 impl Default for CompareSettingsState {
     fn default() -> Self {
         Self {
+            size: None,
+            resize_drag: None,
             is_open: false,
             series_index: 0,
             active_tab: CompareSettingsTab::Style,
@@ -3348,3 +3440,10 @@ impl UserSettingsState {
         self.data_slider_drag.as_ref().and_then(|d| d.floating_value.map(|v| (d.field_id.as_str(), v)))
     }
 }
+
+impl_resizable_modal!(
+    PrimitiveSettingsState => (360.0, 260.0),
+    ChartSettingsState => (480.0, 380.0),
+    IndicatorSettingsState => (420.0, 320.0),
+    CompareSettingsState => (380.0, 300.0),
+);

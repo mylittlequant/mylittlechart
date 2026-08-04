@@ -279,6 +279,11 @@ const FOOTER_PAD: f64 = 16.0;
 const BTN_H: f64 = 32.0;
 const OK_W: f64 = 70.0;
 const TEMPLATE_W: f64 = 80.0;
+/// Thickness of the edge strip a resize drag can grab. Public because the
+/// input side hit-tests the edges itself, against the frame the modal reports.
+pub const RESIZE_GRIP: f64 = 6.0;
+/// The floor a body may be dragged down to.
+const MIN_BODY_H: f64 = 80.0;
 
 /// What the shell needs to draw a modal. Note what is NOT here: total height.
 /// It is derived from `content_height`, which is the one number the body can
@@ -317,6 +322,14 @@ pub struct ModalShellSpec<'a> {
     /// a dropdown pinned to a gear has nowhere to be dragged to.
     pub draggable: bool,
     pub show_close: bool,
+    /// The size the user dragged this modal to, if they have. It overrides
+    /// `width` and the derived height; `None` means the modal sizes itself
+    /// from its content, which is what every modal does until touched.
+    pub size: Option<(f64, f64)>,
+    /// Offer resize grips on the right edge, the bottom edge and the corner.
+    pub resizable: bool,
+    /// Floor for a user-dragged size. The ceiling is the screen.
+    pub min_size: (f64, f64),
 }
 
 impl<'a> ModalShellSpec<'a> {
@@ -339,7 +352,18 @@ impl<'a> ModalShellSpec<'a> {
             radius: 0.0,
             draggable: true,
             show_close: true,
+            size: None,
+            resizable: false,
+            min_size: (320.0, 200.0),
         }
+    }
+
+    /// Let the user drag the frame bigger or smaller, remembering `size`.
+    pub fn resizable(mut self, size: Option<(f64, f64)>, min_size: (f64, f64)) -> Self {
+        self.resizable = true;
+        self.size = size;
+        self.min_size = min_size;
+        self
     }
 
     pub fn placed(mut self, placement: ModalPlacement) -> Self {
@@ -404,21 +428,39 @@ impl<'a> ModalShellSpec<'a> {
         }
     }
 
-    /// What the body actually gets: what it asked for, under the ceiling.
+    /// Everything around the body: header, tab bar, padding, footer.
+    fn chrome_height(&self) -> f64 {
+        self.header_height + self.tab_bar_h() + self.padding * 2.0 + self.footer_h()
+    }
+
+    /// The frame the user dragged to, floored at `min_size`.
+    fn dragged_size(&self) -> Option<(f64, f64)> {
+        self.size.map(|(w, h)| {
+            let min_h = self.min_size.1.max(self.chrome_height() + MIN_BODY_H);
+            (w.max(self.min_size.0), h.max(min_h))
+        })
+    }
+
+    /// Outer width: what the user dragged to, or what the content asked for.
+    fn frame_width(&self) -> f64 {
+        self.dragged_size().map(|(w, _)| w).unwrap_or(self.width)
+    }
+
+    /// What the body actually gets. A dragged frame decides it outright; an
+    /// untouched one takes what the body asked for, under its own ceiling.
     fn viewport_height(&self) -> f64 {
-        match self.max_content_height {
-            Some(max) => self.content_height.min(max),
-            None => self.content_height,
+        match self.dragged_size() {
+            Some((_, h)) => (h - self.chrome_height()).max(MIN_BODY_H),
+            None => match self.max_content_height {
+                Some(max) => self.content_height.min(max),
+                None => self.content_height,
+            },
         }
     }
 
-    /// Total frame height: chrome plus whatever the body said it needs.
+    /// Total frame height: chrome plus whatever the body got.
     fn height(&self) -> f64 {
-        self.header_height
-            + self.tab_bar_h()
-            + self.padding * 2.0
-            + self.viewport_height()
-            + self.footer_h()
+        self.chrome_height() + self.viewport_height()
     }
 }
 
@@ -486,24 +528,25 @@ pub fn begin_modal_shell(
 ) -> (ModalShell, LayerId) {
     let (screen_w, screen_h) = screen;
     let height = spec.height();
+    let width = spec.frame_width();
 
     // Placement, then the clamp. Anchored surfaces keep a small margin so a
     // gear at the very edge still opens something fully visible.
-    let centre = ((screen_w - spec.width) / 2.0, (screen_h - height) / 2.0);
+    let centre = ((screen_w - width) / 2.0, (screen_h - height) / 2.0);
     let (x, y) = match spec.placement {
         ModalPlacement::Center => centre,
         ModalPlacement::At(pos) => pos.unwrap_or(centre),
         ModalPlacement::Anchor(ax, ay) => (ax, ay),
     };
     let margin = if matches!(spec.placement, ModalPlacement::Anchor(..)) { 4.0 } else { 0.0 };
-    let x = clamp_on_screen(x, spec.width, screen_w, margin);
+    let x = clamp_on_screen(x, width, screen_w, margin);
     let y = clamp_on_screen(y, height, screen_h, margin);
 
-    let frame = WidgetRect::new(x, y, spec.width, height);
-    let header = WidgetRect::new(x, y, spec.width, spec.header_height);
+    let frame = WidgetRect::new(x, y, width, height);
+    let header = WidgetRect::new(x, y, width, spec.header_height);
     let footer_h = spec.footer_h();
     let footer = (footer_h > 0.0)
-        .then(|| WidgetRect::new(x, frame.bottom() - footer_h, spec.width, footer_h));
+        .then(|| WidgetRect::new(x, frame.bottom() - footer_h, width, footer_h));
 
     let rail_w = spec.rail_w();
     let bar_h = spec.tab_bar_h();
@@ -515,7 +558,7 @@ pub fn begin_modal_shell(
             frame.height - spec.header_height - footer_h,
         )),
         Some(ModalTabs::Horizontal { .. }) => {
-            Some(WidgetRect::new(x, header.bottom(), spec.width, bar_h))
+            Some(WidgetRect::new(x, header.bottom(), width, bar_h))
         }
         None => None,
     };
@@ -523,7 +566,7 @@ pub fn begin_modal_shell(
     let content = WidgetRect::new(
         x + rail_w + spec.padding,
         header.bottom() + bar_h + spec.padding,
-        spec.width - rail_w - spec.padding * 2.0,
+        width - rail_w - spec.padding * 2.0,
         viewport_h,
     );
     let shell = ModalShell {
@@ -616,7 +659,75 @@ pub fn end_modal_shell(
         hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
         draw_footer(ctx, coord, layer_id, spec, f, theme);
     }
+    if spec.resizable {
+        draw_resize_grips(ctx, shell.frame, theme);
+    }
     coord.pop_layer(layer_id);
+}
+
+/// Which edge or corner a resize drag has hold of. The four that own the
+/// top-left corner MOVE the modal while they resize it — without them a frame
+/// pinned near the right edge of the screen cannot grow at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ResizeEdge {
+    fn pulls_left(self) -> bool {
+        matches!(self, ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft)
+    }
+
+    fn pulls_right(self) -> bool {
+        matches!(self, ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight)
+    }
+
+    fn pulls_top(self) -> bool {
+        matches!(self, ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight)
+    }
+
+    fn pulls_bottom(self) -> bool {
+        matches!(self, ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight)
+    }
+
+    /// Apply a pointer delta to the frame a drag started from and return the
+    /// new `(position, size)`.
+    ///
+    /// The floor is applied HERE, not by the caller: an edge that moves the
+    /// origin must stop moving it the moment the size stops shrinking, or the
+    /// modal walks across the screen while its size sits at the minimum.
+    pub fn apply(
+        self,
+        pos: (f64, f64),
+        size: (f64, f64),
+        delta: (f64, f64),
+        min: (f64, f64),
+    ) -> ((f64, f64), (f64, f64)) {
+        let (mut x, mut y) = pos;
+        let (mut w, mut h) = size;
+        if self.pulls_left() {
+            let nw = (w - delta.0).max(min.0);
+            x += w - nw;
+            w = nw;
+        } else if self.pulls_right() {
+            w = (w + delta.0).max(min.0);
+        }
+        if self.pulls_top() {
+            let nh = (h - delta.1).max(min.1);
+            y += h - nh;
+            h = nh;
+        } else if self.pulls_bottom() {
+            h = (h + delta.1).max(min.1);
+        }
+        ((x, y), (w, h))
+    }
 }
 
 fn hairline(ctx: &mut dyn RenderContext, color: &str, x0: f64, y: f64, x1: f64) {
@@ -830,6 +941,30 @@ fn draw_footer(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&label, r.center_x(), r.center_y());
     coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
+}
+
+/// The corner hint: three short diagonals saying the frame can be dragged.
+///
+/// The GRAB ZONES are not registered here. Widgets registered on a modal layer
+/// after the body do reach the hit test for clicks — the footer proves it —
+/// but a DRAG started on one never arrived, while the header drag registered
+/// by `begin_modal_shell` did. Rather than keep guessing at the coordinator,
+/// the input side hit-tests the edges against the frame rect the modal already
+/// reports in its result, which is the same geometry drawn here.
+fn draw_resize_grips(
+    ctx: &mut dyn RenderContext,
+    frame: WidgetRect,
+    theme: &ModalTheme,
+) {
+    ctx.set_stroke_color(&theme.item_text_muted);
+    ctx.set_stroke_width(1.0);
+    for i in 1..=3 {
+        let off = i as f64 * 3.0;
+        ctx.begin_path();
+        ctx.move_to(frame.right() - off, frame.bottom() - 1.0);
+        ctx.line_to(frame.right() - 1.0, frame.bottom() - off);
+        ctx.stroke();
+    }
 }
 
 /// Keep an edge on screen. A surface taller than the screen is pinned to the

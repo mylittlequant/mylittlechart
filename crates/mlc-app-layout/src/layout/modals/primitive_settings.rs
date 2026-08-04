@@ -314,7 +314,7 @@ pub fn render_primitive_settings_modal(
     // Top of the body area with the padding still to come — the rows below add
     // it back, exactly as they did when this modal laid its own chrome out.
     let content_y = shell.content.y - modal_padding;
-    result.content_rect = WidgetRect::new(modal_x, content_y, modal_width, content_height);
+    result.content_rect = WidgetRect::new(modal_x, content_y, shell.frame.width, shell.content.height);
 
     // Render tab content
     let content_left = modal_x + modal_padding;

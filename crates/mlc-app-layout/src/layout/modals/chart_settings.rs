@@ -10,6 +10,7 @@ use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::{ChartSettingsModalResult, SliderTrackInfo};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::modal_settings::ResizableModal;
 use crate::ui::modal_settings::{ChartSettingsState, ChartSettingsTab};
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,
@@ -69,7 +70,6 @@ pub fn render_settings_modal(
     // Layout constants. Chrome heights are the shell's; the size stays fixed
     // by handing it the body height that leaves the frame where it was.
     let sidebar_width = TAB_RAIL_W;
-    let content_width = modal_width - sidebar_width;
     let content_height = modal_height - HEADER_H - FOOTER_H;
 
     let text_color = &toolbar_theme.item_text;
@@ -115,6 +115,7 @@ pub fn render_settings_modal(
         .with_footer(ModalFooter::Editor {
             template: Some(t_settings(SettingsKey::ButtonTemplate)),
         })
+        .resizable(chart_settings_state.size, chart_settings_state.min_size())
     };
     let (shell, layer_id) =
         begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
@@ -128,6 +129,11 @@ pub fn render_settings_modal(
     // =========================================================================
     let content_x = shell.content.x;
     let content_y = shell.content.y;
+    // Re-bound to the VIEWPORT the shell settled on: a frame the user dragged
+    // bigger is bigger here too, and the natural size above was only ever the
+    // starting point.
+    let content_width = shell.content.width;
+    let content_height = shell.content.height;
     let content_padding = 20.0;
 
     ctx.set_fill_color(&frame_theme.toolbar_bg);

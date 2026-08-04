@@ -12,7 +12,8 @@ pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_te
 pub use modal::{
     begin_modal_shell, end_modal_shell, labelled_tabs_width, render_modal_frame_only, render_modal_shell,
     ModalFooter, ModalPlacement, ModalShell, ModalShellSpec, ModalTab, ModalTabs, ModalTheme,
-    TabFit, FOOTER_H, HEADER_H, TAB_BAR_H, TAB_LIST_W, TAB_RAIL_W,
+    ResizeEdge,
+    TabFit, FOOTER_H, HEADER_H, RESIZE_GRIP, TAB_BAR_H, TAB_LIST_W, TAB_RAIL_W,
 };
 pub use input::{InputConfig, InputType, InputResult, draw_input, draw_input_cursor, input_position_to_cursor, cursor_from_char_positions};
 pub use slider::{
