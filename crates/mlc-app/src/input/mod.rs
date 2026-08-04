@@ -7132,10 +7132,24 @@ impl ChartApp {
                 }
             }
             Command::SetCompareSeriesColor { symbol, color, .. } => {
+                let mut editing_this = false;
                 if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(s) = w.compare_overlay.get_series_mut(symbol) {
                         s.color = color.clone();
                     }
+                    let idx = self.panel_app.compare_settings_state.series_index;
+                    editing_this = w
+                        .compare_overlay
+                        .series
+                        .get(idx)
+                        .is_some_and(|s| &s.symbol == symbol);
+                }
+                // The settings modal caches the swatch it draws, and nothing
+                // refreshes that cache on its own — without this an undo would
+                // recolour the line while the modal kept showing the old
+                // colour.
+                if editing_this {
+                    self.panel_app.compare_settings_state.cached_color = color.clone();
                 }
             }
             Command::ClearAllCompareSeries { .. } => {

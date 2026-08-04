@@ -873,11 +873,29 @@ impl ChartApp {
     }
 
     /// Apply a color change to the compare series currently being edited.
+    ///
+    /// Every colour path in the picker funnels here, so this is where the
+    /// edit becomes undoable. A no-op repaint (the picker re-applying the
+    /// colour it already has) records nothing — otherwise moving the cursor
+    /// over a swatch would fill the stack with commands that change nothing.
     pub(super) fn apply_compare_color(&mut self, color: &str) {
         let idx = self.panel_app.compare_settings_state.series_index;
         self.panel_app.compare_settings_state.cached_color = color.to_string();
+        let mut record = None;
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            if let Some(series) = window.compare_overlay.series.get(idx) {
+                if series.color != color {
+                    record = Some((series.symbol.clone(), series.color.clone()));
+                }
+            }
             window.compare_overlay.set_series_color_by_index(idx, color);
+        }
+        if let Some((symbol, previous_color)) = record {
+            self.push_undo_command(mlc_core::Command::SetCompareSeriesColor {
+                symbol,
+                color: color.to_string(),
+                previous_color,
+            });
         }
         eprintln!("[ChartApp] cmp_settings color applied: idx={} color={}", idx, color);
         self.snapshot_compare_settings_to_user_manager();
