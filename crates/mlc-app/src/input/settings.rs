@@ -1297,6 +1297,18 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "prim_settings:" prefix.
     pub(super) fn handle_prim_settings_click(&mut self, rest: &str, x: f64, y: f64) {
+        // Every property edit in this modal is one undo step: snapshot the
+        // primitive whole around the handler and record it if it moved. Before
+        // this, nothing in the primitive settings modal was undoable at all.
+        match self.panel_app.primitive_settings_state.primitive_id {
+            Some(prim_id) => {
+                self.edit_primitive_recorded(prim_id, |app| app.handle_prim_settings_click_inner(rest, x, y))
+            }
+            None => self.handle_prim_settings_click_inner(rest, x, y),
+        }
+    }
+
+    fn handle_prim_settings_click_inner(&mut self, rest: &str, x: f64, y: f64) {
         use mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a
@@ -1376,6 +1388,15 @@ impl ChartApp {
     /// is callable from click handlers so that clicking a different widget inside the
     /// same modal auto-commits the in-progress value.
     pub(crate) fn commit_prim_editing_text(&mut self) {
+        match self.panel_app.primitive_settings_state.primitive_id {
+            Some(prim_id) => {
+                self.edit_primitive_recorded(prim_id, |app| app.commit_prim_editing_text_inner())
+            }
+            None => self.commit_prim_editing_text_inner(),
+        }
+    }
+
+    fn commit_prim_editing_text_inner(&mut self) {
         let field = match self.panel_app.primitive_settings_state.active_field_id.take() {
             Some(f) => f,
             None => return,
@@ -2657,6 +2678,14 @@ impl ChartApp {
                         0
                     }
                 };
+                // Snapshot a NEW alert for undo (an edit of an existing one
+                // is a field change, not a create — it has its own command).
+                if editing_id.is_none() && alert_id != 0 {
+                    let snapshot = active_bid.and_then(|bid| self.core.alerts().get(bid, alert_id).cloned());
+                    if let Some(snap) = snapshot {
+                        self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
+                    }
+                }
                 eprintln!("[AlertSettings] Alert saved: id={}", alert_id);
                 self.sidebar_data_dirty = true;
                 self.panel_app.alert_settings_state.close();
@@ -2866,9 +2895,10 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let bid_opt = self.core.alerts().find_owner(id).map(|(bid, _)| bid);
-                        if let Some(bid) = bid_opt {
+                        let found = self.core.alerts().find_owner(id).map(|(bid, a)| (bid, a));
+                        if let Some((bid, snapshot)) = found {
                             self.core.alerts_mut().remove(bid, id);
+                            self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
                         }
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts = self.core.alerts().items_all();
@@ -2899,6 +2929,16 @@ impl ChartApp {
 
     /// Handle clicks on widgets registered with the "ind_settings:" prefix.
     pub(super) fn handle_ind_settings_click(&mut self, rest: &str, x: f64, y: f64) {
+        // One undo step per edit in the indicator settings modal — parameters,
+        // outputs and venue toggles all land in the instance, so snapshotting
+        // the instance around the handler covers the whole modal.
+        match self.panel_app.indicator_settings_state.indicator_id {
+            Some(id) => self.edit_indicator_recorded(id, |app| app.handle_ind_settings_click_inner(rest, x, y)),
+            None => self.handle_ind_settings_click_inner(rest, x, y),
+        }
+    }
+
+    fn handle_ind_settings_click_inner(&mut self, rest: &str, x: f64, y: f64) {
         use mlc_app_layout::ui::modal_settings::IndicatorSettingsTab;
 
         // Auto-commit: if a param input is being edited and the click lands on a
@@ -3097,6 +3137,13 @@ impl ChartApp {
     /// Applies the same logic as the Enter-key handler in `on_char_input` so that
     /// clicking a different widget inside the same modal auto-commits the in-progress value.
     pub(crate) fn commit_ind_editing_text(&mut self) {
+        match self.panel_app.indicator_settings_state.indicator_id {
+            Some(id) => self.edit_indicator_recorded(id, |app| app.commit_ind_editing_text_inner()),
+            None => self.commit_ind_editing_text_inner(),
+        }
+    }
+
+    fn commit_ind_editing_text_inner(&mut self) {
         let field = match self.panel_app.indicator_settings_state.active_field_id.take() {
             Some(f) => f,
             None => return,

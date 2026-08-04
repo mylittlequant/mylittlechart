@@ -2596,9 +2596,10 @@ impl ChartApp {
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
-                let bid_opt = self.core.alerts().find_owner(id).map(|(bid, _)| bid);
-                if let Some(bid) = bid_opt {
+                let found = self.core.alerts().find_owner(id).map(|(bid, a)| (bid, a));
+                if let Some((bid, snapshot)) = found {
                     self.core.alerts_mut().remove(bid, id);
+                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
                 }
                 eprintln!("[Sidebar] Alert deleted: {}", id);
                 self.sidebar_data_dirty = true;

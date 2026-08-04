@@ -370,10 +370,24 @@ impl ChartApp {
             }
             "toggle_visible" => {
                 let idx = self.panel_app.compare_settings_state.series_index;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                // Same command the sidebar's eye toggle records — the modal
+                // wrote the flag straight onto the series and left nothing in
+                // the history, so hiding a compare line from here could not be
+                // taken back.
+                let recorded = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                    let symbol = window.compare_overlay.series.get(idx).map(|s| s.symbol.clone());
+                    let previous = window.compare_overlay.series.get(idx).map(|s| s.visible);
                     let new_vis = window.compare_overlay.toggle_visibility(idx);
                     self.panel_app.compare_settings_state.cached_visible = new_vis;
                     eprintln!("[ChartApp] cmp_settings toggle_visible: idx={} -> visible={}", idx, new_vis);
+                    symbol.zip(previous).map(|(symbol, previous)| (symbol, previous, new_vis))
+                } else {
+                    None
+                };
+                if let Some((symbol, previous, visible)) = recorded {
+                    self.push_undo_command(mlc_core::Command::SetCompareSeriesVisibility {
+                        symbol, visible, previous,
+                    });
                     self.autosave_snapshot();
                 }
             }

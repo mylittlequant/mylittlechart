@@ -108,10 +108,13 @@ impl ChartApp {
                     eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
-                // Alerts attached to the deleted drawing go with it. They are
-                // not undoable (owner ruling 2026-08-04) — an alert is a live
-                // subscription with a delivery side effect, not a drawing.
-                self.core.alerts_mut().clear_for_drawing(prim_id);
+                // Alerts attached to the deleted drawing go with it, and come
+                // back with it: each is recorded so one Ctrl+Z restores the
+                // drawing AND its alerts.
+                let removed_alerts = self.core.alerts_mut().clear_for_drawing(prim_id);
+                for snapshot in removed_alerts {
+                    self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
+                }
                 self.autosave_snapshot();
             }
 
@@ -2290,7 +2293,10 @@ impl ChartApp {
             self.core.drawings_mut().delete(bid, prim_id);
             eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
         }
-        self.core.alerts_mut().clear_for_drawing(prim_id);
+        let removed_alerts = self.core.alerts_mut().clear_for_drawing(prim_id);
+        for snapshot in removed_alerts {
+            self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
+        }
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }
@@ -2318,7 +2324,10 @@ impl ChartApp {
         eprintln!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
         self.core.drawings_mut().delete_all(bid);
         for (_, _, data) in &primitives {
-            self.core.alerts_mut().clear_for_drawing(data.id);
+            let removed_alerts = self.core.alerts_mut().clear_for_drawing(data.id);
+            for snapshot in removed_alerts {
+                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
+            }
         }
         eprintln!("[ChartApp] Deleted all primitives (bid={:?})", bid);
         self.sync_drawing_back_to_group();

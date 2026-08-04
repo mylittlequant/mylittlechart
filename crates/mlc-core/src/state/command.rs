@@ -11,8 +11,9 @@
 //!   the edit, and any pan between an undo and a redo cleared the redo stack.
 //! - **symbol / timeframe / chart type** — same reason: choosing what to look
 //!   at is navigation, not an edit of the thing being looked at.
-//! - **alerts** — an alert is a live subscription with a delivery side
-//!   effect, not a drawing. Removing one by Ctrl+Z is not what a user means.
+//! Alerts ARE in: an alert is an object the user created, often attached to
+//! a drawing, so an accidental delete must be takeable back. Only its
+//! CREATION and DELETION though — firing and expiry are events, not edits.
 //!
 //! # Integration with DrawingManager
 //!
@@ -33,6 +34,7 @@
 use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
 use crate::chart::{CompareSeries, CompareSeriesStyle};
+use crate::alert::AlertItem;
 
 // =============================================================================
 // ObjectCategory - full terminal version (with all categories)
@@ -240,6 +242,33 @@ pub enum Command {
         series: Vec<CompareSeries>,
     },
 
+    /// Change an indicator's parameters / outputs.
+    ///
+    /// Carries the whole instance before and after rather than one field:
+    /// parameter edits arrive in groups (reset to defaults, apply template),
+    /// and one Ctrl+Z should put the whole set back.
+    ModifyIndicator {
+        instance_id: u64,
+        previous_json: String,
+        new_json: String,
+    },
+
+    // =========================================================================
+    // Alert commands
+    // =========================================================================
+
+    /// Add an alert (recorded at creation time; inverse = DeleteAlert)
+    AddAlert {
+        /// Full alert state captured immediately after creation
+        snapshot: AlertItem,
+    },
+
+    /// Delete an alert (recorded at deletion time; inverse = AddAlert)
+    DeleteAlert {
+        /// Full alert state captured immediately before deletion
+        snapshot: AlertItem,
+    },
+
     // =========================================================================
     // Indicator commands
     // =========================================================================
@@ -401,6 +430,23 @@ impl Command {
                 }
             }
 
+            Command::ModifyIndicator { instance_id, previous_json, new_json } => {
+                Command::ModifyIndicator {
+                    instance_id: *instance_id,
+                    previous_json: new_json.clone(),
+                    new_json: previous_json.clone(),
+                }
+            }
+
+            // Alert commands
+            Command::AddAlert { snapshot } => {
+                Command::DeleteAlert { snapshot: snapshot.clone() }
+            }
+
+            Command::DeleteAlert { snapshot } => {
+                Command::AddAlert { snapshot: snapshot.clone() }
+            }
+
             // Indicator commands
             Command::AddIndicator { instance_id, type_id, params_json } => {
                 Command::RemoveIndicator {
@@ -508,6 +554,11 @@ impl Command {
             // Indicator commands
             Command::AddIndicator { .. } => "Add Indicator",
             Command::RemoveIndicator { .. } => "Remove Indicator",
+            Command::ModifyIndicator { .. } => "Change Indicator Settings",
+
+            // Alert commands
+            Command::AddAlert { .. } => "Add Alert",
+            Command::DeleteAlert { .. } => "Delete Alert",
         }
     }
 }

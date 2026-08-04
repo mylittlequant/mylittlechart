@@ -552,6 +552,20 @@ pub struct ChartApp {
     /// the whole app is what makes the two comparable.
     undo_seq: u64,
 
+    /// A primitive's whole state as it stood when a slider drag STARTED.
+    ///
+    /// Same reason as `compare_style_before_drag`: the drag writes on every
+    /// pixel, so the value to restore is where the gesture began.
+    primitive_json_before_drag: Option<(u64, String, String)>,
+
+    /// Nesting depth of `edit_*_recorded`.
+    ///
+    /// The colour picker's apply runs INSIDE the settings-modal click
+    /// handler, and both are wrapped — without this one colour pick recorded
+    /// two identical commands and took two Ctrl+Z to undo. Only the outermost
+    /// wrapper records; it spans the whole edit anyway.
+    edit_recording_depth: u32,
+
     /// True while a drag is active on a UI element (modal, slider, scrollbar, color picker).
     /// Set in `on_drag_start` when `is_over_ui()` is true; cleared in `on_drag_end`.
     /// Used to suppress crosshair during UI drags without enumerating every drag type.
@@ -2927,6 +2941,8 @@ impl ChartApp {
             color_picker_drag: None,
             compare_style_before_drag: None,
             undo_seq: 0,
+            primitive_json_before_drag: None,
+            edit_recording_depth: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3343,6 +3359,8 @@ impl ChartApp {
             color_picker_drag: None,
             compare_style_before_drag: None,
             undo_seq: 0,
+            primitive_json_before_drag: None,
+            edit_recording_depth: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3918,6 +3936,8 @@ impl ChartApp {
             color_picker_drag: None,
             compare_style_before_drag: None,
             undo_seq: 0,
+            primitive_json_before_drag: None,
+            edit_recording_depth: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,

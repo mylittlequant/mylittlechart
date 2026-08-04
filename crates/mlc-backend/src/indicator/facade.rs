@@ -378,6 +378,12 @@ impl<'a> IndicatorsMut<'a> {
         self.mgr.get_instance(id).cloned()
     }
 
+    /// Replace an instance wholesale from its serialized form (undo/redo of a
+    /// parameter edit). The caller recalculates.
+    pub fn replace_from_json(&mut self, id: u64, json: &str) -> bool {
+        self.mgr.replace_from_json(id, json)
+    }
+
     /// Type ID (references `IndicatorDefinition`).
     /// Data streams the indicator type DECLARED it consumes, from its mli
     /// catalog signature (`input_stream` + `aux_streams`). A bubble uses

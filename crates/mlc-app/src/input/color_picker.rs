@@ -635,6 +635,16 @@ impl ChartApp {
 
     /// Apply the current color picker color to the selected primitive by field name.
     pub(super) fn apply_primitive_color(&mut self, color: &str) {
+        match self.panel_app.primitive_settings_state.primitive_id {
+            Some(prim_id) => {
+                let color = color.to_string();
+                self.edit_primitive_recorded(prim_id, |app| app.apply_primitive_color_inner(&color))
+            }
+            None => self.apply_primitive_color_inner(color),
+        }
+    }
+
+    fn apply_primitive_color_inner(&mut self, color: &str) {
         let field = match self.panel_app.primitive_settings_state.color_picker_field.clone() {
             Some(f) => f,
             None => return,

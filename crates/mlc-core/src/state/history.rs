@@ -211,6 +211,47 @@ impl CommandHistory {
             .unwrap_or(0)
     }
 
+    /// Fold a primitive edit into the one already on top when they are the
+    /// same continuous change.
+    ///
+    /// Returns true when it merged. One colour pick reaches the app through
+    /// two handlers (the settings modal's and the colour picker's own), and
+    /// repeated picks while the picker is open are one gesture to the user —
+    /// each would otherwise be its own Ctrl+Z step.
+    pub fn coalesce_primitive_modify(
+        &mut self,
+        prim_id: u64,
+        previous_json: &str,
+        new_json: &str,
+    ) -> bool {
+        let Some(top) = self.undo_stack.last_mut() else { return false };
+        let Command::ModifyPrimitiveFull {
+            prim_id: top_id,
+            previous_json: top_prev,
+            new_json: top_new,
+            ..
+        } = &mut top.cmd else {
+            return false;
+        };
+        if *top_id != prim_id {
+            return false;
+        }
+        if top_prev.as_str() == previous_json && top_new.as_str() == new_json {
+            // The SAME edit reported twice — one colour pick reaches both the
+            // settings modal's click handler and the colour picker's own, and
+            // each snapshots from the same starting state. Keep one.
+            return true;
+        }
+        if top_new.as_str() != previous_json {
+            return false;
+        }
+        // A continuation of the edit already on top: widen it instead of
+        // stacking a second step for the same gesture.
+        *top_new = new_json.to_string();
+        self.redo_stack.clear();
+        true
+    }
+
     /// Every (recorded id, type, geometry) this history claims about a
     /// primitive — the evidence a cold load matches against live drawings.
     pub fn primitive_identities(&self) -> Vec<(u64, String, Vec<(i64, f64)>)> {

@@ -2013,10 +2013,18 @@ impl ChartApp {
                         } else {
                             if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max }
                         };
+                        if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                            self.capture_primitive_json_for_drag(prim_id);
+                        }
                         self.panel_app.primitive_settings_state.start_dual_slider_drag_from_track(
                             &fid, track_x, track_width, min_val, max_val, handle, x,
                         );
                         return false;
+                    }
+                    // The gesture is ONE undo step; capture where it began,
+                    // because the live writes below land on every pixel.
+                    if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                        self.capture_primitive_json_for_drag(prim_id);
                     }
                     self.panel_app.primitive_settings_state.start_slider_drag_from_track(
                         &fid, track_x, track_width, min_val, max_val,
@@ -4382,6 +4390,9 @@ impl ChartApp {
                 // No floating value (e.g. drag without move) — clear state.
                 self.panel_app.primitive_settings_state.end_slider_drag();
             }
+            // ONE command for the whole gesture, against the state the drag
+            // started from.
+            self.record_primitive_json_after_drag();
             return;
         }
         if self.panel_app.chart_settings_state.is_slider_dragging() {
@@ -7071,8 +7082,52 @@ impl ChartApp {
                     eprintln!("[Undo/Redo] Indicator instance {} not found", instance_id);
                 }
             }
-            other => {
-                eprintln!("[Undo/Redo] Unhandled command: {}", other.description());
+            Command::ModifyPrimitiveFull { prim_id, type_id, new_json, .. } => {
+                // Was falling into the unhandled catch-all — recorded, never
+                // applied. Rebuilds the primitive from the recorded JSON, so
+                // it covers type-specific state (fib levels and the like) that
+                // `ModifyPrimitiveData` cannot express.
+                if let Some(bid) = self.bubble_holding_primitive(*prim_id) {
+                    self.core.drawings_mut().replace_primitive_from_json(bid, *prim_id, type_id, new_json);
+                    self.sidebar_data_dirty = true;
+                }
+            }
+            Command::ModifyIndicator { instance_id, new_json, .. } => {
+                if self.core.indicators_mut().replace_from_json(*instance_id, new_json) {
+                    let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
+                    if let Some(cid) = chart_id {
+                        let bars = self.bars_for_chart(cid);
+                        self.core.indicators_mut().calculate(*instance_id, &bars);
+                    }
+                    self.sync_sub_panes_from_manager();
+                    self.sidebar_data_dirty = true;
+                }
+            }
+            Command::AddAlert { snapshot } => {
+                // Restore a previously deleted (or redo-add) alert from its snapshot.
+                let alert_id = snapshot.id;
+                if self.core.alerts().find_owner(alert_id).is_none() {
+                    // bid resolution is app-level policy (which bubble wins when
+                    // the snapshot's own group_id doesn't resolve) — design doc §6.4.
+                    let target_bid = snapshot.group_id
+                        .map(mlc_core::ids::BubbleId)
+                        .or_else(|| self.panel_app.panel_grid.active_container_id()
+                            .and_then(|cid| self.bubble_for_chart(cid)));
+                    if let Some(bid) = target_bid {
+                        self.core.alerts_mut().restore_one(bid, snapshot.clone());
+                    }
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
+                }
+            }
+            Command::DeleteAlert { snapshot } => {
+                let alert_id = snapshot.id;
+                let bid_opt = self.core.alerts().find_owner(alert_id).map(|(bid, _)| bid);
+                if let Some(bid) = bid_opt {
+                    self.core.alerts_mut().remove(bid, alert_id);
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
+                }
             }
         }
     }
@@ -7530,6 +7585,148 @@ impl ChartApp {
         self.undo_seq = high;
     }
 
+    /// Run an edit on an indicator instance and record it as ONE undo step.
+    ///
+    /// Snapshots the whole instance before and after — parameters, outputs,
+    /// venues — so every field of the settings modal is covered by one
+    /// command, and nothing is recorded when nothing moved.
+    pub(crate) fn edit_indicator_recorded<R>(
+        &mut self,
+        instance_id: u64,
+        edit: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.edit_recording_depth > 0 {
+            return edit(self);
+        }
+        let before = self.core.indicators().full_clone(instance_id)
+            .and_then(|i| serde_json::to_string(&i).ok());
+        self.edit_recording_depth += 1;
+        let out = edit(self);
+        self.edit_recording_depth -= 1;
+        let Some(previous_json) = before else { return out };
+        let after = self.core.indicators().full_clone(instance_id)
+            .and_then(|i| serde_json::to_string(&i).ok());
+        if let Some(new_json) = after {
+            if new_json != previous_json {
+                self.push_undo_command(mlc_core::Command::ModifyIndicator {
+                    instance_id,
+                    previous_json,
+                    new_json,
+                });
+            }
+        }
+        out
+    }
+
+    /// Try to fold a primitive edit into the command already on top of
+    /// whichever history this chart records into.
+    fn coalesce_primitive_modify(&mut self, prim_id: u64, previous_json: &str, new_json: &str) -> bool {
+        let gid = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.shared_group_for_chart(cid));
+        if let Some(gid) = gid {
+            if self.core.bubbles().exists(gid) {
+                return self.core.bubbles_mut()
+                    .with_bubble_mut(gid, |g| {
+                        g.command_history.coalesce_primitive_modify(prim_id, previous_json, new_json)
+                    })
+                    .unwrap_or(false);
+            }
+        }
+        self.panel_app.panel_grid.active_container_mut()
+            .map(|w| w.command_history.coalesce_primitive_modify(prim_id, previous_json, new_json))
+            .unwrap_or(false)
+    }
+
+    /// Which bubble actually holds `prim_id`.
+    ///
+    /// A primitive can sit in the sync group, in the window's own bubble, or
+    /// in the window's auto-bubble stash. Assuming one of them is how undo
+    /// ends up silently matching nothing.
+    pub(crate) fn bubble_holding_primitive(&self, prim_id: u64) -> Option<mlc_core::BubbleId> {
+        let mut candidates: Vec<mlc_core::BubbleId> = Vec::new();
+        if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+            if let Some(gid) = self.shared_group_for_chart(cid) {
+                candidates.push(gid);
+            }
+        }
+        if let Some(w) = self.panel_app.panel_grid.active_container() {
+            candidates.push(w.current_tag_id);
+            candidates.push(w.auto_tag_id);
+        }
+        candidates.dedup();
+        let drawings = self.core.drawings();
+        candidates.into_iter().find(|bid| drawings.get_type_id(*bid, prim_id).is_some())
+    }
+
+    /// Run an edit on the selected primitive and record it as ONE undo step.
+    ///
+    /// Snapshots the primitive's whole JSON before and after, so this covers
+    /// colour, width, style, text AND type-specific state (fib levels and the
+    /// like) with a single command, and records nothing when nothing moved.
+    pub(crate) fn edit_primitive_recorded<R>(
+        &mut self,
+        prim_id: u64,
+        edit: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if self.edit_recording_depth > 0 {
+            return edit(self); // an inner wrapper — the outermost one records
+        }
+        let bid = self.bubble_holding_primitive(prim_id);
+        let before = bid.and_then(|b| self.core.drawings().get_primitive_json(b, prim_id));
+        let type_id = bid.and_then(|b| self.core.drawings().get_type_id(b, prim_id));
+        self.edit_recording_depth += 1;
+        let out = edit(self);
+        self.edit_recording_depth -= 1;
+        let (Some(bid), Some(before), Some(type_id)) = (bid, before, type_id) else {
+            return out;
+        };
+        let after = self.core.drawings().get_primitive_json(bid, prim_id);
+        if let Some(after) = after {
+            if after != before && !self.coalesce_primitive_modify(prim_id, &before, &after) {
+                self.push_undo_command(mlc_core::Command::ModifyPrimitiveFull {
+                    prim_id,
+                    type_id,
+                    previous_json: before,
+                    new_json: after,
+                });
+            }
+        }
+        out
+    }
+
+    /// Remember a primitive's whole state BEFORE a slider drag.
+    ///
+    /// A drag writes on every pixel, so the state to restore is where the
+    /// drag began, not the previous write.
+    pub(crate) fn capture_primitive_json_for_drag(&mut self, prim_id: u64) {
+        let bid = self.bubble_holding_primitive(prim_id);
+        self.primitive_json_before_drag = bid.and_then(|b| {
+            let drawings = self.core.drawings();
+            let json = drawings.get_primitive_json(b, prim_id)?;
+            let type_id = drawings.get_type_id(b, prim_id)?;
+            Some((prim_id, type_id, json))
+        });
+    }
+
+    /// Close a primitive slider drag with ONE command for the whole gesture.
+    pub(crate) fn record_primitive_json_after_drag(&mut self) {
+        let Some((prim_id, type_id, previous_json)) = self.primitive_json_before_drag.take() else {
+            return;
+        };
+        let Some(bid) = self.bubble_holding_primitive(prim_id) else { return };
+        let new_json = self.core.drawings().get_primitive_json(bid, prim_id);
+        if let Some(new_json) = new_json {
+            if new_json != previous_json {
+                self.push_undo_command(mlc_core::Command::ModifyPrimitiveFull {
+                    prim_id,
+                    type_id,
+                    previous_json,
+                    new_json,
+                });
+            }
+        }
+    }
+
     /// Match a restored history against the drawings that actually exist.
     ///
     /// A cold load re-numbers primitives — the collision sweep re-IDs stashed
@@ -7638,6 +7835,9 @@ impl ChartApp {
                 | Command::ReorderPrimitive { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
+                | Command::ModifyIndicator { .. }
+                | Command::AddAlert { .. }
+                | Command::DeleteAlert { .. }
         );
 
         // Use `shared_group_for_chart` (not `bubble_for_chart`) so auto-mono

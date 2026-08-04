@@ -320,6 +320,21 @@ impl IndicatorManager {
     }
 
     /// Get instance by ID
+    /// Replace an instance wholesale from its serialized form, keeping its id.
+    ///
+    /// The undo path for a parameter edit: the command carries the whole
+    /// instance before and after, so applying it is a replace rather than a
+    /// per-field write — a parameter set is edited as a group (reset to
+    /// defaults and apply-template rewrite several at once).
+    pub fn replace_from_json(&mut self, id: u64, json: &str) -> bool {
+        let Ok(mut inst) = serde_json::from_str::<IndicatorInstance>(json) else {
+            return false;
+        };
+        inst.id = id;
+        self.instances.insert(id, inst);
+        true
+    }
+
     pub fn get_instance(&self, id: u64) -> Option<&IndicatorInstance> {
         self.instances.get(&id)
     }
