@@ -7552,6 +7552,23 @@ impl ChartApp {
         self.undo_seq = self.undo_seq.wrapping_add(1);
         let seq = self.undo_seq;
 
+        // A new action invalidates the redo future — ALL of it. `push` clears
+        // the redo stack it is pushed onto, which is only half the job here:
+        // undo a drawing, add a compare series, undo THAT, press redo, and the
+        // drawing came back instead of the compare, because the group's redo
+        // stack still held it. Both histories this chart undoes from have to
+        // be cleared, whichever one the new command lands in.
+        let shared_gid = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.shared_group_for_chart(cid));
+        if let Some(gid) = shared_gid {
+            if self.core.bubbles().exists(gid) {
+                self.core.bubbles_mut().with_bubble_mut(gid, |g| g.command_history.clear_redo());
+            }
+        }
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            window.command_history.clear_redo();
+        }
+
         if let Some(gid) = group_id {
             if self.core.bubbles().exists(gid) {
                 self.core.bubbles_mut().with_bubble_mut(gid, |group| group.command_history.push(seq, cmd));

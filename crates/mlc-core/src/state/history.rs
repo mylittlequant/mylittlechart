@@ -118,6 +118,18 @@ impl CommandHistory {
         self.redo_stack.last().map(|e| e.cmd.description())
     }
 
+    /// Drop the redo future without touching the undo past.
+    ///
+    /// A new action invalidates redo GLOBALLY, and a chart's actions are
+    /// split across two histories — so recording into one of them has to
+    /// clear the other's redo stack too. Without this a stale entry survives
+    /// in the stack that was not written to, and the next redo replays it:
+    /// undo a drawing, then draw something new, then undo that and press
+    /// redo — and the FIRST drawing comes back instead.
+    pub fn clear_redo(&mut self) {
+        self.redo_stack.clear();
+    }
+
     /// Clear all history
     pub fn clear(&mut self) {
         self.undo_stack.clear();
@@ -202,6 +214,32 @@ mod tests {
         }
 
         assert_eq!(history.size(), 3);
+    }
+
+    /// The exact defect the owner hit: a stale redo entry left in the stack
+    /// that the new action did NOT get pushed onto, replayed ahead of the
+    /// command that was actually undone last.
+    #[test]
+    fn a_new_action_invalidates_the_other_history_s_redo_too() {
+        let mut group = CommandHistory::new(10);
+        let mut window = CommandHistory::new(10);
+
+        group.push(1, vis(1));      // draw
+        group.undo();               // undo the drawing — group redo holds it
+        assert!(group.can_redo());
+
+        // A new action anywhere must kill the whole redo future, not just the
+        // redo stack it happens to land on.
+        group.clear_redo();
+        window.clear_redo();
+        window.push(2, vis(2));     // add a compare series
+
+        assert!(!group.can_redo(), "the drawing must no longer be redoable");
+
+        window.undo();              // undo the compare
+        // Only one candidate left, and it is the compare.
+        assert_eq!(window.next_redo_seq(), Some(2));
+        assert_eq!(group.next_redo_seq(), None);
     }
 
     /// Two histories interleaved: undo must walk the sequence downwards
