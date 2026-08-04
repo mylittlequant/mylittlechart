@@ -211,6 +211,51 @@ impl CommandHistory {
             .unwrap_or(0)
     }
 
+    /// Every (recorded id, type, geometry) this history claims about a
+    /// primitive — the evidence a cold load matches against live drawings.
+    pub fn primitive_identities(&self) -> Vec<(u64, String, Vec<(i64, f64)>)> {
+        self.undo_stack
+            .iter()
+            .chain(self.redo_stack.iter())
+            .filter_map(|e| {
+                let id = e.cmd.prim_id()?;
+                let (type_id, points) = e.cmd.primitive_identity()?;
+                Some((id, type_id.to_string(), points.to_vec()))
+            })
+            .collect()
+    }
+
+    /// Rewrite primitive references through `remap`, then drop what still
+    /// points at a primitive that is not there.
+    ///
+    /// A command left pointing at a dead id is worse than no command: undo
+    /// matches nothing (looks like undo is broken) and redo inserts a second
+    /// copy of a drawing that already exists.
+    pub fn remap_and_prune_primitives(
+        &mut self,
+        remap: &std::collections::HashMap<u64, u64>,
+        live: &std::collections::HashSet<u64>,
+    ) -> usize {
+        let mut dropped = 0usize;
+        for stack in [&mut self.undo_stack, &mut self.redo_stack] {
+            stack.retain_mut(|e| {
+                let Some(old) = e.cmd.prim_id() else {
+                    return true; // not a primitive command — untouched
+                };
+                if let Some(&new) = remap.get(&old) {
+                    e.cmd.set_prim_id(new);
+                    return true;
+                }
+                if live.contains(&old) {
+                    return true;
+                }
+                dropped += 1;
+                false
+            });
+        }
+        dropped
+    }
+
     /// A copy trimmed to what may reach disk: the newest entries, under both
     /// a step count and a byte budget.
     ///

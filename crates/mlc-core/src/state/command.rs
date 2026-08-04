@@ -421,6 +421,61 @@ impl Command {
         }
     }
 
+    /// The primitive this command acts on, when it acts on one.
+    pub fn prim_id(&self) -> Option<u64> {
+        match self {
+            Command::SetPrimitiveVisibility { prim_id, .. }
+            | Command::SetPrimitiveLock { prim_id, .. }
+            | Command::DeletePrimitive { prim_id, .. }
+            | Command::CreatePrimitive { prim_id, .. }
+            | Command::MovePrimitive { prim_id, .. }
+            | Command::ReorderPrimitive { prim_id, .. }
+            | Command::ModifyPrimitiveData { prim_id, .. }
+            | Command::ModifyPrimitiveFull { prim_id, .. } => Some(*prim_id),
+            _ => None,
+        }
+    }
+
+    /// Point this command at a different primitive id.
+    ///
+    /// A cold load re-numbers primitives (collision and duplicate sweeps), so
+    /// a restored history refers to ids that no longer exist. Rewriting is
+    /// what keeps it usable — without it undo silently matches nothing and
+    /// redo re-creates a second copy of a drawing that is already there.
+    pub fn set_prim_id(&mut self, new_id: u64) {
+        match self {
+            Command::SetPrimitiveVisibility { prim_id, .. }
+            | Command::SetPrimitiveLock { prim_id, .. }
+            | Command::MovePrimitive { prim_id, .. }
+            | Command::ReorderPrimitive { prim_id, .. }
+            | Command::ModifyPrimitiveFull { prim_id, .. } => *prim_id = new_id,
+            Command::DeletePrimitive { prim_id, data, .. }
+            | Command::CreatePrimitive { prim_id, data, .. }
+            | Command::ModifyPrimitiveData { prim_id, new_data: data, .. } => {
+                *prim_id = new_id;
+                data.id = new_id;
+            }
+            _ => {}
+        }
+        if let Command::ModifyPrimitiveData { previous_data, .. } = self {
+            previous_data.id = new_id;
+        }
+    }
+
+    /// What this command says the primitive IS — its type and geometry.
+    ///
+    /// The only identity that survives a re-numbering, and therefore the key
+    /// a restored history is matched against the live drawings by.
+    pub fn primitive_identity(&self) -> Option<(&str, &[(i64, f64)])> {
+        match self {
+            Command::CreatePrimitive { type_id, points, .. }
+            | Command::DeletePrimitive { type_id, points, .. } => {
+                Some((type_id.as_str(), points.as_slice()))
+            }
+            _ => None,
+        }
+    }
+
     /// Get a human-readable description of the command
     pub fn description(&self) -> &'static str {
         match self {

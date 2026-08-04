@@ -7530,6 +7530,92 @@ impl ChartApp {
         self.undo_seq = high;
     }
 
+    /// Match a restored history against the drawings that actually exist.
+    ///
+    /// A cold load re-numbers primitives — the collision sweep re-IDs stashed
+    /// primitives that clash with a group's, and `dedup_primitive_ids` re-IDs
+    /// duplicates — so every id in a restored command can be stale. Live
+    /// symptom, measured on the stand: the saved history said
+    /// `CreatePrimitive:48/49/50` while the bubble held primitives 59..69, so
+    /// three undos deleted nothing and three redos ADDED three more copies of
+    /// drawings that were already on the chart.
+    ///
+    /// A primitive's identity across a re-numbering is its type plus its
+    /// geometry, so that is the key: commands that carry both (create,
+    /// delete) locate their primitive again and every command for that
+    /// primitive is rewritten to the new id. What cannot be located is
+    /// dropped — a command aimed at a dead id is worse than no command.
+    pub(crate) fn reconcile_history_primitive_ids(&mut self) {
+        type Key = (String, Vec<(i64, u64)>);
+        fn key(type_id: &str, points: &[(i64, f64)]) -> Key {
+            (
+                type_id.to_string(),
+                points.iter().map(|(t, p)| (*t, p.to_bits())).collect(),
+            )
+        }
+
+        // 1. What is actually on the chart, keyed by identity.
+        let mut live_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut by_identity: std::collections::HashMap<Key, u64> = std::collections::HashMap::new();
+        {
+            let drawings = self.core.drawings();
+            let bids: Vec<_> = self.core.bubbles().bubble_ids().collect();
+            for bid in bids {
+                for item in drawings.primitive_list(bid) {
+                    live_ids.insert(item.id);
+                    if let (Some(type_id), Some(points)) =
+                        (drawings.get_type_id(bid, item.id), drawings.get_points(bid, item.id))
+                    {
+                        by_identity.entry(key(&type_id, &points)).or_insert(item.id);
+                    }
+                }
+            }
+        }
+
+        // 2. What the histories claim, and where each claim now points.
+        let mut identities: Vec<(u64, String, Vec<(i64, f64)>)> = Vec::new();
+        for window in self.panel_app.panel_grid.containers().values() {
+            identities.extend(window.command_history.primitive_identities());
+        }
+        {
+            let bubbles = self.core.bubbles();
+            let bids: Vec<_> = bubbles.bubble_ids().collect();
+            for bid in bids {
+                if let Some(h) = bubbles.command_history(bid) {
+                    identities.extend(h.primitive_identities());
+                }
+            }
+        }
+        let mut remap: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+        for (old_id, type_id, points) in identities {
+            if live_ids.contains(&old_id) {
+                continue;
+            }
+            if let Some(&new_id) = by_identity.get(&key(&type_id, &points)) {
+                remap.insert(old_id, new_id);
+            }
+        }
+
+        // 3. Rewrite, and drop what cannot be placed.
+        let mut dropped = 0usize;
+        for window in self.panel_app.panel_grid.containers_mut().values_mut() {
+            dropped += window.command_history.remap_and_prune_primitives(&remap, &live_ids);
+        }
+        let bids: Vec<_> = self.core.bubbles().bubble_ids().collect();
+        for bid in bids {
+            self.core.bubbles_mut().with_bubble_mut(bid, |b| {
+                dropped += b.command_history.remap_and_prune_primitives(&remap, &live_ids);
+            });
+        }
+        if !remap.is_empty() || dropped > 0 {
+            eprintln!(
+                "[ChartApp] History reconciled after load: {} primitive id(s) rewritten, {} command(s) dropped",
+                remap.len(),
+                dropped
+            );
+        }
+    }
+
     /// Push a command to the appropriate history stack.
     ///
     /// Shared commands (primitives, indicators) go to the sync group's

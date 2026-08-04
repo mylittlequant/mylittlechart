@@ -1781,6 +1781,9 @@ impl ChartApp {
         // the first command of this session stamps below the restored ones
         // and undo walks the two histories in the wrong order.
         self.resume_undo_sequence();
+        // The id sweeps above re-number primitives, which leaves every
+        // restored command pointing at an id that no longer exists.
+        self.reconcile_history_primitive_ids();
 
         // ── Window↔bubble pointer sync sweep ─────────────────────────────
         // Many code paths attach a chart to a bubble via
