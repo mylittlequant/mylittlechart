@@ -32,6 +32,12 @@ pub struct ModalTheme {
     pub item_bg_hover: String,
     /// Unselected tab label.
     pub item_text_muted: String,
+    /// Fill behind the SELECTED tab.
+    pub item_bg_active: String,
+    /// Label on top of `item_bg_active`.
+    pub item_text_active: String,
+    /// Hover fill for the primary button.
+    pub accent_hover: String,
 }
 
 impl Default for ModalTheme {
@@ -52,6 +58,9 @@ impl Default for ModalTheme {
             accent_text: "#ffffff".to_string(),
             item_bg_hover: "rgba(255,255,255,0.08)".to_string(),
             item_text_muted: "#9598a1".to_string(),
+            item_bg_active: "#2962ff".to_string(),
+            item_text_active: "#ffffff".to_string(),
+            accent_hover: "#1e53e5".to_string(),
         }
     }
 }
@@ -77,6 +86,9 @@ impl ModalTheme {
             accent_text: tt.item_text_active.clone(),
             item_bg_hover: tt.item_bg_hover.clone(),
             item_text_muted: tt.item_text_muted.clone(),
+            item_bg_active: tt.item_bg_active.clone(),
+            item_text_active: tt.item_text_active.clone(),
+            accent_hover: tt.accent_hover.clone(),
         }
     }
 
@@ -257,11 +269,16 @@ pub const TAB_RAIL_W: f64 = 48.0;
 pub const TAB_LIST_W: f64 = 80.0;
 pub const TAB_BAR_H: f64 = 32.0;
 const TAB_ITEM_H: f64 = 44.0;
-const TAB_FONT: &str = "11px sans-serif";
+const TAB_FONT: &str = "13px sans-serif";
 const TAB_PAD_H: f64 = 12.0;
 const TAB_GAP: f64 = 2.0;
-const BTN_H: f64 = 28.0;
-const OK_W: f64 = 80.0;
+/// Inset of the footer's buttons from the frame edge. Deliberately NOT
+/// `spec.padding`: that is the BODY's inset, and a modal whose body pads
+/// itself would otherwise push OK hard against the frame edge.
+const FOOTER_PAD: f64 = 16.0;
+const BTN_H: f64 = 32.0;
+const OK_W: f64 = 70.0;
+const TEMPLATE_W: f64 = 80.0;
 
 /// What the shell needs to draw a modal. Note what is NOT here: total height.
 /// It is derived from `content_height`, which is the one number the body can
@@ -545,7 +562,7 @@ pub fn begin_modal_shell(
     // Header.
     ctx.set_fill_color(&theme.header_bg);
     ctx.fill_rect(header.x, header.y, header.width, header.height);
-    ctx.set_font("bold 13px sans-serif");
+    ctx.set_font("13px sans-serif");
     ctx.set_fill_color(&theme.header_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -693,21 +710,23 @@ fn draw_tabs(
         let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
 
         if is_active {
-            ctx.set_fill_color(&theme.accent);
             if vertical {
-                ctx.fill_rounded_rect(r.x + 4.0, r.y + 2.0, r.width - 8.0, r.height - 4.0, 4.0);
+                // Accent bar down the left edge plus a fill — how every rail
+                // in this app marks its selected row.
+                ctx.draw_sidebar_active_item(
+                    r.x, r.y, r.width, r.height,
+                    &theme.accent, &theme.item_bg_active, 3.0,
+                );
             } else {
-                ctx.fill_rect(r.x, r.bottom() - 2.0, r.width, 2.0);
+                ctx.draw_active_rect(r.x, r.y, r.width, r.height, &theme.item_bg_active);
             }
         } else if hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
             ctx.fill_rect(r.x, r.y, r.width, r.height);
         }
 
-        let tint = if is_active && vertical {
-            &theme.accent_text
-        } else if is_active {
-            &theme.accent
+        let tint = if is_active {
+            &theme.item_text_active
         } else if hovered {
             &theme.header_text
         } else {
@@ -753,18 +772,18 @@ fn footer_button_rects(
     footer: WidgetRect,
 ) -> (Option<WidgetRect>, Option<WidgetRect>) {
     let btn_y = footer.center_y() - BTN_H / 2.0;
-    let (label_len, template) = match spec.footer {
+    let (w, template) = match spec.footer {
         ModalFooter::None => return (None, None),
         ModalFooter::Editor { template } => {
-            const T_W: f64 = 150.0;
             let t = template
-                .map(|_| WidgetRect::new(footer.x + spec.padding, btn_y, T_W, BTN_H));
-            (2, t)
+                .map(|_| WidgetRect::new(footer.x + FOOTER_PAD, btn_y, TEMPLATE_W, BTN_H));
+            (OK_W, t)
         }
-        ModalFooter::Creator { label } => (label.chars().count(), None),
+        ModalFooter::Creator { label } => {
+            (OK_W.max(label.chars().count() as f64 * 8.0 + 24.0), None)
+        }
     };
-    let w = OK_W.max(label_len as f64 * 8.0 + 24.0);
-    let primary = WidgetRect::new(footer.right() - spec.padding - w, btn_y, w, BTN_H);
+    let primary = WidgetRect::new(footer.right() - FOOTER_PAD - w, btn_y, w, BTN_H);
     (template, Some(primary))
 }
 
@@ -787,13 +806,11 @@ fn draw_footer(
             if let (Some(name), Some(t_r)) = (template, template_rect) {
                 let t_id = format!("{}:template", spec.ns);
                 let hovered = coord.is_hovered(&WidgetId::from(t_id.as_str()));
-                ctx.set_fill_color(if hovered { &theme.item_bg_hover } else { &theme.footer_bg });
-                ctx.fill_rounded_rect(t_r.x, t_r.y, t_r.width, t_r.height, 4.0);
-                ctx.set_stroke_color(&theme.footer_border);
+                ctx.set_stroke_color(if hovered { &theme.header_text } else { &theme.footer_border });
                 ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(t_r.x, t_r.y, t_r.width, t_r.height, 4.0);
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&theme.header_text);
+                ctx.stroke_rect(t_r.x, t_r.y, t_r.width, t_r.height);
+                ctx.set_font("13px sans-serif");
+                ctx.set_fill_color(if hovered { &theme.close_button_hover } else { &theme.header_text });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(name, t_r.center_x(), t_r.center_y());
@@ -805,9 +822,9 @@ fn draw_footer(
     };
 
     let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
-    ctx.set_fill_color(if hovered { &theme.item_bg_hover } else { &theme.accent });
-    ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(if hovered { &theme.accent_hover } else { &theme.accent });
+    ctx.fill_rect(r.x, r.y, r.width, r.height);
+    ctx.set_font("13px sans-serif");
     ctx.set_fill_color(&theme.accent_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
