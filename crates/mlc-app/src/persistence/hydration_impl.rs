@@ -201,8 +201,15 @@ impl ChartApp {
                                         // yet at this point in the restore sequence).
                                     }
 
-                                    // Undo/redo history is session-local — a cold load
-                                    // starts with an empty stack (2026-08-04).
+                                    // Restore command history. The app's
+                                    // sequence counter is lifted above
+                                    // whatever came off disk after the whole
+                                    // load (see `resume_undo_sequence`), so
+                                    // new commands never stamp below restored
+                                    // ones.
+                                    if let Some(history) = &snap.command_history {
+                                        window.command_history = history.clone();
+                                    }
 
                                     // Create a fresh auto-bubble for this chart and restore
                                     // stashed state (pre-tag primitives, pre_tag_indicator_ids,
@@ -253,6 +260,10 @@ impl ChartApp {
                                         }
                                         // Restore pre_tag_indicator_ids into auto_bubble.
                                         auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
+                                        // Restore stashed command_history into auto_bubble.
+                                        if let Some(h) = snap.stashed_command_history.clone() {
+                                            auto_bub.command_history = h;
+                                        }
                                     });
 
                                     // Restore per-symbol drawing cache
@@ -425,8 +436,15 @@ impl ChartApp {
                                     // clone or a fresh `Viewport::default()`.
                                     window.scale_settings = snap.scale_settings.clone();
 
-                                    // Undo/redo history is session-local — a cold load
-                                    // starts with an empty stack (2026-08-04).
+                                    // Restore command history. The app's
+                                    // sequence counter is lifted above
+                                    // whatever came off disk after the whole
+                                    // load (see `resume_undo_sequence`), so
+                                    // new commands never stamp below restored
+                                    // ones.
+                                    if let Some(history) = &snap.command_history {
+                                        window.command_history = history.clone();
+                                    }
 
                                     // Pre-auto-bubble presets serialised no auto_tag_id —
                                     // a placeholder of BubbleId(0) is patched up by the
@@ -448,6 +466,9 @@ impl ChartApp {
                                             }
                                         }
                                         auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
+                                        if let Some(h) = snap.stashed_command_history.clone() {
+                                            auto_bub.command_history = h;
+                                        }
                                     });
 
                                     // Restore per-symbol drawing cache
@@ -1753,6 +1774,13 @@ impl ChartApp {
                         }
                     }
                     let orphan_prune_us = _t_orphan_prune.elapsed().as_micros();
+
+        // ── Undo sequence resume ─────────────────────────────────────────
+        // Restored commands carry the sequence numbers of the session that
+        // recorded them. The counter has to resume ABOVE the highest one, or
+        // the first command of this session stamps below the restored ones
+        // and undo walks the two histories in the wrong order.
+        self.resume_undo_sequence();
 
         // ── Window↔bubble pointer sync sweep ─────────────────────────────
         // Many code paths attach a chart to a bubble via

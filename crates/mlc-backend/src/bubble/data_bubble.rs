@@ -525,7 +525,7 @@ impl DataBubble {
             chart_type_interval: "1m",
             sync_flags: snap.sync_flags.clone(),
             scale_mode: snap.scale_mode,
-            command_history: CommandHistory::new(250),
+            command_history: snap.command_history.clone().unwrap_or_else(|| CommandHistory::new(250)),
             pre_tag_indicator_ids: Vec::new(),
             last_used_style: Arc::new(RwLock::new(style_map)),
             prev_close_price: None,

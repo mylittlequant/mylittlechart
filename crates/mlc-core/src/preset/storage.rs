@@ -139,10 +139,26 @@ pub fn save_preset(preset: &ChartPreset) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     let path = dir.join(format!("{}.json", preset.id));
 
-    // Undo/redo history no longer reaches disk at all (2026-08-04) — the
-    // snapshot structs simply do not carry it. The viewport field is
-    // `ViewportPersist` (bar_spacing only), so nothing needs stripping here.
-    let json = serde_json::to_string_pretty(preset)?;
+    // Undo/redo history is bounded on the way out — the newest steps only,
+    // under a step count AND a byte budget, because a single recorded
+    // delete-all carries every primitive it removed. The viewport field is
+    // `ViewportPersist` (bar_spacing only), so nothing else needs trimming.
+    let mut bounded = preset.clone();
+    for win in &mut bounded.windows {
+        if let Some(ref mut h) = win.command_history {
+            *h = h.bounded_for_persistence();
+        }
+        if let Some(ref mut h) = win.stashed_command_history {
+            *h = h.bounded_for_persistence();
+        }
+    }
+    for group in &mut bounded.bubbles {
+        if let Some(ref mut h) = group.command_history {
+            *h = h.bounded_for_persistence();
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&bounded)?;
     global_storage().write(&path_key(&path), json.as_bytes())?;
 
     // Remove any leftover encrypted version from before the plaintext-only policy.

@@ -16,7 +16,18 @@
 //! whose top is the OLDEST (min seq), which exactly reverses the undo order.
 
 use super::command::Command;
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Deserializer};
+
+/// How many steps of history reach disk, newest first.
+pub const PERSIST_MAX_ENTRIES: usize = 200;
+
+/// Byte ceiling for one history on disk.
+///
+/// The step count alone is not a bound: `DeleteAllPrimitives` carries a full
+/// snapshot of every primitive it removed, and `CreatePrimitive` carries the
+/// points and data of one. Two hundred of those can run to megabytes inside a
+/// preset that is rewritten whole on every autosave.
+pub const PERSIST_MAX_BYTES: usize = 1_048_576;
 
 /// A command plus the moment it was recorded, so commands split across
 /// several histories can still be ordered against each other.
@@ -26,12 +37,44 @@ struct Stamped {
     cmd: Command,
 }
 
+/// What a stored history entry can turn out to be on the way in.
+///
+/// Presets outlive the command set. An entry written by an older build may be
+/// a command kind that no longer exists (viewport, alerts, symbol changes —
+/// all removed 2026-08-04), or a bare command from before entries carried a
+/// sequence. Neither may take the whole preset down with it, so unknown
+/// entries are dropped and pre-sequence ones load at 0.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredEntry {
+    Stamped(Stamped),
+    Legacy(Command),
+    Unknown(#[allow(dead_code)] serde_json::Value),
+}
+
+fn tolerant_stack<'de, D>(d: D) -> Result<Vec<Stamped>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Vec<StoredEntry> = Vec::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|e| match e {
+            StoredEntry::Stamped(s) => Some(s),
+            StoredEntry::Legacy(cmd) => Some(Stamped { seq: 0, cmd }),
+            StoredEntry::Unknown(_) => None,
+        })
+        .collect())
+}
+
 /// Manages command history for undo/redo operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandHistory {
     /// Stack of executed commands (for undo)
+    #[serde(deserialize_with = "tolerant_stack")]
     undo_stack: Vec<Stamped>,
     /// Stack of undone commands (for redo)
+    #[serde(deserialize_with = "tolerant_stack")]
     redo_stack: Vec<Stamped>,
     /// Maximum number of commands to keep
     pub max_size: usize,
@@ -150,6 +193,53 @@ impl CommandHistory {
     pub fn redo_count(&self) -> usize {
         self.redo_stack.len()
     }
+
+    /// Highest sequence number this history holds.
+    ///
+    /// Read after a cold load so the app's counter resumes ABOVE what came
+    /// off disk — a counter that restarted at zero would stamp new commands
+    /// below the restored ones and undo would walk them in the wrong order.
+    pub fn max_seq(&self) -> u64 {
+        // Scan both stacks whole rather than reading the tops: a history
+        // loaded from an older preset can carry pre-sequence entries at 0
+        // mixed in among stamped ones, so the top is not always the largest.
+        self.undo_stack
+            .iter()
+            .chain(self.redo_stack.iter())
+            .map(|e| e.seq)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A copy trimmed to what may reach disk: the newest entries, under both
+    /// a step count and a byte budget.
+    ///
+    /// The ring itself stays in RAM — the file is rewritten whole on every
+    /// autosave, so persistence needs no wraparound, just a slice of the
+    /// newest steps. Undo is filled first; redo gets whatever budget is left,
+    /// because losing the ability to re-do beats losing the ability to undo.
+    pub fn bounded_for_persistence(&self) -> Self {
+        let mut budget = PERSIST_MAX_BYTES;
+        let undo_stack = take_newest_within(&self.undo_stack, &mut budget);
+        let redo_stack = take_newest_within(&self.redo_stack, &mut budget);
+        Self { undo_stack, redo_stack, max_size: self.max_size }
+    }
+}
+
+/// Newest-first walk that keeps entries while they fit, returned back in
+/// oldest-first stack order.
+fn take_newest_within(stack: &[Stamped], budget: &mut usize) -> Vec<Stamped> {
+    let mut kept: Vec<Stamped> = Vec::new();
+    for entry in stack.iter().rev().take(PERSIST_MAX_ENTRIES) {
+        let size = serde_json::to_vec(entry).map(|v| v.len()).unwrap_or(usize::MAX);
+        if size > *budget {
+            break;
+        }
+        *budget -= size;
+        kept.push(entry.clone());
+    }
+    kept.reverse();
+    kept
 }
 
 #[cfg(test)]
@@ -214,6 +304,42 @@ mod tests {
         }
 
         assert_eq!(history.size(), 3);
+    }
+
+    #[test]
+    fn persistence_keeps_the_newest_steps_and_survives_a_round_trip() {
+        let mut h = CommandHistory::new(500);
+        for i in 0..(PERSIST_MAX_ENTRIES as u64 + 50) {
+            h.push(i + 1, vis(i));
+        }
+        let bounded = h.bounded_for_persistence();
+        assert_eq!(bounded.undo_count(), PERSIST_MAX_ENTRIES);
+        // Newest kept, oldest dropped.
+        assert_eq!(bounded.max_seq(), PERSIST_MAX_ENTRIES as u64 + 50);
+
+        let json = serde_json::to_string(&bounded).unwrap();
+        let back: CommandHistory = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.undo_count(), PERSIST_MAX_ENTRIES);
+        assert_eq!(back.max_seq(), bounded.max_seq());
+    }
+
+    /// A preset written by an older build carries command kinds that no
+    /// longer exist. Those entries must be dropped, not take the preset with
+    /// them, and a pre-sequence entry must still load.
+    #[test]
+    fn unknown_and_pre_sequence_entries_load_instead_of_failing() {
+        let json = r#"{
+            "undo_stack": [
+                {"ViewportChange":{"previous":{"view_start":1.0},"new":{"view_start":2.0}}},
+                {"seq":7,"cmd":{"SetPrimitiveVisibility":{"prim_id":3,"visible":false,"previous":true}}},
+                {"SetPrimitiveVisibility":{"prim_id":9,"visible":true,"previous":false}}
+            ],
+            "redo_stack": [],
+            "max_size": 250
+        }"#;
+        let h: CommandHistory = serde_json::from_str(json).expect("must not fail on removed kinds");
+        assert_eq!(h.undo_count(), 2, "the viewport entry is dropped, the other two survive");
+        assert_eq!(h.max_seq(), 7);
     }
 
     /// The exact defect the owner hit: a stale redo entry left in the stack

@@ -7506,6 +7506,30 @@ impl ChartApp {
         }
     }
 
+    /// Lift the command sequence above everything a cold load restored.
+    ///
+    /// Both histories a chart undoes from are ordered against each other by
+    /// this counter, so it has to be global AND monotonic across sessions —
+    /// a counter that restarted at zero after a reload would stamp the first
+    /// new command below every restored one, and undo would reach for the
+    /// restored commands first no matter what the user just did.
+    pub(crate) fn resume_undo_sequence(&mut self) {
+        let mut high = self.undo_seq;
+        for window in self.panel_app.panel_grid.containers().values() {
+            high = high.max(window.command_history.max_seq());
+        }
+        {
+            let bubbles = self.core.bubbles();
+            let ids: Vec<_> = bubbles.bubble_ids().collect();
+            for bid in ids {
+                if let Some(h) = bubbles.command_history(bid) {
+                    high = high.max(h.max_seq());
+                }
+            }
+        }
+        self.undo_seq = high;
+    }
+
     /// Push a command to the appropriate history stack.
     ///
     /// Shared commands (primitives, indicators) go to the sync group's
@@ -7891,14 +7915,23 @@ impl ChartApp {
                     .map(|g| g.0);
                 // Read stash data from the chart's permanent auto-bubble.
                 let auto_bid = window.auto_tag_id;
-                let (ptids, stashed_prims_snap) = self.with_bubble(auto_bid, |auto_bub| {
+                let (ptids, stashed_ch, stashed_prims_snap) = self.with_bubble(auto_bid, |auto_bub| {
                     let ptids = auto_bub.pre_tag_indicator_ids.clone();
+                    // The auto_bubble holds the stashed command_history only while
+                    // the chart is IN a color group (joined). When ungrouped the
+                    // history lives back on the window; persist a clone of the
+                    // current auto_bubble history (may be empty for ungrouped charts).
+                    let stashed_ch = if auto_bub.command_history.size() > 0 || auto_bub.command_history.can_redo() {
+                        Some(auto_bub.command_history.clone())
+                    } else {
+                        None
+                    };
                     let prims_snap: Vec<mlc_core::preset::snapshots::PrimitiveSnapshot> =
                         auto_bub.primitives.iter()
                             .map(|p| mlc_core::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
                             .collect();
-                    (ptids, prims_snap)
-                }).unwrap_or_else(|| (Vec::new(), Vec::new()));
+                    (ptids, stashed_ch, prims_snap)
+                }).unwrap_or_else(|| (Vec::new(), None, Vec::new()));
                 // Phase 4 B: read instrument fields from branch_meta for snapshot.
                 let snap_symbol = self.symbol_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();
@@ -7928,7 +7961,7 @@ impl ChartApp {
                 let dreg_snap = self.core.drawings();
                 let snap_prims = dreg_snap.primitives(window.current_tag_id);
                 preset.windows.push(crate::persistence::build_chart_window_snapshot(
-                    window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_prims_snap,
+                    window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                     snap_chart_type, snap_chart_type_param, snap_chart_type_param_mode, snap_chart_type_interval,
                 ));

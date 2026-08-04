@@ -89,6 +89,7 @@ pub fn to_snapshot(bubble: &DataBubble, tag: &Tag, synced_panels: &[SyncMemberId
         member_overrides,
         synced_panel_ids,
         primitives,
+        command_history: Some(bubble.command_history.clone()),
         auto_created: tag.auto_created,
         last_used_style,
         alerts: bubble.alerts.clone(),

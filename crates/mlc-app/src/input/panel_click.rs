@@ -2664,54 +2664,37 @@ impl ChartApp {
         // --- Drawing delete ---
         if widget_id.contains("_drw_delete_") || widget_id.starts_with("drw_delete_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
-                // 1. Try active bubble first (handles Active + WindowOtherKey).
-                let active_bid_del = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-                let removed_from_dm = active_bid_del
-                    .map(|bid| self.core.drawings_mut().delete(bid, id))
-                    .unwrap_or(false);
-
-                if removed_from_dm {
-                    self.sync_drawing_back_to_group();
-                    self.autosave_snapshot();
-                    self.sidebar_data_dirty = true;
-                    eprintln!("[Sidebar] Drawing deleted from drawing_manager: {}", id);
-                    return;
-                }
-
-                // 2. Try auto_bubble.primitives (WindowStash).
-                let active_chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
-                let removed_from_auto_bubble = if let Some(cid) = active_chart_id {
-                    let auto_bid = self.panel_app.panel_grid.containers()
-                        .get(&cid)
-                        .map(|w| w.auto_tag_id);
-                    if let Some(bid) = auto_bid {
-                        self.core.drawings_mut().delete(bid, id)
-                    } else {
-                        false
+                // Every store this walks goes through `delete_primitive_with_undo`,
+                // which snapshots the primitive into the history BEFORE removing
+                // it. Deleting a drawing from the object tree used to call
+                // `drawings_mut().delete` directly, so the tree was the one
+                // delete surface in the app that Ctrl+Z could not take back —
+                // and the primitive was gone for good.
+                let candidates: Vec<mlc_core::BubbleId> = {
+                    let mut v = Vec::new();
+                    let active = self.panel_app.panel_grid.active_container();
+                    if let Some(w) = active {
+                        v.push(w.current_tag_id);   // 1. active bubble (Active + WindowOtherKey)
+                        v.push(w.auto_tag_id);      // 2. auto_bubble.primitives (WindowStash)
                     }
-                } else {
-                    false
+                    // 3. group.primitives (GroupOtherKey)
+                    if let Some(gid) = self.panel_app.panel_grid.active_container_id()
+                        .and_then(|cid| self.bubble_for_chart(cid))
+                    {
+                        v.push(gid);
+                    }
+                    v.dedup();
+                    v
                 };
-
-                if removed_from_auto_bubble {
-                    self.autosave_snapshot();
-                    self.sidebar_data_dirty = true;
-                    eprintln!("[Sidebar] Drawing deleted from auto_bubble.primitives: {}", id);
-                    return;
-                }
-
-                // 3. Try group.primitives (GroupOtherKey).
-                let group_id = self.panel_app.panel_grid
-                    .active_container_id()
-                    .and_then(|cid| self.bubble_for_chart(cid));
-                if let Some(gid) = group_id {
-                    let deleted = self.core.drawings_mut().delete(gid, id);
-                    if deleted {
-                        self.autosave_snapshot();
-                        self.sidebar_data_dirty = true;
-                        eprintln!("[Sidebar] Drawing deleted from group.primitives: {}", id);
-                        return;
+                for bid in candidates {
+                    let exists = self.core.drawings().get_type_id(bid, id).is_some();
+                    if !exists {
+                        continue;
                     }
+                    self.delete_primitive_with_undo(bid, id);
+                    self.sidebar_data_dirty = true;
+                    eprintln!("[Sidebar] Drawing deleted (bid={:?}): {}", bid, id);
+                    return;
                 }
 
                 eprintln!("[Sidebar] drw_delete_{}: not found in any store", id);
