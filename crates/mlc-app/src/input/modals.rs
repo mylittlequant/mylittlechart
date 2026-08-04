@@ -1921,6 +1921,9 @@ impl ChartApp {
                 "color_picker_chart" => {
                     self.panel_app.chart_settings_state.close_color_picker_one_level();
                 }
+                "color_picker_compare" => {
+                    self.panel_app.compare_settings_state.close_color_picker();
+                }
                 "color_picker_panel" => {
                     self.panel_app.close_panel_color_tag_picker_one_level();
                 }
@@ -1936,6 +1939,9 @@ impl ChartApp {
                 }
                 "alert_settings" => {
                     self.panel_app.alert_settings_state.close();
+                }
+                "compare_settings" => {
+                    self.panel_app.compare_settings_state.close();
                 }
                 "modal_search" => {
                     self.modal_state.close();
