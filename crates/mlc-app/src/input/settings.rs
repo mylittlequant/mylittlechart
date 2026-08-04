@@ -46,6 +46,18 @@ impl ChartApp {
             "close" => {
                 self.panel_app.chart_settings_state.close();
             }
+            // The footer bar belongs to the modal shell now, so its two
+            // buttons arrive as `{ns}:ok` and `{ns}:template` rather than
+            // under this modal's own `footer:` prefix. There is no "cancel":
+            // this modal edits a chart that already exists and every control
+            // applies as it is touched, so OK, the ✕ and Escape are one exit.
+            "ok" => {
+                self.panel_app.chart_settings_state.close();
+            }
+            "template" => {
+                self.panel_app.chart_settings_state.template_dropdown_open =
+                    !self.panel_app.chart_settings_state.template_dropdown_open;
+            }
             "modal_bg" => {
                 // Click inside modal body — close template dropdown if open
                 self.panel_app.chart_settings_state.template_dropdown_open = false;
@@ -88,19 +100,9 @@ impl ChartApp {
             }
             _ if rest.starts_with("footer:") => {
                 let btn_id = &rest["footer:".len()..];
+                // Only the template MENU still arrives under this prefix — the
+                // bar's own two buttons are the shell's and are handled above.
                 match btn_id {
-                    // No "cancel": this modal edits a chart that already
-                    // exists and every control applies as it is touched, so
-                    // OK, the ✕ and Escape are one and the same exit.
-                    "ok" => {
-                        self.panel_app.chart_settings_state.close();
-                        eprintln!("[ChartApp] chart_settings closed via footer: {}", btn_id);
-                    }
-                    "template" => {
-                        self.panel_app.chart_settings_state.template_dropdown_open =
-                            !self.panel_app.chart_settings_state.template_dropdown_open;
-                        eprintln!("[ChartApp] chart_settings template_dropdown toggled");
-                    }
                     "template_save_as" => {
                         self.panel_app.chart_settings_state.template_dropdown_open = false;
                         self.panel_app.chart_settings_state.save_template_mode = true;

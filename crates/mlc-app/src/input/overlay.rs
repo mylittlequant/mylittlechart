@@ -513,10 +513,11 @@ impl ChartApp {
                     eprintln!("[ChartApp] cmp_settings editing tf_{} {}", tf_idx, if is_min { "min" } else { "max" });
                 }
             }
-            "template_dropdown" => {
+            // `template`, not `template_dropdown`: the footer bar is the modal
+            // shell's and it names the button after the namespace.
+            "template" => {
                 self.panel_app.compare_settings_state.template_dropdown_open =
                     !self.panel_app.compare_settings_state.template_dropdown_open;
-                eprintln!("[ChartApp] cmp_settings template_dropdown toggled");
             }
             "template_save_as" => {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;

@@ -14,14 +14,14 @@ use crate::ui::modal_settings::{ChartSettingsState, ChartSettingsTab};
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,
     render_single_slider, SliderConfig,
-    render_modal_frame_only, ModalTheme,
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
+    ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
     ButtonConfig, draw_button,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
 use crate::ui::Icon;
-use crate::ui::z_order::ZLayer;
 use mlc_core::theme::{ThemeManager, ThemeSettingsPanel};
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
@@ -64,144 +64,70 @@ pub fn render_settings_modal(
     let modal_width = 620.0;
     let modal_height = 580.0;
 
-    // Use saved position or center
-    let (modal_x, modal_y) = chart_settings_state.position.unwrap_or_else(|| {
-        let x = chart_area_x + (screen_w - chart_area_x - modal_width) / 2.0;
-        let y = chart_area_y + (screen_h - chart_area_y - modal_height) / 2.0;
-        (x, y)
-    });
-
-    // Clamp to screen bounds. `.max(0.0)` on the LIMIT keeps a window
-    // narrower than the modal from producing a negative clamp that shoves
-    // the modal off the left edge.
-    let modal_x = modal_x.max(0.0).min((screen_w - modal_width).max(0.0));
-    let modal_y = modal_y.max(0.0).min((screen_h - modal_height).max(0.0));
-
     let mut result = ChartSettingsModalResult::default();
 
-    // Layout constants
-    let header_height = 44.0;
-    let sidebar_width = 48.0;
-    let footer_height = 52.0;
+    // Layout constants. Chrome heights are the shell's; the size stays fixed
+    // by handing it the body height that leaves the frame where it was.
+    let sidebar_width = TAB_RAIL_W;
     let content_width = modal_width - sidebar_width;
-    let content_height = modal_height - header_height - footer_height;
+    let content_height = modal_height - HEADER_H - FOOTER_H;
 
-    // Store modal rect
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-
-    // === InputCoordinator Integration ===
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "chart_settings");
-
-    // Register header drag zone
-    input_coordinator.register_on_layer(
-        "chart_settings:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, header_height),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // Register modal background catch-all
-    input_coordinator.register_on_layer(
-        "chart_settings:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Render modal frame
-    let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
-        &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
-    );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
-
-    // =========================================================================
-    // Header
-    // =========================================================================
-    let title = t_settings(SettingsKey::Title);
     let text_color = &toolbar_theme.item_text;
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, modal_x + 16.0, modal_y + header_height / 2.0);
-
-    // Close button
-    let close_size = 18.0;
-    let close_x = modal_x + modal_width - close_size - 12.0;
-    let close_y = modal_y + (header_height - close_size) / 2.0;
-
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, text_color);
-
-    input_coordinator.register_on_layer(
-        "chart_settings:close",
-        uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header bottom border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_height);
-    ctx.line_to(modal_x + modal_width, modal_y + header_height);
-    ctx.stroke();
-
-    // =========================================================================
-    // Left sidebar (vertical icon tabs)
-    // =========================================================================
-    let sidebar_x = modal_x;
-    let sidebar_y = modal_y + header_height;
-
-    // Sidebar right border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(sidebar_x + sidebar_width, sidebar_y);
-    ctx.line_to(sidebar_x + sidebar_width, sidebar_y + content_height);
-    ctx.stroke();
-
-    // Determine active tab index from state
     let active_tab_idx = ChartSettingsTab::all().iter()
         .position(|t| *t == chart_settings_state.active_tab)
         .unwrap_or(0);
+    let tab_items: Vec<ModalTab<'_>> = ChartSettingsTab::all()
+        .iter()
+        .map(|tab| {
+            let icon = match tab {
+                ChartSettingsTab::Instrument => Icon::Candlestick,
+                ChartSettingsTab::StatusLine => Icon::Legend,
+                ChartSettingsTab::ScalesLines => Icon::Grid,
+                ChartSettingsTab::Appearance => Icon::Palette,
+            };
+            ModalTab::with_icon(tab.id(), tab.label(), icon)
+        })
+        .collect();
 
-    let tab_icon_size = 20.0;
-    let tab_button_height = 44.0;
+    let modal_theme = ModalTheme::from_toolbar(
+        &frame_theme.toolbar_bg,
+        &toolbar_theme.separator,
+        toolbar_theme,
+    );
+    let spec = ModalShellSpec {
+        // The body insets itself by `content_padding`, so the shell adds none.
+        padding: 0.0,
+        placement: ModalPlacement::At(Some(chart_settings_state.position.unwrap_or((
+            chart_area_x + (screen_w - chart_area_x - modal_width) / 2.0,
+            chart_area_y + (screen_h - chart_area_y - modal_height) / 2.0,
+        )))),
+        ..ModalShellSpec::new(
+            "chart_settings",
+            t_settings(SettingsKey::Title),
+            modal_width,
+            content_height,
+        )
+        .with_tabs(ModalTabs::Vertical {
+            width: sidebar_width,
+            items: &tab_items,
+            active: active_tab_idx,
+        })
+        .with_footer(ModalFooter::Editor {
+            template: Some(t_settings(SettingsKey::ButtonTemplate)),
+        })
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    for (i, tab) in ChartSettingsTab::all().iter().enumerate() {
-        let tab_y = sidebar_y + i as f64 * tab_button_height;
-        let is_active = i == active_tab_idx;
-
-        if is_active {
-            ctx.draw_sidebar_active_item(
-                sidebar_x, tab_y, sidebar_width, tab_button_height,
-                &toolbar_theme.accent, &toolbar_theme.item_bg_active, 3.0
-            );
-        }
-
-        let icon_x = sidebar_x + (sidebar_width - tab_icon_size) / 2.0;
-        let icon_y = tab_y + (tab_button_height - tab_icon_size) / 2.0;
-        let icon_color = if is_active { &toolbar_theme.item_text_active } else { text_color };
-
-        let icon = match tab {
-            ChartSettingsTab::Instrument => Icon::Candlestick,
-            ChartSettingsTab::StatusLine => Icon::Legend,
-            ChartSettingsTab::ScalesLines => Icon::Grid,
-            ChartSettingsTab::Appearance => Icon::Palette,
-        };
-        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, tab_icon_size, tab_icon_size, icon_color);
-    }
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
 
     // =========================================================================
     // Content area
     // =========================================================================
-    let content_x = modal_x + sidebar_width;
-    let content_y = modal_y + header_height;
+    let content_x = shell.content.x;
+    let content_y = shell.content.y;
     let content_padding = 20.0;
 
     ctx.set_fill_color(&frame_theme.toolbar_bg);
@@ -288,51 +214,15 @@ pub fn render_settings_modal(
     // =========================================================================
     // Footer
     // =========================================================================
-    let footer_y = modal_y + modal_height - footer_height;
-
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, footer_y);
-    ctx.line_to(modal_x + modal_width, footer_y);
-    ctx.stroke();
-
-    let button_height = 32.0;
-    let button_y = footer_y + (footer_height - button_height) / 2.0;
-
-    // "Шаблон" button (left side)
-    let template_btn_width = 80.0;
-    let template_btn_x = modal_x + 16.0;
-    let is_tmpl_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("template");
-    ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { text_color });
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
-
-    // Right side buttons
-    let ok_btn_width = 70.0;
-
-
-    let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-
-
-    // "OK" button
-    let is_ok_hovered = chart_settings_state.hovered_footer_button.as_deref() == Some("ok");
-    ctx.set_fill_color(if is_ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
-    ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
-    ctx.set_fill_color("#ffffff");
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
+    // The bar is the shell's; what stays here is the menu that hangs off the
+    // Template button, placed from the rect the shell reported.
+    let template_btn = shell.template_btn.unwrap_or_default();
+    let button_height = template_btn.height;
+    let button_y = template_btn.y;
+    let template_btn_width = template_btn.width;
+    let template_btn_x = template_btn.x;
 
     // Populate result
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
     result.content_rect = WidgetRect::new(content_x, content_y, content_width, content_height);
 
     // Phase 6.1a: register scrollable content area for coordinator dispatch
@@ -343,36 +233,8 @@ pub fn render_settings_modal(
         &layer_id,
     );
 
-    // Tab rects
-    for (i, tab) in ChartSettingsTab::all().iter().enumerate() {
-        let tab_y = sidebar_y + i as f64 * tab_button_height;
-        let tab_rect = WidgetRect::new(sidebar_x, tab_y, sidebar_width, tab_button_height);
-        result.tab_rects.push((tab.id().to_string(), tab_rect));
-
-        input_coordinator.register_on_layer(
-            format!("chart_settings:tab:{}", tab.id()),
-            uzor::types::Rect::new(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height),
-            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
-            &layer_id,
-        );
-    }
-
-    // Footer buttons
-    let footer_btns = [
-        ("template", template_btn_x, template_btn_width),
-        ("ok", ok_btn_x, ok_btn_width),
-    ];
-    for (btn_id, btn_x, btn_width) in &footer_btns {
-        let btn_rect = WidgetRect::new(*btn_x, button_y, *btn_width, button_height);
-        result.footer_buttons.push((btn_id.to_string(), btn_rect));
-
-        input_coordinator.register_on_layer(
-            format!("chart_settings:footer:{}", btn_id),
-            uzor::types::Rect::new(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height),
-            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
-            &layer_id,
-        );
-    }
+    // Tab rects — where the shell put them.
+    result.tab_rects = shell.tab_rects.clone();
 
     // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
     if chart_settings_state.template_dropdown_open {
@@ -769,7 +631,7 @@ pub fn render_settings_modal(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
 
     result
 }

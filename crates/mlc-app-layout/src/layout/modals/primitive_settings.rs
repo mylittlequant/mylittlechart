@@ -16,8 +16,8 @@ use crate::ui::widgets::{SliderConfig, render_single_slider, render_dual_slider,
 use crate::ui::widgets::types::WidgetState;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::{
-    begin_modal_shell, labelled_tabs_width, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab,
-    ModalTabs, ModalTheme, TabFit,
+    begin_modal_shell, end_modal_shell, labelled_tabs_width, ModalFooter, ModalPlacement,
+    ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
 };
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
@@ -1870,8 +1870,8 @@ pub fn render_primitive_settings_modal(
         }
     }
 
-    // Pop modal layer
-    input_coordinator.pop_layer(&layer_id);
+    // The footer goes in after the body — see `end_modal_shell`.
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
 
     result
 }

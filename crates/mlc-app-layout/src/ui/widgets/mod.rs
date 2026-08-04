@@ -10,7 +10,7 @@ pub mod radio_group;
 pub use types::{WidgetState, WidgetTheme};
 pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_text_to_width, layout_btn_row};
 pub use modal::{
-    begin_modal_shell, labelled_tabs_width, render_modal_frame_only, render_modal_shell,
+    begin_modal_shell, end_modal_shell, labelled_tabs_width, render_modal_frame_only, render_modal_shell,
     ModalFooter, ModalPlacement, ModalShell, ModalShellSpec, ModalTab, ModalTabs, ModalTheme,
     TabFit, FOOTER_H, HEADER_H, TAB_BAR_H, TAB_LIST_W, TAB_RAIL_W,
 };

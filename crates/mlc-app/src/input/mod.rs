@@ -1762,7 +1762,10 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "compare_settings" => {
+                    // `cmp_settings`, matching the modal's widget-id namespace:
+                    // the shell names the header after it, where this modal
+                    // used to register its own header under the layer name.
+                    "cmp_settings" => {
                         if let Some(ref cs) = self.frame_result.as_ref().and_then(|r| r.compare_settings.as_ref()) {
                             self.panel_app.compare_settings_state.start_drag(x, y, cs.header_rect.x, cs.header_rect.y);
                             true

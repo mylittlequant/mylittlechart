@@ -13,7 +13,7 @@ use crate::ui::modal_settings::{IndicatorSettingsState, IndicatorSettingsTab, In
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, InputType,
     render_dual_slider, SliderConfig, SliderEditingInfo,
-    begin_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
     ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
 };
@@ -1511,7 +1511,7 @@ pub fn render_indicator_settings_modal(
     }
 
     // Pop layer before returning
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
 
     result
 }

@@ -15,10 +15,10 @@ use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::{CompareSettingsState, CompareSettingsTab, DualSliderHandle};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
-    render_modal_frame_only, ModalTheme,
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
+    ModalTheme, TabFit, FOOTER_H, HEADER_H, TAB_BAR_H,
     render_dual_slider, SliderConfig, SliderEditingInfo,
 };
-use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 use crate::layout::render_ui::toolbar_to_widget_theme;
@@ -75,9 +75,6 @@ pub struct SliderTrackInfo {
 
 const MODAL_W: f64 = 460.0;
 const MODAL_H: f64 = 422.0;
-const HEADER_H: f64 = 40.0;
-const TAB_BAR_H: f64 = 32.0;
-const FOOTER_H: f64 = 52.0;
 const PADDING: f64 = 14.0;
 const ROW_H: f64 = 30.0;
 const LABEL_W: f64 = 100.0;
@@ -104,71 +101,58 @@ pub fn render_compare_settings_modal(
     let mut result = CompareSettingsResult::default();
 
     // -------------------------------------------------------------------------
-    // Modal position
+    // Chrome — the shell owns frame, header, ✕, tab bar, footer and the clamp
     // -------------------------------------------------------------------------
-    let modal_x = if let Some((px, _)) = state.position {
-        px.max(0.0).min(screen_w - MODAL_W)
-    } else {
-        (screen_w - MODAL_W) / 2.0
-    };
-    let modal_y = if let Some((_, py)) = state.position {
-        py.max(0.0).min(screen_h - MODAL_H)
-    } else {
-        (screen_h - MODAL_H) / 2.0
-    };
+    let tab_items: Vec<ModalTab<'_>> = CompareSettingsTab::all()
+        .iter()
+        .map(|tab| ModalTab::new(tab.id(), compare_tab_label(*tab)))
+        .collect();
+    let active_tab = CompareSettingsTab::all()
+        .iter()
+        .position(|t| *t == state.active_tab)
+        .unwrap_or(0);
+    // The size stays fixed: the shell gets the body height that leaves the
+    // frame exactly MODAL_H tall with the shared chrome heights.
+    let content_h = MODAL_H - HEADER_H - TAB_BAR_H - PADDING * 2.0 - FOOTER_H;
 
-    let modal_rect = WidgetRect::new(modal_x, modal_y, MODAL_W, MODAL_H);
-    result.modal_rect = modal_rect;
-    result.header_rect = WidgetRect::new(modal_x, modal_y, MODAL_W, HEADER_H);
-
-    // -------------------------------------------------------------------------
-    // Modal frame (shadow + background + border)
-    // -------------------------------------------------------------------------
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, RADIUS);
+    let spec = ModalShellSpec {
+        padding: PADDING,
+        radius: RADIUS,
+        placement: ModalPlacement::At(Some(state.position.unwrap_or((
+            (screen_w - MODAL_W) / 2.0,
+            (screen_h - MODAL_H) / 2.0,
+        )))),
+        ..ModalShellSpec::new("cmp_settings", t_settings(SettingsKey::Title), MODAL_W, content_h)
+            // The layer keeps its old name: it is the key
+            // `close_topmost_known_modal_layer` matches on.
+            .layer_named("compare_settings")
+            .with_tabs(ModalTabs::Horizontal {
+                items: &tab_items,
+                active: active_tab,
+                fit: TabFit::Equal,
+            })
+            .with_footer(ModalFooter::Editor {
+                template: Some(t_settings(SettingsKey::ButtonTemplate)),
+            })
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // -------------------------------------------------------------------------
-    // Input layer (pushed AFTER frame so clicks on the frame are captured)
-    // -------------------------------------------------------------------------
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "compare_settings");
-
-    // Backdrop catch-all — absorbs clicks that didn't hit any specific widget
-    input_coordinator.register_on_layer(
-        "cmp_settings:modal_bg",
-        modal_rect,
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // -------------------------------------------------------------------------
-    // Header
-    // -------------------------------------------------------------------------
-    draw_header(ctx, modal_x, modal_y, MODAL_W, HEADER_H, toolbar_theme, input_coordinator, &layer_id, &mut result);
-    input_coordinator.register_on_layer(
-        "compare_settings:header",
-        result.header_rect,
-        Sense::DRAG,
-        &layer_id,
-    );
-
-    // -------------------------------------------------------------------------
-    // Tab bar
-    // -------------------------------------------------------------------------
-    let tab_y = modal_y + HEADER_H;
-    draw_tab_bar(ctx, modal_x, tab_y, MODAL_W, TAB_BAR_H, state.active_tab, toolbar_theme, input_coordinator, &layer_id);
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
 
     // -------------------------------------------------------------------------
     // Content area
     // -------------------------------------------------------------------------
-    let content_x = modal_x + PADDING;
-    let content_y = tab_y + TAB_BAR_H;
-    let content_w = MODAL_W - PADDING * 2.0;
+    let content_x = shell.content.x;
+    let content_y = shell.content.y;
+    let content_w = shell.content.width;
 
     match state.active_tab {
         CompareSettingsTab::Style => {
@@ -193,12 +177,13 @@ pub fn render_compare_settings_modal(
     }
 
     // -------------------------------------------------------------------------
-    // Footer (template toolbar + OK / Cancel buttons)
+    // Footer — the bar is the shell's; only its template menu is drawn here
     // -------------------------------------------------------------------------
-    let footer_y = modal_y + MODAL_H - FOOTER_H;
-    draw_footer(ctx, modal_x, footer_y, MODAL_W, FOOTER_H, state, toolbar_theme, input_coordinator, &layer_id, &mut result, templates);
+    if let Some(template_btn) = shell.template_btn {
+        draw_template_menu(ctx, template_btn, state, toolbar_theme, input_coordinator, &layer_id, templates);
+    }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
 
     result
 }
@@ -207,99 +192,6 @@ pub fn render_compare_settings_modal(
 // Private sub-renderers
 // =============================================================================
 
-fn draw_header(
-    ctx: &mut dyn RenderContext,
-    modal_x: f64,
-    modal_y: f64,
-    modal_w: f64,
-    header_h: f64,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut CompareSettingsResult,
-) {
-    // Separator below header
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_h);
-    ctx.line_to(modal_x + modal_w, modal_y + header_h);
-    ctx.stroke();
-
-    // Title text
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::Title), modal_x + 14.0, modal_y + header_h / 2.0);
-
-    // Close (×) button
-    let close_size = 20.0;
-    let close_x = modal_x + modal_w - 12.0 - close_size;
-    let close_y = modal_y + (header_h - close_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-
-    input_coordinator.register_on_layer(
-        "cmp_settings:close",
-        close_rect,
-        Sense::click(),
-        layer_id,
-    );
-
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, &toolbar_theme.item_text_muted);
-
-    result.close_btn_rect = close_rect;
-}
-
-fn draw_tab_bar(
-    ctx: &mut dyn RenderContext,
-    modal_x: f64,
-    tab_y: f64,
-    modal_w: f64,
-    tab_h: f64,
-    active_tab: CompareSettingsTab,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-) {
-    let tabs = CompareSettingsTab::all();
-    let tab_w = modal_w / tabs.len() as f64;
-
-    for (i, tab) in tabs.iter().enumerate() {
-        let tx = modal_x + i as f64 * tab_w;
-        let is_active = *tab == active_tab;
-
-        // Active tab indicator bar at bottom
-        if is_active {
-            ctx.set_fill_color(&toolbar_theme.item_bg_active);
-            ctx.fill_rect(tx, tab_y + tab_h - 2.0, tab_w, 2.0);
-        }
-
-        // Tab label
-        ctx.set_fill_color(if is_active { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted });
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(compare_tab_label(*tab), tx + tab_w / 2.0, tab_y + tab_h / 2.0);
-
-        // Register click zone
-        let widget_id = format!("cmp_settings:tab:{}", tab.id());
-        input_coordinator.register_on_layer(
-            widget_id.as_str(),
-            WidgetRect::new(tx, tab_y, tab_w, tab_h),
-            Sense::click(),
-            layer_id,
-        );
-    }
-
-    // Bottom separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, tab_y + tab_h);
-    ctx.line_to(modal_x + modal_w, tab_y + tab_h);
-    ctx.stroke();
-}
 
 #[allow(clippy::too_many_arguments)]
 fn draw_style_tab(
@@ -958,72 +850,24 @@ fn draw_info_tab(
     }
 }
 
+/// The menu that hangs off the footer's Template button. The bar itself — the
+/// separator, that button and OK — belongs to the modal shell; this places the
+/// menu from the rect the shell reported rather than re-deriving it.
 #[allow(clippy::too_many_arguments)]
-fn draw_footer(
+fn draw_template_menu(
     ctx: &mut dyn RenderContext,
-    modal_x: f64,
-    footer_y: f64,
-    modal_w: f64,
-    footer_h: f64,
+    template_btn: WidgetRect,
     state: &CompareSettingsState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
-    result: &mut CompareSettingsResult,
     templates: &[mlc_core::templates::CompareTemplate],
 ) {
-    // Separator above footer
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, footer_y);
-    ctx.line_to(modal_x + modal_w, footer_y);
-    ctx.stroke();
-
-    // Single 52px row: "Шаблон" outline button left, "Отмена" + "OK" right.
-    let button_height = 32.0;
-    let button_y = footer_y + (footer_h - button_height) / 2.0;
+    let button_height = template_btn.height;
+    let button_y = template_btn.y;
     let button_padding = 12.0;
-
-    // ── "Шаблон" button (left side, outline only) ────────────────────────────
-    let template_btn_width = 80.0;
-    let template_btn_x = modal_x + 16.0;
-    let is_tmpl_hovered = state.hovered_item_id.as_deref() == Some("template_dropdown");
-    ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
-
-    input_coordinator.register_on_layer(
-        "cmp_settings:template_dropdown",
-        WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height),
-        Sense::click(),
-        layer_id,
-    );
-
-    // ── "OK" button (right side, accent-filled) ──────────────────────────────
-    let ok_btn_width = 70.0;
-    let ok_btn_x = modal_x + modal_w - 16.0 - ok_btn_width;
-
-    let is_ok_hovered = state.hovered_item_id.as_deref() == Some("ok");
-    ctx.set_fill_color(if is_ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
-    ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
-    ctx.set_fill_color("#ffffff");
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
-
-    input_coordinator.register_on_layer(
-        "cmp_settings:ok",
-        WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height),
-        Sense::click(),
-        layer_id,
-    );
+    let template_btn_width = template_btn.width;
+    let template_btn_x = template_btn.x;
 
     // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────────
     if state.template_dropdown_open {
@@ -1152,7 +996,6 @@ fn draw_footer(
         let _ = is_def_hovered;
     }
 
-    let _ = result;
     let _ = button_padding;
 }
 

@@ -447,18 +447,19 @@ where
 {
     let (shell, layer_id) = begin_modal_shell(ctx, coord, spec, theme, screen);
     body(ctx, coord, &layer_id, &shell);
-    coord.pop_layer(&layer_id);
+    end_modal_shell(ctx, coord, spec, theme, &shell, &layer_id);
     shell
 }
 
-/// Draw the chrome and hand back the geometry and the layer, leaving the body
-/// — and the `pop_layer` that closes it — to the caller.
+/// Draw the chrome above the body and hand back the geometry and the layer.
+/// The caller then draws its body and MUST finish with [`end_modal_shell`],
+/// which draws the footer and closes the layer.
 ///
-/// Prefer [`render_modal_shell`]: its closure makes the pop impossible to
-/// forget. This form exists for the settings modals whose bodies run to
-/// hundreds of lines, where wrapping the body in a closure would be a
-/// reindentation of the whole file for no structural gain. Both draw exactly
-/// the same chrome — this IS the implementation of the closure form.
+/// Prefer [`render_modal_shell`]: its closure makes both impossible to forget.
+/// This form exists for the settings modals whose bodies run to hundreds of
+/// lines, where wrapping the body in a closure would be a reindentation of the
+/// whole file for no structural gain. Both draw exactly the same chrome — this
+/// IS the implementation of the closure form.
 pub fn begin_modal_shell(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -569,12 +570,36 @@ pub fn begin_modal_shell(
         shell.tab_rects = draw_tabs(ctx, coord, &layer_id, spec.ns, tabs, rect, theme);
     }
 
-    if let Some(f) = footer {
-        hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
-        shell.template_btn = draw_footer(ctx, coord, &layer_id, spec, f, theme);
-    }
+    // The footer is NOT drawn here — see `end_modal_shell`. Its geometry is,
+    // because the body needs it: a menu hangs off the template button.
+    shell.template_btn = footer.and_then(|f| footer_button_rects(spec, f).0);
 
     (shell, layer_id)
+}
+
+/// Draw the footer and close the modal's layer.
+///
+/// The footer goes in LAST, after the body, and that ordering is load-bearing
+/// twice over. Registered last, it wins the hit test against a body that draws
+/// past its viewport — a scrolling tab clips its PAINT but not its
+/// registrations, so a row hanging below the fold swallows clicks meant for the
+/// OK button. Painted last, it is not covered by that same overflow. Every
+/// modal that laid its own chrome by hand did exactly this, and moving the
+/// footer above the body broke the Appearance tab of chart settings the day it
+/// was tried.
+pub fn end_modal_shell(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    spec: &ModalShellSpec<'_>,
+    theme: &ModalTheme,
+    shell: &ModalShell,
+    layer_id: &LayerId,
+) {
+    if let Some(f) = shell.footer {
+        hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
+        draw_footer(ctx, coord, layer_id, spec, f, theme);
+    }
+    coord.pop_layer(layer_id);
 }
 
 fn hairline(ctx: &mut dyn RenderContext, color: &str, x0: f64, y: f64, x1: f64) {
@@ -720,6 +745,29 @@ fn draw_tabs(
     placed
 }
 
+/// Where the footer's buttons land: `(template, primary)`. One source of
+/// truth, because `begin_modal_shell` reports the template rect to the body
+/// while `end_modal_shell` draws it a body later.
+fn footer_button_rects(
+    spec: &ModalShellSpec<'_>,
+    footer: WidgetRect,
+) -> (Option<WidgetRect>, Option<WidgetRect>) {
+    let btn_y = footer.center_y() - BTN_H / 2.0;
+    let (label_len, template) = match spec.footer {
+        ModalFooter::None => return (None, None),
+        ModalFooter::Editor { template } => {
+            const T_W: f64 = 150.0;
+            let t = template
+                .map(|_| WidgetRect::new(footer.x + spec.padding, btn_y, T_W, BTN_H));
+            (2, t)
+        }
+        ModalFooter::Creator { label } => (label.chars().count(), None),
+    };
+    let w = OK_W.max(label_len as f64 * 8.0 + 24.0);
+    let primary = WidgetRect::new(footer.right() - spec.padding - w, btn_y, w, BTN_H);
+    (template, Some(primary))
+}
+
 fn draw_footer(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -727,19 +775,17 @@ fn draw_footer(
     spec: &ModalShellSpec<'_>,
     footer: WidgetRect,
     theme: &ModalTheme,
-) -> Option<WidgetRect> {
-    let btn_y = footer.center_y() - BTN_H / 2.0;
-    let mut template_btn = None;
+) {
+    let (template_rect, primary_rect) = footer_button_rects(spec, footer);
+    let Some(r) = primary_rect else { return };
 
     // The primary action always lands in the same place: hard against the
     // right edge, where the eye already goes.
-    let (id, label, primary) = match spec.footer {
-        ModalFooter::None => return None,
+    let (id, label) = match spec.footer {
+        ModalFooter::None => return,
         ModalFooter::Editor { template } => {
-            if let Some(name) = template {
+            if let (Some(name), Some(t_r)) = (template, template_rect) {
                 let t_id = format!("{}:template", spec.ns);
-                let t_w = 150.0;
-                let t_r = WidgetRect::new(footer.x + spec.padding, btn_y, t_w, BTN_H);
                 let hovered = coord.is_hovered(&WidgetId::from(t_id.as_str()));
                 ctx.set_fill_color(if hovered { &theme.item_bg_hover } else { &theme.footer_bg });
                 ctx.fill_rounded_rect(t_r.x, t_r.y, t_r.width, t_r.height, 4.0);
@@ -752,17 +798,14 @@ fn draw_footer(
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(name, t_r.center_x(), t_r.center_y());
                 coord.register_on_layer(t_id.as_str(), t_r, Sense::CLICK | Sense::HOVER, layer);
-                template_btn = Some(t_r);
             }
-            (format!("{}:ok", spec.ns), "OK".to_string(), true)
+            (format!("{}:ok", spec.ns), "OK".to_string())
         }
-        ModalFooter::Creator { label } => (format!("{}:create", spec.ns), label.to_string(), true),
+        ModalFooter::Creator { label } => (format!("{}:create", spec.ns), label.to_string()),
     };
 
-    let w = OK_W.max(label.chars().count() as f64 * 8.0 + 24.0);
-    let r = WidgetRect::new(footer.right() - spec.padding - w, btn_y, w, BTN_H);
     let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
-    ctx.set_fill_color(if primary && hovered { &theme.item_bg_hover } else { &theme.accent });
+    ctx.set_fill_color(if hovered { &theme.item_bg_hover } else { &theme.accent });
     ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&theme.accent_text);
@@ -770,7 +813,6 @@ fn draw_footer(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&label, r.center_x(), r.center_y());
     coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
-    template_btn
 }
 
 /// Keep an edge on screen. A surface taller than the screen is pinned to the
