@@ -70,4 +70,4 @@ pub use tooltip::{Tooltip, TooltipContent};
 pub use watermark::{FontStyle, HorzAlign, VertAlign, Watermark, WatermarkLine};
 
 // Re-export compare
-pub use compare::{get_compare_color, CompareOverlay, CompareSeries, COMPARE_COLORS};
+pub use compare::{get_compare_color, CompareOverlay, CompareSeries, CompareSeriesStyle, COMPARE_COLORS};

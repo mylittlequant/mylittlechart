@@ -23,7 +23,7 @@
 
 use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
-use crate::chart::CompareSeries;
+use crate::chart::{CompareSeries, CompareSeriesStyle};
 use crate::state::Timeframe;
 use crate::alert::AlertItem;
 
@@ -224,11 +224,16 @@ pub enum Command {
         previous: bool,
     },
 
-    /// Set compare series color
-    SetCompareSeriesColor {
+    /// Set the whole presentation of a compare series.
+    ///
+    /// A snapshot rather than one command per field, because the edits arrive
+    /// in GROUPS: "reset to defaults" and "apply template" rewrite colour,
+    /// width, style and chart type together, and one Ctrl+Z should put all
+    /// four back rather than four.
+    SetCompareSeriesStyle {
         symbol: String,
-        color: String,
-        previous_color: String,
+        previous: CompareSeriesStyle,
+        new: CompareSeriesStyle,
     },
 
     /// Clear all compare series
@@ -460,11 +465,11 @@ impl Command {
                 }
             }
 
-            Command::SetCompareSeriesColor { symbol, color, previous_color } => {
-                Command::SetCompareSeriesColor {
+            Command::SetCompareSeriesStyle { symbol, previous, new } => {
+                Command::SetCompareSeriesStyle {
                     symbol: symbol.clone(),
-                    color: previous_color.clone(),
-                    previous_color: color.clone(),
+                    previous: new.clone(),
+                    new: previous.clone(),
                 }
             }
 
@@ -561,7 +566,7 @@ impl Command {
             Command::SetCompareSeriesVisibility { visible, .. } => {
                 if *visible { "Show Compare" } else { "Hide Compare" }
             }
-            Command::SetCompareSeriesColor { .. } => "Change Compare Color",
+            Command::SetCompareSeriesStyle { .. } => "Change Compare Style",
             Command::ClearAllCompareSeries { .. } => "Clear All Compare",
             Command::RestoreAllCompareSeries { .. } => "Restore All Compare",
 

@@ -43,6 +43,23 @@ pub struct CompareSeries {
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
 }
 
+/// The drawn presentation of a compare series, captured whole.
+///
+/// Deliberately NOT the series: a presentation edit must not carry bars
+/// through the undo stack, and it must not be able to change which
+/// instrument the series is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompareSeriesStyle {
+    pub color: String,
+    pub line_width: f32,
+    #[serde(default = "default_line_style")]
+    pub line_style: String,
+    #[serde(default = "default_compare_chart_type")]
+    pub chart_type: String,
+    #[serde(default)]
+    pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
+}
+
 fn default_line_style() -> String {
     "solid".to_string()
 }
@@ -111,6 +128,28 @@ impl CompareSeries {
             self.base_price = first.close;
             self.base_timestamp = first.timestamp;
         }
+    }
+
+    /// Everything about how this series is DRAWN, and nothing about what it
+    /// holds. This is what an undo of a presentation edit restores; the bars
+    /// stay where they are.
+    pub fn style(&self) -> CompareSeriesStyle {
+        CompareSeriesStyle {
+            color: self.color.clone(),
+            line_width: self.line_width,
+            line_style: self.line_style.clone(),
+            chart_type: self.chart_type.clone(),
+            timeframe_visibility: self.timeframe_visibility.clone(),
+        }
+    }
+
+    /// Put a presentation snapshot back.
+    pub fn set_style(&mut self, style: &CompareSeriesStyle) {
+        self.color = style.color.clone();
+        self.line_width = style.line_width;
+        self.line_style = style.line_style.clone();
+        self.chart_type = style.chart_type.clone();
+        self.timeframe_visibility = style.timeframe_visibility.clone();
     }
 
     /// Return a clone of this series with the `bars` field emptied.

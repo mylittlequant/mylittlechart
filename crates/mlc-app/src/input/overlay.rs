@@ -357,6 +357,7 @@ impl ChartApp {
                     .and_then(|cs| cs.line_width_slider.as_ref())
                     .cloned();
                 if let Some(track) = track_opt {
+                    self.capture_compare_style_for_drag();
                     self.panel_app.compare_settings_state.start_slider_drag(
                         &track.field_id,
                         track.track_x,
@@ -387,9 +388,7 @@ impl ChartApp {
                 let idx = self.panel_app.compare_settings_state.series_index;
                 self.panel_app.compare_settings_state.cached_line_style = style.to_string();
                 self.panel_app.compare_settings_state.line_style_dropdown_open = false;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.compare_overlay.set_series_line_style_by_index(idx, style);
-                }
+                self.edit_compare_style(idx, |ov| ov.set_series_line_style_by_index(idx, style));
                 self.autosave_snapshot();
                 eprintln!("[ChartApp] cmp_settings line_style set to: {}", style);
             }
@@ -404,9 +403,7 @@ impl ChartApp {
                 let idx = self.panel_app.compare_settings_state.series_index;
                 self.panel_app.compare_settings_state.cached_chart_type = chart_type.to_string();
                 self.panel_app.compare_settings_state.chart_type_dropdown_open = false;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.compare_overlay.set_series_chart_type_by_index(idx, chart_type);
-                }
+                self.edit_compare_style(idx, |ov| ov.set_series_chart_type_by_index(idx, chart_type));
                 self.autosave_snapshot();
                 eprintln!("[ChartApp] cmp_settings chart_type set to: {}", chart_type);
             }
@@ -448,6 +445,7 @@ impl ChartApp {
                         } else {
                             DualSliderHandle::Max
                         };
+                        self.capture_compare_style_for_drag();
                         self.panel_app.compare_settings_state.start_dual_slider_drag(
                             &field_id,
                             track.track_x,
@@ -530,11 +528,11 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.cached_line_width = defaults.line_width;
                 self.panel_app.compare_settings_state.cached_line_style = defaults.line_style.clone();
                 let idx = self.panel_app.compare_settings_state.series_index;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.compare_overlay.set_series_color_by_index(idx, &defaults.color);
-                    window.compare_overlay.set_series_line_width_by_index(idx, defaults.line_width);
-                    window.compare_overlay.set_series_line_style_by_index(idx, &defaults.line_style);
-                }
+                self.edit_compare_style(idx, |ov| {
+                    ov.set_series_color_by_index(idx, &defaults.color);
+                    ov.set_series_line_width_by_index(idx, defaults.line_width);
+                    ov.set_series_line_style_by_index(idx, &defaults.line_style);
+                });
                 self.autosave_snapshot();
                 self.snapshot_compare_settings_to_user_manager();
                 eprintln!("[ChartApp] cmp_settings reset to developer defaults");
@@ -561,11 +559,11 @@ impl ChartApp {
                     self.panel_app.compare_settings_state.cached_color = tmpl.color.clone();
                     self.panel_app.compare_settings_state.cached_line_width = tmpl.line_width;
                     self.panel_app.compare_settings_state.cached_line_style = tmpl.line_style.clone();
-                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                        window.compare_overlay.set_series_color_by_index(idx, &tmpl.color);
-                        window.compare_overlay.set_series_line_width_by_index(idx, tmpl.line_width);
-                        window.compare_overlay.set_series_line_style_by_index(idx, &tmpl.line_style);
-                    }
+                    self.edit_compare_style(idx, |ov| {
+                        ov.set_series_color_by_index(idx, &tmpl.color);
+                        ov.set_series_line_width_by_index(idx, tmpl.line_width);
+                        ov.set_series_line_style_by_index(idx, &tmpl.line_style);
+                    });
                     self.autosave_snapshot();
                     self.snapshot_compare_settings_to_user_manager();
                     eprintln!("[ChartApp] cmp_settings template applied: {}", tmpl.name);
@@ -599,9 +597,9 @@ impl ChartApp {
         }
 
         self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
-        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
-        }
+        self.edit_compare_style(series_idx, |ov| {
+            ov.set_series_timeframe_visibility(series_idx, tf_config);
+        });
         self.autosave_snapshot();
         eprintln!("[ChartApp] cmp_settings tf_{} toggled", tf_idx);
     }
@@ -674,9 +672,9 @@ impl ChartApp {
         }
 
         self.panel_app.compare_settings_state.cached_timeframe_visibility = Some(tf_config.clone());
-        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
-        }
+        self.edit_compare_style(series_idx, |ov| {
+            ov.set_series_timeframe_visibility(series_idx, tf_config);
+        });
         self.autosave_snapshot();
         eprintln!("[ChartApp] cmp_settings tf_{} {:?} committed: {}", tf_idx, handle, new_val);
     }

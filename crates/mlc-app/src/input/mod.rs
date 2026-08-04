@@ -1691,7 +1691,11 @@ impl ChartApp {
 
         // Modal header drags — dispatched via InputCoordinator registration.
         // Each modal registers its header rect with Sense::DRAG during render.
-        if let Some(wid) = self.input_coordinator.borrow_mut().process_drag_start(x, y) {
+        // Bind first so the RefMut is dropped before the body: handlers below
+        // take `&mut self` (a drag start that must snapshot state), and a
+        // temporary living across the whole `if let` would deny them.
+        let drag_start_wid = self.input_coordinator.borrow_mut().process_drag_start(x, y);
+        if let Some(wid) = drag_start_wid {
             let id = wid.as_str().to_string();
             if id.ends_with(":header") {
                 let prefix = &id[..id.len() - 7];
@@ -1926,6 +1930,7 @@ impl ChartApp {
                             let max_pos = (cur_max as f64 - min_val) / (max_val - min_val);
                             if (t - min_pos).abs() <= (t - max_pos).abs() { DualSliderHandle::Min } else { DualSliderHandle::Max }
                         } else if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max };
+                        self.capture_compare_style_for_drag();
                         self.panel_app.compare_settings_state.start_dual_slider_drag(
                             &fid, track_x, track_width, min_val, max_val, handle, x,
                         );
@@ -1940,6 +1945,7 @@ impl ChartApp {
                     .and_then(|cs| cs.line_width_slider.as_ref())
                     .map(|t| (t.field_id.clone(), t.track_x, t.track_width, t.min_val, t.max_val));
                 if let Some((fid, track_x, track_width, min_val, max_val)) = track_data {
+                    self.capture_compare_style_for_drag();
                     self.panel_app.compare_settings_state.start_slider_drag(
                         &fid, track_x, track_width, min_val, max_val,
                     );
@@ -4431,8 +4437,13 @@ impl ChartApp {
                     self.autosave_snapshot();
                     eprintln!("[ChartApp] cmp_settings line_width committed: {}", width);
                 }
+                // ONE command for the whole gesture, against the style the
+                // drag started from — the live per-pixel writes above are not
+                // recorded.
+                self.record_compare_style_after_drag();
             } else {
                 self.panel_app.compare_settings_state.end_slider_drag();
+                self.compare_style_before_drag = None;
             }
             return;
         }
@@ -7131,11 +7142,11 @@ impl ChartApp {
                     }
                 }
             }
-            Command::SetCompareSeriesColor { symbol, color, .. } => {
+            Command::SetCompareSeriesStyle { symbol, new, .. } => {
                 let mut editing_this = false;
                 if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     if let Some(s) = w.compare_overlay.get_series_mut(symbol) {
-                        s.color = color.clone();
+                        s.set_style(new);
                     }
                     let idx = self.panel_app.compare_settings_state.series_index;
                     editing_this = w
@@ -7144,12 +7155,16 @@ impl ChartApp {
                         .get(idx)
                         .is_some_and(|s| &s.symbol == symbol);
                 }
-                // The settings modal caches the swatch it draws, and nothing
-                // refreshes that cache on its own — without this an undo would
-                // recolour the line while the modal kept showing the old
-                // colour.
+                // The settings modal caches what it draws and nothing
+                // refreshes that cache on its own — without this an undo
+                // would restyle the line while the modal kept showing the
+                // old swatch, width and style.
                 if editing_this {
-                    self.panel_app.compare_settings_state.cached_color = color.clone();
+                    let st = &mut self.panel_app.compare_settings_state;
+                    st.cached_color = new.color.clone();
+                    st.cached_line_width = new.line_width;
+                    st.cached_line_style = new.line_style.clone();
+                    st.cached_chart_type = new.chart_type.clone();
                 }
             }
             Command::ClearAllCompareSeries { .. } => {
@@ -7647,6 +7662,76 @@ impl ChartApp {
     /// Used by toolbar "redo" button click (routes through group history).
     fn perform_redo(&mut self) {
         self.perform_redo_with_group();
+    }
+
+    /// Remember how the edited compare series looks BEFORE a slider drag.
+    ///
+    /// The drag writes live on every pixel so the stack can not read the
+    /// previous write — it has to hold where the drag began.
+    pub(crate) fn capture_compare_style_for_drag(&mut self) {
+        let idx = self.panel_app.compare_settings_state.series_index;
+        self.compare_style_before_drag = self
+            .panel_app
+            .panel_grid
+            .active_container()
+            .and_then(|w| w.compare_overlay.series.get(idx))
+            .map(|s| (s.symbol.clone(), s.style()));
+    }
+
+    /// Close a slider drag with ONE command spanning the whole gesture.
+    pub(crate) fn record_compare_style_after_drag(&mut self) {
+        let Some((symbol, previous)) = self.compare_style_before_drag.take() else {
+            return;
+        };
+        let new = self
+            .panel_app
+            .panel_grid
+            .active_container()
+            .and_then(|w| w.compare_overlay.series.iter().find(|s| s.symbol == symbol))
+            .map(|s| s.style());
+        if let Some(new) = new {
+            if new != previous {
+                self.push_undo_command(mlc_core::Command::SetCompareSeriesStyle { symbol, previous, new });
+            }
+        }
+    }
+
+    /// Run a presentation edit on a compare series and record it as ONE undo
+    /// step.
+    ///
+    /// Snapshots before and after and records nothing when nothing moved: the
+    /// colour picker re-applies the colour it already has as the cursor
+    /// travels, and each of those would otherwise be a command that changes
+    /// nothing. Grouped edits — "reset to defaults", "apply template" — go
+    /// through here as a single closure and therefore undo in one press.
+    pub(crate) fn edit_compare_style(
+        &mut self,
+        idx: usize,
+        edit: impl FnOnce(&mut mlc_core::chart::CompareOverlay),
+    ) {
+        let recorded = {
+            let Some(window) = self.panel_app.panel_grid.active_container_mut() else {
+                return;
+            };
+            let before = window
+                .compare_overlay
+                .series
+                .get(idx)
+                .map(|s| (s.symbol.clone(), s.style()));
+            edit(&mut window.compare_overlay);
+            before.and_then(|(symbol, previous)| {
+                window
+                    .compare_overlay
+                    .series
+                    .get(idx)
+                    .map(|s| s.style())
+                    .filter(|new| *new != previous)
+                    .map(|new| (symbol, previous, new))
+            })
+        };
+        if let Some((symbol, previous, new)) = recorded {
+            self.push_undo_command(mlc_core::Command::SetCompareSeriesStyle { symbol, previous, new });
+        }
     }
 
     /// Push a command to the appropriate history stack.

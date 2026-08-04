@@ -543,6 +543,13 @@ pub struct ChartApp {
     /// hue bar of an L2 color picker.  Cleared in `on_drag_end`.
     color_picker_drag: Option<ColorPickerDragState>,
 
+    /// Compare-series presentation as it stood when a slider drag STARTED.
+    ///
+    /// A width drag writes live on every pixel, so the value the stack must
+    /// restore is not the previous write — it is where the drag began. Set on
+    /// drag start, consumed on drag end.
+    compare_style_before_drag: Option<(String, mlc_core::chart::CompareSeriesStyle)>,
+
     /// True while a drag is active on a UI element (modal, slider, scrollbar, color picker).
     /// Set in `on_drag_start` when `is_over_ui()` is true; cleared in `on_drag_end`.
     /// Used to suppress crosshair during UI drags without enumerating every drag type.
@@ -2917,6 +2924,7 @@ impl ChartApp {
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
+            compare_style_before_drag: None,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3332,6 +3340,7 @@ impl ChartApp {
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
+            compare_style_before_drag: None,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3906,6 +3915,7 @@ impl ChartApp {
             drag_start_points: None,
             viewport_before_drag: None,
             color_picker_drag: None,
+            compare_style_before_drag: None,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
