@@ -1332,6 +1332,16 @@ impl ChartApp {
             "close" => {
                 self.panel_app.primitive_settings_state.close();
             }
+            // The footer belongs to the modal shell now, so its two buttons
+            // arrive as `{ns}:ok` and `{ns}:template` rather than as content
+            // items of this modal's own.
+            "ok" => {
+                self.panel_app.primitive_settings_state.close();
+            }
+            "template" => {
+                self.panel_app.primitive_settings_state.template_dropdown_open =
+                    !self.panel_app.primitive_settings_state.template_dropdown_open;
+            }
             "modal_bg" => {
                 // Click inside modal body — close template dropdown if open
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
@@ -1637,13 +1647,6 @@ impl ChartApp {
             && !item_id.starts_with("level_prop_option:")
         {
             self.panel_app.primitive_settings_state.open_select_dropdown = None;
-        }
-
-        // ── Footer: OK (an exit, not a confirmation) ──────────────────────────
-        if item_id == "ok" {
-            self.panel_app.primitive_settings_state.close();
-            eprintln!("[ChartApp] prim_settings closed via: {}", item_id);
-            return;
         }
 
         // Get selected primitive id from settings state.
@@ -2338,14 +2341,6 @@ impl ChartApp {
             } else {
                 eprintln!("[ChartApp] prim_settings text_prop '{}' not found", prop_id);
             }
-            return;
-        }
-
-        // ── Template dropdown button ──────────────────────────────────────────
-        if item_id == "template_dropdown" {
-            self.panel_app.primitive_settings_state.template_dropdown_open =
-                !self.panel_app.primitive_settings_state.template_dropdown_open;
-            eprintln!("[ChartApp] prim_settings template_dropdown toggled");
             return;
         }
 

@@ -14,8 +14,11 @@ use crate::layout::toolbar_state::ToolbarState;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::widgets::{SliderConfig, render_single_slider, render_dual_slider, SliderEditingInfo};
 use crate::ui::widgets::types::WidgetState;
-use crate::ui::Icon;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
+use crate::ui::widgets::{
+    begin_modal_shell, labelled_tabs_width, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab,
+    ModalTabs, ModalTheme, TabFit,
+};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
 use mlc_core::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
@@ -170,7 +173,6 @@ pub fn render_primitive_settings_modal(
     templates: &[mlc_core::templates::PrimitiveTemplate],
 ) -> PrimitiveSettingsResult {
     use mlc_core::render::{TextAlign, TextBaseline};
-    use mlc_core::engine::render::draw_svg_icon;
     use mlc_core::drawing::primitives_v2::PrimitiveRegistry;
 
     let mut result = PrimitiveSettingsResult::default();
@@ -188,10 +190,6 @@ pub fn render_primitive_settings_modal(
         return result;
     };
 
-    // Push modal layer
-    use crate::ui::z_order::ZLayer;
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "primitive_settings");
-
     let prim_name = prim.display_name();
     let prim_type_id = prim.type_id();
 
@@ -207,11 +205,8 @@ pub fn render_primitive_settings_modal(
     // Get primitive data for content rendering
     let prim_data = prim.data().clone();
 
-    // Layout constants
-    let header_height = 36.0;
-    let tab_height = 32.0;
-    let tab_padding_h = 12.0;
-    let tab_gap = 2.0;
+    // Layout constants. Header, tab-bar and footer heights are the shell's —
+    // this modal no longer has an opinion about them.
     let modal_padding = 12.0;
     let close_btn_size = 20.0;
     let title_close_gap = 12.0;
@@ -258,17 +253,12 @@ pub fn render_primitive_settings_modal(
         }
     }).clamp(150.0, 400.0);
 
-    // Calculate tab widths dynamically
-    ctx.set_font("13px sans-serif");
-    let mut total_tabs_width = 0.0;
-    let mut tab_widths: Vec<f64> = Vec::new();
-    for tab in &tabs {
-        let lw = ctx.measure_text(tab.label());
-        let tab_width = lw + tab_padding_h * 2.0;
-        tab_widths.push(tab_width);
-        total_tabs_width += tab_width;
-    }
-    total_tabs_width += tab_gap * (tabs.len().saturating_sub(1)) as f64;
+    // The shell lays the tab strip out; this modal only needs to know how wide
+    // the strip will be, so it asks the same code rather than measuring twice.
+    let tab_items: Vec<ModalTab<'_>> =
+        tabs.iter().map(|t| ModalTab::new(t.id(), t.label())).collect();
+    let active_tab = tabs.iter().position(|t| *t == state.active_tab).unwrap_or(0);
+    let tabs_row_width = labelled_tabs_width(ctx, &tab_items);
 
     // Calculate title width
     ctx.set_font("13px sans-serif");
@@ -277,147 +267,54 @@ pub fn render_primitive_settings_modal(
 
     // Modal width
     let min_header_width = title_width + title_close_gap + close_btn_size + modal_padding * 2.0;
-    let tabs_row_width = total_tabs_width + modal_padding * 2.0;
     let min_content_width = label_width + 150.0 + modal_padding * 2.0;
     let modal_width = min_header_width.max(tabs_row_width).max(min_content_width).max(400.0);
-    let template_footer_height = 52.0;
-    let modal_height = header_height + tab_height + content_height + template_footer_height;
 
-    // Position
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        let x = (screen_w - modal_width) / 2.0;
-        let y = default_modal_y;
-        (x, y)
-    });
-
-    // Clamp to screen bounds
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_width);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_height);
-
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-
-    // Register modal background as catch-all
-    input_coordinator.register_on_layer(
-        "prim_settings:modal_bg",
-        uzor::types::Rect::new(result.modal_rect.x, result.modal_rect.y, result.modal_rect.width, result.modal_rect.height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Render modal frame using centralized helper
-    use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
+    let spec = ModalShellSpec {
+        // The body's own padding is already inside `content_height`, so the
+        // shell is told what is left after it.
+        padding: modal_padding,
+        placement: ModalPlacement::At(Some(state.position.unwrap_or((
+            (screen_w - modal_width) / 2.0,
+            default_modal_y,
+        )))),
+        ..ModalShellSpec::new(
+            "prim_settings",
+            &title_text,
+            modal_width,
+            content_height - modal_padding * 2.0,
+        )
+        // The layer keeps its old name: it is the key
+        // `close_topmost_known_modal_layer` matches on.
+        .layer_named("primitive_settings")
+        .with_tabs(ModalTabs::Horizontal {
+            items: &tab_items,
+            active: active_tab,
+            fit: TabFit::Labels,
+        })
+        .with_footer(ModalFooter::Editor {
+            template: Some(t_settings(SettingsKey::ButtonTemplate)),
+        })
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // === HEADER ===
-    let header_rect = WidgetRect::new(modal_x, modal_y, modal_width, header_height);
-    result.header_rect = header_rect;
-    input_coordinator.register_on_layer(
-        "prim_settings:header",
-        header_rect,
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // Title (left aligned)
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(
-        &title_text,
-        modal_x + modal_padding,
-        modal_y + header_height / 2.0,
-    );
-
-    // Close button (X) - right aligned
-    let close_rect = WidgetRect::new(
-        modal_x + modal_width - modal_padding - close_btn_size,
-        modal_y + (header_height - close_btn_size) / 2.0,
-        close_btn_size,
-        close_btn_size,
-    );
-    result.close_btn_rect = close_rect;
-
-    // Register close button with coordinator
-    input_coordinator.register_on_layer(
-        "prim_settings:close",
-        uzor::types::Rect::new(close_rect.x, close_rect.y, close_rect.width, close_rect.height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Draw close button icon
-    draw_svg_icon(
-        ctx,
-        Icon::Close.svg(),
-        close_rect.x + 2.0,
-        close_rect.y + 2.0,
-        close_btn_size - 4.0,
-        close_btn_size - 4.0,
-        &toolbar_theme.item_text
-    );
-
-    // Header bottom border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_height);
-    ctx.line_to(modal_x + modal_width, modal_y + header_height);
-    ctx.stroke();
-
-    // === TABS ===
-    let tab_y = modal_y + header_height;
-    let mut tab_x = modal_x + modal_padding;
-
-    for (i, tab) in tabs.iter().enumerate() {
-        let tab_width = tab_widths[i];
-        let tab_rect = WidgetRect::new(tab_x, tab_y, tab_width, tab_height);
-        let is_active = state.active_tab == *tab;
-
-        let tab_id = tab.id().to_string();
-
-        // Tab background
-        if is_active {
-            ctx.draw_active_rect(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height, &toolbar_theme.item_bg_active);
-        }
-
-        // Tab text
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(if is_active { "#ffffff" } else { &toolbar_theme.item_text });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(tab.label(), tab_rect.x + tab_rect.width / 2.0, tab_rect.y + tab_rect.height / 2.0);
-
-        result.tab_rects.push((tab_id.clone(), tab_rect));
-
-        // Register tab with coordinator
-        input_coordinator.register_on_layer(
-            format!("prim_settings:tab:{}", tab_id),
-            uzor::types::Rect::new(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height),
-            uzor::input::Sense::CLICK,
-            &layer_id,
-        );
-
-        tab_x += tab_width + tab_gap;
-    }
-
-    // Tab bar bottom border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, tab_y + tab_height);
-    ctx.line_to(modal_x + modal_width, tab_y + tab_height);
-    ctx.stroke();
+    let modal_x = shell.frame.x;
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result.tab_rects = shell.tab_rects.clone();
 
     // === CONTENT AREA ===
-    let content_y = tab_y + tab_height;
-    let content_rect = WidgetRect::new(modal_x, content_y, modal_width, content_height);
-    result.content_rect = content_rect;
+    // Top of the body area with the padding still to come — the rows below add
+    // it back, exactly as they did when this modal laid its own chrome out.
+    let content_y = shell.content.y - modal_padding;
+    result.content_rect = WidgetRect::new(modal_x, content_y, modal_width, content_height);
 
     // Render tab content
     let content_left = modal_x + modal_padding;
@@ -1698,52 +1595,16 @@ pub fn render_primitive_settings_modal(
         use mlc_core::render::{TextAlign, TextBaseline};
         use mlc_core::engine::render::draw_svg_icon;
 
-        let footer_y = modal_y + modal_height - template_footer_height;
-
-        // Separator line at top of footer
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(modal_x, footer_y);
-        ctx.line_to(modal_x + modal_width, footer_y);
-        ctx.stroke();
-
-        let button_height = 32.0;
-        let button_y = footer_y + (template_footer_height - button_height) / 2.0;
-        let button_padding = 12.0;
-
-        // ── "Шаблон" button (left side, outline only) ────────────────────────
-        let template_btn_width = 80.0;
-        let template_btn_x = modal_x + 16.0;
-        let is_tmpl_hovered = state.hovered_item_id.as_deref() == Some("template_dropdown");
-        ctx.set_stroke_color(if is_tmpl_hovered { &toolbar_theme.item_text } else { &toolbar_theme.separator });
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rect(template_btn_x, button_y, template_btn_width, button_height);
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(if is_tmpl_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_settings(SettingsKey::ButtonTemplate), template_btn_x + template_btn_width / 2.0, button_y + button_height / 2.0);
-
-        result.content_items.push(("template_dropdown".to_string(), WidgetRect::new(template_btn_x, button_y, template_btn_width, button_height)));
-
-        // ── "OK" button (right side, accent-filled) ──────────────────────────
-        let ok_btn_width = 70.0;
-        let ok_btn_x = modal_x + modal_width - 16.0 - ok_btn_width;
-
-        let is_ok_hovered = state.hovered_item_id.as_deref() == Some("ok");
-            ctx.set_fill_color(if is_ok_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
-        ctx.fill_rect(ok_btn_x, button_y, ok_btn_width, button_height);
-        ctx.set_fill_color("#ffffff");
-        ctx.set_font("13px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_settings(SettingsKey::ButtonOk), ok_btn_x + ok_btn_width / 2.0, button_y + button_height / 2.0);
-
-        result.content_items.push(("ok".to_string(), WidgetRect::new(ok_btn_x, button_y, ok_btn_width, button_height)));
-
-        // ── Template dropdown menu (opens BELOW the "Шаблон" button) ─────────
-        if state.template_dropdown_open {
+        // The footer bar itself — separator, Template button, OK — belongs to
+        // the shell now. What is left here is the menu that hangs off the
+        // Template button, placed from the rect the shell reported rather than
+        // from a second copy of the footer arithmetic.
+        if let (Some(template_btn), true) = (shell.template_btn, state.template_dropdown_open) {
+            let button_y = template_btn.y;
+            let button_height = template_btn.height;
+            let button_padding = 12.0;
+            let template_btn_width = template_btn.width;
+            let template_btn_x = template_btn.x;
             let opt_h = 28.0;
             let sep_h = 1.0;
             let delete_btn_w = 24.0;
@@ -1852,9 +1713,8 @@ pub fn render_primitive_settings_modal(
 
             let _ = is_sa_hovered;
             let _ = is_def_hovered;
+            let _ = button_padding;
         }
-
-        let _ = button_padding;
     }
 
     // Draw hover highlight for hovered content item (skip non-interactive background rects)

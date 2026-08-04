@@ -207,6 +207,18 @@ impl<'a> ModalTab<'a> {
     }
 }
 
+/// How a horizontal bar divides its width.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TabFit {
+    /// Equal slices across the full width.
+    Equal,
+    /// Each tab as wide as its own label, packed from the left. Not a style
+    /// preference: "Coordinates" and "Text" are not the same word, and the
+    /// modals that measure their tabs today would visibly regress under an
+    /// equal split.
+    Labels,
+}
+
 /// A modal's section switch. Orientation is a real choice and both are kept:
 /// a rail down the side carries many sections in icons, a bar under the
 /// header carries a few and spells them out. What is NOT a choice is their
@@ -215,8 +227,8 @@ impl<'a> ModalTab<'a> {
 pub enum ModalTabs<'a> {
     /// Rail down the left. `TAB_RAIL_W` for icons, `TAB_LIST_W` for labels.
     Vertical { width: f64, items: &'a [ModalTab<'a>], active: usize },
-    /// Bar under the header, equal widths.
-    Horizontal { items: &'a [ModalTab<'a>], active: usize },
+    /// Bar under the header.
+    Horizontal { items: &'a [ModalTab<'a>], active: usize, fit: TabFit },
 }
 
 /// What sits along the bottom.
@@ -226,8 +238,10 @@ pub enum ModalFooter<'a> {
     None,
     /// The object already exists and every edit applies as it is made, so
     /// the only action left is to leave: one OK, in the same place in every
-    /// modal. `template` carries the current template name where the modal
-    /// belongs to a template family, and nothing where it does not.
+    /// modal. `template` is the label of the secondary button on the left
+    /// where the modal belongs to a template family — the current template's
+    /// name where there is one, the word Template where the button only opens
+    /// a menu — and nothing where the modal has no templates at all.
     Editor { template: Option<&'a str> },
     /// The object does not exist yet — this button is what brings it into
     /// existence, and the ✕ aborts.
@@ -243,6 +257,9 @@ pub const TAB_RAIL_W: f64 = 48.0;
 pub const TAB_LIST_W: f64 = 80.0;
 pub const TAB_BAR_H: f64 = 32.0;
 const TAB_ITEM_H: f64 = 44.0;
+const TAB_FONT: &str = "11px sans-serif";
+const TAB_PAD_H: f64 = 12.0;
+const TAB_GAP: f64 = 2.0;
 const BTN_H: f64 = 28.0;
 const OK_W: f64 = 80.0;
 
@@ -257,10 +274,21 @@ pub struct ModalShellSpec<'a> {
     /// `{ns}:ok` / `{ns}:template` / `{ns}:create`; the body registers ids of
     /// its own on the same layer.
     pub ns: &'a str,
+    /// Name of the layer, when it must differ from `ns`. The layer name is a
+    /// routing key — `close_topmost_known_modal_layer` matches on it — and
+    /// three modals already ship a layer name that is not their id prefix
+    /// (`primitive_settings` against `prim_settings`). Defaults to `ns`.
+    pub layer_name: Option<&'a str>,
     pub title: &'a str,
     pub width: f64,
-    /// Height of the body between tabs and footer, padding excluded.
+    /// Height of the body between tabs and footer, padding excluded — what
+    /// the body would LIKE. What it gets is this clamped by
+    /// `max_content_height`.
     pub content_height: f64,
+    /// Ceiling on the body. Above it the frame stops growing and the excess
+    /// becomes `ModalShell::overflow` for the body to scroll. A modal with a
+    /// fixed height sets this and `content_height` to the same number.
+    pub max_content_height: Option<f64>,
     pub tabs: Option<ModalTabs<'a>>,
     pub footer: ModalFooter<'a>,
     pub placement: ModalPlacement,
@@ -280,9 +308,11 @@ impl<'a> ModalShellSpec<'a> {
     pub fn new(ns: &'a str, title: &'a str, width: f64, content_height: f64) -> Self {
         Self {
             ns,
+            layer_name: None,
             title,
             width,
             content_height,
+            max_content_height: None,
             tabs: None,
             footer: ModalFooter::Editor { template: None },
             placement: ModalPlacement::Center,
@@ -302,6 +332,18 @@ impl<'a> ModalShellSpec<'a> {
 
     pub fn on_layer(mut self, layer: ZLayer) -> Self {
         self.layer = layer;
+        self
+    }
+
+    /// Keep an existing layer name while the widget ids take a shorter one.
+    pub fn layer_named(mut self, name: &'a str) -> Self {
+        self.layer_name = Some(name);
+        self
+    }
+
+    /// Stop the frame growing past this body height; the rest is overflow.
+    pub fn with_max_content_height(mut self, max: f64) -> Self {
+        self.max_content_height = Some(max);
         self
     }
 
@@ -345,12 +387,20 @@ impl<'a> ModalShellSpec<'a> {
         }
     }
 
+    /// What the body actually gets: what it asked for, under the ceiling.
+    fn viewport_height(&self) -> f64 {
+        match self.max_content_height {
+            Some(max) => self.content_height.min(max),
+            None => self.content_height,
+        }
+    }
+
     /// Total frame height: chrome plus whatever the body said it needs.
     fn height(&self) -> f64 {
         self.header_height
             + self.tab_bar_h()
             + self.padding * 2.0
-            + self.content_height
+            + self.viewport_height()
             + self.footer_h()
     }
 }
@@ -360,9 +410,21 @@ impl<'a> ModalShellSpec<'a> {
 pub struct ModalShell {
     pub frame: WidgetRect,
     pub header: WidgetRect,
+    /// The VIEWPORT the body draws into — not the height it asked for.
     pub content: WidgetRect,
+    /// How much taller the body wanted to be than `content`. Zero means it
+    /// fits; anything else is the body's to scroll and clip.
+    pub overflow: f64,
     pub tabs: Option<WidgetRect>,
+    /// Where each tab landed, by the id the caller gave it.
+    pub tab_rects: Vec<(String, WidgetRect)>,
+    /// Where the ✕ landed, when the modal has one.
+    pub close_btn: Option<WidgetRect>,
     pub footer: Option<WidgetRect>,
+    /// Where the footer's template button landed, when there is one. A body
+    /// that hangs a menu off it reads this instead of re-deriving the footer
+    /// arithmetic and drifting from it.
+    pub template_btn: Option<WidgetRect>,
 }
 
 /// Draw a modal and hand its body the layer to register on.
@@ -383,6 +445,27 @@ pub fn render_modal_shell<F>(
 where
     F: FnOnce(&mut dyn RenderContext, &mut InputCoordinator, &LayerId, &ModalShell),
 {
+    let (shell, layer_id) = begin_modal_shell(ctx, coord, spec, theme, screen);
+    body(ctx, coord, &layer_id, &shell);
+    coord.pop_layer(&layer_id);
+    shell
+}
+
+/// Draw the chrome and hand back the geometry and the layer, leaving the body
+/// — and the `pop_layer` that closes it — to the caller.
+///
+/// Prefer [`render_modal_shell`]: its closure makes the pop impossible to
+/// forget. This form exists for the settings modals whose bodies run to
+/// hundreds of lines, where wrapping the body in a closure would be a
+/// reindentation of the whole file for no structural gain. Both draw exactly
+/// the same chrome — this IS the implementation of the closure form.
+pub fn begin_modal_shell(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    spec: &ModalShellSpec<'_>,
+    theme: &ModalTheme,
+    screen: (f64, f64),
+) -> (ModalShell, LayerId) {
     let (screen_w, screen_h) = screen;
     let height = spec.height();
 
@@ -418,15 +501,27 @@ where
         }
         None => None,
     };
+    let viewport_h = spec.viewport_height();
     let content = WidgetRect::new(
         x + rail_w + spec.padding,
         header.bottom() + bar_h + spec.padding,
         spec.width - rail_w - spec.padding * 2.0,
-        spec.content_height,
+        viewport_h,
     );
-    let shell = ModalShell { frame, header, content, tabs: tabs_rect, footer };
+    let shell = ModalShell {
+        frame,
+        header,
+        content,
+        overflow: (spec.content_height - viewport_h).max(0.0),
+        tabs: tabs_rect,
+        tab_rects: Vec::new(),
+        close_btn: None,
+        footer,
+        template_btn: None,
+    };
+    let mut shell = shell;
 
-    let layer_id = spec.layer.push_named(coord, spec.ns);
+    let layer_id = spec.layer.push_named(coord, spec.layer_name.unwrap_or(spec.ns));
     // The background swallows clicks that land on the modal but on nothing in
     // particular — without it they reach whatever is underneath.
     coord.register_on_layer(
@@ -463,29 +558,23 @@ where
         let hovered = coord.is_hovered(&WidgetId::from(close_id.as_str()));
         let tint = if hovered { &theme.close_button_hover } else { &theme.close_button };
         draw_svg_icon(ctx, Icon::Close.svg(), cx, cy, CLOSE, CLOSE, tint);
-        coord.register_on_layer(
-            close_id.as_str(),
-            WidgetRect::new(cx - 4.0, cy - 4.0, CLOSE + 8.0, CLOSE + 8.0),
-            Sense::CLICK | Sense::HOVER,
-            &layer_id,
-        );
+        let hit = WidgetRect::new(cx - 4.0, cy - 4.0, CLOSE + 8.0, CLOSE + 8.0);
+        coord.register_on_layer(close_id.as_str(), hit, Sense::CLICK | Sense::HOVER, &layer_id);
+        shell.close_btn = Some(hit);
     }
 
     hairline(ctx, &theme.header_border, header.x, header.bottom(), header.right());
 
     if let (Some(tabs), Some(rect)) = (spec.tabs, tabs_rect) {
-        draw_tabs(ctx, coord, &layer_id, spec.ns, tabs, rect, theme);
+        shell.tab_rects = draw_tabs(ctx, coord, &layer_id, spec.ns, tabs, rect, theme);
     }
 
     if let Some(f) = footer {
         hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
-        draw_footer(ctx, coord, &layer_id, spec, f, theme);
+        shell.template_btn = draw_footer(ctx, coord, &layer_id, spec, f, theme);
     }
 
-    body(ctx, coord, &layer_id, &shell);
-
-    coord.pop_layer(&layer_id);
-    shell
+    (shell, layer_id)
 }
 
 fn hairline(ctx: &mut dyn RenderContext, color: &str, x0: f64, y: f64, x1: f64) {
@@ -497,6 +586,59 @@ fn hairline(ctx: &mut dyn RenderContext, color: &str, x0: f64, y: f64, x1: f64) 
     ctx.stroke();
 }
 
+/// The width a `TabFit::Labels` bar needs, insets included. A modal that
+/// sizes itself to fit its tabs must ask the same code that lays them out —
+/// two copies of this arithmetic is how a tab strip ends up one pixel wider
+/// than the modal carrying it.
+pub fn labelled_tabs_width(ctx: &mut dyn RenderContext, items: &[ModalTab<'_>]) -> f64 {
+    if items.is_empty() {
+        return 0.0;
+    }
+    ctx.set_font(TAB_FONT);
+    let labels: f64 = items
+        .iter()
+        .map(|t| ctx.measure_text(t.label) + TAB_PAD_H * 2.0)
+        .sum();
+    labels + TAB_GAP * (items.len() - 1) as f64 + TAB_PAD_H * 2.0
+}
+
+/// Where each tab sits. Split out because it is the whole difference between
+/// the two fits, and because a body that wants to know a tab's rect should
+/// ask the same code the shell drew with.
+fn tab_rects(
+    ctx: &mut dyn RenderContext,
+    items: &[ModalTab<'_>],
+    rect: WidgetRect,
+    vertical: bool,
+    fit: TabFit,
+) -> Vec<WidgetRect> {
+    if vertical {
+        return (0..items.len())
+            .map(|i| WidgetRect::new(rect.x, rect.y + i as f64 * TAB_ITEM_H, rect.width, TAB_ITEM_H))
+            .collect();
+    }
+    match fit {
+        TabFit::Equal => {
+            let step = rect.width / items.len() as f64;
+            (0..items.len())
+                .map(|i| WidgetRect::new(rect.x + i as f64 * step, rect.y, step, rect.height))
+                .collect()
+        }
+        TabFit::Labels => {
+            let mut x = rect.x + TAB_PAD_H;
+            items
+                .iter()
+                .map(|t| {
+                    let w = ctx.measure_text(t.label) + TAB_PAD_H * 2.0;
+                    let r = WidgetRect::new(x, rect.y, w, rect.height);
+                    x += w + TAB_GAP;
+                    r
+                })
+                .collect()
+        }
+    }
+}
+
 fn draw_tabs(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -505,27 +647,22 @@ fn draw_tabs(
     tabs: ModalTabs<'_>,
     rect: WidgetRect,
     theme: &ModalTheme,
-) {
-    let (items, active, vertical) = match tabs {
-        ModalTabs::Vertical { items, active, .. } => (items, active, true),
-        ModalTabs::Horizontal { items, active } => (items, active, false),
+) -> Vec<(String, WidgetRect)> {
+    let (items, active, vertical, fit) = match tabs {
+        ModalTabs::Vertical { items, active, .. } => (items, active, true, TabFit::Equal),
+        ModalTabs::Horizontal { items, active, fit } => (items, active, false, fit),
     };
     if items.is_empty() {
-        return;
+        return Vec::new();
     }
+    let mut placed = Vec::with_capacity(items.len());
 
-    let step = if vertical {
-        TAB_ITEM_H
-    } else {
-        rect.width / items.len() as f64
-    };
+    // Measuring needs the font the labels will be drawn in, so it is set once
+    // here rather than inside the loop.
+    ctx.set_font(TAB_FONT);
+    let rects = tab_rects(ctx, items, rect, vertical, fit);
 
-    for (i, tab) in items.iter().enumerate() {
-        let r = if vertical {
-            WidgetRect::new(rect.x, rect.y + i as f64 * step, rect.width, TAB_ITEM_H)
-        } else {
-            WidgetRect::new(rect.x + i as f64 * step, rect.y, step, rect.height)
-        };
+    for (i, (tab, r)) in items.iter().zip(rects).enumerate() {
         let id = format!("{}:tab:{}", ns, tab.id);
         let is_active = i == active;
         let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
@@ -558,7 +695,7 @@ fn draw_tabs(
                 draw_svg_icon(ctx, icon.svg(), r.center_x() - S / 2.0, r.center_y() - S / 2.0, S, S, tint);
             }
             _ => {
-                ctx.set_font("11px sans-serif");
+                ctx.set_font(TAB_FONT);
                 ctx.set_fill_color(tint);
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -567,6 +704,7 @@ fn draw_tabs(
         }
 
         coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
+        placed.push((tab.id.to_string(), r));
     }
 
     if vertical {
@@ -576,7 +714,10 @@ fn draw_tabs(
         ctx.move_to(rect.right(), rect.y);
         ctx.line_to(rect.right(), rect.bottom());
         ctx.stroke();
+    } else {
+        hairline(ctx, &theme.header_border, rect.x, rect.bottom(), rect.right());
     }
+    placed
 }
 
 fn draw_footer(
@@ -586,13 +727,14 @@ fn draw_footer(
     spec: &ModalShellSpec<'_>,
     footer: WidgetRect,
     theme: &ModalTheme,
-) {
+) -> Option<WidgetRect> {
     let btn_y = footer.center_y() - BTN_H / 2.0;
+    let mut template_btn = None;
 
     // The primary action always lands in the same place: hard against the
     // right edge, where the eye already goes.
     let (id, label, primary) = match spec.footer {
-        ModalFooter::None => return,
+        ModalFooter::None => return None,
         ModalFooter::Editor { template } => {
             if let Some(name) = template {
                 let t_id = format!("{}:template", spec.ns);
@@ -610,6 +752,7 @@ fn draw_footer(
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(name, t_r.center_x(), t_r.center_y());
                 coord.register_on_layer(t_id.as_str(), t_r, Sense::CLICK | Sense::HOVER, layer);
+                template_btn = Some(t_r);
             }
             (format!("{}:ok", spec.ns), "OK".to_string(), true)
         }
@@ -627,6 +770,7 @@ fn draw_footer(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&label, r.center_x(), r.center_y());
     coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
+    template_btn
 }
 
 /// Keep an edge on screen. A surface taller than the screen is pinned to the
@@ -654,8 +798,34 @@ mod tests {
         });
         assert_eq!(rail.height(), plain.height());
 
-        let bar = plain.clone().with_tabs(ModalTabs::Horizontal { items: &[], active: 0 });
+        let bar = plain
+            .clone()
+            .with_tabs(ModalTabs::Horizontal { items: &[], active: 0, fit: TabFit::Equal });
         assert_eq!(bar.height(), plain.height() + TAB_BAR_H);
+    }
+
+    /// A body taller than its ceiling does not grow the frame — the excess is
+    /// handed back as overflow instead. This is what lets a modal have a fixed
+    /// height without the shell carrying a height field.
+    #[test]
+    fn a_body_over_its_ceiling_becomes_overflow_not_height() {
+        let fixed = ModalShellSpec::new("t", "Title", 300.0, 900.0).with_max_content_height(400.0);
+        assert_eq!(fixed.viewport_height(), 400.0);
+        assert_eq!(fixed.height(), HEADER_H + 32.0 + 400.0 + FOOTER_H);
+
+        // Under the ceiling the modal still sizes to its content.
+        let small = ModalShellSpec::new("t", "Title", 300.0, 120.0).with_max_content_height(400.0);
+        assert_eq!(small.viewport_height(), 120.0);
+    }
+
+    /// The layer name is a routing key elsewhere, so it may differ from the
+    /// id namespace — and defaults to it when it does not.
+    #[test]
+    fn the_layer_name_defaults_to_the_namespace() {
+        let s = ModalShellSpec::new("prim_settings", "T", 300.0, 100.0);
+        assert_eq!(s.layer_name.unwrap_or(s.ns), "prim_settings");
+        let renamed = s.layer_named("primitive_settings");
+        assert_eq!(renamed.layer_name.unwrap_or(renamed.ns), "primitive_settings");
     }
 
     /// A picker is not a dialog: no footer, so no footer height.
