@@ -562,8 +562,11 @@ mod tests {
     #[test]
     fn test_indicator_category_filter_all() {
         let filters = IndicatorCategoryFilter::all();
-        assert_eq!(filters.len(), 8);
+        // All + 8 categories (the last, TotalOverlay, arrived with the
+        // host-rendered overlay picker and this count was left behind).
+        assert_eq!(filters.len(), 9);
         assert_eq!(filters[0], IndicatorCategoryFilter::All);
+        assert_eq!(filters[filters.len() - 1], IndicatorCategoryFilter::Other);
     }
 
     #[test]

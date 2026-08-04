@@ -217,7 +217,7 @@ pub use input::{
     ChartAction, Shortcut,
     // Handler
     ChartHitTester, ChartInputHandler, ChartInputState, ChartOutputAction,
-    DefaultChartInputHandler, HitResult, InputHandlerConfig, UndoAction,
+    DefaultChartInputHandler, HitResult, InputHandlerConfig,
     // Objects (interaction)
     ChartObject, Configurable, ConfigProperty, ConfigPropertyType, CoordinateHelper, CursorStyle,
     DefaultStyles, DragAxis, DragConstraints, DragManager, DragState, Draggable, DraggableObject,
@@ -316,7 +316,7 @@ pub use state::{
     // Timeframe
     Timeframe,
     // Command pattern (undo/redo)
-    Command, ViewportState, CommandHistory,
+    Command, CommandHistory,
     // ChartId / ChartPanelId / ConnectionStatus — ID-newtypes + domain-data
     // enum consumed directly by mlc-backend / mlc-app-layout, live in
     // mlc-core::ids (re-exported here via mlc-core::state for compatibility).

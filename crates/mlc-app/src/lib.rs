@@ -104,8 +104,8 @@ use mlc_core::{
     ScaleCornerHitZones,
     ToolbarState,
     render::RenderContext,
-    DefaultChartInputHandler, ChartOutputAction, UndoAction,
-    Command, ViewportState,
+    DefaultChartInputHandler, ChartOutputAction,
+    Command,
     data_provider::SharedDataProvider,
     ScaleMode,
     ChartId,
@@ -531,12 +531,6 @@ pub struct ChartApp {
     /// vs new points and push a `MovePrimitive` command to history.
     drag_start_points: Option<(u64, Vec<(i64, f64)>)>,
 
-    /// Viewport state captured at drag start.
-    ///
-    /// Set in `on_drag_start` so that `on_drag_end` can compare before/after
-    /// and push a `ViewportChange` command to history when panning or zooming.
-    viewport_before_drag: Option<ViewportState>,
-
     /// Active color picker L2 drag state.
     ///
     /// Set in `on_drag_start` when the user begins dragging in the SV square or
@@ -549,6 +543,14 @@ pub struct ChartApp {
     /// restore is not the previous write — it is where the drag began. Set on
     /// drag start, consumed on drag end.
     compare_style_before_drag: Option<(String, mlc_core::chart::CompareSeriesStyle)>,
+
+    /// Monotonic stamp handed to every recorded command.
+    ///
+    /// Chart edits land in TWO histories — the sync group's (primitives,
+    /// indicators) and the window's (compare series) — and undo has to walk
+    /// them in the order the user acted, not stack by stack. One counter for
+    /// the whole app is what makes the two comparable.
+    undo_seq: u64,
 
     /// True while a drag is active on a UI element (modal, slider, scrollbar, color picker).
     /// Set in `on_drag_start` when `is_over_ui()` is true; cleared in `on_drag_end`.
@@ -2922,9 +2924,9 @@ impl ChartApp {
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
-            viewport_before_drag: None,
             color_picker_drag: None,
             compare_style_before_drag: None,
+            undo_seq: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3338,9 +3340,9 @@ impl ChartApp {
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
-            viewport_before_drag: None,
             color_picker_drag: None,
             compare_style_before_drag: None,
+            undo_seq: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -3913,9 +3915,9 @@ impl ChartApp {
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
-            viewport_before_drag: None,
             color_picker_drag: None,
             compare_style_before_drag: None,
+            undo_seq: 0,
             ui_drag_active: false,
             drag_dismissed_popup: false,
             split_separator_drag: None,
@@ -11200,84 +11202,6 @@ impl ChartApp {
                 ChartOutputAction::HideCrosshair => {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.crosshair.visible = false;
-                    }
-                }
-
-                // ── Undo recording ─────────────────────────────────────────
-                ChartOutputAction::RecordUndo(undo_action) => {
-                    let cmd = match undo_action {
-                        UndoAction::ViewportChange {
-                            old_view_start,
-                            old_bar_spacing,
-                            old_price_min,
-                            old_price_max,
-                            new_view_start,
-                            new_bar_spacing,
-                            new_price_min,
-                            new_price_max,
-                        } => {
-                            // Only push if the viewport actually changed.
-                            let changed = (new_view_start - old_view_start).abs() > 0.001
-                                || (new_bar_spacing - old_bar_spacing).abs() > 0.001
-                                || (new_price_min - old_price_min).abs() > 0.001
-                                || (new_price_max - old_price_max).abs() > 0.001;
-                            if changed {
-                                Some(Command::ViewportChange {
-                                    previous: ViewportState::new(
-                                        old_view_start,
-                                        old_bar_spacing,
-                                        old_price_min,
-                                        old_price_max,
-                                    ),
-                                    new: ViewportState::new(
-                                        new_view_start,
-                                        new_bar_spacing,
-                                        new_price_min,
-                                        new_price_max,
-                                    ),
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        UndoAction::PrimitiveMoved { prim_id, old_points, new_points } => {
-                            self.autosave_snapshot();
-                            Some(Command::MovePrimitive {
-                                prim_id,
-                                previous_points: old_points,
-                                new_points,
-                            })
-                        }
-                        UndoAction::PrimitiveCreated { prim_id } => {
-                            // For creation we need full primitive data from the drawing manager.
-                            let active_bid_oa = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-                            let snapshot = {
-                                let drawings_oa = self.core.drawings();
-                                active_bid_oa
-                                    .and_then(|bid| {
-                                        let type_id = drawings_oa.get_type_id(bid, prim_id)?;
-                                        let points = drawings_oa.get_points(bid, prim_id)?;
-                                        let data = drawings_oa.get_data(bid, prim_id)?;
-                                        Some((type_id, points, data))
-                                    })
-                            };
-                            if let Some((type_id, points, data)) = snapshot {
-                                self.autosave_snapshot();
-                                Some(Command::CreatePrimitive { prim_id, type_id, points, data })
-                            } else {
-                                eprintln!("[Undo] PrimitiveCreated: could not read primitive {}", prim_id);
-                                None
-                            }
-                        }
-                        UndoAction::PrimitiveDeleted { prim_id, data: _data } => {
-                            // Deletion undo is handled externally when the delete action fires.
-                            // We log it here rather than silently drop it.
-                            dlog!("[Undo] PrimitiveDeleted {} — deletion undo handled at call site", prim_id);
-                            None
-                        }
-                    };
-                    if let Some(command) = cmd {
-                        self.push_undo_command(command);
                     }
                 }
 

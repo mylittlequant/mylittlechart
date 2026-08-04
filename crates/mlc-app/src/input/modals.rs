@@ -108,12 +108,10 @@ impl ChartApp {
                     eprintln!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
-                {
-                    let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
-                    for alert_snapshot in removed {
-                        self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
-                    }
-                }
+                // Alerts attached to the deleted drawing go with it. They are
+                // not undoable (owner ruling 2026-08-04) — an alert is a live
+                // subscription with a delivery side effect, not a drawing.
+                self.core.alerts_mut().clear_for_drawing(prim_id);
                 self.autosave_snapshot();
             }
 
@@ -2292,12 +2290,7 @@ impl ChartApp {
             self.core.drawings_mut().delete(bid, prim_id);
             eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
         }
-        {
-            let removed = self.core.alerts_mut().clear_for_drawing(prim_id);
-            for alert_snapshot in removed {
-                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
-            }
-        }
+        self.core.alerts_mut().clear_for_drawing(prim_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }
@@ -2325,10 +2318,7 @@ impl ChartApp {
         eprintln!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
         self.core.drawings_mut().delete_all(bid);
         for (_, _, data) in &primitives {
-            let removed = self.core.alerts_mut().clear_for_drawing(data.id);
-            for alert_snapshot in removed {
-                self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: alert_snapshot });
-            }
+            self.core.alerts_mut().clear_for_drawing(data.id);
         }
         eprintln!("[ChartApp] Deleted all primitives (bid={:?})", bid);
         self.sync_drawing_back_to_group();

@@ -50,7 +50,7 @@ pub use timeframe::Timeframe;
 pub use selected_config::SelectedPrimitiveConfig;
 
 // Command pattern (undo/redo) - exported from chart for use by core and terminal
-pub use command::{Command, ViewportState, ObjectCategory};
+pub use command::{Command, ObjectCategory};
 pub use history::CommandHistory;
 
 // `action_executor` (ActionResult, execute_chart_action[_internal],

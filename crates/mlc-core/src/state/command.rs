@@ -1,17 +1,26 @@
 //! Command Pattern for Undo/Redo
 //!
-//! All state-changing operations are represented as commands that can be
-//! executed, undone, and redone.
+//! # What belongs in the history (owner ruling, 2026-08-04)
+//!
+//! Undo/redo covers **chart objects and nothing else**: primitives,
+//! indicators and compare series — created, moved, restyled, deleted.
+//!
+//! Explicitly NOT in the history, and not to be re-added:
+//! - **viewport** (pan / zoom) — navigation is not an edit. It also poisoned
+//!   the stack: a pan recorded a command, so Ctrl+Z undid the pan instead of
+//!   the edit, and any pan between an undo and a redo cleared the redo stack.
+//! - **symbol / timeframe / chart type** — same reason: choosing what to look
+//!   at is navigation, not an edit of the thing being looked at.
+//! - **alerts** — an alert is a live subscription with a delivery side
+//!   effect, not a drawing. Removing one by Ctrl+Z is not what a user means.
 //!
 //! # Integration with DrawingManager
 //!
-//! Commands work with primitive indices (as used by DrawingManager):
-//! - `SetPrimitiveVisibility` - uses index
-//! - `SetPrimitiveLock` - uses index
+//! Commands work with primitive ids (as used by DrawingManager):
+//! - `SetPrimitiveVisibility` / `SetPrimitiveLock` - by stable id
 //! - `CreatePrimitive` - stores type_id, points, data for recreation
 //! - `DeletePrimitive` - stores full primitive snapshot for undo
 //! - `MovePrimitive` - stores before/after points
-//! - `ViewportChange` - stores before/after viewport state
 //!
 //! The pre-`ChartContainer` object-ID-based command family (`ObjectInfo`,
 //! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
@@ -24,8 +33,6 @@
 use serde::{Serialize, Deserialize};
 use crate::drawing::PrimitiveData;
 use crate::chart::{CompareSeries, CompareSeriesStyle};
-use crate::state::Timeframe;
-use crate::alert::AlertItem;
 
 // =============================================================================
 // ObjectCategory - full terminal version (with all categories)
@@ -134,13 +141,6 @@ pub enum Command {
         primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
     },
 
-    /// Set strategy visibility.
-    SetStrategyVisibility {
-        strategy_tag: String,
-        visible: bool,
-        previous: bool,
-    },
-
     /// Create primitive (for undo of delete, or recording creation)
     CreatePrimitive {
         /// Stable id of the primitive being created/restored.
@@ -168,14 +168,6 @@ pub enum Command {
         prim_id: u64,
         /// Primitive it should now sit immediately before (`None` = back of z-order).
         before_prim_id: Option<u64>,
-    },
-
-    /// Viewport state change (pan, zoom)
-    ViewportChange {
-        /// Previous viewport state
-        previous: ViewportState,
-        /// New viewport state
-        new: ViewportState,
     },
 
     /// Modify primitive data (color, width, style, text, etc.)
@@ -272,69 +264,6 @@ pub enum Command {
         params_json: String,
     },
 
-    // =========================================================================
-    // Alert commands
-    // =========================================================================
-
-    /// Add an alert (recorded at creation time; inverse = DeleteAlert)
-    AddAlert {
-        /// Full alert state captured immediately after creation
-        snapshot: AlertItem,
-    },
-
-    /// Delete an alert (recorded at deletion time; inverse = AddAlert)
-    DeleteAlert {
-        /// Full alert state captured immediately before deletion
-        snapshot: AlertItem,
-    },
-
-    // =========================================================================
-    // Symbol/Timeframe/ChartType commands
-    // =========================================================================
-
-    /// Change symbol
-    ChangeSymbol {
-        /// Previous symbol
-        previous_symbol: String,
-        /// New symbol
-        new_symbol: String,
-    },
-
-    /// Change timeframe
-    ChangeTimeframe {
-        /// Previous timeframe
-        previous_timeframe: Timeframe,
-        /// New timeframe
-        new_timeframe: Timeframe,
-    },
-
-    /// Change chart type (candlestick, line, bar, etc.)
-    ChangeChartType {
-        /// Previous chart type
-        previous_type: String,
-        /// New chart type
-        new_type: String,
-    },
-
-}
-
-/// Viewport state snapshot for undo/redo
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct ViewportState {
-    /// Starting bar index
-    pub view_start: f64,
-    /// Pixels per bar (zoom level)
-    pub bar_spacing: f64,
-    /// Price scale minimum
-    pub price_min: f64,
-    /// Price scale maximum
-    pub price_max: f64,
-}
-
-impl ViewportState {
-    pub fn new(view_start: f64, bar_spacing: f64, price_min: f64, price_max: f64) -> Self {
-        Self { view_start, bar_spacing, price_min, price_max }
-    }
 }
 
 impl Command {
@@ -382,14 +311,6 @@ impl Command {
                 }
             }
 
-            Command::SetStrategyVisibility { strategy_tag, visible, previous } => {
-                Command::SetStrategyVisibility {
-                    strategy_tag: strategy_tag.clone(),
-                    visible: *previous,
-                    previous: *visible,
-                }
-            }
-
             Command::CreatePrimitive { prim_id, type_id, points, data } => {
                 // Inverse of create is delete
                 Command::DeletePrimitive {
@@ -416,13 +337,6 @@ impl Command {
                 Command::ReorderPrimitive {
                     prim_id: *prim_id,
                     before_prim_id: *before_prim_id,
-                }
-            }
-
-            Command::ViewportChange { previous, new } => {
-                Command::ViewportChange {
-                    previous: *new,
-                    new: *previous,
                 }
             }
 
@@ -504,36 +418,6 @@ impl Command {
                 }
             }
 
-            // Alert commands
-            Command::AddAlert { snapshot } => {
-                Command::DeleteAlert { snapshot: snapshot.clone() }
-            }
-
-            Command::DeleteAlert { snapshot } => {
-                Command::AddAlert { snapshot: snapshot.clone() }
-            }
-
-            // Symbol/Timeframe/ChartType commands
-            Command::ChangeSymbol { previous_symbol, new_symbol } => {
-                Command::ChangeSymbol {
-                    previous_symbol: new_symbol.clone(),
-                    new_symbol: previous_symbol.clone(),
-                }
-            }
-
-            Command::ChangeTimeframe { previous_timeframe, new_timeframe } => {
-                Command::ChangeTimeframe {
-                    previous_timeframe: new_timeframe.clone(),
-                    new_timeframe: previous_timeframe.clone(),
-                }
-            }
-
-            Command::ChangeChartType { previous_type, new_type } => {
-                Command::ChangeChartType {
-                    previous_type: new_type.clone(),
-                    new_type: previous_type.clone(),
-                }
-            }
         }
     }
 
@@ -550,13 +434,9 @@ impl Command {
             Command::DeletePrimitive { .. } => "Delete Primitive",
             Command::DeleteAllPrimitives { .. } => "Delete All Primitives",
             Command::RestoreAllPrimitives { .. } => "Restore All Primitives",
-            Command::SetStrategyVisibility { visible, .. } => {
-                if *visible { "Show Strategy" } else { "Hide Strategy" }
-            }
             Command::CreatePrimitive { .. } => "Create Primitive",
             Command::MovePrimitive { .. } => "Move Primitive",
             Command::ReorderPrimitive { .. } => "Reorder Primitive",
-            Command::ViewportChange { .. } => "Viewport Change",
             Command::ModifyPrimitiveData { .. } => "Modify Primitive",
             Command::ModifyPrimitiveFull { .. } => "Modify Primitive Settings",
 
@@ -573,20 +453,6 @@ impl Command {
             // Indicator commands
             Command::AddIndicator { .. } => "Add Indicator",
             Command::RemoveIndicator { .. } => "Remove Indicator",
-
-            // Alert commands
-            Command::AddAlert { .. } => "Add Alert",
-            Command::DeleteAlert { .. } => "Delete Alert",
-
-            // Symbol/Timeframe/ChartType commands
-            Command::ChangeSymbol { .. } => "Change Symbol",
-            Command::ChangeTimeframe { .. } => "Change Timeframe",
-            Command::ChangeChartType { .. } => "Change Chart Type",
         }
-    }
-
-    /// Whether this command is a viewport change (pan/zoom).
-    pub fn is_viewport_change(&self) -> bool {
-        matches!(self, Command::ViewportChange { .. })
     }
 }

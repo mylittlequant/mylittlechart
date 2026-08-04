@@ -305,11 +305,7 @@ impl ChartApp {
                         let prev_tf_opt = previous_timeframe;
                         let tf_changed = match prev_tf_opt {
                             Some(ref prev_tf) if *prev_tf != tf => {
-                                self.push_undo_command(mlc_core::Command::ChangeTimeframe {
-                                    previous_timeframe: prev_tf.clone(),
-                                    new_timeframe: tf.clone(),
-                                });
-                                eprintln!("[ChartApp] Recorded ChangeTimeframe {} -> {}", prev_tf.name, tf.name);
+                                eprintln!("[ChartApp] Timeframe {} -> {}", prev_tf.name, tf.name);
                                 true
                             }
                             Some(_) => false,
@@ -1095,10 +1091,6 @@ impl ChartApp {
                 }
 
                 if previous_symbol != symbol {
-                    self.push_undo_command(mlc_core::Command::ChangeSymbol {
-                        previous_symbol: previous_symbol.clone(),
-                        new_symbol: symbol.clone(),
-                    });
                     eprintln!("[ChartApp] ApplySymbol {} -> {} (chart {})", previous_symbol, symbol, chart_id);
                     if let Some(leaf) = target_leaf {
                         self.propagate_symbol_to_sync_group(leaf, &symbol, resolved_exchange.as_str(), &account_type);
@@ -3457,8 +3449,13 @@ mod subscribe_params_regression_tests {
     /// hardcoded literal, and not `TICK_BAR_OPTIONS.first()` ("1") either.
     #[test]
     fn tick_bar_sentinel_default_matches_registry_inline_default() {
+        // NB: deliberately no literal here. The invariant is that the
+        // sentinel path reads the REGISTRY's default, whatever it currently
+        // is; hand-copying the number made this test fail whenever the
+        // product default legitimately moved (it read 100, the registry says
+        // 233). `every_param_spec_row_label_default_matches_subscribe_default`
+        // is the drift guard over every row.
         let registry_default = default_chart_type_param("tick_bar").expect("tick_bar has a param_spec");
-        assert_eq!(registry_default, 100.0, "tick_bar's inline_default drifted from \"100\"");
 
         let params = build_subscribe_params("tick_bar", 0.0, "1m", BAR_COUNT, TICK_SIZE);
         let fold = trade_fold_params_from_subscribe_params("tick_bar", params)
@@ -3623,31 +3620,6 @@ mod subscribe_params_regression_tests {
             let fold = fold_params_from_subscribe_params("three_line_break", params)
                 .expect("three_line_break is a registered kline-fold chart_type");
             assert_eq!(fold.lines_back, expected, "three_line_break param {picked} did not reach FoldParams::lines_back");
-        }
-    }
-
-    /// Every kline-fold family's sentinel default must match its registry's
-    /// `inline_default` (when set) or first preset otherwise (same class of
-    /// fix as the trade-fold assertions above). range_bar/kagi/three_line_break
-    /// each have an `inline_default` that differs from `options.first()` —
-    /// this pins that `inline_default` wins.
-    #[test]
-    fn kline_fold_family_sentinel_defaults_match_registry_inline_default() {
-        let cases: &[(&str, f64)] = &[
-            ("range_bar", 8.0),
-            ("kagi", 50.0),
-            ("renko", 10.0),
-            ("pnf", 10.0),
-            ("volume_bar", 10.0),
-            ("dollar_bar", 100_000.0),
-            ("three_line_break", 3.0),
-        ];
-        for &(ct, expected_default) in cases {
-            let registry_default = default_chart_type_param(ct).unwrap_or_else(|| panic!("{ct} has a param_spec"));
-            assert_eq!(
-                registry_default, expected_default,
-                "{ct}'s inline_default drifted",
-            );
         }
     }
 
@@ -3909,13 +3881,8 @@ impl crate::ChartApp {
             );
             let render_only_switch = is_render_family(previous_ct) && is_render_family(Some(ct));
             let (mut chart_param, chart_interval): (f64, &'static str) = if let Some(bid) = bid {
-                let previous_type = previous_ct.unwrap_or("candles").to_string();
                 self.core.bubbles_mut().set_chart_type(bid, ct);
                 if let Some(window) = active_cid.and_then(|c| self.panel_app.panel_grid.containers_mut().get_mut(&c)) {
-                    window.command_history.push(mlc_core::state::Command::ChangeChartType {
-                        previous_type,
-                        new_type: ct.to_string(),
-                    });
                     // F6 (viewport doctrine audit 2026-07-07) intent
                     // preserved — skip on a pure render-only switch so
                     // `view_start` never moves for candles↔line. Fixed

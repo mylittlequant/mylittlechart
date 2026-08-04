@@ -1,17 +1,38 @@
 //! Command History for Undo/Redo
 //!
 //! Manages the undo/redo stacks with configurable depth.
+//!
+//! # Why every command carries a sequence number
+//!
+//! A chart's edits do not all live in one stack. Primitives and indicators
+//! belong to the sync GROUP (so undoing a drawing undoes it on every window
+//! sharing it), while compare series belong to the WINDOW. Undo therefore has
+//! two stacks to choose from, and choosing by stack — "group first, window
+//! only if the group is empty" — made undo non-chronological: with any
+//! primitive present, a compare edit could never be reached.
+//!
+//! Each push stamps the command with a process-wide monotonic sequence. Undo
+//! takes the stack whose top is the NEWEST (max seq); redo takes the stack
+//! whose top is the OLDEST (min seq), which exactly reverses the undo order.
 
 use super::command::Command;
 use serde::{Serialize, Deserialize};
+
+/// A command plus the moment it was recorded, so commands split across
+/// several histories can still be ordered against each other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Stamped {
+    seq: u64,
+    cmd: Command,
+}
 
 /// Manages command history for undo/redo operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandHistory {
     /// Stack of executed commands (for undo)
-    undo_stack: Vec<Command>,
+    undo_stack: Vec<Stamped>,
     /// Stack of undone commands (for redo)
-    redo_stack: Vec<Command>,
+    redo_stack: Vec<Stamped>,
     /// Maximum number of commands to keep
     pub max_size: usize,
 }
@@ -26,15 +47,15 @@ impl CommandHistory {
         }
     }
 
-    /// Push a new command to the history
+    /// Push a new command to the history under sequence number `seq`.
     ///
     /// This clears the redo stack since we've taken a new action.
-    pub fn push(&mut self, command: Command) {
+    pub fn push(&mut self, seq: u64, command: Command) {
         // Clear redo stack - can't redo after new action
         self.redo_stack.clear();
 
         // Add to undo stack
-        self.undo_stack.push(command);
+        self.undo_stack.push(Stamped { seq, cmd: command });
 
         // Trim if over max size
         while self.undo_stack.len() > self.max_size {
@@ -46,24 +67,35 @@ impl CommandHistory {
     ///
     /// Returns the command that should be undone, and moves it to redo stack.
     pub fn undo(&mut self) -> Option<Command> {
-        if let Some(command) = self.undo_stack.pop() {
-            self.redo_stack.push(command.clone());
-            Some(command)
-        } else {
-            None
-        }
+        let entry = self.undo_stack.pop()?;
+        let cmd = entry.cmd.clone();
+        self.redo_stack.push(entry);
+        Some(cmd)
     }
 
     /// Pop from redo stack
     ///
     /// Returns the command that should be redone, and moves it back to undo stack.
     pub fn redo(&mut self) -> Option<Command> {
-        if let Some(command) = self.redo_stack.pop() {
-            self.undo_stack.push(command.clone());
-            Some(command)
-        } else {
-            None
-        }
+        let entry = self.redo_stack.pop()?;
+        let cmd = entry.cmd.clone();
+        self.undo_stack.push(entry);
+        Some(cmd)
+    }
+
+    /// Sequence number of the command undo would take next.
+    ///
+    /// The caller compares this across histories and undoes the LARGEST.
+    pub fn next_undo_seq(&self) -> Option<u64> {
+        self.undo_stack.last().map(|e| e.seq)
+    }
+
+    /// Sequence number of the command redo would take next.
+    ///
+    /// The caller compares this across histories and redoes the SMALLEST —
+    /// undo walks seq downwards, so redo has to walk it back upwards.
+    pub fn next_redo_seq(&self) -> Option<u64> {
+        self.redo_stack.last().map(|e| e.seq)
     }
 
     /// Check if undo is available
@@ -78,12 +110,12 @@ impl CommandHistory {
 
     /// Get description of the next undo action
     pub fn undo_description(&self) -> Option<&str> {
-        self.undo_stack.last().map(|cmd| cmd.description())
+        self.undo_stack.last().map(|e| e.cmd.description())
     }
 
     /// Get description of the next redo action
     pub fn redo_description(&self) -> Option<&str> {
-        self.redo_stack.last().map(|cmd| cmd.description())
+        self.redo_stack.last().map(|e| e.cmd.description())
     }
 
     /// Clear all history
@@ -106,33 +138,21 @@ impl CommandHistory {
     pub fn redo_count(&self) -> usize {
         self.redo_stack.len()
     }
-
-    /// Return a copy with all `ViewportChange` commands removed.
-    ///
-    /// Viewport is device-local — it gets recalculated on bar load, so
-    /// persisting it to disk or cloud causes stale-viewport bugs on restart.
-    pub fn stripped_for_persistence(&self) -> Self {
-        Self {
-            undo_stack: self.undo_stack.iter().filter(|c| !c.is_viewport_change()).cloned().collect(),
-            redo_stack: self.redo_stack.iter().filter(|c| !c.is_viewport_change()).cloned().collect(),
-            max_size: self.max_size,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn vis(prim_id: u64) -> Command {
+        Command::SetPrimitiveVisibility { prim_id, visible: false, previous: true }
+    }
+
     #[test]
     fn test_push_and_undo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetPrimitiveVisibility {
-            prim_id: 1,
-            visible: false,
-            previous: true,
-        });
+        history.push(1, vis(1));
 
         assert!(history.can_undo());
         assert!(!history.can_redo());
@@ -147,11 +167,7 @@ mod tests {
     fn test_redo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetPrimitiveVisibility {
-            prim_id: 1,
-            visible: false,
-            previous: true,
-        });
+        history.push(1, vis(1));
 
         history.undo();
         assert!(history.can_redo());
@@ -166,21 +182,13 @@ mod tests {
     fn test_new_action_clears_redo() {
         let mut history = CommandHistory::new(10);
 
-        history.push(Command::SetPrimitiveVisibility {
-            prim_id: 1,
-            visible: false,
-            previous: true,
-        });
+        history.push(1, vis(1));
 
         history.undo();
         assert!(history.can_redo());
 
         // New action should clear redo
-        history.push(Command::SetPrimitiveVisibility {
-            prim_id: 2,
-            visible: false,
-            previous: true,
-        });
+        history.push(2, vis(2));
 
         assert!(!history.can_redo());
     }
@@ -190,13 +198,51 @@ mod tests {
         let mut history = CommandHistory::new(3);
 
         for i in 0..5 {
-            history.push(Command::SetPrimitiveVisibility {
-                prim_id: i,
-                visible: false,
-                previous: true,
-            });
+            history.push(i, vis(i));
         }
 
         assert_eq!(history.size(), 3);
+    }
+
+    /// Two histories interleaved: undo must walk the sequence downwards
+    /// across BOTH, and redo must walk it back upwards — this is the whole
+    /// point of stamping, and the property the old stack-priority routing
+    /// violated.
+    #[test]
+    fn two_histories_undo_newest_first_and_redo_reverses_it() {
+        let mut group = CommandHistory::new(10);
+        let mut window = CommandHistory::new(10);
+
+        group.push(1, vis(10));   // oldest
+        window.push(2, vis(20));
+        group.push(3, vis(30));   // newest
+
+        // Undo picks the larger of the two tops, every time.
+        let mut undone = Vec::new();
+        for _ in 0..3 {
+            let take_group = match (group.next_undo_seq(), window.next_undo_seq()) {
+                (Some(g), Some(w)) => g > w,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            let seq = if take_group { group.next_undo_seq() } else { window.next_undo_seq() };
+            if take_group { group.undo(); } else { window.undo(); }
+            undone.push(seq.unwrap());
+        }
+        assert_eq!(undone, vec![3, 2, 1]);
+
+        // Redo picks the smaller of the two tops, replaying in reverse.
+        let mut redone = Vec::new();
+        for _ in 0..3 {
+            let take_group = match (group.next_redo_seq(), window.next_redo_seq()) {
+                (Some(g), Some(w)) => g < w,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            let seq = if take_group { group.next_redo_seq() } else { window.next_redo_seq() };
+            if take_group { group.redo(); } else { window.redo(); }
+            redone.push(seq.unwrap());
+        }
+        assert_eq!(redone, vec![1, 2, 3]);
     }
 }

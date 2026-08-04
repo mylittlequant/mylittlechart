@@ -10,6 +10,6 @@ mod default;
 mod traits;
 
 pub use default::{
-    ChartInputState, ChartOutputAction, DefaultChartInputHandler, InputHandlerConfig, UndoAction,
+    ChartInputState, ChartOutputAction, DefaultChartInputHandler, InputHandlerConfig,
 };
 pub use traits::{ChartHitTester, ChartInputHandler, HitResult};

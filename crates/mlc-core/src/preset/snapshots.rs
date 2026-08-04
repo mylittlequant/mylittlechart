@@ -19,7 +19,6 @@ fn default_chart_type_interval() -> String {
 use crate::chart::types::price_scale::{PriceScaleMode, ScaleMode};
 use crate::drawing::primitives_v2::Primitive;
 use crate::drawing::primitives_v2::config::TimeframeVisibilityConfig;
-use crate::state::history::CommandHistory;
 use crate::state::Timeframe;
 use crate::indicator_types::IndicatorGroupConfig;
 use crate::ids::SyncFlags;
@@ -237,12 +236,12 @@ pub struct ChartWindowSnapshot {
     pub scale_settings: crate::scale_settings::ScaleSettings,
     /// Local window drawings (only populated for ungrouped windows).
     pub drawings: DrawingSnapshot,
-    /// Undo/redo command history for this window.
-    #[serde(default)]
-    pub command_history: Option<CommandHistory>,
-    /// Stashed command history saved when the window joined a sync group.
-    #[serde(default)]
-    pub stashed_command_history: Option<CommandHistory>,
+    // Undo/redo history is SESSION-LOCAL and is not persisted (2026-08-04).
+    // It used to be written here, minus viewport commands, which made the
+    // restored stack disagree with what the user had actually done; and every
+    // recorded id (primitive, indicator instance) refers to objects that a
+    // cold load rebuilds from the snapshot itself. Old presets still carry
+    // `command_history` / `stashed_command_history` keys — serde ignores them.
     /// Compare overlay (overlaid symbols for comparison).
     #[serde(default)]
     pub compare_overlay: CompareOverlay,
@@ -443,9 +442,7 @@ pub struct DataBubbleSnapshot {
     pub synced_panel_ids: Vec<u64>,
     /// Shared drawing primitives owned by this group.
     pub primitives: Vec<PrimitiveSnapshot>,
-    /// Undo/redo command history for this sync group.
-    #[serde(default)]
-    pub command_history: Option<CommandHistory>,
+    // Undo/redo history is session-local — see `ChartWindowSnapshot`.
     /// Invisible auto-created group (no color tag in UI).
     #[serde(default)]
     pub auto_created: bool,

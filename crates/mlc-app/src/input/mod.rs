@@ -2707,26 +2707,10 @@ impl ChartApp {
             return false;
         }
 
-        // Capture viewport BEFORE drag starts so on_drag_end can record a
-        // ViewportChange command if panning or zooming occurred.
-        //
-        // Guard: do NOT capture when the mousedown lands on a toolbar button or
-        // any other UI widget (undo/redo, drawing tools, etc.).  If we captured
-        // here, the subsequent on_drag_end() would see the viewport modified by
-        // the undo/redo action and push a spurious ViewportChange — creating an
-        // infinite undo loop.  When a widget is hovered the drag is NOT a chart
-        // pan/zoom, so there is nothing to record.
-        let on_widget = live_hover.is_some();
-        if !on_widget {
-            self.viewport_before_drag = self.panel_app.panel_grid.active_container().map(|w| {
-                mlc_core::ViewportState::new(
-                    w.viewport().view_start,
-                    w.viewport().bar_spacing,
-                    w.price_scale().price_min,
-                    w.price_scale().price_max,
-                )
-            });
-        }
+        // Panning and zooming are NOT undoable (owner ruling 2026-08-04) —
+        // navigation is not an edit. A pan used to push a command here, which
+        // meant Ctrl+Z undid the pan instead of the drawing the user had just
+        // made, and any pan between an undo and a redo cleared the redo stack.
 
         let _fallback_ds;
         let extended = match self.active_frame_layout.as_ref() {
@@ -4548,37 +4532,6 @@ impl ChartApp {
             &hit_tester,
         );
         self.process_output_actions(actions);
-
-        // Record ViewportChange if the viewport moved during this drag.
-        // We take() so the Option is reset for the next drag regardless.
-        if let Some(previous) = self.viewport_before_drag.take() {
-            if let Some(window) = self.panel_app.panel_grid.active_container() {
-                let new_state = mlc_core::ViewportState::new(
-                    window.viewport().view_start,
-                    window.viewport().bar_spacing,
-                    window.price_scale().price_min,
-                    window.price_scale().price_max,
-                );
-                let changed = (new_state.view_start - previous.view_start).abs() > 0.001
-                    || (new_state.bar_spacing - previous.bar_spacing).abs() > 0.001
-                    || (new_state.price_min - previous.price_min).abs() > 0.001
-                    || (new_state.price_max - previous.price_max).abs() > 0.001;
-                // Copy new_state so we can drop the immutable borrow on window
-                // before taking the mutable borrow required to push to history.
-                let new_state_copy = new_state;
-                // Explicitly end the immutable borrow scope.
-                let _ = window;
-                if changed {
-                    self.push_undo_command(mlc_core::Command::ViewportChange {
-                        previous,
-                        new: new_state_copy,
-                    });
-                    eprintln!("[ChartApp] Recorded ViewportChange");
-                }
-            } else {
-                // No active window — just discard the saved state (take() already done).
-            }
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -6974,157 +6927,43 @@ impl ChartApp {
                     self.core.drawings_mut().reorder_before(bid, *prim_id, *before_prim_id);
                 }
             }
-            // Non-primitive commands: viewport, symbol, timeframe, chart type, indicators.
-            // These always act on the window directly regardless of group membership.
-            Command::ViewportChange { new, .. } => {
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    window.apply_undo_viewport(new.view_start, new.bar_spacing, new.price_min, new.price_max);
-                }
-            }
-            Command::ChangeChartType { new_type, .. } => {
-                // chart_type lives on the bubble; leak the string to produce a 'static ref.
-                let cid = self.panel_app.panel_grid.active_container_id();
-                if let Some(bid) = cid.and_then(|cid| self.bubble_for_chart(cid)) {
-                    let static_str: &'static str = Box::leak(new_type.clone().into_boxed_str());
-                    self.core.bubbles_mut().set_chart_type(bid, static_str);
-                }
-            }
-            Command::ChangeSymbol { new_symbol, .. } => {
-                // Phase 4 B: instrument fields removed from ChartContainer.
-                // Read current tf/exchange/account_type from branch_meta, then
-                // request bars and update branch_meta with new symbol + exchange.
-                let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                let cur_tf = active_chart_id
-                    .and_then(|cid| self.timeframe_for_chart(cid))
-                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                let cur_at_label = active_chart_id
-                    .and_then(|cid| self.account_type_for_chart(cid))
-                    .map(|at| at.to_string())
-                    .unwrap_or_else(|| "S".to_string());
-                // Audit D8: this undo/redo only ever replaces KLINE data. For
-                // a candle-family window the active series IS the (about to
-                // be replaced) bars, so it must reflect the NEW fetch; for a
-                // window displaying a derived chart_type (renko/pnf/...) the
-                // active series is untouched by this symbol change, so it
-                // must resolve to whatever that array already holds instead
-                // of the newly-fetched kline count.
-                let active_chart_type = active_chart_id
-                    .and_then(|cid| self.chart_type_for_chart(cid))
-                    .unwrap_or("candles");
-                let is_candle_family = !matches!(
-                    active_chart_type,
-                    "renko" | "pnf" | "kagi" | "three_line_break" | "tpo"
-                );
-                let series_owned = if is_candle_family {
-                    None
-                } else {
-                    active_chart_id.map(|cid| self.active_series_for_chart(cid))
-                };
-                let mut new_exch: Option<String> = None;
-                let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    let exch = window.data_provider.exchange_name(new_symbol);
-                    if let Some(bars) = window.data_provider.get_bars(new_symbol, &cur_tf) {
-                        // Bubble is the source of truth for drawings; symbol/exchange
-                        // metadata lives on DataBubble (updated below), not on the
-                        // (now-deleted) per-DM symbol-key cache.
-                        bars_for_bubble = Some(bars.clone());
-                        let series = series_owned.as_ref()
-                            .map(|s| s.as_active_series())
-                            .unwrap_or(crate::active_series::ActiveSeries::Bars(&bars));
-                        window.reconcile_view_fresh(&bars, series);
-                        new_exch = Some(exch);
-                        eprintln!("[Undo/Redo] Changed symbol to {}", new_symbol);
-                    }
-                }
-                if let (Some(chart_id), Some(exch)) = (active_chart_id, new_exch) {
-                    if let Some(bid) = self.bubble_for_chart(chart_id) {
-                        let mut mgr = self.core.bubbles_mut();
-                        mgr.set_bid_instrument_full(bid, new_symbol.to_string(), exch, cur_at_label.clone(), cur_tf);
-                        // Phase X0 / C4: mirror bars into bubble storage.
-                        if let Some(b) = bars_for_bubble {
-                            mgr.set_bars(bid, b);
-                        }
-                    }
-                }
-            }
-            Command::ChangeTimeframe { new_timeframe, .. } => {
-                // Phase 4 B: instrument fields removed from ChartContainer.
-                let active_chart_id = self.panel_app.panel_grid.active_container_id();
-                let cur_sym = active_chart_id
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
-                // Audit D8: see the ChangeSymbol arm above for the rationale
-                // (this undo only replaces kline data; a derived-chart_type
-                // window's bar_count must stay keyed to its own array).
-                let active_chart_type = active_chart_id
-                    .and_then(|cid| self.chart_type_for_chart(cid))
-                    .unwrap_or("candles");
-                let is_candle_family = !matches!(
-                    active_chart_type,
-                    "renko" | "pnf" | "kagi" | "three_line_break" | "tpo"
-                );
-                let series_owned = if is_candle_family {
-                    None
-                } else {
-                    active_chart_id.map(|cid| self.active_series_for_chart(cid))
-                };
-                let mut changed = false;
-                let mut bars_for_bubble: Option<Vec<mlc_core::Bar>> = None;
-                if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-                    if let Some(bars) = window.data_provider.get_bars(&cur_sym, new_timeframe) {
-                        bars_for_bubble = Some(bars.clone());
-                        let series = series_owned.as_ref()
-                            .map(|s| s.as_active_series())
-                            .unwrap_or(crate::active_series::ActiveSeries::Bars(&bars));
-                        window.reconcile_view_fresh(&bars, series);
-                        changed = true;
-                        eprintln!("[Undo/Redo] Changed timeframe to {:?}", new_timeframe);
-                    }
-                }
-                if changed {
-                    if let Some(chart_id) = active_chart_id {
-                        if let Some(bid) = self.bubble_for_chart(chart_id) {
-                            self.core.bubbles_mut().set_timeframe(bid, new_timeframe.clone());
-                            // Phase X0 / C4: mirror bars into bubble storage.
-                            if let Some(b) = bars_for_bubble {
-                                self.core.bubbles_mut().set_bars(bid, b);
-                            }
-                        }
-                    }
-                }
-            }
             Command::AddCompareSeries { series } => {
-                // The recorded command intentionally drops `bars` (see
-                // `CompareSeries::without_bars` — bars are re-fetchable and would
-                // bloat undo history with hundreds of KB per series).  On redo
-                // we need to RESTORE bars from the per-window data_provider
-                // cache so the line actually renders.  The provider was filled
-                // either by the original add path (modals.rs CompareSearch
-                // branch + react.rs BarsLoaded retry) or by the active chart's
-                // existing subscription.  If both miss, the series goes into
-                // the overlay with empty bars — visible in the sidebar tree but
-                // invisible on the chart — and the user can re-pick from the
-                // compare modal to fire a fresh fetch.
-                let main_tf = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.timeframe_for_chart(cid))
-                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
-                let bars: Vec<mlc_core::Bar> = self.panel_app.panel_grid.containers().values()
-                    .find_map(|w| w.data_provider.get_bars(&series.symbol, &main_tf))
-                    .unwrap_or_default();
+                // The recorded command carries no bars (`without_bars` — they
+                // are re-fetchable and would put hundreds of KB per series in
+                // the history), so putting the series back has to find them.
+                // First chance is the overlay's own detached-bars store, which
+                // holds whatever this window removed earlier in the session —
+                // that covers undo-of-delete and redo-of-add.
                 if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                     if !w.compare_overlay.has_symbol(&series.symbol) {
-                        let mut hydrated = series.clone();
-                        if !bars.is_empty() {
-                            // Re-seed base price/timestamp from the first bar so
-                            // the percentage axis lines up.
-                            let first = &bars[0];
-                            hydrated.base_price = first.close;
-                            hydrated.base_timestamp = first.timestamp;
-                            hydrated.bars = bars;
+                        w.compare_overlay.add_series(series.clone());
+                    }
+                }
+                // Second chance, for a series this window never held: the
+                // per-window provider cache. It is keyed to the WINDOW's own
+                // venue, so it only hits for a same-venue compare symbol; a
+                // miss leaves the series in the tree with no line and the user
+                // can re-pick it from the compare modal to fire a fresh fetch.
+                let still_empty = self.panel_app.panel_grid.active_container()
+                    .and_then(|w| w.compare_overlay.get_series(&series.symbol))
+                    .is_some_and(|s| s.bars.is_empty());
+                if still_empty {
+                    let main_tf = self.panel_app.panel_grid.active_container_id()
+                        .and_then(|cid| self.timeframe_for_chart(cid))
+                        .unwrap_or_else(mlc_core::state::Timeframe::h1);
+                    let bars: Vec<mlc_core::Bar> = self.panel_app.panel_grid.containers().values()
+                        .find_map(|w| w.data_provider.get_bars(&series.symbol, &main_tf))
+                        .unwrap_or_default();
+                    if let Some(first) = bars.first().copied() {
+                        if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
+                            if let Some(s) = w.compare_overlay.get_series_mut(&series.symbol) {
+                                // Re-seed base price/timestamp from the first
+                                // bar so the percentage axis lines up.
+                                s.base_price = first.close;
+                                s.base_timestamp = first.timestamp;
+                                s.bars = bars;
+                            }
                         }
-                        w.compare_overlay.add_series(hydrated);
                     }
                 }
             }
@@ -7230,42 +7069,6 @@ impl ChartApp {
                     eprintln!("[Undo/Redo] Removed indicator instance {}", instance_id);
                 } else {
                     eprintln!("[Undo/Redo] Indicator instance {} not found", instance_id);
-                }
-            }
-            Command::AddAlert { snapshot } => {
-                // Restore a previously deleted (or redo-add) alert from its snapshot.
-                // If an alert with this ID already exists, skip to keep state consistent.
-                let alert_id = snapshot.id;
-                // Find which bubble owns this alert (by group_id hint or active bubble).
-                let already_exists = self.core.alerts().find_owner(alert_id).is_some();
-                if !already_exists {
-                    // Try to restore to the bubble identified by group_id in the snapshot.
-                    // bid resolution is app-level policy (which bubble wins when the
-                    // snapshot's own group_id doesn't resolve) — stays here, not in
-                    // the manager (design doc §6.4).
-                    let target_bid = snapshot.group_id
-                        .map(mlc_core::ids::BubbleId)
-                        .or_else(|| self.panel_app.panel_grid.active_container_id()
-                            .and_then(|cid| self.bubble_for_chart(cid)));
-                    if let Some(bid) = target_bid {
-                        self.core.alerts_mut().restore_one(bid, snapshot.clone());
-                    }
-                    self.sidebar_data_dirty = true;
-                    eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
-                } else {
-                    eprintln!("[Undo/Redo] Alert id={} already exists, skipping AddAlert", alert_id);
-                }
-            }
-            Command::DeleteAlert { snapshot } => {
-                // Remove the alert identified by the snapshot's ID.
-                let alert_id = snapshot.id;
-                let bid_opt = self.core.alerts().find_owner(alert_id).map(|(bid, _)| bid);
-                if let Some(bid) = bid_opt {
-                    self.core.alerts_mut().remove(bid, alert_id);
-                    self.sidebar_data_dirty = true;
-                    eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
-                } else {
-                    eprintln!("[Undo/Redo] Alert id={} not found for DeleteAlert", alert_id);
                 }
             }
             other => {
@@ -7516,76 +7319,87 @@ impl ChartApp {
     ///
     /// Priority: group history first (shared ops), then window-local history.
     fn perform_undo_with_group(&mut self) {
-        // Extract group_id before any mutable borrows.  Use
-        // `shared_group_for_chart` so auto-mono groups (every fresh chart)
-        // skip group history entirely — those operations were already pushed
-        // to window-local history by `push_undo_command`.
+        // `shared_group_for_chart` (not `bubble_for_chart`) so auto-mono
+        // groups — present on every fresh chart, but whose primitives live in
+        // the window — are not consulted; their commands went to the window.
         let group_id = self.panel_app.panel_grid.active_container_id()
             .and_then(|cid| self.shared_group_for_chart(cid));
 
-        if let Some(gid) = group_id {
-            // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.core.bubbles_mut()
-                .with_bubble_mut(gid, |g| g.command_history.undo())
-                .flatten();
-            if let Some(cmd) = group_cmd {
-                let desc = cmd.description();
-                let inverse = cmd.inverse();
-                self.apply_command_to_active_window(&inverse);
-                self.post_apply_command_effects(&inverse);
-                eprintln!("[ChartApp] Undo (group): {}", desc);
-                return;
-            }
-        }
+        let group_seq = group_id.and_then(|gid| {
+            self.core.bubbles().command_history(gid).and_then(|h| h.next_undo_seq())
+        });
+        let local_seq = self.panel_app.panel_grid.active_container()
+            .and_then(|w| w.command_history.next_undo_seq());
 
-        // Fall back to window-local history (viewport, symbol, timeframe, chart type).
-        let local_cmd = self.panel_app.panel_grid.active_container_mut()
-            .and_then(|w| w.command_history.undo());
-        if let Some(cmd) = local_cmd {
-            let desc = cmd.description();
-            let inverse = cmd.inverse();
-            self.apply_command_to_active_window(&inverse);
-            self.post_apply_command_effects(&inverse);
-            eprintln!("[ChartApp] Undo (local): {}", desc);
+        // Newest first, across BOTH stacks — undo has to follow the order the
+        // user acted in, not the order the stacks happen to be declared in.
+        let take_group = match (group_seq, local_seq) {
+            (Some(g), Some(l)) => g > l,
+            (Some(_), None) => true,
+            _ => false,
+        };
+
+        let cmd = if take_group {
+            group_id.and_then(|gid| {
+                self.core.bubbles_mut()
+                    .with_bubble_mut(gid, |g| g.command_history.undo())
+                    .flatten()
+            })
         } else {
+            self.panel_app.panel_grid.active_container_mut()
+                .and_then(|w| w.command_history.undo())
+        };
+
+        let Some(cmd) = cmd else {
             eprintln!("[ChartApp] Nothing to undo");
-        }
+            return;
+        };
+        let desc = cmd.description();
+        let inverse = cmd.inverse();
+        self.apply_command_to_active_window(&inverse);
+        self.post_apply_command_effects(&inverse);
+        eprintln!("[ChartApp] Undo ({}): {}", if take_group { "group" } else { "local" }, desc);
     }
 
     /// Execute a redo step, routing through the group history for shared
     /// operations when the active window is in a sync group.
     fn perform_redo_with_group(&mut self) {
-        // Extract group_id before any mutable borrows.  Use
-        // `shared_group_for_chart` so auto-mono groups skip group history —
-        // mirror of perform_undo_with_group.
         let group_id = self.panel_app.panel_grid.active_container_id()
             .and_then(|cid| self.shared_group_for_chart(cid));
 
-        if let Some(gid) = group_id {
-            // Try group history first (shared: primitives, indicators).
-            let group_cmd = self.core.bubbles_mut()
-                .with_bubble_mut(gid, |g| g.command_history.redo())
-                .flatten();
-            if let Some(cmd) = group_cmd {
-                let desc = cmd.description();
-                self.apply_command_to_active_window(&cmd);
-                self.post_apply_command_effects(&cmd);
-                eprintln!("[ChartApp] Redo (group): {}", desc);
-                return;
-            }
-        }
+        let group_seq = group_id.and_then(|gid| {
+            self.core.bubbles().command_history(gid).and_then(|h| h.next_redo_seq())
+        });
+        let local_seq = self.panel_app.panel_grid.active_container()
+            .and_then(|w| w.command_history.next_redo_seq());
 
-        // Fall back to window-local history.
-        let local_cmd = self.panel_app.panel_grid.active_container_mut()
-            .and_then(|w| w.command_history.redo());
-        if let Some(cmd) = local_cmd {
-            let desc = cmd.description();
-            self.apply_command_to_active_window(&cmd);
-            self.post_apply_command_effects(&cmd);
-            eprintln!("[ChartApp] Redo (local): {}", desc);
+        // Mirror of undo: undo walked the sequence DOWN, so redo walks it back
+        // UP — the oldest of the two redo tops is the one undone most recently.
+        let take_group = match (group_seq, local_seq) {
+            (Some(g), Some(l)) => g < l,
+            (Some(_), None) => true,
+            _ => false,
+        };
+
+        let cmd = if take_group {
+            group_id.and_then(|gid| {
+                self.core.bubbles_mut()
+                    .with_bubble_mut(gid, |g| g.command_history.redo())
+                    .flatten()
+            })
         } else {
+            self.panel_app.panel_grid.active_container_mut()
+                .and_then(|w| w.command_history.redo())
+        };
+
+        let Some(cmd) = cmd else {
             eprintln!("[ChartApp] Nothing to redo");
-        }
+            return;
+        };
+        let desc = cmd.description();
+        self.apply_command_to_active_window(&cmd);
+        self.post_apply_command_effects(&cmd);
+        eprintln!("[ChartApp] Redo ({}): {}", if take_group { "group" } else { "local" }, desc);
     }
 
     /// Post-apply hook: run side-effects that the forward path does but
@@ -7594,48 +7408,6 @@ impl ChartApp {
     fn post_apply_command_effects(&mut self, cmd: &mlc_core::Command) {
         use mlc_core::Command;
         match cmd {
-            Command::ChangeSymbol { new_symbol, .. } => {
-                // Recalculate indicators for new bars
-                let recalc_bid_bars = self.panel_app.panel_grid.docking().active_leaf()
-                    .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-                    .and_then(|cid| self.bubble_for_chart(cid))
-                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
-                if let Some((bid, bars)) = recalc_bid_bars {
-                    self.core.indicators_mut().recalc_bubble(bid, &bars);
-                }
-                self.sync_sub_panes_from_manager();
-                // Propagate to sync group peers
-                // S2.7.1e: read exchange/account_type via branch_meta (B1).
-                if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    let active_cid_prop = self.panel_app.panel_grid.active_container_id();
-                    let exchange: String = active_cid_prop
-                        .and_then(|cid| self.exchange_for_chart(cid))
-                        .map(String::from)
-                        .unwrap_or_default();
-                    let account_type: String = active_cid_prop
-                        .and_then(|cid| self.account_type_for_chart(cid))
-                        .map(|at| at.to_string())
-                        .unwrap_or_default();
-                    self.propagate_symbol_to_sync_group(leaf, new_symbol, &exchange, &account_type);
-                }
-                self.autosave_snapshot();
-            }
-            Command::ChangeTimeframe { new_timeframe, .. } => {
-                // Recalculate indicators for new bars
-                let recalc_bid_bars = self.panel_app.panel_grid.docking().active_leaf()
-                    .and_then(|leaf| self.panel_app.panel_grid.container_id_for_leaf(leaf))
-                    .and_then(|cid| self.bubble_for_chart(cid))
-                    .and_then(|bid| self.with_bubble(bid, |b| b.bars.clone()).map(|bars| (bid, bars)));
-                if let Some((bid, bars)) = recalc_bid_bars {
-                    self.core.indicators_mut().recalc_bubble(bid, &bars);
-                }
-                self.sync_sub_panes_from_manager();
-                // Propagate to sync group peers
-                if let Some(leaf) = self.panel_app.panel_grid.docking().active_leaf() {
-                    self.propagate_timeframe_to_sync_group(leaf, new_timeframe.clone());
-                }
-                self.autosave_snapshot();
-            }
             Command::AddIndicator { .. } | Command::RemoveIndicator { .. } => {
                 self.autosave_snapshot();
             }
@@ -7737,8 +7509,8 @@ impl ChartApp {
     /// Push a command to the appropriate history stack.
     ///
     /// Shared commands (primitives, indicators) go to the sync group's
-    /// `command_history` when the active window is in a group. Window-local
-    /// commands (viewport, symbol, timeframe, chart type) always go to the
+    /// `command_history` when the active window is in a group. Compare
+    /// series live on the window itself, so their commands always go to the
     /// active window's own `command_history`.
     pub(crate) fn push_undo_command(&mut self, cmd: mlc_core::Command) {
         use mlc_core::Command;
@@ -7756,8 +7528,6 @@ impl ChartApp {
                 | Command::ReorderPrimitive { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
-                | Command::AddAlert { .. }
-                | Command::DeleteAlert { .. }
         );
 
         // Use `shared_group_for_chart` (not `bubble_for_chart`) so auto-mono
@@ -7777,16 +7547,21 @@ impl ChartApp {
             None
         };
 
+        // One counter for the whole app: the two stacks are ordered against
+        // each other by it, so it must not restart per window or per group.
+        self.undo_seq = self.undo_seq.wrapping_add(1);
+        let seq = self.undo_seq;
+
         if let Some(gid) = group_id {
             if self.core.bubbles().exists(gid) {
-                self.core.bubbles_mut().with_bubble_mut(gid, |group| group.command_history.push(cmd));
+                self.core.bubbles_mut().with_bubble_mut(gid, |group| group.command_history.push(seq, cmd));
                 return;
             }
         }
 
         // Local command or no real group — push to the active window's history.
         if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
-            window.command_history.push(cmd);
+            window.command_history.push(seq, cmd);
         }
     }
 
@@ -8099,23 +7874,14 @@ impl ChartApp {
                     .map(|g| g.0);
                 // Read stash data from the chart's permanent auto-bubble.
                 let auto_bid = window.auto_tag_id;
-                let (ptids, stashed_ch, stashed_prims_snap) = self.with_bubble(auto_bid, |auto_bub| {
+                let (ptids, stashed_prims_snap) = self.with_bubble(auto_bid, |auto_bub| {
                     let ptids = auto_bub.pre_tag_indicator_ids.clone();
-                    // The auto_bubble holds the stashed command_history only while
-                    // the chart is IN a color group (joined). When ungrouped the
-                    // history lives back on the window; persist a clone of the
-                    // current auto_bubble history (may be empty for ungrouped charts).
-                    let stashed_ch = if auto_bub.command_history.size() > 0 || auto_bub.command_history.can_redo() {
-                        Some(auto_bub.command_history.clone())
-                    } else {
-                        None
-                    };
                     let prims_snap: Vec<mlc_core::preset::snapshots::PrimitiveSnapshot> =
                         auto_bub.primitives.iter()
                             .map(|p| mlc_core::preset::snapshots::PrimitiveSnapshot::from_primitive(p.as_ref()))
                             .collect();
-                    (ptids, stashed_ch, prims_snap)
-                }).unwrap_or_else(|| (Vec::new(), None, Vec::new()));
+                    (ptids, prims_snap)
+                }).unwrap_or_else(|| (Vec::new(), Vec::new()));
                 // Phase 4 B: read instrument fields from branch_meta for snapshot.
                 let snap_symbol = self.symbol_for_chart(chart_id)
                     .map(String::from).unwrap_or_default();
@@ -8145,7 +7911,7 @@ impl ChartApp {
                 let dreg_snap = self.core.drawings();
                 let snap_prims = dreg_snap.primitives(window.current_tag_id);
                 preset.windows.push(crate::persistence::build_chart_window_snapshot(
-                    window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_ch, stashed_prims_snap,
+                    window, snap_panel_state, snap_prims, leaf_id.0, gid, ptids, stashed_prims_snap,
                     snap_symbol, snap_timeframe, snap_exchange, snap_account_type,
                     snap_chart_type, snap_chart_type_param, snap_chart_type_param_mode, snap_chart_type_interval,
                 ));

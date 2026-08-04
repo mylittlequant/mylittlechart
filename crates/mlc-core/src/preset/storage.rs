@@ -139,26 +139,10 @@ pub fn save_preset(preset: &ChartPreset) -> Result<PathBuf, PresetError> {
     let dir = presets_dir();
     let path = dir.join(format!("{}.json", preset.id));
 
-    // ViewportChange commands are stripped from undo/redo stacks since they
-    // reference stale positions. The snapshot's viewport field itself is
-    // ViewportPersist (bar_spacing only) — nothing else reaches disk by
-    // construction, so no field stripping is needed here.
-    let mut stripped = preset.clone();
-    for win in &mut stripped.windows {
-        if let Some(ref mut history) = win.command_history {
-            *history = history.stripped_for_persistence();
-        }
-        if let Some(ref mut stashed) = win.stashed_command_history {
-            *stashed = stashed.stripped_for_persistence();
-        }
-    }
-    for group in &mut stripped.bubbles {
-        if let Some(ref mut history) = group.command_history {
-            *history = history.stripped_for_persistence();
-        }
-    }
-
-    let json = serde_json::to_string_pretty(&stripped)?;
+    // Undo/redo history no longer reaches disk at all (2026-08-04) — the
+    // snapshot structs simply do not carry it. The viewport field is
+    // `ViewportPersist` (bar_spacing only), so nothing needs stripping here.
+    let json = serde_json::to_string_pretty(preset)?;
     global_storage().write(&path_key(&path), json.as_bytes())?;
 
     // Remove any leftover encrypted version from before the plaintext-only policy.

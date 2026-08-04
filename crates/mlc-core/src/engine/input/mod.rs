@@ -60,7 +60,7 @@ pub use actions::{ChartAction, Shortcut};
 // Re-export handler
 pub use handler::{
     ChartHitTester, ChartInputHandler, ChartInputState, ChartOutputAction,
-    DefaultChartInputHandler, HitResult, InputHandlerConfig, UndoAction,
+    DefaultChartInputHandler, HitResult, InputHandlerConfig,
 };
 
 // Re-export objects

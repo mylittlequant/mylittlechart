@@ -185,6 +185,18 @@ pub struct CompareOverlay {
     pub main_base_price: f64,
     /// Main symbol's base timestamp
     pub main_base_timestamp: i64,
+    /// Bars of series that were removed during this session, kept so a
+    /// removal can be taken back.
+    ///
+    /// A recorded command carries the series WITHOUT its bars (they are
+    /// hundreds of KB and the exchange can re-serve them), so putting a
+    /// series back — undoing a delete, redoing an add — restored a line with
+    /// no data: present in the object tree, invisible on the chart. Refetching
+    /// is not an option on the spot either, because a compare symbol usually
+    /// lives on a different venue than the window and the window's data
+    /// provider is keyed to its OWN venue. Runtime only, never persisted.
+    #[serde(skip)]
+    detached_bars: std::collections::HashMap<String, Vec<Bar>>,
 }
 
 impl CompareOverlay {
@@ -193,8 +205,22 @@ impl CompareOverlay {
         Self::default()
     }
 
-    /// Add a comparison series
-    pub fn add_series(&mut self, series: CompareSeries) {
+    /// Add a comparison series.
+    ///
+    /// A series arriving with no bars is re-hydrated from `detached_bars` when
+    /// this overlay held it earlier in the session — that is what makes
+    /// undoing a delete (and redoing an add) put a DRAWN line back rather than
+    /// an empty entry in the tree.
+    pub fn add_series(&mut self, mut series: CompareSeries) {
+        if series.bars.is_empty() {
+            if let Some(bars) = self.detached_bars.remove(&series.symbol) {
+                if let Some(first) = bars.first() {
+                    series.base_price = first.close;
+                    series.base_timestamp = first.timestamp;
+                }
+                series.bars = bars;
+            }
+        }
         self.series.push(series);
         self.active = true;
         // Auto-switch to percent mode when adding comparison
@@ -205,7 +231,10 @@ impl CompareOverlay {
 
     /// Remove a comparison series by symbol
     pub fn remove_series_by_symbol(&mut self, symbol: &str) {
-        self.series.retain(|s| s.symbol != symbol);
+        if let Some(pos) = self.series.iter().position(|s| s.symbol == symbol) {
+            let removed = self.series.remove(pos);
+            self.detach(removed);
+        }
         if self.series.is_empty() {
             self.active = false;
             self.scale_mode = PriceScaleMode::Normal;
@@ -217,11 +246,13 @@ impl CompareOverlay {
     pub fn remove_series(&mut self, index: usize) -> Option<String> {
         if index < self.series.len() {
             let removed = self.series.remove(index);
+            let symbol = removed.symbol.clone();
+            self.detach(removed);
             if self.series.is_empty() {
                 self.active = false;
                 self.scale_mode = PriceScaleMode::Normal;
             }
-            Some(removed.symbol)
+            Some(symbol)
         } else {
             None
         }
@@ -240,9 +271,18 @@ impl CompareOverlay {
 
     /// Clear all comparison series
     pub fn clear(&mut self) {
-        self.series.clear();
+        for series in std::mem::take(&mut self.series) {
+            self.detach(series);
+        }
         self.active = false;
         self.scale_mode = PriceScaleMode::Normal;
+    }
+
+    /// Park a removed series' bars so putting it back can draw immediately.
+    fn detach(&mut self, series: CompareSeries) {
+        if !series.bars.is_empty() {
+            self.detached_bars.insert(series.symbol, series.bars);
+        }
     }
 
     /// Check if a symbol is already being compared

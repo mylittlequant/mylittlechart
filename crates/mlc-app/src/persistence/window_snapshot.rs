@@ -15,7 +15,7 @@ use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::preset::snapshots::{
     ChartWindowSnapshot, DrawingSnapshot, PriceScalePersist, PrimitiveSnapshot,
 };
-use mlc_core::state::{CommandHistory, Timeframe};
+use mlc_core::state::Timeframe;
 use crate::chart_container::ChartContainer;
 use crate::chart_panel_state::ChartPanelState;
 
@@ -38,7 +38,6 @@ pub fn build_chart_window_snapshot(
     leaf_id: u64,
     bubble_id: Option<u64>,
     pre_tag_indicator_ids: Vec<u64>,
-    stashed_command_history: Option<CommandHistory>,
     stashed_primitives_snap: Vec<PrimitiveSnapshot>,
     symbol: String,
     timeframe: Timeframe,
@@ -98,8 +97,6 @@ pub fn build_chart_window_snapshot(
         show_baseline: panel.show_baseline,
         scale_settings: window.scale_settings.clone(),
         drawings,
-        command_history: Some(window.command_history.clone()),
-        stashed_command_history,
         compare_overlay: window.compare_overlay.clone(),
         symbol_drawings_snapshots: window.symbol_drawings.clone(),
         bars: Vec::new(),
@@ -165,7 +162,6 @@ mod json_compat_tests {
             /* leaf_id */ 7,
             /* bubble_id */ Some(42),
             /* pre_tag_indicator_ids */ vec![1, 2, 3],
-            /* stashed_command_history */ None,
             /* stashed_primitives_snap */ vec![],
             "BTCUSDT".to_string(),
             Timeframe::h1(),
@@ -231,7 +227,6 @@ mod json_compat_tests {
             9,
             None,
             vec![],
-            None,
             vec![],
             "ETHUSDT".to_string(),
             Timeframe::h1(),

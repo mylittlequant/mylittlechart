@@ -280,9 +280,6 @@ pub enum ChartOutputAction {
     /// Hide the current tooltip.
     HideTooltip,
 
-    /// Record an undo action.
-    RecordUndo(UndoAction),
-
     /// Update crosshair position.
     UpdateCrosshair {
         /// X coordinate in screen pixels.
@@ -408,58 +405,6 @@ impl ChartOutputAction {
                 | ChartOutputAction::HideTooltip
         )
     }
-}
-
-// =============================================================================
-// Undo Actions
-// =============================================================================
-
-/// Undo action types that can be recorded.
-#[derive(Debug, Clone, PartialEq)]
-pub enum UndoAction {
-    /// Viewport was changed (pan/zoom).
-    ViewportChange {
-        /// Previous view start.
-        old_view_start: f64,
-        /// Previous bar spacing.
-        old_bar_spacing: f64,
-        /// Previous price min.
-        old_price_min: f64,
-        /// Previous price max.
-        old_price_max: f64,
-        /// New view start.
-        new_view_start: f64,
-        /// New bar spacing.
-        new_bar_spacing: f64,
-        /// New price min.
-        new_price_min: f64,
-        /// New price max.
-        new_price_max: f64,
-    },
-
-    /// Primitive was moved.
-    PrimitiveMoved {
-        /// Stable primitive id.
-        prim_id: u64,
-        /// Previous points (ts_ms, price).
-        old_points: Vec<(i64, f64)>,
-        /// New points (ts_ms, price).
-        new_points: Vec<(i64, f64)>,
-    },
-
-    /// Primitive was created.
-    PrimitiveCreated {
-        /// Stable primitive id.
-        prim_id: u64,
-    },
-
-    /// Primitive was deleted.
-    PrimitiveDeleted {
-        /// Stable primitive id.
-        prim_id: u64,
-        /// Serialized primitive data for restoration.
-        data: String,
-    },
 }
 
 // =============================================================================

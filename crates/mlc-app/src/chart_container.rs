@@ -2092,16 +2092,6 @@ impl ChartContainer {
         self.calc_auto_scale(series);
     }
 
-    /// Apply an undo/redo `ViewportChange` command snapshot verbatim.
-    pub fn apply_undo_viewport(&mut self, view_start: f64, bar_spacing: f64, price_min: f64, price_max: f64) {
-        let (vs0, bc0) = (self.viewport.view_start, self.viewport.bar_count);
-        self.viewport.view_start = view_start;
-        self.viewport.bar_spacing = bar_spacing;
-        self.price_scale.price_min = price_min;
-        self.price_scale.price_max = price_max;
-        self.log_view_jump("apply_undo_viewport", vs0, bc0);
-    }
-
     /// Apply a sync-group propagation write from the source window.
     ///
     /// `peer_view_start` / `peer_spacing` are already resolved into this

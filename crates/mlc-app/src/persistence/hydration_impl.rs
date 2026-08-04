@@ -201,10 +201,8 @@ impl ChartApp {
                                         // yet at this point in the restore sequence).
                                     }
 
-                                    // Restore command history
-                                    if let Some(history) = &snap.command_history {
-                                        window.command_history = history.clone();
-                                    }
+                                    // Undo/redo history is session-local — a cold load
+                                    // starts with an empty stack (2026-08-04).
 
                                     // Create a fresh auto-bubble for this chart and restore
                                     // stashed state (pre-tag primitives, pre_tag_indicator_ids,
@@ -255,10 +253,6 @@ impl ChartApp {
                                         }
                                         // Restore pre_tag_indicator_ids into auto_bubble.
                                         auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
-                                        // Restore stashed command_history into auto_bubble.
-                                        if let Some(h) = snap.stashed_command_history.clone() {
-                                            auto_bub.command_history = h;
-                                        }
                                     });
 
                                     // Restore per-symbol drawing cache
@@ -431,10 +425,8 @@ impl ChartApp {
                                     // clone or a fresh `Viewport::default()`.
                                     window.scale_settings = snap.scale_settings.clone();
 
-                                    // Restore command history
-                                    if let Some(history) = &snap.command_history {
-                                        window.command_history = history.clone();
-                                    }
+                                    // Undo/redo history is session-local — a cold load
+                                    // starts with an empty stack (2026-08-04).
 
                                     // Pre-auto-bubble presets serialised no auto_tag_id —
                                     // a placeholder of BubbleId(0) is patched up by the
@@ -456,9 +448,6 @@ impl ChartApp {
                                             }
                                         }
                                         auto_bub.pre_tag_indicator_ids = snap.pre_tag_indicator_ids.clone();
-                                        if let Some(h) = snap.stashed_command_history.clone() {
-                                            auto_bub.command_history = h;
-                                        }
                                     });
 
                                     // Restore per-symbol drawing cache
@@ -542,8 +531,8 @@ impl ChartApp {
                                     snap.timeframe.clone(),
                                 );
                             }
-                            // Note: pre_tag_indicator_ids and stashed_command_history are
-                            // already written into auto_bubble above; no separate map needed.
+                            // Note: pre_tag_indicator_ids is already written into
+                            // auto_bubble above; no separate map needed.
                         }
                         // Phase 4 C: write panel states (panel_grid borrow is dropped above).
                         for (chart_panel_id, ps) in panel_patches {

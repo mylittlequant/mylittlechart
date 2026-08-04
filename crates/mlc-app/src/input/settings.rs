@@ -2657,17 +2657,6 @@ impl ChartApp {
                         0
                     }
                 };
-                // Snapshot for undo.
-                if editing_id.is_none() && alert_id != 0 {
-                    let snapshot = if let Some(bid) = active_bid {
-                        self.core.alerts().get(bid, alert_id).cloned()
-                    } else {
-                        None
-                    };
-                    if let Some(snap) = snapshot {
-                        self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
-                    }
-                }
                 eprintln!("[AlertSettings] Alert saved: id={}", alert_id);
                 self.sidebar_data_dirty = true;
                 self.panel_app.alert_settings_state.close();
@@ -2877,15 +2866,9 @@ impl ChartApp {
             _ if rest.starts_with("list_delete:") => {
                 if let Some(id_str) = rest.strip_prefix("list_delete:") {
                     if let Ok(id) = id_str.parse::<u64>() {
-                        let (snapshot, bid_opt) = match self.core.alerts().find_owner(id) {
-                            Some((bid, a)) => (Some(a), Some(bid)),
-                            None => (None, None),
-                        };
+                        let bid_opt = self.core.alerts().find_owner(id).map(|(bid, _)| bid);
                         if let Some(bid) = bid_opt {
                             self.core.alerts_mut().remove(bid, id);
-                        }
-                        if let Some(snap) = snapshot {
-                            self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot: snap });
                         }
                         // Refresh the list
                         self.panel_app.alert_settings_state.all_alerts = self.core.alerts().items_all();
