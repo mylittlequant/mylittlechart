@@ -9,11 +9,12 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_state::{ModalState, OpenModal, IndicatorCatalogItem, IndicatorCategoryFilter, SearchResult};
 use crate::ui::modal_settings::ChartScreenArea;
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::types::WidgetState;
 use crate::ui::Icon;
-use crate::ui::z_order::ZLayer;
 use mlc_core::templates::indicator_set::IndicatorSet;
 use mlc_core::i18n::{ModalKey, t_modal};
 
@@ -52,37 +53,33 @@ pub fn render_search_overlay(
 
     let header_height = 36.0;
     let modal_padding = 12.0;
-    let close_btn_size = 20.0;
     let input_height = 32.0;
     let scrollbar_width = 8.0;
     let sidebar_width = if is_indicator_search { 48.0 } else { 0.0 };
 
     let base_width = (screen.width * 0.5).max(400.0);
-    let modal_width = if is_indicator_search { base_width + sidebar_width } else { base_width };
+    let mut modal_width = if is_indicator_search { base_width + sidebar_width } else { base_width };
     let modal_height = (screen.height * 0.6).max(300.0);
+
+    // The header carries a title, two toggles and the ✕ on the symbol and
+    // compare variants. Give it the width it needs, or the title and the first
+    // toggle label overlap — which they did.
+    if !is_indicator_search {
+        const TOGGLE_GAP: f64 = 10.0;
+        const CLOSE_ZONE: f64 = 44.0;
+        ctx.set_font("13px sans-serif");
+        let needed = 16.0
+            + ctx.measure_text(title)
+            + TOGGLE_GAP
+            + header_toggle_width(ctx, t_modal(ModalKey::QuickSearchToggle))
+            + TOGGLE_GAP
+            + header_toggle_width(ctx, t_modal(ModalKey::SeparateCompareToggle))
+            + CLOSE_ZONE;
+        modal_width = modal_width.max(needed).min(screen.width);
+    }
 
     let screen_w = screen.x + screen.width;
     let screen_h = screen.y + screen.height;
-
-    let (modal_x, modal_y) = modal_state.position.unwrap_or_else(|| {
-        let x = screen.x + (screen.width - modal_width) / 2.0;
-        let y = screen.y + (screen.height - modal_height) / 2.0;
-        (x, y)
-    });
-
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_width);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_height);
-
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, modal_width, modal_height);
-
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "modal_search");
-
-    input_coordinator.register_on_layer(
-        "modal_search:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, modal_height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
 
     let modal_theme = ModalTheme::from_frame_theme(
         &theme.toolbar_bg,
@@ -91,21 +88,34 @@ pub fn render_search_overlay(
         &toolbar_theme.item_text_hover,
         &toolbar_theme.separator,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
-
-    result.header_rect = Some(WidgetRect::new(modal_x, modal_y, modal_width, header_height));
-    input_coordinator.register_on_layer(
-        "search_modal:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_width, header_height),
-        uzor::input::Sense::DRAG,
-        &layer_id,
+    // A search list, not a settings surface: the shell brings the frame,
+    // header, title and ✕; the list below is untouched. Fixed height, so the
+    // ceiling equals what the body asks for.
+    let body_h = modal_height - header_height;
+    let spec = ModalShellSpec {
+        padding: 0.0,
+        header_height,
+        placement: ModalPlacement::At(modal_state.position),
+        ..ModalShellSpec::new("modal_search", title, modal_width, body_h)
+            .with_footer(ModalFooter::None)
+            .with_max_content_height(body_h)
+    };
+    let (shell, layer_id) = begin_modal_shell(
+        ctx,
+        input_coordinator,
+        &spec,
+        &modal_theme,
+        (screen_w, screen_h),
     );
 
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, modal_x + modal_padding, modal_y + header_height / 2.0);
+    result.modal_rect = shell.frame;
+    result.header_rect = Some(shell.header);
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+
+    // The body reads the frame the shell settled on.
+    let (modal_x, modal_y) = (shell.frame.x, shell.frame.y);
+    let modal_width = shell.frame.width;
+    let modal_height = shell.frame.height;
 
     // ── Header toggles (2026-07-17 rework — TWO toggles only): "Quick
     // search" / "Separate compare button", the ONLY way back to the
@@ -114,10 +124,11 @@ pub fn render_search_overlay(
     // CompareSearch variants; skipped for IndicatorSearch (irrelevant
     // toggles for that modal). The former third "Inline input" toggle is
     // deleted (the inline behavior IS quick search now).
-    let close_x = modal_x + modal_width - modal_padding - close_btn_size;
+    //
+    // They hang off where the shell put the ✕ rather than re-deriving it.
     if !is_indicator_search {
         let toggle_gap = 10.0;
-        let mut toggle_right_edge = close_x - toggle_gap;
+        let mut toggle_right_edge = result.close_btn_rect.x - toggle_gap;
         toggle_right_edge = draw_header_toggle(
             ctx, input_coordinator, &layer_id,
             toggle_right_edge, modal_y, header_height,
@@ -132,30 +143,6 @@ pub fn render_search_overlay(
             "modal_search:toggle_quick", toolbar_theme,
         );
     }
-
-    let close_y = modal_y + (header_height - close_btn_size) / 2.0;
-
-    draw_svg_icon(
-        ctx,
-        Icon::Close.svg(),
-        close_x + 2.0, close_y + 2.0,
-        close_btn_size - 4.0, close_btn_size - 4.0,
-        &toolbar_theme.item_text,
-    );
-    result.close_btn_rect = WidgetRect::new(close_x, close_y, close_btn_size, close_btn_size);
-
-    input_coordinator.register_on_layer(
-        "modal_search:close",
-        uzor::types::Rect::new(close_x, close_y, close_btn_size, close_btn_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_height);
-    ctx.line_to(modal_x + modal_width, modal_y + header_height);
-    ctx.stroke();
 
     // Left sidebar (indicator category filters)
     let content_x = modal_x + sidebar_width;
@@ -463,7 +450,7 @@ pub fn render_search_overlay(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
     result
 }
 
@@ -479,6 +466,19 @@ pub fn render_search_overlay(
 /// (`crate::ui::dropdown`'s `DropdownItem::Item::toggle` rendering) scaled
 /// down to fit the header's `header_height`.
 #[allow(clippy::too_many_arguments)]
+/// What a header toggle occupies, label included. Same measurement
+/// `draw_header_toggle` makes, asked before the frame width is chosen — the
+/// header cannot fit what nothing measured, and this one did not: the title
+/// and the "Quick search" label overlapped by several pixels at every window
+/// size, because the width came from the screen and the toggles were laid out
+/// from the ✕ leftwards until they ran into whatever was there.
+fn header_toggle_width(ctx: &mut dyn RenderContext, label: &str) -> f64 {
+    const TRACK_W: f64 = 28.0;
+    const LABEL_GAP: f64 = 6.0;
+    ctx.set_font("11px sans-serif");
+    ctx.measure_text(label) + LABEL_GAP + TRACK_W
+}
+
 fn draw_header_toggle(
     ctx: &mut dyn RenderContext,
     input_coordinator: &mut uzor::input::InputCoordinator,

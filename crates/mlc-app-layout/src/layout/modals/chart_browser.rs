@@ -9,12 +9,13 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::ChartBrowserState;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use mlc_core::PresetSummary;
 use mlc_core::i18n::{ModalKey, t_modal};
@@ -79,20 +80,11 @@ pub fn render_chart_browser(
     let padding = 16.0;
     let input_h = 28.0;
     let item_h = 52.0;
-    let icon_size = 18.0;
     let icon_btn_size = 24.0;
 
-    // --- Position (draggable, centered by default) ---
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        ((screen_w - modal_w) / 2.0, (screen_h - modal_h) / 2.0)
-    });
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_w);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_h);
-
-    let modal_rect = WidgetRect::new(modal_x, modal_y, modal_w, modal_h);
-    result.modal_rect = modal_rect;
-
-    // --- Modal frame (blur + background + border) ---
+    // A list, not a settings surface: the shell brings the frame, the header
+    // and the ✕, and the body below is untouched. It has a fixed height, so
+    // `max_content_height` matches what it asks for and nothing overflows.
     let modal_theme = ModalTheme::from_frame_theme(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
@@ -100,65 +92,26 @@ pub fn render_chart_browser(
         &toolbar_theme.item_text_hover,
         &toolbar_theme.separator,
     );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
+    let body_h = modal_h - header_h;
+    let spec = ModalShellSpec {
+        // The body insets itself; the shell adds none.
+        padding: 0.0,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("chart_browser", t_modal(ModalKey::Charts), modal_w, body_h)
+            .with_footer(ModalFooter::None)
+            .with_max_content_height(body_h)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // --- InputCoordinator layer ---
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "chart_browser");
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
 
-    // Register modal background (absorbs clicks inside the modal that don't hit a widget)
-    input_coordinator.register_on_layer(
-        "chart_browser:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // ==========================================================================
-    // Header
-    // ==========================================================================
-
-    let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
-    result.header_rect = header_rect;
-    input_coordinator.register_on_layer(
-        "chart_browser:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // Header background (slightly lighter than modal bg)
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(modal_x, modal_y, modal_w, header_h);
-
-    // Title
-    ctx.set_font("bold 14px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_modal(ModalKey::Charts), modal_x + padding, modal_y + header_h / 2.0);
-
-    // Close button (X)
-    let close_x = modal_x + modal_w - icon_size - 12.0;
-    let close_y = modal_y + (header_h - icon_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, icon_size, icon_size);
-    result.close_btn_rect = close_rect;
-
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, icon_size, icon_size, &toolbar_theme.item_text);
-
-    input_coordinator.register_on_layer(
-        "chart_browser:close",
-        uzor::types::Rect::new(close_x, close_y, icon_size, icon_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_h);
-    ctx.line_to(modal_x + modal_w, modal_y + header_h);
-    ctx.stroke();
+    // The body's arithmetic is unchanged — it reads the frame the shell
+    // settled on instead of computing its own.
+    let (modal_x, modal_y) = (shell.frame.x, shell.frame.y);
+    let (modal_w, modal_h) = (shell.frame.width, shell.frame.height);
 
     // ==========================================================================
     // Search row
@@ -490,7 +443,14 @@ pub fn render_chart_browser(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(
+        ctx,
+        input_coordinator,
+        &spec,
+        &modal_theme,
+        &shell,
+        &layer_id,
+    );
     result
 }
 
