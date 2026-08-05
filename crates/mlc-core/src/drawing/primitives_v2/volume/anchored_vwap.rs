@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
-    PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
+    PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
 };
 
@@ -63,11 +63,58 @@ impl Primitive for AnchoredVwap {
         }
     }
 
-    fn hit_test(&self, sx: f64, _sy: f64, bars: &[Bar], vp: &Viewport, _ps: &PriceScale) -> HitTestResult {
+    /// The anchor, then the VWAP curve itself.
+    ///
+    /// It used to be the anchor alone: the curve — the thing the primitive IS
+    /// — could not be clicked anywhere along its length. The accumulation is
+    /// run only as far as the bar under the cursor, so this stays one pass
+    /// over the bars left of `sx` rather than a full curve build per mouse
+    /// move.
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let b = timestamp_ms_to_bar_f64(bars, self.anchor_ts);
         let x = vp.bar_to_x_f64(b);
         if (sx - x).abs() < 20.0 {
             return HitTestResult::ControlPoint(ControlPointType::Point1);
+        }
+        if sx < x || bars.is_empty() {
+            return HitTestResult::Miss;
+        }
+        let anchor_idx = {
+            let anchor_sec = self.anchor_ts / 1000;
+            match bars.binary_search_by_key(&anchor_sec, |b| b.timestamp) {
+                Ok(i) => i,
+                Err(i) => i.min(bars.len().saturating_sub(1)),
+            }
+        };
+        // Which bar the cursor is over.
+        let hover = vp.x_to_bar_f64(sx).round();
+        if !hover.is_finite() || hover < anchor_idx as f64 {
+            return HitTestResult::Miss;
+        }
+        let hover_idx = (hover as usize).min(bars.len() - 1);
+        if hover_idx < anchor_idx {
+            return HitTestResult::Miss;
+        }
+
+        let (mut cum_vp, mut cum_v, mut cum_vp2) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for b in &bars[anchor_idx..=hover_idx] {
+            let typical = (b.high + b.low + b.close) / 3.0;
+            let v = b.volume.max(0.0);
+            cum_vp += v * typical;
+            cum_v += v;
+            cum_vp2 += v * typical * typical;
+        }
+        if cum_v <= 0.0 {
+            return HitTestResult::Miss;
+        }
+        let vwap = cum_vp / cum_v;
+        let stddev = ((cum_vp2 / cum_v) - vwap * vwap).max(0.0).sqrt();
+
+        let y_of = |price: f64| vp.price_to_y(price, ps.price_min, ps.price_max);
+        for price in [vwap, vwap + stddev, vwap - stddev, vwap + 2.0 * stddev, vwap - 2.0 * stddev] {
+            if (sy - y_of(price)).abs() < HIT_TOLERANCE {
+                return HitTestResult::Body;
+            }
         }
         HitTestResult::Miss
     }

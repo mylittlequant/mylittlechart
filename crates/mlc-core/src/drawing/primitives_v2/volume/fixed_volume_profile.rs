@@ -50,13 +50,29 @@ impl Primitive for FixedVolumeProfile {
             _ => {}
         }
     }
-    fn hit_test(&self, sx: f64, _sy: f64, bars: &[Bar], vp: &Viewport, _ps: &PriceScale) -> HitTestResult {
+    /// The two boundaries, then the histogram's own area.
+    ///
+    /// It used to claim every pixel between the boundaries at ANY price — the
+    /// whole column of the chart, candles included. A profile occupies the
+    /// price band its bars cover, and nothing above or below it.
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts1));
         let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts2));
         if (sx - x1).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
-        if sx >= min_x && sx <= max_x { return HitTestResult::Body; }
+        if sx < min_x || sx > max_x { return HitTestResult::Miss; }
+        // Vertical boundaries are lines and are grabbable over their full run.
+        if (sx - min_x).abs() < HIT_TOLERANCE || (sx - max_x).abs() < HIT_TOLERANCE {
+            return HitTestResult::Body;
+        }
+        let window = super::profile_render::bars_in_window(bars, self.ts1, self.ts2);
+        let Some((lo, hi)) = super::profile_render::price_span(window) else { return HitTestResult::Miss };
+        let y_lo = vp.price_to_y(hi, ps.price_min, ps.price_max);
+        let y_hi = vp.price_to_y(lo, ps.price_min, ps.price_max);
+        if sy >= y_lo - HIT_TOLERANCE && sy <= y_hi + HIT_TOLERANCE {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -88,56 +104,17 @@ impl Primitive for FixedVolumeProfile {
         ctx.line_to(crisp(max_x, dpr), chart_height);
         ctx.stroke();
 
-        // Draw volume histogram (placeholder - would need actual volume data)
-        let row_height = chart_height / self.rows as f64;
-        let profile_width = (max_x - min_x) * 0.3;
-
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_global_alpha(0.5);
-
-        for i in 0..self.rows {
-            let y = i as f64 * row_height;
-            let volume_pct = ((i as f64 - self.rows as f64 / 2.0).abs() / (self.rows as f64 / 2.0)).min(1.0);
-            let bar_width = profile_width * (1.0 - volume_pct);
-
-            ctx.begin_path();
-            ctx.rect(max_x, y, bar_width, row_height);
-            ctx.fill();
-        }
-
-        ctx.set_global_alpha(1.0);
-
-        if self.show_poc {
-            let poc_y = chart_height / 2.0;
-            ctx.set_stroke_color("#FFEB3B");
-            ctx.set_stroke_width(2.0 * dpr);
-            ctx.begin_path();
-            ctx.move_to(crisp(min_x, dpr), crisp(poc_y, dpr));
-            ctx.line_to(crisp(max_x, dpr), crisp(poc_y, dpr));
-            ctx.stroke();
-        }
-
-        if self.show_value_area {
-            let va_top = chart_height * 0.35;
-            let va_bottom = chart_height * 0.65;
-            ctx.set_stroke_color(&self.data.color.stroke);
-            ctx.set_global_alpha(0.3);
-            ctx.set_stroke_width(1.0 * dpr);
-            ctx.set_line_dash(&[5.0 * dpr, 3.0 * dpr]);
-
-            ctx.begin_path();
-            ctx.move_to(crisp(min_x, dpr), crisp(va_top, dpr));
-            ctx.line_to(crisp(max_x, dpr), crisp(va_top, dpr));
-            ctx.stroke();
-
-            ctx.begin_path();
-            ctx.move_to(crisp(min_x, dpr), crisp(va_bottom, dpr));
-            ctx.line_to(crisp(max_x, dpr), crisp(va_bottom, dpr));
-            ctx.stroke();
-
-            ctx.set_global_alpha(1.0);
-            ctx.set_line_dash(&[]);
-        }
+        // The real profile over the bars this range covers, growing rightward
+        // from the LEFT boundary — the direction a fixed-range profile is read
+        // in, and the direction the chart's own overlay grows in.
+        let window = super::profile_render::bars_in_window(ctx.bars(), self.ts1, self.ts2);
+        let Some(vp) = super::profile_render::profile_for(window, self.rows) else { return };
+        let geom = super::profile_render::ProfileGeometry {
+            origin_x: min_x,
+            max_width: max_x - min_x,
+            span: (min_x, max_x),
+        };
+        super::profile_render::draw_profile(ctx, &vp, &geom, self.show_poc, self.show_value_area);
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {

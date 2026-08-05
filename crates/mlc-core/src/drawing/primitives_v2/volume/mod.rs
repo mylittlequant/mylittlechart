@@ -1,5 +1,7 @@
 //! Volume module - volume analysis tools
 
+mod profile_render;
+
 pub mod fixed_volume_profile;
 pub mod anchored_volume_profile;
 pub mod anchored_vwap;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
-    PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
+    PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
 };
 
@@ -40,10 +40,24 @@ impl Primitive for AnchoredVolumeProfile {
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, _price: f64) {
         if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) { self.anchor_ts = ts_ms; }
     }
-    fn hit_test(&self, sx: f64, _sy: f64, bars: &[Bar], vp: &Viewport, _ps: &PriceScale) -> HitTestResult {
+    /// The anchor, then the histogram's own area — it used to be the anchor
+    /// alone, so the profile itself could not be clicked at all.
+    fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let b = timestamp_ms_to_bar_f64(bars, self.anchor_ts);
         let x = vp.bar_to_x_f64(b);
         if (sx - x).abs() < 20.0 { return HitTestResult::ControlPoint(ControlPointType::Point1); }
+        if sx < x { return HitTestResult::Miss; }
+        let last_ts_ms = bars.last().map(|b| b.timestamp * 1000).unwrap_or(self.anchor_ts);
+        let window = super::profile_render::bars_in_window(bars, self.anchor_ts, last_ts_ms);
+        let Some((lo, hi)) = super::profile_render::price_span(window) else { return HitTestResult::Miss };
+        // The histogram grows rightward over 40 % of the space past the anchor.
+        let reach = x + (vp.chart_width - x) * 0.4;
+        if sx > reach { return HitTestResult::Miss; }
+        let y_lo = vp.price_to_y(hi, ps.price_min, ps.price_max);
+        let y_hi = vp.price_to_y(lo, ps.price_min, ps.price_max);
+        if sy >= y_lo - HIT_TOLERANCE && sy <= y_hi + HIT_TOLERANCE {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -68,34 +82,21 @@ impl Primitive for AnchoredVolumeProfile {
         ctx.line_to(crisp(x, dpr), chart_height);
         ctx.stroke();
 
-        // Draw volume histogram from anchor to right edge
-        let row_height = chart_height / self.rows as f64;
+        // The real profile over every bar from the anchor onward, growing
+        // rightward from the anchor line.
+        let last_ts_ms = ctx.bars().last().map(|b| b.timestamp * 1000).unwrap_or(self.anchor_ts);
+        let window = super::profile_render::bars_in_window(ctx.bars(), self.anchor_ts, last_ts_ms);
         let max_profile_width = (chart_width - x) * 0.4;
-
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_global_alpha(0.5);
-
-        for i in 0..self.rows {
-            let y = i as f64 * row_height;
-            let volume_pct = ((i as f64 - self.rows as f64 / 2.0).abs() / (self.rows as f64 / 2.0)).min(1.0);
-            let bar_width = max_profile_width * (1.0 - volume_pct);
-
-            ctx.begin_path();
-            ctx.rect(x, y, bar_width, row_height);
-            ctx.fill();
-        }
-
-        ctx.set_global_alpha(1.0);
-
-        if self.show_poc {
-            let poc_y = chart_height / 2.0;
-            let poc_x_end = x + max_profile_width;
-            ctx.set_stroke_color("#FFEB3B");
-            ctx.set_stroke_width(2.0 * dpr);
-            ctx.begin_path();
-            ctx.move_to(crisp(x, dpr), crisp(poc_y, dpr));
-            ctx.line_to(crisp(poc_x_end, dpr), crisp(poc_y, dpr));
-            ctx.stroke();
+        if let Some(vp) = super::profile_render::profile_for(window, self.rows) {
+            let geom = super::profile_render::ProfileGeometry {
+                origin_x: x,
+                max_width: max_profile_width,
+                span: (x, chart_width),
+            };
+            // An anchored profile has no far boundary to hang a value area on,
+            // so it shows POC only — the same choice the anchored form has
+            // always carried in its config.
+            super::profile_render::draw_profile(ctx, &vp, &geom, self.show_poc, false);
         }
 
         // Draw anchor marker
