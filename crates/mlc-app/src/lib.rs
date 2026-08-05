@@ -1280,6 +1280,62 @@ pub enum TemplateAction {
     RemoveIndicatorSet { id: String },
 }
 
+impl ChartApp {
+    /// Apply everything the UI queued onto the shared template store and empty
+    /// the queue. Returns whether anything was applied, which is the only part
+    /// a shell has an opinion about — the native one uses it to mark the store
+    /// dirty for its disk writer.
+    ///
+    /// This lives on `ChartApp`, not in a shell, because `ChartApp` already
+    /// holds the same `Arc<BackendCore>` the actions are destined for. It used
+    /// to be a ten-arm match inside the native shell's frame loop and nowhere
+    /// else, so every template saved in the browser was queued and silently
+    /// dropped — the queue grew for the life of the tab and nothing ever read
+    /// it. One implementation, called by both shells, is the shape that cannot
+    /// go missing from one of them again.
+    pub fn drain_template_actions(&mut self) -> bool {
+        if self.template_actions.is_empty() {
+            return false;
+        }
+        for action in self.template_actions.drain(..) {
+            let mut templates = self.core.templates_mut();
+            match action {
+                TemplateAction::AddPrimitive(t) => {
+                    let _ = templates.add_primitive_template(t);
+                }
+                TemplateAction::RemovePrimitive { id } => {
+                    let _ = templates.remove_primitive_template(&id);
+                }
+                TemplateAction::AddIndicator(t) => {
+                    let _ = templates.add_indicator_template(t);
+                }
+                TemplateAction::RemoveIndicator { id } => {
+                    let _ = templates.remove_indicator_template(&id);
+                }
+                TemplateAction::AddCompare(t) => {
+                    let _ = templates.add_compare_template(t);
+                }
+                TemplateAction::RemoveCompare { id } => {
+                    let _ = templates.remove_compare_template(&id);
+                }
+                TemplateAction::AddChart(t) => {
+                    let _ = templates.add_chart_template(t);
+                }
+                TemplateAction::RemoveChart { id } => {
+                    let _ = templates.remove_chart_template(&id);
+                }
+                TemplateAction::AddIndicatorSet(s) => {
+                    let _ = templates.add_indicator_set(s);
+                }
+                TemplateAction::RemoveIndicatorSet { id } => {
+                    let _ = templates.remove_indicator_set(&id);
+                }
+            }
+        }
+        true
+    }
+}
+
 /// An action that changes a performance control setting.
 /// Queued by the Performance panel, drained and applied by App.
 #[derive(Debug, Clone)]

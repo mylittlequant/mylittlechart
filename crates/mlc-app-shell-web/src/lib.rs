@@ -511,6 +511,14 @@ fn run_render_loop(
             // nobody consumes — symbols never reach the watchlist and the
             // mini-ticker subscription never starts.
             st.chart.drain_watchlist_actions();
+            // Same parity gap, same class: "Save as..." in any of the four
+            // template menus queues a TemplateAction, and until this call the
+            // only drain lived in the native shell's frame loop. On the web
+            // build the queue grew for the life of the tab and every template
+            // the user saved was dropped — the menu went on saying "(no
+            // templates)". The apply itself belongs to ChartApp; the shell
+            // only has to ask for it.
+            st.chart.drain_template_actions();
         }
 
         // ── Drain deferred cold-preset apply ─────────────────────────────────

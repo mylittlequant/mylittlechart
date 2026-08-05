@@ -2624,40 +2624,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         }
 
         // ── Drain template actions from all windows → shared core ───────
+        // The apply lives on ChartApp; the shell's only share of it is the
+        // disk flag.
         for (_wid, pw) in self.windows.iter_mut() {
-            for action in pw.chart.template_actions.drain(..) {
-                match action {
-                    mlc_app::TemplateAction::AddPrimitive(tmpl) => {
-                        let _ = self.core.templates_mut().add_primitive_template(tmpl);
-                    }
-                    mlc_app::TemplateAction::RemovePrimitive { id } => {
-                        let _ = self.core.templates_mut().remove_primitive_template(&id);
-                    }
-                    mlc_app::TemplateAction::AddIndicator(tmpl) => {
-                        let _ = self.core.templates_mut().add_indicator_template(tmpl);
-                    }
-                    mlc_app::TemplateAction::RemoveIndicator { id } => {
-                        let _ = self.core.templates_mut().remove_indicator_template(&id);
-                    }
-                    mlc_app::TemplateAction::AddCompare(tmpl) => {
-                        let _ = self.core.templates_mut().add_compare_template(tmpl);
-                    }
-                    mlc_app::TemplateAction::RemoveCompare { id } => {
-                        let _ = self.core.templates_mut().remove_compare_template(&id);
-                    }
-                    mlc_app::TemplateAction::AddChart(tmpl) => {
-                        let _ = self.core.templates_mut().add_chart_template(tmpl);
-                    }
-                    mlc_app::TemplateAction::RemoveChart { id } => {
-                        let _ = self.core.templates_mut().remove_chart_template(&id);
-                    }
-                    mlc_app::TemplateAction::AddIndicatorSet(set) => {
-                        let _ = self.core.templates_mut().add_indicator_set(set);
-                    }
-                    mlc_app::TemplateAction::RemoveIndicatorSet { id } => {
-                        let _ = self.core.templates_mut().remove_indicator_set(&id);
-                    }
-                }
+            if pw.chart.drain_template_actions() {
                 self.templates_disk_dirty = true;
             }
         }
