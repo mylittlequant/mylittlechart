@@ -8834,7 +8834,7 @@ impl ChartApp {
     /// sidebar itself keeps its real width; only this derived layout input
     /// changes. Single source for both `render_modal_layer`'s
     /// `ChartModalLayout` and the search overlay's `ChartScreenArea` — they
-    /// both consume `content_rect`/`modal_right_edge`, which are derived from
+    /// both consume `content_rect`, which is derived from
     /// this one value, so there is nothing to fork per-modal.
     fn effective_modal_sidebar_w(&self) -> f64 {
         use mlc_app_sidebar_content::state::RightSidebarPanel;
@@ -8883,14 +8883,20 @@ impl ChartApp {
             r.width = (r.width - sidebar_w).max(0.0);
             r
         };
-        // Kept for the centered search overlay (its layout still fits the
-        // content area); draggable modals below do NOT use it.
-        let modal_right_edge = content_rect.x + content_rect.width;
         // Draggable modals move freely across the WHOLE window (owner rule
-        // 2026-07-31). The old `modal_right_edge` guard (content edge minus
-        // the data sidebar) is a relic: with a wide sidebar open it pushed
-        // the clamp limit NEGATIVE and shoved modals off the left screen
-        // edge. Modals may overlap the sidebar.
+        // 2026-07-31) and are SIZED from it too. The old guard — the
+        // content edge minus the data sidebar — is a relic: with a wide
+        // sidebar open it pushed the clamp limit NEGATIVE and shoved
+        // modals off the left screen edge. Modals may overlap it.
+        //
+        // Three still drank from it after the rule landed, because the
+        // comment here carved out an exception for "the centered search
+        // overlay" that stopped being true once that overlay became
+        // draggable: search, the watchlist modal and the watchlist
+        // group-name prompt. It cost them more than position — the
+        // watchlist sizes itself as a FRACTION of what it is handed, so
+        // with the data sidebar open it collapsed to its 380px floor and
+        // its eight columns overlapped each other.
         let modal_layout = ChartModalLayout {
             prim_screen_w: w,
             prim_screen_h: h,
@@ -9091,7 +9097,7 @@ impl ChartApp {
         // 5b. Search overlay (indicator / symbol / compare)
         let search_modal_result: Option<mlc_app_layout::layout::ModalSearchResult> =
             if self.modal_state.current.is_search_overlay() {
-                let screen = ChartScreenArea { x: 0.0, y: 0.0, width: modal_right_edge, height: h };
+                let screen = ChartScreenArea { x: 0.0, y: 0.0, width: w, height: h };
                 let indicator_catalog = self.build_indicator_catalog();
                 let hovered = self.modal_state.hovered_item_id.as_deref();
                 let toolbar_theme_search = self.panel_app.toolbar_theme_for_render();
@@ -9233,7 +9239,7 @@ impl ChartApp {
                 drop(wl_guard);
                 Some(render_watchlist_modal(
                     ctx,
-                    modal_right_edge,
+                    w,
                     h,
                     &self.standalone_panels.watchlist_modal,
                     &entries,
@@ -9252,7 +9258,7 @@ impl ChartApp {
             if self.standalone_panels.wl_group_name_input.is_open() {
                 Some(render_wl_group_name_input(
                     ctx,
-                    modal_right_edge,
+                    w,
                     h,
                     &self.standalone_panels.wl_group_name_input,
                     &frame_theme,
