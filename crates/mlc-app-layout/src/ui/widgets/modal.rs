@@ -663,7 +663,7 @@ pub fn end_modal_shell(
         draw_footer(ctx, coord, layer_id, spec, f, theme);
     }
     if spec.resizable {
-        draw_resize_grips(ctx, shell.frame, theme);
+        draw_resize_grips(ctx, coord, layer_id, spec.ns, shell.frame, theme);
     }
     coord.pop_layer(layer_id);
 }
@@ -684,6 +684,37 @@ pub enum ResizeEdge {
 }
 
 impl ResizeEdge {
+    /// The suffix this edge carries in a widget id (`{ns}:resize:{id}`), and
+    /// the string `from_id` reads back. One table, so a rename cannot make the
+    /// two disagree.
+    pub fn id(self) -> &'static str {
+        match self {
+            ResizeEdge::Left => "l",
+            ResizeEdge::Right => "r",
+            ResizeEdge::Top => "t",
+            ResizeEdge::Bottom => "b",
+            ResizeEdge::TopLeft => "tl",
+            ResizeEdge::TopRight => "tr",
+            ResizeEdge::BottomLeft => "bl",
+            ResizeEdge::BottomRight => "br",
+        }
+    }
+
+    /// Read an edge back out of a widget id suffix.
+    pub fn from_id(s: &str) -> Option<Self> {
+        Some(match s {
+            "l" => ResizeEdge::Left,
+            "r" => ResizeEdge::Right,
+            "t" => ResizeEdge::Top,
+            "b" => ResizeEdge::Bottom,
+            "tl" => ResizeEdge::TopLeft,
+            "tr" => ResizeEdge::TopRight,
+            "bl" => ResizeEdge::BottomLeft,
+            "br" => ResizeEdge::BottomRight,
+            _ => return None,
+        })
+    }
+
     fn pulls_left(self) -> bool {
         matches!(self, ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft)
     }
@@ -946,19 +977,39 @@ fn draw_footer(
     coord.register_on_layer(id.as_str(), r, Sense::CLICK | Sense::HOVER, layer);
 }
 
-/// The corner hint: three short diagonals saying the frame can be dragged.
+/// The grab zones, plus the corner hint that says the frame can be dragged.
 ///
-/// The GRAB ZONES are not registered here. Widgets registered on a modal layer
-/// after the body do reach the hit test for clicks — the footer proves it —
-/// but a DRAG started on one never arrived, while the header drag registered
-/// by `begin_modal_shell` did. Rather than keep guessing at the coordinator,
-/// the input side hit-tests the edges against the frame rect the modal already
-/// reports in its result, which is the same geometry drawn here.
+/// Registered LAST on the modal layer, which is what makes them win: the
+/// coordinator walks a layer's widgets in reverse registration order, so the
+/// zones outrank the body rows and the footer they overlap.
+///
+/// Five zones, not eight — the top edge is the header's, and a strip there
+/// would steal the drag that MOVES the modal, so `Top`, `TopLeft` and
+/// `TopRight` are never handed out. They stay as `ResizeEdge` variants because
+/// `apply` is the general rule and a caller may drive them another way.
+///
+/// The zones straddle the frame edge (half outside) so the pointer catches
+/// them coming from either side, and they carry HOVER as well as DRAG so a
+/// caller can light one up. A previous attempt registered DRAG alone and read
+/// `is_hovered` to check whether the zone was live — it answered false by
+/// construction, which is how this was misdiagnosed as a coordinator fault.
 fn draw_resize_grips(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    ns: &str,
     frame: WidgetRect,
     theme: &ModalTheme,
 ) {
+    for (edge, rect) in resize_grip_rects(frame) {
+        coord.register_on_layer(
+            format!("{ns}:resize:{}", edge.id()).as_str(),
+            rect,
+            Sense::DRAG | Sense::HOVER,
+            layer,
+        );
+    }
+
     ctx.set_stroke_color(&theme.item_text_muted);
     ctx.set_stroke_width(1.0);
     for i in 1..=3 {
@@ -968,6 +1019,38 @@ fn draw_resize_grips(
         ctx.line_to(frame.right() - 1.0, frame.bottom() - off);
         ctx.stroke();
     }
+}
+
+/// Where each grab zone sits. Edges first, corners last — the coordinator
+/// walks a layer in reverse registration order, so registering in this order
+/// puts the corners on top of the edges they overlap.
+///
+/// Each zone straddles its edge: `OUT` pixels outside the frame so the pointer
+/// catches it on the way in, and at least `RESIZE_GRIP` inside. The corners
+/// reach `CORNER` deep, which is what makes the painted hint grabbable — an
+/// earlier cut drew the hint 9px inside the frame and put the zone 3px inside,
+/// so the thing the user aims at was not the thing that answered.
+fn resize_grip_rects(frame: WidgetRect) -> Vec<(ResizeEdge, WidgetRect)> {
+    const OUT: f64 = 3.0;
+    const CORNER: f64 = 14.0;
+    let g = RESIZE_GRIP;
+    let (l, r) = (frame.x - OUT, frame.right() - g);
+    let (t, b) = (frame.y, frame.bottom() - g);
+    let (edge_w, w, h) = (g + OUT, frame.width, frame.height);
+    let corner = CORNER + OUT;
+    vec![
+        (ResizeEdge::Left, WidgetRect::new(l, t, edge_w, h)),
+        (ResizeEdge::Right, WidgetRect::new(r, t, edge_w, h)),
+        (ResizeEdge::Bottom, WidgetRect::new(frame.x, b, w, edge_w)),
+        (
+            ResizeEdge::BottomLeft,
+            WidgetRect::new(l, frame.bottom() - CORNER, corner, corner),
+        ),
+        (
+            ResizeEdge::BottomRight,
+            WidgetRect::new(frame.right() - CORNER, frame.bottom() - CORNER, corner, corner),
+        ),
+    ]
 }
 
 /// Keep an edge on screen. A surface taller than the screen is pinned to the

@@ -929,61 +929,51 @@ impl ChartApp {
 
     /// Handle drag start at `(x, y)`.
     pub fn on_drag_start(&mut self, x: f64, y: f64) -> bool {
-        // Modal resize — the right edge, the bottom edge and the corner between
-        // them, hit-tested against the frame each modal reported last frame.
+        // Modal resize. The grab zones are ordinary widgets the shell registers
+        // last on the modal layer, so the coordinator hands them over like any
+        // other drag; this runs first only because a gesture that starts on a
+        // frame edge must not be read as anything else.
         //
-        // NOT through the InputCoordinator: grips registered on the modal layer
-        // after the body never arrived as drag starts, while the header
-        // registered by the same shell a few lines earlier did. The frame rect
-        // is already in `frame_result` and is the same geometry the corner hint
-        // is drawn from, so this needs nothing the render side does not report.
+        // It used to hit-test the edges against `frame_result` instead, on the
+        // belief that a zone registered after the body never reached a drag
+        // start. It did reach it — `process_drag_start` returned the id and had
+        // already begun the drag. Nothing here accepted an id that was not a
+        // `:header`, so it fell through the match and was dropped, and the zone
+        // carried DRAG without HOVER, so the `is_hovered` probe used to confirm
+        // the theory answered false by construction.
         {
             use mlc_app_layout::ui::modal_settings::ResizableModal;
-            use mlc_app_layout::ui::widgets::{ResizeEdge, RESIZE_GRIP};
+            use mlc_app_layout::ui::widgets::ResizeEdge;
 
-            let edge_of = |r: uzor::types::Rect| -> Option<ResizeEdge> {
-                let inside_x = x >= r.x - RESIZE_GRIP && x <= r.right() + 1.0;
-                let inside_y = y >= r.y - RESIZE_GRIP && y <= r.bottom() + 1.0;
-                if !inside_x || !inside_y {
-                    return None;
-                }
-                let left = x <= r.x + RESIZE_GRIP;
-                let right = x >= r.right() - RESIZE_GRIP;
-                // The top edge is the header's — dragging there MOVES the
-                // modal, and a grab strip along it would steal that.
-                let top = false;
-                let bottom = y >= r.bottom() - RESIZE_GRIP;
-                match (left, right, top, bottom) {
-                    (true, _, true, _) => Some(ResizeEdge::TopLeft),
-                    (_, true, true, _) => Some(ResizeEdge::TopRight),
-                    (true, _, _, true) => Some(ResizeEdge::BottomLeft),
-                    (_, true, _, true) => Some(ResizeEdge::BottomRight),
-                    (true, ..) => Some(ResizeEdge::Left),
-                    (_, true, ..) => Some(ResizeEdge::Right),
-                    (_, _, true, _) => Some(ResizeEdge::Top),
-                    (_, _, _, true) => Some(ResizeEdge::Bottom),
+            let grip = self
+                .input_coordinator
+                .borrow()
+                .hit_test_now(x, y)
+                .map(|w| w.as_str().to_string())
+                .and_then(|id| {
+                    let (ns, edge) = id.split_once(":resize:")?;
+                    Some((ns.to_string(), ResizeEdge::from_id(edge)?))
+                });
+            if let Some((ns, edge)) = grip {
+                // The frame the drag starts from: the geometry as RENDERED,
+                // which the state itself does not know until it has been
+                // resized once.
+                let frame = self.frame_result.as_ref().and_then(|r| match ns.as_str() {
+                    "chart_settings" => r.chart_settings.as_ref().map(|m| m.modal_rect),
+                    "ind_settings" => r.indicator_settings.as_ref().map(|m| m.modal_rect),
                     _ => None,
-                }
-            };
-            // Only the two whose bodies are lists: a dialog of four fixed rows
-            // has nothing to gain from a bigger frame and plenty to lose.
-            let frames = self.frame_result.as_ref().map(|r| {
-                (
-                    r.chart_settings.as_ref().map(|m| m.modal_rect),
-                    r.indicator_settings.as_ref().map(|m| m.modal_rect),
-                )
-            });
-            if let Some((chart, ind)) = frames {
-                let hit = [chart, ind]
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, f)| f.and_then(edge_of).map(|e| (i, f.unwrap(), e)));
-                if let Some((which, f, edge)) = hit {
-                    let pos = (f.x, f.y);
-                    let size = (f.width, f.height);
-                    match which {
-                        0 => self.panel_app.chart_settings_state.start_resize(edge, (x, y), pos, size),
-                        _ => self.panel_app.indicator_settings_state.start_resize(edge, (x, y), pos, size),
+                });
+                if let Some(f) = frame {
+                    let (pos, size) = ((f.x, f.y), (f.width, f.height));
+                    match ns.as_str() {
+                        "chart_settings" => self
+                            .panel_app
+                            .chart_settings_state
+                            .start_resize(edge, (x, y), pos, size),
+                        _ => self
+                            .panel_app
+                            .indicator_settings_state
+                            .start_resize(edge, (x, y), pos, size),
                     }
                     // FALSE, like every modal drag below: `true` here means "a
                     // popup was dismissed, drop this press", and the shell
