@@ -169,14 +169,26 @@ impl ObjectTreeItem {
         }
     }
 
-    /// Formatted key for display: "BTCUSDT:binance:S", "BTCUSDT:binance", or "BTCUSDT".
+    /// Formatted key for display: "BTCUSDT:BINANCE:S", "BTCUSDT:BINANCE", or
+    /// "BTCUSDT".
+    ///
+    /// The venue is upper-cased here because it is stored lower-case and shown
+    /// next to a symbol and an account type that are not. Every other surface
+    /// in the app — watchlist, tapes, screener, instrument line — already
+    /// upper-cases it on the way out; this one did not, and the object tree
+    /// read "BTCUSDT:binance:S".
     pub fn key_label(&self) -> String {
         if self.exchange.is_empty() {
             self.symbol.clone()
         } else if self.account_type.is_empty() {
-            format!("{}:{}", self.symbol, self.exchange)
+            format!("{}:{}", self.symbol, self.exchange.to_uppercase())
         } else {
-            format!("{}:{}:{}", self.symbol, self.exchange, self.account_type)
+            format!(
+                "{}:{}:{}",
+                self.symbol,
+                self.exchange.to_uppercase(),
+                self.account_type
+            )
         }
     }
 

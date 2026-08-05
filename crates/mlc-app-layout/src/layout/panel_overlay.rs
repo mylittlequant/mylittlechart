@@ -172,7 +172,9 @@ pub fn render_leaf_tab(
         None => {
             let mut parts = vec![symbol.to_string()];
             if !timeframe.is_empty() { parts.push(timeframe.to_string()); }
-            if !exchange.is_empty() { parts.push(exchange.to_string()); }
+            // Upper-case: the venue is stored lower-case and sits between a
+            // symbol and an account type that are not.
+            if !exchange.is_empty() { parts.push(exchange.to_uppercase()); }
             if !account_type.is_empty() { parts.push(account_type.to_string()); }
             parts.join(" · ")
         }
