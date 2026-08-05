@@ -15,11 +15,19 @@
 /// label. There is deliberately no ceiling: a ceiling puts the empty space
 /// back, which is the complaint that started this. A user who wants a narrow
 /// control narrows the modal.
+///
+/// `width` must be the width the body may actually PAINT — inside a scrolling
+/// body that is `ScrollableContainer::content_width()`, not the viewport's.
+/// The container clips to the narrower of the two, and a control laid out to
+/// the wider one has its right end, chevron and all, sliced off at the clip.
 pub fn control_column(x: f64, width: f64, label_col: f64, min_w: f64) -> (f64, f64) {
     let cx = x + label_col;
-    let w = (x + width - cx).max(min_w);
+    let w = (x + width - cx - SCROLLBAR_GAP).max(min_w);
     (cx, w)
 }
+
+/// Breathing room between a stretched control and the scrollbar beside it.
+const SCROLLBAR_GAP: f64 = 6.0;
 
 pub mod indicator_settings;
 pub mod context_menu;

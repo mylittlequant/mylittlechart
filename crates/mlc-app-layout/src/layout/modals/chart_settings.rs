@@ -682,6 +682,10 @@ fn render_instrument_settings(
     };
     let scrollable = ScrollableContainer::new(viewport_rect, &chart_settings_state.scroll, Some(scroll_config));
     scrollable.begin(ctx);
+    // From here on `width` is what may be PAINTED: the container clips to its
+    // own content width, and a row laid out to the viewport loses its right
+    // end — chevron included — at that clip.
+    let width = scrollable.content_width();
 
     let content_start_y = scrollable.content_y();
 
@@ -2016,6 +2020,8 @@ fn render_scales_settings(
     };
     let scrollable = ScrollableContainer::new(viewport_rect, &chart_settings_state.scroll, Some(scroll_config));
     scrollable.begin(ctx);
+    // Paintable width, not the viewport's — see `control_column`.
+    let content_width = scrollable.content_width();
 
     let scroll_offset = scrollable.scroll_offset();
 
@@ -2432,6 +2438,8 @@ fn render_status_line_settings(
     };
     let scrollable = ScrollableContainer::new(viewport_rect, &chart_settings_state.scroll, Some(scroll_config));
     scrollable.begin(ctx);
+    // Paintable width, not the viewport's — see `control_column`.
+    let width = scrollable.content_width();
 
     let content_start_y = scrollable.content_y();
     let label_x = x + label_x_offset;

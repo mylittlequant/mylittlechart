@@ -224,7 +224,9 @@ pub fn render_indicator_settings_modal(
                 // right edge, so widening the modal widens the field.
                 let (input_x, control_w) = control_column(
                     content_x + content_padding,
-                    content_width - content_padding * 2.0,
+                    // What the container will actually paint, minus the body's
+                    // own right inset.
+                    scrollable.content_width() - content_padding * 2.0,
                     150.0,
                     80.0,
                 );
