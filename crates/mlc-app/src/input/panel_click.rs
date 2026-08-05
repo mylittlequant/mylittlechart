@@ -2847,14 +2847,22 @@ impl ChartApp {
             }
             return;
         }
-        // --- Compare settings / alert / lock — intentionally inert ---
-        // Compare series do not carry per-series settings, alerts or lock state
-        // the way drawings / indicators do (the line is a derived overlay on
-        // top of the host chart's bars, not a first-class object).  The
-        // sidebar renderer should grey these icons out for compare rows; we
-        // still swallow the click here so no other handler picks it up.
-        if widget_id.contains("_cmp_settings_") || widget_id.starts_with("cmp_settings_")
-            || widget_id.contains("_cmp_alert_") || widget_id.starts_with("cmp_alert_")
+        // --- Compare settings — the same dialog the legend's gear opens ---
+        // It was inert here, greyed out and swallowed, on the claim that a
+        // compare series carries no per-series settings. It carries colour,
+        // line width, line style, chart type and per-timeframe visibility, and
+        // the dialog for them already existed one surface away.
+        if widget_id.contains("_cmp_settings_") || widget_id.starts_with("cmp_settings_") {
+            if let Some(idx) = widget_id.rsplit('_').next().and_then(|s| s.parse::<usize>().ok()) {
+                self.open_compare_settings(idx);
+            }
+            return;
+        }
+        // --- Compare alert / lock — genuinely inert ---
+        // A compare line has no bar source the chart owns, so an alert cannot
+        // bind to it, and it has no geometry to lock. Swallowed so no other
+        // handler picks the click up.
+        if widget_id.contains("_cmp_alert_") || widget_id.starts_with("cmp_alert_")
             || widget_id.contains("_cmp_lock_") || widget_id.starts_with("cmp_lock_")
         {
             return;

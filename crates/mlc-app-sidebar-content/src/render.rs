@@ -2933,21 +2933,14 @@ fn render_object_tree_items(
                     let delete_color = if del_hovered { "#ff5252" } else { row_color.as_str() };
                     draw_svg_icon(ctx, Icon::Close.svg(), del_x, icon_y, icon_size, icon_size, delete_color);
 
-                    // Settings gear.
-                    // Compare series do not carry per-series settings (the
-                    // line is a derived overlay over the host chart's bars,
-                    // not a first-class object).  Render the gear muted so it
-                    // visually signals "not actionable"; the click handler in
-                    // `panel_click.rs` swallows the event so nothing else
-                    // catches it either.
+                    // Settings gear — live on every row, compare included. It
+                    // was muted for compare series on the claim that they carry
+                    // no per-series settings; they carry colour, width, style,
+                    // chart type and per-timeframe visibility, and the dialog
+                    // was already reachable from the chart legend.
                     let is_compare = item.category == ObjectCategory::Compare;
                     result.settings_button_rects.push((set_id, settings_rect));
-                    let settings_color = if is_compare {
-                        theme.item_text_hidden.as_str()
-                    } else {
-                        row_color.as_str()
-                    };
-                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, settings_color);
+                    draw_svg_icon(ctx, Icon::Settings.svg(), set_x, icon_y, icon_size, icon_size, row_color.as_str());
 
                     // Alert bell — accent colour when an alert is bound, row color otherwise.
                     // Compare series cannot bind alerts (the bar source isn't

@@ -5,6 +5,49 @@ use crate::ChartApp;
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 
 impl ChartApp {
+    /// Open the settings dialog for the compare series at `idx`.
+    ///
+    /// One entry point, because there are two surfaces that ask for it: the
+    /// chart legend and the object tree. The tree's gear used to be greyed out
+    /// and its click swallowed on the belief that a compare series carries no
+    /// per-series settings — while the dialog it would have opened had been
+    /// there the whole time, reachable from the legend, with colour, width,
+    /// style, chart type and per-timeframe visibility in it.
+    pub(crate) fn open_compare_settings(&mut self, idx: usize) {
+        let opened = self
+            .panel_app
+            .panel_grid
+            .active_container()
+            .and_then(|w| w.compare_overlay.series.get(idx))
+            .map(|series| {
+                (
+                    series.symbol.clone(),
+                    series.name.clone(),
+                    series.color.clone(),
+                    series.line_width,
+                    series.line_style.clone(),
+                    series.chart_type.clone(),
+                    series.visible,
+                    series.bars.len(),
+                    series.base_price,
+                    series.timeframe_visibility.clone(),
+                )
+            });
+        let Some((symbol, name, color, width, style, chart_type, visible, bars, base, tf_vis)) =
+            opened
+        else {
+            return;
+        };
+        self.panel_app.compare_settings_state.open(
+            idx, &symbol, &name, &color, width, &style, &chart_type, visible, bars, base, tf_vis,
+        );
+        self.panel_app.compare_settings_state.pin_initial_position(
+            self.content_rect.width,
+            self.content_rect.height,
+        );
+        eprintln!("[ChartApp] compare settings opened: idx={idx}");
+    }
+
     /// After a CVD indicator instance was just added to `bid` (created on
     /// `chart_id`'s window), install the client-side CVD companion fold
     /// (`BackendCore::subscribe_cvd_fold`) for the instrument — unless the
@@ -149,28 +192,7 @@ impl ChartApp {
             }
             _ if action.starts_with("settings:") => {
                 if let Ok(idx) = action["settings:".len()..].parse::<usize>() {
-                    if let Some(window) = self.panel_app.panel_grid.active_container() {
-                        if let Some(series) = window.compare_overlay.series.get(idx) {
-                            self.panel_app.compare_settings_state.open(
-                                idx,
-                                &series.symbol.clone(),
-                                &series.name.clone(),
-                                &series.color.clone(),
-                                series.line_width,
-                                &series.line_style.clone(),
-                                &series.chart_type.clone(),
-                                series.visible,
-                                series.bars.len(),
-                                series.base_price,
-                                series.timeframe_visibility.clone(),
-                            );
-                            self.panel_app.compare_settings_state.pin_initial_position(
-                                self.content_rect.width,
-                                self.content_rect.height,
-                            );
-                            eprintln!("[ChartApp] cmp_overlay settings opened: idx={}", idx);
-                        }
-                    }
+                    self.open_compare_settings(idx);
                 }
             }
             _ if action.starts_with("alert:") => {
