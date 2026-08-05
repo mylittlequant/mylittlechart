@@ -43,7 +43,14 @@ pub struct PrimitiveMetadata {
 pub struct PrimitiveRegistry {
     primitives: HashMap<&'static str, PrimitiveMetadata>,
     by_kind: HashMap<PrimitiveKind, Vec<&'static str>>,
+    /// How to rebuild each type from the JSON it wrote. Filled by
+    /// [`PrimitiveRegistry::register_typed`], which is the only registration
+    /// that knows the concrete type — see [`PrimitiveRegistry::from_json`].
+    deserializers: HashMap<&'static str, DeserializeFn>,
 }
+
+/// Rebuild one primitive from its own `to_json` output.
+type DeserializeFn = fn(&str) -> Option<Box<dyn Primitive>>;
 
 impl PrimitiveRegistry {
     /// Create a new empty registry
@@ -51,6 +58,7 @@ impl PrimitiveRegistry {
         Self {
             primitives: HashMap::new(),
             by_kind: HashMap::new(),
+            deserializers: HashMap::new(),
         }
     }
 
@@ -75,6 +83,24 @@ impl PrimitiveRegistry {
             .entry(kind)
             .or_default()
             .push(type_id);
+    }
+
+    /// Register a primitive type together with the way to read it back.
+    ///
+    /// This is what [`register`](Self::register) cannot do: it takes an
+    /// already-erased `PrimitiveMetadata`, so nothing at that point knows the
+    /// concrete type and `from_json` had to carry a hand-written match arm.
+    /// It carried five, out of 121 registered types.
+    pub fn register_typed<T>(&mut self, metadata: PrimitiveMetadata)
+    where
+        T: Primitive + serde::de::DeserializeOwned + 'static,
+    {
+        self.deserializers.insert(metadata.type_id, |json| {
+            serde_json::from_str::<T>(json)
+                .ok()
+                .map(|p| Box::new(p) as Box<dyn Primitive>)
+        });
+        self.register(metadata);
     }
 
     /// Get metadata for a primitive type
@@ -135,185 +161,164 @@ impl PrimitiveRegistry {
         self.primitives.get(type_id).map(|m| m.has_points_config).unwrap_or(false)
     }
 
-    /// Create a primitive from JSON (for undo/redo)
-    /// Note: This only supports primitives that implement serde
+    /// Rebuild a primitive from the JSON it wrote.
+    ///
+    /// This is the hydration path — a type that answers `None` here is a
+    /// drawing the user loses on reload, and it is also the undo/redo path.
+    /// It used to be a hand-written match of five arms plus a fallback that
+    /// looked for a top-level `points` array; only a dozen primitives have a
+    /// field by that name, so **104 of 121 registered types did not survive a
+    /// round trip**. Every type now supplies its own reader through
+    /// [`register_typed`](Self::register_typed).
+    ///
+    /// The `points` fallback stays for a snapshot written before a type's
+    /// serde shape changed: geometry back is better than the drawing gone.
     pub fn from_json(&self, type_id: &str, json: &str) -> Option<Box<dyn Primitive>> {
-        match type_id {
-            "fib_retracement" => {
-                use super::fibonacci::retracement::FibRetracement;
-                serde_json::from_str::<FibRetracement>(json)
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn Primitive>)
-            }
-            "trend_line" => {
-                use super::lines::trend_line::TrendLine;
-                serde_json::from_str::<TrendLine>(json)
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn Primitive>)
-            }
-            "horizontal_line" => {
-                use super::lines::horizontal_line::HorizontalLine;
-                serde_json::from_str::<HorizontalLine>(json)
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn Primitive>)
-            }
-            "vertical_line" => {
-                use super::lines::vertical_line::VerticalLine;
-                serde_json::from_str::<VerticalLine>(json)
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn Primitive>)
-            }
-            "rectangle" => {
-                use super::shapes::rectangle::Rectangle;
-                serde_json::from_str::<Rectangle>(json)
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn Primitive>)
-            }
-            // For other types, fall back to re-creating from points
-            _ => {
-                // Try to extract points from JSON and recreate
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
-                    if let Some(points_arr) = value.get("points").and_then(|p| p.as_array()) {
-                        let points: Vec<(i64, f64)> = points_arr.iter()
-                            .filter_map(|p| {
-                                let arr = p.as_array()?;
-                                Some((arr.first()?.as_i64()?, arr.get(1)?.as_f64()?))
-                            })
-                            .collect();
-                        let color = value.get("data")
-                            .and_then(|d| d.get("color"))
-                            .and_then(|c| c.get("stroke"))
-                            .and_then(|s| s.as_str());
-                        return self.create(type_id, &points, color);
-                    }
-                }
-                None
+        if let Some(read) = self.deserializers.get(type_id) {
+            if let Some(p) = read(json) {
+                return Some(p);
             }
         }
+        // Legacy / shape-drift fallback: recreate from a `points` array.
+        let value = serde_json::from_str::<serde_json::Value>(json).ok()?;
+        let points_arr = value.get("points")?.as_array()?;
+        let points: Vec<(i64, f64)> = points_arr
+            .iter()
+            .filter_map(|p| {
+                let arr = p.as_array()?;
+                Some((arr.first()?.as_i64()?, arr.get(1)?.as_f64()?))
+            })
+            .collect();
+        let color = value
+            .get("data")
+            .and_then(|d| d.get("color"))
+            .and_then(|c| c.get("stroke"))
+            .and_then(|s| s.as_str());
+        self.create(type_id, &points, color)
     }
 
     /// Register all built-in primitives
     fn register_builtins(&mut self) {
         // Lines
-        self.register(super::lines::trend_line::metadata());
-        self.register(super::lines::horizontal_line::metadata());
-        self.register(super::lines::vertical_line::metadata());
-        self.register(super::lines::ray::metadata());
-        self.register(super::lines::extended_line::metadata());
-        self.register(super::lines::info_line::metadata());
-        self.register(super::lines::trend_angle::metadata());
-        self.register(super::lines::horizontal_ray::metadata());
-        self.register(super::lines::cross_line::metadata());
+        self.register_typed::<super::lines::trend_line::TrendLine>(super::lines::trend_line::metadata());
+        self.register_typed::<super::lines::horizontal_line::HorizontalLine>(super::lines::horizontal_line::metadata());
+        self.register_typed::<super::lines::vertical_line::VerticalLine>(super::lines::vertical_line::metadata());
+        self.register_typed::<super::lines::ray::Ray>(super::lines::ray::metadata());
+        self.register_typed::<super::lines::extended_line::ExtendedLine>(super::lines::extended_line::metadata());
+        self.register_typed::<super::lines::info_line::InfoLine>(super::lines::info_line::metadata());
+        self.register_typed::<super::lines::trend_angle::TrendAngle>(super::lines::trend_angle::metadata());
+        self.register_typed::<super::lines::horizontal_ray::HorizontalRay>(super::lines::horizontal_ray::metadata());
+        self.register_typed::<super::lines::cross_line::CrossLine>(super::lines::cross_line::metadata());
 
         // Channels
-        self.register(super::channels::parallel_channel::metadata());
-        self.register(super::channels::regression_trend::metadata());
-        self.register(super::channels::flat_top_bottom::metadata());
-        self.register(super::channels::disjoint_channel::metadata());
+        self.register_typed::<super::channels::parallel_channel::ParallelChannel>(super::channels::parallel_channel::metadata());
+        self.register_typed::<super::channels::regression_trend::RegressionTrend>(super::channels::regression_trend::metadata());
+        self.register_typed::<super::channels::flat_top_bottom::FlatTopBottom>(super::channels::flat_top_bottom::metadata());
+        self.register_typed::<super::channels::disjoint_channel::DisjointChannel>(super::channels::disjoint_channel::metadata());
 
         // Shapes
-        self.register(super::shapes::rectangle::metadata());
-        self.register(super::shapes::circle::metadata());
-        self.register(super::shapes::ellipse::metadata());
-        self.register(super::shapes::triangle::metadata());
-        self.register(super::shapes::arc::metadata());
-        self.register(super::shapes::polyline::metadata());
-        self.register(super::shapes::path::metadata());
-        self.register(super::shapes::rotated_rectangle::metadata());
-        self.register(super::shapes::curve::metadata());
-        self.register(super::shapes::double_curve::metadata());
+        self.register_typed::<super::shapes::rectangle::Rectangle>(super::shapes::rectangle::metadata());
+        self.register_typed::<super::shapes::circle::Circle>(super::shapes::circle::metadata());
+        self.register_typed::<super::shapes::ellipse::Ellipse>(super::shapes::ellipse::metadata());
+        self.register_typed::<super::shapes::triangle::Triangle>(super::shapes::triangle::metadata());
+        self.register_typed::<super::shapes::arc::Arc>(super::shapes::arc::metadata());
+        self.register_typed::<super::shapes::polyline::Polyline>(super::shapes::polyline::metadata());
+        self.register_typed::<super::shapes::path::Path>(super::shapes::path::metadata());
+        self.register_typed::<super::shapes::rotated_rectangle::RotatedRectangle>(super::shapes::rotated_rectangle::metadata());
+        self.register_typed::<super::shapes::curve::Curve>(super::shapes::curve::metadata());
+        self.register_typed::<super::shapes::double_curve::DoubleCurve>(super::shapes::double_curve::metadata());
 
         // Fibonacci
-        self.register(super::fibonacci::retracement::metadata());
-        self.register(super::fibonacci::trend_extension::metadata());
-        self.register(super::fibonacci::channel::metadata());
-        self.register(super::fibonacci::time_zones::metadata());
-        self.register(super::fibonacci::speed_resistance::metadata());
-        self.register(super::fibonacci::trend_time::metadata());
-        self.register(super::fibonacci::circles::metadata());
-        self.register(super::fibonacci::spiral::metadata());
-        self.register(super::fibonacci::arcs::metadata());
-        self.register(super::fibonacci::wedge::metadata());
-        self.register(super::fibonacci::fan::metadata());
+        self.register_typed::<super::fibonacci::retracement::FibRetracement>(super::fibonacci::retracement::metadata());
+        self.register_typed::<super::fibonacci::trend_extension::FibTrendExtension>(super::fibonacci::trend_extension::metadata());
+        self.register_typed::<super::fibonacci::channel::FibChannel>(super::fibonacci::channel::metadata());
+        self.register_typed::<super::fibonacci::time_zones::FibTimeZones>(super::fibonacci::time_zones::metadata());
+        self.register_typed::<super::fibonacci::speed_resistance::FibSpeedResistance>(super::fibonacci::speed_resistance::metadata());
+        self.register_typed::<super::fibonacci::trend_time::FibTrendTime>(super::fibonacci::trend_time::metadata());
+        self.register_typed::<super::fibonacci::circles::FibCircles>(super::fibonacci::circles::metadata());
+        self.register_typed::<super::fibonacci::spiral::FibSpiral>(super::fibonacci::spiral::metadata());
+        self.register_typed::<super::fibonacci::arcs::FibArcs>(super::fibonacci::arcs::metadata());
+        self.register_typed::<super::fibonacci::wedge::FibWedge>(super::fibonacci::wedge::metadata());
+        self.register_typed::<super::fibonacci::fan::FibFan>(super::fibonacci::fan::metadata());
 
         // Pitchforks
-        self.register(super::pitchforks::pitchfork::metadata());
-        self.register(super::pitchforks::schiff::metadata());
-        self.register(super::pitchforks::modified_schiff::metadata());
-        self.register(super::pitchforks::inside_pitchfork::metadata());
+        self.register_typed::<super::pitchforks::pitchfork::Pitchfork>(super::pitchforks::pitchfork::metadata());
+        self.register_typed::<super::pitchforks::schiff::SchiffPitchfork>(super::pitchforks::schiff::metadata());
+        self.register_typed::<super::pitchforks::modified_schiff::ModifiedSchiff>(super::pitchforks::modified_schiff::metadata());
+        self.register_typed::<super::pitchforks::inside_pitchfork::InsidePitchfork>(super::pitchforks::inside_pitchfork::metadata());
 
         // Gann
-        self.register(super::gann::gann_box::metadata());
-        self.register(super::gann::gann_square_fixed::metadata());
-        self.register(super::gann::gann_square::metadata());
-        self.register(super::gann::gann_fan::metadata());
+        self.register_typed::<super::gann::gann_box::GannBox>(super::gann::gann_box::metadata());
+        self.register_typed::<super::gann::gann_square_fixed::GannSquareFixed>(super::gann::gann_square_fixed::metadata());
+        self.register_typed::<super::gann::gann_square::GannSquare>(super::gann::gann_square::metadata());
+        self.register_typed::<super::gann::gann_fan::GannFan>(super::gann::gann_fan::metadata());
 
         // Arrows
-        self.register(super::arrows::arrow_line::metadata());
+        self.register_typed::<super::arrows::arrow_line::ArrowLine>(super::arrows::arrow_line::metadata());
 
         // Annotations
-        self.register(super::annotations::text::metadata());
-        self.register(super::annotations::anchored_text::metadata());
-        self.register(super::annotations::note::metadata());
-        self.register(super::annotations::price_note::metadata());
-        self.register(super::annotations::signpost::metadata());
-        self.register(super::annotations::callout::metadata());
-        self.register(super::annotations::comment::metadata());
-        self.register(super::annotations::price_label::metadata());
-        self.register(super::annotations::sign::metadata());
-        self.register(super::annotations::flag::metadata());
-        self.register(super::annotations::table::metadata());
-        self.register(super::annotations::triangle_up::metadata());
-        self.register(super::annotations::triangle_down::metadata());
+        self.register_typed::<super::annotations::text::Text>(super::annotations::text::metadata());
+        self.register_typed::<super::annotations::anchored_text::AnchoredText>(super::annotations::anchored_text::metadata());
+        self.register_typed::<super::annotations::note::Note>(super::annotations::note::metadata());
+        self.register_typed::<super::annotations::price_note::PriceNote>(super::annotations::price_note::metadata());
+        self.register_typed::<super::annotations::signpost::Signpost>(super::annotations::signpost::metadata());
+        self.register_typed::<super::annotations::callout::Callout>(super::annotations::callout::metadata());
+        self.register_typed::<super::annotations::comment::Comment>(super::annotations::comment::metadata());
+        self.register_typed::<super::annotations::price_label::PriceLabel>(super::annotations::price_label::metadata());
+        self.register_typed::<super::annotations::sign::Sign>(super::annotations::sign::metadata());
+        self.register_typed::<super::annotations::flag::Flag>(super::annotations::flag::metadata());
+        self.register_typed::<super::annotations::table::Table>(super::annotations::table::metadata());
+        self.register_typed::<super::annotations::triangle_up::TriangleUp>(super::annotations::triangle_up::metadata());
+        self.register_typed::<super::annotations::triangle_down::TriangleDown>(super::annotations::triangle_down::metadata());
 
         // Patterns
-        self.register(super::patterns::xabcd_pattern::metadata());
-        self.register(super::patterns::cypher_pattern::metadata());
-        self.register(super::patterns::head_shoulders::metadata());
-        self.register(super::patterns::abcd_pattern::metadata());
-        self.register(super::patterns::triangle_pattern::metadata());
-        self.register(super::patterns::three_drives::metadata());
+        self.register_typed::<super::patterns::xabcd_pattern::XabcdPattern>(super::patterns::xabcd_pattern::metadata());
+        self.register_typed::<super::patterns::cypher_pattern::CypherPattern>(super::patterns::cypher_pattern::metadata());
+        self.register_typed::<super::patterns::head_shoulders::HeadShoulders>(super::patterns::head_shoulders::metadata());
+        self.register_typed::<super::patterns::abcd_pattern::AbcdPattern>(super::patterns::abcd_pattern::metadata());
+        self.register_typed::<super::patterns::triangle_pattern::TrianglePattern>(super::patterns::triangle_pattern::metadata());
+        self.register_typed::<super::patterns::three_drives::ThreeDrives>(super::patterns::three_drives::metadata());
 
         // Elliott
-        self.register(super::elliott::elliott_impulse::metadata());
-        self.register(super::elliott::elliott_correction::metadata());
-        self.register(super::elliott::elliott_triangle::metadata());
-        self.register(super::elliott::elliott_double_combo::metadata());
-        self.register(super::elliott::elliott_triple_combo::metadata());
+        self.register_typed::<super::elliott::elliott_impulse::ElliottImpulse>(super::elliott::elliott_impulse::metadata());
+        self.register_typed::<super::elliott::elliott_correction::ElliottCorrection>(super::elliott::elliott_correction::metadata());
+        self.register_typed::<super::elliott::elliott_triangle::ElliottTriangle>(super::elliott::elliott_triangle::metadata());
+        self.register_typed::<super::elliott::elliott_double_combo::ElliottDoubleCombo>(super::elliott::elliott_double_combo::metadata());
+        self.register_typed::<super::elliott::elliott_triple_combo::ElliottTripleCombo>(super::elliott::elliott_triple_combo::metadata());
 
         // Cycles
-        self.register(super::cycles::cycle_lines::metadata());
-        self.register(super::cycles::time_cycles::metadata());
-        self.register(super::cycles::sine_wave::metadata());
+        self.register_typed::<super::cycles::cycle_lines::CycleLines>(super::cycles::cycle_lines::metadata());
+        self.register_typed::<super::cycles::time_cycles::TimeCycles>(super::cycles::time_cycles::metadata());
+        self.register_typed::<super::cycles::sine_wave::SineWave>(super::cycles::sine_wave::metadata());
 
         // Projection
-        self.register(super::projection::long_position::metadata());
-        self.register(super::projection::short_position::metadata());
-        self.register(super::projection::bars_pattern::metadata());
-        self.register(super::projection::price_projection::metadata());
-        self.register(super::projection::projection::metadata());
+        self.register_typed::<super::projection::long_position::LongPosition>(super::projection::long_position::metadata());
+        self.register_typed::<super::projection::short_position::ShortPosition>(super::projection::short_position::metadata());
+        self.register_typed::<super::projection::bars_pattern::BarsPattern>(super::projection::bars_pattern::metadata());
+        self.register_typed::<super::projection::price_projection::PriceProjection>(super::projection::price_projection::metadata());
+        self.register_typed::<super::projection::projection::Projection>(super::projection::projection::metadata());
 
         // Volume
-        self.register(super::volume::fixed_volume_profile::metadata());
-        self.register(super::volume::anchored_volume_profile::metadata());
-        self.register(super::volume::anchored_vwap::metadata());
+        self.register_typed::<super::volume::fixed_volume_profile::FixedVolumeProfile>(super::volume::fixed_volume_profile::metadata());
+        self.register_typed::<super::volume::anchored_volume_profile::AnchoredVolumeProfile>(super::volume::anchored_volume_profile::metadata());
+        self.register_typed::<super::volume::anchored_vwap::AnchoredVwap>(super::volume::anchored_vwap::metadata());
 
         // Measurement
-        self.register(super::measurement::price_range::metadata());
-        self.register(super::measurement::date_range::metadata());
-        self.register(super::measurement::price_date_range::metadata());
+        self.register_typed::<super::measurement::price_range::PriceRange>(super::measurement::price_range::metadata());
+        self.register_typed::<super::measurement::date_range::DateRange>(super::measurement::date_range::metadata());
+        self.register_typed::<super::measurement::price_date_range::PriceDateRange>(super::measurement::price_date_range::metadata());
 
         // Brushes
-        self.register(super::brushes::brush::metadata());
-        self.register(super::brushes::highlighter::metadata());
+        self.register_typed::<super::brushes::brush::Brush>(super::brushes::brush::metadata());
+        self.register_typed::<super::brushes::highlighter::Highlighter>(super::brushes::highlighter::metadata());
 
         // Icons
-        self.register(super::icons::image::metadata());
-        self.register(super::icons::emoji::metadata());
+        self.register_typed::<super::icons::image::Image>(super::icons::image::metadata());
+        self.register_typed::<super::icons::emoji::Emoji>(super::icons::emoji::metadata());
 
-        // Individual emoji primitives (36 types)
+        // Individual emoji primitives (36 type_ids, all one struct)
         for meta in super::icons::emoji::all_emoji_metadata() {
-            self.register(meta);
+            self.register_typed::<super::icons::emoji::Emoji>(meta);
         }
     }
 }
@@ -353,4 +358,41 @@ macro_rules! define_primitive {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod hydration {
+    use super::*;
+
+    /// Every registered type must survive `to_json` → `from_json`. That pair is
+    /// the hydration path, so a type that fails here is a drawing the user
+    /// loses on reload.
+    #[test]
+    fn every_registered_type_survives_a_round_trip() {
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        let pts = [
+            (1_700_000_000_000i64, 100.0f64),
+            (1_700_003_600_000, 110.0),
+            (1_700_007_200_000, 105.0),
+            (1_700_010_800_000, 115.0),
+            (1_700_014_400_000, 108.0),
+            (1_700_018_000_000, 112.0),
+            (1_700_021_600_000, 109.0),
+        ];
+        let mut lost = Vec::new();
+        let mut kept = Vec::new();
+        let mut ids: Vec<&str> = reg.all().map(|m| m.type_id).collect();
+        ids.sort_unstable();
+        for id in ids {
+            let Some(p) = reg.create(id, &pts, None) else { lost.push(format!("{id} (no factory)")); continue };
+            let json = p.to_json();
+            match reg.from_json(id, &json) {
+                Some(back) => {
+                    if back.points() == p.points() { kept.push(id) } else { lost.push(format!("{id} (points differ)")) }
+                }
+                None => lost.push(format!("{id} (from_json None)")),
+            }
+        }
+        assert!(lost.is_empty(), "{} of {} primitive types do not survive a round trip", lost.len(), lost.len() + kept.len());
+    }
 }
