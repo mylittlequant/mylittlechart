@@ -23,7 +23,6 @@ use uzor::types::Rect as WidgetRect;
 use super::rects::LayoutRect;
 use super::render_chart::ScaleCornerHitZones;
 use crate::panel_app::ChartToolbarRenderResult;
-use crate::layout::modals::overlay_settings::OverlaySettingsResult;
 use crate::layout::modals::tags_tabs_modal::TagsTabsResult;
 
 // =============================================================================
@@ -463,7 +462,6 @@ pub struct ChartModalRenderResult {
     /// Chart settings modal result (if open)
     pub chart_settings: Option<ChartSettingsModalResult>,
     /// Overlay settings modal result (if open)
-    pub overlay_settings: Option<OverlaySettingsResult>,
     /// Tags & Tabs modal result (if open)
     pub tags_tabs: Option<TagsTabsResult>,
     /// Color picker result (last one wins — primitive, indicator, or chart settings)

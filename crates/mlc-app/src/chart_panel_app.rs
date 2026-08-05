@@ -37,7 +37,6 @@ use mlc_app_layout::layout::modals::{
     render_indicator_color_picker_popup,
     render_chart_settings_color_picker_popup,
     render_settings_modal, ChartSettingsData,
-    render_overlay_settings_modal,
     render_panel_color_tag_picker_popup,
     render_tags_tabs_modal,
 };
@@ -721,26 +720,6 @@ impl ChartPanelApp {
             }
         }
 
-        // Overlay settings modal
-        if self.overlay_settings_state.is_open {
-            result.overlay_settings = Some(render_overlay_settings_modal(
-                ctx,
-                modal_layout.prim_screen_w,
-                modal_layout.prim_screen_h,
-                modal_layout.chart_x,
-                modal_layout.chart_y,
-                &self.overlay_settings_state,
-                frame_theme,
-                toolbar_theme,
-                &self.theme_manager,
-                self.panel_grid.docking(),
-                self.panel_grid.is_expanded(),
-                modal_layout.prim_screen_w,
-                modal_layout.prim_screen_h,
-                input_coordinator,
-            ));
-        }
-
         // Tags & Tabs modal
         if self.tags_tabs_state.is_open {
             result.tags_tabs = Some(render_tags_tabs_modal(
@@ -1129,21 +1108,6 @@ impl ChartPanelApp {
     /// Check if any chart-local modal is open.
     pub fn is_modal_open(&self) -> bool {
         self.active_modal.is_open()
-    }
-
-    /// Open the overlay settings modal.
-    pub fn open_overlay_settings(&mut self) {
-        self.overlay_settings_state.open();
-    }
-
-    /// Open the overlay settings modal for a specific leaf (highlights it).
-    pub fn open_overlay_settings_for_leaf(&mut self, leaf_id: uzor::panels::LeafId) {
-        self.overlay_settings_state.open_for_leaf(leaf_id);
-    }
-
-    /// Close the overlay settings modal.
-    pub fn close_overlay_settings(&mut self) {
-        self.overlay_settings_state.close();
     }
 
     /// Open the Tags & Tabs modal (defaults to TABS sidebar).

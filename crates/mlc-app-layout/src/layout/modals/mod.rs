@@ -39,7 +39,6 @@ pub mod indicator_overlay;
 pub mod panel_color_tag;
 pub mod search_overlay;
 pub mod chart_settings;
-pub mod overlay_settings;
 pub mod preset_name_input;
 pub mod chart_browser;
 pub mod tags_tabs_modal;
@@ -81,7 +80,6 @@ pub use chart_settings::{
     render_settings_modal, ChartSettingsData,
     InstrumentSettings, StatusLineSettings, ScalesLinesSettings,
 };
-pub use overlay_settings::{render_overlay_settings_modal, OverlaySettingsResult};
 pub use tags_tabs_modal::{render_tags_tabs_modal, TagsTabsResult};
 pub use trading_container_modal::{
     render_trading_container_modal, TcMapPanel, TcModalResult, TcModalSection,

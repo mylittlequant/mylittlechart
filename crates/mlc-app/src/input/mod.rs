@@ -1774,12 +1774,6 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "overlay_settings" => {
-                        if let Some(ref os) = self.frame_result.as_ref().and_then(|r| r.overlay_settings.as_ref()) {
-                            self.panel_app.overlay_settings_state.start_drag(x, y, os.header_rect.x, os.header_rect.y);
-                            true
-                        } else { false }
-                    }
                     "tags_tabs" => {
                         if let Some(ref tt) = self.frame_result.as_ref().and_then(|r| r.tags_tabs.as_ref()) {
                             self.panel_app.tags_tabs_state.start_drag(x, y, tt.header_rect.x, tt.header_rect.y);
@@ -4923,7 +4917,7 @@ impl ChartApp {
                     self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("wl_modal:item:") {
                     self.standalone_panels.watchlist_modal.hovered_item_id = Some(local.to_string());
-                } else if id.starts_with("tags_tabs:") || id.starts_with("overlay_settings:") {
+                } else if id.starts_with("tags_tabs:") {
                     self.panel_app.overlay_settings_state.hovered_item_id = Some(id_str.clone());
                 }
             }

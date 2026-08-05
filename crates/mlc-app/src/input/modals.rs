@@ -1954,10 +1954,6 @@ impl ChartApp {
                     self.dom_modal.close();
                 }
                 // Top-level modals — close when user clicks outside them.
-                "overlay_settings" => {
-                    self.panel_app.close_overlay_settings();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: overlay_settings closed");
-                }
                 "tags_tabs" => {
                     self.panel_app.close_tags_tabs();
                     eprintln!("[ChartApp] close_topmost_modal_layer: tags_tabs closed");
@@ -2022,7 +2018,6 @@ impl ChartApp {
         self.panel_app.chart_settings_state.close();
         self.panel_app.indicator_settings_state.close();
         // Close top-level modals that are managed outside of modal_state.
-        self.panel_app.close_overlay_settings();
         self.panel_app.close_tags_tabs();
         if self.panel_app.chart_browser.is_open {
             self.panel_app.chart_browser.close();
