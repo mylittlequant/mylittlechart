@@ -2608,8 +2608,18 @@ pub fn render_main_chart_primitives(
                     let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
                     b > view_end + bar_margin
                 });
-                let all_above = points.iter().all(|(_, price)| *price > price_max * 10.0);
-                let all_below = points.iter().all(|(_, price)| *price < price_min * 0.1);
+                // A price of exactly 0.0 is the "this point carries no price"
+                // sentinel: anchored VWAP, both volume profiles and the bars
+                // pattern take their y-extent from the BARS, not from their own
+                // points, so nothing here can judge where they sit vertically.
+                // Culling them as `all_below` is why they never appeared —
+                // `0.0 < price_min * 0.1` is true for every real instrument.
+                let priced = points.iter().filter(|(_, p)| *p != 0.0).count();
+                let fully_priced = priced == points.len();
+                let all_above = fully_priced
+                    && points.iter().all(|(_, price)| *price > price_max * 10.0);
+                let all_below = fully_priced
+                    && points.iter().all(|(_, price)| *price < price_min * 0.1);
 
                 if all_left || all_right || all_above || all_below {
                     continue;
