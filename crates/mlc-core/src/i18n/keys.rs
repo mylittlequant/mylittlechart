@@ -760,17 +760,12 @@ pub enum UserSettingsKey {
     DescCacheSize            = 23,
     DescAutoCleanup          = 24,
 
-    // Offline mode confirmation panel
-    OfflineModeTitle         = 25,
-    OfflineModeBody1         = 26,
-    OfflineModeBody2         = 27,
-
     // General tab — workspace toggle (workspace-panel arc, Stage 4)
-    TradingPanelTopbarTakeover = 28,
+    TradingPanelTopbarTakeover = 25,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 29;
+    pub const COUNT: usize = 26;
 
     /// Get translation for this key.
     #[inline]
