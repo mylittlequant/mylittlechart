@@ -16,7 +16,10 @@ use crate::ui::modal_settings::{
 };
 use crate::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState as SbState};
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{draw_input, draw_input_cursor, render_modal_frame_only, InputConfig, ModalTheme, WidgetTheme};
+use crate::ui::widgets::{
+    begin_modal_shell, draw_input, draw_input_cursor, end_modal_shell, InputConfig, ModalFooter,
+    ModalPlacement, ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit, WidgetTheme,
+};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::z_order::ZLayer;
 use mlc_core::i18n::{ModalKey, t_modal};
@@ -29,14 +32,9 @@ use uzor::types::Rect as WidgetRect;
 // =============================================================================
 
 const MODAL_WIDTH: f64 = 480.0;
-const HEADER_H: f64 = 36.0;
-const TAB_BAR_H: f64 = 32.0;
 const ROW_H: f64 = 32.0;
-const PADDING: f64 = 16.0;
 const ITEM_PADDING: f64 = 8.0;
 const RADIUS: f64 = 6.0;
-const BTN_H: f64 = 32.0;
-const BTN_W: f64 = 100.0;
 const LABEL_W: f64 = 110.0;
 
 // =============================================================================
@@ -125,45 +123,6 @@ fn draw_dropdown_field(
     draw_svg_icon(ctx, Icon::ChevronDown.svg(), arrow_x, arrow_y, arrow_size, arrow_size, &toolbar_theme.item_text_muted);
 }
 
-/// Draw the Create/Save button at the bottom of the modal.
-///
-/// One button, because there is only one action: the alert does not exist
-/// until it is pressed. The ✕ is the abort — the Cancel that used to sit
-/// beside it was the same exit under another label.
-#[allow(clippy::too_many_arguments)]
-fn draw_buttons(
-    ctx: &mut dyn RenderContext,
-    result: &mut AlertSettingsResult,
-    content_x: f64,
-    content_w: f64,
-    y: f64,
-    editing: bool,
-    state: &AlertSettingsState,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-) {
-    // Create / Save
-    {
-        let save_x = content_x + content_w - BTN_W;
-        let save_hovered = state.hovered_item_id.as_deref() == Some("alert_set:save");
-        let save_bg = if save_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent };
-        ctx.set_fill_color(save_bg);
-        ctx.fill_rounded_rect(save_x, y, BTN_W, BTN_H, 4.0);
-
-        ctx.set_fill_color(&toolbar_theme.item_text_active);
-        ctx.set_font("bold 12px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        let label = if editing { t_modal(ModalKey::AlertSave) } else { t_modal(ModalKey::AlertCreate) };
-        ctx.fill_text(label, save_x + BTN_W / 2.0, y + BTN_H / 2.0);
-
-        let r = WidgetRect::new(save_x, y, BTN_W, BTN_H);
-        result.content_items.push(("alert_set:save".to_string(), r));
-        input_coordinator.register_on_layer("alert_set:save", r, Sense::CLICK, layer_id);
-    }
-}
-
 // =============================================================================
 // Main render entry point
 // =============================================================================
@@ -183,146 +142,69 @@ pub fn render_alert_settings_modal(
 ) -> AlertSettingsResult {
     let mut result = AlertSettingsResult::default();
 
-    // -------------------------------------------------------------------------
-    // Compute modal height based on active tab
-    // -------------------------------------------------------------------------
     let content_h = match state.active_tab {
         AlertSettingsTab::Settings => compute_settings_tab_height(state),
         AlertSettingsTab::Notifications => compute_notifications_tab_height(state),
         AlertSettingsTab::AlertsList => compute_alerts_list_tab_height(state),
     };
-    let modal_height = HEADER_H + TAB_BAR_H + content_h;
 
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        ((screen_w - MODAL_WIDTH) / 2.0, (screen_h - modal_height) / 2.0)
-    });
-    let modal_x = modal_x.clamp(0.0, (screen_w - MODAL_WIDTH).max(0.0));
-    let modal_y = modal_y.clamp(0.0, (screen_h - modal_height).max(0.0));
+    let alerts_label = format!("Alerts ({})", state.all_alerts.len());
+    let tab_items = [
+        ModalTab::new("settings", t_modal(ModalKey::AlertTabSettings)),
+        ModalTab::new("notifications", t_modal(ModalKey::AlertTabNotifications)),
+        ModalTab::new("list", &alerts_label),
+    ];
+    let active_tab_idx = match state.active_tab {
+        AlertSettingsTab::Settings => 0,
+        AlertSettingsTab::Notifications => 1,
+        AlertSettingsTab::AlertsList => 2,
+    };
 
-    let modal_rect = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, modal_height);
-    result.modal_rect = modal_rect;
+    let title = if state.editing_alert_id.is_some() {
+        t_modal(ModalKey::EditAlert)
+    } else {
+        t_modal(ModalKey::CreateAlert)
+    };
+    // A creator: the alert does not exist until the button is pressed, and the
+    // ✕ aborts. The list tab does not create anything, so it has no footer at
+    // all rather than a button that would act on fields it does not show.
+    let footer = match state.active_tab {
+        AlertSettingsTab::AlertsList => ModalFooter::None,
+        _ => ModalFooter::Creator {
+            label: if state.editing_alert_id.is_some() {
+                t_modal(ModalKey::AlertSave)
+            } else {
+                t_modal(ModalKey::AlertCreate)
+            },
+        },
+    };
 
-    // Modal frame
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, RADIUS);
+    let spec = ModalShellSpec {
+        radius: RADIUS,
+        ..ModalShellSpec::new("alert_set", title, MODAL_WIDTH, content_h)
+            .layer_named("alert_settings")
+            .placed(ModalPlacement::At(state.position))
+            .with_tabs(ModalTabs::Horizontal {
+                items: &tab_items,
+                active: active_tab_idx,
+                fit: TabFit::Equal,
+            })
+            .with_footer(footer)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // Push modal Z-layer
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "alert_settings");
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result.content_rect = shell.content;
 
-    // Catch-all background
-    input_coordinator.register_on_layer(
-        "alert_set:modal_bg",
-        modal_rect,
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // -------------------------------------------------------------------------
-    // Header
-    // -------------------------------------------------------------------------
-    let header_rect = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, HEADER_H);
-    result.header_rect = header_rect;
-
-    input_coordinator.register_on_layer(
-        "alert_set:header",
-        header_rect,
-        Sense::DRAG,
-        &layer_id,
-    );
-
-    let title = if state.editing_alert_id.is_some() { t_modal(ModalKey::EditAlert) } else { t_modal(ModalKey::CreateAlert) };
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_font("bold 14px sans-serif");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, modal_x + PADDING, modal_y + HEADER_H / 2.0);
-
-    // Close button
-    let close_size = 20.0;
-    let close_x = modal_x + MODAL_WIDTH - PADDING - close_size;
-    let close_y = modal_y + (HEADER_H - close_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    result.close_btn_rect = close_rect;
-    input_coordinator.register_on_layer("alert_set:close", close_rect, Sense::CLICK, &layer_id);
-
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, &toolbar_theme.item_text_muted);
-
-    // Header separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + HEADER_H);
-    ctx.line_to(modal_x + MODAL_WIDTH, modal_y + HEADER_H);
-    ctx.stroke();
-
-    // -------------------------------------------------------------------------
-    // Tab bar
-    // -------------------------------------------------------------------------
-    let tab_bar_y = modal_y + HEADER_H;
-    let alerts_count = state.all_alerts.len();
-    let tab_labels: [(&str, &str); 3] = [
-        (t_modal(ModalKey::AlertTabSettings), "alert_set:tab:settings"),
-        (t_modal(ModalKey::AlertTabNotifications), "alert_set:tab:notifications"),
-        ("", "alert_set:tab:list"), // rendered specially below
-    ];
-    let tab_w = MODAL_WIDTH / 3.0;
-
-    for (i, (base_label, widget_id)) in tab_labels.iter().enumerate() {
-        let tab_x = modal_x + i as f64 * tab_w;
-        let tab_rect = WidgetRect::new(tab_x, tab_bar_y, tab_w, TAB_BAR_H);
-
-        let this_tab = match i {
-            0 => AlertSettingsTab::Settings,
-            1 => AlertSettingsTab::Notifications,
-            _ => AlertSettingsTab::AlertsList,
-        };
-        let is_active = state.active_tab == this_tab;
-
-        // Tab background
-        if is_active {
-            ctx.set_fill_color(&toolbar_theme.item_bg_active);
-            ctx.fill_rect(tab_x, tab_bar_y, tab_w, TAB_BAR_H);
-        }
-
-        // Tab text
-        let text_color = if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text_muted };
-        ctx.set_fill_color(text_color);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-
-        let label = if i == 2 {
-            format!("Alerts ({})", alerts_count)
-        } else {
-            base_label.to_string()
-        };
-        ctx.fill_text(&label, tab_x + tab_w / 2.0, tab_bar_y + TAB_BAR_H / 2.0);
-
-        result.content_items.push((widget_id.to_string(), tab_rect));
-        input_coordinator.register_on_layer(*widget_id, tab_rect, Sense::CLICK, &layer_id);
-    }
-
-    // Tab bar bottom separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, tab_bar_y + TAB_BAR_H);
-    ctx.line_to(modal_x + MODAL_WIDTH, tab_bar_y + TAB_BAR_H);
-    ctx.stroke();
-
-    // -------------------------------------------------------------------------
-    // Content area — dispatch to tab-specific renderer
-    // -------------------------------------------------------------------------
-    let content_x = modal_x + PADDING;
-    let content_y = modal_y + HEADER_H + TAB_BAR_H;
-    let content_w = MODAL_WIDTH - PADDING * 2.0;
-    result.content_rect = WidgetRect::new(content_x, content_y, content_w, content_h);
+    let (content_x, content_y, content_w) = (shell.content.x, shell.content.y, shell.content.width);
 
     match state.active_tab {
         AlertSettingsTab::Settings => render_settings_tab(
@@ -337,6 +219,20 @@ pub fn render_alert_settings_modal(
             ctx, state, toolbar_theme, input_coordinator, &layer_id, &mut result,
             content_x, content_y, content_w,
         ),
+    }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+
+    // The two dropdowns come AFTER the shell closes, on a layer of their own.
+    // Twelve conditions are 336px of list inside a body barely 200px tall, so
+    // an open dropdown reaches past the footer — and the footer is drawn and
+    // registered last precisely so it beats an overflowing body. A popover
+    // that a button paints over and steals clicks from is not a popover.
+    if state.active_tab == AlertSettingsTab::Settings {
+        render_settings_dropdowns(
+            ctx, state, toolbar_theme, input_coordinator, &mut result,
+            content_x, content_y, content_w,
+        );
     }
 
     result
@@ -363,7 +259,14 @@ fn compute_settings_tab_height(state: &AlertSettingsState) -> f64 {
     if !state.available_signal_kinds.is_empty() {
         rows += 1;
     }
-    rows as f64 * (ROW_H + ITEM_PADDING) + PADDING * 2.0 + BTN_H + ITEM_PADDING
+    rows_height(rows)
+}
+
+/// What `rows` stacked rows occupy. The body's own inset and the footer are
+/// the shell's now, so this is the rows and nothing else — the trailing gap
+/// after the last row is not part of the body.
+fn rows_height(rows: usize) -> f64 {
+    rows as f64 * (ROW_H + ITEM_PADDING) - ITEM_PADDING
 }
 
 fn compute_notifications_tab_height(state: &AlertSettingsState) -> f64 {
@@ -383,7 +286,7 @@ fn compute_notifications_tab_height(state: &AlertSettingsState) -> f64 {
     if state.notification_settings.webhook.enabled {
         rows += 1; // webhook url field
     }
-    rows as f64 * (ROW_H + ITEM_PADDING) + PADDING * 2.0 + BTN_H + ITEM_PADDING
+    rows_height(rows)
 }
 
 fn compute_alerts_list_tab_height(state: &AlertSettingsState) -> f64 {
@@ -394,7 +297,7 @@ fn compute_alerts_list_tab_height(state: &AlertSettingsState) -> f64 {
     } else {
         (visible_alerts as f64 * (ROW_H + ITEM_PADDING)).min(240.0)
     };
-    filter_h + list_h + PADDING * 2.0
+    filter_h + list_h
 }
 
 fn filtered_alert_count(state: &AlertSettingsState) -> usize {
@@ -427,7 +330,7 @@ fn render_settings_tab(
 ) {
     let field_x = content_x + LABEL_W;
     let field_w = content_w - LABEL_W;
-    let mut y = content_y + PADDING;
+    let mut y = content_y;
 
     // --- 1. Source (readonly) ---
     draw_readonly_row(ctx, t_modal(ModalKey::AlertSource), &state.source_name, content_x, y, ROW_H, LABEL_W, toolbar_theme);
@@ -615,24 +518,39 @@ fn render_settings_tab(
         let r = WidgetRect::new(field_x, y, field_w, ROW_H);
         result.content_items.push(("alert_set:item:name".to_string(), r));
         input_coordinator.register_on_layer("alert_set:item:name", r, Sense::CLICK, layer_id);
-        y += ROW_H + ITEM_PADDING;
     }
+}
 
-    // --- Buttons (rendered BEFORE dropdown overlays so dropdowns draw on top) ---
-    let btn_y = y + PADDING / 2.0;
-    draw_buttons(
-        ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state, toolbar_theme,
-        input_coordinator, layer_id,
-    );
+/// The settings tab's two dropdown overlays, on a layer above the modal.
+///
+/// Split out of the tab body because they must be painted and registered after
+/// the shell's footer, not before it: they are taller than the body that owns
+/// them and reach past the frame.
+#[allow(clippy::too_many_arguments)]
+fn render_settings_dropdowns(
+    ctx: &mut dyn RenderContext,
+    state: &AlertSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut AlertSettingsResult,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+) {
+    if !state.condition_dropdown_open && !state.trigger_mode_dropdown_open {
+        return;
+    }
+    let field_x = content_x + LABEL_W;
+    let field_w = content_w - LABEL_W;
+    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "alert_set_dropdown");
+    let layer_id = &layer_id;
 
-    // --- Condition dropdown overlay (LAST — renders and registers on top) ---
+    // --- Condition dropdown overlay ---
     if state.condition_dropdown_open {
         let conditions = AlertCondition::all();
         let dd_item_h = 28.0;
         let dd_height = conditions.len() as f64 * dd_item_h;
-        // Position below the condition row
-        let dd_y = content_y + PADDING + (ROW_H + ITEM_PADDING) + ROW_H;
+        let dd_y = row_bottom(content_y, settings_row_index(state, SettingsRow::Condition));
         let dd_rect = WidgetRect::new(field_x, dd_y, field_w, dd_height);
         result.content_items.push(("alert_set:condition_dropdown".to_string(), dd_rect));
 
@@ -680,15 +598,7 @@ fn render_settings_tab(
         ];
         let dd_item_h = 28.0;
         let dd_height = modes.len() as f64 * dd_item_h;
-        // Position below trigger mode row — compute row index (0-based, after source+condition+price)
-        let mut tmode_row_index = 3usize; // source + condition + price
-        if state.condition.requires_second_price() {
-            tmode_row_index += 1;
-        }
-        if state.condition.requires_percentage() {
-            tmode_row_index += 1;
-        }
-        let dd_y = content_y + PADDING + tmode_row_index as f64 * (ROW_H + ITEM_PADDING) + ROW_H;
+        let dd_y = row_bottom(content_y, settings_row_index(state, SettingsRow::TriggerMode));
 
         let dd_rect = WidgetRect::new(field_x, dd_y, field_w, dd_height);
         result.content_items.push(("alert_set:tmode_dropdown".to_string(), dd_rect));
@@ -726,6 +636,43 @@ fn render_settings_tab(
             input_coordinator.register_on_layer(dd_item_id.as_str(), r, Sense::CLICK, layer_id);
         }
     }
+
+    input_coordinator.pop_layer(layer_id);
+}
+
+/// A row of the settings tab that something else has to find on screen.
+#[derive(Clone, Copy)]
+enum SettingsRow {
+    Condition,
+    TriggerMode,
+}
+
+/// Which row that is, counting the conditional rows above it. The dropdowns
+/// used to count these by hand and both counts were short by the signal-kind
+/// row, so a Signal alert opened its condition list one row too high.
+fn settings_row_index(state: &AlertSettingsState, row: SettingsRow) -> usize {
+    // source
+    let mut i = 1;
+    if !state.available_signal_kinds.is_empty() {
+        i += 1;
+    }
+    if matches!(row, SettingsRow::Condition) {
+        return i;
+    }
+    i += 1; // condition
+    i += 1; // price
+    if state.condition.requires_second_price() {
+        i += 1;
+    }
+    if state.condition.requires_percentage() {
+        i += 1;
+    }
+    i
+}
+
+/// The y a dropdown anchored under row `index` opens at.
+fn row_bottom(content_y: f64, index: usize) -> f64 {
+    content_y + index as f64 * (ROW_H + ITEM_PADDING) + ROW_H
 }
 
 // =============================================================================
@@ -745,7 +692,7 @@ fn render_notifications_tab(
     content_y: f64,
     content_w: f64,
 ) {
-    let mut y = content_y + PADDING;
+    let mut y = content_y;
     let ns = &state.notification_settings;
 
     // ------------------------------------------------------------------
@@ -1120,16 +1067,7 @@ fn render_notifications_tab(
         let r = WidgetRect::new(field_x, y, field_w, ROW_H);
         result.content_items.push(("alert_set:item:webhook_url".to_string(), r));
         input_coordinator.register_on_layer("alert_set:item:webhook_url", r, Sense::CLICK, layer_id);
-        y += ROW_H + ITEM_PADDING;
     }
-
-    // Buttons
-    let btn_y = y + PADDING / 2.0;
-    draw_buttons(
-        ctx, result, content_x, content_w, btn_y,
-        state.editing_alert_id.is_some(), state, toolbar_theme,
-        input_coordinator, layer_id,
-    );
 }
 
 // =============================================================================
@@ -1148,7 +1086,7 @@ fn render_alerts_list_tab(
     content_y: f64,
     content_w: f64,
 ) {
-    let mut y = content_y + PADDING;
+    let mut y = content_y;
 
     // ---- Filter row ----
     let filter_items = [

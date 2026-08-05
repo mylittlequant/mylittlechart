@@ -2591,7 +2591,7 @@ impl ChartApp {
             "modal_bg" | "header" => {
                 // No-op (catch-all, drag handled separately)
             }
-            "save" => {
+            "create" => {
                 // Snapshot all the AlertSettingsState fields we need up front
                 // so we don't keep a borrow on `self.panel_app` while taking
                 // `self.core.alerts_mut()` below.

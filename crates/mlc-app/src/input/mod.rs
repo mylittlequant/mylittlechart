@@ -4863,6 +4863,7 @@ impl ChartApp {
         self.panel_app.indicator_settings_state.hovered_item_id = None;
         self.panel_app.indicator_settings_state.hovered_footer_button = None;
         self.panel_app.user_settings_state.hovered_item_id = None;
+        self.panel_app.alert_settings_state.hovered_item_id = None;
         self.panel_app.chart_browser.hovered_preset_id = None;
         self.standalone_panels.watchlist_modal.hovered_item_id = None;
         self.panel_app.overlay_settings_state.hovered_item_id = None;
@@ -4903,6 +4904,12 @@ impl ChartApp {
                     self.panel_app.indicator_settings_state.hovered_footer_button = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("user_settings:") {
                     self.panel_app.user_settings_state.hovered_item_id = Some(local.to_string());
+                } else if id.starts_with("alert_set:") {
+                    // Whole id, not the local part: the alert modal compares
+                    // against `alert_set:item:condition` and friends. Nothing
+                    // set this field at all until 2026-08-06, so every hover
+                    // in that dialog was dead — the dropdown rows included.
+                    self.panel_app.alert_settings_state.hovered_item_id = Some(id_str.clone());
                 } else if let Some(local) = id.strip_prefix("chart_browser:item:") {
                     self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("chart_browser:rename:") {
