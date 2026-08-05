@@ -19,10 +19,12 @@ use crate::ui::modal_settings::{OverlaySettingsState, TagsTabsState, TagsTabsSid
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
+    ModalTheme, FOOTER_H, HEADER_H, TAB_LIST_W,
+};
 use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::Icon;
-use crate::ui::z_order::ZLayer;
 use uzor::panels::{LeafId, BranchId, PanelNode, Leaf};
 use uzor::panels::DockPanel;
 use mlc_core::state::panel::Panel;
@@ -65,11 +67,8 @@ pub struct TagsTabsResult {
 
 const MODAL_WIDTH: f64  = 520.0;
 const MODAL_HEIGHT: f64 = 450.0;
-const HEADER_HEIGHT: f64 = 36.0;
-const SIDEBAR_WIDTH: f64 = 80.0;
 const SUB_TAB_HEIGHT: f64 = 32.0;
 const MODAL_PADDING: f64 = 12.0;
-const CLOSE_BTN_SIZE: f64 = 20.0;
 const ROW_HEIGHT: f64 = 28.0;
 const ROW_GAP: f64 = 6.0;
 const SWATCH_SIZE: f64 = 12.0;
@@ -102,165 +101,55 @@ pub fn render_tags_tabs_modal(
 ) -> TagsTabsResult {
     let mut result = TagsTabsResult::default();
 
-    // =========================================================================
-    // Position calculation (draggable, centered by default)
-    // =========================================================================
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        (
-            (screen_w - MODAL_WIDTH) / 2.0,
-            (screen_h - MODAL_HEIGHT) / 2.0,
-        )
-    });
-    let modal_x = modal_x.max(0.0).min((screen_w - MODAL_WIDTH).max(0.0));
-    let modal_y = modal_y.max(0.0).min((screen_h - MODAL_HEIGHT).max(0.0));
+    // A fixed-height modal: hand the shell the body height that leaves the
+    // frame where it was.
+    let body_height = MODAL_HEIGHT - HEADER_H - FOOTER_H;
 
-    result.modal_rect  = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, MODAL_HEIGHT);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT);
+    let sidebar_items = [
+        ModalTab::new("tabs", t_modal(ModalKey::SectionTabs)),
+        ModalTab::new("tags", t_modal(ModalKey::SectionTags)),
+        ModalTab::new("map", "MAP"),
+    ];
+    let active_section = match state.sidebar {
+        TagsTabsSidebar::Tabs => 0,
+        TagsTabsSidebar::Tags => 1,
+        TagsTabsSidebar::Map => 2,
+    };
 
-    // =========================================================================
-    // InputCoordinator layer
-    // =========================================================================
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "tags_tabs");
-
-    // Register header drag zone
-    input_coordinator.register_on_layer(
-        "tags_tabs:header",
-        WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT),
-        Sense::DRAG,
-        &layer_id,
-    );
-
-    // Register modal background as click absorber
-    input_coordinator.register_on_layer(
-        "tags_tabs:modal_bg",
-        WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, MODAL_HEIGHT),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // =========================================================================
-    // 1. Modal frame
-    // =========================================================================
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &frame_theme.toolbar_border,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_active,
-        &frame_theme.toolbar_border,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
+    let spec = ModalShellSpec {
+        // Each section insets itself by `MODAL_PADDING`.
+        padding: 0.0,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("tags_tabs", t_modal(ModalKey::TagsAndTabs), MODAL_WIDTH, body_height)
+            .with_tabs(ModalTabs::Vertical {
+                width: TAB_LIST_W,
+                items: &sidebar_items,
+                active: active_section,
+            })
+            .with_max_content_height(body_height)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
+
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn;
+    result.sidebar_rects = shell.tab_rects.clone();
+
+    let modal_x = shell.frame.x;
 
     // =========================================================================
-    // 2. Header
+    // Content area (right of the rail, below the header)
     // =========================================================================
-    // Header background
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT);
-
-    // Title
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_modal(ModalKey::TagsAndTabs), modal_x + 16.0, modal_y + HEADER_HEIGHT / 2.0);
-
-    // Close button
-    let close_x = modal_x + MODAL_WIDTH - CLOSE_BTN_SIZE - 12.0;
-    let close_y = modal_y + (HEADER_HEIGHT - CLOSE_BTN_SIZE) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE);
-    result.close_btn_rect = Some(close_rect);
-
-    draw_svg_icon(
-        ctx,
-        Icon::Close.svg(),
-        close_x, close_y,
-        CLOSE_BTN_SIZE, CLOSE_BTN_SIZE,
-        &toolbar_theme.item_text,
-    );
-    input_coordinator.register_on_layer(
-        "tags_tabs:close",
-        close_rect,
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header bottom border
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + HEADER_HEIGHT);
-    ctx.line_to(modal_x + MODAL_WIDTH, modal_y + HEADER_HEIGHT);
-    ctx.stroke();
-
-    // =========================================================================
-    // 3. Left sidebar (below header)
-    // =========================================================================
-    let sidebar_top    = modal_y + HEADER_HEIGHT;
-    let sidebar_height = MODAL_HEIGHT - HEADER_HEIGHT;
-    let sidebar_items  = [
-        ("tabs",  t_modal(ModalKey::SectionTabs),  TagsTabsSidebar::Tabs),
-        ("tags",  t_modal(ModalKey::SectionTags),  TagsTabsSidebar::Tags),
-        ("map",   "MAP",                           TagsTabsSidebar::Map),
-    ];
-
-    let sidebar_item_height = 40.0;
-    let sidebar_items_total = sidebar_item_height * sidebar_items.len() as f64;
-    let sidebar_start_y = sidebar_top + (sidebar_height - sidebar_items_total) / 2.0;
-    let mut sb_y = sidebar_start_y;
-
-    for (id, label, variant) in &sidebar_items {
-        let is_active = state.sidebar == *variant;
-        let item_rect = WidgetRect::new(modal_x, sb_y, SIDEBAR_WIDTH, sidebar_item_height);
-        let sidebar_wid = format!("tags_tabs:sidebar:{}", id);
-        let is_hovered = overlay_state.hovered_item_id.as_deref() == Some(sidebar_wid.as_str());
-
-        // Active background
-        if is_active {
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.20));
-            ctx.fill_rounded_rect(item_rect.x + 4.0, item_rect.y + 2.0, SIDEBAR_WIDTH - 8.0, sidebar_item_height - 4.0, 4.0);
-        } else if is_hovered {
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.08));
-            ctx.fill_rounded_rect(item_rect.x + 4.0, item_rect.y + 2.0, SIDEBAR_WIDTH - 8.0, sidebar_item_height - 4.0, 4.0);
-        }
-
-        // Label
-        let text_color = if is_active {
-            toolbar_theme.accent.as_str()
-        } else {
-            toolbar_theme.item_text.as_str()
-        };
-        ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color(text_color);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, modal_x + SIDEBAR_WIDTH / 2.0, sb_y + sidebar_item_height / 2.0);
-
-        result.sidebar_rects.push((sidebar_wid.clone(), item_rect));
-        input_coordinator.register_on_layer(
-            sidebar_wid.as_str(),
-            item_rect,
-            Sense::CLICK | Sense::HOVER,
-            &layer_id,
-        );
-
-        sb_y += sidebar_item_height;
-    }
-
-    // Vertical separator between sidebar and content
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x + SIDEBAR_WIDTH, sidebar_top);
-    ctx.line_to(modal_x + SIDEBAR_WIDTH, modal_y + MODAL_HEIGHT);
-    ctx.stroke();
-
-    // =========================================================================
-    // 4. Content area (right of sidebar, below header)
-    // =========================================================================
-    let content_x      = modal_x + SIDEBAR_WIDTH;
-    let content_y      = sidebar_top;
-    let content_width  = MODAL_WIDTH - SIDEBAR_WIDTH;
-    let content_height = MODAL_HEIGHT - HEADER_HEIGHT;
+    let content_x      = shell.content.x;
+    let content_y      = shell.content.y;
+    let content_width  = shell.content.width;
+    let content_height = shell.content.height;
 
     // WidgetTheme used for scrollbar rendering in TABS and TAGS sections —
     // every field from theme tokens (hardcoded semantic colors removed
@@ -369,7 +258,7 @@ pub fn render_tags_tabs_modal(
         }
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
     result
 }
 
@@ -616,7 +505,10 @@ fn render_tabs_section(
         let tab_w    = tab_widths[i];
         let tab_rect = WidgetRect::new(tab_x, content_y, tab_w, SUB_TAB_HEIGHT);
         let is_active = overlay_state.active_tab == *tab;
-        let wid = format!("tags_tabs:tab:{}", tab.id());
+        // `tree_tab:`, not `tab:` — the shell's section rail owns `tab:` now,
+        // and this strip switches the panel-tree VIEW inside one section. The
+        // TAGS section's own strip already names itself `tags_tab:`.
+        let wid = format!("tags_tabs:tree_tab:{}", tab.id());
         let is_hovered = overlay_state.hovered_item_id.as_deref() == Some(wid.as_str());
 
         if is_active {

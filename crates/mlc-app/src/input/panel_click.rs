@@ -4520,25 +4520,27 @@ impl ChartApp {
             use mlc_app_layout::ui::modal_settings::{TagsTabsSidebar, TagsTabsTagsTab};
             use mlc_core::ids::BubbleId;
             match rest {
-                "close" => {
+                // Every edit here applies as it is made, so OK and the ✕ are
+                // the same action: leave.
+                "close" | "ok" => {
                     self.panel_app.close_tags_tabs();
                     eprintln!("[ChartApp] tags_tabs closed");
                 }
-                "modal_bg" => {
+                "modal_bg" | "header" => {
                     // Absorb click — prevent fall-through.
                 }
-                "sidebar:tabs" => {
+                "tab:tabs" => {
                     self.panel_app.tags_tabs_state.set_sidebar(TagsTabsSidebar::Tabs);
                 }
-                "sidebar:tags" => {
+                "tab:tags" => {
                     self.panel_app.tags_tabs_state.set_sidebar(TagsTabsSidebar::Tags);
                 }
-                "sidebar:map" => {
+                "tab:map" => {
                     self.panel_app.tags_tabs_state.set_sidebar(TagsTabsSidebar::Map);
                 }
-                id if id.starts_with("tab:") => {
+                id if id.starts_with("tree_tab:") => {
                     use mlc_app_layout::ui::modal_settings::OverlayPanelTreeTab;
-                    let tab = match &id["tab:".len()..] {
+                    let tab = match &id["tree_tab:".len()..] {
                         "tree_view"  => OverlayPanelTreeTab::TreeView,
                         "eliminate"  => OverlayPanelTreeTab::Eliminate,
                         "hidden"     => OverlayPanelTreeTab::Hidden,
