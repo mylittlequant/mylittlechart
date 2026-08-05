@@ -2,6 +2,25 @@
 //!
 //! Each modal lives in its own sub-module for clear separation of concerns.
 
+/// Where a settings row puts its control: after the label column, running to
+/// the row's right edge.
+///
+/// A resizable modal that keeps its controls at a fixed width just grows a
+/// field of empty space to the right of them, which is the same as not
+/// resizing at all. Controls that show a VALUE — dropdowns, text inputs,
+/// sliders — take the room; checkboxes and colour swatches keep their size and
+/// do not go through here.
+///
+/// `min_w` is the width the control needs to read at all — usually its widest
+/// label. There is deliberately no ceiling: a ceiling puts the empty space
+/// back, which is the complaint that started this. A user who wants a narrow
+/// control narrows the modal.
+pub fn control_column(x: f64, width: f64, label_col: f64, min_w: f64) -> (f64, f64) {
+    let cx = x + label_col;
+    let w = (x + width - cx).max(min_w);
+    (cx, w)
+}
+
 pub mod indicator_settings;
 pub mod context_menu;
 pub mod primitive_settings;

@@ -18,6 +18,7 @@ use crate::ui::widgets::{
     ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
 };
+use crate::layout::modals::control_column;
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
 use crate::ui::Icon;
@@ -219,8 +220,14 @@ pub fn render_indicator_settings_modal(
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(param_name, content_x + content_padding, row_y + row_height / 2.0);
 
-                // Input field position
-                let input_x = content_x + content_padding + 150.0;
+                // Input field position — the control column runs to the row's
+                // right edge, so widening the modal widens the field.
+                let (input_x, control_w) = control_column(
+                    content_x + content_padding,
+                    content_width - content_padding * 2.0,
+                    150.0,
+                    80.0,
+                );
                 let input_height = 24.0;
                 let input_y = row_y + (row_height - input_height) / 2.0;
 
@@ -310,7 +317,7 @@ pub fn render_indicator_settings_modal(
                     }
                     Some(IndicatorParamType::Source) | Some(IndicatorParamType::Select { .. }) => {
                         // Render split dropdown for source/select
-                        let dropdown_width = 80.0;
+                        let dropdown_width = control_w;
                         let chevron_width = 20.0;
                         let text_width = dropdown_width - chevron_width;
                         let dropdown_rect = WidgetRect::new(input_x, input_y, dropdown_width, input_height);
@@ -374,7 +381,7 @@ pub fn render_indicator_settings_modal(
                     }
                     _ => {
                         // Default: render text input for Int/Float
-                        let input_width = 80.0;
+                        let input_width = control_w;
 
                         // Get text and cursor from active_render (populated by ChartApp from TextFieldStore).
                         let ar = &indicator_state.active_render;

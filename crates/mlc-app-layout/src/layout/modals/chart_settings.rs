@@ -7,6 +7,7 @@ use mlc_core::engine::render::RenderContext;
 use mlc_core::engine::render::draw_svg_icon;
 use mlc_core::i18n::{current_language, ClockKey, SettingsKey, t_settings};
 use crate::layout::render_chart::FrameTheme;
+use crate::layout::modals::control_column;
 use crate::layout::render_frame::{ChartSettingsModalResult, SliderTrackInfo};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::toolbar_theme::ToolbarTheme;
@@ -798,9 +799,8 @@ fn render_instrument_settings(
         ctx.set_fill_color(text_color);
         ctx.set_text_align(TextAlign::Left);
         ctx.fill_text("Candle style", label_x, row_y + row_height / 2.0);
-        let dropdown_x = x + 140.0;
+        let (dropdown_x, dropdown_width) = control_column(x, width, 140.0, 140.0);
         let chevron_w = 20.0;
-        let dropdown_width = 140.0;
         let dropdown_height = 28.0;
         let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
         let text_w = dropdown_width - chevron_w;
@@ -858,14 +858,14 @@ fn render_instrument_settings(
         // `chart_type_param_spec`'s doc comment) and inherited global candle
         // colors at render time.
         row_y = render_line_family_settings_block(
-            ctx, x, row_y, row_height, swatch_size, swatch_gap,
+            ctx, x, width, row_y, row_height, swatch_size, swatch_gap,
             label_x, swatches_x, text_color, muted_color, theme, settings, result,
         );
     } else if mlc_core::chart_type::by_id(&settings.chart_type)
         .is_some_and(|d| d.has_bespoke_settings_block)
     {
         row_y = render_footprint_settings_block(
-            ctx, x, row_y, row_height, checkbox_size, swatch_size, swatch_gap,
+            ctx, x, width, row_y, row_height, checkbox_size, swatch_size, swatch_gap,
             label_x, swatches_x, text_color, muted_color, theme, settings, result,
         );
     } else if let Some(spec) = chart_type_param_spec(&settings.chart_type) {
@@ -881,8 +881,7 @@ fn render_instrument_settings(
         ctx.set_text_align(TextAlign::Left);
         ctx.fill_text(&spec.row_label, x, row_y + row_height / 2.0);
 
-        let dropdown_x = x + 140.0;
-        let dropdown_width = 140.0;
+        let (dropdown_x, dropdown_width) = control_column(x, width, 140.0, 140.0);
         let dropdown_height = 28.0;
         let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
         let chevron_w = 20.0;
@@ -1098,8 +1097,7 @@ fn render_instrument_settings(
             // define the Initial Balance range.
             ctx.set_fill_color(text_color);
             ctx.fill_text("IB periods", x, row_y + row_height / 2.0);
-            let ib_dropdown_x = x + 140.0;
-            let ib_dropdown_width = 140.0;
+            let (ib_dropdown_x, ib_dropdown_width) = control_column(x, width, 140.0, 140.0);
             let ib_dropdown_height = 28.0;
             let ib_dropdown_y = row_y + (row_height - ib_dropdown_height) / 2.0;
             let ib_chevron_w = 20.0;
@@ -1166,8 +1164,7 @@ fn render_instrument_settings(
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text(t_settings(SettingsKey::LineStyle), x, row_y + row_height / 2.0);
 
-    let dropdown_x = x + 140.0;
-    let dropdown_width = 140.0;
+    let (dropdown_x, dropdown_width) = control_column(x, width, 140.0, 140.0);
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let tick_style_label = match settings.price_tick_style.as_str() {
@@ -1187,8 +1184,7 @@ fn render_instrument_settings(
     ctx.set_fill_color(text_color);
     ctx.fill_text(t_settings(SettingsKey::Precision), x, row_y + row_height / 2.0);
 
-    let dropdown_x = x + 140.0;
-    let dropdown_width = 140.0;
+    let (dropdown_x, dropdown_width) = control_column(x, width, 140.0, 140.0);
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
 
@@ -1296,6 +1292,7 @@ fn render_instrument_settings(
 fn render_footprint_settings_block(
     ctx: &mut dyn RenderContext,
     x: f64,
+    width: f64,
     mut row_y: f64,
     row_height: f64,
     checkbox_size: f64,
@@ -1363,12 +1360,12 @@ fn render_footprint_settings_block(
     // absorption stay active regardless of this choice.
     ctx.set_fill_color(text_color);
     ctx.fill_text("Cell mode", x, row_y + row_height / 2.0);
-    let cell_mode_dropdown_x = x + 140.0;
     ctx.set_font("12px sans-serif");
     let cell_mode_widest_w = ["Bid×Ask", "Delta", "Volume", "Volume (Delta Color)", "Profile"].iter()
         .map(|s| ctx.measure_text(s))
         .fold(0.0_f64, f64::max);
-    let cell_mode_dropdown_width = (cell_mode_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let (cell_mode_dropdown_x, cell_mode_dropdown_width) =
+        control_column(x, width, 140.0, (cell_mode_widest_w + 8.0 * 2.0 + 20.0).max(140.0));
     let cell_mode_dropdown_height = 28.0;
     let cell_mode_dropdown_y = row_y + (row_height - cell_mode_dropdown_height) / 2.0;
     let cell_mode_chevron_w = 20.0;
@@ -1384,7 +1381,6 @@ fn render_footprint_settings_block(
     // Row: Heat intensity dropdown (Low / Normal / High)
     ctx.set_fill_color(text_color);
     ctx.fill_text("Heat intensity", x, row_y + row_height / 2.0);
-    let dropdown_x = x + 140.0;
     // Width sized off the longest option label ("Normal") rather than the
     // fixed 140px used by short values elsewhere (e.g. Precision's "Auto")
     // — bug fix 2026-07-06: 140px clipped "Normal" against the chevron.
@@ -1392,7 +1388,8 @@ fn render_footprint_settings_block(
     let widest_label_w = ["Low", "Normal", "High"].iter()
         .map(|s| ctx.measure_text(s))
         .fold(0.0_f64, f64::max);
-    let dropdown_width = (widest_label_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let (dropdown_x, dropdown_width) =
+        control_column(x, width, 140.0, (widest_label_w + 8.0 * 2.0 + 20.0).max(140.0));
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let chevron_w = 20.0;
@@ -1413,12 +1410,12 @@ fn render_footprint_settings_block(
     // that reaches the fold machine does.
     ctx.set_fill_color(text_color);
     ctx.fill_text("Row grouping", x, row_y + row_height / 2.0);
-    let grouping_dropdown_x = x + 140.0;
     ctx.set_font("12px sans-serif");
     let grouping_widest_w = ["Raw", "2 ticks", "5 ticks", "10 ticks"].iter()
         .map(|s| ctx.measure_text(s))
         .fold(0.0_f64, f64::max);
-    let grouping_dropdown_width = (grouping_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let (grouping_dropdown_x, grouping_dropdown_width) =
+        control_column(x, width, 140.0, (grouping_widest_w + 8.0 * 2.0 + 20.0).max(140.0));
     let grouping_dropdown_height = 28.0;
     let grouping_dropdown_y = row_y + (row_height - grouping_dropdown_height) / 2.0;
     let grouping_text_w = grouping_dropdown_width - chevron_w;
@@ -1438,12 +1435,12 @@ fn render_footprint_settings_block(
     // this control.
     ctx.set_fill_color(text_color);
     ctx.fill_text("Imbalance ratio", x, row_y + row_height / 2.0);
-    let imbalance_dropdown_x = x + 140.0;
     ctx.set_font("12px sans-serif");
     let imbalance_widest_w = ["1.5x", "2x", "3x", "4x"].iter()
         .map(|s| ctx.measure_text(s))
         .fold(0.0_f64, f64::max);
-    let imbalance_dropdown_width = (imbalance_widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+    let (imbalance_dropdown_x, imbalance_dropdown_width) =
+        control_column(x, width, 140.0, (imbalance_widest_w + 8.0 * 2.0 + 20.0).max(140.0));
     let imbalance_dropdown_height = 28.0;
     let imbalance_dropdown_y = row_y + (row_height - imbalance_dropdown_height) / 2.0;
     let imbalance_text_w = imbalance_dropdown_width - chevron_w;
@@ -1468,6 +1465,7 @@ fn render_footprint_settings_block(
 fn render_line_family_settings_block(
     ctx: &mut dyn RenderContext,
     x: f64,
+    width: f64,
     mut row_y: f64,
     row_height: f64,
     swatch_size: f64,
@@ -1507,12 +1505,12 @@ fn render_line_family_settings_block(
         ctx.set_fill_color(text_color);
         ctx.set_text_align(TextAlign::Left);
         ctx.fill_text(row_label, x, row_y + row_height / 2.0);
-        let dropdown_x = x + 140.0;
         let chevron_w = 20.0;
         let widest_w = options_widest.iter()
             .map(|s| ctx.measure_text(s))
             .fold(0.0_f64, f64::max);
-        let dropdown_width = (widest_w + 8.0 * 2.0 + 20.0).max(140.0);
+        let (dropdown_x, dropdown_width) =
+            control_column(x, width, 140.0, (widest_w + 8.0 * 2.0 + 20.0).max(140.0));
         let dropdown_height = 28.0;
         let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
         let text_w = dropdown_width - chevron_w;
@@ -2129,8 +2127,7 @@ fn render_scales_settings(
     ctx.set_fill_color(text_color);
     ctx.fill_text(t_settings(SettingsKey::CrosshairMode), x, row_y + row_height / 2.0);
 
-    let dropdown_x = x + 100.0;
-    let dropdown_width = 120.0;
+    let (dropdown_x, dropdown_width) = control_column(x, content_width, 100.0, 120.0);
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
 
@@ -2232,7 +2229,7 @@ fn render_scales_settings(
     ctx.set_fill_color(text_color);
     ctx.fill_text(t_settings(SettingsKey::PriceScalePosition), x, row_y + row_height / 2.0);
 
-    let dropdown_x2 = x + 120.0;
+    let (dropdown_x2, _) = control_column(x, content_width, 120.0, dropdown_width);
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
     let price_pos_label = match settings.price_scale_position.as_str() {
         "left" => t_settings(SettingsKey::ScalePosLeft),
@@ -2455,8 +2452,7 @@ fn render_status_line_settings(
     ctx.set_fill_color(text_color);
     ctx.fill_text(t_settings(SettingsKey::Position), x, row_y + row_height / 2.0);
 
-    let dropdown_x = x + 100.0;
-    let dropdown_width = 150.0;
+    let (dropdown_x, dropdown_width) = control_column(x, width, 100.0, 150.0);
     let dropdown_height = 28.0;
     let dropdown_y = row_y + (row_height - dropdown_height) / 2.0;
 
