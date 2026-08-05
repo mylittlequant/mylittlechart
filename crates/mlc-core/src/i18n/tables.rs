@@ -514,7 +514,7 @@ pub(super) static PROFILE_KEY_TABLE: [[&str; N_LANG]; 24] = [
 //
 //  Col:  0=En                                              1=Ru                                           2..14=""
 
-pub(super) static MODAL_KEY_TABLE: [[&str; N_LANG]; 75] = [
+pub(super) static MODAL_KEY_TABLE: [[&str; N_LANG]; 76] = [
     // ---- Alert Settings ----
     /* 0  EditAlert              */ [ "Edit Alert",                          "Редактировать оповещение",                   "Editar alerta",                     "Alarm bearbeiten",                     "Modifier l'alerte",                        "Editar alerta",                         "编辑提醒",          "アラート編集",            "알림 편집",           "تعديل التنبيه",             "Modifica avviso",               "Uyarıyı Düzenle",                 "Edytuj alert",                    "Редагувати оповіщення",                 "अलर्ट संपादित करें"        ],
     /* 1  CreateAlert            */ [ "Create Alert",                        "Создать оповещение",                         "Crear alerta",                      "Alarm erstellen",                      "Créer une alerte",                         "Criar alerta",                          "创建提醒",          "アラート作成",            "알림 만들기",         "إنشاء تنبيه",               "Crea avviso",                   "Uyarı Oluştur",                   "Utwórz alert",                    "Створити оповіщення",                   "अलर्ट बनाएं"                ],
@@ -599,6 +599,7 @@ pub(super) static MODAL_KEY_TABLE: [[&str; N_LANG]; 75] = [
     // ---- Search Overlay header toggles ----
     /* 73 QuickSearchToggle      */ [ "Quick search",                        "Быстрый поиск",                              "Búsqueda rápida",                   "Schnellsuche",                         "Recherche rapide",                         "Busca rápida",                          "快速搜索",          "クイック検索",             "빠른 검색",           "بحث سريع",                  "Ricerca rapida",                "Hızlı arama",                     "Szybkie wyszukiwanie",            "Швидкий пошук",                         "त्वरित खोज"                 ],
     /* 74 SeparateCompareToggle  */ [ "Separate compare button",             "Отдельная кнопка сравнения",                 "Botón de comparar separado",        "Separater Vergleichs-Button",          "Bouton de comparaison séparé",             "Botão de comparação separado",          "独立对比按钮",      "個別の比較ボタン",         "별도의 비교 버튼",     "زر مقارنة منفصل",           "Pulsante confronto separato",   "Ayrı karşılaştırma düğmesi",      "Osobny przycisk porównania",      "Окрема кнопка порівняння",              "अलग तुलना बटन"              ],
+    /* 75 ColCompare             */ [ "COMPARE",                             "СРАВНИТЬ",                                   "COMPARAR",                          "VERGLEICHEN",                          "COMPARER",                                 "COMPARAR",                              "对比",              "比較",                    "비교",                "مقارنة",                    "CONFRONTA",                     "KARŞILAŞTIR",                     "PORÓWNAJ",                        "ПОРІВНЯТИ",                             "तुलना"                      ],
 ];
 
 // =============================================================================

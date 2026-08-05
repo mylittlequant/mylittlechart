@@ -1036,6 +1036,9 @@ pub enum ModalKey {
     QuickSearchToggle      = 73,
     /// "Separate compare button" toggle label
     SeparateCompareToggle  = 74,
+    /// "COMPARE" column header over the search row's trailing + — without it
+    /// the icon reads as a second way to pick the symbol.
+    ColCompare             = 75,
 }
 
 impl ModalKey {

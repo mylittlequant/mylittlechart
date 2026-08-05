@@ -296,9 +296,38 @@ pub fn render_search_overlay(
     }
 
     // Results area
-    let results_y = input_y + input_height + modal_padding;
-    let results_height = modal_y + modal_height - results_y - modal_padding;
+    let mut results_y = input_y + input_height + modal_padding;
+    let mut results_height = modal_y + modal_height - results_y - modal_padding;
     let results_width = content_width - modal_padding * 2.0 - scrollbar_width;
+
+    // A header band, but only on the variant that carries the compare column.
+    // The trailing + read as "add this symbol" — the same thing clicking the
+    // row does — because nothing said otherwise. Naming the columns is what
+    // separates "the row picks the instrument" from "the + compares it".
+    let show_cmp_plus = modal_state.current == OpenModal::SymbolSearch && !split_symbol_compare;
+    if show_cmp_plus {
+        const HEADER_H: f64 = 22.0;
+        let hx = content_x + modal_padding;
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text(t_modal(ModalKey::ColSymbol), hx + 8.0, results_y + HEADER_H / 2.0);
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(
+            t_modal(ModalKey::ColCompare),
+            hx + results_width - 4.0,
+            results_y + HEADER_H / 2.0,
+        );
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(hx, results_y + HEADER_H);
+        ctx.line_to(hx + results_width, results_y + HEADER_H);
+        ctx.stroke();
+        results_y += HEADER_H;
+        results_height -= HEADER_H;
+    }
 
     result.results_rect = Some(WidgetRect::new(
         content_x + modal_padding, results_y,
@@ -369,11 +398,10 @@ pub fn render_search_overlay(
         // itself) and only when `split_symbol_compare == false` — the
         // separate `compare` toolbar button + its own CompareSearch modal
         // remain the compare path unchanged when the flag is `true`.
-        let show_cmp_plus = modal_state.current == OpenModal::SymbolSearch && !split_symbol_compare;
         let (rects, star_rects, cmp_rects, height) = render_symbol_search_results_scrollable(
             ctx, content_x + modal_padding, results_y, results_width, results_height,
             &modal_state.symbol_search_results, hovered_item_id, scroll_offset, theme, toolbar_theme,
-            show_cmp_plus,
+            show_cmp_plus, input_coordinator,
         );
         result.item_rects = rects;
         result.star_rects = star_rects;
@@ -609,6 +637,7 @@ fn render_symbol_search_results_scrollable(
     _theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     show_cmp_plus: bool,
+    coord: &uzor::input::InputCoordinator,
 ) -> (Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, f64) {
     use mlc_core::render::{TextAlign, TextBaseline};
     use mlc_core::engine::render::draw_svg_icon;
@@ -658,11 +687,42 @@ fn render_symbol_search_results_scrollable(
         star_rects.push((item_key.clone(), WidgetRect::new(star_x, star_y, star_size, star_size)));
 
         // --- Compare-plus icon (right side, merged-mode only — кусок 5) ---
+        // It hovers on its OWN, with its own pad, because it does a different
+        // thing from the row it sits in: the row picks the instrument, the +
+        // compares it. Sharing the row's highlight is what made it read as a
+        // second way to do the same thing.
         if show_cmp_plus {
+            const CMP_PAD: f64 = 5.0;
             let cmp_x = x + width - cmp_pad_right - cmp_size;
             let cmp_y = current_y + (item_height - cmp_size) / 2.0;
-            draw_svg_icon(ctx, crate::ui::Icon::Plus.svg(), cmp_x, cmp_y, cmp_size, cmp_size, toolbar_theme.item_text_muted.as_str());
-            cmp_rects.push((item_key.clone(), WidgetRect::new(cmp_x, cmp_y, cmp_size, cmp_size)));
+            let cmp_hovered = coord.is_hovered(&uzor::types::WidgetId::from(
+                format!("modal_cmp:{item_key}").as_str(),
+            ));
+            if cmp_hovered {
+                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                ctx.fill_rounded_rect(
+                    cmp_x - CMP_PAD,
+                    cmp_y - CMP_PAD,
+                    cmp_size + CMP_PAD * 2.0,
+                    cmp_size + CMP_PAD * 2.0,
+                    4.0,
+                );
+            }
+            let cmp_color = if cmp_hovered {
+                toolbar_theme.accent.as_str()
+            } else {
+                toolbar_theme.item_text_muted.as_str()
+            };
+            draw_svg_icon(ctx, crate::ui::Icon::Plus.svg(), cmp_x, cmp_y, cmp_size, cmp_size, cmp_color);
+            cmp_rects.push((
+                item_key.clone(),
+                WidgetRect::new(
+                    cmp_x - CMP_PAD,
+                    cmp_y - CMP_PAD,
+                    cmp_size + CMP_PAD * 2.0,
+                    cmp_size + CMP_PAD * 2.0,
+                ),
+            ));
         }
 
         // --- Symbol text (shifted right to make room for star) ---
@@ -686,7 +746,13 @@ fn render_symbol_search_results_scrollable(
         ctx.set_text_baseline(TextBaseline::Middle);
         // Exchange labels render UPPERCASE everywhere (display-only, owner
         // rule 2026-07-17 — keys/queries keep the canonical lowercase id).
-        ctx.fill_text(&item.exchange.to_uppercase(), right_edge, current_y + item_height / 2.0);
+        // Right-aligned, so a long venue grows LEFT — straight into the
+        // category icon 58px away, which is what "KUCOIN" and "GATEIO" were
+        // doing. Shorten to the budget instead of letting two labels share
+        // pixels.
+        const VENUE_BUDGET: f64 = 50.0;
+        let venue = ellipsize(ctx, &item.exchange.to_uppercase(), VENUE_BUDGET);
+        ctx.fill_text(&venue, right_edge, current_y + item_height / 2.0);
         ctx.set_font("12px sans-serif");
         ctx.fill_text(&item.category_icon, right_edge - 58.0, current_y + item_height / 2.0);
 
@@ -881,4 +947,21 @@ fn render_indicator_sets_scrollable(
     }
 
     (item_rects, total_height)
+}
+
+/// Shorten `text` with a trailing ellipsis until it fits `budget` pixels.
+///
+/// Assumes the caller has already set the font it will draw with.
+fn ellipsize(ctx: &mut dyn RenderContext, text: &str, budget: f64) -> String {
+    if ctx.measure_text(text) <= budget {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    for keep in (1..chars.len()).rev() {
+        let candidate: String = chars[..keep].iter().collect::<String>() + "…";
+        if ctx.measure_text(&candidate) <= budget {
+            return candidate;
+        }
+    }
+    "…".to_string()
 }
