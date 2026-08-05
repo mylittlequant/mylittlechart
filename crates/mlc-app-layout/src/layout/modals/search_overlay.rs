@@ -255,9 +255,13 @@ pub fn render_search_overlay(
     };
     let display_cursor = if is_focused { cursor_pos } else { display_text.len() };
 
+    // Armed on open so the first keystroke lands, but the ring and the caret
+    // wait for a click or a keystroke. The text fallback below still follows
+    // FOCUS — what is displayed is a different question from what looks live.
+    let is_engaged = input_coordinator.text_fields().is_engaged(&search_field_id);
     let input_config = InputConfig::new(&display_text)
         .with_placeholder(placeholder)
-        .with_focused(is_focused)
+        .with_focused(is_engaged)
         .with_type(InputType::Search)
         .with_font_size(13.0)
         .with_padding(28.0)
@@ -287,7 +291,7 @@ pub fn render_search_overlay(
         &toolbar_theme.item_text_muted,
     );
 
-    if is_focused && input_coordinator.text_fields().cursor_visible(current_time_ms) {
+    if is_engaged && input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
     }
 

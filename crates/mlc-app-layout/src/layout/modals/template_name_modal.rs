@@ -110,8 +110,9 @@ pub fn render_template_name_modal(
             };
 
             let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+            let engaged = coord.text_fields().is_engaged(&wid);
             let config = InputConfig::new(&display_text)
-                .with_focused(true)
+                .with_focused(engaged)
                 .with_cursor(cursor_pos)
                 .with_placeholder(t_modal(ModalKey::TemplateNamePlaceholder))
                 .with_selection(sel_start, sel_end);
@@ -127,7 +128,7 @@ pub fn render_template_name_modal(
                 layer_id,
             );
 
-            if coord.text_fields().cursor_visible(current_time_ms) {
+            if engaged && coord.text_fields().cursor_visible(current_time_ms) {
                 draw_input_cursor(
                     ctx,
                     drawn.cursor_x,

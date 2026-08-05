@@ -133,8 +133,11 @@ pub fn render_chart_browser(
         None => (None, None),
     };
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    // Visually focused only once touched — the field is armed on open so the
+    // first keystroke lands, but a caret nobody asked for is noise.
+    let cb_engaged = input_coordinator.text_fields().is_engaged(&cb_search_id);
     let input_config = InputConfig::new(&cb_text)
-        .with_focused(true)
+        .with_focused(cb_engaged)
         .with_cursor(cb_cursor)
         .with_selection(cb_sel_start, cb_sel_end)
         .with_placeholder(t_modal(ModalKey::SearchChartsPlaceholder))
@@ -162,7 +165,7 @@ pub fn render_chart_browser(
     );
 
     // Blinking cursor in search input
-    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
+    if cb_engaged && input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,

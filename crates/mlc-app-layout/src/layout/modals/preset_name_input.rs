@@ -99,8 +99,9 @@ pub fn render_preset_name_input(
             };
 
             let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+            let engaged = coord.text_fields().is_engaged(&pni_id);
             let config = InputConfig::new(&text)
-                .with_focused(true)
+                .with_focused(engaged)
                 .with_cursor(cursor)
                 .with_placeholder("Preset name...")
                 .with_selection(sel_start, sel_end);
@@ -116,7 +117,7 @@ pub fn render_preset_name_input(
                 layer_id,
             );
 
-            if coord.text_fields().cursor_visible(current_time_ms) {
+            if engaged && coord.text_fields().cursor_visible(current_time_ms) {
                 draw_input_cursor(
                     ctx,
                     drawn.cursor_x,

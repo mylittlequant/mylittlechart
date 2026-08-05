@@ -475,8 +475,9 @@ fn render_overview_tab(
     };
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let wl_engaged = input_coordinator.text_fields().is_engaged(&wl_search_id);
     let input_config = InputConfig::new(&wl_text)
-        .with_focused(true)
+        .with_focused(wl_engaged)
         .with_cursor(wl_cursor)
         .with_placeholder("Search symbols...")
         .with_selection(wl_sel_start, wl_sel_end)
@@ -497,7 +498,7 @@ fn render_overview_tab(
     );
 
     // Blinking cursor for search input
-    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
+    if wl_engaged && input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             search_input_result.cursor_x,
@@ -1252,8 +1253,9 @@ pub fn render_wl_group_name_input(
     };
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let wl_gn_engaged = input_coordinator.text_fields().is_engaged(&wl_gn_id);
     let input_config = InputConfig::new(&wl_gn_text)
-        .with_focused(true)
+        .with_focused(wl_gn_engaged)
         .with_cursor(wl_gn_cursor)
         .with_placeholder("Watchlist name...")
         .with_selection(wl_gn_sel_start, wl_gn_sel_end);
@@ -1271,7 +1273,7 @@ pub fn render_wl_group_name_input(
     );
 
     // Blinking cursor
-    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
+    if wl_gn_engaged && input_coordinator.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(
             ctx,
             input_result.cursor_x,
