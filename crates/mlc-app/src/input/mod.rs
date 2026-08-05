@@ -1839,7 +1839,7 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "watchlist_modal" => {
+                    "wl_modal" => {
                         if let Some(ref wl) = self.last_watchlist_modal_result {
                             self.standalone_panels.watchlist_modal.start_drag(x, y, wl.modal_rect.x, wl.modal_rect.y);
                             true

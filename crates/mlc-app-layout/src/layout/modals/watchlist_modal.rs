@@ -11,7 +11,10 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{WatchlistModalState, WatchlistModalTab, WatchlistGroupNameInputState, WatchlistGroupNameMode};
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, render_modal_frame_only, ModalFooter, ModalPlacement,
+    ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
+};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
@@ -141,19 +144,9 @@ pub fn render_watchlist_modal(
     let icon_btn_size = 22.0;
 
     // -------------------------------------------------------------------------
-    // Position (draggable; centered by default)
-    // -------------------------------------------------------------------------
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        ((screen_w - modal_w) / 2.0, (screen_h - modal_h) / 2.0)
-    });
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_w);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_h);
-
-    let modal_rect = WidgetRect::new(modal_x, modal_y, modal_w, modal_h);
-    result.modal_rect = modal_rect;
-
-    // -------------------------------------------------------------------------
-    // Modal frame (blur + background + border)
+    // Chrome — frame, header, title, ✕, screen clamp, layer and the tab bar.
+    // Two tabs sharing the width equally, which is `TabFit::Equal`, the
+    // shell's default for a horizontal strip.
     // -------------------------------------------------------------------------
     let modal_theme = ModalTheme::from_frame_theme(
         &frame_theme.toolbar_bg,
@@ -162,153 +155,52 @@ pub fn render_watchlist_modal(
         &toolbar_theme.item_text_hover,
         &toolbar_theme.separator,
     );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
-
-    // -------------------------------------------------------------------------
-    // InputCoordinator layer
-    // -------------------------------------------------------------------------
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "watchlist_modal");
-
-    // Modal background absorbs clicks that don't hit any widget.
-    input_coordinator.register_on_layer(
-        "wl_modal:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // ==========================================================================
-    // Header
-    // ==========================================================================
-
-    let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
-    result.header_rect = header_rect;
-    input_coordinator.register_on_layer(
-        "watchlist_modal:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // Header background
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(modal_x, modal_y, modal_w, header_h);
-
-    // Title
-    ctx.set_font("bold 14px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_modal(ModalKey::Watchlist), modal_x + padding, modal_y + header_h / 2.0);
-
-    // Close button
-    let close_x = modal_x + modal_w - icon_size - 14.0;
-    let close_y = modal_y + (header_h - icon_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, icon_size, icon_size);
-    result.close_btn_rect = close_rect;
-
-    let close_hovered = state.hovered_widget.as_deref() == Some("wl_modal:close");
-    let close_color = if close_hovered {
-        &toolbar_theme.item_text
-    } else {
-        &toolbar_theme.item_text_muted
-    };
-    draw_svg_icon(
-        ctx, Icon::Close.svg(),
-        close_x, close_y,
-        icon_size, icon_size,
-        close_color,
-    );
-
-    input_coordinator.register_on_layer(
-        "wl_modal:close",
-        uzor::types::Rect::new(close_x, close_y, icon_size, icon_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_h);
-    ctx.line_to(modal_x + modal_w, modal_y + header_h);
-    ctx.stroke();
-
-    // Re-register the header drag zone with a tighter rect (excludes the close
-    // icon area on the right). Reuses the "watchlist_modal:header" id so the
-    // existing dispatch arm in input/mod.rs handles it; last-registered wins
-    // within a layer, so this shadows the broader rect registered earlier.
-    input_coordinator.register_on_layer(
-        "watchlist_modal:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w - icon_size - 14.0, header_h),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
-
-    // ==========================================================================
-    // Tab bar
-    // ==========================================================================
-
-    let tab_bar_y = modal_y + header_h;
-    // Only Overview and Groups tabs — Settings tab removed.
-    let tabs: &[(&str, &str, WatchlistModalTab)] = &[
-        (t_modal(ModalKey::WatchlistOverview), "wl_modal:tab:overview", WatchlistModalTab::Overview),
-        (t_modal(ModalKey::WatchlistGroups),   "wl_modal:tab:groups",   WatchlistModalTab::Groups),
+    let tab_defs: &[(&str, &str, WatchlistModalTab)] = &[
+        (t_modal(ModalKey::WatchlistOverview), "overview", WatchlistModalTab::Overview),
+        (t_modal(ModalKey::WatchlistGroups), "groups", WatchlistModalTab::Groups),
     ];
-    let tab_w = modal_w / tabs.len() as f64;
+    let tab_items: Vec<ModalTab<'_>> = tab_defs
+        .iter()
+        .map(|(label, id, _)| ModalTab { id, label, icon: None })
+        .collect();
+    let active_tab_idx = tab_defs
+        .iter()
+        .position(|(_, _, t)| *t == state.active_tab)
+        .unwrap_or(0);
+    let body_h = modal_h - header_h - tab_bar_h;
+    let spec = ModalShellSpec {
+        // Every tab body insets itself by `padding`.
+        padding: 0.0,
+        header_height: header_h,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("wl_modal", t_modal(ModalKey::Watchlist), modal_w, body_h)
+            .layer_named("watchlist_modal")
+            .with_tabs(ModalTabs::Horizontal {
+                items: &tab_items,
+                active: active_tab_idx,
+                fit: TabFit::Equal,
+            })
+            .with_footer(ModalFooter::None)
+            .with_max_content_height(body_h)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    for (_i, (label, widget_id, this_tab)) in tabs.iter().enumerate() {
-        let tab_x = modal_x + _i as f64 * tab_w;
-        let tab_rect = WidgetRect::new(tab_x, tab_bar_y, tab_w, tab_bar_h);
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result.tab_rects = shell.tab_rects.clone();
 
-        let is_active = state.active_tab == *this_tab;
-        let is_tab_hovered = state.hovered_widget.as_deref() == Some(*widget_id);
-
-        if is_active {
-            ctx.set_fill_color(&toolbar_theme.item_bg_active);
-            ctx.fill_rect(tab_x, tab_bar_y, tab_w, tab_bar_h);
-        } else if is_tab_hovered {
-            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-            ctx.fill_rect(tab_x, tab_bar_y, tab_w, tab_bar_h);
-        }
-
-        let text_color = if is_active {
-            &toolbar_theme.item_text_active
-        } else if is_tab_hovered {
-            &toolbar_theme.item_text
-        } else {
-            &toolbar_theme.item_text_muted
-        };
-        ctx.set_fill_color(text_color);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, tab_x + tab_w / 2.0, tab_bar_y + tab_bar_h / 2.0);
-
-        result.tab_rects.push((label.to_string(), tab_rect));
-        input_coordinator.register_on_layer(
-            *widget_id,
-            uzor::types::Rect::new(tab_x, tab_bar_y, tab_w, tab_bar_h),
-            uzor::input::Sense::CLICK,
-            &layer_id,
-        );
-    }
-
-    // Tab bar bottom separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, tab_bar_y + tab_bar_h);
-    ctx.line_to(modal_x + modal_w, tab_bar_y + tab_bar_h);
-    ctx.stroke();
+    // The tab bodies read the frame the shell settled on.
+    let (modal_x, modal_y) = (shell.frame.x, shell.frame.y);
+    let (modal_w, modal_h) = (shell.frame.width, shell.frame.height);
 
     // ==========================================================================
     // Content area — dispatch by active tab
     // ==========================================================================
 
-    let content_top = modal_y + header_h + tab_bar_h;
-    let content_h = modal_h - header_h - tab_bar_h;
+    let content_top = shell.content.y;
+    let content_h = shell.content.height;
 
     match state.active_tab {
         WatchlistModalTab::Overview => {
@@ -352,7 +244,7 @@ pub fn render_watchlist_modal(
         }
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
     result
 }
 
