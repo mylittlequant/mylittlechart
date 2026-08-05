@@ -4931,7 +4931,10 @@ impl ChartApp {
         // === Preset name input modal clicks ===
         if let Some(rest) = widget_id.strip_prefix("preset_name_input:") {
             match rest {
-                "save" => {
+                // `create`, not `save`: the shell names a creator's primary
+                // action for what it does, and this dialog names a thing that
+                // does not exist yet.
+                "create" => {
                     // Read text from TextFieldStore.
                     let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
                     let name = self.input_coordinator.borrow().text_fields().text(&pni_id).trim().to_string();

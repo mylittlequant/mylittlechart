@@ -1827,7 +1827,7 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "preset_name" => {
+                    "preset_name_input" => {
                         if let Some(ref pni) = self.frame_result.as_ref().and_then(|r| r.preset_name_input.as_ref()) {
                             self.panel_app.preset_name_input.start_drag(x, y, pni.modal_rect.x, pni.modal_rect.y);
                             true

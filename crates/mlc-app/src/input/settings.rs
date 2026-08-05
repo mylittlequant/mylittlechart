@@ -2440,7 +2440,8 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] prim_tmpl modal cancelled");
             }
-            "save" => {
+            // The shell calls a creator's primary action `create`.
+            "create" => {
                 let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
@@ -2479,7 +2480,8 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] ind_tmpl modal cancelled");
             }
-            "save" => {
+            // The shell calls a creator's primary action `create`.
+            "create" => {
                 let field_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
@@ -2525,7 +2527,8 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] cmp_tmpl modal cancelled");
             }
-            "save" => {
+            // The shell calls a creator's primary action `create`.
+            "create" => {
                 let field_id = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_TEMPLATE_NAME);
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {
@@ -2558,7 +2561,8 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 eprintln!("[ChartApp] chart_tmpl modal cancelled");
             }
-            "save" => {
+            // The shell calls a creator's primary action `create`.
+            "create" => {
                 let field_id = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_TEMPLATE_NAME);
                 let name = self.input_coordinator.borrow().text_fields().text(&field_id).to_string();
                 if !name.is_empty() {

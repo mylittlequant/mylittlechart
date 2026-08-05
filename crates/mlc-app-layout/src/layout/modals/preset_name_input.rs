@@ -1,19 +1,16 @@
 //! Preset name input modal renderer — small dialog for naming presets.
 
 use mlc_core::engine::render::RenderContext;
-use mlc_core::engine::render::draw_svg_icon;
-use mlc_core::i18n::{TextKey, current_language};
-use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::{PresetNameInputState, PresetNameInputMode};
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
+use crate::ui::widgets::{
+    ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme, render_modal_shell,
+};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::z_order::ZLayer;
-use crate::ui::Icon;
 
 /// Render result from the preset name input modal.
 #[derive(Clone, Debug, Default)]
@@ -36,7 +33,10 @@ pub struct PresetNameInputResult {
     pub char_x_positions: Vec<f64>,
 }
 
-/// Render the preset name input modal dialog.
+/// A dialog that names a thing which does not exist yet: one field, and a
+/// button that brings it into existence. The ✕ is the abort, so there is no
+/// Cancel — `cancel_btn_rect` stays empty and is kept only because callers
+/// read the struct.
 pub fn render_preset_name_input(
     ctx: &mut dyn RenderContext,
     screen_w: f64,
@@ -49,56 +49,7 @@ pub fn render_preset_name_input(
 ) -> PresetNameInputResult {
     let mut result = PresetNameInputResult::default();
 
-    let modal_w = 400.0;
-    let modal_h = 170.0;
-    let header_h = 44.0;
-    let footer_h = 52.0;
-    let padding = 16.0;
-    let input_h = 32.0;
-    let btn_h = 32.0;
-    let btn_w = 80.0;
-    let btn_gap = 8.0;
-
-    // Position (draggable, centered by default)
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        ((screen_w - modal_w) / 2.0, (screen_h - modal_h) / 2.0)
-    });
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_w);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_h);
-
-    let modal_rect = WidgetRect::new(modal_x, modal_y, modal_w, modal_h);
-    result.modal_rect = modal_rect;
-
-    // Modal frame (blur + background + border)
-    let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
-        &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
-    );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
-
-    // InputCoordinator layer
-    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "preset_name_input");
-
-    // Register modal background (absorbs clicks)
-    input_coordinator.register_on_layer(
-        "preset_name_input:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header
-    let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
-    result.header_rect = header_rect;
-    input_coordinator.register_on_layer(
-        "preset_name:header",
-        header_rect,
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
+    const INPUT_H: f64 = 32.0;
 
     let title = match state.mode {
         PresetNameInputMode::SaveAs => "Save As",
@@ -106,117 +57,80 @@ pub fn render_preset_name_input(
         PresetNameInputMode::NewChart => "New Chart",
         PresetNameInputMode::CreateIndicatorSet => "Create Indicator Set",
     };
-    ctx.set_font("bold 14px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, modal_x + padding, modal_y + header_h / 2.0);
 
-    // Close button (X) — right side of header
-    let close_size = 18.0;
-    let close_x = modal_x + modal_w - close_size - 12.0;
-    let close_y = modal_y + (header_h - close_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    result.close_btn_rect = close_rect;
-
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, &toolbar_theme.item_text);
-
-    input_coordinator.register_on_layer(
-        "preset_name_input:close",
-        uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_h);
-    ctx.line_to(modal_x + modal_w, modal_y + header_h);
-    ctx.stroke();
-
-    // Content area — text input field
-    let content_y = modal_y + header_h + padding;
-    let input_rect = WidgetRect::new(
-        modal_x + padding,
-        content_y,
-        modal_w - padding * 2.0,
-        input_h,
-    );
-    result.input_rect = input_rect;
-
-    // Text input — text/cursor/selection from TextFieldStore.
-    let pni_id = uzor::WidgetId::from("preset_name_input");
-    let pni_text = input_coordinator.text_fields().text(&pni_id).to_string();
-    let pni_cursor = input_coordinator.text_fields().cursor(&pni_id);
-    let (pni_sel_start, pni_sel_end) = match input_coordinator.text_fields().selection_range(&pni_id) {
-        Some((lo, hi)) => (Some(lo), Some(hi)),
-        None => (None, None),
-    };
-
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let input_config = InputConfig::new(&pni_text)
-        .with_focused(true)
-        .with_cursor(pni_cursor)
-        .with_placeholder("Preset name...")
-        .with_selection(pni_sel_start, pni_sel_end);
-
-    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
-    result.input_text_rect = input_result.text_rect;
-    result.char_x_positions = input_result.char_x_positions;
-
-    // Register text input area for click-to-cursor
-    input_coordinator.register_on_layer(
-        "preset_name_input:input",
-        uzor::types::Rect::new(input_rect.x, input_rect.y, input_rect.width, input_rect.height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Blinking cursor
-    if input_coordinator.text_fields().cursor_visible(current_time_ms) {
-        draw_input_cursor(
-            ctx,
-            input_result.cursor_x,
-            input_result.cursor_y,
-            input_result.cursor_height,
-            &toolbar_theme.item_text,
-        );
+    let save_label = mlc_core::i18n::TextKey::Save.get(mlc_core::i18n::current_language());
+    let spec = ModalShellSpec {
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("preset_name_input", title, 400.0, INPUT_H)
     }
+    .with_footer(ModalFooter::Creator { label: save_label });
 
-    // Footer separator
-    let footer_y = modal_y + modal_h - footer_h;
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, footer_y);
-    ctx.line_to(modal_x + modal_w, footer_y);
-    ctx.stroke();
-
-    // Footer buttons — right-aligned
-    let btns_y = footer_y + (footer_h - btn_h) / 2.0;
-    // Save takes the right-hand slot; the ✕ is the abort.
-    let save_x = modal_x + modal_w - padding - btn_w;
-    let _ = btn_gap;
-
-    // "Save" button (primary)
-    let save_rect = WidgetRect::new(save_x, btns_y, btn_w, btn_h);
-    result.save_btn_rect = save_rect;
-    ctx.set_fill_color(&toolbar_theme.accent);
-    ctx.fill_rounded_rect(save_rect.x, save_rect.y, save_rect.width, save_rect.height, 4.0);
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("#ffffff");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(TextKey::Save.get(current_language()), save_rect.center_x(), save_rect.center_y());
-
-    input_coordinator.register_on_layer(
-        "preset_name_input:save",
-        uzor::types::Rect::new(save_rect.x, save_rect.y, save_rect.width, save_rect.height),
-        uzor::input::Sense::CLICK,
-        &layer_id,
+    let theme = ModalTheme::from_frame_theme(
+        &frame_theme.toolbar_bg,
+        &toolbar_theme.separator,
+        &toolbar_theme.item_text,
+        &toolbar_theme.item_text_hover,
+        &toolbar_theme.separator,
     );
 
+    let shell = render_modal_shell(
+        ctx,
+        input_coordinator,
+        &spec,
+        &theme,
+        (screen_w, screen_h),
+        |ctx, coord, layer_id, shell| {
+            let input_rect = WidgetRect::new(
+                shell.content.x,
+                shell.content.y,
+                shell.content.width,
+                INPUT_H,
+            );
+            result.input_rect = input_rect;
+
+            // Text, caret and selection all live in the shared TextFieldStore —
+            // this modal owns none of them.
+            let pni_id = uzor::WidgetId::from("preset_name_input");
+            let text = coord.text_fields().text(&pni_id).to_string();
+            let cursor = coord.text_fields().cursor(&pni_id);
+            let (sel_start, sel_end) = match coord.text_fields().selection_range(&pni_id) {
+                Some((lo, hi)) => (Some(lo), Some(hi)),
+                None => (None, None),
+            };
+
+            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+            let config = InputConfig::new(&text)
+                .with_focused(true)
+                .with_cursor(cursor)
+                .with_placeholder("Preset name...")
+                .with_selection(sel_start, sel_end);
+
+            let drawn = draw_input(ctx, &config, WidgetState::Normal, input_rect, &widget_theme);
+            result.input_text_rect = drawn.text_rect;
+            result.char_x_positions = drawn.char_x_positions;
+
+            coord.register_on_layer(
+                "preset_name_input:input",
+                input_rect,
+                uzor::input::Sense::CLICK,
+                layer_id,
+            );
+
+            if coord.text_fields().cursor_visible(current_time_ms) {
+                draw_input_cursor(
+                    ctx,
+                    drawn.cursor_x,
+                    drawn.cursor_y,
+                    drawn.cursor_height,
+                    &toolbar_theme.item_text,
+                );
+            }
+        },
+    );
+
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result.save_btn_rect = shell.primary_btn.unwrap_or_default();
     result
 }

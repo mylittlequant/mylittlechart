@@ -279,8 +279,7 @@ const FOOTER_PAD: f64 = 16.0;
 const BTN_H: f64 = 32.0;
 const OK_W: f64 = 70.0;
 const TEMPLATE_W: f64 = 80.0;
-/// Thickness of the edge strip a resize drag can grab. Public because the
-/// input side hit-tests the edges itself, against the frame the modal reports.
+/// How far a grab zone reaches inside the frame it resizes.
 pub const RESIZE_GRIP: f64 = 6.0;
 /// The floor a body may be dragged down to.
 const MIN_BODY_H: f64 = 80.0;
@@ -326,6 +325,13 @@ pub struct ModalShellSpec<'a> {
     /// `width` and the derived height; `None` means the modal sizes itself
     /// from its content, which is what every modal does until touched.
     pub size: Option<(f64, f64)>,
+    /// Dim the screen behind the frame with `ModalTheme::backdrop`.
+    ///
+    /// Off by default, and that is the honest default: a settings dialog sits
+    /// over a live chart the user is still reading. A dimmer says the rest of
+    /// the app is out of play, which is true only for a modal that must be
+    /// answered before anything else can happen.
+    pub dim_backdrop: bool,
     /// Offer resize grips on the right edge, the bottom edge and the corner.
     pub resizable: bool,
     /// Floor for a user-dragged size. The ceiling is the screen.
@@ -353,6 +359,7 @@ impl<'a> ModalShellSpec<'a> {
             draggable: true,
             show_close: true,
             size: None,
+            dim_backdrop: false,
             resizable: false,
             min_size: (320.0, 200.0),
         }
@@ -484,6 +491,10 @@ pub struct ModalShell {
     /// that hangs a menu off it reads this instead of re-deriving the footer
     /// arithmetic and drifting from it.
     pub template_btn: Option<WidgetRect>,
+    /// Where the footer's primary action landed — OK on an editor, the create
+    /// button on a creator. Reported for the same reason as `template_btn`:
+    /// callers that publish a rect for it must not compute a second opinion.
+    pub primary_btn: Option<WidgetRect>,
 }
 
 /// Draw a modal and hand its body the layer to register on.
@@ -579,8 +590,15 @@ pub fn begin_modal_shell(
         close_btn: None,
         footer,
         template_btn: None,
+        primary_btn: None,
     };
     let mut shell = shell;
+
+    // Before the layer, before the frame: whatever is behind goes dim first.
+    if spec.dim_backdrop {
+        ctx.set_fill_color(&theme.backdrop);
+        ctx.fill_rect(0.0, 0.0, screen_w, screen_h);
+    }
 
     let layer_id = spec.layer.push_named(coord, spec.layer_name.unwrap_or(spec.ns));
     // The background swallows clicks that land on the modal but on nothing in
@@ -635,7 +653,9 @@ pub fn begin_modal_shell(
 
     // The footer is NOT drawn here — see `end_modal_shell`. Its geometry is,
     // because the body needs it: a menu hangs off the template button.
-    shell.template_btn = footer.and_then(|f| footer_button_rects(spec, f).0);
+    let footer_btns = footer.map(|f| footer_button_rects(spec, f));
+    shell.template_btn = footer_btns.and_then(|b| b.0);
+    shell.primary_btn = footer_btns.and_then(|b| b.1);
 
     (shell, layer_id)
 }
