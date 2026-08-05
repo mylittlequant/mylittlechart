@@ -271,9 +271,9 @@ pub fn render_indicator_settings_modal(
                         // "cycle" half, because a set has no next value.
                         let field_width = 150.0;
                         let field_rect = WidgetRect::new(input_x, input_y, field_width, input_height);
-                        let chosen: Vec<&str> = indicator_state.venue_options.iter()
+                        let chosen: Vec<String> = indicator_state.venue_options.iter()
                             .filter(|(_, on)| *on)
-                            .map(|(v, _)| v.as_str())
+                            .map(|(v, _)| mlc_core::venue_label(v))
                             .collect();
                         let label = if indicator_state.venue_all {
                             // Following the offered list, whatever it becomes.
@@ -1366,7 +1366,16 @@ pub fn render_indicator_settings_modal(
                                     // unticked rows only competes with the tick
                                     // it is meant to contrast with; the blank
                                     // keeps the labels aligned.
-                                    DropdownItem::item(v, &format!("{} {}", if *on { "✓" } else { " " }, v))
+                                    // The id stays the canonical lower-case
+                                    // venue; only the label is upper-cased.
+                                    DropdownItem::item(
+                                        v,
+                                        &format!(
+                                            "{} {}",
+                                            if *on { "✓" } else { " " },
+                                            mlc_core::venue_label(v)
+                                        ),
+                                    )
                                 })
                                 .collect()
                         } else {

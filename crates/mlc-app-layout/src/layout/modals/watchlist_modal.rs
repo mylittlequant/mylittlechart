@@ -649,7 +649,7 @@ fn render_overview_tab(
             // Exchange (10px, muted, left-aligned)
             ctx.set_font("10px sans-serif");
             ctx.set_fill_color(&toolbar_theme.item_text_muted);
-            ctx.fill_text(&entry.exchange, cols.exch_x, row_mid_y);
+            ctx.fill_text(&mlc_core::venue_label(&entry.exchange), cols.exch_x, row_mid_y);
 
             // Last price (11px, item_text color, right-aligned)
             ctx.set_font("11px sans-serif");

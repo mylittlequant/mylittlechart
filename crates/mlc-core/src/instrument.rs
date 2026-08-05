@@ -166,6 +166,22 @@ impl InstrumentAddress {
     }
 }
 
+/// A venue name as the interface shows it: UPPER CASE, always.
+///
+/// The rule is a standard, not a preference. A symbol is upper case, a
+/// timeframe is upper case, an account type is upper case — a venue sitting
+/// between them in lower case is the odd one out on every surface that
+/// composes them. Exchange ids are STORED lower case (`"binance"`), because
+/// that is the canonical routing key; this is the display side of that same
+/// value and the only thing that should ever draw it.
+///
+/// Call this instead of `.to_uppercase()` at the draw site: a bare
+/// `to_uppercase` says nothing about why, and the four surfaces that forgot it
+/// forgot it independently.
+pub fn venue_label(exchange: &str) -> String {
+    exchange.to_uppercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

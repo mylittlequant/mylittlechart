@@ -111,7 +111,7 @@ pub mod alert;
 // Canonical instrument key (exchange, symbol, account_type) — see
 // docs/mlc/plans/doctrine-cutover-2026-06-27.md §1C.
 pub mod instrument;
-pub use instrument::{AccountType, InstrumentAddress};
+pub use instrument::{venue_label, AccountType, InstrumentAddress};
 
 // Watchlist domain value types (no UI/presentation fields) — see
 // docs/mlc/plans/doctrine-cutover-2026-06-27.md §1B.

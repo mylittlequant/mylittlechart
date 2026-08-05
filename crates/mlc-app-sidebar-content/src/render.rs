@@ -1799,7 +1799,8 @@ fn render_watchlist_items(
                 ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(align);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                let display_exchange = truncate_to_width(ctx, &item.exchange, clip_w);
+                let display_exchange =
+                    truncate_to_width(ctx, &mlc_core::venue_label(&item.exchange), clip_w);
                 ctx.fill_text(&display_exchange, tx, current_y + data_row_h / 2.0);
             }
         }
@@ -2391,7 +2392,7 @@ fn render_screener_rows(
 
             ctx.set_font("9px sans-serif");
             ctx.set_fill_color(&theme.item_text_muted);
-            let tag = format!("{}:{}", item.exchange, item.account_type);
+            let tag = format!("{}:{}", mlc_core::venue_label(&item.exchange), item.account_type);
             let tag_display = truncate_to_width(ctx, &tag, col_w - 4.0);
             ctx.fill_text(&tag_display, col_x, current_y + 17.0);
         }
@@ -2626,11 +2627,12 @@ fn render_alert_items(
 
             // --- Line 3: symbol:exchange:timeframe ---
             let sym = item.symbol();
-            let symbol_exchange_text = match (item.exchange().is_empty(), item.timeframe.is_empty()) {
+            let venue = mlc_core::venue_label(item.exchange());
+            let symbol_exchange_text = match (venue.is_empty(), item.timeframe.is_empty()) {
                 (true, true) => sym.to_string(),
-                (false, true) => format!("{}:{}", sym, item.exchange()),
+                (false, true) => format!("{sym}:{venue}"),
                 (true, false) => format!("{}:{}", sym, item.timeframe),
-                (false, false) => format!("{}:{}:{}", sym, item.exchange(), item.timeframe),
+                (false, false) => format!("{sym}:{venue}:{}", item.timeframe),
             };
             ctx.set_font("9px sans-serif");
             ctx.fill_text(&symbol_exchange_text, rect.x + item_padding + 12.0, current_y + 37.0);
