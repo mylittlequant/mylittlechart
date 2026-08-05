@@ -181,7 +181,7 @@ pub fn render_clock_popup(
 
     // Checkmark (white, 2px stroke) when checked
     if use_24h {
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(&toolbar_theme.item_text_active);
         ctx.set_stroke_width(2.0);
         ctx.begin_path();
         ctx.move_to(cb_x + 2.0, cb_top + CHECKBOX_SIZE / 2.0);
@@ -228,7 +228,7 @@ pub fn render_clock_popup(
 
     // Checkmark (white, 2px stroke) when checked
     if show_utc {
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(&toolbar_theme.item_text_active);
         ctx.set_stroke_width(2.0);
         ctx.begin_path();
         ctx.move_to(cb_x + 2.0, cb2_top + CHECKBOX_SIZE / 2.0);

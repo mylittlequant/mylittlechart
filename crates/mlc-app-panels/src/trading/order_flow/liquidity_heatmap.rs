@@ -764,7 +764,7 @@ impl TradingPanel for LiquidityHeatmapState {
                         // Bids — green
                         if bid_qty > 0.0 {
                             let bar_w = sidebar_w as f64 * (bid_qty / max_qty) * 0.5;
-                            ctx.set_fill_color("#2ecc7199");
+                            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.buy, 0.6));
                             ctx.fill_rect(
                                 (x + heatmap_w) as f64,
                                 bar_y,
@@ -776,7 +776,7 @@ impl TradingPanel for LiquidityHeatmapState {
                         // Asks — red
                         if ask_qty > 0.0 {
                             let bar_w = sidebar_w as f64 * (ask_qty / max_qty) * 0.5;
-                            ctx.set_fill_color("#e74c3c99");
+                            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.sell, 0.6));
                             ctx.fill_rect(
                                 (x + heatmap_w) as f64 + sidebar_w as f64 * 0.5,
                                 bar_y,
@@ -829,8 +829,11 @@ impl TradingPanel for LiquidityHeatmapState {
 
                 let radius = 2.0 + (circle.qty / self.max_trade_qty).sqrt() * 8.0;
 
-                let color = if circle.is_buy { "#2ecc7199" } else { "#e74c3c99" };
-                ctx.set_fill_color(color);
+                let color = mlc_core::apply_opacity(
+                    if circle.is_buy { &theme.buy } else { &theme.sell },
+                    0.6,
+                );
+                ctx.set_fill_color(&color);
                 ctx.begin_path();
                 ctx.arc(cx, cy, radius, 0.0, TAU);
                 ctx.fill();
@@ -842,7 +845,7 @@ impl TradingPanel for LiquidityHeatmapState {
             let crosshair_tick = (crosshair_price / self.tick_size).round() as i64;
             let cy = y as f64 + tick_to_y(crosshair_tick);
 
-            ctx.set_fill_color("#ffffff66");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.4));
             ctx.fill_rect(x as f64, cy, heatmap_w as f64, 1.0);
 
             let decimal_places = if self.tick_size < 0.01 {
@@ -856,7 +859,7 @@ impl TradingPanel for LiquidityHeatmapState {
             ctx.set_font("9px sans-serif");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.set_fill_color("#ffffffcc");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.8));
             ctx.fill_text(&label, (x + heatmap_w - 2.0) as f64, cy);
         }
 
@@ -895,13 +898,13 @@ impl TradingPanel for LiquidityHeatmapState {
             let badge_x = x + w - 60.0;
             let badge_y = y + 6.0;
 
-            ctx.set_fill_color("#00000099");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&theme.panel_bg, 0.6));
             ctx.fill_rect((badge_x - 4.0) as f64, badge_y as f64, 56.0, 14.0);
 
             ctx.set_font("bold 9px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
-            ctx.set_fill_color("#e74c3cff");
+            ctx.set_fill_color(&theme.sell);
             ctx.fill_text(badge_text, badge_x as f64, badge_y as f64);
         }
 

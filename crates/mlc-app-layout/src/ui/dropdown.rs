@@ -5,6 +5,7 @@
 
 use uzor::render::{RenderContext, TextAlign, TextBaseline};
 use super::toolbar_core::{WidgetRect, IconId};
+use super::toolbar_theme::ToolbarTheme;
 
 /// Square size of a trailing icon button.
 const TRAILING_ICON_SIZE: f64 = 16.0;
@@ -334,6 +335,33 @@ pub struct DropdownTheme {
     /// Theme accent — active-state trailing icons (Multi-DOM roster DOM
     /// icon etc.). Tokenized, never hardcode a hex at a call site.
     pub accent: String,
+}
+
+impl DropdownTheme {
+    /// The one every dropdown in the app should use.
+    ///
+    /// Four settings modals were each assembling this struct field by field
+    /// from the same toolbar tokens and the same two hardcoded reds, so a
+    /// change to the danger colour reached none of them. `Default` stays for
+    /// tests and for the callers that have no toolbar to hand.
+    pub fn from_toolbar(tt: &ToolbarTheme) -> Self {
+        Self {
+            background: tt.dropdown_bg.clone(),
+            border: tt.separator.clone(),
+            shadow: "rgba(0,0,0,0.5)".to_string(),
+            item_text: tt.item_text.clone(),
+            item_text_hover: tt.item_text_hover.clone(),
+            item_text_disabled: tt.item_text_muted.clone(),
+            item_bg_hover: tt.item_bg_hover.clone(),
+            item_danger: tt.danger.clone(),
+            item_danger_bg_hover: mlc_core::apply_opacity(&tt.danger, 0.15),
+            header_text: tt.item_text.clone(),
+            header_border: tt.separator.clone(),
+            separator: tt.separator.clone(),
+            shortcut_text: tt.item_text_muted.clone(),
+            accent: tt.accent.clone(),
+        }
+    }
 }
 
 impl Default for DropdownTheme {

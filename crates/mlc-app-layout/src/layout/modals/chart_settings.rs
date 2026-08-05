@@ -355,7 +355,7 @@ pub fn render_settings_modal(
 
                 let del_x = dd_x + menu_w - delete_btn_w - 4.0;
                 let del_y = row_y + (opt_h - 24.0) / 2.0;
-                let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
+                let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
                 draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
 
                 let name_w = menu_w - delete_btn_w - 8.0;
@@ -393,22 +393,7 @@ pub fn render_settings_modal(
     // Centralized Dropdown Rendering (render AFTER footer to appear on top)
     // =========================================================================
     if let Some(active_field) = &chart_settings_state.active_dropdown {
-        let dropdown_theme = DropdownTheme {
-            background: toolbar_theme.dropdown_bg.clone(),
-            border: toolbar_theme.separator.clone(),
-            shadow: "rgba(0,0,0,0.5)".to_string(),
-            item_text: toolbar_theme.item_text.clone(),
-            item_text_hover: toolbar_theme.item_text_hover.clone(),
-            item_text_disabled: toolbar_theme.item_text_muted.clone(),
-            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
-            item_danger: "#f23645".to_string(),
-            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
-            header_text: toolbar_theme.item_text.clone(),
-            header_border: toolbar_theme.separator.clone(),
-            separator: toolbar_theme.separator.clone(),
-            shortcut_text: toolbar_theme.item_text_muted.clone(),
-            accent: toolbar_theme.accent.clone(),
-        };
+        let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
 
         let dropdown_id = match active_tab {
             ChartSettingsTab::StatusLine => format!("status:dropdown_menu:{}", active_field),
@@ -1950,9 +1935,9 @@ fn render_appearance_settings(
             let swatch_rect = WidgetRect::new(swatch_x, swatch_y, swatch_size, swatch_size);
 
             // Checkerboard for transparency
-            ctx.set_fill_color("#ffffff");
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
             ctx.fill_rect(swatch_x, swatch_y, swatch_size, swatch_size);
-            ctx.set_fill_color("#cccccc");
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
             ctx.fill_rect(swatch_x, swatch_y, swatch_size / 2.0, swatch_size / 2.0);
             ctx.fill_rect(swatch_x + swatch_size / 2.0, swatch_y + swatch_size / 2.0, swatch_size / 2.0, swatch_size / 2.0);
 
@@ -2661,7 +2646,7 @@ fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, t
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
     if checked {
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(&theme.item_text_active);
         ctx.set_stroke_width(2.0);
         ctx.begin_path();
         ctx.move_to(rect.x + 3.0, rect.center_y());

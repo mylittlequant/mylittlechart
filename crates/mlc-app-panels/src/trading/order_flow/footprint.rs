@@ -755,11 +755,11 @@ impl TradingPanel for FootprintState {
                         let dot_y = (cell_y + cell_h - dot_size as f32) as f64;
                         match imb {
                             ImbalanceType::BuyImbalance => {
-                                ctx.set_fill_color("#00ff00ff");
+                                ctx.set_fill_color(&theme.buy_bright);
                                 ctx.fill_rect(dot_x, dot_y, dot_size, dot_size);
                             }
                             ImbalanceType::SellImbalance => {
-                                ctx.set_fill_color("#ff0000ff");
+                                ctx.set_fill_color(&theme.sell_bright);
                                 ctx.fill_rect(dot_x, dot_y, dot_size, dot_size);
                             }
                         }

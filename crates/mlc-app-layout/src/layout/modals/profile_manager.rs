@@ -366,8 +366,8 @@ fn render_page_profile_list(
             let del_y = row_mid_y - del_h / 2.0;
             let del_id = format!("profile_delete:{}", id);
             let is_del_hovered = hovered == Some(del_id.as_str());
-            let del_bg = if is_del_hovered { "rgba(255,60,60,0.6)" } else { "rgba(255,60,60,0.3)" };
-            ctx.set_fill_color(del_bg);
+            let del_bg = mlc_core::apply_opacity(&toolbar_theme.danger, if is_del_hovered { 0.6 } else { 0.3 });
+            ctx.set_fill_color(&del_bg);
             ctx.fill_rounded_rect(del_x, del_y, del_w, del_h, 3.0);
             ctx.set_font("bold 10px sans-serif");
             ctx.set_fill_color(toolbar_theme.item_text.as_str());

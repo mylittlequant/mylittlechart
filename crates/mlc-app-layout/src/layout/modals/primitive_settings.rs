@@ -50,7 +50,7 @@ fn render_level_item(
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 2.0);
     if config.visible {
-        ctx.set_stroke_color("#ffffff");
+        ctx.set_stroke_color(&toolbar_theme.item_text_active);
         ctx.set_stroke_width(2.0);
         ctx.begin_path();
         ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
@@ -571,7 +571,7 @@ pub fn render_primitive_settings_modal(
                         ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
 
                         if is_checked {
-                            ctx.set_stroke_color("#ffffff");
+                            ctx.set_stroke_color(&toolbar_theme.item_text_active);
                             ctx.set_stroke_width(2.0);
                             ctx.begin_path();
                             ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
@@ -831,7 +831,7 @@ pub fn render_primitive_settings_modal(
                             ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
 
                             if is_checked {
-                                ctx.set_stroke_color("#ffffff");
+                                ctx.set_stroke_color(&toolbar_theme.item_text_active);
                                 ctx.set_stroke_width(2.0);
                                 ctx.begin_path();
                                 ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
@@ -1034,7 +1034,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.stroke_rounded_rect(bold_rect.x, bold_rect.y, bold_rect.width, bold_rect.height, 3.0);
                 if current_bold {
-                    ctx.set_stroke_color("#ffffff");
+                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
                     ctx.set_stroke_width(2.0);
                     ctx.begin_path();
                     ctx.move_to(bold_rect.x + 5.0, bold_rect.center_y());
@@ -1054,7 +1054,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.stroke_rounded_rect(italic_rect.x, italic_rect.y, italic_rect.width, italic_rect.height, 3.0);
                 if current_italic {
-                    ctx.set_stroke_color("#ffffff");
+                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
                     ctx.set_stroke_width(2.0);
                     ctx.begin_path();
                     ctx.move_to(italic_rect.x + 5.0, italic_rect.center_y());
@@ -1117,7 +1117,7 @@ pub fn render_primitive_settings_modal(
                         ctx.fill_rounded_rect(cell_x, cell_y, cell_size, cell_size, 3.0);
 
                         let indicator_size = 6.0;
-                        let indicator_color = if is_selected { "#ffffff" } else { &toolbar_theme.item_text };
+                        let indicator_color = if is_selected { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text };
 
                         let indicator_x = match *h_align {
                             "start" => cell_x + 6.0,
@@ -1209,7 +1209,7 @@ pub fn render_primitive_settings_modal(
                         price_input_result.cursor_x,
                         price_input_result.cursor_y,
                         price_input_result.cursor_height,
-                        "#d1d4dc",
+                        &toolbar_theme.item_text,
                     );
                     result.active_input_char_positions = price_input_result.char_x_positions;
                     result.active_input_rect = Some(price_rect);
@@ -1253,7 +1253,7 @@ pub fn render_primitive_settings_modal(
                         bar_input_result.cursor_x,
                         bar_input_result.cursor_y,
                         bar_input_result.cursor_height,
-                        "#d1d4dc",
+                        &toolbar_theme.item_text,
                     );
                     result.active_input_char_positions = bar_input_result.char_x_positions;
                     result.active_input_rect = Some(bar_rect);
@@ -1341,7 +1341,7 @@ pub fn render_primitive_settings_modal(
                         ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
 
                         if is_checked {
-                            ctx.set_stroke_color("#ffffff");
+                            ctx.set_stroke_color(&toolbar_theme.item_text_active);
                             ctx.set_stroke_width(2.0);
                             ctx.begin_path();
                             ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
@@ -1464,7 +1464,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
                 if *enabled {
-                    ctx.set_stroke_color("#ffffff");
+                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
                     ctx.set_stroke_width(2.0);
                     ctx.begin_path();
                     ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
@@ -1697,7 +1697,7 @@ pub fn render_primitive_settings_modal(
 
                     let del_x = dd_x + menu_w - delete_btn_w - 4.0;
                     let del_y = row_y + (opt_h - 24.0) / 2.0;
-                    let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
+                    let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
                     draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
 
                     let name_w = menu_w - delete_btn_w - 8.0;
@@ -1722,7 +1722,7 @@ pub fn render_primitive_settings_modal(
         if hovered_id != "template_dropdown_menu" {
             for (id, rect) in &result.content_items {
                 if id == hovered_id {
-                    ctx.set_fill_color("rgba(255, 255, 255, 0.1)");
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.1));
                     ctx.fill_rounded_rect(rect.x - 2.0, rect.y - 2.0, rect.width + 4.0, rect.height + 4.0, 4.0);
                     break;
                 }
@@ -1784,22 +1784,7 @@ pub fn render_primitive_settings_modal(
             grid_columns: None,
                             clamp_x: None,
         };
-        let dropdown_theme = DropdownTheme {
-            background: toolbar_theme.dropdown_bg.clone(),
-            border: toolbar_theme.separator.clone(),
-            shadow: "rgba(0,0,0,0.5)".to_string(),
-            item_text: toolbar_theme.item_text.clone(),
-            item_text_hover: toolbar_theme.item_text_hover.clone(),
-            item_text_disabled: toolbar_theme.item_text_muted.clone(),
-            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
-            item_danger: "#f23645".to_string(),
-            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
-            header_text: toolbar_theme.item_text.clone(),
-            header_border: toolbar_theme.separator.clone(),
-            separator: toolbar_theme.separator.clone(),
-            shortcut_text: toolbar_theme.item_text_muted.clone(),
-            accent: toolbar_theme.accent.clone(),
-        };
+        let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
         let dropdown_result = render_dropdown(
             ctx,
             &dropdown_cfg,
@@ -1837,22 +1822,7 @@ pub fn render_primitive_settings_modal(
             grid_columns: None,
                             clamp_x: None,
         };
-        let dropdown_theme = DropdownTheme {
-            background: toolbar_theme.dropdown_bg.clone(),
-            border: toolbar_theme.separator.clone(),
-            shadow: "rgba(0,0,0,0.5)".to_string(),
-            item_text: toolbar_theme.item_text.clone(),
-            item_text_hover: toolbar_theme.item_text_hover.clone(),
-            item_text_disabled: toolbar_theme.item_text_muted.clone(),
-            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
-            item_danger: "#f23645".to_string(),
-            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
-            header_text: toolbar_theme.item_text.clone(),
-            header_border: toolbar_theme.separator.clone(),
-            separator: toolbar_theme.separator.clone(),
-            shortcut_text: toolbar_theme.item_text_muted.clone(),
-            accent: toolbar_theme.accent.clone(),
-        };
+        let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
         let hovered = state.hovered_item_id.as_deref();
         let dropdown_result = render_dropdown(
             ctx,

@@ -863,11 +863,17 @@ fn render_notifications_tab(
                     let chk_x = content_x;
                     let chk_y = y + (ROW_H - chk_size) / 2.0;
                     let chk_hovered = state.hovered_item_id.as_deref() == Some(&toggle_id);
-                    let chk_bg = if sub.active { "#2563eb" } else if chk_hovered { "#374151" } else { "#1f2937" };
+                    let chk_bg = if sub.active {
+                        &toolbar_theme.accent
+                    } else if chk_hovered {
+                        &toolbar_theme.item_bg_hover
+                    } else {
+                        &toolbar_theme.dropdown_bg
+                    };
                     ctx.set_fill_color(chk_bg);
                     ctx.fill_rounded_rect(chk_x, chk_y, chk_size, chk_size, 3.0);
                     if sub.active {
-                        ctx.set_fill_color("#ffffff");
+                        ctx.set_fill_color(&toolbar_theme.item_text_active);
                         ctx.set_font("10px sans-serif");
                         ctx.set_text_align(TextAlign::Center);
                         ctx.set_text_baseline(TextBaseline::Middle);
@@ -893,10 +899,10 @@ fn render_notifications_tab(
                     let rm_btn_w = 24.0;
                     let rm_x = content_x + content_w - rm_btn_w;
                     let rm_hovered = state.hovered_item_id.as_deref() == Some(&remove_id);
-                    let rm_bg = if rm_hovered { "#dc2626" } else { "#374151" };
+                    let rm_bg = if rm_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_bg_hover };
                     ctx.set_fill_color(rm_bg);
                     ctx.fill_rounded_rect(rm_x, y + (ROW_H - 20.0) / 2.0, rm_btn_w, 20.0, 3.0);
-                    ctx.set_fill_color("#ffffff");
+                    ctx.set_fill_color(&toolbar_theme.item_text_active);
                     ctx.set_font("11px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
@@ -914,10 +920,10 @@ fn render_notifications_tab(
         {
             let detect_btn_w = 100.0;
             let detect_hovered = state.hovered_item_id.as_deref() == Some("alert_set:notif:tg_detect");
-            let detect_bg = if detect_hovered { "#2563eb" } else { "#1e40af" };
+            let detect_bg = if detect_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent };
             ctx.set_fill_color(detect_bg);
             ctx.fill_rounded_rect(content_x + LABEL_W, y, detect_btn_w, ROW_H, 4.0);
-            ctx.set_fill_color("#ffffff");
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
@@ -959,10 +965,14 @@ fn render_notifications_tab(
                 let add_btn_w = 40.0;
                 let add_x = content_x + content_w - add_btn_w;
                 let add_hovered = state.hovered_item_id.as_deref() == Some(&add_id);
-                let add_bg = if add_hovered { "#059669" } else { "#065f46" };
-                ctx.set_fill_color(add_bg);
+                let add_bg = if add_hovered {
+                    toolbar_theme.success.clone()
+                } else {
+                    mlc_core::apply_opacity(&toolbar_theme.success, 0.65)
+                };
+                ctx.set_fill_color(&add_bg);
                 ctx.fill_rounded_rect(add_x, y + (ROW_H - 20.0) / 2.0, add_btn_w, 20.0, 3.0);
-                ctx.set_fill_color("#ffffff");
+                ctx.set_fill_color(&toolbar_theme.item_text_active);
                 ctx.set_font("11px sans-serif");
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
@@ -1009,9 +1019,9 @@ fn render_notifications_tab(
                 let status_color = if state.tg_status_message.starts_with("Connected")
                     || state.tg_status_message.starts_with("Sent")
                 {
-                    "#4caf50"
+                    &toolbar_theme.success
                 } else {
-                    "#f44336"
+                    &toolbar_theme.danger
                 };
                 ctx.set_fill_color(status_color);
                 ctx.set_font("11px sans-serif");
@@ -1195,10 +1205,10 @@ fn render_alerts_list_tab(
             let dot_x = content_x + dot_r + 2.0;
             let dot_y = item_y + list_item_h / 2.0;
             let dot_color = match alert.status {
-                AlertStatus::Active => "#4caf50",
-                AlertStatus::Triggered => "#ff9800",
-                AlertStatus::Paused => "#9e9e9e",
-                AlertStatus::Expired => "#616161",
+                AlertStatus::Active => toolbar_theme.success.as_str(),
+                AlertStatus::Triggered => toolbar_theme.warning.as_str(),
+                AlertStatus::Paused => toolbar_theme.item_text_muted.as_str(),
+                AlertStatus::Expired => toolbar_theme.item_text_hidden.as_str(),
             };
             ctx.set_fill_color(dot_color);
             ctx.begin_path();

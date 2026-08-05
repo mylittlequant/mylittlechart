@@ -255,7 +255,7 @@ pub fn render_indicator_settings_modal(
                             input_x + knob_radius + 4.0
                         };
                         let knob_y = toggle_y + toggle_height / 2.0;
-                        ctx.set_fill_color("#ffffff");
+                        ctx.set_fill_color(&toolbar_theme.item_text_active);
                         ctx.fill_rounded_rect(knob_x - knob_radius, knob_y - knob_radius, knob_radius * 2.0, knob_radius * 2.0, knob_radius);
 
                         // Store toggle rect for hit testing
@@ -566,7 +566,7 @@ pub fn render_indicator_settings_modal(
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
                 if *enabled {
-                    ctx.set_stroke_color("#ffffff");
+                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
                     ctx.set_stroke_width(2.0);
                     ctx.begin_path();
                     ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
@@ -748,7 +748,7 @@ pub fn render_indicator_settings_modal(
                 toggle_x + knob_radius + 2.0
             };
             let knob_center_y = toggle_y_offset + toggle_height / 2.0;
-            ctx.set_fill_color("#ffffff");
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
             ctx.fill_rounded_rect(knob_center_x - knob_radius, knob_center_y - knob_radius, knob_radius * 2.0, knob_radius * 2.0, knob_radius);
 
             // Store toggle rect for hit testing
@@ -1297,7 +1297,7 @@ pub fn render_indicator_settings_modal(
 
                 let del_x = dd_x + menu_w - delete_btn_w - 4.0;
                 let del_y = row_y + (opt_h - 24.0) / 2.0;
-                let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
+                let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
                 draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
 
                 let name_w = menu_w - delete_btn_w - 8.0;
@@ -1405,19 +1405,7 @@ pub fn render_indicator_settings_modal(
                             // a skin may derive with an alpha — and a menu you
                             // can read the chart through is not a menu.
                             background: mlc_core::apply_opacity(&frame_theme.toolbar_bg, 1.0),
-                            border: toolbar_theme.separator.clone(),
-                            shadow: "rgba(0,0,0,0.5)".to_string(),
-                            item_text: toolbar_theme.item_text.clone(),
-                            item_text_hover: toolbar_theme.item_text_hover.clone(),
-                            item_text_disabled: toolbar_theme.item_text_muted.clone(),
-                            item_bg_hover: toolbar_theme.item_bg_hover.clone(),
-                            item_danger: "#f23645".to_string(),
-                            item_danger_bg_hover: "rgba(242,54,69,0.15)".to_string(),
-                            header_text: toolbar_theme.item_text.clone(),
-                            header_border: toolbar_theme.separator.clone(),
-                            separator: toolbar_theme.separator.clone(),
-                            shortcut_text: toolbar_theme.item_text_muted.clone(),
-                            accent: toolbar_theme.accent.clone(),
+                            ..DropdownTheme::from_toolbar(toolbar_theme)
                         };
 
                         // Find the dropdown button position from content_items.

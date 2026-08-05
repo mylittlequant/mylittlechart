@@ -129,9 +129,9 @@ pub fn render_user_settings_modal(
         border_focused: toolbar_theme.item_bg_active.clone(),
         accent:         toolbar_theme.accent.clone(),
         accent_hover:   toolbar_theme.accent.clone(),
-        success:        "#26a69a".to_string(),
-        warning:        "#ff9800".to_string(),
-        danger:         "#ef5350".to_string(),
+        success:        toolbar_theme.success.clone(),
+        warning:        toolbar_theme.warning.clone(),
+        danger:         toolbar_theme.danger.clone(),
     };
 
     match state.active_tab {
@@ -231,7 +231,10 @@ fn render_general_tab(
 
     // ── Section: PROFILE ─────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    // A section heading is an accented label, not a warning. The gold it
+    // used to be hardcoded to is the mascot theme's `warning` token, which
+    // is how one theme's palette ended up painted into every other one.
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(UserSettingsKey::SectionProfile.get(current_language()), x, cy);
@@ -245,7 +248,10 @@ fn render_general_tab(
 
     // ── Section: LANGUAGE ────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    // A section heading is an accented label, not a warning. The gold it
+    // used to be hardcoded to is the mascot theme's `warning` token, which
+    // is how one theme's palette ended up painted into every other one.
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(UserSettingsKey::SectionLanguage.get(current_language()), x, cy);
@@ -347,7 +353,10 @@ fn render_general_tab(
 
     // ── Version info (always shown at bottom) ─────────────────────────────────
     ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color("rgba(244,205,99,0.7)");
+    // A section heading is an accented label, not a warning. The gold it
+    // used to be hardcoded to is the mascot theme's `warning` token, which
+    // is how one theme's palette ended up painted into every other one.
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(UserSettingsKey::SectionVersion.get(current_language()), x, cy);
     cy += 18.0;
@@ -361,14 +370,18 @@ fn render_general_tab(
     let btn_h = 24.0;
     let btn_w = available_w.min(180.0);
     let is_wizard_hovered = state.hovered_item_id.as_deref() == Some("show_wizard");
-    let wizard_bg = if is_wizard_hovered { "rgba(255,255,255,0.10)" } else { &toolbar_theme.item_bg_hover };
-    ctx.set_fill_color(wizard_bg);
+    let wizard_bg = if is_wizard_hovered {
+        mlc_core::apply_opacity(&toolbar_theme.item_text, 0.10)
+    } else {
+        toolbar_theme.item_bg_hover.clone()
+    };
+    ctx.set_fill_color(&wizard_bg);
     ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(if is_wizard_hovered { "rgba(254,255,238,0.80)" } else { "rgba(254,255,238,0.55)" });
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_wizard_hovered { 0.80 } else { 0.55 }));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(UserSettingsKey::ShowWelcomeWizard.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
@@ -501,7 +514,7 @@ fn render_profile_section(
         if !is_active {
             let row_hover_id = format!("profile_switch:{}", id);
             if state.hovered_item_id.as_deref() == Some(row_hover_id.as_str()) {
-                ctx.set_fill_color("rgba(255,255,255,0.04)");
+                ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.04));
                 ctx.fill_rounded_rect(x, cy, available_w, profile_row_h, 3.0);
             }
         }
@@ -538,8 +551,8 @@ fn render_profile_section(
 
         // ── Name + mode label ──
         let name_x = dot_cx + dot_r + 8.0;
-        let name_alpha = if is_active { "1.0" } else { "0.65" };
-        let row_name_color = format!("rgba(254,255,238,{})", name_alpha);
+        let name_alpha = if is_active { 1.0 } else { 0.65 };
+        let row_name_color = mlc_core::apply_opacity(&toolbar_theme.item_text, name_alpha);
 
         // Right-side buttons layout (computed from right edge, i18n-aware auto-width)
         // All rows: [Rename] [Avatar] [Delete]
@@ -670,13 +683,13 @@ fn render_profile_section(
             let btn_y = cy + (profile_row_h - btn_h) / 2.0;
 
             // Save button (green tint)
-            ctx.set_fill_color("rgba(76,175,80,0.2)");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.2));
             ctx.fill_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
-            ctx.set_stroke_color("rgba(76,175,80,0.6)");
+            ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.6));
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("#81c784");
+            ctx.set_fill_color(&toolbar_theme.success);
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(fit_text_to_width(ctx, save_label, save_w - btn_padding_x).as_str(), confirm_btn_x + save_w / 2.0, btn_y + btn_h / 2.0);
@@ -697,7 +710,7 @@ fn render_profile_section(
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.7)");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.7));
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(fit_text_to_width(ctx, cancel_label, cancel_w - btn_padding_x).as_str(), cancel_btn_x + cancel_w / 2.0, btn_y + btn_h / 2.0);
@@ -724,14 +737,18 @@ fn render_profile_section(
             {
                 let rename_hover_id = format!("profile_rename:{}", id);
                 let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
-                let rename_bg = if is_rename_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
-                ctx.set_fill_color(rename_bg);
+                let rename_bg = if is_rename_hovered {
+                    mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+                } else {
+                    toolbar_theme.item_bg_hover.clone()
+                };
+                ctx.set_fill_color(&rename_bg);
                 ctx.fill_rounded_rect(rename_btn_x, btn_y, cur_rename_w, btn_h, 3.0);
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(rename_btn_x, btn_y, cur_rename_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(if is_rename_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
+                ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_rename_hovered { 0.95 } else { 0.7 }));
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(fit_text_to_width(ctx, rename_label, cur_rename_w - btn_padding_x).as_str(), rename_btn_x + cur_rename_w / 2.0, btn_y + btn_h / 2.0);
@@ -751,14 +768,18 @@ fn render_profile_section(
             {
                 let avatar_toggle_hover_id = format!("profile_avatar_toggle:{}", id);
                 let is_avatar_hovered = state.hovered_item_id.as_deref() == Some(avatar_toggle_hover_id.as_str());
-                let avatar_bg = if is_avatar_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
-                ctx.set_fill_color(avatar_bg);
+                let avatar_bg = if is_avatar_hovered {
+                    mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+                } else {
+                    toolbar_theme.item_bg_hover.clone()
+                };
+                ctx.set_fill_color(&avatar_bg);
                 ctx.fill_rounded_rect(avatar_btn_x, btn_y, cur_avatar_w, btn_h, 3.0);
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(avatar_btn_x, btn_y, cur_avatar_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(if is_avatar_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
+                ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_avatar_hovered { 0.95 } else { 0.7 }));
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(fit_text_to_width(ctx, avatar_label, cur_avatar_w - btn_padding_x).as_str(), avatar_btn_x + cur_avatar_w / 2.0, btn_y + btn_h / 2.0);
@@ -778,14 +799,27 @@ fn render_profile_section(
                 // ── Delete button (only on inactive rows — can't delete the running profile) ──
                 let delete_hover_id = format!("profile_delete:{}", id);
                 let is_delete_hovered = state.hovered_item_id.as_deref() == Some(delete_hover_id.as_str());
-                let delete_bg = if is_delete_hovered { "rgba(229,57,53,0.2)" } else { &toolbar_theme.item_bg_hover };
-                ctx.set_fill_color(delete_bg);
+                let delete_bg = if is_delete_hovered {
+                    mlc_core::apply_opacity(&toolbar_theme.danger, 0.2)
+                } else {
+                    toolbar_theme.item_bg_hover.clone()
+                };
+                ctx.set_fill_color(&delete_bg);
                 ctx.fill_rounded_rect(delete_btn_x, btn_y, delete_w, btn_h, 3.0);
-                ctx.set_stroke_color(if is_delete_hovered { "rgba(229,57,53,0.5)" } else { &toolbar_theme.separator });
+                let delete_border = if is_delete_hovered {
+                    mlc_core::apply_opacity(&toolbar_theme.danger, 0.5)
+                } else {
+                    toolbar_theme.separator.clone()
+                };
+                ctx.set_stroke_color(&delete_border);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(delete_btn_x, btn_y, delete_w, btn_h, 3.0);
                 ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(if is_delete_hovered { "rgba(239,154,154,0.95)" } else { "rgba(254,255,238,0.5)" });
+                ctx.set_fill_color(&if is_delete_hovered {
+                    mlc_core::apply_opacity(&toolbar_theme.danger, 0.95)
+                } else {
+                    mlc_core::apply_opacity(&toolbar_theme.item_text, 0.5)
+                });
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(fit_text_to_width(ctx, delete_label, delete_w - btn_padding_x).as_str(), delete_btn_x + delete_w / 2.0, btn_y + btn_h / 2.0);
@@ -922,7 +956,7 @@ fn render_profile_section(
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
             ctx.fill_rounded_rect(cancel_x, cy, 24.0, input_h, 3.0);
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color("rgba(254,255,238,0.5)");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.5));
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("✕", cancel_x + 12.0, cy + input_h / 2.0);
@@ -940,13 +974,13 @@ fn render_profile_section(
         cy += input_h + 4.0;
 
         // Create button — full row
-        ctx.set_fill_color("rgba(76,175,80,0.2)");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.2));
         ctx.fill_rounded_rect(x, cy, available_w, input_h, 3.0);
-        ctx.set_stroke_color("rgba(76,175,80,0.6)");
+        ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.6));
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(x, cy, available_w, input_h, 3.0);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#81c784");
+        ctx.set_fill_color(&toolbar_theme.success);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(UserSettingsKey::BtnCreate.get(current_language()), x + available_w / 2.0, cy + input_h / 2.0);
@@ -966,14 +1000,18 @@ fn render_profile_section(
         let new_btn_h = 24.0;
         let new_btn_w = available_w.min(140.0);
         let is_new_profile_hovered = state.hovered_item_id.as_deref() == Some("profile_new");
-        let new_profile_bg = if is_new_profile_hovered { "rgba(255,255,255,0.12)" } else { &toolbar_theme.item_bg_hover };
-        ctx.set_fill_color(new_profile_bg);
+        let new_profile_bg = if is_new_profile_hovered {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+        } else {
+            toolbar_theme.item_bg_hover.clone()
+        };
+        ctx.set_fill_color(&new_profile_bg);
         ctx.fill_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(x, cy, new_btn_w, new_btn_h, 3.0);
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(if is_new_profile_hovered { "rgba(254,255,238,0.95)" } else { "rgba(254,255,238,0.7)" });
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_new_profile_hovered { 0.95 } else { 0.7 }));
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(UserSettingsKey::BtnNewProfile.get(current_language()), x + new_btn_w / 2.0, cy + new_btn_h / 2.0);
@@ -1035,9 +1073,9 @@ fn render_performance_tab(
         border_focused: toolbar_theme.item_bg_active.clone(),
         accent:        toolbar_theme.accent.clone(),
         accent_hover:  toolbar_theme.accent.clone(),
-        success:       "#26a69a".to_string(),
-        warning:       "#ff9800".to_string(),
-        danger:        "#ef5350".to_string(),
+        success:       toolbar_theme.success.clone(),
+        warning:       toolbar_theme.warning.clone(),
+        danger:        toolbar_theme.danger.clone(),
     };
 
     // Section label
@@ -1439,7 +1477,7 @@ fn render_server_tab(
     let dot_cy = cy + row_h / 2.0;
 
     let is_running = state.server_enabled && state.server_status == "running";
-    let dot_color = if is_running { "#26a69a" } else { "#ef5350" };
+    let dot_color = if is_running { &toolbar_theme.success } else { &toolbar_theme.danger };
     ctx.set_fill_color(dot_color);
     ctx.begin_path();
     ctx.arc(dot_cx, dot_cy, dot_r, 0.0, std::f64::consts::TAU);
@@ -1539,15 +1577,15 @@ fn render_disconnect_dialog(
     let mut cy = y;
 
     // Dialog box background
-    ctx.set_fill_color("rgba(239,83,80,0.06)");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.06));
     ctx.fill_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 130.0, 6.0);
-    ctx.set_stroke_color("rgba(239,83,80,0.25)");
+    ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.25));
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x - 6.0, cy - 6.0, available_w + 12.0, 130.0, 6.0);
 
     // Title
     ctx.set_font("600 12px sans-serif");
-    ctx.set_fill_color("rgba(239,83,80,0.9)");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.9));
     ctx.set_text_align(uzor::render::TextAlign::Left);
     ctx.set_text_baseline(uzor::render::TextBaseline::Top);
     let lang = current_language();
@@ -1556,7 +1594,7 @@ fn render_disconnect_dialog(
 
     // Body text
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("rgba(254,255,238,0.55)");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.55));
     ctx.fill_text(UserSettingsKey::OfflineModeBody1.get(lang), x, cy);
     cy += 15.0;
     ctx.fill_text(UserSettingsKey::OfflineModeBody2.get(lang), x, cy);
@@ -1566,13 +1604,13 @@ fn render_disconnect_dialog(
     let half_w = (available_w - 8.0) / 2.0;
 
     // ── Button: Confirm Disconnect ────────────────────────────────────────────
-    ctx.set_fill_color("rgba(239,83,80,0.15)");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.15));
     ctx.fill_rounded_rect(x, cy, half_w, btn_h, 4.0);
-    ctx.set_stroke_color("rgba(239,83,80,0.5)");
+    ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.5));
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, cy, half_w, btn_h, 4.0);
     ctx.set_font("12px sans-serif");
-    ctx.set_fill_color("#ef5350");
+    ctx.set_fill_color(&toolbar_theme.danger);
     ctx.set_text_align(uzor::render::TextAlign::Center);
     ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
     ctx.fill_text(TextKey::Disconnect.get(lang), x + half_w / 2.0, cy + btn_h / 2.0);

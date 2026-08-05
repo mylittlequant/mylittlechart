@@ -101,7 +101,7 @@ pub fn render_indicator_overlay_dropdown(
         let vis_x = icons_x;
         let vis_icon = if indicator.visible { Icon::Eye } else { Icon::EyeOff };
         let vis_color = if overlay_state.is_action_hovered(indicator.id, "visibility") {
-            "#2962ff".to_string()
+            toolbar_theme.accent.clone()
         } else {
             base_color.clone()
         };
@@ -111,7 +111,7 @@ pub fn render_indicator_overlay_dropdown(
         // 2. Alert (bell)
         let alert_x = vis_x + icon_size + icon_gap;
         let alert_color = if overlay_state.is_action_hovered(indicator.id, "alert") {
-            "#2962ff".to_string()
+            toolbar_theme.accent.clone()
         } else {
             base_color.clone()
         };
@@ -121,7 +121,7 @@ pub fn render_indicator_overlay_dropdown(
         // 3. Settings (gear)
         let settings_x = alert_x + icon_size + icon_gap;
         let settings_color = if overlay_state.is_action_hovered(indicator.id, "settings") {
-            "#2962ff".to_string()
+            toolbar_theme.accent.clone()
         } else {
             base_color.clone()
         };
@@ -131,7 +131,7 @@ pub fn render_indicator_overlay_dropdown(
         // 4. Delete (trash)
         let delete_x = settings_x + icon_size + icon_gap;
         let delete_color = if overlay_state.is_action_hovered(indicator.id, "delete") {
-            "#f23645".to_string()
+            toolbar_theme.danger.clone()
         } else {
             base_color.clone()
         };

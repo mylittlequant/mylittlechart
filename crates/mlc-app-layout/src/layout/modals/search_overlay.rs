@@ -542,14 +542,14 @@ fn draw_header_toggle(
     ctx.fill_text(label, label_x, modal_y + header_height / 2.0);
 
     // Track background
-    ctx.set_fill_color(if is_on { "#2962ff" } else { &toolbar_theme.item_text_muted });
+    ctx.set_fill_color(if is_on { &toolbar_theme.accent } else { &toolbar_theme.item_text_muted });
     ctx.fill_rounded_rect(track_x, track_y, track_w, track_h, track_r);
 
     // Thumb circle (10px diameter, 2px inset)
     let thumb_d = 10.0;
     let thumb_x = if is_on { track_x + track_w - thumb_d - 2.0 } else { track_x + 2.0 };
     let thumb_y = track_y + (track_h - thumb_d) / 2.0;
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(&toolbar_theme.item_text_active);
     ctx.fill_rounded_rect(thumb_x, thumb_y, thumb_d, thumb_d, thumb_d / 2.0);
 
     let hit_x = label_x - label_width;
@@ -589,7 +589,7 @@ fn render_indicator_search_results_scrollable_filtered(
         if is_hovered { ctx.draw_hover_rect(x, current_y, width, item_height, &toolbar_theme.item_bg_active); }
         item_rects.push((item.type_id.clone(), WidgetRect::new(x, current_y, width, item_height)));
         ctx.set_font("bold 13px sans-serif");
-        ctx.set_fill_color(if is_hovered { "#ffffff" } else { &toolbar_theme.item_text });
+        ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(&item.short_name, x + 12.0, current_y + 10.0);
@@ -678,7 +678,7 @@ fn render_symbol_search_results_scrollable(
         let star_x = x + star_pad_x;
         let star_y = current_y + (item_height - star_size) / 2.0;
         let (star_icon, star_color) = if item.in_watchlist {
-            (crate::ui::Icon::StarFilled, "#FFD700")
+            (crate::ui::Icon::StarFilled, toolbar_theme.warning.as_str())
         } else {
             (crate::ui::Icon::Star, toolbar_theme.item_text_muted.as_str())
         };
@@ -728,7 +728,7 @@ fn render_symbol_search_results_scrollable(
         // --- Symbol text (shifted right to make room for star) ---
         let text_x = x + star_col_w;
         ctx.set_font("bold 13px sans-serif");
-        ctx.set_fill_color(if is_hovered { "#ffffff" } else { &toolbar_theme.item_text });
+        ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(&item.symbol, text_x, current_y + 10.0);
@@ -891,7 +891,7 @@ fn render_indicator_sets_scrollable(
 
         // Set name
         ctx.set_font("bold 13px sans-serif");
-        ctx.set_fill_color(if is_hovered { "#ffffff" } else { &toolbar_theme.item_text });
+        ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(&set.name, x + 12.0, row_y_abs + 10.0);
@@ -906,7 +906,7 @@ fn render_indicator_sets_scrollable(
         ctx.fill_text(&count_label, x + 12.0, row_y_abs + 28.0);
 
         // Delete (X) icon — red when hovered directly, dim otherwise
-        let delete_color = if is_delete_hovered { "#EF5350" } else { &toolbar_theme.separator };
+        let delete_color = if is_delete_hovered { &toolbar_theme.danger } else { &toolbar_theme.separator };
         draw_svg_icon(
             ctx, Icon::Close.svg(),
             delete_icon_x, delete_icon_y, icon_size, icon_size,

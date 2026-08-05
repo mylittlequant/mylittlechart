@@ -1439,7 +1439,7 @@ impl TradingPanel for DomState {
                 .map_or(false, |cp| (level.price - cp).abs() < self.tick_size * 0.5);
 
             if is_crosshair && !is_hovered {
-                ctx.set_fill_color("#ffffff26");
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.15));
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, row_height as f64);
             }
 
@@ -1701,7 +1701,7 @@ impl TradingPanel for DomState {
                 if sp > self.tick_size * 1.5 {
                     let dec = self.price_decimals();
                     let spread_text = format!("Spread: {:.*}", dec, sp);
-                    ctx.set_fill_color("#ffff0099");
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.current_price, 0.6));
                     ctx.set_font("9px monospace");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.fill_text(&spread_text, price_x as f64, price_y as f64);

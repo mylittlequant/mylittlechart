@@ -413,7 +413,7 @@ impl TradingPanel for L2TapeState {
             // Flash overlay: bright semi-transparent rect for recently-pushed events.
             let serial = self.event_serial(*deque_idx);
             if flash_active.contains(&serial) {
-                ctx.set_fill_color("#ffffff28");
+                ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.16));
                 ctx.fill_rect(x as f64, row_y as f64, w as f64, L2_ROW_HEIGHT as f64);
             }
 
@@ -490,7 +490,7 @@ impl TradingPanel for L2TapeState {
             if self.frame_separator {
                 if let Some(p_ts) = prev_ts {
                     if event.timestamp != p_ts {
-                        ctx.set_fill_color("#5a5a5a99");
+                        ctx.set_fill_color(&mlc_core::apply_opacity(&theme.separator, 0.6));
                         ctx.fill_rect(x as f64, row_y as f64, w as f64, 1.0);
                     }
                 }
@@ -777,7 +777,7 @@ impl L2TapeState {
                 ctx.set_fill_color(&chroma);
                 ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
                 if flash_active.contains(&self.event_serial(deque_idx)) {
-                    ctx.set_fill_color("#ffffff28");
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&theme.text_primary, 0.16));
                     ctx.fill_rect(cx0 as f64, row_y as f64, col_w as f64, L2_ROW_HEIGHT as f64);
                 }
                 if event.spoof {

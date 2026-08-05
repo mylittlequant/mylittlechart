@@ -552,9 +552,9 @@ fn render_overview_tab(
 
             // Change % (11px, green/red, right-aligned)
             let change_color: &str = if entry.change_pct >= 0.0 {
-                "#26a69a"
+                &toolbar_theme.success
             } else {
-                "#ef5350"
+                &toolbar_theme.danger
             };
             ctx.set_fill_color(change_color);
             let chg_pct_str = format!("{:+.2}%", entry.change_pct);
@@ -591,7 +591,7 @@ fn render_overview_tab(
                 let icon_off_y = delete_y + (icon_btn_size - icon_inner) / 2.0;
                 if is_delete_hovered {
                     // Highlight delete button with a red background when hovered.
-                    ctx.set_fill_color("#ef535033");
+                    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.2));
                     ctx.fill_rect(delete_x, delete_y, icon_btn_size, icon_btn_size);
                 }
                 draw_svg_icon(
@@ -599,7 +599,7 @@ fn render_overview_tab(
                     icon_off_x,
                     icon_off_y,
                     icon_inner, icon_inner,
-                    if is_delete_hovered { "#ef5350" } else { &toolbar_theme.item_text_muted },
+                    if is_delete_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted },
                 );
             }
 
@@ -641,13 +641,13 @@ fn render_overview_tab(
     if let Some((drag_idx, _drag_y)) = state.drag_reorder {
         // Highlight the dragged row with a semi-transparent accent overlay.
         let drag_row_y = list_top - state.scroll.offset + drag_idx as f64 * item_h;
-        ctx.set_fill_color("#4a9eff33"); // accent blue ~20% opacity
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.2));
         ctx.fill_rect(modal_x, drag_row_y, modal_w, item_h);
 
         // Drop indicator: a 2 px horizontal line at the drop position.
         if let Some(drop_idx) = state.drop_index {
             let drop_line_y = list_top - state.scroll.offset + drop_idx as f64 * item_h;
-            ctx.set_stroke_color("#4a9eff");
+            ctx.set_stroke_color(&toolbar_theme.accent);
             ctx.set_stroke_width(2.0);
             ctx.begin_path();
             ctx.move_to(modal_x, drop_line_y);
@@ -892,7 +892,7 @@ fn render_groups_tab(
 
         // Delete icon (x) -- only if not the last group, red on hover.
         if groups.len() > 1 {
-            let del_color = if del_hovered { "#ef5350" } else { &toolbar_theme.item_text_muted };
+            let del_color = if del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
             draw_svg_icon(
                 ctx, Icon::Close.svg(),
                 del_icon_x,
@@ -1196,7 +1196,7 @@ pub fn render_wl_group_name_input(
     ctx.set_fill_color(&toolbar_theme.accent);
     ctx.fill_rounded_rect(save_rect.x, save_rect.y, save_rect.width, save_rect.height, 4.0);
     ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("#ffffff");
+    ctx.set_fill_color(&toolbar_theme.item_text_active);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(t_text(TextKey::Save), save_rect.center_x(), save_rect.center_y());

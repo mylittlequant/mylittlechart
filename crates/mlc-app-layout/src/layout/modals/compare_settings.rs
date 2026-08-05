@@ -675,7 +675,7 @@ fn draw_visibility_tab(
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
         if *enabled {
-            ctx.set_stroke_color("#ffffff");
+            ctx.set_stroke_color(&toolbar_theme.item_text_active);
             ctx.set_stroke_width(2.0);
             ctx.begin_path();
             ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
@@ -971,7 +971,7 @@ fn draw_template_menu(
 
                 let del_x = dd_x + menu_w - delete_btn_w - 4.0;
                 let del_y = row_y + (opt_h - 24.0) / 2.0;
-                let del_color = if is_del_hovered { "#EF5350" } else { &toolbar_theme.item_text_muted };
+                let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
                 draw_svg_icon(ctx, Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
 
                 let name_w = menu_w - delete_btn_w - 8.0;
