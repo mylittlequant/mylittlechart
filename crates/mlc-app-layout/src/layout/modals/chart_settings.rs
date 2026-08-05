@@ -135,7 +135,7 @@ pub fn render_settings_modal(
     // starting point.
     let content_width = shell.content.width;
     let content_height = shell.content.height;
-    let content_padding = 20.0;
+    let content_padding = 12.0;
 
     ctx.set_fill_color(&frame_theme.toolbar_bg);
     ctx.fill_rect(content_x, content_y, content_width, content_height);

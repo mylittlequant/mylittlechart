@@ -609,7 +609,10 @@ pub fn begin_modal_shell(
     ctx.set_fill_color(&theme.header_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(spec.title, header.x + spec.padding, header.center_y());
+    // The title is chrome, so it takes the chrome inset — NOT `spec.padding`,
+    // which is the BODY's and is zero in every modal that pads itself. That
+    // left the window title welded to the frame edge.
+    ctx.fill_text(spec.title, header.x + FOOTER_PAD, header.center_y());
 
     if spec.show_close {
         const CLOSE: f64 = 16.0;
