@@ -4971,7 +4971,10 @@ impl ChartApp {
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use mlc_app_layout::ui::modal_settings::UserSettingsTab;
             match action {
-                "close" => {
+                // Every edit here applies as it is made, so OK and the ✕ are
+                // the same action: leave. The footer button is the shell's,
+                // and this dialog had none until it moved onto it.
+                "close" | "ok" => {
                     self.panel_app.user_settings_state.close();
                     eprintln!("[ChartApp] user settings closed via X");
                 }

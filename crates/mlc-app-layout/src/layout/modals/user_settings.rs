@@ -5,7 +5,6 @@
 //!   - Performance: RecalcMode radio group selector
 
 use mlc_core::engine::render::RenderContext;
-use mlc_core::engine::render::draw_svg_icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
@@ -13,14 +12,17 @@ use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
+use crate::ui::widgets::{ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, ModalPlacement, ModalShellSpec, ModalTab,
+    ModalTabs, FOOTER_H, HEADER_H, TAB_RAIL_W,
+};
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
 use crate::ui::widgets::{render_single_slider, SliderConfig, SliderTrackInfo};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
 
@@ -39,147 +41,69 @@ pub fn render_user_settings_modal(
 
     let modal_w = 540.0;
     let modal_h = 500.0;
-    let header_h = 44.0;
-    let sidebar_w = 48.0;
     let padding = 20.0;
+    // A fixed-height modal needs no height field: hand the shell the body
+    // height that leaves the frame exactly where it was.
+    let content_height = modal_h - HEADER_H - FOOTER_H;
 
-    // Position (draggable, centered by default)
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        ((screen_w - modal_w) / 2.0, (screen_h - modal_h) / 2.0)
-    });
-    let modal_x = modal_x.max(0.0).min(screen_w - modal_w);
-    let modal_y = modal_y.max(0.0).min(screen_h - modal_h);
+    let tab_items: Vec<ModalTab<'_>> = UserSettingsTab::all()
+        .iter()
+        .map(|tab| {
+            let icon = match tab {
+                UserSettingsTab::General => Icon::Settings,
+                UserSettingsTab::Sync => Icon::Lock,
+                UserSettingsTab::Performance => Icon::Grid,
+                UserSettingsTab::Server => Icon::Layers,
+            };
+            ModalTab::with_icon(tab.id(), tab.label(), icon)
+        })
+        .collect();
+    let active_tab_idx = UserSettingsTab::all()
+        .iter()
+        .position(|t| *t == state.active_tab)
+        .unwrap_or(0);
 
-    let modal_rect = WidgetRect::new(modal_x, modal_y, modal_w, modal_h);
-    result.modal_rect = modal_rect;
-
-    // Modal frame (shadow + background + border)
-    let modal_theme = ModalTheme::from_frame_theme(
+    let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
         &toolbar_theme.separator,
-        &toolbar_theme.item_text,
-        &toolbar_theme.item_text_hover,
-        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    render_modal_frame_only(ctx, modal_rect, &modal_theme, 0.0);
+    let spec = ModalShellSpec {
+        // The body insets itself by `padding`, so the shell adds none.
+        padding: 0.0,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new(
+            "user_settings",
+            UserSettingsKey::Title.get(current_language()),
+            modal_w,
+            content_height,
+        )
+        .with_tabs(ModalTabs::Vertical {
+            width: TAB_RAIL_W,
+            items: &tab_items,
+            active: active_tab_idx,
+        })
+        .with_max_content_height(content_height)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-    // InputCoordinator layer
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "user_settings");
-
-    // Register modal background (absorbs clicks so they don't fall through)
-    input_coordinator.register_on_layer(
-        "user_settings:modal_bg",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, modal_h),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // =========================================================================
-    // Header
-    // =========================================================================
-    let header_rect = WidgetRect::new(modal_x, modal_y, modal_w, header_h);
-    result.header_rect = header_rect;
-
-    input_coordinator.register_on_layer(
-        "user_settings:header",
-        uzor::types::Rect::new(modal_x, modal_y, modal_w, header_h),
-        uzor::input::Sense::DRAG,
-        &layer_id,
-    );
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result.tab_rects = shell.tab_rects.clone();
 
     let text_color = &toolbar_theme.item_text;
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(UserSettingsKey::Title.get(current_language()), modal_x + padding, modal_y + header_h / 2.0);
-
-    // Close button (X) — right side of header
-    let close_size = 18.0;
-    let close_x = modal_x + modal_w - close_size - 12.0;
-    let close_y = modal_y + (header_h - close_size) / 2.0;
-    let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-    result.close_btn_rect = close_rect;
-
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_size, close_size, text_color);
-
-    input_coordinator.register_on_layer(
-        "user_settings:close",
-        uzor::types::Rect::new(close_x, close_y, close_size, close_size),
-        uzor::input::Sense::CLICK,
-        &layer_id,
-    );
-
-    // Header separator
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_h);
-    ctx.line_to(modal_x + modal_w, modal_y + header_h);
-    ctx.stroke();
-
-    // =========================================================================
-    // Left sidebar (vertical icon tabs)
-    // =========================================================================
-    let sidebar_x = modal_x;
-    let sidebar_y = modal_y + header_h;
-    let content_h = modal_h - header_h;
-
-    // Sidebar right border
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(sidebar_x + sidebar_w, sidebar_y);
-    ctx.line_to(sidebar_x + sidebar_w, sidebar_y + content_h);
-    ctx.stroke();
-
-    let tab_button_h = 44.0;
-    let tab_icon_size = 20.0;
-
-    for tab in UserSettingsTab::all() {
-        let tab_idx = UserSettingsTab::all().iter().position(|t| t == tab).unwrap_or(0);
-        let tab_y = sidebar_y + tab_idx as f64 * tab_button_h;
-        let is_active = *tab == state.active_tab;
-
-        if is_active {
-            ctx.draw_sidebar_active_item(
-                sidebar_x, tab_y, sidebar_w, tab_button_h,
-                &toolbar_theme.accent, &toolbar_theme.item_bg_active, 3.0,
-            );
-        }
-
-        let icon_x = sidebar_x + (sidebar_w - tab_icon_size) / 2.0;
-        let icon_y = tab_y + (tab_button_h - tab_icon_size) / 2.0;
-        let icon_color = if is_active { &toolbar_theme.item_text_active } else { text_color };
-
-        // Choose icon per tab — Settings for General, Lock for Sync, Grid for Performance, Layers for Server
-        let icon = match tab {
-            UserSettingsTab::General => Icon::Settings,
-            UserSettingsTab::Sync => Icon::Lock,
-            UserSettingsTab::Performance => Icon::Grid,
-            UserSettingsTab::Server => Icon::Layers,
-        };
-        draw_svg_icon(ctx, icon.svg(), icon_x, icon_y, tab_icon_size, tab_icon_size, icon_color);
-
-        let tab_rect = WidgetRect::new(sidebar_x, tab_y, sidebar_w, tab_button_h);
-        result.tab_rects.push((tab.id().to_string(), tab_rect));
-
-        let hit_id = format!("user_settings:tab:{}", tab.id());
-        input_coordinator.register_on_layer(
-            hit_id.as_str(),
-            uzor::types::Rect::new(sidebar_x, tab_y, sidebar_w, tab_button_h),
-            uzor::input::Sense::CLICK,
-            &layer_id,
-        );
-    }
 
     // =========================================================================
     // Content area
     // =========================================================================
+    // The rail and the body are flush in the shell; this is the gap the tab
+    // content has always had between them.
     let sidebar_gap = 6.0;
-    let content_x = modal_x + sidebar_w + sidebar_gap;
-    let content_y = modal_y + header_h;
-    let content_w = modal_w - sidebar_w - sidebar_gap;
+    let content_x = shell.content.x + sidebar_gap;
+    let content_y = shell.content.y;
+    let content_w = shell.content.width - sidebar_gap;
 
     // Tab title
     ctx.set_font("bold 14px sans-serif");
@@ -189,7 +113,7 @@ pub fn render_user_settings_modal(
     ctx.fill_text(state.active_tab.label(), content_x + padding, content_y + padding);
 
     let settings_y = content_y + padding + 30.0;
-    let scroll_viewport_h = modal_h - header_h - padding - 30.0;
+    let scroll_viewport_h = shell.content.height - padding - 30.0;
 
     // WidgetTheme used for scrollbar rendering in General / Sync tabs
     let scroll_widget_theme = WidgetTheme {
@@ -271,6 +195,8 @@ pub fn render_user_settings_modal(
             );
         }
     }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
 
     result
 }
