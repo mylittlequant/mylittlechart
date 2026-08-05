@@ -4342,10 +4342,13 @@ impl ChartApp {
                 "modal_bg" | "header" => {
                     // Absorb click — prevent fall-through.
                 }
-                "sidebar:map" => {
+                // `tab:`, not `sidebar:` — the rail is the shell's vertical
+                // tab strip now and it names its rows the way it names every
+                // other modal's.
+                "tab:map" => {
                     self.tc_modal.section = TcModalSection::Map;
                 }
-                "sidebar:setup" => {
+                "tab:setup" => {
                     self.tc_modal.section = TcModalSection::Setup;
                 }
                 // SETUP interior layout mode (owner spec 2026-07-29):

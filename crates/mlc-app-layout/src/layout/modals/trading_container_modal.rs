@@ -20,10 +20,10 @@ use uzor::types::Rect as WidgetRect;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_frame_only, ModalTheme};
-use crate::ui::z_order::ZLayer;
-use crate::ui::Icon;
-use mlc_core::engine::render::draw_svg_icon;
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab,
+    ModalTabs, ModalTheme,
+};
 use mlc_core::engine::render::RenderContext;
 use mlc_core::render::{TextAlign, TextBaseline};
 
@@ -150,7 +150,6 @@ const MODAL_HEIGHT: f64 = 552.0;
 const HEADER_HEIGHT: f64 = 36.0;
 const SIDEBAR_WIDTH: f64 = 80.0;
 const MODAL_PADDING: f64 = 12.0;
-const CLOSE_BTN_SIZE: f64 = 20.0;
 
 // =============================================================================
 // Renderer
@@ -206,32 +205,11 @@ pub fn render_trading_container_modal(
 ) -> TcModalResult {
     let mut result = TcModalResult::default();
 
-    let (modal_x, modal_y) = state.position.unwrap_or((
-        (screen_w - MODAL_WIDTH) / 2.0,
-        (screen_h - MODAL_HEIGHT) / 2.0,
-    ));
-    let modal_x = modal_x.max(0.0).min((screen_w - MODAL_WIDTH).max(0.0));
-    let modal_y = modal_y.max(0.0).min((screen_h - MODAL_HEIGHT).max(0.0));
-
-    result.modal_rect = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, MODAL_HEIGHT);
-    result.header_rect = WidgetRect::new(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT);
-
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "tc_modal");
-
-    input_coordinator.register_on_layer(
-        "tc_modal:header",
-        result.header_rect,
-        Sense::DRAG,
-        &layer_id,
-    );
-    input_coordinator.register_on_layer(
-        "tc_modal:modal_bg",
-        result.modal_rect,
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // ── Frame + header ───────────────────────────────────────────────────
+    // ── Chrome ───────────────────────────────────────────────────────────
+    // Frame, header, title, ✕, screen clamp, layer AND the MAP / SETUP rail:
+    // that rail is a vertical tab strip, so it is `ModalTabs::Vertical` with
+    // no icons — the shell draws the label when a tab carries none, and marks
+    // the selected row the way every rail in this app marks it.
     let modal_theme = ModalTheme::from_frame_theme(
         &frame_theme.toolbar_bg,
         &frame_theme.toolbar_border,
@@ -239,89 +217,44 @@ pub fn render_trading_container_modal(
         &toolbar_theme.item_text_active,
         &frame_theme.toolbar_border,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
-
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(modal_x, modal_y, MODAL_WIDTH, HEADER_HEIGHT);
-
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("Trading Container", modal_x + 16.0, modal_y + HEADER_HEIGHT / 2.0);
-
-    let close_x = modal_x + MODAL_WIDTH - CLOSE_BTN_SIZE - 12.0;
-    let close_y = modal_y + (HEADER_HEIGHT - CLOSE_BTN_SIZE) / 2.0;
-    draw_svg_icon(
-        ctx,
-        Icon::Close.svg(),
-        close_x,
-        close_y,
-        CLOSE_BTN_SIZE,
-        CLOSE_BTN_SIZE,
-        &toolbar_theme.item_text,
-    );
-    input_coordinator.register_on_layer(
-        "tc_modal:close",
-        WidgetRect::new(close_x, close_y, CLOSE_BTN_SIZE, CLOSE_BTN_SIZE),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + HEADER_HEIGHT);
-    ctx.line_to(modal_x + MODAL_WIDTH, modal_y + HEADER_HEIGHT);
-    ctx.stroke();
-
-    // ── Left sidebar ─────────────────────────────────────────────────────
-    let sidebar_top = modal_y + HEADER_HEIGHT;
-    let sidebar_height = MODAL_HEIGHT - HEADER_HEIGHT;
     let sidebar_items = [
         ("map", "MAP", TcModalSection::Map),
         ("setup", "SETUP", TcModalSection::Setup),
     ];
-    let item_h = 40.0;
-    let mut sb_y = sidebar_top + (sidebar_height - item_h * sidebar_items.len() as f64) / 2.0;
-    for (id, label, section) in &sidebar_items {
-        let wid = format!("tc_modal:sidebar:{}", id);
-        let is_active = state.section == *section;
-        let is_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from(wid.as_str()));
-        if is_active {
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.20));
-            ctx.fill_rounded_rect(modal_x + 4.0, sb_y + 2.0, SIDEBAR_WIDTH - 8.0, item_h - 4.0, 4.0);
-        } else if is_hovered {
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.08));
-            ctx.fill_rounded_rect(modal_x + 4.0, sb_y + 2.0, SIDEBAR_WIDTH - 8.0, item_h - 4.0, 4.0);
-        }
-        ctx.set_font("bold 11px sans-serif");
-        ctx.set_fill_color(if is_active { toolbar_theme.accent.as_str() } else { toolbar_theme.item_text.as_str() });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, modal_x + SIDEBAR_WIDTH / 2.0, sb_y + item_h / 2.0);
+    let tab_items: Vec<ModalTab<'_>> = sidebar_items
+        .iter()
+        .map(|(id, label, _)| ModalTab { id, label, icon: None })
+        .collect();
+    let active_tab_idx = sidebar_items
+        .iter()
+        .position(|(_, _, section)| *section == state.section)
+        .unwrap_or(0);
+    let body_h = MODAL_HEIGHT - HEADER_HEIGHT;
+    let spec = ModalShellSpec {
+        // The sections inset themselves.
+        padding: 0.0,
+        header_height: HEADER_HEIGHT,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("tc_modal", "Trading Container", MODAL_WIDTH, body_h)
+            .with_tabs(ModalTabs::Vertical {
+                width: SIDEBAR_WIDTH,
+                items: &tab_items,
+                active: active_tab_idx,
+            })
+            .with_footer(ModalFooter::None)
+            .with_max_content_height(body_h)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
 
-        input_coordinator.register_on_layer(
-            wid.as_str(),
-            WidgetRect::new(modal_x, sb_y, SIDEBAR_WIDTH, item_h),
-            Sense::CLICK | Sense::HOVER,
-            &layer_id,
-        );
-        sb_y += item_h;
-    }
-
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(modal_x + SIDEBAR_WIDTH, sidebar_top);
-    ctx.line_to(modal_x + SIDEBAR_WIDTH, modal_y + MODAL_HEIGHT);
-    ctx.stroke();
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
 
     // ── Content ──────────────────────────────────────────────────────────
-    let content_x = modal_x + SIDEBAR_WIDTH;
-    let content_y = sidebar_top;
-    let content_w = MODAL_WIDTH - SIDEBAR_WIDTH;
-    let content_h = MODAL_HEIGHT - HEADER_HEIGHT;
+    let content_x = shell.content.x;
+    let content_y = shell.content.y;
+    let content_w = shell.content.width;
+    let content_h = shell.content.height;
 
     match state.section {
         TcModalSection::Map => render_map_section(
@@ -343,7 +276,7 @@ pub fn render_trading_container_modal(
         }
     }
 
-    input_coordinator.pop_layer(&layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
     result
 }
 
