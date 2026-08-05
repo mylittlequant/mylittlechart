@@ -2600,14 +2600,23 @@ pub fn render_main_chart_primitives(
                 // Margin of 100 bars expressed in bar-index space for ts-based culling.
                 let bar_margin = 100.0;
 
-                let all_left  = points.iter().all(|(ts_ms, _)| {
-                    let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                    b < view_start - bar_margin
-                });
-                let all_right = points.iter().all(|(ts_ms, _)| {
-                    let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
-                    b > view_end + bar_margin
-                });
+                // A timestamp of exactly 0 is the same kind of sentinel one
+                // axis over: a horizontal line has no time, it spans the whole
+                // width. Bar-index for ts=0 lands far to the left of any real
+                // chart, so `all_left` was true and the most-used primitive in
+                // the app never painted at all.
+                let stamped = points.iter().filter(|(ts, _)| *ts != 0).count();
+                let fully_stamped = stamped == points.len();
+                let all_left = fully_stamped
+                    && points.iter().all(|(ts_ms, _)| {
+                        let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                        b < view_start - bar_margin
+                    });
+                let all_right = fully_stamped
+                    && points.iter().all(|(ts_ms, _)| {
+                        let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
+                        b > view_end + bar_margin
+                    });
                 // A price of exactly 0.0 is the "this point carries no price"
                 // sentinel: anchored VWAP, both volume profiles and the bars
                 // pattern take their y-extent from the BARS, not from their own

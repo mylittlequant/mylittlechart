@@ -396,3 +396,53 @@ mod hydration {
         assert!(lost.is_empty(), "{} of {} primitive types do not survive a round trip", lost.len(), lost.len() + kept.len());
     }
 }
+
+#[cfg(test)]
+mod catalogue_dump {
+    use super::*;
+    use crate::state::icons::Icon;
+
+    /// SVG uses double quotes for its attributes; single quotes are equally
+    /// valid there, so swapping them keeps the markup usable inside a JSON
+    /// string without an escaping pass.
+    fn q(s: &str) -> String {
+        s.replace(char::from(34), "'").replace(char::from(10), " ")
+    }
+
+    /// Dump every registered type: metadata plus its resolved SVG icon.
+    ///
+    /// Not a test — the machine half of the primitive audit, so the browser
+    /// half only has to draw and photograph. Run with:
+    /// `cargo test -p mylittlechart-core --lib dump_catalogue -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn dump_catalogue() {
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        let mut ids: Vec<&str> = reg.all().map(|m| m.type_id).collect();
+        ids.sort_unstable();
+        println!("[");
+        for (n, id) in ids.iter().enumerate() {
+            let m = reg.get(id).unwrap();
+            let icon = Icon::from_name(m.icon);
+            let svg = icon.map(|i| i.svg()).unwrap_or("");
+            let comma = if n + 1 < ids.len() { "," } else { "" };
+            println!(
+                "  {{\"type_id\":\"{}\",\"display_name\":\"{}\",\"kind\":\"{:?}\",\"click_behavior\":\"{:?}\",\"tooltip\":\"{}\",\"icon_name\":\"{}\",\"icon_resolved\":{},\"default_color\":\"{}\",\"supports_text\":{},\"has_levels\":{},\"has_points_config\":{},\"svg\":\"{}\"}}{}",
+                q(m.type_id),
+                q(m.display_name),
+                m.kind,
+                m.click_behavior,
+                q(m.tooltip),
+                q(m.icon),
+                icon.is_some(),
+                q(m.default_color),
+                m.supports_text,
+                m.has_levels,
+                m.has_points_config,
+                q(svg),
+                comma,
+            );
+        }
+        println!("]");
+    }
+}
