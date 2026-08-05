@@ -13,10 +13,10 @@ use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::{OverlaySettingsState, OverlayPanelTreeTab};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
-    render_modal_frame_only, ModalTheme,
+    begin_modal_shell, end_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec,
+    ModalTab, ModalTabs, ModalTheme, TabFit,
 };
 use crate::ui::Icon;
-use crate::ui::z_order::ZLayer;
 use mlc_core::render::{TextAlign, TextBaseline};
 use uzor::panels::DockPanel;
 use mlc_core::state::panel::Panel;
@@ -261,7 +261,6 @@ pub fn render_overlay_settings_modal(
     // Layout constants
     // =========================================================================
     let header_height  = 36.0;
-    let tab_height     = 32.0;
     let tab_padding_h  = 12.0;
     let tab_gap        = 2.0;
     let modal_padding  = 12.0;
@@ -318,52 +317,15 @@ pub fn render_overlay_settings_modal(
         + tab_gap * (OverlayPanelTreeTab::all().len().saturating_sub(1)) as f64
         + modal_padding * 2.0;
 
-    let min_header_width = ctx.measure_text("PANELS SETTINGS") + 16.0 + close_btn_size + 16.0 + 20.0;
+    let title = "PANELS SETTINGS";
+    let min_header_width = ctx.measure_text(title) + 16.0 + close_btn_size + 16.0 + 20.0;
     let modal_width = min_header_width.max(tabs_row_width).max(420.0);
-    let modal_height = header_height + tab_height + content_height;
 
     // =========================================================================
-    // Position calculation
-    // =========================================================================
-    let (modal_x, modal_y) = state.position.unwrap_or_else(|| {
-        let x = screen_x + (screen_w - modal_width) / 2.0;
-        let y = screen_y + (screen_h - modal_height) / 2.0;
-        (x, y)
-    });
-
-    // Clamp to screen bounds.
-    let modal_x = modal_x.max(0.0).min((screen_x + screen_w - modal_width).max(0.0));
-    let modal_y = modal_y.max(0.0).min((screen_y + screen_h - modal_height).max(0.0));
-
-    let mut result = OverlaySettingsResult {
-        modal_rect: WidgetRect::new(modal_x, modal_y, modal_width, modal_height),
-        header_rect: WidgetRect::new(modal_x, modal_y, modal_width, header_height),
-        ..OverlaySettingsResult::default()
-    };
-
-    // =========================================================================
-    // InputCoordinator layer
-    // =========================================================================
-    let layer_id = ZLayer::Modal.push_named(input_coordinator, "overlay_settings");
-
-    // Register modal background catch-all
-    input_coordinator.register_on_layer(
-        "overlay_settings:modal_bg",
-        WidgetRect::new(modal_x, modal_y, modal_width, modal_height),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // Register header drag zone
-    input_coordinator.register_on_layer(
-        "overlay_settings:header",
-        WidgetRect::new(modal_x, modal_y, modal_width, header_height),
-        Sense::DRAG,
-        &layer_id,
-    );
-
-    // =========================================================================
-    // Modal frame
+    // Chrome — the shell owns the frame, header, title, ✕ and the tab strip.
+    // The tabs are measured from their labels, which is what `TabFit::Labels`
+    // is; the width above still comes from this modal because it also has to
+    // clear its own header text.
     // =========================================================================
     let modal_theme = ModalTheme::from_frame_theme(
         &frame_theme.toolbar_bg,
@@ -372,82 +334,52 @@ pub fn render_overlay_settings_modal(
         &toolbar_theme.item_text_active,
         &frame_theme.toolbar_border,
     );
-    render_modal_frame_only(ctx, result.modal_rect, &modal_theme, 0.0);
-
-    // =========================================================================
-    // Header
-    // =========================================================================
-    let title = "PANELS SETTINGS";
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(title, modal_x + 16.0, modal_y + header_height / 2.0);
-
-    // Close button
-    let close_x = modal_x + modal_width - close_btn_size - 12.0;
-    let close_y = modal_y + (header_height - close_btn_size) / 2.0;
-    result.close_btn_rect = Some(WidgetRect::new(close_x, close_y, close_btn_size, close_btn_size));
-    draw_svg_icon(ctx, Icon::Close.svg(), close_x, close_y, close_btn_size, close_btn_size, &toolbar_theme.item_text);
-    input_coordinator.register_on_layer(
-        "overlay_settings:close",
-        WidgetRect::new(close_x, close_y, close_btn_size, close_btn_size),
-        Sense::CLICK,
-        &layer_id,
+    let tab_items: Vec<ModalTab<'_>> = OverlayPanelTreeTab::all()
+        .iter()
+        .map(|t| ModalTab { id: t.id(), label: t.label(), icon: None })
+        .collect();
+    let active_tab_idx = OverlayPanelTreeTab::all()
+        .iter()
+        .position(|t| *t == state.active_tab)
+        .unwrap_or(0);
+    let spec = ModalShellSpec {
+        // The body insets itself by `modal_padding`.
+        padding: 0.0,
+        header_height,
+        placement: ModalPlacement::At(state.position),
+        ..ModalShellSpec::new("overlay_settings", title, modal_width, content_height)
+            .with_tabs(ModalTabs::Horizontal {
+                items: &tab_items,
+                active: active_tab_idx,
+                fit: TabFit::Labels,
+            })
+            .with_footer(ModalFooter::None)
+            .with_max_content_height(content_height)
+    };
+    let (shell, layer_id) = begin_modal_shell(
+        ctx,
+        input_coordinator,
+        &spec,
+        &modal_theme,
+        (screen_x + screen_w, screen_y + screen_h),
     );
 
-    // Header bottom border
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + header_height);
-    ctx.line_to(modal_x + modal_width, modal_y + header_height);
-    ctx.stroke();
+    let mut result = OverlaySettingsResult {
+        modal_rect: shell.frame,
+        header_rect: shell.header,
+        close_btn_rect: shell.close_btn,
+        tab_rects: shell.tab_rects.clone(),
+        ..OverlaySettingsResult::default()
+    };
+
+    // The body reads the frame the shell settled on.
+    let modal_x = shell.frame.x;
+    let modal_width = shell.frame.width;
 
     // =========================================================================
-    // Tab bar
+    // Content area — the tab strip above it belongs to the shell now.
     // =========================================================================
-    let tab_y = modal_y + header_height;
-    let mut tab_x = modal_x + modal_padding;
-
-    for (i, tab) in OverlayPanelTreeTab::all().iter().enumerate() {
-        let tab_width = tab_widths[i];
-        let tab_rect = WidgetRect::new(tab_x, tab_y, tab_width, tab_height);
-        let is_active = state.active_tab == *tab;
-
-        if is_active {
-            ctx.set_fill_color(&toolbar_theme.accent);
-            ctx.fill_rounded_rect(tab_rect.x, tab_rect.y, tab_rect.width, tab_rect.height, 3.0);
-        }
-
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(tab.label(), tab_rect.x + tab_rect.width / 2.0, tab_rect.y + tab_rect.height / 2.0);
-
-        result.tab_rects.push((tab.id().to_string(), tab_rect));
-        let wid = format!("overlay_settings:tab:{}", tab.id());
-        input_coordinator.register_on_layer(
-            wid.as_str(),
-            tab_rect,
-            Sense::CLICK | Sense::HOVER,
-            &layer_id,
-        );
-
-        tab_x += tab_width + tab_gap;
-    }
-
-    // Tab bar bottom border
-    ctx.set_stroke_color(&frame_theme.toolbar_border);
-    ctx.begin_path();
-    ctx.move_to(modal_x, tab_y + tab_height);
-    ctx.line_to(modal_x + modal_width, tab_y + tab_height);
-    ctx.stroke();
-
-    // =========================================================================
-    // Content area
-    // =========================================================================
-    let content_top = modal_y + header_height + tab_height;
+    let content_top = shell.content.y;
     let content_left = modal_x + modal_padding;
     let mut row_y = content_top + modal_padding;
 
@@ -884,5 +816,6 @@ pub fn render_overlay_settings_modal(
         }
     }
 
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
     result
 }
