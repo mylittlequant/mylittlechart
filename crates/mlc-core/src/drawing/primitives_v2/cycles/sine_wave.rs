@@ -5,7 +5,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
-    RenderContext, crisp, LineStyle,
+    RenderContext, crisp, LineStyle, HIT_TOLERANCE,
     render_primitive_text,
 };
 
@@ -60,9 +60,24 @@ impl Primitive for SineWave {
         let r = 8.0;
         if (sx - x1).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
+        // The CURVE, not its bounding box. The box was 50px taller than the
+        // wave on each side and answered everywhere inside it, so a sine wave
+        // drawn across the chart swallowed every click in that band.
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
-        let (min_y, max_y) = (y1.min(y2) - 50.0, y1.max(y2) + 50.0);
-        if sx >= min_x && sx <= max_x && sy >= min_y && sy <= max_y { return HitTestResult::Body; }
+        if sx < min_x - HIT_TOLERANCE || sx > max_x + HIT_TOLERANCE {
+            return HitTestResult::Miss;
+        }
+        let mid_y = (y1 + y2) / 2.0;
+        let span = x2 - x1;
+        if span.abs() < 0.001 { return HitTestResult::Miss; }
+        // Same parametrisation as `render`, so the hit follows what is drawn.
+        let t = (sx - x1) / span;
+        if !(0.0..=1.0).contains(&t) { return HitTestResult::Miss; }
+        let curve_y = mid_y
+            + self.amplitude * (t * 2.0 * std::f64::consts::PI * self.cycles).sin();
+        if (sy - curve_y).abs() < HIT_TOLERANCE {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {

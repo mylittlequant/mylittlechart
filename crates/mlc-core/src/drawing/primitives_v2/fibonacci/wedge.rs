@@ -161,6 +161,13 @@ impl Primitive for FibWedge {
                 return HitTestResult::Body;
             }
         }
+
+        // A filled wedge answers over its whole body. An UNfilled one must not
+        // — an empty outline that swallows the candles inside it is the reason
+        // the area is gated on `fill` everywhere else.
+        if self.fill && point_in_triangle(sx, sy, x1, y1, x2, y2, x3, y3) {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
 
@@ -448,4 +455,14 @@ pub fn metadata() -> PrimitiveMetadata {
         has_levels: true,
         has_points_config: false,
     }
+}
+
+/// Barycentric containment, the same test the filled shapes use.
+fn point_in_triangle(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) -> bool {
+    let denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3);
+    if denom.abs() < 0.0001 { return false; }
+    let a = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / denom;
+    let b = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denom;
+    let c = 1.0 - a - b;
+    (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c)
 }
