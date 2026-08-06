@@ -126,12 +126,15 @@ impl ModifiedSchiff {
     }
 
     /// Get the adjusted handle point (Modified Schiff adjustment)
-    /// Keeps original ts, moves price to midpoint of P2/P3 (ts in ms, price)
+    ///
+    /// Unlike the Schiff variant (origin = midpoint of P1 and the P2-P3
+    /// midpoint, on both axes), Modified Schiff only moves the origin's
+    /// TIME coordinate — to the midpoint of P1 and P2 — and keeps the
+    /// origin's price at P1's own price.
     pub fn adjusted_handle(&self) -> (i64, f64) {
-        let mid_price = (self.price2 + self.price3) / 2.0;
         (
-            self.ts1,
-            (self.price1 + mid_price) / 2.0,
+            (self.ts1 + self.ts2) / 2,
+            self.price1,
         )
     }
 

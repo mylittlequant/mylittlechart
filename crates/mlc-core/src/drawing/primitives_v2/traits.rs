@@ -408,23 +408,33 @@ pub trait Primitive: Send + Sync {
     /// Move a specific control point to (timestamp_ms, price).
     fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64);
 
-    /// Move a specific control point using screen coordinates.
+    /// Move a specific control point, given BOTH the screen-space cursor
+    /// position and the already-resolved data coordinates for that same
+    /// position.
     ///
-    /// Default implementation converts screen → timestamp_ms + price and calls
-    /// `move_control_point`.  Override for primitives that store size in screen
-    /// pixels (emoji, image) so they can skip the timestamp conversion.
+    /// `ts_ms`/`price` are exactly what the drag caller (`DrawingManager::
+    /// update_drag_screen`) would also hand to `move_control_point` — magnet
+    /// snap and sub-pane price-range offsets are resolved upstream, before
+    /// this call. The default implementation delegates straight to
+    /// `move_control_point` with them, so every primitive that does not
+    /// override this method behaves identically to calling
+    /// `move_control_point` directly; `screen_x`/`screen_y` (plus `bars`/
+    /// `viewport`/`price_scale`) are unused by the default and exist only
+    /// for primitives that must reshape in PIXEL space to keep the dragged
+    /// handle under the cursor — a fixed-rotation corner resize is one such
+    /// case: ms-deltas and price-deltas aren't comparable, so the geometry
+    /// only exists once both are in pixels. See `RotatedRectangle`.
     fn move_control_point_screen(
         &mut self,
         point_type: ControlPointType,
-        screen_x: f64,
-        screen_y: f64,
-        bars: &[Bar],
-        viewport: &Viewport,
-        price_scale: &PriceScale,
+        _screen_x: f64,
+        _screen_y: f64,
+        ts_ms: i64,
+        price: f64,
+        _bars: &[Bar],
+        _viewport: &Viewport,
+        _price_scale: &PriceScale,
     ) {
-        let bar_f = viewport.x_to_bar_f64(screen_x);
-        let ts_ms = crate::bar_f64_to_timestamp_ms(bars, bar_f);
-        let price = viewport.y_to_price(screen_y, price_scale.price_min, price_scale.price_max);
         self.move_control_point(point_type, ts_ms, price);
     }
 

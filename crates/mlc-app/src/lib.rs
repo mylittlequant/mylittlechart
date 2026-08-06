@@ -11122,7 +11122,7 @@ impl ChartApp {
             .unwrap_or_else(|| self.build_extended_layout());
         let chart_x = extended.main_chart.chart.x;
         let chart_y = extended.main_chart.chart.y;
-        let _chart_w = extended.main_chart.chart.width;
+        let chart_w = extended.main_chart.chart.width;
         let chart_h = extended.main_chart.chart.height;
 
         let drag_mode = self.input_handler.state.drag_mode;
@@ -11446,7 +11446,45 @@ impl ChartApp {
 
                     if let Some(bid) = active_bid_ud {
                         let drag_ts_ms = mlc_core::bar_f64_to_timestamp_ms(&active_bars[..], data_bar);
-                        self.core.drawings_mut().update_drag(bid, drag_ts_ms, data_price);
+                        // Resolve local (pane-relative) screen coords plus the
+                        // viewport/price_scale scoped to the dragged primitive's
+                        // pane, mirroring handle_drag_start's own control-point
+                        // hit-test scoping (panel_grid.rs) — move_control_point_screen
+                        // overrides (e.g. RotatedRectangle) do real pixel-space
+                        // geometry and need the SAME pixel space screen_layout()/
+                        // control_points() use, not the raw window-absolute coords
+                        // screen_to_data_coords() takes above.
+                        let sub_pane_scope = primitive_pane_id.and_then(|instance_id| {
+                            extended.sub_panes.iter()
+                                .find(|p| p.instance_id == instance_id)
+                                .map(|p| (instance_id, p.content))
+                        });
+                        if let Some(window) = self.panel_app.panel_grid.active_container() {
+                            let (local_x, local_y, drag_viewport, drag_price_scale) = match sub_pane_scope {
+                                Some((instance_id, content)) => {
+                                    let (price_min, price_max) = window.sub_pane_y_state
+                                        .get(&instance_id)
+                                        .map(|s| (s.price_min, s.price_max))
+                                        .unwrap_or((0.0, 100.0));
+                                    let mut vp = window.viewport().clone();
+                                    vp.chart_height = content.height;
+                                    (
+                                        screen_x - content.x, screen_y - content.y,
+                                        vp, mlc_core::PriceScale::new(price_min, price_max),
+                                    )
+                                }
+                                None => {
+                                    let mut vp = window.viewport().clone();
+                                    vp.chart_width = chart_w;
+                                    vp.chart_height = chart_h;
+                                    (screen_x - chart_x, screen_y - chart_y, vp, window.price_scale().clone())
+                                }
+                            };
+                            self.core.drawings_mut().update_drag_screen(
+                                bid, local_x, local_y, drag_ts_ms, data_price,
+                                &active_bars, &drag_viewport, &drag_price_scale,
+                            );
+                        }
                     }
                     // Propagate live drag position to sync-group peer leaves.
                     if let Some(prim_id) = dragged_id {

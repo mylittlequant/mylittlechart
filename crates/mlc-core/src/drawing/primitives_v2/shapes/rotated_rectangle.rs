@@ -1,7 +1,7 @@
 //! Rotated Rectangle primitive
 
 use serde::{Deserialize, Serialize};
-use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::{Bar, PriceScale, Viewport, bar_f64_to_timestamp_ms, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -130,8 +130,85 @@ impl Primitive for RotatedRectangle {
                 self.height_ts = ts_ms;
                 self.height_price = price;
             }
+            // Corner handles need real pixel-space geometry (dragged corner
+            // under the cursor, opposite corner pinned, rotation held) —
+            // that requires a viewport, which this ts/price-only entry
+            // point doesn't have. `move_control_point_screen` below is the
+            // real corner-resize path; this is only reached for a corner
+            // drag if some future caller drives it without a viewport, in
+            // which case falling through to a no-op (rather than the old
+            // width/height-coupled guess) is the honest behavior.
+            ControlPointType::Corner(_) => {}
             _ => {}
         }
+    }
+
+    fn move_control_point_screen(
+        &mut self,
+        point_type: ControlPointType,
+        screen_x: f64,
+        screen_y: f64,
+        ts_ms: i64,
+        price: f64,
+        bars: &[Bar],
+        viewport: &Viewport,
+        price_scale: &PriceScale,
+    ) {
+        let ControlPointType::Corner(i) = point_type else {
+            // Move / Point2 / Point3 — same as the trait default.
+            self.move_control_point(point_type, ts_ms, price);
+            return;
+        };
+        let i = i as usize;
+        if i >= 4 {
+            self.move_control_point(point_type, ts_ms, price);
+            return;
+        }
+        let j = (i + 2) % 4; // diagonally opposite corner — stays pinned
+
+        // Current geometry BEFORE this drag changes anything. Rotation is
+        // held fixed at this value; the opposite corner is pinned at its
+        // CURRENT pixel position — both read from the pre-drag anchors.
+        let (cx, cy, corners) = self.screen_layout(bars, viewport, price_scale);
+        let ex = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.edge_ts));
+        let ey = viewport.price_to_y(self.edge_price, price_scale.price_min, price_scale.price_max);
+        let hx = viewport.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.height_ts));
+        let hy = viewport.price_to_y(self.height_price, price_scale.price_min, price_scale.price_max);
+        let (_, _, rotation) = rotated_geometry(ex - cx, ey - cy, hx - cx, hy - cy);
+        let (ox, oy) = corners[j];
+
+        // Dragged corner follows the cursor exactly. New center is the
+        // midpoint of the moving corner and the pinned one. New
+        // half-extents come from resolving the corner-to-corner delta
+        // along the (unchanged) rotation axes — the same inverse-rotation
+        // `rotated_geometry` applies to point3, just applied to both axes
+        // here since a diagonal spans both.
+        let dx = screen_x - ox;
+        let dy = screen_y - oy;
+        let cos_r = rotation.cos();
+        let sin_r = rotation.sin();
+        let local_dx = dx * cos_r + dy * sin_r;
+        let local_dy = dy * cos_r - dx * sin_r;
+        let new_half_width = (local_dx.abs() / 2.0).max(1.0);
+        let new_half_height = (local_dy.abs() / 2.0).max(1.0);
+        let new_cx = (screen_x + ox) / 2.0;
+        let new_cy = (screen_y + oy) / 2.0;
+
+        // Re-anchor: edge point (point2) back on the rotation axis at the
+        // new half_width, height point (point3) on the perpendicular axis
+        // at the new half_height — the same placement `rotated_corners`
+        // assumes when it next derives the 4 corners from these anchors.
+        let new_ex = new_cx + new_half_width * cos_r;
+        let new_ey = new_cy + new_half_width * sin_r;
+        let new_hx = new_cx - new_half_height * sin_r;
+        let new_hy = new_cy + new_half_height * cos_r;
+
+        self.center_ts = bar_f64_to_timestamp_ms(bars, viewport.x_to_bar_f64(new_cx));
+        self.center_price = viewport.y_to_price(new_cy, price_scale.price_min, price_scale.price_max);
+        self.edge_ts = bar_f64_to_timestamp_ms(bars, viewport.x_to_bar_f64(new_ex));
+        self.edge_price = viewport.y_to_price(new_ey, price_scale.price_min, price_scale.price_max);
+        self.height_ts = bar_f64_to_timestamp_ms(bars, viewport.x_to_bar_f64(new_hx));
+        self.height_price = viewport.y_to_price(new_hy, price_scale.price_min, price_scale.price_max);
     }
 
     fn hit_test(&self, screen_x: f64, screen_y: f64, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> HitTestResult {

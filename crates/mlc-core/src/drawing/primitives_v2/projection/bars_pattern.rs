@@ -1,4 +1,10 @@
 //! Bars Pattern - copy and project price pattern
+//!
+//! Three anchors: `ts1`/`ts2` bracket a SOURCE range of already-drawn bars,
+//! `ts3` is where that range's pattern is projected to. Rendering copies
+//! the OHLC of every source bar onto a shifted timestamp starting at
+//! `ts3`, optionally mirrored vertically (`mirror`) and shifted by
+//! `price_offset`.
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
@@ -8,6 +14,12 @@ use super::super::{
     RenderContext, crisp, LineStyle,
     render_primitive_text,
 };
+
+/// Default up/down candle colors, matching the chart's own default theme
+/// preset (`#26a69a` / `#ef5350`) — the projected copy is a self-contained
+/// primitive render and does not thread the live `ThemeManager`.
+const PROJECTED_UP_COLOR: &str = "#26a69a";
+const PROJECTED_DOWN_COLOR: &str = "#ef5350";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BarsPattern {
@@ -26,6 +38,14 @@ impl BarsPattern {
             data: PrimitiveData { type_id: "bars_pattern".to_string(), display_name: "Bars Pattern".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
             ts1, ts2, ts3, price_offset: 0.0, mirror: false,
         }
+    }
+
+    /// The projected range's end timestamp (ms): the source range's own
+    /// span, re-anchored at `ts3`.
+    fn projected_end_ms(&self) -> i64 {
+        let lo = self.ts1.min(self.ts2);
+        let hi = self.ts1.max(self.ts2);
+        self.ts3 + (hi - lo)
     }
 }
 
@@ -59,6 +79,15 @@ impl Primitive for BarsPattern {
         if (sx - x1).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         if (sx - x3).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point3); }
+
+        // Body: anywhere across the source range or the projected copy
+        // (full chart height, matching the vertical boundary markers).
+        let x4 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.projected_end_ms()));
+        let min_x = x1.min(x2).min(x3).min(x4);
+        let max_x = x1.max(x2).max(x3).max(x4);
+        if sx >= min_x - HIT_TOLERANCE && sx <= max_x + HIT_TOLERANCE {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -75,16 +104,13 @@ impl Primitive for BarsPattern {
         let x1 = ctx.ts_to_x_ms(self.ts1);
         let x2 = ctx.ts_to_x_ms(self.ts2);
         let x3 = ctx.ts_to_x_ms(self.ts3);
+        let x4 = ctx.ts_to_x_ms(self.projected_end_ms());
 
-        // Get chart dimensions
         let chart_height = ctx.chart_height();
-        let pattern_width = (x2 - x1).abs();
 
-        // Set stroke style
+        // Boundary markers: source range (ts1, ts2) and projection start (ts3).
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
-
-        // Set line dash based on style
         match self.data.style {
             LineStyle::Solid => ctx.set_line_dash(&[]),
             LineStyle::Dashed => ctx.set_line_dash(&[8.0, 4.0]),
@@ -92,51 +118,86 @@ impl Primitive for BarsPattern {
             LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
-
-        // Draw source range vertical lines
-        ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), 0.0);
-        ctx.line_to(crisp(x1, dpr), chart_height);
-        ctx.stroke();
-
-        ctx.begin_path();
-        ctx.move_to(crisp(x2, dpr), 0.0);
-        ctx.line_to(crisp(x2, dpr), chart_height);
-        ctx.stroke();
-
-        // Draw target range vertical line
-        ctx.begin_path();
-        ctx.move_to(crisp(x3, dpr), 0.0);
-        ctx.line_to(crisp(x3, dpr), chart_height);
-        ctx.stroke();
-
-        // Draw projected pattern range
-        let x4 = x3 + pattern_width;
-        ctx.begin_path();
-        ctx.move_to(crisp(x4, dpr), 0.0);
-        ctx.line_to(crisp(x4, dpr), chart_height);
-        ctx.stroke();
-
-        // Draw connecting lines at top and bottom
-        let mid_y = chart_height / 2.0;
-        ctx.set_line_dash(&[4.0, 4.0]);
-
-        // Top connecting line
-        ctx.begin_path();
-        ctx.move_to(crisp(x2, dpr), crisp(mid_y - 20.0, dpr));
-        ctx.line_to(crisp(x3, dpr), crisp(mid_y - 20.0, dpr));
-        ctx.stroke();
-
-        // Bottom connecting line
-        ctx.begin_path();
-        ctx.move_to(crisp(x2, dpr), crisp(mid_y + 20.0, dpr));
-        ctx.line_to(crisp(x3, dpr), crisp(mid_y + 20.0, dpr));
-        ctx.stroke();
-
-        // Reset line dash
+        for x in [x1, x2, x3] {
+            ctx.begin_path();
+            ctx.move_to(crisp(x, dpr), 0.0);
+            ctx.line_to(crisp(x, dpr), chart_height);
+            ctx.stroke();
+        }
         ctx.set_line_dash(&[]);
 
-        // Draw control points if selected
+        // Copy and project the source candles onto the ts3-anchored range.
+        //
+        // Collect the projected (timestamp, OHLC) tuples first, while
+        // `ctx.bars()` is borrowed immutably; the render pass below only
+        // touches owned values, so it is free to take `ctx` mutably.
+        let projected: Vec<(i64, f64, f64, f64, f64)> = {
+            let bars = ctx.bars();
+            if bars.is_empty() {
+                Vec::new()
+            } else {
+                let lo_ms = self.ts1.min(self.ts2);
+                let hi_ms = self.ts1.max(self.ts2);
+                let lo_sec = lo_ms.div_euclid(1000);
+                let hi_sec = hi_ms.div_euclid(1000);
+                let start_idx = bars.partition_point(|b| b.timestamp < lo_sec);
+                let end_idx = bars.partition_point(|b| b.timestamp <= hi_sec);
+                let shift_ms = self.ts3 - lo_ms;
+                // Mirror pivot: the source range's own opening price, so a
+                // mirrored copy flips around where the pattern started.
+                let pivot = bars.get(start_idx).map(|b| b.open).unwrap_or(0.0);
+
+                bars[start_idx..end_idx].iter().map(|bar| {
+                    let tgt_ts_ms = bar.timestamp * 1000 + shift_ms;
+                    let (open, high, low, close) = if self.mirror {
+                        (
+                            2.0 * pivot - bar.open,
+                            2.0 * pivot - bar.low,
+                            2.0 * pivot - bar.high,
+                            2.0 * pivot - bar.close,
+                        )
+                    } else {
+                        (bar.open, bar.high, bar.low, bar.close)
+                    };
+                    (
+                        tgt_ts_ms,
+                        open + self.price_offset,
+                        high + self.price_offset,
+                        low + self.price_offset,
+                        close + self.price_offset,
+                    )
+                }).collect()
+            }
+        };
+
+        if !projected.is_empty() {
+            let spacing = (ctx.bar_to_x(1.0) - ctx.bar_to_x(0.0)).abs();
+            let body_w = (spacing * 0.7).max(1.0);
+
+            for (tgt_ts_ms, open, high, low, close) in projected {
+                let cx = ctx.ts_to_x_ms(tgt_ts_ms);
+                let is_up = close >= open;
+                let color = if is_up { PROJECTED_UP_COLOR } else { PROJECTED_DOWN_COLOR };
+
+                let high_y = ctx.price_to_y(high);
+                let low_y = ctx.price_to_y(low);
+                let open_y = ctx.price_to_y(open);
+                let close_y = ctx.price_to_y(close);
+
+                ctx.set_stroke_color(color);
+                ctx.set_stroke_width(1.0);
+                ctx.set_line_dash(&[]);
+                ctx.begin_path();
+                ctx.move_to(crisp(cx, dpr), high_y);
+                ctx.line_to(crisp(cx, dpr), low_y);
+                ctx.stroke();
+
+                let top = open_y.min(close_y);
+                let h = (open_y - close_y).abs().max(1.0);
+                ctx.set_fill_color(color);
+                ctx.fill_rect(crisp(cx - body_w / 2.0, dpr), top, body_w, h);
+            }
+        }
 
         // Render text if present
         if let Some(ref text) = self.data.text {

@@ -1,7 +1,12 @@
 //! Inside Pitchfork primitive
 //!
-//! A pitchfork that draws channels inward from the outer points
-//! rather than from the handle point outward.
+//! Same three anchors and the same median/tine geometry as the standard
+//! Andrew's Pitchfork (median from the handle through the P2-P3 midpoint,
+//! tines through P2 and P3), but every line is projected in the OPPOSITE
+//! direction: past the handle (backward, into already-elapsed price
+//! action) instead of past the swing points (forward, as a projection).
+//! This validates the fork against history rather than forecasting with
+//! it, which is the usual reason to reach for the "inside" variant.
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
@@ -133,11 +138,16 @@ impl InsidePitchfork {
         )
     }
 
-    /// Get the channel half-offset inverted (ts_delta in ms, price_delta)
+    /// Get the channel half-offset (ts_delta in ms, price_delta).
+    ///
+    /// Same anchors and offset as the standard Pitchfork/Schiff family —
+    /// Inside Pitchfork's only real difference is which end of each line
+    /// the extend ray is thrown from (see `render`/`hit_test`: the roles
+    /// of the handle and the P2-P3 midpoint are swapped there).
     pub fn channel_offset(&self) -> (i64, f64) {
         (
-            (self.ts2 - self.ts3) / 2,
-            (self.price2 - self.price3) / 2.0,
+            (self.ts3 - self.ts2) / 2,
+            (self.price3 - self.price2) / 2.0,
         )
     }
 
@@ -278,10 +288,13 @@ impl Primitive for InsidePitchfork {
         let offset_x = viewport.bar_to_x_f64(offset_b) - mid_x;
         let offset_y = viewport.price_to_y(mid_price + offset_price, price_scale.price_min, price_scale.price_max) - mid_y;
 
-        // Check median line (always present)
+        // Check median line (always present). Inside Pitchfork extends the
+        // ray PAST THE HANDLE (backward, into history) instead of past the
+        // P2-P3 midpoint — the ray-distance origin/target are swapped
+        // relative to the standard Pitchfork.
         {
             let dist = if self.extend {
-                point_to_ray_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
+                point_to_ray_distance(screen_x, screen_y, mid_x, mid_y, x1, y1)
             } else {
                 point_to_line_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
             };
@@ -290,15 +303,17 @@ impl Primitive for InsidePitchfork {
             }
         }
 
-        // Check each pitchfork line (inside variant inverts the direction, symmetric ±levels)
+        // Check each pitchfork line — same anchors as the standard
+        // pitchfork (symmetric ±levels through the handle and midpoint),
+        // only the extend direction is reversed.
         for (level, _config) in self.effective_levels() {
-            let start_x = x1 - offset_x * level;
-            let start_y = y1 - offset_y * level;
-            let end_x = mid_x - offset_x * level;
-            let end_y = mid_y - offset_y * level;
+            let start_x = x1 + offset_x * level;
+            let start_y = y1 + offset_y * level;
+            let end_x = mid_x + offset_x * level;
+            let end_y = mid_y + offset_y * level;
 
             let dist = if self.extend {
-                point_to_ray_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
+                point_to_ray_distance(screen_x, screen_y, end_x, end_y, start_x, start_y)
             } else {
                 point_to_line_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
             };
@@ -352,7 +367,9 @@ impl Primitive for InsidePitchfork {
         let mid_x = ctx.ts_to_x_ms(mid_ts);
         let mid_y = ctx.price_to_y(mid_price);
 
-        // Inside pitchfork: inverted channel offset
+        // Same channel offset as the standard pitchfork family — Inside
+        // Pitchfork's difference is purely which side each line extends
+        // beyond (see the swapped anchors below).
         let (offset_ts, offset_price) = self.channel_offset();
         let offset_x = ctx.ts_to_x_ms(mid_ts + offset_ts) - mid_x;
         let offset_y = ctx.price_to_y(mid_price + offset_price) - mid_y;
@@ -419,8 +436,11 @@ impl Primitive for InsidePitchfork {
         }
 
         // === FILL RENDERING (before lines so lines are on top) ===
-        // For inside pitchfork, fill is drawn between +level and -level (symmetric channel)
-        // Note: inside pitchfork uses subtraction for offset direction
+        // For inside pitchfork, fill is drawn between +level and -level (symmetric channel).
+        // The fill quad is anchored at the P2-P3 midpoint side and, when
+        // extended, grows backward past the handle — mirroring the line
+        // extend direction below (roles of the handle and midpoint swapped
+        // relative to the standard Pitchfork's fill quad).
         for config in &self.level_configs {
             if config.visible && config.fill_enabled && config.level.abs() > 0.001 {
                 let level = config.level;
@@ -429,20 +449,20 @@ impl Primitive for InsidePitchfork {
                     .unwrap_or(&self.data.color.stroke);
 
                 // Calculate corners of the fill quad between +level and -level
-                // Start points (at handle, using subtraction for inside variant)
-                let pos_start_x = x1 - offset_x * level;
-                let pos_start_y = y1 - offset_y * level;
-                let neg_start_x = x1 - offset_x * (-level);
-                let neg_start_y = y1 - offset_y * (-level);
+                // Start points (at the P2-P3 midpoint side)
+                let pos_start_x = mid_x + offset_x * level;
+                let pos_start_y = mid_y + offset_y * level;
+                let neg_start_x = mid_x + offset_x * (-level);
+                let neg_start_y = mid_y + offset_y * (-level);
 
-                // End points (extended or at midpoint)
+                // End points (extended backward past the handle, or at the handle)
                 let (pos_end_x, pos_end_y, neg_end_x, neg_end_y) = if self.extend {
-                    let pos_dx = (mid_x - offset_x * level) - pos_start_x;
-                    let pos_dy = (mid_y - offset_y * level) - pos_start_y;
+                    let pos_dx = (x1 + offset_x * level) - pos_start_x;
+                    let pos_dy = (y1 + offset_y * level) - pos_start_y;
                     let pos_len = (pos_dx * pos_dx + pos_dy * pos_dy).sqrt();
 
-                    let neg_dx = (mid_x - offset_x * (-level)) - neg_start_x;
-                    let neg_dy = (mid_y - offset_y * (-level)) - neg_start_y;
+                    let neg_dx = (x1 + offset_x * (-level)) - neg_start_x;
+                    let neg_dy = (y1 + offset_y * (-level)) - neg_start_y;
                     let neg_len = (neg_dx * neg_dx + neg_dy * neg_dy).sqrt();
 
                     let ext = chart_width * 2.0;
@@ -458,8 +478,8 @@ impl Primitive for InsidePitchfork {
                     };
                     (pex, pey, nex, ney)
                 } else {
-                    (mid_x - offset_x * level, mid_y - offset_y * level,
-                     mid_x - offset_x * (-level), mid_y - offset_y * (-level))
+                    (x1 + offset_x * level, y1 + offset_y * level,
+                     x1 + offset_x * (-level), y1 + offset_y * (-level))
                 };
 
                 // Draw fill quad
@@ -485,14 +505,19 @@ impl Primitive for InsidePitchfork {
             LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
-        draw_line(ctx, dpr, chart_width, self.extend, x1, y1, mid_x, mid_y);
+        // Median: same segment as the standard pitchfork (handle to P2-P3
+        // midpoint), but the extend ray is thrown from the midpoint side
+        // past the handle (backward, into history) — swap the anchors
+        // `draw_line` is called with rather than negate the offset.
+        draw_line(ctx, dpr, chart_width, self.extend, mid_x, mid_y, x1, y1);
 
-        // 2. Draw symmetric ±levels from effective_levels() - inside variant inverts the direction
+        // 2. Draw symmetric ±levels from effective_levels() — same anchors
+        // as the standard pitchfork; only the extend direction (below) is reversed.
         for (level, config) in self.effective_levels() {
-            let start_x = x1 - offset_x * level;
-            let start_y = y1 - offset_y * level;
-            let end_x = mid_x - offset_x * level;
-            let end_y = mid_y - offset_y * level;
+            let start_x = x1 + offset_x * level;
+            let start_y = y1 + offset_y * level;
+            let end_x = mid_x + offset_x * level;
+            let end_y = mid_y + offset_y * level;
 
             let stroke_color = config.color.as_ref().unwrap_or(&self.data.color.stroke);
             ctx.set_stroke_color(stroke_color);
@@ -567,9 +592,16 @@ impl Primitive for InsidePitchfork {
                 (None, 0.0, 0.0)
             };
 
+            // `draw_line_with_gap` always extends past its own second
+            // point-pair; Inside Pitchfork needs the ray thrown past
+            // `start` (the handle side) instead of past `end` (the
+            // swing-point side), so the anchors are passed swapped. The gap
+            // fractions are remapped (t' = 1 - t) so the label still sits
+            // where `label_position` says relative to the handle, matching
+            // the unswapped label-drawing code below.
             let has_label_gap = label.is_some() && label_gap_t_end > label_gap_t_start;
-            draw_line_with_gap(ctx, dpr, chart_width, self.extend, start_x, start_y, end_x, end_y,
-                has_label_gap, label_gap_t_start, label_gap_t_end);
+            draw_line_with_gap(ctx, dpr, chart_width, self.extend, end_x, end_y, start_x, start_y,
+                has_label_gap, 1.0 - label_gap_t_end, 1.0 - label_gap_t_start);
 
             // Draw label in the gap
             if let Some(label) = label {
@@ -600,27 +632,26 @@ impl Primitive for InsidePitchfork {
             if !text.content.is_empty() {
                 // Calculate text position based on v_align:
                 // - Center: on median line (level 0)
-                // - Start: above upper boundary (highest level, but inverted for inside)
-                // - End: below lower boundary (lowest level, but inverted for inside)
+                // - Start: above upper boundary (highest level)
+                // - End: below lower boundary (lowest level)
                 let (text_start_x, text_start_y, text_end_x, text_end_y) = match text.v_align {
                     super::super::TextAlign::Start | super::super::TextAlign::End => {
                         // Find visible boundary levels and determine which is visually upper/lower
                         // by comparing actual screen Y coordinates (smaller Y = higher on screen)
-                        // Note: inside pitchfork uses subtraction for offset
                         let visible_levels: Vec<f64> = self.level_configs.iter()
                             .filter(|c| c.visible)
                             .map(|c| c.level)
                             .collect();
 
                         let (upper_level, lower_level) = if visible_levels.is_empty() {
-                            (-1.0, 1.0)
+                            (1.0, -1.0)
                         } else {
                             let max_level = visible_levels.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
                             let min_level = visible_levels.iter().fold(f64::INFINITY, |a, &b| a.min(b));
 
-                            // Calculate actual screen Y positions (note: inside uses subtraction)
-                            let max_level_y = y1 - offset_y * max_level;
-                            let min_level_y = y1 - offset_y * min_level;
+                            // Calculate actual screen Y positions
+                            let max_level_y = y1 + offset_y * max_level;
+                            let min_level_y = y1 + offset_y * min_level;
 
                             // In screen coords, smaller Y is visually higher (upper)
                             if max_level_y < min_level_y {
@@ -636,8 +667,8 @@ impl Primitive for InsidePitchfork {
                             lower_level
                         };
 
-                        (x1 - offset_x * level, y1 - offset_y * level,
-                         mid_x - offset_x * level, mid_y - offset_y * level)
+                        (x1 + offset_x * level, y1 + offset_y * level,
+                         mid_x + offset_x * level, mid_y + offset_y * level)
                     }
                     super::super::TextAlign::Center => {
                         (x1, y1, mid_x, mid_y)
@@ -776,7 +807,7 @@ pub fn metadata() -> PrimitiveMetadata {
         display_name: "Inside Pitchfork",
         kind: PrimitiveKind::Channel,
         click_behavior: ClickBehavior::ThreePoint,
-        tooltip: "Inside Pitchfork - inward channels",
+        tooltip: "Inside Pitchfork - projects backward through the handle",
         icon: "inside_pitchfork",
         default_color: "#F7B93E",
         factory: create_inside_pitchfork,

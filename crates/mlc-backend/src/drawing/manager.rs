@@ -1571,7 +1571,7 @@ impl DrawingManager {
                 }
             }
             DragType::ControlPoint(point_type) => {
-                prim.move_control_point_screen(point_type, screen_x, screen_y, bars, viewport, price_scale);
+                prim.move_control_point_screen(point_type, screen_x, screen_y, current_ts_ms, current_price, bars, viewport, price_scale);
                 self.session_mut(bid).drag_start = Some((current_ts_ms, current_price));
             }
         }

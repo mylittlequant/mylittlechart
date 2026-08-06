@@ -133,6 +133,23 @@ impl Primitive for Arc {
             return HitTestResult::ControlPoint(ControlPointType::Point1);
         }
 
+        // Point 2 (radius) and point 3 (sweep end) both sit ON the arc
+        // stroke by construction (control_points() places them exactly on
+        // the circle of `radius`), so they must be tested BEFORE the
+        // on-stroke body check below — otherwise the body test always wins
+        // and the handle can never be picked up, only the whole arc.
+        let start_rad = self.start_angle.to_radians();
+        let p2x = cx + radius * start_rad.cos();
+        let p2y = cy + radius * start_rad.sin();
+        if check_point_hit(screen_x, screen_y, p2x, p2y) {
+            return HitTestResult::ControlPoint(ControlPointType::Point2);
+        }
+        let p3x = cx + radius * end_rad.cos();
+        let p3y = cy + radius * end_rad.sin();
+        if check_point_hit(screen_x, screen_y, p3x, p3y) {
+            return HitTestResult::ControlPoint(ControlPointType::Point3);
+        }
+
         let dx = screen_x - cx;
         let dy = screen_y - cy;
         let dist = (dx * dx + dy * dy).sqrt();
