@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate,
+    config::{FibLevelConfig, LabelStyle},
 };
 use super::retracement::default_level_configs;
 
@@ -61,6 +61,9 @@ pub struct FibSpiral {
     pub label_position: String,
     #[serde(default = "default_true")]
     pub show_as_percent: bool,
+    /// Style for level labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 fn default_true() -> bool { true }
@@ -86,17 +89,45 @@ impl FibSpiral {
             show_percentages: true,
             label_position: "left".to_string(),
             show_as_percent: true,
+            label_style: LabelStyle::default(),
         }
+    }
+
+    /// Golden-ratio decay rate per radian (r = exp(-b*theta)); r shrinks by
+    /// 1/phi every quarter turn, which is what makes this a *golden* spiral.
+    fn decay_rate() -> f64 {
+        PHI.ln() / (PI / 2.0)
+    }
+
+    /// Angle actually swept by the spiral — the nominal `rotations * 2*PI`,
+    /// clamped to wherever the golden-ratio decay has already shrunk the
+    /// radius under 1% of the starting radius (visually negligible at any
+    /// zoom). Decay shrinks r to 1/phi^4 ≈ 0.146 after a single turn and
+    /// keeps compounding, so sampling the full nominal `rotations` range
+    /// wastes most of the point budget on a speck around the center — that
+    /// dense knot of near-duplicate points is what reads as an illegible
+    /// scribble. Shared by [`Self::spiral_points`] and level-to-point-index
+    /// lookups in `render()` so both agree on where the spiral actually ends.
+    pub fn max_angle(&self) -> f64 {
+        let b = Self::decay_rate();
+        let visibility_floor = 0.01_f64;
+        let max_angle_by_decay = (1.0 / visibility_floor).ln() / b;
+        (self.rotations * 2.0 * PI).min(max_angle_by_decay).max(PI / 2.0)
     }
 
     /// Returns spiral points as (timestamp_ms, price)
     pub fn spiral_points(&self, num_points: usize) -> Vec<(i64, f64)> {
-        let initial_radius_ts = (self.edge_ts - self.center_ts).abs() as f64;
-        let initial_radius_price = (self.edge_price - self.center_price).abs();
+        // Signed, not `.abs()`: the edge point's direction from center (left
+        // vs right, above vs below) has to survive into the geometry, or the
+        // first spiral point always lands to the upper-right of center
+        // regardless of which way the user actually dragged the edge.
+        let initial_radius_ts = (self.edge_ts - self.center_ts) as f64;
+        let initial_radius_price = self.edge_price - self.center_price;
 
-        let b = PHI.ln() / (PI / 2.0);
+        let b = Self::decay_rate();
+        let max_angle = self.max_angle();
+
         let mut points = Vec::with_capacity(num_points);
-        let max_angle = self.rotations * 2.0 * PI;
 
         for i in 0..num_points {
             let t = i as f64 / (num_points - 1) as f64;
@@ -112,6 +143,21 @@ impl FibSpiral {
             points.push((ts, price));
         }
         points
+    }
+
+    /// Map a level value (in "number of full turns", matching how the
+    /// default 0.0..~6.8 Fibonacci ratios double as a turn-count fraction
+    /// here) to an index into a `spiral_points(total_points)` array, honoring
+    /// the same decay-capped [`Self::max_angle`] the points were generated
+    /// with — NOT `self.rotations` directly, since the two diverge once decay
+    /// truncates the nominal rotation count.
+    fn level_to_index(&self, level: f64, total_points: usize) -> usize {
+        if total_points == 0 {
+            return 0;
+        }
+        let theta = level * 2.0 * PI;
+        let t = (theta / self.max_angle()).clamp(0.0, 1.0);
+        ((t * (total_points - 1) as f64).round() as usize).min(total_points - 1)
     }
 }
 
@@ -208,10 +254,8 @@ impl Primitive for FibSpiral {
                 .enumerate()
                 .filter(|(_, cfg)| cfg.visible)
                 .map(|(idx, cfg)| {
-                    let start_idx = (cfg.level * total_points as f64 / self.rotations).floor() as usize;
-                    let end_idx = ((cfg.level + 0.1) * total_points as f64 / self.rotations).ceil() as usize;
-                    let start_idx = start_idx.min(total_points - 1);
-                    let end_idx = end_idx.min(total_points).max(start_idx + 1);
+                    let start_idx = self.level_to_index(cfg.level, total_points);
+                    let end_idx = self.level_to_index(cfg.level + 0.1, total_points).max(start_idx + 1).min(total_points);
                     (idx, cfg.level, start_idx, end_idx)
                 })
                 .collect();
@@ -268,10 +312,8 @@ impl Primitive for FibSpiral {
             let total_points = spiral_data.len();
             if total_points < 2 { continue; }
 
-            let start_idx = (cfg.level * total_points as f64 / self.rotations).floor() as usize;
-            let end_idx = ((cfg.level + 0.1) * total_points as f64 / self.rotations).ceil() as usize;
-            let start_idx = start_idx.min(total_points - 1);
-            let end_idx = end_idx.min(total_points).max(start_idx + 1);
+            let start_idx = self.level_to_index(cfg.level, total_points);
+            let end_idx = self.level_to_index(cfg.level + 0.1, total_points).max(start_idx + 1).min(total_points);
 
             if start_idx >= total_points - 1 { continue; }
 
@@ -303,11 +345,13 @@ impl Primitive for FibSpiral {
                     let (ts, price) = spiral_data[start_idx];
                     let lx = ctx.ts_to_x_ms(ts);
                     let ly = ctx.price_to_y(price);
-                    ctx.set_font("11px sans-serif");
+                    let label_color = self.label_style.color.as_deref().unwrap_or(color);
+                    ctx.set_font(&self.label_style.font_string());
                     ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-                    ctx.set_fill_color(color);
-                    ctx.set_text_align(crate::render::TextAlign::Left);
-                    ctx.fill_text(&label, lx, ly);
+                    ctx.set_text_align(crate::render::TextAlign::Center);
+                    ctx.set_fill_color(label_color);
+                    let label_x = lx + ctx.measure_text(&label) / 2.0 + 4.0;
+                    draw_label_plate(ctx, label_x, ly, &label, self.label_style.font_size, &self.label_style, label_color);
                 }
             }
         }
@@ -356,11 +400,19 @@ impl Primitive for FibSpiral {
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::ConfigProperty;
-        vec![
+        let mut props = vec![
             ConfigProperty::levels(self.show_percentages).with_order(10),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(11),
             ConfigProperty::label_position(&self.label_position).with_order(12),
-        ]
+            ConfigProperty::rotations(self.rotations).with_order(20),
+            ConfigProperty::clockwise(self.clockwise).with_order(21),
+            ConfigProperty::flip_horizontal(self.flip_horizontal).with_order(22),
+            ConfigProperty::flip_vertical(self.flip_vertical).with_order(23),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
@@ -369,8 +421,15 @@ impl Primitive for FibSpiral {
             "show_percentages" => { if let PropertyValue::Boolean(v) = value { self.show_percentages = *v; return true; } }
             "show_as_percent" => { if let PropertyValue::Boolean(v) = value { self.show_as_percent = *v; return true; } }
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
+            "rotations" => { if let Some(v) = value.as_number() { self.rotations = v.max(0.1); return true; } }
+            "clockwise" => { if let Some(v) = value.as_bool() { self.clockwise = v; return true; } }
+            "flip_horizontal" => { if let Some(v) = value.as_bool() { self.flip_horizontal = v; return true; } }
+            "flip_vertical" => { if let Some(v) = value.as_bool() { self.flip_vertical = v; return true; } }
+            "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
+            "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
         }
+        if self.label_style.apply_property(id, value) { return true; }
         false
     }
 

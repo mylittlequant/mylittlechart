@@ -7,9 +7,11 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext, crisp,
+    RenderContext, crisp, contrasting_text_color,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
+
+fn default_fill_opacity() -> f64 { 0.9 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signpost {
@@ -22,6 +24,9 @@ pub struct Signpost {
     #[serde(default)]
     pub text: String,
     #[serde(default)] pub direction: SignpostDirection,
+    /// Arrow fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
+    #[serde(default = "default_fill_opacity")]
+    pub fill_opacity: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -32,7 +37,7 @@ impl Signpost {
         let mut data = PrimitiveData {
             type_id: "signpost".to_string(),
             display_name: "Signpost".to_string(),
-            color: PrimitiveColor::new(color),
+            color: PrimitiveColor::with_fill(color, color),
             width: 1.0,
             ..Default::default()
         };
@@ -43,6 +48,7 @@ impl Signpost {
             ts1, price1, ts2, price2,
             text: String::new(),
             direction: SignpostDirection::Right,
+            fill_opacity: 0.9,
         }
     }
 
@@ -111,7 +117,10 @@ impl Primitive for Signpost {
         let size = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(30.0);
         let half_height = size / 3.0;
 
-        ctx.set_fill_color(&self.data.color.stroke);
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+
+        ctx.set_fill_color(&fill_color);
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
 
@@ -152,8 +161,10 @@ impl Primitive for Signpost {
 
         let label = self.get_text();
         if !label.is_empty() {
-            let font_size = if let Some(ref text) = self.data.text { text.font_size } else { 12.0 };
-            ctx.set_fill_color("#000000");
+            let text_data = self.data.text.as_ref();
+            let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
+            let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
+            ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
             ctx.set_text_align(crate::render::TextAlign::Center);
             let (text_x, text_y) = match self.direction {
@@ -170,7 +181,8 @@ impl Primitive for Signpost {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
-        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or("#000000");
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
         let dir = match self.direction {
             SignpostDirection::Right => "right",
             SignpostDirection::Left => "left",
@@ -237,6 +249,24 @@ impl Primitive for Signpost {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(20),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "fill_opacity" {
+            if let Some(v) = value.as_number() {
+                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

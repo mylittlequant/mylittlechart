@@ -1226,6 +1226,26 @@ impl ConfigProperty {
         Self::boolean("show_time", ConfigKey::ShowDuration.get(current_language()), value)
     }
 
+    /// Create "Rotations" number property with i18n (Fibonacci spiral turn count)
+    pub fn rotations(value: f64) -> Self {
+        Self::number("rotations", ConfigKey::Rotations.get(current_language()), value, Some(0.5), Some(6.0))
+    }
+
+    /// Create "Clockwise" boolean property with i18n (Fibonacci spiral direction)
+    pub fn clockwise(value: bool) -> Self {
+        Self::boolean("clockwise", ConfigKey::Clockwise.get(current_language()), value)
+    }
+
+    /// Create "Flip Horizontal" boolean property with i18n (Fibonacci spiral mirroring)
+    pub fn flip_horizontal(value: bool) -> Self {
+        Self::boolean("flip_horizontal", ConfigKey::FlipHorizontal.get(current_language()), value)
+    }
+
+    /// Create "Flip Vertical" boolean property with i18n (Fibonacci spiral mirroring)
+    pub fn flip_vertical(value: bool) -> Self {
+        Self::boolean("flip_vertical", ConfigKey::FlipVertical.get(current_language()), value)
+    }
+
     /// Create "Wave Degree" select property with i18n
     pub fn wave_degree(value: &str, options: Vec<SelectOption>) -> Self {
         Self::select("degree", ConfigKey::WaveDegree.get(current_language()), value, options)

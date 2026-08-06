@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text_rotated, calculate_line_text_params,
-    config::FibLevelConfig,
+    render_primitive_text_rotated, calculate_line_text_params, draw_label_plate, stagger_t, level_rank,
+    config::{FibLevelConfig, LabelStyle},
 };
 use super::retracement::default_level_configs;
 
@@ -50,6 +50,9 @@ pub struct FibFan {
     /// Extend rays to edge of chart
     #[serde(default = "default_true")]
     pub extend: bool,
+    /// Style for level labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 fn default_true() -> bool { true }
@@ -98,6 +101,7 @@ impl FibFan {
             label_position: "center".to_string(),
             show_as_percent: true,
             extend: true,
+            label_style: LabelStyle::default(),
         }
     }
 
@@ -340,6 +344,14 @@ impl Primitive for FibFan {
             .map(|t| !t.content.is_empty() && matches!(t.v_align, TextAlign::Center))
             .unwrap_or(false);
 
+        // Rank each visible level (ascending) so labels stagger along their own
+        // ray instead of colliding — every ray shares the origin (x1, y1), so
+        // placing every label at the same t fraction along the line collapses
+        // them onto each other near that shared point.
+        let mut sorted_visible: Vec<f64> = self.level_configs.iter().filter(|c| c.visible).map(|c| c.level).collect();
+        sorted_visible.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let visible_count = sorted_visible.len();
+
         // Draw fan lines at each level (only visible ones)
         for cfg in &self.level_configs {
             if !cfg.visible {
@@ -407,18 +419,22 @@ impl Primitive for FibFan {
                     let line_len = (dx * dx + dy * dy).sqrt();
 
                     if line_len > 0.001 {
-                        let char_width = 6.5;
+                        let char_width = self.label_style.font_size * 0.59;
                         let text_width = label.len() as f64 * char_width;
                         let half_gap_t = (text_width / 2.0) / line_len;
 
-                        let (gap_start, gap_end) = match self.label_position.as_str() {
-                            "right" => ((1.0 - half_gap_t * 2.0).max(0.0), 1.0),
-                            "center" => ((0.5 - half_gap_t).max(0.0), (0.5 + half_gap_t).min(1.0)),
-                            _ => (0.0, (half_gap_t * 2.0).min(1.0)), // "left"
+                        let base_t = match self.label_position.as_str() {
+                            "right" => 0.85,
+                            "center" => 0.5,
+                            _ => 0.15, // "left"
                         };
-                        (Some(label), gap_start, gap_end)
+                        let rank = level_rank(cfg.level, &sorted_visible);
+                        let label_t = stagger_t(base_t, rank, visible_count, 0.55);
+                        let gap_start = (label_t - half_gap_t).max(0.0);
+                        let gap_end = (label_t + half_gap_t).min(1.0);
+                        (Some((label, label_t)), gap_start, gap_end)
                     } else {
-                        (Some(label), 0.0, 0.0)
+                        (Some((label, 0.15)), 0.0, 0.0)
                     }
                 } else {
                     (None, 0.0, 0.0)
@@ -496,26 +512,16 @@ impl Primitive for FibFan {
             }
             ctx.stroke();
 
-            // Draw label in the gap
-            if let Some(lbl) = label {
-                ctx.set_font("11px sans-serif");
+            // Draw label in the gap, staggered along its own ray (see rank/stagger above)
+            if let Some((lbl, label_t)) = label {
+                let label_color = self.label_style.color.as_deref().unwrap_or(color);
+                ctx.set_font(&self.label_style.font_string());
                 ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-                ctx.set_fill_color(color);
-
-                match self.label_position.as_str() {
-                    "right" => {
-                        ctx.set_text_align(crate::render::TextAlign::Right);
-                        ctx.fill_text(&lbl, fx, fy);
-                    }
-                    "center" => {
-                        ctx.set_text_align(crate::render::TextAlign::Center);
-                        ctx.fill_text(&lbl, (x1 + fx) / 2.0, (y1 + fy) / 2.0);
-                    }
-                    _ => { // "left"
-                        ctx.set_text_align(crate::render::TextAlign::Left);
-                        ctx.fill_text(&lbl, x1, y1);
-                    }
-                }
+                ctx.set_text_align(crate::render::TextAlign::Center);
+                ctx.set_fill_color(label_color);
+                let label_x = x1 + dx * label_t;
+                let label_y = y1 + dy * label_t;
+                draw_label_plate(ctx, label_x, label_y, &lbl, self.label_style.font_size, &self.label_style, label_color);
             }
         }
         ctx.set_line_dash(&[]);
@@ -584,13 +590,17 @@ impl Primitive for FibFan {
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::ConfigProperty;
-        vec![
+        let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
             ConfigProperty::extend_lines(self.extend).with_order(20),
-        ]
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
@@ -626,7 +636,22 @@ impl Primitive for FibFan {
                     return true;
                 }
             }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.label_style.font_size = v;
+                    return true;
+                }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() {
+                    self.label_style.color = Some(c.to_string());
+                    return true;
+                }
+            }
             _ => {}
+        }
+        if self.label_style.apply_property(id, value) {
+            return true;
         }
         false
     }

@@ -215,10 +215,17 @@ pub enum ConfigKey {
     ShowPriceDiff   = 89,
     ShowBarCount    = 90,
     ShowDuration    = 91,
+
+    // Fibonacci spiral geometry (rotations/direction/mirroring — previously
+    // wired into the geometry but unreachable from any UI control)
+    Rotations       = 92,
+    Clockwise       = 93,
+    FlipHorizontal  = 94,
+    FlipVertical    = 95,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 92;
+    pub const COUNT: usize = 96;
 
     /// Get translation for this key
     #[inline]

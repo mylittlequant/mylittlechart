@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate,
+    config::{FibLevelConfig, LabelStyle},
 };
 use super::retracement::default_level_configs;
 
@@ -60,6 +60,9 @@ pub struct FibTrendExtension {
     pub show_trend_line: bool,
     #[serde(default = "default_true")]
     pub extend_right: bool,
+    /// Style for level labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 fn default_true() -> bool { true }
@@ -83,6 +86,7 @@ impl FibTrendExtension {
             show_as_percent: true,
             show_trend_line: true,
             extend_right: true,
+            label_style: LabelStyle::default(),
         }
     }
 
@@ -350,14 +354,17 @@ impl Primitive for FibTrendExtension {
             }
 
             if let Some(ref lbl) = label {
-                ctx.set_font("11px sans-serif");
+                let label_color = self.label_style.color.as_deref().unwrap_or(color);
+                ctx.set_font(&self.label_style.font_string());
                 ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-                ctx.set_fill_color(color);
-                match self.label_position.as_str() {
-                    "right" => { ctx.set_text_align(crate::render::TextAlign::Right); ctx.fill_text(lbl, right_x, y); }
-                    "center" => { ctx.set_text_align(crate::render::TextAlign::Center); ctx.fill_text(lbl, (x3 + right_x) / 2.0, y); }
-                    _ => { ctx.set_text_align(crate::render::TextAlign::Left); ctx.fill_text(lbl, x3, y); }
-                }
+                ctx.set_text_align(crate::render::TextAlign::Center);
+                ctx.set_fill_color(label_color);
+                let label_x = match self.label_position.as_str() {
+                    "right" => right_x - ctx.measure_text(lbl) / 2.0 - 4.0,
+                    "center" => (x3 + right_x) / 2.0,
+                    _ => x3 + ctx.measure_text(lbl) / 2.0 + 4.0,
+                };
+                draw_label_plate(ctx, label_x, y, lbl, self.label_style.font_size, &self.label_style, label_color);
             }
         }
         ctx.set_line_dash(&[]);
@@ -396,14 +403,18 @@ impl Primitive for FibTrendExtension {
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::ConfigProperty;
-        vec![
+        let mut props = vec![
             ConfigProperty::show_prices(self.show_prices).with_order(10),
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
             ConfigProperty::extend_right(self.extend_right).with_order(20),
             ConfigProperty::show_trend_line(self.show_trend_line).with_order(21),
-        ]
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
@@ -415,8 +426,11 @@ impl Primitive for FibTrendExtension {
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
             "extend_right" => { if let PropertyValue::Boolean(v) = value { self.extend_right = *v; return true; } }
             "show_trend_line" => { if let PropertyValue::Boolean(v) = value { self.show_trend_line = *v; return true; } }
+            "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
+            "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
         }
+        if self.label_style.apply_property(id, value) { return true; }
         false
     }
 

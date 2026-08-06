@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    config::{FibLevelConfig, LabelStyle},
 };
 
 /// All Gann Box division levels (fraction of box: 0.0 = edge, 0.5 = center, 1.0 = opposite edge)
@@ -33,9 +33,13 @@ pub const MAIN_GANN_BOX_VISIBLE: &[f64] = &[0.25, 0.5, 0.75];
 
 /// Create default level configs for Gann Box
 pub fn default_gann_box_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_GANN_BOX_LEVELS.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_GANN_BOX_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = MAIN_GANN_BOX_VISIBLE.contains(&level);
+        // Ramp colour by rank instead of every grid line falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
         config
     }).collect()
 }
@@ -110,6 +114,9 @@ pub struct GannBox {
     /// Show diagonals (1x1 and anti-diagonal)
     #[serde(default = "default_true")]
     pub show_diagonals: bool,
+    /// Style for grid fraction labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 impl GannBox {
@@ -131,6 +138,7 @@ impl GannBox {
             show_labels: true,
             show_grid: true,
             show_diagonals: true,
+            label_style: LabelStyle::default(),
         }
     }
 }
@@ -387,6 +395,23 @@ impl Primitive for GannBox {
                 ctx.move_to(crisp(min_x, dpr), crisp(gy, dpr));
                 ctx.line_to(crisp(max_x, dpr), crisp(gy, dpr));
                 ctx.stroke();
+
+                // Fraction label at the vertical/horizontal line intersection
+                if self.show_labels {
+                    let pct = level * 100.0;
+                    let label = if (pct - pct.round()).abs() < 0.01 {
+                        format!("{}%", pct.round() as i32)
+                    } else {
+                        format!("{:.1}%", pct)
+                    };
+                    let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
+                    ctx.set_font(&self.label_style.font_string());
+                    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                    ctx.set_text_align(crate::render::TextAlign::Center);
+                    ctx.set_fill_color(label_color);
+                    let label_y = min_y - self.label_style.font_size / 2.0 - self.label_style.background_padding - 2.0;
+                    draw_label_plate(ctx, gx, label_y, &label, self.label_style.font_size, &self.label_style, label_color);
+                }
             }
         }
 
@@ -455,6 +480,46 @@ impl Primitive for GannBox {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::ConfigProperty;
+        let mut props = vec![
+            ConfigProperty::show_labels(self.show_labels).with_order(10),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        use super::super::config::PropertyValue;
+        match id {
+            "show_labels" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.show_labels = *v;
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.label_style.font_size = v;
+                    return true;
+                }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() {
+                    self.label_style.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) {
+            return true;
+        }
+        false
     }
 }
 

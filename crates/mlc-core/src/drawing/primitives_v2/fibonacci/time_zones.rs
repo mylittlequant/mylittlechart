@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    config::{FibLevelConfig, LabelStyle},
 };
 
 pub const MAIN_TIME_ZONES: &[f64] = &[1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0, 89.0, 144.0, 233.0];
@@ -24,9 +24,13 @@ pub const ALL_TIME_ZONES: &[f64] = &[
 ];
 
 pub fn default_time_zone_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_TIME_ZONES.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_TIME_ZONES.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = MAIN_TIME_ZONES.contains(&level);
+        // Ramp colour by rank instead of every zone falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
         config
     }).collect()
 }
@@ -52,6 +56,9 @@ pub struct FibTimeZones {
     pub label_position: String,
     #[serde(default = "default_true")]
     pub show_as_percent: bool,
+    /// Style for zone labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
@@ -86,6 +93,7 @@ impl FibTimeZones {
             show_percentages: true,
             label_position: "left".to_string(),
             show_as_percent: true,
+            label_style: LabelStyle::default(),
         }
     }
 
@@ -250,6 +258,10 @@ impl Primitive for FibTimeZones {
 
             let zone_x = ctx.ts_to_x_ms(zone_ts);
 
+            // label_y is the vertical CENTER (draw_label_plate always uses
+            // TextBaseline::Middle), so the "near top" position centers a bit
+            // below the chart edge rather than sitting flush at y=0.
+            let plate_half_height = self.label_style.font_size / 2.0 + self.label_style.background_padding;
             let (label, label_y, gap_half_height) = if self.show_labels || self.show_percentages {
                 let lbl = {
                     let mut label_parts = Vec::new();
@@ -261,11 +273,11 @@ impl Primitive for FibTimeZones {
                     label_parts.join(" ")
                 };
                 if !lbl.is_empty() {
-                    let (ly, gap_h) = match self.label_position.as_str() {
-                        "right" | "center" => (chart_height / 2.0, 8.0),
-                        _ => (4.0 + 6.0, 8.0),
+                    let ly = match self.label_position.as_str() {
+                        "right" | "center" => chart_height / 2.0,
+                        _ => 4.0 + plate_half_height,
                     };
-                    (Some(lbl), ly, gap_h)
+                    (Some(lbl), ly, plate_half_height + 2.0)
                 } else {
                     (None, 0.0, 0.0)
                 }
@@ -292,19 +304,12 @@ impl Primitive for FibTimeZones {
             ctx.stroke();
 
             if let Some(ref lbl) = label {
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(color);
+                let label_color = self.label_style.color.as_deref().unwrap_or(color);
+                ctx.set_font(&self.label_style.font_string());
                 ctx.set_text_align(crate::render::TextAlign::Center);
-                match self.label_position.as_str() {
-                    "right" | "center" => {
-                        ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-                        ctx.fill_text(lbl, zone_x, chart_height / 2.0);
-                    }
-                    _ => {
-                        ctx.set_text_baseline(crate::render::TextBaseline::Top);
-                        ctx.fill_text(lbl, zone_x, 4.0);
-                    }
-                }
+                ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                ctx.set_fill_color(label_color);
+                draw_label_plate(ctx, zone_x, label_y, lbl, self.label_style.font_size, &self.label_style, label_color);
             }
         }
         ctx.set_line_dash(&[]);
@@ -342,12 +347,16 @@ impl Primitive for FibTimeZones {
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::ConfigProperty;
-        vec![
+        let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
-        ]
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
@@ -357,8 +366,11 @@ impl Primitive for FibTimeZones {
             "show_percentages" => { if let PropertyValue::Boolean(v) = value { self.show_percentages = *v; return true; } }
             "show_as_percent" => { if let PropertyValue::Boolean(v) = value { self.show_as_percent = *v; return true; } }
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
+            "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
+            "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
         }
+        if self.label_style.apply_property(id, value) { return true; }
         false
     }
 

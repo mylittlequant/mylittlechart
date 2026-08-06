@@ -176,6 +176,90 @@ pub(crate) fn draw_label_plate(
     ctx.fill_text(label, x, y);
 }
 
+/// Pick black or white text for readability over a `#rrggbb`/`#rrggbbaa`
+/// background, via relative luminance (ITU-R BT.601). Annotation shapes
+/// (comment/callout/note/signpost) each carry a user-configurable fill
+/// colour, so a single hardcoded text colour reads fine on some fills and
+/// disappears on others — this picks the readable one instead of guessing.
+/// Falls back to white on a malformed hex (shouldn't happen; `PrimitiveColor`
+/// always stores `#rrggbb`).
+pub(crate) fn contrasting_text_color(bg_hex: &str) -> &'static str {
+    let hex = bg_hex.trim_start_matches('#');
+    if hex.len() < 6 {
+        return "#ffffff";
+    }
+    let parse = |s: &str| u8::from_str_radix(s, 16).unwrap_or(128) as f64;
+    let r = parse(&hex[0..2]);
+    let g = parse(&hex[2..4]);
+    let b = parse(&hex[4..6]);
+    let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    if luminance > 150.0 { "#000000" } else { "#ffffff" }
+}
+
+/// Deterministic per-level colour so a multi-level tool (Fibonacci ratios,
+/// Gann angles/rings, time zones) reads as a ramp instead of every level
+/// falling back to the same flat stroke colour. `rank` is the level's
+/// 0-indexed position among `total` levels sorted ascending by value, not
+/// the raw level value — this way it works identically whether levels are
+/// 0.0..1.0 ratios, Gann angle slopes, or Fibonacci bar counts. Derives a
+/// hex string via HSL so levels stay visually distinct at any `total`
+/// without hand-picking a palette per tool.
+pub(crate) fn level_ramp_color(rank: usize, total: usize) -> String {
+    let hue = if total <= 1 {
+        200.0
+    } else {
+        (rank as f64 / (total - 1) as f64) * 300.0
+    };
+    hsl_to_hex(hue, 0.68, 0.56)
+}
+
+fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime.rem_euclid(2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r1, g1, b1) = if h_prime < 1.0 {
+        (c, x, 0.0)
+    } else if h_prime < 2.0 {
+        (x, c, 0.0)
+    } else if h_prime < 3.0 {
+        (0.0, c, x)
+    } else if h_prime < 4.0 {
+        (0.0, x, c)
+    } else if h_prime < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let to_byte = |v: f64| (((v + m) * 255.0).round().clamp(0.0, 255.0)) as u8;
+    format!("#{:02x}{:02x}{:02x}", to_byte(r1), to_byte(g1), to_byte(b1))
+}
+
+/// Position along a shared-origin ray/line (0.0 = origin, 1.0 = far end) for
+/// the `rank`-th of `total` labels anchored near the same `anchor` fraction,
+/// so labels on closely angled rays that share one origin point (Fibonacci
+/// fan/speed-resistance, Gann fan) spread out along their own ray instead of
+/// landing on top of each other at the origin. `spread` is the total width
+/// of the band the ranks are distributed across, centered on `anchor`.
+pub(crate) fn stagger_t(anchor: f64, rank: usize, total: usize, spread: f64) -> f64 {
+    if total <= 1 {
+        return anchor.clamp(0.02, 0.98);
+    }
+    let centered = rank as f64 / (total - 1) as f64 - 0.5;
+    (anchor + centered * spread).clamp(0.02, 0.98)
+}
+
+/// Rank of `level` (0-indexed, ascending) among `sorted_levels` — the
+/// position used by [`stagger_t`] and label-plate colour lookups so a
+/// level's screen placement/colour is stable regardless of the primitive's
+/// own (unsorted) `level_configs` storage order.
+pub(crate) fn level_rank(level: f64, sorted_levels: &[f64]) -> usize {
+    sorted_levels
+        .iter()
+        .position(|&l| (l - level).abs() < 1e-9)
+        .unwrap_or(0)
+}
+
 // Category modules
 pub mod lines;
 pub mod channels;

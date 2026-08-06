@@ -7,9 +7,11 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext, crisp,
+    RenderContext, crisp, contrasting_text_color,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
+
+fn default_fill_opacity() -> f64 { 0.88 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comment {
@@ -23,6 +25,9 @@ pub struct Comment {
     pub text: String,
     #[serde(default)] pub author: String,
     #[serde(default)] pub timestamp: i64,
+    /// Bubble fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
+    #[serde(default = "default_fill_opacity")]
+    pub fill_opacity: f64,
 }
 
 impl Comment {
@@ -30,7 +35,7 @@ impl Comment {
         let mut data = PrimitiveData {
             type_id: "comment".to_string(),
             display_name: "Comment".to_string(),
-            color: PrimitiveColor::new(color),
+            color: PrimitiveColor::with_fill(color, color),
             width: 1.0,
             ..Default::default()
         };
@@ -42,6 +47,7 @@ impl Comment {
             text: String::new(),
             author: String::new(),
             timestamp: 0,
+            fill_opacity: 0.88,
         }
     }
 
@@ -85,10 +91,12 @@ impl Primitive for Comment {
         let r = 8.0;
         if (sx - x1).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
-        let min_x = x1.min(x2);
-        let max_x = x1.max(x2);
-        let min_y = y1.min(y2);
-        let max_y = y1.max(y2);
+        // Match render()'s minimum bubble size floor, or a same-point click
+        // would draw a real bubble but hit-test a degenerate zero-size box.
+        let min_x = x1.min(x2).min(x1 - 16.0);
+        let max_x = (x1.max(x2)).max(x1 + 16.0);
+        let min_y = y1.min(y2).min(y1 - 10.0);
+        let max_y = (y1.max(y2)).max(y1 + 10.0);
         if sx >= min_x && sx <= max_x && sy >= min_y && sy <= max_y {
             return HitTestResult::Body;
         }
@@ -109,40 +117,57 @@ impl Primitive for Comment {
         let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
 
-        let min_x = x1.min(x2);
-        let max_x = x1.max(x2);
-        let min_y = y1.min(y2);
-        let max_y = y1.max(y2);
+        // Sane default size: a comment marker drawn with two near-identical
+        // points (a single click) still reads as a real bubble, not a speck.
+        let min_x = x1.min(x2).min(x1 - 16.0);
+        let max_x = (x1.max(x2)).max(x1 + 16.0);
+        let min_y = y1.min(y2).min(y1 - 10.0);
+        let max_y = (y1.max(y2)).max(y1 + 10.0);
         let width = max_x - min_x;
         let height = max_y - min_y;
-        let center_x = (x1 + x2) / 2.0;
-        let center_y = (y1 + y2) / 2.0;
-        let size = width.min(height).max(20.0);
+        let center_x = (min_x + max_x) / 2.0;
+        let center_y = (min_y + max_y) / 2.0;
 
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_stroke_color(&self.data.color.stroke);
-        ctx.set_stroke_width(self.data.width);
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
 
+        // Speech-bubble body: rounded rect + a small tail merged into the
+        // bottom-left edge, matching the tool's own rail icon instead of a
+        // solid circle.
+        let radius = 6.0_f64.min(width / 3.0).min(height / 3.0);
+        ctx.set_fill_color(&fill_color);
         ctx.begin_path();
-        ctx.arc(center_x, center_y, size / 2.0, 0.0, std::f64::consts::TAU);
+        ctx.rounded_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height, radius);
         ctx.fill();
 
+        let tail_w = (width * 0.22).clamp(5.0, 12.0);
+        let tail_h = (height * 0.35).clamp(5.0, 10.0);
+        let tail_x0 = min_x + width * 0.2;
         ctx.begin_path();
-        ctx.move_to(crisp(center_x - 3.0, dpr), crisp(center_y + size / 2.0 - 2.0, dpr));
-        ctx.line_to(crisp(center_x - 8.0, dpr), crisp(center_y + size / 2.0 + 6.0, dpr));
-        ctx.line_to(crisp(center_x + 2.0, dpr), crisp(center_y + size / 2.0 - 2.0, dpr));
+        ctx.move_to(crisp(tail_x0, dpr), crisp(max_y - 1.0, dpr));
+        ctx.line_to(crisp(tail_x0 + tail_w, dpr), crisp(max_y - 1.0, dpr));
+        ctx.line_to(crisp(tail_x0 + tail_w * 0.3, dpr), crisp(max_y + tail_h, dpr));
         ctx.close_path();
         ctx.fill();
 
+        ctx.set_stroke_color(&self.data.color.stroke);
+        ctx.set_stroke_width(self.data.width);
+        ctx.begin_path();
+        ctx.rounded_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height, radius);
+        ctx.stroke();
+
         let label = self.get_text();
-        if !label.is_empty() && size > 30.0 {
-            let font_size = if let Some(ref text) = self.data.text { text.font_size.min(size * 0.4) } else { (size * 0.3).min(12.0) };
-            ctx.set_fill_color("#000000");
+        let text_data = self.data.text.as_ref();
+        let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
+        if !label.is_empty() {
+            let font_size = text_data.map(|t| t.font_size.min(height * 0.5)).unwrap_or((height * 0.4).min(12.0)).max(8.0);
+            ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
             ctx.set_text_align(crate::render::TextAlign::Center);
-            ctx.fill_text(label, center_x, center_y + font_size / 3.0);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            ctx.fill_text(label, center_x, center_y);
         } else {
-            ctx.set_stroke_color("#000000");
+            ctx.set_stroke_color(text_color);
             ctx.set_stroke_width(1.0);
             for i in 0..3 {
                 let ly = center_y - 3.0 + (i as f64 * 3.0);
@@ -159,7 +184,8 @@ impl Primitive for Comment {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
-        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or("#000000");
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
 
         Some(vec![
             ConfigProperty::comment(content)
@@ -205,6 +231,24 @@ impl Primitive for Comment {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(20),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "fill_opacity" {
+            if let Some(v) = value.as_number() {
+                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

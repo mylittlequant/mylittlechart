@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    config::{FibLevelConfig, LabelStyle},
 };
 
 /// All Gann Square ring levels (0.0 = center, 1.0 = outer edge)
@@ -32,9 +32,13 @@ pub const MAIN_GANN_SQUARE_VISIBLE: &[f64] = &[0.333, 0.667, 1.0];
 
 /// Create default level configs for Gann Square
 pub fn default_gann_square_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_GANN_SQUARE_LEVELS.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_GANN_SQUARE_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = MAIN_GANN_SQUARE_VISIBLE.contains(&level);
+        // Ramp colour by rank instead of every ring falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
         config
     }).collect()
 }
@@ -109,6 +113,9 @@ pub struct GannSquare {
     /// Show ordinal lines (diagonals)
     #[serde(default = "default_true")]
     pub show_ordinal: bool,
+    /// Style for ring fraction labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 impl GannSquare {
@@ -130,6 +137,7 @@ impl GannSquare {
             show_labels: true,
             show_cardinal: true,
             show_ordinal: true,
+            label_style: LabelStyle::default(),
         }
     }
 }
@@ -410,6 +418,24 @@ impl Primitive for GannSquare {
             ctx.begin_path();
             ctx.rect(crisp(cx - half_w, dpr), crisp(cy - half_h, dpr), half_w * 2.0, half_h * 2.0);
             ctx.stroke();
+
+            // Ring fraction label on the ring's top edge — rings nest around a
+            // shared center rather than converging on one point, so each
+            // ring's own top edge is already a collision-free anchor.
+            if self.show_labels {
+                let pct = ratio * 100.0;
+                let label = if (pct - pct.round()).abs() < 0.01 {
+                    format!("{}%", pct.round() as i32)
+                } else {
+                    format!("{:.1}%", pct)
+                };
+                let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
+                ctx.set_font(&self.label_style.font_string());
+                ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                ctx.set_text_align(crate::render::TextAlign::Center);
+                ctx.set_fill_color(label_color);
+                draw_label_plate(ctx, cx, cy - half_h, &label, self.label_style.font_size, &self.label_style, label_color);
+            }
         }
 
         // Reset to default style
@@ -489,6 +515,46 @@ impl Primitive for GannSquare {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::ConfigProperty;
+        let mut props = vec![
+            ConfigProperty::show_labels(self.show_labels).with_order(10),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        use super::super::config::PropertyValue;
+        match id {
+            "show_labels" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.show_labels = *v;
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.label_style.font_size = v;
+                    return true;
+                }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() {
+                    self.label_style.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) {
+            return true;
+        }
+        false
     }
 }
 

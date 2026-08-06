@@ -7,9 +7,11 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext, crisp,
+    RenderContext, crisp, contrasting_text_color,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
+
+fn default_fill_opacity() -> f64 { 0.88 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Note {
@@ -24,6 +26,9 @@ pub struct Note {
     #[serde(default)]
     pub content: String,
     #[serde(default)] pub expanded: bool,
+    /// Note fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
+    #[serde(default = "default_fill_opacity")]
+    pub fill_opacity: f64,
 }
 
 impl Note {
@@ -31,7 +36,7 @@ impl Note {
         let mut data = PrimitiveData {
             type_id: "note".to_string(),
             display_name: "Note".to_string(),
-            color: PrimitiveColor::new(color),
+            color: PrimitiveColor::with_fill(color, color),
             width: 1.0,
             ..Default::default()
         };
@@ -43,6 +48,7 @@ impl Note {
             title: String::new(),
             content: String::new(),
             expanded: false,
+            fill_opacity: 0.88,
         }
     }
 
@@ -113,13 +119,17 @@ impl Primitive for Note {
         let min_x = x1.min(x2);
         let min_y = y1.min(y2);
 
-        ctx.set_fill_color(&format!("{}CC", &self.data.color.stroke));
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+
+        ctx.set_fill_color(&fill_color);
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
 
         ctx.fill_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height);
         ctx.stroke_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height);
 
+        // Folded corner (sticky-note metaphor)
         let fold_size = (12.0_f64).min(width / 4.0).min(height / 4.0);
         let corner_x = min_x + width;
         let corner_y = min_y;
@@ -130,9 +140,11 @@ impl Primitive for Note {
         ctx.stroke();
 
         let content = self.get_content();
+        let text_data = self.data.text.as_ref();
+        let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
         if !content.is_empty() {
-            let font_size = if let Some(ref text) = self.data.text { text.font_size } else { 12.0 };
-            ctx.set_fill_color("#000000");
+            let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
+            ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
             ctx.set_text_align(crate::render::TextAlign::Center);
             let center_x = min_x + width / 2.0;
@@ -145,7 +157,8 @@ impl Primitive for Note {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.content);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
-        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or("#000000");
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
 
         Some(vec![
             ConfigProperty::comment(content)
@@ -200,6 +213,24 @@ impl Primitive for Note {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(20),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "fill_opacity" {
+            if let Some(v) = value.as_number() {
+                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

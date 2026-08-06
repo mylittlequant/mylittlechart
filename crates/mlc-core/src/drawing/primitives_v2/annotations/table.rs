@@ -23,6 +23,10 @@ pub struct Table {
     #[serde(default = "default_grid_color")] pub grid_color: String,
     #[serde(default = "default_text_color")] pub text_color: String,
     #[serde(default = "default_header_text_color")] pub header_text_color: String,
+    /// Cell text size in pixels — previously hardcoded to 11px with no control
+    #[serde(default = "default_font_size")] pub font_size: f64,
+    /// Table body fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
+    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
 }
 fn default_cols() -> u8 { 2 }
 fn default_true() -> bool { true }
@@ -30,11 +34,13 @@ fn default_header_color() -> String { "#607D8B".to_string() }
 fn default_grid_color() -> String { "#607D8B".to_string() }
 fn default_text_color() -> String { "#FFFFFF".to_string() }
 fn default_header_text_color() -> String { "#000000".to_string() }
+fn default_font_size() -> f64 { 13.0 }
+fn default_fill_opacity() -> f64 { 0.88 }
 
 impl Table {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
-            data: PrimitiveData { type_id: "table".to_string(), display_name: "Table".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
+            data: PrimitiveData { type_id: "table".to_string(), display_name: "Table".to_string(), color: PrimitiveColor::with_fill(color, color), width: 1.0, ..Default::default() },
             ts1, price1, ts2, price2,
             rows: vec![vec!["Header1".to_string(), "Header2".to_string()], vec!["Value1".to_string(), "Value2".to_string()]],
             columns: 2,
@@ -43,6 +49,8 @@ impl Table {
             grid_color: color.to_string(),
             text_color: "#FFFFFF".to_string(),
             header_text_color: "#000000".to_string(),
+            font_size: 13.0,
+            fill_opacity: 0.88,
         }
     }
 }
@@ -107,9 +115,11 @@ impl Primitive for Table {
         let cell_h = if self.rows.is_empty() { total_h } else { total_h / self.rows.len() as f64 };
 
         let padding_x = 6.0;
-        let font_size = 11.0;
+        let font_size = self.font_size;
 
-        ctx.set_fill_color(&format!("{}E0", &self.data.color.stroke));
+        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+        let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+        ctx.set_fill_color(&fill_color);
         ctx.fill_rect(crisp(left, dpr), crisp(top, dpr), total_w, total_h);
 
         if self.show_header && !self.rows.is_empty() {
@@ -273,6 +283,12 @@ impl Primitive for Table {
             ConfigProperty::header_text_color(&self.header_text_color)
                 .with_category(PropertyCategory::Style)
                 .with_order(13),
+            ConfigProperty::font_size(self.font_size)
+                .with_category(PropertyCategory::Style)
+                .with_order(14),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(15),
         ]
     }
 
@@ -299,6 +315,18 @@ impl Primitive for Table {
             "header_text_color" => {
                 if let Some(c) = value.as_color() {
                     self.header_text_color = c.to_string();
+                    return true;
+                }
+            }
+            "font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
                     return true;
                 }
             }

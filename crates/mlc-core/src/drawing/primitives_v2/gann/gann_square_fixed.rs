@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    config::{FibLevelConfig, LabelStyle},
 };
 
 // Use same levels as GannSquare
@@ -21,9 +21,13 @@ use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE};
 
 /// Create default level configs for Gann Square Fixed
 pub fn default_gann_square_fixed_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_GANN_SQUARE_LEVELS.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_GANN_SQUARE_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = MAIN_GANN_SQUARE_VISIBLE.contains(&level);
+        // Ramp colour by rank instead of every ring falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
         config
     }).collect()
 }
@@ -96,6 +100,9 @@ pub struct GannSquareFixed {
     /// Show spiral numbers
     #[serde(default)]
     pub show_numbers: bool,
+    /// Style for ring fraction labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 impl GannSquareFixed {
@@ -116,6 +123,7 @@ impl GannSquareFixed {
             level_configs: default_gann_square_fixed_configs(),
             show_labels: true,
             show_numbers: false,
+            label_style: LabelStyle::default(),
         }
     }
 
@@ -414,6 +422,71 @@ impl Primitive for GannSquareFixed {
         ctx.close_path();
         ctx.stroke();
 
+        // Draw inner ring squares using level_configs (previously the fill
+        // quads above were the only visible trace of a level — the ring
+        // OUTLINE itself, and its label, never rendered).
+        for config in &self.level_configs {
+            if !config.visible {
+                continue;
+            }
+            let ratio = config.level;
+            if ratio > 0.99 {
+                continue;
+            }
+
+            let stroke_color = config.color.as_ref().unwrap_or(&self.data.color.stroke);
+            ctx.set_stroke_color(stroke_color);
+            let stroke_width = config.width.unwrap_or(self.data.width);
+            ctx.set_stroke_width(stroke_width);
+            let line_style = match config.style.as_str() {
+                "dashed" => LineStyle::Dashed,
+                "dotted" => LineStyle::Dotted,
+                "large_dashed" => LineStyle::LargeDashed,
+                "sparse_dotted" => LineStyle::SparseDotted,
+                _ => self.data.style,
+            };
+            match line_style {
+                LineStyle::Solid => ctx.set_line_dash(&[]),
+                LineStyle::Dashed => ctx.set_line_dash(&[8.0, 4.0]),
+                LineStyle::Dotted => ctx.set_line_dash(&[2.0, 2.0]),
+                LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
+                LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
+            }
+
+            let half_w = half_w_full * ratio;
+            let half_h = half_h_full * ratio;
+            ctx.begin_path();
+            ctx.rect(crisp(cx - half_w, dpr), crisp(cy - half_h, dpr), half_w * 2.0, half_h * 2.0);
+            ctx.stroke();
+
+            if self.show_labels {
+                let pct = ratio * 100.0;
+                let label = if (pct - pct.round()).abs() < 0.01 {
+                    format!("{}%", pct.round() as i32)
+                } else {
+                    format!("{:.1}%", pct)
+                };
+                let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
+                ctx.set_font(&self.label_style.font_string());
+                ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                ctx.set_text_align(crate::render::TextAlign::Center);
+                ctx.set_fill_color(label_color);
+                draw_label_plate(ctx, cx, cy - half_h, &label, self.label_style.font_size, &self.label_style, label_color);
+            }
+        }
+
+        // Reset to default style before diagonals/cardinals (the ring loop
+        // above may have left a per-level color/dash pattern active)
+        ctx.set_stroke_color(&self.data.color.stroke);
+        ctx.set_stroke_width(self.data.width);
+        match self.data.style {
+            LineStyle::Solid => ctx.set_line_dash(&[]),
+            LineStyle::Dashed => ctx.set_line_dash(&[8.0, 4.0]),
+            LineStyle::Dotted => ctx.set_line_dash(&[2.0, 2.0]),
+            LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
+            LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
+        }
+
         // Draw diagonals
         ctx.begin_path();
         ctx.move_to(crisp(screen_corners[0].0, dpr), crisp(screen_corners[0].1, dpr));
@@ -473,6 +546,46 @@ impl Primitive for GannSquareFixed {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::ConfigProperty;
+        let mut props = vec![
+            ConfigProperty::show_labels(self.show_labels).with_order(10),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        use super::super::config::PropertyValue;
+        match id {
+            "show_labels" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.show_labels = *v;
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.label_style.font_size = v;
+                    return true;
+                }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() {
+                    self.label_style.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) {
+            return true;
+        }
+        false
     }
 }
 

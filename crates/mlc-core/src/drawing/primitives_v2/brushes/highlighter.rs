@@ -6,6 +6,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext,
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,6 +102,42 @@ impl Primitive for Highlighter {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        // `opacity` and `brush_size` existed as struct fields with no way to
+        // reach them from the settings modal — the low default opacity
+        // (0.4) over a dark chart is what read as a muddy, khaki-looking
+        // stroke instead of a bright highlighter; this at least lets the
+        // owner brighten it per-primitive instead of only via the source default.
+        vec![
+            ConfigProperty::fill_opacity(self.opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(20),
+            ConfigProperty::number("brush_size", "Brush Size", self.brush_size, Some(4.0), Some(60.0))
+                .with_category(PropertyCategory::Style)
+                .with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            "brush_size" => {
+                if let Some(v) = value.as_number() {
+                    self.brush_size = v.max(1.0);
+                    self.data.width = self.brush_size;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {

@@ -12,8 +12,8 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text,
-    config::FibLevelConfig,
+    render_primitive_text, draw_label_plate, level_ramp_color, level_rank, stagger_t,
+    config::{FibLevelConfig, LabelStyle},
 };
 
 /// All Gann angle ratios (price units per time unit)
@@ -47,9 +47,13 @@ pub fn gann_angle_label(ratio: f64) -> String {
 
 /// Create default level configs for Gann Fan
 pub fn default_gann_fan_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_GANN_ANGLES.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_GANN_ANGLES.iter().map(|&ratio| {
         let mut config = FibLevelConfig::new(ratio);
         config.visible = MAIN_GANN_VISIBLE.contains(&ratio);
+        // Ramp colour by rank instead of every angle falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(ratio, &sorted), sorted.len()));
         config
     }).collect()
 }
@@ -124,6 +128,9 @@ pub struct GannFan {
     /// Direction: true = upward fan, false = downward fan
     #[serde(default = "default_true")]
     pub upward: bool,
+    /// Style for angle labels (font, background plate, offset, border)
+    #[serde(default)]
+    pub label_style: LabelStyle,
 }
 
 impl GannFan {
@@ -145,6 +152,7 @@ impl GannFan {
             show_labels: true,
             extend: true,
             upward: true,
+            label_style: LabelStyle::default(),
         }
     }
 
@@ -397,6 +405,13 @@ impl Primitive for GannFan {
             ctx.reset_alpha();
         }
 
+        // Rank each visible angle (ascending) so labels stagger along their
+        // own ray instead of colliding at the shared origin (x1, y1) — every
+        // angle ray starts from the same point.
+        let mut sorted_visible: Vec<f64> = self.level_configs.iter().filter(|c| c.visible).map(|c| c.level).collect();
+        sorted_visible.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let visible_count = sorted_visible.len();
+
         // Draw each visible Gann angle line
         for config in &self.level_configs {
             if !config.visible {
@@ -450,6 +465,26 @@ impl Primitive for GannFan {
                 ctx.line_to(crisp(end_x, dpr), crisp(end_y, dpr));
             }
             ctx.stroke();
+
+            // Angle ratio label (e.g. "2x1", "1x4"), staggered along the ray
+            // so closely angled rays don't stack their labels on the origin.
+            if self.show_labels {
+                let dx = end_x - x1;
+                let dy = end_y - y1;
+                if dx != 0.0 || dy != 0.0 {
+                    let rank = level_rank(ratio, &sorted_visible);
+                    let label_t = stagger_t(0.3, rank, visible_count, 0.5);
+                    let label_x = x1 + dx * label_t;
+                    let label_y = y1 + dy * label_t;
+                    let label = gann_angle_label(ratio);
+                    let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
+                    ctx.set_font(&self.label_style.font_string());
+                    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                    ctx.set_text_align(crate::render::TextAlign::Center);
+                    ctx.set_fill_color(label_color);
+                    draw_label_plate(ctx, label_x, label_y, &label, self.label_style.font_size, &self.label_style, label_color);
+                }
+            }
         }
         ctx.set_line_dash(&[]);
 
@@ -505,6 +540,46 @@ impl Primitive for GannFan {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::ConfigProperty;
+        let mut props = vec![
+            ConfigProperty::show_labels(self.show_labels).with_order(10),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        use super::super::config::PropertyValue;
+        match id {
+            "show_labels" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.show_labels = *v;
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.label_style.font_size = v;
+                    return true;
+                }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() {
+                    self.label_style.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) {
+            return true;
+        }
+        false
     }
 }
 
