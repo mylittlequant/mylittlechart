@@ -1421,7 +1421,32 @@ impl ChartApp {
         if field == "text_content" {
             if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                 if let Some(bid) = active_bid_prim {
-                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                    // THE WEDGE (2026-08-06): `self.core.drawings()` returns a
+                    // facade that OWNS a `RwLockReadGuard`. Calling
+                    // `.get_data(...)` on it directly in an `if let` scrutinee
+                    // does NOT drop that guard once the call returns — Rust
+                    // keeps scrutinee temporaries alive for the whole `if let`
+                    // body (the same footgun clippy's
+                    // `significant_drop_in_scrutinee` lint exists for). So the
+                    // `self.core.drawings_mut()` write below used to try to
+                    // re-acquire the SAME lock while still read-locked. On
+                    // wasm32 `std::sync::RwLock` has no real threads to block
+                    // against (see `std::sys::sync::rwlock::no_threads`): a
+                    // reentrant `write()` does not deadlock or panic, it
+                    // stomps the lock's internal mode to "write-locked" and
+                    // then calls `rtabort!`, trapping the wasm instance for
+                    // that call. Every later frame's `drawings()`/
+                    // `drawings_mut()` call — i.e. basically all rendering —
+                    // hits the same permanently-corrupted lock and traps too,
+                    // so the whole app looks alive (the JS RAF loop keeps
+                    // scheduling) while nothing on screen or in the input
+                    // pipeline can ever change again. Binding the read to a
+                    // plain `let` first drops the guard at that statement's
+                    // `;`, before `drawings_mut()` ever runs — the same fix
+                    // already applied once in
+                    // `snapshot_primitive_settings_to_user_manager` below.
+                    let existing = self.core.drawings().get_data(bid, prim_id);
+                    if let Some(mut data) = existing {
                         if let Some(ref mut t) = data.text {
                             t.content = text.clone();
                         } else {
@@ -1441,7 +1466,9 @@ impl ChartApp {
             if let Ok(width) = text.trim().parse::<f64>() {
                 if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
                     if let Some(bid) = active_bid_prim {
-                        if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                        // Same read-guard-alive-through-if-let trap as text_content above.
+                        let existing = self.core.drawings().get_data(bid, prim_id);
+                        if let Some(mut data) = existing {
                             data.width = width.clamp(0.5, 20.0);
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
@@ -1452,7 +1479,9 @@ impl ChartApp {
         } else if field == "text_font_size" {
             if let Ok(font_size) = text.trim().parse::<f64>() {
                 if let (Some(bid), Some(prim_id)) = (active_bid_prim, self.panel_app.primitive_settings_state.primitive_id) {
-                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                    // Same read-guard-alive-through-if-let trap as text_content above.
+                    let existing = self.core.drawings().get_data(bid, prim_id);
+                    if let Some(mut data) = existing {
                         if let Some(ref mut t) = data.text {
                             t.font_size = font_size.clamp(8.0, 72.0);
                         } else {
@@ -2369,7 +2398,10 @@ impl ChartApp {
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive
                 if let Some(bid) = active_bid_prim {
-                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                    // Same read-guard-alive-through-if-let trap as
+                    // commit_prim_editing_text_inner's text_content branch above.
+                    let existing = self.core.drawings().get_data(bid, prim_id);
+                    if let Some(mut data) = existing {
                         tmpl.apply_to_primitive_data(&mut data);
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
@@ -2407,7 +2439,10 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.applied_template_id = None;
             // Reset primitive to factory defaults
             if let Some(bid) = active_bid_prim {
-                if let Some(data) = self.core.drawings().get_data(bid, prim_id) {
+                // Same read-guard-alive-through-if-let trap as
+                // commit_prim_editing_text_inner's text_content branch above.
+                let existing = self.core.drawings().get_data(bid, prim_id);
+                if let Some(data) = existing {
                     let type_id = data.type_id.clone();
                     let default_tmpl = mlc_core::templates::PrimitiveTemplate::new_with_defaults(&type_id, "__default__");
                     let mut data_copy = data;

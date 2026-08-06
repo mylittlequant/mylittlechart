@@ -6633,6 +6633,15 @@ impl ChartApp {
 
         // If text editing is active in any settings modal, cancel it first before closing the modal.
         // This follows the pattern: first Escape cancels editing, second Escape closes the modal.
+        //
+        // HARD INVARIANT (2026-08-06 wedge post-mortem): these four arms clear
+        // `active_field_id` and blur DIRECTLY — they must NEVER call
+        // `commit_*_editing_text()`. Escape is the modal's last-resort exit, so
+        // it has to stay reachable even if a commit path is broken (as one was:
+        // `commit_prim_editing_text_inner` used to trap the wasm RwLock on
+        // every text_content/stroke_width/font_size commit — see the comment
+        // there). Routing Escape through commit would make the escape hatch
+        // depend on the exact code it exists to escape from.
         if self.panel_app.primitive_settings_state.active_field_id.is_some() {
             self.panel_app.primitive_settings_state.active_field_id = None;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
