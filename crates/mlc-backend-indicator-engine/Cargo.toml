@@ -24,3 +24,6 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 # IndicatorValue from mli while keeping the mlc-owned UI layer
 # (IndicatorManager state, SignalEngine, value_adapter, indicator_bridge).
 mli = { version = "=0.1.8", package = "mylittleindicators" }
+
+[lints]
+workspace = true

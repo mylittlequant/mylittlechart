@@ -217,8 +217,11 @@ async fn patch_alert(
     State(s): State<AppState>,
     Json(body): Json<PatchAlertIn>,
 ) -> impl IntoResponse {
-    // Find the bubble owning this alert.
-    let bid = match s.core.alerts().find_owner(id) {
+    // Find the bubble owning this alert. Bound to a `let` first so the
+    // `alerts()` read guard drops before the match body runs
+    // (clippy::significant_drop_in_scrutinee).
+    let owner = s.core.alerts().find_owner(id);
+    let bid = match owner {
         Some((bid, _)) => bid,
         None => return StatusCode::NOT_FOUND.into_response(),
     };

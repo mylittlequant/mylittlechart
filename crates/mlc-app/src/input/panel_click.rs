@@ -1017,10 +1017,11 @@ impl ChartApp {
         if widget_id == "agent:close_pane" {
             if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
-                    let id = desc.instance_id;
+                    // Only read on native — no PTY runtime to stop on wasm.
+                    let _id = desc.instance_id;
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(rt) = self.core.native_rt() {
-                        let _ = rt.block_on(self.agent.stop_instance(id));
+                        let _ = rt.block_on(self.agent.stop_instance(_id));
                     }
                 }
                 self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
@@ -1114,10 +1115,11 @@ impl ChartApp {
                 if let Ok(raw) = id_str.parse::<u64>() {
                     let leaf_id = uzor::panels::LeafId(raw);
                     if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
-                        let id = desc.instance_id;
+                        // Only read on native — no PTY runtime to stop on wasm.
+                        let _id = desc.instance_id;
                         #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
-                            let _ = rt.block_on(self.agent.stop_instance(id));
+                            let _ = rt.block_on(self.agent.stop_instance(_id));
                         }
                     }
                     self.sidebar_state.agent_docking.inner_mut().tree_mut().remove_leaf(leaf_id);
@@ -1324,14 +1326,15 @@ impl ChartApp {
                                     gate4agent::AgentCli::Gemini   => CliTool::Gemini,
                                     gate4agent::AgentCli::OpenCode => CliTool::OpenCode,
                                 };
-                                let config = SessionConfig {
+                                // Only read on native — no PTY runtime to spawn on wasm.
+                                let _config = SessionConfig {
                                     tool,
                                     working_dir: desc.workdir.clone(),
                                     ..SessionConfig::default()
                                 };
                                 #[cfg(not(target_arch = "wasm32"))]
                                 if let Some(rt) = self.core.native_rt() {
-                                    match rt.block_on(self.agent.start_pty_instance(id, config)) {
+                                    match rt.block_on(self.agent.start_pty_instance(id, _config)) {
                                         Ok(()) => {
                                             eprintln!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
                                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
@@ -1387,10 +1390,11 @@ impl ChartApp {
                         let text = if !from_field.is_empty() { from_field } else { from_buffer };
                         eprintln!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
                         if !text.is_empty() {
-                            let id = desc.instance_id;
+                            // Only read on native — no PTY runtime to send to on wasm.
+                            let _id = desc.instance_id;
                             #[cfg(not(target_arch = "wasm32"))]
                             if let Some(rt) = self.core.native_rt() {
-                                match rt.block_on(self.agent.send_chat_instance(id, &text)) {
+                                match rt.block_on(self.agent.send_chat_instance(_id, &text)) {
                                     Ok(()) => {
                                         self.sidebar_state.agent_input_buffers.remove(&leaf_id);
                                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");

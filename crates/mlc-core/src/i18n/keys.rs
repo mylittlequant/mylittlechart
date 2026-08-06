@@ -260,10 +260,26 @@ pub enum ConfigKey {
     LineColorLabel  = 112,
     WidthLabel      = 113,
     FillColorLabel  = 114,
+
+    // primitive_settings modal Text tab — the two base row labels with no
+    // existing equivalent (Content/FontSize/TextColor above already cover
+    // the other three rows verbatim, so those are reused rather than
+    // duplicated here).
+    TextStyleLabel   = 115,
+    PositionLabel    = 116,
+
+    // Shared "(empty)" placeholder for an unset text field — previously two
+    // separate hardcoded "(пусто)" literals at two call sites in the same
+    // modal, now one key.
+    EmptyPlaceholder = 117,
+
+    // primitive_settings modal Coordinates tab — per-point row label
+    // ("Point N") used when the primitive has no named point labels.
+    PointLabel       = 118,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 115;
+    pub const COUNT: usize = 119;
 
     /// Get translation for this key
     #[inline]
@@ -1197,10 +1213,13 @@ pub enum IndicatorKey {
     TextBold               = 25,
     /// Italic toggle marker ("I" / "К")
     TextItalic             = 26,
+    /// "Parameters" (Inputs tab label in the indicator settings modal —
+    /// previously hardcoded Russian "Параметры" that never localized)
+    TabInputs              = 27,
 }
 
 impl IndicatorKey {
-    pub const COUNT: usize = 27;
+    pub const COUNT: usize = 28;
 
     /// Get translation for this key.
     #[inline]

@@ -752,6 +752,7 @@ pub fn render_primitive_settings_modal(
 
         PrimitiveSettingsTab::Text => {
             // === TEXT TAB ===
+            let lang = current_language();
             if let Some(ref props) = text_props {
                 for prop in props {
                     match &prop.prop_type {
@@ -762,7 +763,7 @@ pub fn render_primitive_settings_modal(
                             let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
 
                             let default_text = prop.value.as_string().unwrap_or("");
-                            let empty_placeholder = "(пусто)";
+                            let empty_placeholder = ConfigKey::EmptyPlaceholder.get(lang);
                             let ar = &state.active_render;
                             let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
                                 (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
@@ -962,7 +963,7 @@ pub fn render_primitive_settings_modal(
                 let current_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or(&prim_data.color.stroke);
 
                 // Row 1: Text content
-                draw_label(ctx, "Текст:", row_y);
+                draw_label(ctx, ConfigKey::Content.get(lang), row_y);
                 let input_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
 
                 let is_editing = state.active_field_id.as_deref() == Some("text_content");
@@ -972,7 +973,7 @@ pub fn render_primitive_settings_modal(
                     let text = if ar.text.is_empty() { "" } else { &ar.text };
                     (text, ar.cursor, ar.selection_start, Some(ar.cursor))
                 } else {
-                    (if current_content.is_empty() { "(пусто)" } else { current_content }, current_content.len(), None, None)
+                    (if current_content.is_empty() { ConfigKey::EmptyPlaceholder.get(lang) } else { current_content }, current_content.len(), None, None)
                 };
 
                 let content_input_config = InputConfig::new(display_text)
@@ -1010,7 +1011,7 @@ pub fn render_primitive_settings_modal(
                 row_y += row_height + row_gap;
 
                 // Row 2: Font size
-                draw_label(ctx, "Размер шрифта:", row_y);
+                draw_label(ctx, ConfigKey::FontSize.get(lang), row_y);
                 let font_size_rect = WidgetRect::new(control_left, row_y + 2.0, 80.0, row_height - 4.0);
 
                 let is_editing_font_size = state.active_field_id.as_deref() == Some("text_font_size");
@@ -1050,7 +1051,7 @@ pub fn render_primitive_settings_modal(
                 row_y += row_height + row_gap;
 
                 // Row 3: Bold/Italic toggles
-                draw_label(ctx, "Стиль текста:", row_y);
+                draw_label(ctx, ConfigKey::TextStyleLabel.get(lang), row_y);
                 // Bold toggle
                 let bold_rect = WidgetRect::new(control_left, row_y + 4.0, 20.0, 20.0);
                 ctx.set_fill_color(if current_bold { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
@@ -1093,7 +1094,7 @@ pub fn render_primitive_settings_modal(
                 row_y += row_height + row_gap;
 
                 // Row 4: Text color
-                draw_label(ctx, "Цвет текста:", row_y);
+                draw_label(ctx, ConfigKey::TextColor.get(lang), row_y);
                 let text_color_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
                 draw_color_button(ctx, current_color, text_color_rect.x, text_color_rect.y, text_color_rect.width, text_color_rect.height);
                 result.content_items.push(("text_color".to_string(), text_color_rect));
@@ -1103,7 +1104,7 @@ pub fn render_primitive_settings_modal(
                 let current_v_align = text_data.map(|t| t.v_align.as_str()).unwrap_or("start");
                 let current_h_align = text_data.map(|t| t.h_align.as_str()).unwrap_or("center");
 
-                draw_label(ctx, "Положение:", row_y);
+                draw_label(ctx, ConfigKey::PositionLabel.get(lang), row_y);
                 row_y += row_height;
 
                 let cell_size = 28.0;
@@ -1176,6 +1177,7 @@ pub fn render_primitive_settings_modal(
 
         PrimitiveSettingsTab::Coordinates => {
             // === COORDINATES TAB ===
+            let lang = current_language();
             let points = prim.points();
             let point_labels = mlc_core::drawing::get_point_labels(prim_type_id, points.len());
 
@@ -1186,7 +1188,7 @@ pub fn render_primitive_settings_modal(
             for (i, (bar, price)) in points.iter().enumerate() {
                 let label = point_labels.get(i).map(|s| s.as_str()).unwrap_or("");
                 let point_label = if label.is_empty() {
-                    format!("Точка {}:", i + 1)
+                    format!("{} {}:", ConfigKey::PointLabel.get(lang), i + 1)
                 } else {
                     format!("{}:", label)
                 };
@@ -1462,13 +1464,13 @@ pub fn render_primitive_settings_modal(
                 .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
 
             let timeframes: [(&str, bool, bool, Option<(u32, u32)>, u32, u32); 7] = [
-                ("Тики", true, tf_config.ticks, None, 0, 0),
-                ("Секунды", false, tf_config.seconds.is_some(), tf_config.seconds, 1, 59),
-                ("Минуты", false, tf_config.minutes.is_some(), tf_config.minutes, 1, 59),
-                ("Часы", false, tf_config.hours.is_some(), tf_config.hours, 1, 24),
-                ("Дни", false, tf_config.days.is_some(), tf_config.days, 1, 366),
-                ("Недели", false, tf_config.weeks.is_some(), tf_config.weeks, 1, 52),
-                ("Месяцы", false, tf_config.months.is_some(), tf_config.months, 1, 12),
+                (t_settings(SettingsKey::TfTicks), true, tf_config.ticks, None, 0, 0),
+                (t_settings(SettingsKey::TfSeconds), false, tf_config.seconds.is_some(), tf_config.seconds, 1, 59),
+                (t_settings(SettingsKey::TfMinutes), false, tf_config.minutes.is_some(), tf_config.minutes, 1, 59),
+                (t_settings(SettingsKey::TfHours), false, tf_config.hours.is_some(), tf_config.hours, 1, 24),
+                (t_settings(SettingsKey::TfDays), false, tf_config.days.is_some(), tf_config.days, 1, 366),
+                (t_settings(SettingsKey::TfWeeks), false, tf_config.weeks.is_some(), tf_config.weeks, 1, 52),
+                (t_settings(SettingsKey::TfMonths), false, tf_config.months.is_some(), tf_config.months, 1, 12),
             ];
 
             let checkbox_size = 16.0;
@@ -1742,7 +1744,7 @@ pub fn render_primitive_settings_modal(
                 ctx.set_font("11px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
+                ctx.fill_text(t_settings(SettingsKey::NoTemplates), dd_x + 8.0, row_y + opt_h / 2.0);
             } else {
                 for tmpl in templates {
                     let row_id = format!("template_option:{}", tmpl.id);

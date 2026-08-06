@@ -1735,7 +1735,10 @@ impl ChartApp {
         // Also update the TagManager group's canonical timeframe so the group
         // state stays consistent with the displayed windows.
         if let Some(chart_id) = self.panel_app.panel_grid.container_id_for_leaf(source_leaf) {
-            if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
+            // Bound first so the `tags()` read guard drops before the
+            // `bubbles_mut()` write below (clippy::significant_drop_in_scrutinee).
+            let tag_bid = self.core.tags().tag_for_chart(chart_id);
+            if let Some(bid) = tag_bid {
                 self.core.bubbles_mut().set_timeframe(bid, tf.clone());
             }
             eprintln!(

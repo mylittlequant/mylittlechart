@@ -607,10 +607,6 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.send_to_back(&mut self.bubbles, bid, prim_id)
     }
 
-    pub fn reorder_before(&mut self, bid: BubbleId, prim_id: u64, before_prim_id: Option<u64>) {
-        self.mgr.reorder_before(&mut self.bubbles, bid, prim_id, before_prim_id)
-    }
-
     // ---- Drag and drop ----------------------------------------------------
 
     pub fn start_drag(&mut self, bid: BubbleId, prim_id: u64, ts_ms: i64, price: f64) -> bool {

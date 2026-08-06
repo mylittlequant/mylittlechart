@@ -23,3 +23,6 @@ sha2 = "0.10"
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
 # Browser RNG source so rand / pbkdf2 / aes-gcm RNG-using code paths compile.
 getrandom = { version = "0.2", features = ["js"] }
+
+[lints]
+workspace = true

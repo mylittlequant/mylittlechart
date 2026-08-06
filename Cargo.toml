@@ -30,6 +30,20 @@ members = [
 ]
 resolver = "2"
 
+# `self.core.drawings()` (and the equivalent facades on other domain
+# managers) return a type that OWNS a lock guard. Calling it directly in a
+# match/if-let/while-let scrutinee keeps that guard alive for the whole
+# body — so a `drawings_mut()` write inside the body re-acquires the same
+# lock while still read-locked. On wasm32 `std::sync::RwLock` has no thread
+# to block on: it does not deadlock, it corrupts the lock and calls
+# `rtabort!`, trapping the instance for every later frame. Six sites carried
+# this (fixed in 8ac92db1 + f578c868). The safe form is
+# `.and_then(|bid| self.core.drawings().get_data(..))` — a closure body is
+# its own temporary scope, so the guard drops on return; that shape does not
+# trip this lint.
+[workspace.lints.clippy]
+significant_drop_in_scrutinee = "warn"
+
 [workspace.dependencies]
 rayon = "1"
 aes-gcm = "0.10"

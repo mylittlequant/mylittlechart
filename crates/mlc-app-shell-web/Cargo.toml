@@ -80,3 +80,6 @@ default = []
 # render-vello-cpu    = ["dep:uzor-render-vello-cpu"]
 # render-vello-hybrid = ["dep:uzor-render-vello-hybrid"]
 # render-vello-gpu    = ["dep:uzor-render-vello-gpu"]
+
+[lints]
+workspace = true

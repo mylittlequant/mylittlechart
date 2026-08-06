@@ -581,8 +581,6 @@ pub enum ControlPointType {
     Corner(u8),
     /// Edge midpoint handle (for rectangles) - index 0=Top, 1=Right, 2=Bottom, 3=Left
     Edge(u8),
-    /// Level handle (for Fibonacci) - index is level number
-    Level(u8),
     /// Generic indexed point (for polylines, patterns)
     Index(u8),
 }

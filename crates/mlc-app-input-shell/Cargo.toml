@@ -14,3 +14,6 @@ mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "myli
 uzor       = "=1.4.18"
 web-time   = "1"
 # NO winit, NO arboard, NO wasm-bindgen, NO vello
+
+[lints]
+workspace = true

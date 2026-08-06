@@ -29,3 +29,6 @@ uuid = { version = "1", features = ["v4", "js"] }
 
 [features]
 default = []
+
+[lints]
+workspace = true

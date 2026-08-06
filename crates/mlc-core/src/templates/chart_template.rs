@@ -127,7 +127,7 @@ impl ChartTemplate {
                 tpo_show_poor_hl: true,
                 tpo_show_initial_balance: true,
                 tpo_ib_periods_label: "2".to_string(),
-                precision_label: "Авто".to_string(),
+                precision_label: crate::scale_settings::precision_label(None).to_string(),
                 timezone_label: TimeFormatSettings { timezone_offset_hours: 0, ..TimeFormatSettings::default() }.timezone_label(),
                 use_24h: true,
                 show_utc_prefix: true,

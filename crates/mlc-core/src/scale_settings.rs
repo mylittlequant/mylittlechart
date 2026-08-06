@@ -3,6 +3,7 @@
 //! Controls positioning, dimensions, and visibility of chart scales.
 
 use serde::{Deserialize, Serialize};
+use crate::i18n::{SettingsKey, current_language};
 
 /// Date format presets
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,7 +387,7 @@ pub fn cycle_precision(current: Option<usize>) -> Option<usize> {
 /// Get display label for a precision value
 pub fn precision_label(precision: Option<usize>) -> &'static str {
     match precision {
-        None => "Авто",
+        None => SettingsKey::PrecisionAuto.get(current_language()),
         Some(0) => "0",
         Some(1) => "1 (0.0)",
         Some(2) => "2 (0.00)",
@@ -395,6 +396,6 @@ pub fn precision_label(precision: Option<usize>) -> &'static str {
         Some(5) => "5 (0.00000)",
         Some(6) => "6",
         Some(8) => "8",
-        Some(_) => "Авто",
+        Some(_) => SettingsKey::PrecisionAuto.get(current_language()),
     }
 }

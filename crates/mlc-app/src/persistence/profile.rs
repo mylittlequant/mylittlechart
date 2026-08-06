@@ -430,7 +430,10 @@ impl ChartApp {
 
     /// Persist templates to disk.
     pub fn persist_templates(&self) {
-        if let Err(e) = self.core.templates().save_to_default_dir(None) {
+        // Bound first so the `templates()` guard drops before the body runs
+        // (clippy::significant_drop_in_scrutinee).
+        let save_result = self.core.templates().save_to_default_dir(None);
+        if let Err(e) = save_result {
             eprintln!("[persist] templates: {:?}", e);
         }
     }

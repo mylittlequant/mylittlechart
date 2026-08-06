@@ -1462,23 +1462,6 @@ impl DrawingManager {
         }
     }
 
-    /// Move `prim_id` to be positioned immediately before `before_prim_id`
-    /// in the z-order list. `None` moves it to the back.
-    pub(crate) fn reorder_before(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, before_prim_id: Option<u64>) {
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let Some(old_idx) = Self::find_index_by_id(b, prim_id) else { return };
-        let new_idx = match before_prim_id {
-            Some(target) => Self::find_index_by_id(b, target).unwrap_or(0),
-            None => 0,
-        };
-        if old_idx == new_idx {
-            return;
-        }
-        let prim = b.primitives.remove(old_idx);
-        let insert_at = if new_idx > old_idx { new_idx - 1 } else { new_idx };
-        b.primitives.insert(insert_at.min(b.primitives.len()), prim);
-    }
-
     // =========================================================================
     // Drag and drop
     // =========================================================================

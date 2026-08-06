@@ -212,8 +212,8 @@ pub use primitives_v2::TextAnchor;
 
 // Configuration system
 pub use primitives_v2::config::{
-    Configurable, ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
-    ContextMenuAction, PrimitiveFullConfig, FibLevelConfig, TimeframeVisibilityConfig,
+    ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
+    FibLevelConfig, TimeframeVisibilityConfig,
     SelectOption, SettingsTemplate, TemplateStyle,
 };
 
@@ -230,7 +230,12 @@ pub use primitives_v2::signals::{
 /// - Head and shoulders: named shoulder/head labels
 /// - Three drives: `["1", "2", "3", "4", "5", "6"]`
 /// - Elliott waves: numeric `["1", "2", "3", ...]`
-/// - Default: `["Точка", ...]`
+/// - Default: empty strings — every primitive without a named-point
+///   scheme falls through to the caller's own localized "Point N:"
+///   fallback (`primitive_settings.rs`, `ConfigKey::PointLabel`)
+///   instead of carrying a label here. This used to return a hardcoded,
+///   un-numbered Russian "Точка" for every point of every unmatched
+///   primitive type (i.e. almost all of them) regardless of language.
 pub fn get_point_labels(primitive_type: &str, count: usize) -> Vec<String> {
     match primitive_type {
         "xabcd_pattern" | "cypher_pattern" => {
@@ -272,7 +277,10 @@ pub fn get_point_labels(primitive_type: &str, count: usize) -> Vec<String> {
             (1..=count).map(|i| i.to_string()).collect()
         }
         _ => {
-            (1..=count).map(|_| "Точка".to_string()).collect()
+            // Empty label per point — the caller (primitive_settings.rs)
+            // treats an empty label as "no named point" and substitutes
+            // its own localized, numbered "Point N:" row.
+            (0..count).map(|_| String::new()).collect()
         }
     }
 }

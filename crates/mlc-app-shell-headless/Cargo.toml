@@ -16,3 +16,6 @@ mlc-app-agent-api = { path = "../mlc-app-agent-api", package = "mylittlechart-ap
 mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+
+[lints]
+workspace = true

@@ -733,7 +733,10 @@ impl ChartApp {
         if self.diagnostics_enabled
             && self.recalc_log_timer.elapsed() >= std::time::Duration::from_secs(5)
         {
-            let mode = match self.core.indicators().recalc_mode() {
+            // Bound first so the `indicators()` read guard drops before the match
+            // body runs (clippy::significant_drop_in_scrutinee).
+            let recalc_mode = self.core.indicators().recalc_mode();
+            let mode = match recalc_mode {
                 RecalcMode::PerTick => "PerTick",
                 RecalcMode::PerFrame => "PerFrame",
                 RecalcMode::PerBar => "PerBar",

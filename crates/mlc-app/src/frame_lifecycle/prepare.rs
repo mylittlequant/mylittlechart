@@ -133,7 +133,10 @@ impl ChartApp {
         }
 
         // Sync recalc_mode_label into user_settings_state so the modal can display it.
-        self.panel_app.user_settings_state.recalc_mode_label = match self.core.indicators().recalc_mode() {
+        // Bound to a `let` first so the `indicators()` read guard drops before the
+        // match body runs, not at the end of it (clippy::significant_drop_in_scrutinee).
+        let recalc_mode = self.core.indicators().recalc_mode();
+        self.panel_app.user_settings_state.recalc_mode_label = match recalc_mode {
             RecalcMode::PerTick  => "Per Tick".to_string(),
             RecalcMode::PerFrame => "Per Frame".to_string(),
             RecalcMode::PerBar   => "Per Bar".to_string(),
@@ -697,7 +700,10 @@ impl ChartApp {
                     }
 
                     for &iid in &pre_tag_ids {
-                        if let Some(summary) = self.core.indicators().summary(iid)
+                        // Bound first so the `indicators()` read guard drops before the
+                        // body runs (clippy::significant_drop_in_scrutinee).
+                        let summary = self.core.indicators().summary(iid);
+                        if let Some(summary) = summary
                         {
                             let item = mlc_app_sidebar_content::types::ObjectTreeItem::new(
                                 summary.id,

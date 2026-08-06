@@ -164,14 +164,6 @@ pub enum Command {
         new_points: Vec<(i64, f64)>,
     },
 
-    /// Reorder primitive (bring to front / send to back)
-    ReorderPrimitive {
-        /// Primitive being reordered.
-        prim_id: u64,
-        /// Primitive it should now sit immediately before (`None` = back of z-order).
-        before_prim_id: Option<u64>,
-    },
-
     /// Modify primitive data (color, width, style, text, etc.)
     ModifyPrimitiveData {
         prim_id: u64,
@@ -358,17 +350,6 @@ impl Command {
                 }
             }
 
-            Command::ReorderPrimitive { prim_id, before_prim_id } => {
-                // Reorder has no clean self-inverse under relative (before_prim_id)
-                // addressing — the caller (mlc-app) captures the pre-move
-                // neighbor itself and pushes a fresh command for undo rather
-                // than relying on `inverse()` for this variant.
-                Command::ReorderPrimitive {
-                    prim_id: *prim_id,
-                    before_prim_id: *before_prim_id,
-                }
-            }
-
             Command::ModifyPrimitiveData { prim_id, previous_data, new_data } => {
                 Command::ModifyPrimitiveData {
                     prim_id: *prim_id,
@@ -475,7 +456,6 @@ impl Command {
             | Command::DeletePrimitive { prim_id, .. }
             | Command::CreatePrimitive { prim_id, .. }
             | Command::MovePrimitive { prim_id, .. }
-            | Command::ReorderPrimitive { prim_id, .. }
             | Command::ModifyPrimitiveData { prim_id, .. }
             | Command::ModifyPrimitiveFull { prim_id, .. } => Some(*prim_id),
             _ => None,
@@ -493,7 +473,6 @@ impl Command {
             Command::SetPrimitiveVisibility { prim_id, .. }
             | Command::SetPrimitiveLock { prim_id, .. }
             | Command::MovePrimitive { prim_id, .. }
-            | Command::ReorderPrimitive { prim_id, .. }
             | Command::ModifyPrimitiveFull { prim_id, .. } => *prim_id = new_id,
             Command::DeletePrimitive { prim_id, data, .. }
             | Command::CreatePrimitive { prim_id, data, .. }
@@ -537,7 +516,6 @@ impl Command {
             Command::RestoreAllPrimitives { .. } => "Restore All Primitives",
             Command::CreatePrimitive { .. } => "Create Primitive",
             Command::MovePrimitive { .. } => "Move Primitive",
-            Command::ReorderPrimitive { .. } => "Reorder Primitive",
             Command::ModifyPrimitiveData { .. } => "Modify Primitive",
             Command::ModifyPrimitiveFull { .. } => "Modify Primitive Settings",
 

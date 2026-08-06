@@ -359,7 +359,10 @@ pub fn indicator_atomic_window_id() -> HarnessResult<()> {
         return Err(err("indicator-scope", "fresh bubble_a already has instances"));
     }
 
-    let id = match h.core.indicators_mut().add(Some(bubble_a), "sma") {
+    // Bound first so the `indicators_mut()` write guard drops before the match
+    // body runs (clippy::significant_drop_in_scrutinee).
+    let added_id = h.core.indicators_mut().add(Some(bubble_a), "sma");
+    let id = match added_id {
         Some(id) => id,
         None => return Err(err("indicator-scope", "add(bubble_a, \"sma\") returned None")),
     };

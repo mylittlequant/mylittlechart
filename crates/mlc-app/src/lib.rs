@@ -7987,11 +7987,12 @@ impl ChartApp {
             for (leaf_id, rect) in leaf_rects {
                 if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                     if desc.mode == gate4agent::InstanceMode::Pty {
-                        let cols = ((rect.width / 7.0) as u16).max(1);
-                        let rows = ((rect.height / 19.0) as u16).max(1);
+                        // Only read on native — no PTY runtime to resize on wasm.
+                        let _cols = ((rect.width / 7.0) as u16).max(1);
+                        let _rows = ((rect.height / 19.0) as u16).max(1);
                         #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
-                            rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                            rt.block_on(self.agent.resize_instance(desc.instance_id, _cols, _rows));
                         }
                     }
                 }
@@ -8493,11 +8494,12 @@ impl ChartApp {
             for (leaf_id, rect) in leaf_rects {
                 if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                     if desc.mode == gate4agent::InstanceMode::Pty {
-                        let cols = ((rect.width / 7.0) as u16).max(1);
-                        let rows = ((rect.height / 19.0) as u16).max(1);
+                        // Only read on native — no PTY runtime to resize on wasm.
+                        let _cols = ((rect.width / 7.0) as u16).max(1);
+                        let _rows = ((rect.height / 19.0) as u16).max(1);
                         #[cfg(not(target_arch = "wasm32"))]
                         if let Some(rt) = self.core.native_rt() {
-                            rt.block_on(self.agent.resize_instance(desc.instance_id, cols, rows));
+                            rt.block_on(self.agent.resize_instance(desc.instance_id, _cols, _rows));
                         }
                     }
                 }
@@ -12292,7 +12294,10 @@ impl ChartApp {
     /// app-level snapshot store, keyed by the indicator's `type_id`.
     pub fn snapshot_indicator_settings_to_user_manager(&mut self) {
         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
-            if let Some(inst) = self.core.indicators().full_clone(ind_id) {
+            // Bound first so the `indicators()` read guard drops before the body
+            // runs (clippy::significant_drop_in_scrutinee).
+            let cloned_inst = self.core.indicators().full_clone(ind_id);
+            if let Some(inst) = cloned_inst {
                 let type_id = inst.type_id.to_string();
                 if let Ok(val) = serde_json::to_value(&inst) {
                     self.snapshot_actions.push(SnapshotAction::IndicatorSettings { type_id, data: val });

@@ -762,11 +762,6 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
 }
 
-// Note: Configurable is now implemented via blanket impl in config.rs
-// This provides base configuration (color, width, style, coordinates) automatically.
-// Custom properties (show_prices, extend_left, etc.) could be added via a
-// separate trait or by extending the base properties in the future.
-
 // =============================================================================
 // Factory Registration
 // =============================================================================

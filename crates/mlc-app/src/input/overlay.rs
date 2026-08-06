@@ -918,7 +918,10 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(crate) fn delete_indicator_instance(&mut self, id: u64) {
-        let type_id = match self.core.indicators().type_id_of(id) {
+        // Bound first so the `indicators()` read guard drops before the match
+        // body runs (clippy::significant_drop_in_scrutinee).
+        let indicator_type_id = self.core.indicators().type_id_of(id);
+        let type_id = match indicator_type_id {
             Some(type_id) => type_id,
             None => return,
         };

@@ -7,7 +7,9 @@
 //!
 //! # Architecture
 //!
-//! Each primitive can expose its configurable properties through the `Configurable` trait.
+//! Each primitive exposes its configurable properties through the `Primitive` trait's
+//! `style_properties()` / `level_properties()` / `text_properties()` methods, applied
+//! back via `DrawingManager::apply_property` (dispatched by `PropertyKind`).
 //! Properties are described as `ConfigProperty` which includes:
 //! - Property ID and display name
 //! - Property type (color, number, boolean, select, levels, etc.)
@@ -15,7 +17,7 @@
 //! - Constraints (min/max, options, etc.)
 
 use serde::{Deserialize, Serialize};
-use crate::i18n::{Language, WaveDegreeKey, MenuKey, StyleKey, ConfigKey, LabelPositionKey, current_language};
+use crate::i18n::{Language, WaveDegreeKey, StyleKey, ConfigKey, LabelPositionKey, current_language};
 
 // =============================================================================
 // Elliott Wave Degree and Notation
@@ -1386,222 +1388,6 @@ impl ConfigProperty {
                 SelectOption::new("end", ConfigKey::AlignBottom.get(lang)),
             ],
         )
-    }
-}
-
-// =============================================================================
-// Context Menu Actions
-// =============================================================================
-
-/// Actions available in primitive context menu
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ContextMenuAction {
-    /// Open settings modal
-    OpenSettings,
-    /// Delete primitive
-    Delete,
-    /// Clone primitive
-    Clone,
-    /// Copy to clipboard
-    Copy,
-    /// Lock/unlock editing
-    ToggleLock,
-    /// Hide/show primitive
-    ToggleVisibility,
-    /// Bring to front
-    BringToFront,
-    /// Send to back
-    SendToBack,
-    /// Bring forward one layer
-    BringForward,
-    /// Send backward one layer
-    SendBackward,
-    /// Apply to all charts (sync)
-    SyncToAllCharts,
-    /// Apply everywhere
-    SyncEverywhere,
-    /// Don't sync
-    NoSync,
-}
-
-impl ContextMenuAction {
-    /// Get label using current language
-    pub fn label(&self) -> &'static str {
-        self.label_for(current_language())
-    }
-
-    /// Get label for specified language
-    pub fn label_for(&self, lang: Language) -> &'static str {
-        self.i18n_key().get(lang)
-    }
-
-    /// Get i18n key for this action
-    pub fn i18n_key(&self) -> MenuKey {
-        match self {
-            Self::OpenSettings => MenuKey::OpenSettings,
-            Self::Delete => MenuKey::Delete,
-            Self::Clone => MenuKey::Clone,
-            Self::Copy => MenuKey::Copy,
-            Self::ToggleLock => MenuKey::LockUnlock,
-            Self::ToggleVisibility => MenuKey::ShowHide,
-            Self::BringToFront => MenuKey::BringToFront,
-            Self::SendToBack => MenuKey::SendToBack,
-            Self::BringForward => MenuKey::BringForward,
-            Self::SendBackward => MenuKey::SendBackward,
-            Self::SyncToAllCharts => MenuKey::SyncToAllCharts,
-            Self::SyncEverywhere => MenuKey::SyncEverywhere,
-            Self::NoSync => MenuKey::NoSync,
-        }
-    }
-}
-
-// =============================================================================
-// Configurable Trait
-// =============================================================================
-
-/// Trait for primitives that expose configuration properties
-pub trait Configurable {
-    /// Get all configurable properties
-    fn get_properties(&self) -> Vec<ConfigProperty>;
-
-    /// Set a property value by ID
-    /// Returns true if property was found and updated
-    fn set_property(&mut self, id: &str, value: PropertyValue) -> bool;
-
-    /// Get available context menu actions
-    fn context_menu_actions(&self) -> Vec<ContextMenuAction> {
-        vec![
-            ContextMenuAction::OpenSettings,
-            ContextMenuAction::Delete,
-            ContextMenuAction::Clone,
-            ContextMenuAction::Copy,
-            ContextMenuAction::ToggleLock,
-            ContextMenuAction::ToggleVisibility,
-            ContextMenuAction::BringToFront,
-            ContextMenuAction::SendToBack,
-        ]
-    }
-
-    /// Get timeframe visibility config (if supported)
-    fn timeframe_visibility(&self) -> Option<&TimeframeVisibilityConfig> {
-        None
-    }
-
-    /// Set timeframe visibility config
-    fn set_timeframe_visibility(&mut self, _config: TimeframeVisibilityConfig) {
-        // Default: do nothing (primitive doesn't support timeframe visibility)
-    }
-}
-
-// =============================================================================
-// Full Config Structure (for serialization to UI)
-// =============================================================================
-
-/// Full primitive configuration for UI
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PrimitiveFullConfig {
-    /// Primitive ID
-    pub id: u64,
-    /// Type ID (e.g., "trend_line", "fib_retracement")
-    pub type_id: String,
-    /// Display name
-    pub display_name: String,
-    /// Is locked
-    pub locked: bool,
-    /// Is visible
-    pub visible: bool,
-    /// All properties grouped by category
-    pub properties: Vec<ConfigProperty>,
-    /// Available context menu actions
-    pub actions: Vec<ContextMenuAction>,
-}
-
-impl PrimitiveFullConfig {
-    /// Get properties by category
-    pub fn properties_by_category(&self, category: PropertyCategory) -> Vec<&ConfigProperty> {
-        self.properties
-            .iter()
-            .filter(|p| p.category == category)
-            .collect()
-    }
-
-    /// Convert to JSON string
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
-    }
-}
-
-// =============================================================================
-// Blanket Implementation for all Primitives
-// =============================================================================
-
-use super::Primitive;
-
-/// Blanket implementation of Configurable for all Primitive types
-/// This provides base configuration support (color, width, style, coordinates)
-/// Individual primitives can override by implementing Configurable directly
-impl<T: Primitive> Configurable for T {
-    fn get_properties(&self) -> Vec<ConfigProperty> {
-        let data = self.data();
-        let mut props = data.base_properties();
-
-        // Add primitive-specific style properties (show_labels, degree, etc.)
-        props.extend(self.style_properties());
-
-        // Add text properties if primitive has text
-        props.extend(data.text_properties());
-
-        // Add coordinate properties from points() — ts_ms stored as f64 in property
-        let points = self.points();
-        for (i, (ts_ms, price)) in points.iter().enumerate() {
-            props.push(
-                ConfigProperty::coordinate(
-                    &format!("point{}", i + 1),
-                    &format!("Point {}", i + 1),
-                    *ts_ms as f64,
-                    *price,
-                ).with_order(100 + i as i32)
-            );
-        }
-
-        props
-    }
-
-    fn set_property(&mut self, id: &str, value: PropertyValue) -> bool {
-        // Handle base properties
-        if self.data_mut().apply_property(id, &value) {
-            return true;
-        }
-
-        // Handle primitive-specific style properties
-        if self.apply_style_property(id, &value) {
-            return true;
-        }
-
-        // Handle coordinate properties (point1, point2, etc.)
-        if id.starts_with("point") {
-            if let Some((bar_f, price)) = value.as_coordinate() {
-                if let Some(idx) = id.strip_prefix("point").and_then(|s| s.parse::<usize>().ok()) {
-                    let idx = idx.saturating_sub(1); // point1 -> index 0
-                    let mut points = self.points();
-                    if idx < points.len() {
-                        points[idx] = (bar_f as i64, price);
-                        self.set_points(&points);
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    fn timeframe_visibility(&self) -> Option<&TimeframeVisibilityConfig> {
-        self.data().timeframe_visibility.as_ref()
-    }
-
-    fn set_timeframe_visibility(&mut self, config: TimeframeVisibilityConfig) {
-        self.data_mut().timeframe_visibility = Some(config);
     }
 }
 

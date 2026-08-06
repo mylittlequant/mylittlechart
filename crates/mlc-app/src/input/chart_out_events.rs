@@ -349,7 +349,10 @@ impl ChartApp {
                             }
                         }
                         if let Some(chart_id) = active_chart_id {
-                            if let Some(bid) = self.core.tags().tag_for_chart(chart_id) {
+                            // Bound first so the `tags()` read guard drops before the
+                            // `bubbles_mut()` write below (clippy::significant_drop_in_scrutinee).
+                            let tag_bid = self.core.tags().tag_for_chart(chart_id);
+                            if let Some(bid) = tag_bid {
                                 self.core.bubbles_mut().set_timeframe(bid, tf.clone());
                             }
                         }
@@ -1637,7 +1640,10 @@ impl ChartApp {
                 if !self.panel_app.open_tabs.contains(&id) {
                     self.panel_app.open_tabs.push(id.clone());
                 }
-                if let Some(preset) = self.core.presets().get(&id).cloned() {
+                // Bound first so the `presets()` read guard drops before the body
+                // runs (clippy::significant_drop_in_scrutinee).
+                let saved_preset = self.core.presets().get(&id).cloned();
+                if let Some(preset) = saved_preset {
                     self.preset_actions.push(crate::PresetAction::Upsert(preset));
                 }
                 self.persist_profile();
@@ -1745,7 +1751,10 @@ impl ChartApp {
                     // outgoing-state persistence here synchronously.
                     self.pending_autosave = None;
                     self.collect_state_into_preset(&prev_id, &prev_name);
-                    if let Some(preset) = self.core.presets().get(&prev_id).cloned() {
+                    // Bound first so the `presets()` read guard drops before the body
+                    // runs (clippy::significant_drop_in_scrutinee).
+                    let outgoing_preset = self.core.presets().get(&prev_id).cloned();
+                    if let Some(preset) = outgoing_preset {
                         self.preset_actions.push(crate::PresetAction::Upsert(preset));
                     }
                     eprintln!(
@@ -2074,7 +2083,10 @@ impl ChartApp {
                     let name_opt = self.core.presets().get(&id).map(|p| p.name.clone());
                     if let Some(name) = name_opt {
                         self.collect_state_into_preset(&id, &name);
-                        if let Some(preset) = self.core.presets().get(&id).cloned() {
+                        // Bound first so the `presets()` read guard drops before the
+                        // body runs (clippy::significant_drop_in_scrutinee).
+                        let saved_preset = self.core.presets().get(&id).cloned();
+                        if let Some(preset) = saved_preset {
                             self.preset_actions.push(crate::PresetAction::Upsert(preset));
                         }
                         eprintln!("[ChartApp] saved snapshot into preset '{}' (id={})", name, id);
@@ -2176,10 +2188,13 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(new_flag) = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Bound first so the `bubbles_mut()` write guard drops before the
+                    // body runs (clippy::significant_drop_in_scrutinee).
+                    let toggled_symbol = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         group.sync_flags.sync_symbol = !group.sync_flags.sync_symbol;
                         group.sync_flags.sync_symbol
-                    }) {
+                    });
+                    if let Some(new_flag) = toggled_symbol {
                         newly_enabled = new_flag;
                         eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, new_flag);
                     }
@@ -2215,10 +2230,13 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(new_flag) = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Bound first so the `bubbles_mut()` write guard drops before the
+                    // body runs (clippy::significant_drop_in_scrutinee).
+                    let toggled_timeframe = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         group.sync_flags.sync_timeframe = !group.sync_flags.sync_timeframe;
                         group.sync_flags.sync_timeframe
-                    }) {
+                    });
+                    if let Some(new_flag) = toggled_timeframe {
                         newly_enabled = new_flag;
                         eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, new_flag);
                     }
@@ -2243,10 +2261,13 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let mut newly_enabled = false;
                 if let Some(gid) = gid {
-                    if let Some(new_flag) = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Bound first so the `bubbles_mut()` write guard drops before the
+                    // body runs (clippy::significant_drop_in_scrutinee).
+                    let toggled_crosshair = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         group.sync_flags.sync_crosshair = !group.sync_flags.sync_crosshair;
                         group.sync_flags.sync_crosshair
-                    }) {
+                    });
+                    if let Some(new_flag) = toggled_crosshair {
                         newly_enabled = new_flag;
                         eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, new_flag);
                     }
@@ -2278,11 +2299,14 @@ impl ChartApp {
                 let mut newly_enabled = false;
                 let mut newly_disabled = false;
                 if let Some(gid) = gid {
-                    if let Some(was_on) = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Bound first so the `bubbles_mut()` write guard drops before the
+                    // body runs (clippy::significant_drop_in_scrutinee).
+                    let toggled_viewport = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         let was_on = group.sync_flags.sync_viewport;
                         group.sync_flags.sync_viewport = !was_on;
                         was_on
-                    }) {
+                    });
+                    if let Some(was_on) = toggled_viewport {
                         newly_enabled = !was_on;
                         newly_disabled = was_on;
                         eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, !was_on);
@@ -2359,11 +2383,14 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let Some(gid) = gid {
-                    // Toggle the flag and capture the new value.
-                    let new_sync = match self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Toggle the flag and capture the new value. Bound to a `let`
+                    // first so the write guard drops before the match body runs
+                    // (clippy::significant_drop_in_scrutinee).
+                    let toggled_drawings = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         group.sync_flags.sync_drawings = !group.sync_flags.sync_drawings;
                         group.sync_flags.sync_drawings
-                    }) {
+                    });
+                    let new_sync = match toggled_drawings {
                         Some(new_sync) => {
                             eprintln!("[BubbleStore] sync_drawings toggled to {}", new_sync);
                             new_sync
@@ -2425,11 +2452,14 @@ impl ChartApp {
                 let gid = self.panel_app.panel_grid.active_container_id().and_then(|cid| self.bubble_for_chart(cid));
                 let chart_id = self.panel_app.panel_grid.active_container().map(|w| w.id);
                 if let (Some(gid), Some(chart_id)) = (gid, chart_id) {
-                    // Toggle the flag and capture the new value.
-                    let new_sync = match self.core.bubbles_mut().with_bubble_mut(gid, |group| {
+                    // Toggle the flag and capture the new value. Bound to a `let`
+                    // first so the write guard drops before the match body runs
+                    // (clippy::significant_drop_in_scrutinee).
+                    let toggled_indicators = self.core.bubbles_mut().with_bubble_mut(gid, |group| {
                         group.sync_flags.sync_indicators = !group.sync_flags.sync_indicators;
                         group.sync_flags.sync_indicators
-                    }) {
+                    });
+                    let new_sync = match toggled_indicators {
                         Some(new_sync) => {
                             eprintln!("[BubbleStore] sync_indicators toggled to {}", new_sync);
                             new_sync
@@ -3114,7 +3144,10 @@ impl ChartApp {
         symbol: &str,
         bid: Option<mlc_core::ids::BubbleId>,
     ) -> f64 {
-        if let Some(t) = self.core.exchange_symbols().tick_size_for(exchange_str, symbol).filter(|t| *t > 0.0) {
+        // Bound first so the `exchange_symbols()` read guard drops before the
+        // body runs (clippy::significant_drop_in_scrutinee).
+        let catalogue_tick = self.core.exchange_symbols().tick_size_for(exchange_str, symbol);
+        if let Some(t) = catalogue_tick.filter(|t| *t > 0.0) {
             crate::dlog!(
                 "[ChartApp] resolve_tick_size: {}/{} = {} (source=catalogue)",
                 exchange_str, symbol, t
@@ -3182,7 +3215,10 @@ impl ChartApp {
         bid: Option<mlc_core::ids::BubbleId>,
     ) -> Option<f64> {
         if let Some(bid) = bid {
-            if let Some(price) = self.core.bubbles().bars(bid).last().map(|b| b.close).filter(|p| *p > 0.0) {
+            // Bound first so the `bubbles()` read guard drops before the body
+            // runs (clippy::significant_drop_in_scrutinee).
+            let last_close = self.core.bubbles().bars(bid).last().map(|b| b.close);
+            if let Some(price) = last_close.filter(|p| *p > 0.0) {
                 return Some(price);
             }
         }

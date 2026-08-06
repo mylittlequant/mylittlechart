@@ -190,10 +190,11 @@ impl ChartApp {
         if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
             if let Some(desc) = self.sidebar_state.agent_leaves.get(&leaf_id).cloned() {
                 if desc.mode == gate4agent::InstanceMode::Pty {
-                    let id = desc.instance_id;
+                    // Only read on native — no PTY runtime to write to on wasm.
+                    let _id = desc.instance_id;
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(rt) = self.core.native_rt() {
-                        let _ = rt.block_on(self.agent.write_pty_instance(id, text));
+                        let _ = rt.block_on(self.agent.write_pty_instance(_id, text));
                     }
                 }
             }
@@ -7085,13 +7086,6 @@ impl ChartApp {
                     self.sync_drawing_back_to_group();
                 }
             }
-            Command::ReorderPrimitive { prim_id, before_prim_id } => {
-                if let Some(gid) = group_id {
-                    self.core.drawings_mut().reorder_before(gid, *prim_id, *before_prim_id);
-                } else if let Some(bid) = active_bid_cmd {
-                    self.core.drawings_mut().reorder_before(bid, *prim_id, *before_prim_id);
-                }
-            }
             Command::AddCompareSeries { series } => {
                 // The recorded command carries no bars (`without_bars` — they
                 // are re-fetchable and would put hundreds of KB per series in
@@ -7986,7 +7980,6 @@ impl ChartApp {
                 | Command::SetPrimitiveLock { .. }
                 | Command::ModifyPrimitiveData { .. }
                 | Command::ModifyPrimitiveFull { .. }
-                | Command::ReorderPrimitive { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
                 | Command::ModifyIndicator { .. }
@@ -8132,7 +8125,10 @@ impl ChartApp {
 
         let _t0 = web_time::Instant::now();
         self.collect_state_into_preset(&id, &name);
-        if let Some(preset) = self.core.presets().get(&id).cloned() {
+        // Bound first so the `presets()` read guard drops before the body runs
+        // (clippy::significant_drop_in_scrutinee).
+        let saved_preset = self.core.presets().get(&id).cloned();
+        if let Some(preset) = saved_preset {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
         eprintln!(
@@ -8288,7 +8284,10 @@ impl ChartApp {
         if !self.panel_app.open_tabs.contains(&new_id) {
             self.panel_app.open_tabs.push(new_id.clone());
         }
-        if let Some(preset) = self.core.presets().get(&new_id).cloned() {
+        // Bound first so the `presets()` read guard drops before the body runs
+        // (clippy::significant_drop_in_scrutinee).
+        let new_preset = self.core.presets().get(&new_id).cloned();
+        if let Some(preset) = new_preset {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
         self.persist_profile();
@@ -8412,7 +8411,10 @@ impl ChartApp {
         // group's persisted synced_panel_ids list survives restore).
         let tags_for_snapshot = self.core.tags();
         let synced_snapshot = tags_for_snapshot.synced_panels_snapshot();
-        for group_snap in self.core.bubbles().snapshot_all(&tags_for_snapshot, &synced_snapshot) {
+        // Bound first so the `bubbles()` read guard drops before the loop body
+        // runs (clippy::significant_drop_in_scrutinee).
+        let bubble_snapshots = self.core.bubbles().snapshot_all(&tags_for_snapshot, &synced_snapshot);
+        for group_snap in bubble_snapshots {
             preset.bubbles.push(group_snap);
         }
 

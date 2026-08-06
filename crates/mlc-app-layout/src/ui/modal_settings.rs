@@ -310,14 +310,16 @@ impl PrimitiveSettingsTab {
         }
     }
 
-    /// Get tab display label
+    /// Get tab display label (localized via current language)
     pub fn label(&self) -> &'static str {
+        use mlc_core::i18n::{ConfigKey, SettingsKey, current_language};
+        let lang = current_language();
         match self {
-            Self::Style => "Стиль",
-            Self::Text => "Текст",
-            Self::Coordinates => "Координаты",
-            Self::Levels => "Уровни",
-            Self::Visibility => "Видимость",
+            Self::Style => ConfigKey::Style.get(lang),
+            Self::Text => SettingsKey::Text.get(lang),
+            Self::Coordinates => ConfigKey::Coordinates.get(lang),
+            Self::Levels => ConfigKey::Levels.get(lang),
+            Self::Visibility => ConfigKey::Visibility.get(lang),
         }
     }
 
@@ -1132,14 +1134,16 @@ impl IndicatorSettingsTab {
         }
     }
 
-    /// Get tab display label
+    /// Get tab display label (localized via current language)
     pub fn label(&self) -> &'static str {
+        use mlc_core::i18n::{ConfigKey, IndicatorKey, SettingsKey, ToolbarTooltipKey, current_language};
+        let lang = current_language();
         match self {
-            Self::Inputs => "Параметры",
-            Self::Style => "Стиль",
-            Self::Visibility => "Видимость",
-            Self::Signals => "Сигналы",
-            Self::Info => "Инфо",
+            Self::Inputs => IndicatorKey::TabInputs.get(lang),
+            Self::Style => ConfigKey::Style.get(lang),
+            Self::Visibility => ConfigKey::Visibility.get(lang),
+            Self::Signals => ToolbarTooltipKey::Signals.get(lang),
+            Self::Info => SettingsKey::CompareTabInfo.get(lang),
         }
     }
 
@@ -1688,12 +1692,14 @@ impl CompareSettingsTab {
         }
     }
 
-    /// Get tab display label
+    /// Get tab display label (localized via current language)
     pub fn label(&self) -> &'static str {
+        use mlc_core::i18n::{SettingsKey, current_language};
+        let lang = current_language();
         match self {
-            Self::Style => "Стиль",
-            Self::Visibility => "Видимость",
-            Self::Info => "Инфо",
+            Self::Style => SettingsKey::CompareTabStyle.get(lang),
+            Self::Visibility => SettingsKey::CompareTabVisibility.get(lang),
+            Self::Info => SettingsKey::CompareTabInfo.get(lang),
         }
     }
 

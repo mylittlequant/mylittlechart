@@ -1335,9 +1335,12 @@ impl ChartApp {
                     if chart_type_by_chart.get(cid_).copied() == Some("footprint")
                         && self.core.bubbles().bars_source(*bid) == mlc_backend::bubble::BarsSource::FootprintOhlc
                     {
-                        if let Some((fp_len, bars_len)) = self.core.bubbles().with_bubble(*bid, |b| {
+                        // Bound first so the `bubbles()` read guard drops before the
+                        // body runs (clippy::significant_drop_in_scrutinee).
+                        let fp_bars_len = self.core.bubbles().with_bubble(*bid, |b| {
                             b.footprint_bars.as_ref().map(|fp| (fp.len(), b.bars.len()))
-                        }).flatten() {
+                        }).flatten();
+                        if let Some((fp_len, bars_len)) = fp_bars_len {
                             if fp_len != bars_len {
                                 log::warn!(
                                     "[VPLOCKSTEP] footprint desync bid={:?} footprint_bars.len()={fp_len} bubble.bars.len()={bars_len}",

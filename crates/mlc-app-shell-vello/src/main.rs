@@ -2210,7 +2210,10 @@ impl App<'_> {
         // 6. Save watchlists.json from the shared core (always plaintext — no vault key).
         {
             let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-            if let Err(e) = mlc_core::save_json(&watchlists_path, &self.core.watchlists().snapshot(), None) {
+            // Bound first so the `watchlists()` read guard drops before the body
+            // runs (clippy::significant_drop_in_scrutinee).
+            let watchlists_snapshot = self.core.watchlists().snapshot();
+            if let Err(e) = mlc_core::save_json(&watchlists_path, &watchlists_snapshot, None) {
                 eprintln!("[App] Failed to save watchlists: {}", e);
             }
         }
@@ -2218,13 +2221,19 @@ impl App<'_> {
         // 7. Save settings snapshots from the shared core (always plaintext — no vault key).
         {
             let path = mlc_core::active_profile_data_dir().join("settings_snapshots.json");
-            if let Err(e) = mlc_core::save_json(&path, self.core.user().snapshots(), None) {
+            // Bound first so the `user()` read guard drops before the save call
+            // runs (clippy::significant_drop_in_scrutinee).
+            let save_result = mlc_core::save_json(&path, self.core.user().snapshots(), None);
+            if let Err(e) = save_result {
                 eprintln!("[App] Failed to save settings snapshots: {}", e);
             }
         }
 
         // 8. Save templates from the shared core (single canonical source of truth).
-        if let Err(e) = self.core.templates().save_to_default_dir(vault_key) {
+        // Bound first so the `templates()` guard drops before the body runs
+        // (clippy::significant_drop_in_scrutinee).
+        let templates_save_result = self.core.templates().save_to_default_dir(vault_key);
+        if let Err(e) = templates_save_result {
             eprintln!("[App] Failed to save templates: {:?}", e);
         }
 
@@ -2796,7 +2805,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if any_watchlists_dirty {
                 let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
                 // Watchlists are always plaintext — pass None regardless of vault key.
-                if let Err(e) = mlc_core::save_json(&watchlists_path, &self.core.watchlists().snapshot(), None) {
+                // Bound first so the `watchlists()` read guard drops before the body
+                // runs (clippy::significant_drop_in_scrutinee).
+                let watchlists_snapshot = self.core.watchlists().snapshot();
+                if let Err(e) = mlc_core::save_json(&watchlists_path, &watchlists_snapshot, None) {
                     eprintln!("[App] Failed to save watchlists: {}", e);
                 }
                 // Clear dirty flags.
@@ -2814,7 +2826,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // key needed, cheap enough to write every dirty frame.
             if self.snapshots_disk_dirty {
                 let path = mlc_core::active_profile_data_dir().join("settings_snapshots.json");
-                if let Err(e) = mlc_core::save_json(&path, self.core.user().snapshots(), None) {
+                // Bound first so the `user()` read guard drops before the save call
+                // runs (clippy::significant_drop_in_scrutinee).
+                let save_result = mlc_core::save_json(&path, self.core.user().snapshots(), None);
+                if let Err(e) = save_result {
                     eprintln!("[App] Failed to save settings snapshots: {}", e);
                 } else {
                     self.snapshots_disk_dirty = false;
@@ -2836,7 +2851,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .unwrap_or(true);
                 if debounce_elapsed {
                     let vault_key = self.core.user().vault_key();
-                    if let Err(e) = self.core.templates().save_to_default_dir(vault_key.as_ref()) {
+                    // Bound first so the `templates()` guard drops before the body
+                    // runs (clippy::significant_drop_in_scrutinee).
+                    let templates_save_result = self.core.templates().save_to_default_dir(vault_key.as_ref());
+                    if let Err(e) = templates_save_result {
                         eprintln!("[App] Failed to save templates: {:?}", e);
                     } else {
                         self.templates_disk_dirty = false;

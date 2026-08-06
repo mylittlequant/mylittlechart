@@ -19,3 +19,6 @@ socket2 = "0.5"
 # Workspace path dependencies
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
+
+[lints]
+workspace = true
