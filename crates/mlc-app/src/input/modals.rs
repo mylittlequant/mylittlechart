@@ -153,7 +153,16 @@ impl ChartApp {
             // ── Width cycle ──────────────────────────────────────────────────
             "inline:width" => {
                 if let Some(bid) = active_bid_inline {
-                    if let Some(mut data) = self.core.drawings().get_data(bid, prim_id) {
+                    // Bind the read FIRST: `self.core.drawings()` owns a
+                    // RwLockReadGuard, and an `if let` keeps its scrutinee's
+                    // temporaries alive for the whole body — so calling
+                    // `drawings_mut()` inside would re-acquire the same lock
+                    // while still read-locked. On wasm that is `rtabort!`, a
+                    // hard trap that leaves the lock permanently corrupted and
+                    // kills every later frame. Same trap as the five sites
+                    // fixed in `settings.rs` (8ac92db1).
+                    let existing = self.core.drawings().get_data(bid, prim_id);
+                    if let Some(mut data) = existing {
                         data.width = (data.width + 1.0).clamp(1.0, 20.0);
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
