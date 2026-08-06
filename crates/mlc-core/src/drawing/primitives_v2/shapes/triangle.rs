@@ -10,6 +10,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,7 +27,7 @@ pub struct Triangle {
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.2 }
+fn default_fill_opacity() -> f64 { 0.12 }
 
 impl Triangle {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, ts3: i64, price3: f64, color: &str) -> Self {
@@ -34,12 +35,12 @@ impl Triangle {
             data: PrimitiveData {
                 type_id: "triangle".to_string(),
                 display_name: "Triangle".to_string(),
-                color: PrimitiveColor::new(color),
+                color: PrimitiveColor::with_fill(color, color),
                 width: 2.0,
                 ..Default::default()
             },
             ts1, price1, ts2, price2, ts3, price3,
-            fill: true, fill_opacity: 0.2,
+            fill: true, fill_opacity: 0.12,
         }
     }
 }
@@ -122,7 +123,8 @@ impl Primitive for Triangle {
         let x3 = ctx.ts_to_x_ms(self.ts3); let y3 = ctx.price_to_y(self.price3);
 
         if self.fill {
-            let fill_color = format!("{}{:02x}", &self.data.color.stroke[..7], (self.fill_opacity * 255.0) as u8);
+            let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
             ctx.move_to(x1, y1); ctx.line_to(x2, y2); ctx.line_to(x3, y3);
@@ -171,6 +173,22 @@ impl Primitive for Triangle {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

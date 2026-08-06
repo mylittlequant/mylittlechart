@@ -1022,6 +1022,14 @@ impl ConfigProperty {
         Self::boolean("fill", ConfigKey::Fill.get(current_language()), value)
     }
 
+    /// Create "Fill Opacity" number property with i18n. `value_pct` is a
+    /// percentage (0-100) — primitives store opacity as 0.0-1.0 internally,
+    /// but the slider renders `{:.0}` with no decimals, so a 0.0-1.0 range
+    /// would only ever show "0" or "1".
+    pub fn fill_opacity(value_pct: f64) -> Self {
+        Self::number("fill_opacity", ConfigKey::FillOpacity.get(current_language()), value_pct, Some(0.0), Some(100.0))
+    }
+
     /// Create "Level Mode" select property with i18n for pitchforks
     pub fn level_mode(value: &str) -> Self {
         let lang = current_language();

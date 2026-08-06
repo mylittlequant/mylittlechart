@@ -55,7 +55,7 @@ impl Primitive for ElliottTripleCombo {
     fn type_id(&self) -> &'static str { "elliott_triple_combo" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
-    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(9) }
+    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(9) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.clone() }
@@ -216,7 +216,7 @@ fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f
 pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "elliott_triple_combo", display_name: "Elliott Triple Combo", kind: PrimitiveKind::Pattern,
-        click_behavior: ClickBehavior::MultiPoint(9), tooltip: "WXYXZ triple combination", icon: "elliott_triple_combo", default_color: "#673AB7",
+        click_behavior: ClickBehavior::MultiPointFixed(9), tooltip: "WXYXZ triple combination", icon: "elliott_triple_combo", default_color: "#673AB7",
         factory: |points, color| Box::new(ElliottTripleCombo::new(points.to_vec(), color)),
         supports_text: true,
         has_levels: false,

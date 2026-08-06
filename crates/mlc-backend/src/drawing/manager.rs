@@ -745,18 +745,27 @@ impl DrawingManager {
                 }
             }
             ClickBehavior::ThreePoint => {
-                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), 3)
+                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), 3, true)
             }
             ClickBehavior::FourPoint => {
-                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), 4)
+                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), 4, true)
+            }
+            ClickBehavior::MultiPointFixed(n) => {
+                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), n as usize, true)
             }
             ClickBehavior::MultiPoint(min_points) => {
-                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), min_points as usize)
+                Self::on_click_n_point(b, session, &registry, &tool_id, ts_ms, price, last_style.as_ref(), min_points as usize, false)
             }
             ClickBehavior::FreehandDrag => false,
         }
     }
 
+    /// Shared click accumulator for every fixed-count-or-more click
+    /// behaviour: `ThreePoint`/`FourPoint` (arity baked into the call
+    /// site), `MultiPointFixed(n)` (arity IS `min_points`, `finalize_at_min
+    /// = true`), and `MultiPoint(n)` (`n` is a floor, `finalize_at_min =
+    /// false` — the tool keeps collecting past it and finalizes only
+    /// through `finish_multipoint`, the double-click handler).
     #[allow(clippy::too_many_arguments)]
     fn on_click_n_point(
         b: &mut crate::bubble::DataBubble,
@@ -767,6 +776,7 @@ impl DrawingManager {
         price: f64,
         last_style: Option<&TemplateStyle>,
         min_points: usize,
+        finalize_at_min: bool,
     ) -> bool {
         match &mut session.state {
             DrawingState::Idle => {
@@ -775,7 +785,7 @@ impl DrawingManager {
             }
             DrawingState::Creating { points, tool_id: creating_tool } if creating_tool == tool_id => {
                 points.push((ts_ms, price));
-                if points.len() >= min_points {
+                if finalize_at_min && points.len() >= min_points {
                     let points = points.clone();
                     if let Some(prim) = registry.create(tool_id, &points, Some(&session.default_color)) {
                         Self::finalize_new_primitive(b, session, prim, last_style);
@@ -972,7 +982,7 @@ impl DrawingManager {
             ClickBehavior::TwoPoint | ClickBehavior::ClickDrag => 2,
             ClickBehavior::ThreePoint => 3,
             ClickBehavior::FourPoint => 4,
-            ClickBehavior::MultiPoint(n) => n as usize,
+            ClickBehavior::MultiPoint(n) | ClickBehavior::MultiPointFixed(n) => n as usize,
             ClickBehavior::FreehandDrag => return None,
         };
         while preview_points.len() < min_points {

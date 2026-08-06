@@ -24,15 +24,19 @@ pub struct TrianglePattern {
     #[serde(default = "default_true")] pub show_labels: bool,
     #[serde(default)] pub label_style: LabelStyle,
     #[serde(default = "default_true")] pub show_lines: bool,
+    #[serde(default = "default_true")] pub fill: bool,
+    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
 }
 fn default_true() -> bool { true }
+fn default_fill_opacity() -> f64 { 0.12 }
 
 impl TrianglePattern {
     pub fn new(ts1: i64, price1_top: f64, price1_bottom: f64, ts2: i64, price2_top: f64, price2_bottom: f64, color: &str) -> Self {
         Self {
-            data: PrimitiveData { type_id: "triangle_pattern".to_string(), display_name: "Triangle Pattern".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
+            data: PrimitiveData { type_id: "triangle_pattern".to_string(), display_name: "Triangle Pattern".to_string(), color: PrimitiveColor::with_fill(color, color), width: 2.0, ..Default::default() },
             ts1, price1_top, price1_bottom, ts2, price2_top, price2_bottom, triangle_type: TriangleType::Symmetrical, show_labels: true,
             label_style: LabelStyle::default(), show_lines: true,
+            fill: true, fill_opacity: 0.12,
         }
     }
 }
@@ -41,7 +45,7 @@ impl Primitive for TrianglePattern {
     fn type_id(&self) -> &'static str { "triangle_pattern" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
-    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(4) }
+    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(4) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts1, self.price1_top), (self.ts1, self.price1_bottom), (self.ts2, self.price2_top), (self.ts2, self.price2_bottom)] }
@@ -76,6 +80,23 @@ impl Primitive for TrianglePattern {
         // Check top and bottom lines
         if point_to_line_dist(sx, sy, screen[0].0, screen[0].1, screen[2].0, screen[2].1) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_dist(sx, sy, screen[1].0, screen[1].1, screen[3].0, screen[3].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+
+        // Interior, ranked last and only when filled — an unfilled outline
+        // must not swallow the candles it overlaps.
+        if self.fill {
+            let (x1, y1_top) = screen[0];
+            let (_, y1_bot) = screen[1];
+            let (x2, y2_top) = screen[2];
+            let (_, y2_bot) = screen[3];
+            let min_x = x1.min(x2);
+            let max_x = x1.max(x2);
+            if sx >= min_x && sx <= max_x {
+                let t = if (x2 - x1).abs() > 0.001 { (sx - x1) / (x2 - x1) } else { 0.5 };
+                let top_y = y1_top + t * (y2_top - y1_top);
+                let bot_y = y1_bot + t * (y2_bot - y1_bot);
+                if sy >= top_y.min(bot_y) && sy <= top_y.max(bot_y) { return HitTestResult::Body; }
+            }
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -131,14 +152,18 @@ impl Primitive for TrianglePattern {
         }
 
         // Fill triangle area
-        ctx.set_fill_color(&format!("{}20", &self.data.color.stroke));
-        ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(y1_top, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(y2_top, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(y2_bot, dpr));
-        ctx.line_to(crisp(x1, dpr), crisp(y1_bot, dpr));
-        ctx.close_path();
-        ctx.fill();
+        if self.fill {
+            let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.begin_path();
+            ctx.move_to(crisp(x1, dpr), crisp(y1_top, dpr));
+            ctx.line_to(crisp(x2, dpr), crisp(y2_top, dpr));
+            ctx.line_to(crisp(x2, dpr), crisp(y2_bot, dpr));
+            ctx.line_to(crisp(x1, dpr), crisp(y1_bot, dpr));
+            ctx.close_path();
+            ctx.fill();
+        }
 
         // Draw label
         if self.show_labels {
@@ -234,6 +259,12 @@ impl Primitive for TrianglePattern {
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::Style)
                 .with_order(14),
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(21),
         ]
     }
 
@@ -262,6 +293,12 @@ impl Primitive for TrianglePattern {
             "label_color" => {
                 if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; }
             }
+            "fill" => {
+                if let Some(v) = value.as_bool() { self.fill = v; return true; }
+            }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; }
+            }
             _ => {}
         }
         false
@@ -280,7 +317,7 @@ fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f
 pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "triangle_pattern", display_name: "Triangle Pattern", kind: PrimitiveKind::Pattern,
-        click_behavior: ClickBehavior::MultiPoint(4), tooltip: "Triangle consolidation pattern", icon: "triangle_pattern", default_color: "#009688",
+        click_behavior: ClickBehavior::MultiPointFixed(4), tooltip: "Triangle consolidation pattern", icon: "triangle_pattern", default_color: "#009688",
         factory: |points, color| {
             let (ts1, p1t) = points.first().copied().unwrap_or((0, 100.0));
             let (_, p1b) = points.get(1).copied().unwrap_or((ts1, 90.0));

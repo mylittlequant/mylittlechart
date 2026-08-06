@@ -13,6 +13,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -40,7 +41,7 @@ pub struct RegressionTrend {
 
 fn default_true() -> bool { true }
 fn default_std_dev() -> f64 { 2.0 }
-fn default_fill_opacity() -> f64 { 0.2 }
+fn default_fill_opacity() -> f64 { 0.12 }
 
 impl RegressionTrend {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -48,7 +49,7 @@ impl RegressionTrend {
             data: PrimitiveData {
                 type_id: "regression_trend".to_string(),
                 display_name: "Regression Trend".to_string(),
-                color: PrimitiveColor::new(color),
+                color: PrimitiveColor::with_fill(color, color),
                 width: 2.0,
                 ..Default::default()
             },
@@ -57,7 +58,7 @@ impl RegressionTrend {
             use_upper_deviation: false,
             show_center: true,
             fill: true,
-            fill_opacity: 0.2,
+            fill_opacity: 0.12,
             extend_right: false,
         }
     }
@@ -162,7 +163,8 @@ impl Primitive for RegressionTrend {
         let lower_y2 = ctx.price_to_y(self.price2 - offset);
 
         if self.fill {
-            let fill_color = format!("{}{:02x}", &self.data.color.stroke[..7], (self.fill_opacity * 255.0) as u8);
+            let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
             ctx.move_to(x1, upper_y1); ctx.line_to(x2, upper_y2);
@@ -214,6 +216,22 @@ impl Primitive for RegressionTrend {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

@@ -46,9 +46,17 @@ pub enum ClickBehavior {
     ThreePoint,
     /// Four points needed (e.g., disjoint channel)
     FourPoint,
-    /// Multiple points until double-click or Enter (e.g., polyline)
-    /// The u8 is the minimum number of points needed
+    /// Open-ended: keeps accepting clicks past the u8 until the user
+    /// double-clicks (`finish_multipoint`) or cancels (e.g., polyline,
+    /// path). The u8 is a FLOOR — the minimum number of points needed
+    /// before a double-click is allowed to finish the shape — never a
+    /// terminator. There is no maximum.
     MultiPoint(u8),
+    /// Fixed-arity multi-point: finalizes the instant it reaches exactly
+    /// u8 points, same as `ThreePoint`/`FourPoint` but for counts >4 (e.g.,
+    /// harmonic patterns, Elliott waves). The u8 IS the exact point count,
+    /// never a floor — there is no double-click step.
+    MultiPointFixed(u8),
     /// Click and drag (e.g., rectangle while holding mouse)
     ClickDrag,
     /// Freehand drag - continuous point collection during drag (e.g., brush, highlighter)

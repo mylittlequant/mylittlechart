@@ -10,6 +10,7 @@ use super::super::{
     HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub struct Ellipse {
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.2 }
+fn default_fill_opacity() -> f64 { 0.12 }
 
 impl Ellipse {
     pub fn new(center_ts: i64, center_price: f64, radius_ms: i64, radius_price: f64, color: &str) -> Self {
@@ -33,14 +34,14 @@ impl Ellipse {
             data: PrimitiveData {
                 type_id: "ellipse".to_string(),
                 display_name: "Ellipse".to_string(),
-                color: PrimitiveColor::new(color),
+                color: PrimitiveColor::with_fill(color, color),
                 width: 2.0,
                 ..Default::default()
             },
             center_ts, center_price,
             radius_ms: radius_ms.max(1),
             radius_price: radius_price.abs().max(f64::EPSILON),
-            fill: true, fill_opacity: 0.2,
+            fill: true, fill_opacity: 0.12,
         }
     }
 }
@@ -146,7 +147,8 @@ impl Primitive for Ellipse {
         let ry = (cy - ry_top).abs();
 
         if self.fill {
-            let fill_color = format!("{}{:02x}", &self.data.color.stroke[..7], (self.fill_opacity * 255.0) as u8);
+            let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.ellipse(cx, cy, rx, ry, 0.0, 0.0, std::f64::consts::TAU);
             ctx.fill();
@@ -187,6 +189,22 @@ impl Primitive for Ellipse {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

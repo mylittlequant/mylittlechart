@@ -848,13 +848,14 @@ impl App<'_> {
                 };
 
                 let click_behavior = match meta.click_behavior {
-                    ClickBehavior::SingleClick    => "SingleClick",
-                    ClickBehavior::TwoPoint       => "TwoPoint",
-                    ClickBehavior::ThreePoint     => "ThreePoint",
-                    ClickBehavior::FourPoint      => "FourPoint",
-                    ClickBehavior::MultiPoint(_)  => "MultiPoint",
-                    ClickBehavior::ClickDrag      => "ClickDrag",
-                    ClickBehavior::FreehandDrag   => "FreehandDrag",
+                    ClickBehavior::SingleClick      => "SingleClick",
+                    ClickBehavior::TwoPoint         => "TwoPoint",
+                    ClickBehavior::ThreePoint       => "ThreePoint",
+                    ClickBehavior::FourPoint        => "FourPoint",
+                    ClickBehavior::MultiPoint(_)    => "MultiPoint",
+                    ClickBehavior::MultiPointFixed(_) => "MultiPointFixed",
+                    ClickBehavior::ClickDrag        => "ClickDrag",
+                    ClickBehavior::FreehandDrag     => "FreehandDrag",
                 };
 
                 CatalogPrimitive {

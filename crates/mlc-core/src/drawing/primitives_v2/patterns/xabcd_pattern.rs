@@ -51,7 +51,7 @@ impl Primitive for XabcdPattern {
     fn type_id(&self) -> &'static str { "xabcd_pattern" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
-    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(5) }
+    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(5) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -292,7 +292,7 @@ fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f
 pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "xabcd_pattern", display_name: "XABCD Pattern", kind: PrimitiveKind::Pattern,
-        click_behavior: ClickBehavior::MultiPoint(5), tooltip: "5-point harmonic pattern", icon: "xabcd_pattern", default_color: "#9C27B0",
+        click_behavior: ClickBehavior::MultiPointFixed(5), tooltip: "5-point harmonic pattern", icon: "xabcd_pattern", default_color: "#9C27B0",
         factory: |points, color| {
             let mut arr = [(0i64, 0.0); 5];
             for (i, &p) in points.iter().take(5).enumerate() { arr[i] = p; }

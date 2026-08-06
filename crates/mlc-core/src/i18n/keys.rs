@@ -188,10 +188,13 @@ pub enum ConfigKey {
     AlignRight      = 73,
     AlignTop        = 74,
     AlignBottom     = 75,
+
+    // Fill (closed shapes: rectangle, circle, ellipse, triangle, channels, …)
+    FillOpacity     = 76,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 76;
+    pub const COUNT: usize = 77;
 
     /// Get translation for this key
     #[inline]

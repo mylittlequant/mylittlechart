@@ -58,7 +58,7 @@ impl Primitive for ElliottTriangle {
     fn type_id(&self) -> &'static str { "elliott_triangle" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
-    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(6) }
+    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(6) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -241,7 +241,7 @@ fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f
 pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "elliott_triangle", display_name: "Elliott Triangle", kind: PrimitiveKind::Pattern,
-        click_behavior: ClickBehavior::MultiPoint(6), tooltip: "ABCDE triangle correction", icon: "elliott_triangle", default_color: "#4CAF50",
+        click_behavior: ClickBehavior::MultiPointFixed(6), tooltip: "ABCDE triangle correction", icon: "elliott_triangle", default_color: "#4CAF50",
         factory: |points, color| {
             let mut arr = [(0i64, 0.0f64); 6];
             for (i, &p) in points.iter().take(6).enumerate() { arr[i] = p; }

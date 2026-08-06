@@ -49,7 +49,7 @@ impl Primitive for AbcdPattern {
     fn type_id(&self) -> &'static str { "abcd_pattern" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
-    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPoint(4) }
+    fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(4) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -267,7 +267,7 @@ fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f
 pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "abcd_pattern", display_name: "ABCD Pattern", kind: PrimitiveKind::Pattern,
-        click_behavior: ClickBehavior::MultiPoint(4), tooltip: "4-point harmonic pattern", icon: "abcd_pattern", default_color: "#3F51B5",
+        click_behavior: ClickBehavior::MultiPointFixed(4), tooltip: "4-point harmonic pattern", icon: "abcd_pattern", default_color: "#3F51B5",
         factory: |points, color| {
             let mut arr = [(0i64, 0.0); 4];
             for (i, &p) in points.iter().take(4).enumerate() { arr[i] = p; }
