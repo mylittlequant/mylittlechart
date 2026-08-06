@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -12,6 +13,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
+    config::{ConfigProperty, PropertyValue},
 };
 
 /// Trend Angle - trend line with angle measurement
@@ -75,6 +77,13 @@ impl Primitive for TrendAngle {
         match point_type {
             ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }
@@ -211,6 +220,23 @@ impl Primitive for TrendAngle {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::boolean("show_arc", ConfigKey::ShowArc.get(current_language()), self.show_arc)
+                .with_order(20),
+            ConfigProperty::show_labels(self.show_label).with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_arc" => { if let Some(v) = value.as_bool() { self.show_arc = v; return true; } }
+            "show_labels" => { if let Some(v) = value.as_bool() { self.show_label = v; return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

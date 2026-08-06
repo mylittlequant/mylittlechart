@@ -262,6 +262,9 @@ pub fn build_primitive_context_menu(
         ContextMenuItemState::action_with_icon(lock_icon, "toggle_lock", lock_label),
         ContextMenuItemState::action_with_icon(visibility_icon, "toggle_visibility", visibility_label),
         ContextMenuItemState::separator(),
+        ContextMenuItemState::action_with_icon("arrow_up", "bring_to_front", MenuKey::BringToFront.get(lang)),
+        ContextMenuItemState::action_with_icon("arrow_down", "send_to_back", MenuKey::SendToBack.get(lang)),
+        ContextMenuItemState::separator(),
         ContextMenuItemState::danger_with_icon("delete", "delete", MenuKey::Delete.get(lang)),
     ]
 }

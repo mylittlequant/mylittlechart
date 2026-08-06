@@ -2158,6 +2158,22 @@ impl ChartApp {
                         }
                         self.sidebar_data_dirty = true;
                     }
+                    "bring_to_front" => {
+                        // Layer order, like pan/zoom, is not tracked on the
+                        // undo stack (no `Command::SetPrimitiveZOrder`
+                        // variant exists) — same non-undoable class as the
+                        // viewport navigation actions.
+                        if let Some(bid) = active_bid_ctx {
+                            self.core.drawings_mut().bring_to_front(bid, prim_id);
+                        }
+                        eprintln!("[ChartApp] Brought primitive #{} to front", prim_id);
+                    }
+                    "send_to_back" => {
+                        if let Some(bid) = active_bid_ctx {
+                            self.core.drawings_mut().send_to_back(bid, prim_id);
+                        }
+                        eprintln!("[ChartApp] Sent primitive #{} to back", prim_id);
+                    }
                     _ => {
                         eprintln!("[ChartApp] Unhandled primitive context action: {}", action);
                     }

@@ -93,6 +93,14 @@ impl Primitive for AnchoredText {
         // click target so it's always reachable.
         let w = (text_content.len() as f64 * font_size * 0.6).max(CONTROL_POINT_HIT_RADIUS * 2.0);
         let h = font_size * 1.2;
+        // The anchor itself is a dedicated control point (`control_points()`
+        // advertises one Point1 handle here) — check it before the bounding
+        // box so a precise click on the anchor registers as a handle grab,
+        // not just a body click. Harmless either way: `move_control_point`
+        // already treats Point1 and Move identically.
+        if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) {
+            return HitTestResult::ControlPoint(ControlPointType::Point1);
+        }
         if sx >= x && sx <= x + w && sy >= y - h && sy <= y { return HitTestResult::Body; }
         HitTestResult::Miss
     }

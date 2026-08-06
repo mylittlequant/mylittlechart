@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
     LineStyle, RenderContext, crisp,
     render_primitive_text_rotated, TextAlign, LineTextParams, normalize_text_rotation,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,6 +193,28 @@ impl Primitive for ArrowLine {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let lang = current_language();
+        vec![
+            ConfigProperty::boolean("arrow_start", ConfigKey::ArrowStart.get(lang), self.arrow_start)
+                .with_order(20),
+            ConfigProperty::boolean("arrow_end", ConfigKey::ArrowEnd.get(lang), self.arrow_end)
+                .with_order(21),
+            ConfigProperty::number("arrow_size", ConfigKey::ArrowSize.get(lang), self.arrow_size, Some(4.0), Some(40.0))
+                .with_order(22),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "arrow_start" => { if let Some(v) = value.as_bool() { self.arrow_start = v; return true; } }
+            "arrow_end" => { if let Some(v) = value.as_bool() { self.arrow_end = v; return true; } }
+            "arrow_size" => { if let Some(v) = value.as_number() { self.arrow_size = v.clamp(4.0, 40.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

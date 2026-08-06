@@ -7,6 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -146,6 +147,21 @@ impl Primitive for PriceProjection {
 
         ctx.set_line_dash(&[]);
 
+        // `show_percentage` used to be a struct field with no reader
+        // anywhere — the projected level had no way to say what percent
+        // move it represents.
+        if self.show_percentage && self.price1.abs() > 1e-10 {
+            let pct = (price_delta / self.price1) * 100.0;
+            let sign = if pct >= 0.0 { "+" } else { "" };
+            let label = format!("{}{:.2}%", sign, pct);
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(&self.data.color.stroke);
+            use crate::render::{TextAlign, TextBaseline};
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&label, x3 + 55.0, y4);
+        }
+
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
                 let min_x = x1.min(x2).min(x3);
@@ -171,6 +187,17 @@ impl Primitive for PriceProjection {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![ConfigProperty::show_as_percent(self.show_percentage).with_order(20)]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "show_as_percent" {
+            if let Some(v) = value.as_bool() { self.show_percentage = v; return true; }
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

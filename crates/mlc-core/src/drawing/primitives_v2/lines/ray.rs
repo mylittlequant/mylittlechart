@@ -69,6 +69,13 @@ impl Primitive for Ray {
         match point_type {
             ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }
@@ -83,6 +90,16 @@ impl Primitive for Ray {
 
         if check_point_hit(screen_x, screen_y, x1, y1) { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if check_point_hit(screen_x, screen_y, x2, y2) { return HitTestResult::ControlPoint(ControlPointType::Point2); }
+
+        // Midpoint Move handle — only advertised (see `control_points()`)
+        // once the segment is long enough to fit it without overlapping
+        // Point1/Point2; mirror that same guard here so the handle is
+        // exactly as grabbable as it is visible.
+        let cx = (x1 + x2) / 2.0; let cy = (y1 + y2) / 2.0;
+        let move_dist = ((cx - x1).powi(2) + (cy - y1).powi(2)).sqrt();
+        if move_dist > CONTROL_POINT_RADIUS * 4.0 && check_point_hit(screen_x, screen_y, cx, cy) {
+            return HitTestResult::ControlPoint(ControlPointType::Move);
+        }
 
         let dx = x2 - x1; let dy = y2 - y1;
         let len = (dx * dx + dy * dy).sqrt();

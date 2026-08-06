@@ -113,6 +113,13 @@ impl Primitive for DisjointChannel {
             ControlPointType::Point2 => { self.line1_ts2 = ts_ms; self.line1_price2 = price; }
             ControlPointType::Point3 => { self.line2_ts1 = ts_ms; self.line2_price1 = price; }
             ControlPointType::Point4 => { self.line2_ts2 = ts_ms; self.line2_price2 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.line1_ts1 + self.line1_ts2 + self.line2_ts1 + self.line2_ts2) / 4;
+                let mid_price = (self.line1_price1 + self.line1_price2 + self.line2_price1 + self.line2_price2) / 4.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }

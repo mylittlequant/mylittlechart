@@ -8,11 +8,13 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 /// Default up/down candle colors, matching the chart's own default theme
@@ -225,6 +227,25 @@ impl Primitive for BarsPattern {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let lang = current_language();
+        vec![
+            ConfigProperty::boolean("mirror", ConfigKey::Mirror.get(lang), self.mirror)
+                .with_order(20),
+            ConfigProperty::number("price_offset", ConfigKey::PriceOffset.get(lang), self.price_offset, None, None)
+                .with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "mirror" => { if let Some(v) = value.as_bool() { self.mirror = v; return true; } }
+            "price_offset" => { if let Some(v) = value.as_number() { self.price_offset = v; return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

@@ -13,6 +13,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
+    config::{ConfigProperty, PropertyValue},
 };
 
 /// Info Line - line with price/percentage/bars info display
@@ -112,6 +113,13 @@ impl Primitive for InfoLine {
         match point_type {
             ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }
@@ -202,26 +210,11 @@ impl Primitive for InfoLine {
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
-        // Draw info label
-        let info_text = {
-            let mut parts = Vec::new();
-            if self.show_price_diff {
-                let diff = self.price_diff();
-                let sign = if diff >= 0.0 { "+" } else { "" };
-                parts.push(format!("{}{:.2}", sign, diff));
-            }
-            if self.show_percent {
-                let pct = self.percent_change();
-                let sign = if pct >= 0.0 { "+" } else { "" };
-                parts.push(format!("({}{:.2}%)", sign, pct));
-            }
-            if self.show_bars {
-                // Use ts delta; bars not available here
-                let delta_ms = (self.ts2 - self.ts1).abs();
-                parts.push(format!("{} ms", delta_ms));
-            }
-            parts.join(" ")
-        };
+        // Draw info label — reuses `info_text_with_bars`, the same builder
+        // `bar_count_from_bars` was written for, instead of a second
+        // hand-rolled copy that fell back to a raw millisecond delta because
+        // it had no bars in scope (`ctx.bars()` does).
+        let info_text = self.info_text_with_bars(ctx.bars());
 
         if !info_text.is_empty() {
             let cx = (x1 + x2) / 2.0; let cy = (y1 + y2) / 2.0;
@@ -247,6 +240,24 @@ impl Primitive for InfoLine {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::show_price_diff(self.show_price_diff).with_order(20),
+            ConfigProperty::show_as_percent(self.show_percent).with_order(21),
+            ConfigProperty::show_bar_count(self.show_bars).with_order(22),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_pips" => { if let Some(v) = value.as_bool() { self.show_price_diff = v; return true; } }
+            "show_as_percent" => { if let Some(v) = value.as_bool() { self.show_percent = v; return true; } }
+            "show_bars" => { if let Some(v) = value.as_bool() { self.show_bars = v; return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

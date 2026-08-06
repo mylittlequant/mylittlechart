@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
     RenderContext, crisp, LineStyle, HIT_TOLERANCE,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,6 +153,25 @@ impl Primitive for SineWave {
     }
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let lang = current_language();
+        vec![
+            ConfigProperty::number("amplitude", ConfigKey::Amplitude.get(lang), self.amplitude, Some(0.0), None)
+                .with_order(20),
+            ConfigProperty::number("cycles", ConfigKey::WaveCycles.get(lang), self.cycles, Some(0.1), Some(20.0))
+                .with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "amplitude" => { if let Some(v) = value.as_number() { self.amplitude = v.max(0.0); return true; } }
+            "cycles" => { if let Some(v) = value.as_number() { self.cycles = v.clamp(0.1, 20.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

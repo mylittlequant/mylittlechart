@@ -4,13 +4,16 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::chart::types::time_scale::format_time_full;
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
-    PrimitiveColor, LineStyle, HIT_TOLERANCE,
+    PrimitiveColor, LineStyle, HIT_TOLERANCE, draw_label_plate,
     RenderContext, crisp,
     render_primitive_text_rotated,
+    config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
 /// Vertical Line at a timestamp
@@ -152,6 +155,18 @@ impl Primitive for VerticalLine {
         // Reset line dash
         ctx.set_line_dash(&[]);
 
+        // `show_time_label` used to be a struct field with no reader
+        // anywhere — toggling it changed nothing. `ts_ms` is milliseconds,
+        // `format_time_full` takes SECONDS, matching `Bar::timestamp`'s unit.
+        if self.show_time_label {
+            let label_style = LabelStyle::default();
+            ctx.set_font(&label_style.font_string());
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            let label = format_time_full(self.ts_ms / 1000);
+            draw_label_plate(ctx, x, 16.0, &label, label_style.font_size, &label_style, &self.data.color.stroke);
+        }
+
         // Render text if present
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
@@ -179,6 +194,17 @@ impl Primitive for VerticalLine {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![ConfigProperty::boolean("show_time_label", ConfigKey::ShowTimeLabel.get(current_language()), self.show_time_label).with_order(20)]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "show_time_label" {
+            if let Some(v) = value.as_bool() { self.show_time_label = v; return true; }
+        }
+        false
     }
 }
 

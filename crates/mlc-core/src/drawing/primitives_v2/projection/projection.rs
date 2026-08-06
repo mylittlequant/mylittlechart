@@ -5,8 +5,9 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
-    RenderContext, crisp, LineStyle,
+    RenderContext, crisp, LineStyle, fmt_price, draw_label_plate,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -103,6 +104,7 @@ impl Primitive for Projection {
             ctx.set_line_dash(&[4.0, 2.0]);
 
             let chart_width = ctx.chart_width();
+            let label_style = LabelStyle::default();
 
             for &level in &fib_levels {
                 let projected_price = self.price1 + (price_range * level);
@@ -112,6 +114,19 @@ impl Primitive for Projection {
                 ctx.move_to(crisp(x2, dpr), crisp(y_level, dpr));
                 ctx.line_to(crisp(chart_width, dpr), crisp(y_level, dpr));
                 ctx.stroke();
+
+                // `show_labels` used to be a struct field with no reader
+                // anywhere — the levels drew as bare lines with no way to
+                // tell which price/ratio each one carried.
+                if self.show_labels {
+                    let label = format!("{:.3} — {}", level, fmt_price(projected_price));
+                    ctx.set_font(&label_style.font_string());
+                    ctx.set_fill_color(&self.data.color.stroke);
+                    ctx.set_text_align(crate::render::TextAlign::Center);
+                    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+                    let label_x = (chart_width - 50.0).max(x2 + 50.0);
+                    draw_label_plate(ctx, label_x, y_level, &label, label_style.font_size, &label_style, &self.data.color.stroke);
+                }
             }
         }
 
@@ -142,6 +157,22 @@ impl Primitive for Projection {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::show_labels(self.show_labels).with_order(20),
+            ConfigProperty::show_levels(self.show_levels).with_order(21),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
+            "show_percentages" => { if let Some(v) = value.as_bool() { self.show_levels = v; return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

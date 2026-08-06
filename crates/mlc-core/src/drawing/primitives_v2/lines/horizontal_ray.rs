@@ -8,10 +8,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
-    PrimitiveColor, LineStyle,
+    PrimitiveColor, LineStyle, fmt_price, draw_label_plate,
     HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
 /// Horizontal Ray - horizontal line extending right from a point
@@ -113,6 +114,18 @@ impl Primitive for HorizontalRay {
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
+        // `show_price_label` used to be a struct field with no reader
+        // anywhere — toggling it changed nothing.
+        if self.show_price_label {
+            let label_style = LabelStyle::default();
+            ctx.set_font(&label_style.font_string());
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            let label = fmt_price(self.price);
+            let label_x = ctx.chart_width() - 40.0;
+            draw_label_plate(ctx, label_x, y, &label, label_style.font_size, &label_style, &self.data.color.stroke);
+        }
+
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
                 let min_x = x; let max_x = ctx.chart_width();
@@ -135,6 +148,17 @@ impl Primitive for HorizontalRay {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![ConfigProperty::show_price(self.show_price_label).with_order(20)]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "show_price" {
+            if let Some(v) = value.as_bool() { self.show_price_label = v; return true; }
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

@@ -2,11 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -168,6 +170,20 @@ impl Primitive for TimeCycles {
     }
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::number("count", ConfigKey::Count.get(current_language()), self.count as f64, Some(1.0), Some(30.0))
+                .with_order(20),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "count" {
+            if let Some(v) = value.as_number() { self.count = v.round().clamp(1.0, 30.0) as u8; return true; }
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

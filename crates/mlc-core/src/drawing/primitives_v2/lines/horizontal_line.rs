@@ -8,9 +8,10 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
-    PrimitiveColor, LineStyle, TextAlign, HIT_TOLERANCE,
+    PrimitiveColor, LineStyle, TextAlign, HIT_TOLERANCE, fmt_price, draw_label_plate,
     RenderContext, crisp,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
 /// Horizontal Line at a price level
@@ -190,6 +191,21 @@ impl Primitive for HorizontalLine {
         // Reset line dash
         ctx.set_line_dash(&[]);
 
+        // `show_price_label` used to be a struct field with no reader
+        // anywhere — toggling it changed nothing. Tags the price near the
+        // right edge of the chart, same spot TradingView's own price tag
+        // sits (the real price-scale gutter is a different render pass this
+        // primitive has no access to).
+        if self.show_price_label {
+            let label_style = LabelStyle::default();
+            ctx.set_font(&label_style.font_string());
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            let label = fmt_price(self.price);
+            let label_x = ctx.chart_width() - 40.0;
+            draw_label_plate(ctx, label_x, y, &label, label_style.font_size, &label_style, &self.data.color.stroke);
+        }
+
         // Render text if present
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
@@ -218,6 +234,17 @@ impl Primitive for HorizontalLine {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![ConfigProperty::show_price(self.show_price_label).with_order(20)]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "show_price" {
+            if let Some(v) = value.as_bool() { self.show_price_label = v; return true; }
+        }
+        false
     }
 }
 

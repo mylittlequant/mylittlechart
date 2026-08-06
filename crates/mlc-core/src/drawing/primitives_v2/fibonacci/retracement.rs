@@ -102,8 +102,13 @@ pub struct FibRetracement {
     /// Extend lines to right
     #[serde(default = "default_true")]
     pub extend_right: bool,
-    /// Fill between levels
-    #[serde(default)]
+    /// Master fill toggle — gates every level's own `fill_enabled` at once.
+    /// Defaults true (via `default_true`, not `bool::default()`) so a saved
+    /// primitive from before this field was wired — where the per-level
+    /// `fill_enabled` toggle was the only thing that mattered — keeps
+    /// rendering its fills exactly as before, rather than a `false` default
+    /// silently turning every one of them off.
+    #[serde(default = "default_true")]
     pub show_fill: bool,
     /// Fill opacity (0.0 to 1.0)
     #[serde(default = "default_fill_opacity")]
@@ -168,7 +173,7 @@ impl FibRetracement {
             show_percentages: true,
             extend_left: false,
             extend_right: true,
-            show_fill: false,
+            show_fill: true,
             fill_opacity: 0.1,
             label_position: "left".to_string(),
             show_as_percent: true,
@@ -352,28 +357,36 @@ impl Primitive for FibRetracement {
             .collect();
         visible_levels.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Draw fills between adjacent visible levels (before lines so lines are on top)
-        for i in 0..visible_levels.len().saturating_sub(1) {
-            let (idx, _, y_top) = visible_levels[i];
-            let (_, _, y_bottom) = visible_levels[i + 1];
+        // Draw fills between adjacent visible levels (before lines so lines are on top).
+        // Gated by `show_fill` — previously a struct field with no reader
+        // anywhere, so the primitive always fell back to whatever each
+        // level's own `fill_enabled`/`fill_opacity` said (only reachable via
+        // the per-level editor on the Levels tab), with no single master
+        // on/off + opacity control. `fill_opacity` now overrides each
+        // level's own opacity uniformly when the master toggle is on.
+        if self.show_fill {
+            for i in 0..visible_levels.len().saturating_sub(1) {
+                let (idx, _, y_top) = visible_levels[i];
+                let (_, _, y_bottom) = visible_levels[i + 1];
 
-            let cfg = &self.level_configs[idx];
-            if cfg.fill_enabled {
-                // Use fill_color or fall back to line color
-                let fill_color = cfg.fill_color.as_deref()
-                    .or(cfg.color.as_deref())
-                    .unwrap_or(&self.data.color.stroke);
+                let cfg = &self.level_configs[idx];
+                if cfg.fill_enabled {
+                    // Use fill_color or fall back to line color
+                    let fill_color = cfg.fill_color.as_deref()
+                        .or(cfg.color.as_deref())
+                        .unwrap_or(&self.data.color.stroke);
 
-                // Apply fill with opacity
-                ctx.set_fill_color_alpha(fill_color, cfg.fill_opacity);
-                ctx.begin_path();
-                ctx.move_to(left_x, y_top);
-                ctx.line_to(right_x, y_top);
-                ctx.line_to(right_x, y_bottom);
-                ctx.line_to(left_x, y_bottom);
-                ctx.close_path();
-                ctx.fill();
-                ctx.reset_alpha();
+                    // Apply fill with opacity
+                    ctx.set_fill_color_alpha(fill_color, self.fill_opacity);
+                    ctx.begin_path();
+                    ctx.move_to(left_x, y_top);
+                    ctx.line_to(right_x, y_top);
+                    ctx.line_to(right_x, y_bottom);
+                    ctx.line_to(left_x, y_bottom);
+                    ctx.close_path();
+                    ctx.fill();
+                    ctx.reset_alpha();
+                }
             }
         }
 
@@ -649,6 +662,8 @@ impl Primitive for FibRetracement {
             ConfigProperty::extend_left(self.extend_left).with_order(20),
             ConfigProperty::extend_right(self.extend_right).with_order(21),
             ConfigProperty::show_trend_line(self.show_trend_line).with_order(22),
+            ConfigProperty::fill(self.show_fill).with_order(23),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(24),
             ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
         ];
@@ -698,6 +713,18 @@ impl Primitive for FibRetracement {
             "show_trend_line" => {
                 if let PropertyValue::Boolean(v) = value {
                     self.show_trend_line = *v;
+                    return true;
+                }
+            }
+            "fill" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.show_fill = *v;
+                    return true;
+                }
+            }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.0, 1.0);
                     return true;
                 }
             }

@@ -63,10 +63,19 @@ impl Primitive for Polyline {
     }
 
     fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
-        if let ControlPointType::Index(i) = point_type {
-            if let Some(p) = self.points_data.get_mut(i as usize) {
-                p.0 = ts_ms; p.1 = price;
+        match point_type {
+            ControlPointType::Index(i) => {
+                if let Some(p) = self.points_data.get_mut(i as usize) {
+                    p.0 = ts_ms; p.1 = price;
+                }
             }
+            ControlPointType::Move => {
+                let (center_ts, center_price) = self.center_ts_price();
+                let td = ts_ms - center_ts;
+                let pd = price - center_price;
+                self.translate(td, pd);
+            }
+            _ => {}
         }
     }
 

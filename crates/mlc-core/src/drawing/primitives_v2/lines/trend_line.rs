@@ -8,10 +8,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
-    PrimitiveColor, ExtendMode, LineStyle,
+    PrimitiveColor, ExtendMode, LineStyle, fmt_price, draw_label_plate,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
+    config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
 /// Trend Line - line between two points
@@ -116,7 +117,20 @@ impl Primitive for TrendLine {
                 self.price2 = price;
             }
             ControlPointType::Move => {
-                // Move is handled by translate() via delta
+                // The dedicated midpoint handle `control_points()` advertises
+                // once the line is long enough (see `CONTROL_POINT_RADIUS *
+                // 4.0` guard there and in `hit_test_control_points`) reaches
+                // here, not just a generic whole-body drag — it used to be a
+                // no-op ("handled by translate() via delta", but nothing
+                // ever called translate() for this arm), so grabbing that
+                // specific dot did nothing while the body drag around it
+                // still worked. Recompute the midpoint fresh each call so
+                // dragging follows the cursor smoothly frame to frame.
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
             }
             _ => {}
         }
@@ -295,6 +309,21 @@ impl Primitive for TrendLine {
         // Reset line dash
         ctx.set_line_dash(&[]);
 
+        // `show_price_labels` used to be a struct field with no reader
+        // anywhere — toggling it in the settings modal changed nothing.
+        // Tag both endpoints with their price, at the ORIGINAL (unextended)
+        // points, not the extended line ends.
+        if self.show_price_labels {
+            let label_style = LabelStyle::default();
+            ctx.set_font(&label_style.font_string());
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            let label1 = fmt_price(self.price1);
+            draw_label_plate(ctx, x1, y1 - label_style.offset_y, &label1, label_style.font_size, &label_style, &self.data.color.stroke);
+            let label2 = fmt_price(self.price2);
+            draw_label_plate(ctx, x2, y2 - label_style.offset_y, &label2, label_style.font_size, &label_style, &self.data.color.stroke);
+        }
+
         // Render text if present (rotated along line)
         if let Some(ref text) = self.data.text {
             if let Some(ref params) = text_params {
@@ -309,6 +338,60 @@ impl Primitive for TrendLine {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let (extend_left, extend_right) = match self.extend {
+            ExtendMode::None => (false, false),
+            ExtendMode::Left => (true, false),
+            ExtendMode::Right => (false, true),
+            ExtendMode::Both => (true, true),
+        };
+        vec![
+            ConfigProperty::extend_left(extend_left).with_order(20),
+            ConfigProperty::extend_right(extend_right).with_order(21),
+            ConfigProperty::show_price(self.show_price_labels).with_order(22),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        let (mut extend_left, mut extend_right) = match self.extend {
+            ExtendMode::None => (false, false),
+            ExtendMode::Left => (true, false),
+            ExtendMode::Right => (false, true),
+            ExtendMode::Both => (true, true),
+        };
+        match id {
+            "extend_left" => {
+                if let Some(v) = value.as_bool() {
+                    extend_left = v;
+                    self.extend = match (extend_left, extend_right) {
+                        (false, false) => ExtendMode::None,
+                        (true, false) => ExtendMode::Left,
+                        (false, true) => ExtendMode::Right,
+                        (true, true) => ExtendMode::Both,
+                    };
+                    return true;
+                }
+            }
+            "extend_right" => {
+                if let Some(v) = value.as_bool() {
+                    extend_right = v;
+                    self.extend = match (extend_left, extend_right) {
+                        (false, false) => ExtendMode::None,
+                        (true, false) => ExtendMode::Left,
+                        (false, true) => ExtendMode::Right,
+                        (true, true) => ExtendMode::Both,
+                    };
+                    return true;
+                }
+            }
+            "show_price" => {
+                if let Some(v) = value.as_bool() { self.show_price_labels = v; return true; }
+            }
+            _ => {}
+        }
+        false
     }
 
     fn extend_mode_raw(&self) -> u8 {

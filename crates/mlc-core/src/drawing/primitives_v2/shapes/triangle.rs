@@ -73,6 +73,13 @@ impl Primitive for Triangle {
             ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
             ControlPointType::Point3 => { self.ts3 = ts_ms; self.price3 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2 + self.ts3) / 3;
+                let mid_price = (self.price1 + self.price2 + self.price3) / 3.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }

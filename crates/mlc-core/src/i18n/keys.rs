@@ -222,10 +222,48 @@ pub enum ConfigKey {
     Clockwise       = 93,
     FlipHorizontal  = 94,
     FlipVertical    = 95,
+
+    // Volume profile / anchored VWAP (rows, POC, value area, deviation bands
+    // — struct fields that drove rendering but had no style_properties()
+    // override anywhere, so none of them was ever reachable from the UI)
+    ShowPoc         = 96,
+    ShowValueArea   = 97,
+    ShowStdDev1     = 98,
+    ShowStdDev2     = 99,
+    SigmaMultiplier1 = 100,
+    SigmaMultiplier2 = 101,
+
+    // Cycle tools (cycle_lines/sine_wave/time_cycles repeat count, sine
+    // amplitude and period count)
+    Count           = 102,
+    Amplitude       = 103,
+    WaveCycles      = 104,
+
+    // Bars Pattern projection geometry (mirror + price offset — real fields
+    // read by render(), unreachable from any UI control)
+    Mirror          = 105,
+    PriceOffset     = 106,
+
+    // Arrow Line arrowhead configuration
+    ArrowStart      = 107,
+    ArrowEnd        = 108,
+    ArrowSize       = 109,
+
+    // Time-axis companion to ShowPrice (vertical_line / cross_line)
+    ShowTimeLabel   = 110,
+
+    // Trend Angle's angle-arc toggle
+    ShowArc         = 111,
+
+    // primitive_settings modal Style tab base row labels — previously
+    // hardcoded Russian literals that never localized
+    LineColorLabel  = 112,
+    WidthLabel      = 113,
+    FillColorLabel  = 114,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 96;
+    pub const COUNT: usize = 115;
 
     /// Get translation for this key
     #[inline]
@@ -303,10 +341,16 @@ pub enum StyleKey {
     Dotted   = 5,
     Thin     = 6,
     Bold     = 7,
+    // Line-dash style names for the primitive settings modal's Style tab
+    // (line-style dual-button label + dropdown — previously hardcoded
+    // Russian literals in both places).
+    Solid       = 8,
+    LargeDashed = 9,
+    SparseDotted = 10,
 }
 
 impl StyleKey {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 11;
 
     /// Get translation for this key
     #[inline]

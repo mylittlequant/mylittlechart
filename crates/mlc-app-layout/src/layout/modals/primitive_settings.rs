@@ -22,7 +22,21 @@ use crate::ui::widgets::{
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
-use mlc_core::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
+use mlc_core::i18n::{IndicatorKey, SettingsKey, ConfigKey, StyleKey, current_language, t_indicator, t_settings};
+
+/// Localized display name for a `LineStyle` variant. Shared by the Style
+/// tab's dual-button label and its deferred dropdown list so the two never
+/// drift — they used to be two separate hardcoded-Russian match arms with
+/// the same five strings typed out twice.
+fn line_style_display_name(style: LineStyle, lang: mlc_core::i18n::Language) -> &'static str {
+    match style {
+        LineStyle::Solid => StyleKey::Solid.get(lang),
+        LineStyle::Dashed => StyleKey::Dashed.get(lang),
+        LineStyle::Dotted => StyleKey::Dotted.get(lang),
+        LineStyle::LargeDashed => StyleKey::LargeDashed.get(lang),
+        LineStyle::SparseDotted => StyleKey::SparseDotted.get(lang),
+    }
+}
 
 fn render_level_item(
     ctx: &mut dyn RenderContext,
@@ -365,8 +379,10 @@ pub fn render_primitive_settings_modal(
         PrimitiveSettingsTab::Style => {
             // === STYLE TAB ===
 
+            let lang = current_language();
+
             // Row 1: Stroke Color
-            draw_label(ctx, "Цвет линии:", row_y);
+            draw_label(ctx, ConfigKey::LineColorLabel.get(lang), row_y);
             let color_btn_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
             draw_color_button(ctx, &prim_data.color.stroke, color_btn_rect.x, color_btn_rect.y, color_btn_rect.width, color_btn_rect.height);
             result.content_items.push(("stroke_color".to_string(), color_btn_rect));
@@ -403,7 +419,7 @@ pub fn render_primitive_settings_modal(
                 &slider_config,
                 stroke_width_display,
                 slider_rect,
-                "Толщина:",
+                ConfigKey::WidthLabel.get(lang),
                 &widget_theme,
                 hovered,
                 stroke_width_editing,
@@ -434,14 +450,8 @@ pub fn render_primitive_settings_modal(
             row_y += row_height + row_gap;
 
             // Row 3: Line Style — dual button (left cycles, right opens dropdown)
-            draw_label(ctx, "Стиль:", row_y);
-            let style_label = match prim_data.style {
-                LineStyle::Solid => "Сплошная",
-                LineStyle::Dashed => "Пунктир",
-                LineStyle::Dotted => "Точки",
-                LineStyle::LargeDashed => "Длинный пунктир",
-                LineStyle::SparseDotted => "Редкие точки",
-            };
+            draw_label(ctx, ConfigKey::Style.get(lang), row_y);
+            let style_label = line_style_display_name(prim_data.style, lang);
             let btn_total_width = control_width.min(160.0);
             let chevron_part = 22.0;
             let text_part = btn_total_width - chevron_part;
@@ -556,19 +566,12 @@ pub fn render_primitive_settings_modal(
 
             // Deferred: line style dropdown renders AFTER footer to avoid z-order overlap
             if state.open_line_style_dropdown {
-                let current_style_str = match prim_data.style {
-                    LineStyle::Solid        => "solid",
-                    LineStyle::Dashed       => "dashed",
-                    LineStyle::Dotted       => "dotted",
-                    LineStyle::LargeDashed  => "large_dashed",
-                    LineStyle::SparseDotted => "sparse_dotted",
-                };
-                deferred_line_style_dropdown = Some((btn_rect.x, btn_rect.bottom() + 2.0, btn_total_width, current_style_str.to_string()));
+                deferred_line_style_dropdown = Some((btn_rect.x, btn_rect.bottom() + 2.0, btn_total_width, prim_data.style.as_str().to_string()));
             }
 
             // Row 4: Fill Color (if applicable)
             if let Some(ref fill_color) = prim_data.color.fill {
-                draw_label(ctx, "Цвет заливки:", row_y);
+                draw_label(ctx, ConfigKey::FillColorLabel.get(lang), row_y);
                 let fill_btn_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
                 draw_color_button(ctx, fill_color, fill_btn_rect.x, fill_btn_rect.y, fill_btn_rect.width, fill_btn_rect.height);
                 result.content_items.push(("fill_color".to_string(), fill_btn_rect));
@@ -1819,17 +1822,20 @@ pub fn render_primitive_settings_modal(
         );
     }
 
-    // Deferred line style dropdown — draw AFTER footer so it appears on top
+    // Deferred line style dropdown — draw AFTER footer so it appears on top.
+    // Names come from `line_style_display_name`, the same lookup the Style
+    // tab's dual-button label uses, so the two can never drift again.
     if let Some((drop_x, drop_y, btn_w, current_style_str)) = deferred_line_style_dropdown {
-        let all_styles: &[(&str, &str)] = &[
-            ("solid",        "Сплошная"),
-            ("dashed",       "Пунктир"),
-            ("dotted",       "Точки"),
-            ("large_dashed", "Длинный пунктир"),
-            ("sparse_dotted","Редкие точки"),
+        let dd_lang = current_language();
+        let all_styles: &[LineStyle] = &[
+            LineStyle::Solid,
+            LineStyle::Dashed,
+            LineStyle::Dotted,
+            LineStyle::LargeDashed,
+            LineStyle::SparseDotted,
         ];
         let dropdown_items: Vec<DropdownItem> = all_styles.iter()
-            .map(|(id, label)| DropdownItem::item(id, label))
+            .map(|style| DropdownItem::item(style.as_str(), line_style_display_name(*style, dd_lang)))
             .collect();
         let dropdown_cfg = DropdownConfig {
             items: dropdown_items,

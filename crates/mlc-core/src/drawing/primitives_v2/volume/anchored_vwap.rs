@@ -6,10 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,9 +26,19 @@ pub struct AnchoredVwap {
     /// Whether to draw ±2 σ deviation bands.
     #[serde(default = "default_true")]
     pub show_stddev_2: bool,
+    /// Standard-deviation multiplier for the inner band (was a hardcoded
+    /// `1.0` in both `hit_test` and `render`).
+    #[serde(default = "default_sigma_1")]
+    pub sigma_1: f64,
+    /// Standard-deviation multiplier for the outer band (was a hardcoded
+    /// `2.0`).
+    #[serde(default = "default_sigma_2")]
+    pub sigma_2: f64,
 }
 
 fn default_true() -> bool { true }
+fn default_sigma_1() -> f64 { 1.0 }
+fn default_sigma_2() -> f64 { 2.0 }
 
 impl AnchoredVwap {
     pub fn new(anchor_ts: i64, color: &str) -> Self {
@@ -41,6 +53,8 @@ impl AnchoredVwap {
             anchor_ts,
             show_stddev_1: true,
             show_stddev_2: true,
+            sigma_1: 1.0,
+            sigma_2: 2.0,
         }
     }
 }
@@ -111,7 +125,11 @@ impl Primitive for AnchoredVwap {
         let stddev = ((cum_vp2 / cum_v) - vwap * vwap).max(0.0).sqrt();
 
         let y_of = |price: f64| vp.price_to_y(price, ps.price_min, ps.price_max);
-        for price in [vwap, vwap + stddev, vwap - stddev, vwap + 2.0 * stddev, vwap - 2.0 * stddev] {
+        for price in [
+            vwap,
+            vwap + self.sigma_1 * stddev, vwap - self.sigma_1 * stddev,
+            vwap + self.sigma_2 * stddev, vwap - self.sigma_2 * stddev,
+        ] {
             if (sy - y_of(price)).abs() < HIT_TOLERANCE {
                 return HitTestResult::Body;
             }
@@ -174,10 +192,10 @@ impl Primitive for AnchoredVwap {
             let y_vwap = ctx.price_to_y(vwap);
 
             vwap_points.push((x, y_vwap));
-            sd1_upper.push((x, ctx.price_to_y(vwap + stddev)));
-            sd1_lower.push((x, ctx.price_to_y(vwap - stddev)));
-            sd2_upper.push((x, ctx.price_to_y(vwap + 2.0 * stddev)));
-            sd2_lower.push((x, ctx.price_to_y(vwap - 2.0 * stddev)));
+            sd1_upper.push((x, ctx.price_to_y(vwap + self.sigma_1 * stddev)));
+            sd1_lower.push((x, ctx.price_to_y(vwap - self.sigma_1 * stddev)));
+            sd2_upper.push((x, ctx.price_to_y(vwap + self.sigma_2 * stddev)));
+            sd2_lower.push((x, ctx.price_to_y(vwap - self.sigma_2 * stddev)));
         }
 
         if vwap_points.is_empty() { return; }
@@ -250,6 +268,31 @@ impl Primitive for AnchoredVwap {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let lang = current_language();
+        vec![
+            ConfigProperty::boolean("show_stddev_1", ConfigKey::ShowStdDev1.get(lang), self.show_stddev_1)
+                .with_order(20),
+            ConfigProperty::number("sigma_1", ConfigKey::SigmaMultiplier1.get(lang), self.sigma_1, Some(0.1), Some(5.0))
+                .with_order(21),
+            ConfigProperty::boolean("show_stddev_2", ConfigKey::ShowStdDev2.get(lang), self.show_stddev_2)
+                .with_order(22),
+            ConfigProperty::number("sigma_2", ConfigKey::SigmaMultiplier2.get(lang), self.sigma_2, Some(0.1), Some(10.0))
+                .with_order(23),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_stddev_1" => { if let Some(v) = value.as_bool() { self.show_stddev_1 = v; return true; } }
+            "show_stddev_2" => { if let Some(v) = value.as_bool() { self.show_stddev_2 = v; return true; } }
+            "sigma_1" => { if let Some(v) = value.as_number() { self.sigma_1 = v.clamp(0.1, 5.0); return true; } }
+            "sigma_2" => { if let Some(v) = value.as_number() { self.sigma_2 = v.clamp(0.1, 10.0); return true; } }
+            _ => {}
+        }
+        false
+    }
 }
 
 // ─── Drawing helpers ──────────────────────────────────────────────────────────

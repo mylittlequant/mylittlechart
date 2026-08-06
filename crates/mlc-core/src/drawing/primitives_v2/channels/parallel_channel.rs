@@ -97,6 +97,13 @@ impl Primitive for ParallelChannel {
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
             ControlPointType::Point3 => { self.channel_offset = price - self.price1; }
             ControlPointType::Point4 => { self.channel_offset = price - self.price2; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0 + self.channel_offset / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }

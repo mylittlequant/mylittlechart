@@ -95,6 +95,13 @@ impl Primitive for RegressionTrend {
         match point_type {
             ControlPointType::Point1 => { self.ts1 = ts_ms; self.price1 = price; }
             ControlPointType::Point2 => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Move => {
+                let mid_ts = (self.ts1 + self.ts2) / 2;
+                let mid_price = (self.price1 + self.price2) / 2.0;
+                let td = ts_ms - mid_ts;
+                let pd = price - mid_price;
+                self.translate(td, pd);
+            }
             _ => {}
         }
     }

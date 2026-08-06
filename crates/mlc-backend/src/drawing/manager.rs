@@ -791,6 +791,13 @@ impl DrawingManager {
                         Self::finalize_new_primitive(b, session, prim, last_style);
                         session.state = DrawingState::Idle;
                         session.current_tool = None;
+                        // The TwoPoint/ClickDrag sibling branch above already
+                        // clears this on finalize; this branch (ThreePoint/
+                        // FourPoint/MultiPointFixed/MultiPoint) didn't, so a
+                        // tool variant (e.g. an emoji sub-type) picked for one
+                        // drawn primitive could leak into the next primitive
+                        // of the same tool.
+                        session.tool_variant = None;
                         session.current_pane_id = None;
                         return true;
                     }
@@ -825,6 +832,7 @@ impl DrawingManager {
                     Self::finalize_new_primitive(b, session, prim, last_style.as_ref());
                     session.state = DrawingState::Idle;
                     session.current_tool = None;
+                    session.tool_variant = None;
                     session.current_pane_id = None;
                     return true;
                 }
@@ -1429,6 +1437,14 @@ impl DrawingManager {
             let prim = b.primitives.remove(idx);
             b.primitives.push(prim);
         }
+        // Rendering and hit-testing walk `primitives_sorted_by_z_order()`,
+        // which sorts by `data().z_order` — NOT by position in this Vec.
+        // Reordering the Vec alone (above) had zero visible effect; this is
+        // the write that actually moves the primitive to the top.
+        let max_z = b.primitives.iter().map(|p| p.data().z_order).max().unwrap_or(0);
+        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
+            prim.data_mut().z_order = max_z + 1;
+        }
     }
 
     pub(crate) fn send_to_back(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64) {
@@ -1437,6 +1453,12 @@ impl DrawingManager {
         if idx != 0 {
             let prim = b.primitives.remove(idx);
             b.primitives.insert(0, prim);
+        }
+        // See `bring_to_front` — the z_order field is what rendering and
+        // hit-testing actually sort by.
+        let min_z = b.primitives.iter().map(|p| p.data().z_order).min().unwrap_or(0);
+        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
+            prim.data_mut().z_order = min_z - 1;
         }
     }
 
@@ -1455,38 +1477,6 @@ impl DrawingManager {
         let prim = b.primitives.remove(old_idx);
         let insert_at = if new_idx > old_idx { new_idx - 1 } else { new_idx };
         b.primitives.insert(insert_at.min(b.primitives.len()), prim);
-    }
-
-    pub(crate) fn bring_selected_to_front(&mut self, bubbles: &mut BubbleStore, bid: BubbleId) {
-        let Some(prim_id) = self.selected(bid) else { return };
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let max_z = b.primitives.iter().map(|p| p.data().z_order).max().unwrap_or(0);
-        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
-            prim.data_mut().z_order = max_z + 1;
-        }
-    }
-
-    pub(crate) fn send_selected_to_back(&mut self, bubbles: &mut BubbleStore, bid: BubbleId) {
-        let Some(prim_id) = self.selected(bid) else { return };
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let min_z = b.primitives.iter().map(|p| p.data().z_order).min().unwrap_or(0);
-        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
-            prim.data_mut().z_order = min_z - 1;
-        }
-    }
-
-    pub(crate) fn move_up(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64) {
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
-            prim.data_mut().z_order += 1;
-        }
-    }
-
-    pub(crate) fn move_down(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64) {
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
-            prim.data_mut().z_order -= 1;
-        }
     }
 
     // =========================================================================
