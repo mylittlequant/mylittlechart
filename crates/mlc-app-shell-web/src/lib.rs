@@ -411,7 +411,11 @@ impl WebAppState {
             chrome,
             dirty:  mlc_app_input_shell::DirtyFlags::default(),
             out:    mlc_app_input_shell::DispatchOut::default(),
-            toolbar_tooltip:    mlc_app_input_shell::TooltipState::new(),
+            // 700ms delay matches the native shell's toolbar tooltip
+            // (mlc-app-shell-vello/src/main.rs:1450) — the chrome tooltip
+            // (tabs/window buttons) keeps the crate default (500ms) on both
+            // shells via `ChromeState::new()`.
+            toolbar_tooltip:    mlc_app_input_shell::TooltipState::with_delay(700.0),
             screenshot_pending: false,
             canvas_id:          canvas_id.to_string(),
             last_measured:      None,
@@ -1656,11 +1660,45 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         ctx.restore();
     }
 
+    // ── Tooltip tick — mirrors mlc-app-shell-vello/src/main.rs:4339-4351 ──────
+    // Dwell tooltips only flip `visible` inside `TooltipState::update()`/
+    // `request_tooltip()`, both of which are otherwise driven exclusively from
+    // `CursorMoved` in `dispatch.rs` (chrome/logic.rs:156-165,
+    // dispatch.rs:311-361). A stationary cursor stops firing `CursorMoved`, so
+    // without a per-frame re-arm the show-delay condition
+    // (`should_show`, mlc-app-input-shell/src/tooltip.rs:115-117) never gets
+    // re-evaluated and a tooltip that was mid-dwell when the pointer stopped
+    // moving can never become visible. Native re-arms this every frame from
+    // its `about_to_wait` callback; the wasm RAF loop (`render_frame`, called
+    // every frame unconditionally, see `run_render_loop` above) never did.
+    {
+        let mut st = state.borrow_mut();
+        let time_ms = st.input.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+        let (mx, my) = st.input.last_mouse_pos;
+        mlc_app_input_shell::chrome::update_tooltip(&mut st.chrome, mx, my, time_ms);
+        let hovered = st.toolbar_tooltip.hovered_widget().cloned();
+        st.toolbar_tooltip.update(hovered, time_ms);
+    }
+
     // ── Chrome render ─────────────────────────────────────────────────────────
     {
         let st = state.borrow();
         mlc_app_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false);
         mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
+        // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar strips,
+        // agent + free-slot sidebar rows) live in the separate `toolbar_tooltip`
+        // TooltipState (dispatch.rs:316-360) — native paints it via its own
+        // `render_tooltip_themed` call on every render path
+        // (mlc-app-shell-vello/src/render/scene_builder.rs:318 etc.); the web
+        // shell tracked the state but never painted it.
+        mlc_app_input_shell::render_tooltip_themed(
+            &mut ctx,
+            &st.toolbar_tooltip,
+            &st.chrome.colors.tooltip_bg,
+            &st.chrome.colors.tooltip_text,
+            css_w as f64,
+            css_h as f64,
+        );
     }
 
     Ok(())
