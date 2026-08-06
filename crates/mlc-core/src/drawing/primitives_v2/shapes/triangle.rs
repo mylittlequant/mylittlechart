@@ -218,6 +218,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a triangle with three points",
         icon: "triangle", default_color: "#FF9800",
         factory: create_triangle,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

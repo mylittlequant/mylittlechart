@@ -7,7 +7,9 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::draw_stat_plate;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DateRange {
@@ -19,14 +21,20 @@ pub struct DateRange {
     pub price: f64,
     #[serde(default = "default_true")] pub show_bars: bool,
     #[serde(default = "default_true")] pub show_time: bool,
+    #[serde(default = "default_label_style")]
+    pub label_style: LabelStyle,
 }
 fn default_true() -> bool { true }
+fn default_label_style() -> LabelStyle {
+    LabelStyle { font_size: 13.0, ..Default::default() }
+}
 
 impl DateRange {
     pub fn new(ts1: i64, ts2: i64, price: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "date_range".to_string(), display_name: "Date Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
             ts1, ts2, price, show_bars: true, show_time: true,
+            label_style: default_label_style(),
         }
     }
 }
@@ -82,8 +90,9 @@ impl Primitive for DateRange {
         let max_x = x1.max(x2);
         let w = max_x - min_x;
 
-        // Draw filled area between the two vertical lines
-        ctx.set_fill_color(&format!("{}40", &self.data.color.stroke));
+        // Light translucent band between the two vertical lines — a ruler
+        // measures the range, it should not paint over it.
+        ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
         ctx.fill_rect(crisp(min_x, dpr), 0.0, w, ctx.chart_height());
 
         // Draw the two vertical lines
@@ -101,30 +110,35 @@ impl Primitive for DateRange {
         ctx.line_to(crisp(x2, dpr), ctx.chart_height());
         ctx.stroke();
 
-        // Draw duration label
+        // Stat plate: elapsed time (show_time) and/or bar count (show_bars).
+        // Fall back to elapsed time alone so the ruler never renders blank.
         let duration_ms = (self.ts2 - self.ts1).abs();
         let duration_secs = duration_ms / 1000;
-
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_font("12px sans-serif");
-
-        let label = if self.show_time {
-            if duration_secs >= 86400 {
-                format!("{:.1}d", duration_secs as f64 / 86400.0)
-            } else if duration_secs >= 3600 {
-                format!("{:.1}h", duration_secs as f64 / 3600.0)
-            } else if duration_secs >= 60 {
-                format!("{:.0}m", duration_secs as f64 / 60.0)
-            } else {
-                format!("{}s", duration_secs)
-            }
+        let duration_label = if duration_secs >= 86400 {
+            format!("{:.1}d", duration_secs as f64 / 86400.0)
+        } else if duration_secs >= 3600 {
+            format!("{:.1}h", duration_secs as f64 / 3600.0)
+        } else if duration_secs >= 60 {
+            format!("{:.0}m", duration_secs as f64 / 60.0)
         } else {
-            format!("{}ms", duration_ms)
+            format!("{}s", duration_secs)
         };
 
-        ctx.fill_text(&label, crisp(min_x + w / 2.0, dpr), crisp(y - 10.0, dpr));
+        let bar1 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts2);
+        let bar_count = (bar2 - bar1).abs().round() as i64;
 
-        // Draw control points if selected
+        let mut lines = Vec::new();
+        if self.show_time {
+            lines.push(duration_label.clone());
+        }
+        if self.show_bars {
+            lines.push(format!("{} bars", bar_count));
+        }
+        if lines.is_empty() {
+            lines.push(duration_label);
+        }
+        draw_stat_plate(ctx, min_x + w / 2.0, y - 20.0, &lines, &self.label_style, &self.data.color.stroke);
 
         // Render text if present
         if let Some(ref text) = self.data.text {
@@ -147,6 +161,45 @@ impl Primitive for DateRange {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let mut props = vec![
+            ConfigProperty::show_duration(self.show_time)
+                .with_category(PropertyCategory::Style)
+                .with_order(10),
+            ConfigProperty::show_bar_count(self.show_bars)
+                .with_category(PropertyCategory::Style)
+                .with_order(11),
+            ConfigProperty::label_font_size(self.label_style.font_size)
+                .with_category(PropertyCategory::Style)
+                .with_order(13),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
+                .with_category(PropertyCategory::Style)
+                .with_order(14),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_time" => {
+                if let Some(v) = value.as_bool() { self.show_time = v; return true; }
+            }
+            "show_bars" => {
+                if let Some(v) = value.as_bool() { self.show_bars = v; return true; }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) { return true; }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {
@@ -160,6 +213,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

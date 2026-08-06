@@ -226,6 +226,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| { let (t, p) = points.first().copied().unwrap_or((0, 0.0)); Box::new(PriceLabel::new(t, p, color)) },
         supports_text: true, // Has custom text_properties
         has_levels: false,
-        has_points_config: false,
     }
 }

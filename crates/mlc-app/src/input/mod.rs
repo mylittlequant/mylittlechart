@@ -1929,6 +1929,9 @@ impl ChartApp {
                 } else if prefix == "ind_settings" {
                     self.panel_app.indicator_settings_state.scroll.start_drag(y);
                     true
+                } else if prefix == "prim_settings" {
+                    self.panel_app.primitive_settings_state.scroll.start_drag(y);
+                    true
                 } else if prefix == "alert_settings" {
                     self.panel_app.alert_settings_state.list_scroll.start_drag(y);
                     true
@@ -2630,6 +2633,32 @@ impl ChartApp {
                             });
                             self.apply_color_picker_drag(x, y);
                             eprintln!("[ChartApp] color_picker L1 opacity drag started ({})", src);
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Primitive settings scrollbar track click — click on empty track
+        // (not the handle) jumps the tab content by one page. Handle drag
+        // itself goes through the ":scrollbar_handle" DRAG branch above.
+        if self.panel_app.primitive_settings_state.is_open()
+            && !self.panel_app.primitive_settings_state.is_color_picker_open()
+        {
+            if let Some(ref result) = &self.frame_result {
+                if let Some(ref ps) = result.primitive_settings {
+                    if let Some(ref track_rect) = ps.scrollbar_track_rect {
+                        let hit = x >= track_rect.x && x <= track_rect.x + track_rect.width
+                            && y >= track_rect.y && y <= track_rect.y + track_rect.height;
+                        if hit {
+                            self.panel_app.primitive_settings_state.scroll.handle_track_click(
+                                y,
+                                track_rect.y,
+                                track_rect.height,
+                                ps.total_content_height,
+                                ps.viewport_height,
+                            );
                             return false;
                         }
                     }
@@ -3637,6 +3666,21 @@ impl ChartApp {
             }
             return;
         }
+        if self.panel_app.primitive_settings_state.scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref ps) = result.primitive_settings {
+                    if let Some(ref track_rect) = ps.scrollbar_track_rect {
+                        self.panel_app.primitive_settings_state.scroll.handle_drag(
+                            y,
+                            track_rect.height,
+                            ps.total_content_height,
+                            ps.viewport_height,
+                        );
+                    }
+                }
+            }
+            return;
+        }
         // Alert settings scrollbar drag move
         if self.panel_app.alert_settings_state.list_scroll.is_dragging {
             if let Some(ref result) = self.frame_result {
@@ -4394,6 +4438,11 @@ impl ChartApp {
         if self.panel_app.indicator_settings_state.scroll.is_dragging {
             self.panel_app.indicator_settings_state.scroll.end_drag();
             eprintln!("[ChartApp] ind_settings scrollbar drag ended");
+            return;
+        }
+        if self.panel_app.primitive_settings_state.scroll.is_dragging {
+            self.panel_app.primitive_settings_state.scroll.end_drag();
+            eprintln!("[ChartApp] prim_settings scrollbar drag ended");
             return;
         }
         if self.panel_app.alert_settings_state.list_scroll.is_dragging {
@@ -5833,6 +5882,18 @@ impl ChartApp {
                                         scroll_step,
                                         is.total_content_height,
                                         is.viewport_height,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                        "prim_settings:scroll_viewport" => {
+                            if let Some(ref result) = self.frame_result {
+                                if let Some(ref ps) = result.primitive_settings {
+                                    self.panel_app.primitive_settings_state.scroll.handle_wheel(
+                                        scroll_step,
+                                        ps.total_content_height,
+                                        ps.viewport_height,
                                     );
                                 }
                             }

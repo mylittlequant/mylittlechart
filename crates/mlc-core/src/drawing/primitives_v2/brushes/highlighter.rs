@@ -117,6 +117,6 @@ pub fn metadata() -> PrimitiveMetadata {
         click_behavior: ClickBehavior::FreehandDrag, tooltip: "Semi-transparent highlight",
         icon: "highlighter", default_color: "#FFEB3B",
         factory: |points, color| Box::new(Highlighter::new(points.to_vec(), color)),
-        supports_text: false, has_levels: false, has_points_config: false,
+        supports_text: false, has_levels: false,
     }
 }

@@ -6,7 +6,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
-    render_primitive_text,
+    render_primitive_text, draw_label_plate,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
 
@@ -129,31 +129,7 @@ impl Primitive for ThreeDrives {
             for (i, (x, y)) in screen.iter().enumerate() {
                 let label = labels[i];
                 let offset = if i % 2 == 1 { -self.label_style.offset_y } else { self.label_style.offset_y };
-
-                if let Some(ref bg_color) = self.label_style.background_color {
-                    let text_width = ctx.measure_text(label);
-                    let padding = self.label_style.background_padding;
-                    let radius = self.label_style.background_radius;
-                    let bg_x = x - text_width / 2.0 - padding;
-                    let bg_y = y + offset - self.label_style.font_size / 2.0 - padding;
-                    let bg_w = text_width + padding * 2.0;
-                    let bg_h = self.label_style.font_size + padding * 2.0;
-
-                    ctx.set_fill_color(bg_color);
-                    ctx.begin_path();
-                    ctx.rounded_rect(bg_x, bg_y, bg_w, bg_h, radius);
-                    ctx.fill();
-
-                    if let Some(ref border_color) = self.label_style.border_color {
-                        ctx.set_stroke_color(border_color);
-                        ctx.set_stroke_width(self.label_style.border_width);
-                        ctx.stroke();
-                    }
-
-                    ctx.set_fill_color(label_color);
-                }
-
-                ctx.fill_text(label, *x, *y + offset);
+                draw_label_plate(ctx, *x, *y + offset, label, self.label_style.font_size, &self.label_style, label_color);
             }
         }
 
@@ -174,19 +150,19 @@ impl Primitive for ThreeDrives {
 
             // R1/D1 on retrace1 leg (≈0.618)
             if d1 > 0.0 {
-                draw_ratio_label(ctx, screen[1], screen[2], r1 / d1);
+                draw_ratio_label(ctx, screen[1], screen[2], r1 / d1, ratio_font_size, &self.label_style, ratio_color);
             }
             // D2/R1 on drive2 leg (≈1.272)
             if r1 > 0.0 {
-                draw_ratio_label(ctx, screen[2], screen[3], d2 / r1);
+                draw_ratio_label(ctx, screen[2], screen[3], d2 / r1, ratio_font_size, &self.label_style, ratio_color);
             }
             // R2/D2 on retrace2 leg (≈0.618)
             if d2 > 0.0 {
-                draw_ratio_label(ctx, screen[3], screen[4], r2 / d2);
+                draw_ratio_label(ctx, screen[3], screen[4], r2 / d2, ratio_font_size, &self.label_style, ratio_color);
             }
             // D3/R2 on drive3 leg (≈1.272)
             if r2 > 0.0 {
-                draw_ratio_label(ctx, screen[4], screen[5], d3 / r2);
+                draw_ratio_label(ctx, screen[4], screen[5], d3 / r2, ratio_font_size, &self.label_style, ratio_color);
             }
         }
 
@@ -217,7 +193,7 @@ impl Primitive for ThreeDrives {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
-        vec![
+        let mut props = vec![
             ConfigProperty::show_labels(self.show_labels)
                 .with_category(PropertyCategory::Style)
                 .with_order(10),
@@ -233,7 +209,9 @@ impl Primitive for ThreeDrives {
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::Style)
                 .with_order(14),
-        ]
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
@@ -255,11 +233,12 @@ impl Primitive for ThreeDrives {
             }
             _ => {}
         }
+        if self.label_style.apply_property(id, value) { return true; }
         false
     }
 }
 
-fn draw_ratio_label(ctx: &mut dyn RenderContext, p1: (f64, f64), p2: (f64, f64), ratio: f64) {
+fn draw_ratio_label(ctx: &mut dyn RenderContext, p1: (f64, f64), p2: (f64, f64), ratio: f64, font_size: f64, label_style: &LabelStyle, label_color: &str) {
     let mid_x = (p1.0 + p2.0) / 2.0;
     let mid_y = (p1.1 + p2.1) / 2.0;
     let dx = p2.0 - p1.0;
@@ -267,7 +246,8 @@ fn draw_ratio_label(ctx: &mut dyn RenderContext, p1: (f64, f64), p2: (f64, f64),
     let len = (dx * dx + dy * dy).sqrt().max(1.0);
     let ox = -dy / len * 10.0;
     let oy = dx / len * 10.0;
-    ctx.fill_text(&format!("{:.3}", ratio), mid_x + ox, mid_y + oy);
+    let label = format!("{:.3}", ratio);
+    draw_label_plate(ctx, mid_x + ox, mid_y + oy, &label, font_size, label_style, label_color);
 }
 
 fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
@@ -290,6 +270,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: true,
     }
 }

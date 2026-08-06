@@ -209,6 +209,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw connected line segments (double-click to finish)",
         icon: "polyline", default_color: "#795548",
         factory: create_polyline,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

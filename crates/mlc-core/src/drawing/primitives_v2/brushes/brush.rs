@@ -126,6 +126,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| Box::new(Brush::new(points.to_vec(), color)),
         supports_text: false,
         has_levels: false,
-        has_points_config: false,
     }
 }

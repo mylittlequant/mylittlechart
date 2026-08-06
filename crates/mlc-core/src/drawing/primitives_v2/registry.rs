@@ -33,8 +33,6 @@ pub struct PrimitiveMetadata {
     pub supports_text: bool,
     /// Whether this primitive has configurable levels (Fibonacci, Gann, Pitchfork - shows "Levels" tab)
     pub has_levels: bool,
-    /// Whether this primitive has configurable control points (Elliott, Patterns - shows "Points" tab)
-    pub has_points_config: bool,
 }
 
 /// Global primitive registry
@@ -154,11 +152,6 @@ impl PrimitiveRegistry {
     /// Check if primitive type supports text
     pub fn supports_text(&self, type_id: &str) -> bool {
         self.primitives.get(type_id).map(|m| m.supports_text).unwrap_or(false)
-    }
-
-    /// Check if primitive type has configurable control points (Elliott, Patterns)
-    pub fn has_points_config(&self, type_id: &str) -> bool {
-        self.primitives.get(type_id).map(|m| m.has_points_config).unwrap_or(false)
     }
 
     /// Rebuild a primitive from the JSON it wrote.
@@ -354,7 +347,6 @@ macro_rules! define_primitive {
                 factory: $factory,
                 supports_text: true,
                 has_levels: false,
-                has_points_config: false,
             }
         }
     };
@@ -427,7 +419,7 @@ mod catalogue_dump {
             let svg = icon.map(|i| i.svg()).unwrap_or("");
             let comma = if n + 1 < ids.len() { "," } else { "" };
             println!(
-                "  {{\"type_id\":\"{}\",\"display_name\":\"{}\",\"kind\":\"{:?}\",\"click_behavior\":\"{:?}\",\"tooltip\":\"{}\",\"icon_name\":\"{}\",\"icon_resolved\":{},\"default_color\":\"{}\",\"supports_text\":{},\"has_levels\":{},\"has_points_config\":{},\"svg\":\"{}\"}}{}",
+                "  {{\"type_id\":\"{}\",\"display_name\":\"{}\",\"kind\":\"{:?}\",\"click_behavior\":\"{:?}\",\"tooltip\":\"{}\",\"icon_name\":\"{}\",\"icon_resolved\":{},\"default_color\":\"{}\",\"supports_text\":{},\"has_levels\":{},\"svg\":\"{}\"}}{}",
                 q(m.type_id),
                 q(m.display_name),
                 m.kind,
@@ -438,7 +430,6 @@ mod catalogue_dump {
                 q(m.default_color),
                 m.supports_text,
                 m.has_levels,
-                m.has_points_config,
                 q(svg),
                 comma,
             );

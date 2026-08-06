@@ -229,6 +229,6 @@ pub fn metadata() -> PrimitiveMetadata {
         click_behavior: ClickBehavior::TwoPoint,
         tooltip: "Draw a trend line showing the angle in degrees",
         icon: "trend_angle", default_color: "#FF9800", factory: create_trend_angle,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

@@ -219,6 +219,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a Bezier curve (start, end, control)",
         icon: "curve", default_color: "#00BCD4",
         factory: create_curve,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

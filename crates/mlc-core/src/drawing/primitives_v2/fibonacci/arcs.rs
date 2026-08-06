@@ -660,6 +660,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_fib_arcs,
         supports_text: true,
         has_levels: true,
-        has_points_config: false,
     }
 }

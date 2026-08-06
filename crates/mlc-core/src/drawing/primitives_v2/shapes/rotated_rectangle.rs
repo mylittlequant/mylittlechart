@@ -401,6 +401,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a rotatable rectangle (center, corner, height)",
         icon: "rotated_rectangle", default_color: "#3F51B5",
         factory: create_rotated_rectangle,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

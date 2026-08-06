@@ -203,6 +203,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| { let (t, p) = points.first().copied().unwrap_or((0, 0.0)); Box::new(AnchoredText::new(t, p, color)) },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

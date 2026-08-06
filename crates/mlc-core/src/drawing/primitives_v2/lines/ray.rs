@@ -201,6 +201,6 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "ray", display_name: "Ray", kind: PrimitiveKind::Line,
         click_behavior: ClickBehavior::TwoPoint, tooltip: "Draw a ray extending to the right",
         icon: "ray", default_color: "#2196F3", factory: create_ray,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

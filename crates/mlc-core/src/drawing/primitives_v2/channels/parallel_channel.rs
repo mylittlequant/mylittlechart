@@ -264,6 +264,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_parallel_channel,
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

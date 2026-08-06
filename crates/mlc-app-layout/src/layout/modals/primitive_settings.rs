@@ -19,6 +19,7 @@ use crate::ui::widgets::{
     begin_modal_shell, end_modal_shell, labelled_tabs_width, ModalFooter, ModalPlacement,
     ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
 };
+use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
 use mlc_core::i18n::{IndicatorKey, SettingsKey, t_indicator, t_settings};
@@ -221,23 +222,32 @@ pub fn render_primitive_settings_modal(
     // Get text_properties for current primitive
     let text_props = prim.text_properties();
 
-    // Calculate content height based on active tab
-    let content_height = (match state.active_tab {
+    // True height the active tab's rows need — padding excluded (the shell's
+    // `content_height` is body-only, see `ModalShellSpec::content_height` doc).
+    // NOT clamped: a hard `.clamp(.., 400.0)` here used to throw away the
+    // real number the row loop below needed, so a tab past ~11 rows (the
+    // label-plumbing pass's 9 extra LabelStyle rows on top of the existing
+    // ones gets there on its own) drew straight past the frame the shell
+    // built for the clamped height, with the footer landing mid-content.
+    // The ceiling now lives on the shell (`max_content_height` below), which
+    // reports the difference as `shell.overflow` for the `ScrollableContainer`
+    // to actually scroll instead of silently discarding it.
+    let rows_height = (match state.active_tab {
         PrimitiveSettingsTab::Style => {
             let base_rows = if prim_data.color.fill.is_some() { 4 } else { 3 };
             let extra_rows = style_props.len();
-            (base_rows + extra_rows) as f64 * (row_height + row_gap) + modal_padding * 2.0
+            (base_rows + extra_rows) as f64 * (row_height + row_gap)
         }
         PrimitiveSettingsTab::Text => {
             if let Some(ref props) = text_props {
-                props.len() as f64 * (row_height + row_gap) + modal_padding * 2.0
+                props.len() as f64 * (row_height + row_gap)
             } else {
-                4.0 * (row_height + row_gap) + 120.0 + modal_padding * 2.0
+                4.0 * (row_height + row_gap) + 120.0
             }
         }
         PrimitiveSettingsTab::Coordinates => {
             let points = prim.points();
-            points.len().max(1) as f64 * (row_height + row_gap) + modal_padding * 2.0
+            points.len().max(1) as f64 * (row_height + row_gap)
         }
         PrimitiveSettingsTab::Levels => {
             let level_props_rows = level_props.len();
@@ -246,12 +256,17 @@ pub fn render_primitive_settings_modal(
             } else {
                 0.0
             };
-            (level_props_rows as f64 * (row_height + row_gap)) + level_configs_rows + modal_padding * 2.0
+            (level_props_rows as f64 * (row_height + row_gap)) + level_configs_rows
         }
         PrimitiveSettingsTab::Visibility => {
-            9.0 * (row_height + row_gap) + modal_padding * 2.0
+            9.0 * (row_height + row_gap)
         }
-    }).clamp(150.0, 400.0);
+    }).max(row_height);
+
+    // Ceiling on the body. A short tab (e.g. Visibility) still sizes the
+    // frame to its content; a long one (Style, now that primitives can carry
+    // 20+ style properties) stops growing here and scrolls the rest.
+    let max_content_height = (screen_h - 250.0).clamp(200.0, 460.0);
 
     // The shell lays the tab strip out; this modal only needs to know how wide
     // the strip will be, so it asks the same code rather than measuring twice.
@@ -276,8 +291,8 @@ pub fn render_primitive_settings_modal(
         toolbar_theme,
     );
     let spec = ModalShellSpec {
-        // The body's own padding is already inside `content_height`, so the
-        // shell is told what is left after it.
+        // The body's own padding is separate from the chrome's own constants
+        // (`FOOTER_PAD` etc.) — this is only the body's inset.
         padding: modal_padding,
         placement: ModalPlacement::At(Some(state.position.unwrap_or((
             (screen_w - modal_width) / 2.0,
@@ -287,8 +302,9 @@ pub fn render_primitive_settings_modal(
             "prim_settings",
             &title_text,
             modal_width,
-            content_height - modal_padding * 2.0,
+            rows_height,
         )
+        .with_max_content_height(max_content_height)
         // The layer keeps its old name: it is the key
         // `close_topmost_known_modal_layer` matches on.
         .layer_named("primitive_settings")
@@ -309,18 +325,23 @@ pub fn render_primitive_settings_modal(
     result.header_rect = shell.header;
     result.close_btn_rect = shell.close_btn.unwrap_or_default();
     result.tab_rects = shell.tab_rects.clone();
+    result.total_content_height = rows_height;
+    result.viewport_height = shell.content.height;
 
     // === CONTENT AREA ===
-    // Top of the body area with the padding still to come — the rows below add
-    // it back, exactly as they did when this modal laid its own chrome out.
-    let content_y = shell.content.y - modal_padding;
-    result.content_rect = WidgetRect::new(modal_x, content_y, shell.frame.width, shell.content.height);
+    // `shell.content` is the VIEWPORT the body draws into — not the height it
+    // asked for (`rows_height`). When they differ the body scrolls, via the
+    // `ScrollableContainer` set up below.
+    result.content_rect = WidgetRect::new(modal_x, shell.content.y, shell.frame.width, shell.content.height);
 
     // Render tab content
     let content_left = modal_x + modal_padding;
     let control_left = content_left + label_width + 8.0;
     let control_width = modal_width - modal_padding * 2.0 - label_width - 8.0;
-    let mut row_y = content_y + modal_padding;
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let scrollable = ScrollableContainer::new(shell.content, &state.scroll, Some(ScrollableConfig::default()));
+    scrollable.begin(ctx);
+    let mut row_y = scrollable.content_y();
 
     // Helper closure to draw a label
     let draw_label = |ctx: &mut dyn RenderContext, label: &str, y: f64| {
@@ -1587,6 +1608,48 @@ pub fn render_primitive_settings_modal(
                 row_y += row_height + row_gap;
             }
         }
+    }
+
+    // Closes the clip opened by `scrollable.begin()` above and draws the
+    // scrollbar. Registration for the tab-content widgets pushed during the
+    // match above is NOT clipped by this — only paint is — but that is safe
+    // here for the same reason it is safe in every other scrolling modal in
+    // this codebase: `end_modal_shell` below registers the footer LAST, and
+    // last-registered wins the hit test, so a row scrolled out of view can
+    // never swallow a click meant for Template/OK.
+    let scroll_result = scrollable.end(ctx, rows_height, &widget_theme);
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+
+    // Route mouse-wheel scroll here via InputCoordinator's scroll-sense pass
+    // (`process_scroll` in the app's wheel handler).
+    input_coordinator.register_on_layer(
+        "prim_settings:scroll_viewport",
+        uzor::types::Rect::new(shell.content.x, shell.content.y, shell.content.width, shell.content.height),
+        uzor::input::Sense::SCROLL,
+        &layer_id,
+    );
+
+    // Register scrollbar handle (inflated ±5px X for an easier grab) and
+    // track, mirroring the indicator-settings modal's pattern exactly — the
+    // ":scrollbar_handle" / ":scrollbar_track" id suffixes are what the
+    // app's drag-start/track-click dispatch matches on.
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "prim_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            &layer_id,
+        );
+    }
+    if let Some(ref track_rect) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "prim_settings:scrollbar_track",
+            uzor::types::Rect::new(track_rect.x, track_rect.y, track_rect.width, track_rect.height),
+            uzor::input::Sense::CLICK,
+            &layer_id,
+        );
     }
 
     // === TEMPLATE FOOTER ===

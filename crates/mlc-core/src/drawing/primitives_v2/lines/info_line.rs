@@ -265,6 +265,6 @@ pub fn metadata() -> PrimitiveMetadata {
         click_behavior: ClickBehavior::TwoPoint,
         tooltip: "Draw a line showing price difference, percentage, and bars",
         icon: "info_line", default_color: "#9C27B0", factory: create_info_line,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

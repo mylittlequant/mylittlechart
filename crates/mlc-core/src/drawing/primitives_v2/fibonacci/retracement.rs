@@ -739,6 +739,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_fib_retracement,
         supports_text: true,
         has_levels: true,
-        has_points_config: false,
     }
 }

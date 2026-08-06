@@ -126,6 +126,56 @@ pub fn fmt_price(price: f64) -> String {
     }
 }
 
+/// Draw a single line of label text with an optional background "plate" (fill +
+/// border, driven by `LabelStyle`), centered at `(x, y)` — `y` is the vertical
+/// CENTER the text will be drawn at (matches `TextBaseline::Middle`, which every
+/// caller sets before invoking this).
+///
+/// `font_size` sizes the plate height; it is passed separately from
+/// `label_style.font_size` because some callers (e.g. harmonic-pattern ratio
+/// numbers) intentionally render at a smaller size than the point labels while
+/// still sharing the same `LabelStyle` toggle.
+///
+/// Caller must already have set font, fill color (the label's own color) and
+/// text alignment on `ctx`. Shared by every pattern/Elliott primitive so one
+/// `LabelStyle` (and its "Show Background" toggle) governs every label a
+/// primitive draws, not just the point labels — precedent:
+/// `measurement::draw_stat_plate`.
+pub(crate) fn draw_label_plate(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    label: &str,
+    font_size: f64,
+    label_style: &LabelStyle,
+    label_color: &str,
+) {
+    if let Some(ref bg_color) = label_style.background_color {
+        let text_width = ctx.measure_text(label);
+        let padding = label_style.background_padding;
+        let radius = label_style.background_radius;
+        let bg_x = x - text_width / 2.0 - padding;
+        let bg_y = y - font_size / 2.0 - padding;
+        let bg_w = text_width + padding * 2.0;
+        let bg_h = font_size + padding * 2.0;
+
+        ctx.set_fill_color(bg_color);
+        ctx.begin_path();
+        ctx.rounded_rect(bg_x, bg_y, bg_w, bg_h, radius);
+        ctx.fill();
+
+        if let Some(ref border_color) = label_style.border_color {
+            ctx.set_stroke_color(border_color);
+            ctx.set_stroke_width(label_style.border_width);
+            ctx.stroke();
+        }
+
+        ctx.set_fill_color(label_color);
+    }
+
+    ctx.fill_text(label, x, y);
+}
+
 // Category modules
 pub mod lines;
 pub mod channels;

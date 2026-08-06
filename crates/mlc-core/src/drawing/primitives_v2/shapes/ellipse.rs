@@ -229,6 +229,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw an ellipse from center to corner",
         icon: "ellipse", default_color: "#9C27B0",
         factory: create_ellipse,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

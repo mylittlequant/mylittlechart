@@ -194,10 +194,31 @@ pub enum ConfigKey {
 
     // Path smoothing (Catmull-Rom-style quadratic curve through points)
     Smooth          = 77,
+
+    // Label backing plate (wave/pattern point labels + measurement rulers +
+    // trading position price labels — label-plumbing pass)
+    LabelBackgroundColor = 78,
+    LabelPadding         = 79,
+    LabelRadius          = 80,
+    LabelBorder          = 81,
+    LabelBorderColor     = 82,
+    LabelBorderWidth     = 83,
+    LabelOffset          = 84,
+
+    // Trading position tools (long/short position)
+    StopZoneColor   = 85,
+    TargetZoneColor = 86,
+    Quantity        = 87,
+    ShowPnl         = 88,
+
+    // Measurement rulers (price/date/price-date range)
+    ShowPriceDiff   = 89,
+    ShowBarCount    = 90,
+    ShowDuration    = 91,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 78;
+    pub const COUNT: usize = 92;
 
     /// Get translation for this key
     #[inline]

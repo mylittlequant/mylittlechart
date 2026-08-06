@@ -203,6 +203,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_vertical_line,
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

@@ -1211,7 +1211,6 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }
 
@@ -1270,7 +1269,6 @@ fn emoji_metadata(emoji_type: EmojiType) -> PrimitiveMetadata {
         factory: create_emoji_factory(emoji_type),
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }
 

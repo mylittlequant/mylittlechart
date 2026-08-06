@@ -203,6 +203,6 @@ pub fn metadata() -> PrimitiveMetadata {
             let (ts2, p2) = points.get(1).copied().unwrap_or((ts1, p1));
             Box::new(ArrowLine::new(ts1, p1, ts2, p2, color))
         },
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

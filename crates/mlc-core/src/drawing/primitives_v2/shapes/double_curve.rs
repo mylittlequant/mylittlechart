@@ -260,6 +260,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw an S-curve with two control points",
         icon: "double_curve", default_color: "#8BC34A",
         factory: create_double_curve,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

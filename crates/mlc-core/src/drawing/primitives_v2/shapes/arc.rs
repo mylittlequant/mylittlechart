@@ -261,6 +261,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw an arc (center, start, end)",
         icon: "arc", default_color: "#E91E63",
         factory: create_arc,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

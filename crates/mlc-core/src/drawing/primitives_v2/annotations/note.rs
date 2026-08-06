@@ -209,6 +209,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| { let (t1, p1) = points.first().copied().unwrap_or((0, 0.0)); let (t2, p2) = points.get(1).copied().unwrap_or((t1+180_000, p1-20.0)); Box::new(Note::new(t1, p1, t2, p2, color)) },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

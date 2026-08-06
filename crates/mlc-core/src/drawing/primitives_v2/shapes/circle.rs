@@ -230,6 +230,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a circle from center to edge",
         icon: "circle", default_color: "#4CAF50",
         factory: create_circle,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

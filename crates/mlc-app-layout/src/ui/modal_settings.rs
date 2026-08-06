@@ -385,6 +385,11 @@ pub struct PrimitiveSettingsState {
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
+    /// Scroll state for the tab content area. The label-plumbing pass (item 1
+    /// of the primitives batch) grew the Style tab past a fixed-height body
+    /// with nowhere for the overflow to go; this plus `ScrollableContainer`
+    /// in the renderer is the fix.
+    pub scroll: ScrollState,
 }
 
 impl PrimitiveSettingsState {
@@ -398,6 +403,7 @@ impl PrimitiveSettingsState {
         self.is_open = true;
         self.primitive_id = Some(primitive_id);
         self.active_tab = PrimitiveSettingsTab::Style;
+        self.scroll.reset();
         // Don't reset position - keep last position for convenience
     }
 
@@ -427,6 +433,7 @@ impl PrimitiveSettingsState {
     /// Set active tab
     pub fn set_tab(&mut self, tab: PrimitiveSettingsTab) {
         self.active_tab = tab;
+        self.scroll.reset();
     }
 
     /// Set position (for dragging)

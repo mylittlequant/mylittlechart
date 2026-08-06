@@ -7,7 +7,9 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::draw_stat_plate;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceDateRange {
@@ -19,14 +21,20 @@ pub struct PriceDateRange {
     #[serde(default = "default_true")] pub show_percentage: bool,
     #[serde(default = "default_true")] pub show_bars: bool,
     #[serde(default = "default_true")] pub show_pips: bool,
+    #[serde(default = "default_label_style")]
+    pub label_style: LabelStyle,
 }
 fn default_true() -> bool { true }
+fn default_label_style() -> LabelStyle {
+    LabelStyle { font_size: 13.0, ..Default::default() }
+}
 
 impl PriceDateRange {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "price_date_range".to_string(), display_name: "Price/Date Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
             ts1, price1, ts2, price2, show_percentage: true, show_bars: true, show_pips: true,
+            label_style: default_label_style(),
         }
     }
 }
@@ -84,8 +92,9 @@ impl Primitive for PriceDateRange {
         let w = (x2 - x1).abs();
         let h = (y2 - y1).abs();
 
-        // Draw filled rectangle
-        ctx.set_fill_color(&format!("{}40", &self.data.color.stroke));
+        // Light translucent rectangle — a ruler measures the range, it
+        // should not paint over it.
+        ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
         ctx.fill_rect(crisp(min_x, dpr), crisp(min_y, dpr), w, h);
 
         // Draw rectangle border
@@ -94,7 +103,9 @@ impl Primitive for PriceDateRange {
         ctx.set_stroke_width(self.data.width);
         ctx.stroke_rect(crisp(min_x, dpr), crisp(min_y, dpr), w, h);
 
-        // Calculate metrics
+        // Metrics: price delta (+ %), elapsed time (always shown — this tool
+        // combines both dimensions), bar count (real count, not a
+        // relabelled duration string).
         let price_diff = (self.price2 - self.price1).abs();
         let percentage = if self.price1 != 0.0 {
             (price_diff / self.price1.abs()) * 100.0
@@ -103,41 +114,36 @@ impl Primitive for PriceDateRange {
         };
         let duration_ms = (self.ts2 - self.ts1).abs();
         let duration_secs = duration_ms / 1000;
+        let duration_label = if duration_secs >= 86400 {
+            format!("{:.1}d", duration_secs as f64 / 86400.0)
+        } else if duration_secs >= 3600 {
+            format!("{:.1}h", duration_secs as f64 / 3600.0)
+        } else if duration_secs >= 60 {
+            format!("{:.0}m", duration_secs as f64 / 60.0)
+        } else {
+            format!("{}s", duration_secs)
+        };
+        let bar1 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts2);
+        let bar_count = (bar2 - bar1).abs().round() as i64;
 
-        // Draw labels
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_font("12px sans-serif");
-
-        let center_x = crisp(min_x + w / 2.0, dpr);
-        let center_y = crisp(min_y + h / 2.0, dpr);
-
-        // Price label
-        let mut y_offset = center_y - 15.0;
+        let mut lines = Vec::new();
+        let mut price_parts = Vec::new();
         if self.show_pips {
-            let price_label = if self.show_percentage {
-                format!("{} ({:.2}%)", super::super::fmt_price(price_diff), percentage)
-            } else {
-                super::super::fmt_price(price_diff)
-            };
-            ctx.fill_text(&price_label, center_x, y_offset);
-            y_offset += 15.0;
+            price_parts.push(super::super::fmt_price(price_diff));
         }
-
-        // Time duration label
+        if self.show_percentage {
+            price_parts.push(format!("{:.2}%", percentage));
+        }
+        if !price_parts.is_empty() {
+            lines.push(price_parts.join("  /  "));
+        }
+        lines.push(duration_label);
         if self.show_bars {
-            let time_label = if duration_secs >= 86400 {
-                format!("{:.1}d", duration_secs as f64 / 86400.0)
-            } else if duration_secs >= 3600 {
-                format!("{:.1}h", duration_secs as f64 / 3600.0)
-            } else if duration_secs >= 60 {
-                format!("{:.0}m", duration_secs as f64 / 60.0)
-            } else {
-                format!("{}s", duration_secs)
-            };
-            ctx.fill_text(&time_label, center_x, y_offset);
+            lines.push(format!("{} bars", bar_count));
         }
 
-        // Draw control points if selected
+        draw_stat_plate(ctx, crisp(min_x + w / 2.0, dpr), crisp(min_y + h / 2.0, dpr), &lines, &self.label_style, &self.data.color.stroke);
 
         // Render text if present
         if let Some(ref text) = self.data.text {
@@ -162,6 +168,51 @@ impl Primitive for PriceDateRange {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let mut props = vec![
+            ConfigProperty::show_price_diff(self.show_pips)
+                .with_category(PropertyCategory::Style)
+                .with_order(10),
+            ConfigProperty::show_as_percent(self.show_percentage)
+                .with_category(PropertyCategory::Style)
+                .with_order(11),
+            ConfigProperty::show_bar_count(self.show_bars)
+                .with_category(PropertyCategory::Style)
+                .with_order(12),
+            ConfigProperty::label_font_size(self.label_style.font_size)
+                .with_category(PropertyCategory::Style)
+                .with_order(13),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
+                .with_category(PropertyCategory::Style)
+                .with_order(14),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_pips" => {
+                if let Some(v) = value.as_bool() { self.show_pips = v; return true; }
+            }
+            "show_as_percent" => {
+                if let Some(v) = value.as_bool() { self.show_percentage = v; return true; }
+            }
+            "show_bars" => {
+                if let Some(v) = value.as_bool() { self.show_bars = v; return true; }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) { return true; }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {
@@ -175,6 +226,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

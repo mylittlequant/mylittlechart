@@ -162,6 +162,6 @@ pub fn metadata() -> PrimitiveMetadata {
         click_behavior: ClickBehavior::SingleClick,
         tooltip: "Draw crossing horizontal and vertical lines",
         icon: "cross_line", default_color: "#607D8B", factory: create_cross_line,
-        supports_text: false, has_levels: false, has_points_config: false,
+        supports_text: false, has_levels: false,
     }
 }

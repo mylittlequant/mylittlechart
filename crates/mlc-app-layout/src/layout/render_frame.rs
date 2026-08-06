@@ -91,6 +91,17 @@ pub struct PrimitiveSettingsResult {
     pub active_input_char_positions: Vec<f64>,
     /// Bounding rect of the currently active text input field.
     pub active_input_rect: Option<WidgetRect>,
+    /// True height of the active tab's rows, un-clamped — what the body
+    /// asked for. Compared against `viewport_height` by the wheel dispatch
+    /// to decide whether this modal has anything to scroll.
+    pub total_content_height: f64,
+    /// What the body actually got (`ModalShell::content.height`), after the
+    /// shell's `max_content_height` ceiling.
+    pub viewport_height: f64,
+    /// Scrollbar handle rect, when the tab overflows (for drag).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect, when the tab overflows (for click-to-page).
+    pub scrollbar_track_rect: Option<WidgetRect>,
 }
 
 // =============================================================================

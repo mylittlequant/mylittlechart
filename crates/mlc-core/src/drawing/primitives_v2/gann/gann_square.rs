@@ -537,6 +537,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_gann_square,
         supports_text: true,
         has_levels: true,
-        has_points_config: false,
     }
 }

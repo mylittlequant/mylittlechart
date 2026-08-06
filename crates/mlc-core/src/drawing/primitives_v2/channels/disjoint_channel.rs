@@ -313,6 +313,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_disjoint_channel,
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

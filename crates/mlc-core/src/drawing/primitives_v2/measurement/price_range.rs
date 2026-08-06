@@ -7,7 +7,9 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::draw_stat_plate;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceRange {
@@ -17,14 +19,20 @@ pub struct PriceRange {
     pub price2: f64,
     #[serde(default = "default_true")] pub show_percentage: bool,
     #[serde(default = "default_true")] pub show_pips: bool,
+    #[serde(default = "default_label_style")]
+    pub label_style: LabelStyle,
 }
 fn default_true() -> bool { true }
+fn default_label_style() -> LabelStyle {
+    LabelStyle { font_size: 13.0, ..Default::default() }
+}
 
 impl PriceRange {
     pub fn new(ts_ms: i64, price1: f64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "price_range".to_string(), display_name: "Price Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
             ts_ms, price1, price2, show_percentage: true, show_pips: true,
+            label_style: default_label_style(),
         }
     }
 }
@@ -78,8 +86,9 @@ impl Primitive for PriceRange {
         let max_y = y1.max(y2);
         let h = max_y - min_y;
 
-        // Draw filled area between the two horizontal lines
-        ctx.set_fill_color(&format!("{}40", &self.data.color.stroke));
+        // Light translucent band between the two horizontal lines — a ruler
+        // measures the range, it should not paint over it.
+        ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
         ctx.fill_rect(0.0, crisp(min_y, dpr), ctx.chart_width(), h);
 
         // Draw the two horizontal lines
@@ -97,7 +106,8 @@ impl Primitive for PriceRange {
         ctx.line_to(ctx.chart_width(), crisp(y2, dpr));
         ctx.stroke();
 
-        // Draw price difference label
+        // Stat plate: price delta (show_pips) and/or percentage change
+        // (show_percentage) — independent toggles, either can stand alone.
         let price_diff = (self.price2 - self.price1).abs();
         let percentage = if self.price1 != 0.0 {
             (price_diff / self.price1.abs()) * 100.0
@@ -105,22 +115,20 @@ impl Primitive for PriceRange {
             0.0
         };
 
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.set_font("12px sans-serif");
-
-        let label = if self.show_percentage && self.show_pips {
-            format!("{} ({:.2}%)", super::super::fmt_price(price_diff), percentage)
-        } else if self.show_percentage {
-            format!("{:.2}%", percentage)
-        } else if self.show_pips {
+        let mut parts = Vec::new();
+        if self.show_pips {
+            parts.push(super::super::fmt_price(price_diff));
+        }
+        if self.show_percentage {
+            parts.push(format!("{:.2}%", percentage));
+        }
+        let line = if parts.is_empty() {
             super::super::fmt_price(price_diff)
         } else {
-            super::super::fmt_price(price_diff)
+            parts.join("  /  ")
         };
 
-        ctx.fill_text(&label, crisp(x + 10.0, dpr), crisp(min_y + h / 2.0, dpr));
-
-        // Draw control points if selected
+        draw_stat_plate(ctx, x + 60.0, min_y + h / 2.0, &[line], &self.label_style, &self.data.color.stroke);
 
         // Render text if present
         if let Some(ref text) = self.data.text {
@@ -143,6 +151,45 @@ impl Primitive for PriceRange {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let mut props = vec![
+            ConfigProperty::show_price_diff(self.show_pips)
+                .with_category(PropertyCategory::Style)
+                .with_order(10),
+            ConfigProperty::show_as_percent(self.show_percentage)
+                .with_category(PropertyCategory::Style)
+                .with_order(11),
+            ConfigProperty::label_font_size(self.label_style.font_size)
+                .with_category(PropertyCategory::Style)
+                .with_order(13),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
+                .with_category(PropertyCategory::Style)
+                .with_order(14),
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "show_pips" => {
+                if let Some(v) = value.as_bool() { self.show_pips = v; return true; }
+            }
+            "show_as_percent" => {
+                if let Some(v) = value.as_bool() { self.show_percentage = v; return true; }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
+            }
+            "label_color" => {
+                if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; }
+            }
+            _ => {}
+        }
+        if self.label_style.apply_property(id, value) { return true; }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {
@@ -156,6 +203,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

@@ -256,6 +256,5 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_regression_trend,
         supports_text: true,
         has_levels: false,
-        has_points_config: false,
     }
 }

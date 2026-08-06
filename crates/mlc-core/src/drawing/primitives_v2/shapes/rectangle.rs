@@ -252,6 +252,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a rectangle by dragging",
         icon: "rectangle", default_color: "#2196F3",
         factory: create_rectangle,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

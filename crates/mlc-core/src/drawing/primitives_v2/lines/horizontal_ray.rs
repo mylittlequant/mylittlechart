@@ -152,6 +152,6 @@ pub fn metadata() -> PrimitiveMetadata {
         click_behavior: ClickBehavior::SingleClick,
         tooltip: "Draw a horizontal line extending to the right",
         icon: "horizontal_ray", default_color: "#4CAF50", factory: create_horizontal_ray,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

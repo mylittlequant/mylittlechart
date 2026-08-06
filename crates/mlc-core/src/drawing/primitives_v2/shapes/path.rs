@@ -228,6 +228,6 @@ pub fn metadata() -> PrimitiveMetadata {
         tooltip: "Draw a freeform path (double-click to finish)",
         icon: "path", default_color: "#009688",
         factory: create_path,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

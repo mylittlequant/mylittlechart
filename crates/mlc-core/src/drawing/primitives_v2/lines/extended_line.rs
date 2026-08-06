@@ -199,6 +199,6 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "extended_line", display_name: "Extended Line", kind: PrimitiveKind::Line,
         click_behavior: ClickBehavior::TwoPoint, tooltip: "Draw a line extending in both directions",
         icon: "extended_line", default_color: "#2196F3", factory: create_extended_line,
-        supports_text: true, has_levels: false, has_points_config: false,
+        supports_text: true, has_levels: false,
     }
 }

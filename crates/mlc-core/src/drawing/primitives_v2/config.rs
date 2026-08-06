@@ -254,7 +254,16 @@ pub struct LabelStyle {
     pub font_weight: String,
     /// Text color (if None, uses primitive stroke color)
     pub color: Option<String>,
-    /// Background color for label (if None, no background)
+    /// Background color for label (if None, no background). Defaults to a
+    /// dark translucent plate — labels drawn straight onto candles with no
+    /// backing were the single biggest readability defect in this arc; see
+    /// `nemo/mylittlechart` label-plumbing pass. `#[serde(default = ...)]`
+    /// (rather than only setting it in `Default for LabelStyle`) so JSON
+    /// that genuinely lacks the key — pre-dating this field's existence —
+    /// also resolves to a plate. Saved drawings that already serialized an
+    /// explicit `null` here keep reading back as no background; only a
+    /// fresh recreate of the primitive picks up the new default for those.
+    #[serde(default = "default_label_background_color")]
     pub background_color: Option<String>,
     /// Background padding in pixels
     #[serde(default = "default_label_padding")]
@@ -274,6 +283,7 @@ pub struct LabelStyle {
 
 fn default_label_font_size() -> f64 { 12.0 }
 fn default_font_weight() -> String { "normal".to_string() }
+fn default_label_background_color() -> Option<String> { Some("#0d0f14cc".to_string()) }
 fn default_label_padding() -> f64 { 4.0 }
 fn default_label_radius() -> f64 { 3.0 }
 fn default_border_width() -> f64 { 1.0 }
@@ -285,7 +295,7 @@ impl Default for LabelStyle {
             font_size: 12.0,
             font_weight: "normal".to_string(),
             color: None,
-            background_color: None,
+            background_color: default_label_background_color(),
             background_padding: 4.0,
             background_radius: 3.0,
             border_color: None,
@@ -331,6 +341,91 @@ impl LabelStyle {
         } else {
             format!("{}px sans-serif", self.font_size)
         }
+    }
+
+    /// Config properties for the parts of the struct beyond `font_size`/
+    /// `color` (those two predate this method — every call site already
+    /// wires them at fixed orders 13/14 via `ConfigProperty::label_font_size`/
+    /// `label_color`). This appends the remaining 6 fields — bold, offset,
+    /// background on/off + color, padding, corner radius, border on/off +
+    /// color + width — starting at `order_start`. Callers `.extend()` this
+    /// into their own `style_properties()`.
+    pub fn style_properties(&self, fallback_color: &str, order_start: i32) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::boolean("label_bold", ConfigKey::Bold.get(current_language()), self.font_weight == "bold")
+                .with_category(PropertyCategory::Style).with_order(order_start),
+            ConfigProperty::number("label_offset", ConfigKey::LabelOffset.get(current_language()), self.offset_y, Some(0.0), Some(60.0))
+                .with_category(PropertyCategory::Style).with_order(order_start + 1),
+            ConfigProperty::boolean("label_background", ConfigKey::ShowBackground.get(current_language()), self.background_color.is_some())
+                .with_category(PropertyCategory::Style).with_order(order_start + 2),
+            ConfigProperty::color("label_background_color", ConfigKey::LabelBackgroundColor.get(current_language()), self.background_color.as_deref().unwrap_or(fallback_color))
+                .with_category(PropertyCategory::Style).with_order(order_start + 3),
+            ConfigProperty::number("label_padding", ConfigKey::LabelPadding.get(current_language()), self.background_padding, Some(0.0), Some(20.0))
+                .with_category(PropertyCategory::Style).with_order(order_start + 4),
+            ConfigProperty::number("label_radius", ConfigKey::LabelRadius.get(current_language()), self.background_radius, Some(0.0), Some(20.0))
+                .with_category(PropertyCategory::Style).with_order(order_start + 5),
+            ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_color.is_some())
+                .with_category(PropertyCategory::Style).with_order(order_start + 6),
+            ConfigProperty::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), self.border_color.as_deref().unwrap_or(fallback_color))
+                .with_category(PropertyCategory::Style).with_order(order_start + 7),
+            ConfigProperty::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), self.border_width, Some(0.5), Some(6.0))
+                .with_category(PropertyCategory::Style).with_order(order_start + 8),
+        ]
+    }
+
+    /// Apply a property produced by `style_properties()`. Returns `true` if
+    /// `id` was recognized. `font_size`/`color` are NOT handled here — they
+    /// stay on the per-primitive `"label_font_size"`/`"label_color"` ids
+    /// callers already had; this only owns the ids it mints above.
+    pub fn apply_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "label_bold" => {
+                if let Some(v) = value.as_bool() {
+                    self.font_weight = if v { "bold".to_string() } else { "normal".to_string() };
+                    return true;
+                }
+            }
+            "label_offset" => {
+                if let Some(v) = value.as_number() { self.offset_y = v; return true; }
+            }
+            "label_background" => {
+                if let Some(v) = value.as_bool() {
+                    self.background_color = if v {
+                        Some(self.background_color.clone().unwrap_or_else(|| default_label_background_color().unwrap_or_default()))
+                    } else {
+                        None
+                    };
+                    return true;
+                }
+            }
+            "label_background_color" => {
+                if let Some(c) = value.as_color() { self.background_color = Some(c.to_string()); return true; }
+            }
+            "label_padding" => {
+                if let Some(v) = value.as_number() { self.background_padding = v.max(0.0); return true; }
+            }
+            "label_radius" => {
+                if let Some(v) = value.as_number() { self.background_radius = v.max(0.0); return true; }
+            }
+            "label_border" => {
+                if let Some(v) = value.as_bool() {
+                    self.border_color = if v {
+                        Some(self.border_color.clone().unwrap_or_else(|| "#666666".to_string()))
+                    } else {
+                        None
+                    };
+                    return true;
+                }
+            }
+            "label_border_color" => {
+                if let Some(c) = value.as_color() { self.border_color = Some(c.to_string()); return true; }
+            }
+            "label_border_width" => {
+                if let Some(v) = value.as_number() { self.border_width = v.max(0.1); return true; }
+            }
+            _ => {}
+        }
+        false
     }
 }
 
@@ -1058,6 +1153,77 @@ impl ConfigProperty {
     /// Create "Label Color" color property with i18n
     pub fn label_color(value: &str) -> Self {
         Self::color("label_color", ConfigKey::LabelColor.get(current_language()), value)
+    }
+
+    /// Create "Label Background Color" color property with i18n
+    pub fn label_background_color(value: &str) -> Self {
+        Self::color("label_background_color", ConfigKey::LabelBackgroundColor.get(current_language()), value)
+    }
+
+    /// Create "Label Padding" number property with i18n
+    pub fn label_padding(value: f64) -> Self {
+        Self::number("label_padding", ConfigKey::LabelPadding.get(current_language()), value, Some(0.0), Some(20.0))
+    }
+
+    /// Create "Label Corner Radius" number property with i18n
+    pub fn label_radius(value: f64) -> Self {
+        Self::number("label_radius", ConfigKey::LabelRadius.get(current_language()), value, Some(0.0), Some(20.0))
+    }
+
+    /// Create "Label Border" boolean property with i18n
+    pub fn label_border(value: bool) -> Self {
+        Self::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), value)
+    }
+
+    /// Create "Label Border Color" color property with i18n
+    pub fn label_border_color(value: &str) -> Self {
+        Self::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), value)
+    }
+
+    /// Create "Label Border Width" number property with i18n
+    pub fn label_border_width(value: f64) -> Self {
+        Self::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), value, Some(0.5), Some(6.0))
+    }
+
+    /// Create "Label Offset" number property with i18n
+    pub fn label_offset(value: f64) -> Self {
+        Self::number("label_offset", ConfigKey::LabelOffset.get(current_language()), value, Some(0.0), Some(60.0))
+    }
+
+    /// Create "Quantity" number property with i18n (trading position size)
+    pub fn quantity(value: f64) -> Self {
+        Self::number("quantity", ConfigKey::Quantity.get(current_language()), value, Some(0.0), Some(1_000_000.0))
+    }
+
+    /// Create "Show P&L" boolean property with i18n
+    pub fn show_pnl(value: bool) -> Self {
+        Self::boolean("show_pnl", ConfigKey::ShowPnl.get(current_language()), value)
+    }
+
+    /// Create "Stop Zone Color" color property with i18n (long/short position)
+    pub fn stop_zone_color(value: &str) -> Self {
+        Self::color("stop_color", ConfigKey::StopZoneColor.get(current_language()), value)
+    }
+
+    /// Create "Target Zone Color" color property with i18n (long/short position)
+    pub fn target_zone_color(value: &str) -> Self {
+        Self::color("target_color", ConfigKey::TargetZoneColor.get(current_language()), value)
+    }
+
+    /// Create "Show Price Diff" boolean property with i18n (measurement rulers).
+    /// Property id stays `"show_pips"` to match the struct field it drives.
+    pub fn show_price_diff(value: bool) -> Self {
+        Self::boolean("show_pips", ConfigKey::ShowPriceDiff.get(current_language()), value)
+    }
+
+    /// Create "Show Bar Count" boolean property with i18n (measurement rulers)
+    pub fn show_bar_count(value: bool) -> Self {
+        Self::boolean("show_bars", ConfigKey::ShowBarCount.get(current_language()), value)
+    }
+
+    /// Create "Show Duration" boolean property with i18n (date range ruler)
+    pub fn show_duration(value: bool) -> Self {
+        Self::boolean("show_time", ConfigKey::ShowDuration.get(current_language()), value)
     }
 
     /// Create "Wave Degree" select property with i18n

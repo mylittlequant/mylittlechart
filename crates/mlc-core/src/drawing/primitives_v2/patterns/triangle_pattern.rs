@@ -6,7 +6,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
-    render_primitive_text,
+    render_primitive_text, draw_label_plate,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
 
@@ -180,32 +180,7 @@ impl Primitive for TrianglePattern {
             };
             let lx = (x1 + x2) / 2.0;
             let ly = (y1_top + y1_bot + y2_top + y2_bot) / 4.0;
-
-            // Draw background if configured
-            if let Some(ref bg_color) = self.label_style.background_color {
-                let text_width = ctx.measure_text(label);
-                let padding = self.label_style.background_padding;
-                let radius = self.label_style.background_radius;
-                let bg_x = lx - text_width / 2.0 - padding;
-                let bg_y = ly - self.label_style.font_size / 2.0 - padding;
-                let bg_w = text_width + padding * 2.0;
-                let bg_h = self.label_style.font_size + padding * 2.0;
-
-                ctx.set_fill_color(bg_color);
-                ctx.begin_path();
-                ctx.rounded_rect(bg_x, bg_y, bg_w, bg_h, radius);
-                ctx.fill();
-
-                if let Some(ref border_color) = self.label_style.border_color {
-                    ctx.set_stroke_color(border_color);
-                    ctx.set_stroke_width(self.label_style.border_width);
-                    ctx.stroke();
-                }
-
-                ctx.set_fill_color(label_color);
-            }
-
-            ctx.fill_text(label, lx, ly);
+            draw_label_plate(ctx, lx, ly, label, self.label_style.font_size, &self.label_style, label_color);
         }
 
         // Render text if present
@@ -238,7 +213,7 @@ impl Primitive for TrianglePattern {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
-        vec![
+        let mut props = vec![
             ConfigProperty::show_labels(self.show_labels)
                 .with_category(PropertyCategory::Style)
                 .with_order(10),
@@ -265,7 +240,9 @@ impl Primitive for TrianglePattern {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::Style)
                 .with_order(21),
-        ]
+        ];
+        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
@@ -301,6 +278,7 @@ impl Primitive for TrianglePattern {
             }
             _ => {}
         }
+        if self.label_style.apply_property(id, value) { return true; }
         false
     }
 }
@@ -327,6 +305,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
-        has_points_config: true,
     }
 }

@@ -279,6 +279,5 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: false,
         has_levels: false,
-        has_points_config: false,
     }
 }
