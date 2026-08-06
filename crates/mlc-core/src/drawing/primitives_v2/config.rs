@@ -1030,6 +1030,11 @@ impl ConfigProperty {
         Self::number("fill_opacity", ConfigKey::FillOpacity.get(current_language()), value_pct, Some(0.0), Some(100.0))
     }
 
+    /// Create "Smooth" boolean property with i18n (path curve smoothing).
+    pub fn smooth(value: bool) -> Self {
+        Self::boolean("smooth", ConfigKey::Smooth.get(current_language()), value)
+    }
+
     /// Create "Level Mode" select property with i18n for pitchforks
     pub fn level_mode(value: &str) -> Self {
         let lang = current_language();

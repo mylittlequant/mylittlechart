@@ -191,10 +191,13 @@ pub enum ConfigKey {
 
     // Fill (closed shapes: rectangle, circle, ellipse, triangle, channels, …)
     FillOpacity     = 76,
+
+    // Path smoothing (Catmull-Rom-style quadratic curve through points)
+    Smooth          = 77,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 77;
+    pub const COUNT: usize = 78;
 
     /// Get translation for this key
     #[inline]

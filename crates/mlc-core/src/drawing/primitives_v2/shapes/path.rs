@@ -10,6 +10,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,6 +197,20 @@ impl Primitive for Path {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![ConfigProperty::smooth(self.smooth).with_order(20)]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "smooth" {
+            if let Some(v) = value.as_bool() {
+                self.smooth = v;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

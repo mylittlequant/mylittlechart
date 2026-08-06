@@ -1547,8 +1547,23 @@ impl DrawingManager {
                 }
             }
             DragType::ControlPoint(point_type) => {
-                prim.move_control_point(point_type, current_ts_ms, current_price);
-                self.session_mut(bid).drag_start = Some((current_ts_ms, current_price));
+                // Same no-movement guard as `DragType::Move` above. Without
+                // it, every call — including a spurious one that lands at
+                // (or within noise of) the exact position the drag already
+                // started from — re-applies `move_control_point`
+                // unconditionally. A single stray call is a same-value
+                // no-op, but a RUN of them (e.g. a zero-distance
+                // press→move×N→release gesture, which still emits N
+                // `UpdatePrimitiveDrag` calls) lets any per-call rounding
+                // in the screen↔data round trip compound across calls
+                // instead of collapsing back to nothing — a "drag" that
+                // never moved the cursor must never move the geometry.
+                let ts_delta = current_ts_ms - start_ts;
+                let price_delta = current_price - start_price;
+                if ts_delta.abs() > 0 || price_delta.abs() > 0.0001 {
+                    prim.move_control_point(point_type, current_ts_ms, current_price);
+                    self.session_mut(bid).drag_start = Some((current_ts_ms, current_price));
+                }
             }
         }
     }
@@ -1581,8 +1596,22 @@ impl DrawingManager {
                 }
             }
             DragType::ControlPoint(point_type) => {
-                prim.move_control_point_screen(point_type, screen_x, screen_y, current_ts_ms, current_price, bars, viewport, price_scale);
-                self.session_mut(bid).drag_start = Some((current_ts_ms, current_price));
+                // Same no-movement guard as `DragType::Move` above, and for
+                // the same reason `update_drag`'s ControlPoint arm now has
+                // it: nothing here may gate on `screen_x`/`screen_y` alone,
+                // because a zero-distance gesture still calls this with the
+                // SAME screen position on every step, and screen position
+                // is exactly what a rotated/pixel-space override (e.g.
+                // `RotatedRectangle::move_control_point_screen`) re-derives
+                // its opposite-corner pin from — a run of same-position
+                // calls must be a run of no-ops, not N reapplications
+                // against a target that shifts slightly on every call.
+                let ts_delta = current_ts_ms - start_ts;
+                let price_delta = current_price - start_price;
+                if ts_delta.abs() > 0 || price_delta.abs() > 0.0001 {
+                    prim.move_control_point_screen(point_type, screen_x, screen_y, current_ts_ms, current_price, bars, viewport, price_scale);
+                    self.session_mut(bid).drag_start = Some((current_ts_ms, current_price));
+                }
             }
         }
     }

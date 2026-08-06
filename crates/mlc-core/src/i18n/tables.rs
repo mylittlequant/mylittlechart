@@ -41,12 +41,12 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 ];
 
 // =============================================================================
-// ConfigKey table  (84 variants × N_LANG)
+// ConfigKey table  (78 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 77] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 78] = [
     /* 0  Labels            */ [ "Labels",                     "Метки",                                  "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "В процентах",                            "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -124,6 +124,7 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 77] = [
     /* 74 AlignTop          */ [ "Top",                         "Сверху",                                 "Arriba",              "Oben",                  "Haut",                    "Cima",                "上",        "上",            "위",          "أعلى",           "In alto",            "Üst",                "Góra",               "Вгорі",               "ऊपर"             ],
     /* 75 AlignBottom       */ [ "Bottom",                      "Снизу",                                  "Abajo",               "Unten",                 "Bas",                     "Baixo",               "下",        "下",            "아래",        "أسفل",           "In basso",           "Alt",                "Dół",                "Внизу",               "नीचे"            ],
     /* 76 FillOpacity       */ [ "Fill Opacity",                "Прозрачность заливки",                   "Opacidad de relleno", "Füllopazität",          "Opacité du remplissage",  "Opacidade do preenchimento", "填充不透明度", "塗りつぶしの不透明度", "채우기 불투명도", "عتامة التعبئة", "Opacità riempimento", "Dolgu Opaklığı",    "Nieprzezroczystość wypełnienia", "Непрозорість заливки", "भरण अपारदर्शिता" ],
+    /* 77 Smooth            */ [ "Smooth",                      "Сглаживание",                            "Suavizado",           "Glättung",              "Lissage",                 "Suavização",                 "平滑",       "スムーズ",             "매끄럽게",       "تنعيم",         "Smussatura",         "Yumuşatma",          "Wygładzanie",                    "Згладжування",         "चिकनापन"          ],
 ];
 
 // =============================================================================
