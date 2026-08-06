@@ -52,8 +52,10 @@ pub use keys_common::{
     TextKey,
     TooltipKey,
     MonthKey,
+    WeekdayKey,
     Translatable,
     month_names_short,
+    weekday_names_short,
 };
 
 // Chart-specific keys
@@ -77,6 +79,7 @@ pub use keys::{
     TradingKey,
     ToolbarMenuKey,
     CityKey,
+    HeadShouldersKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.

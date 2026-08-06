@@ -10,7 +10,7 @@
 
 use crate::chart::types::Viewport;
 use crate::Bar;
-use crate::i18n::{month_names_short, current_language};
+use crate::i18n::{month_names_short, weekday_names_short, current_language};
 use crate::{TimeFormatSettings, DateFormat};
 
 // =============================================================================
@@ -1397,7 +1397,7 @@ pub fn format_time_by_weight_with_settings(
     let dow_prefix = if settings.show_day_of_week {
         // Calculate day of week from timestamp
         let dow = day_of_week_from_timestamp(ts);
-        let dow_names = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+        let dow_names = weekday_names_short(current_language());
         format!("{} ", dow_names[dow as usize])
     } else {
         String::new()

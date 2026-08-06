@@ -541,10 +541,10 @@ pub fn render_settings_modal(
                             DropdownItem::item("never", t_settings(SettingsKey::CornerNever)),
                         ]),
                         "date_format" => Some(vec![
-                            DropdownItem::item("day_month_year", "ДД.ММ.ГГГГ (26.01.2025)"),
-                            DropdownItem::item("month_day_year", "ММ/ДД/ГГГГ (01/26/2025)"),
-                            DropdownItem::item("year_month_day", "ГГГГ-ММ-ДД (2025-01-26)"),
-                            DropdownItem::item("day_month_short", "ДД МММ (26 янв)"),
+                            DropdownItem::item("day_month_year", t_settings(SettingsKey::DateFormatDayMonthYear)),
+                            DropdownItem::item("month_day_year", t_settings(SettingsKey::DateFormatMonthDayYear)),
+                            DropdownItem::item("year_month_day", t_settings(SettingsKey::DateFormatYearMonthDay)),
+                            DropdownItem::item("day_month_short", t_settings(SettingsKey::DateFormatDayMonthShort)),
                         ]),
                         _ => None,
                     }

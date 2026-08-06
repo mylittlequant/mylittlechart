@@ -12012,9 +12012,9 @@ impl ChartApp {
             .unwrap_or_else(|| (
                 true, 70.0, 30.0,
                 true, false, true,
-                "(UTC+0) Лондон".to_string(),
+                mlc_core::TimeFormatSettings::default().timezone_label(),
                 "21.01.2026".to_string(),
-                "Авто".to_string(),
+                mlc_core::scale_settings::precision_label(None).to_string(),
             ));
         // Panel-owned display fields.
         let settings_default_panel = settings_pid.map(crate::chart_panel_state::ChartPanelState::new);

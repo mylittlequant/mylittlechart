@@ -227,7 +227,8 @@ pub use primitives_v2::signals::{
 /// Returns appropriate labels based on the primitive type:
 /// - XABCD patterns: `["X", "A", "B", "C", "D"]`
 /// - ABCD patterns: `["A", "B", "C", "D"]`
-/// - Head and shoulders: named shoulder/head labels
+/// - Head and shoulders: named shoulder/head/neckline labels
+///   (`i18n::HeadShouldersKey`, real per-language trading terminology)
 /// - Three drives: `["1", "2", "3", "4", "5", "6"]`
 /// - Elliott waves: numeric `["1", "2", "3", ...]`
 /// - Default: empty strings — every primitive without a named-point
@@ -253,11 +254,19 @@ pub fn get_point_labels(primitive_type: &str, count: usize) -> Vec<String> {
                 .collect()
         }
         "head_shoulders" => {
-            vec!["L плечо", "Голова", "R плечо", "Низ 1", "Низ 2"]
-                .into_iter()
-                .take(count)
-                .map(String::from)
-                .collect()
+            use crate::i18n::{HeadShouldersKey, current_language};
+            let lang = current_language();
+            [
+                HeadShouldersKey::LeftShoulder,
+                HeadShouldersKey::Head,
+                HeadShouldersKey::RightShoulder,
+                HeadShouldersKey::Neckline1,
+                HeadShouldersKey::Neckline2,
+            ]
+            .into_iter()
+            .take(count)
+            .map(|k| k.get(lang).to_string())
+            .collect()
         }
         "three_drives" => {
             vec!["1", "2", "3", "4", "5", "6"]

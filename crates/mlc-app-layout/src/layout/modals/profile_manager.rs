@@ -823,14 +823,14 @@ fn render_page_show_recovery_key(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
-        "Запишите и сохраните в безопасное место",
+        ProfileKey::RecoveryKeyWriteDownWarning.get(current_language()),
         inner_x + inner_w / 2.0,
         cy,
     );
     cy += 18.0;
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.fill_text(
-        "Если вы забудете пароль, этот ключ восстановит доступ",
+        ProfileKey::RecoveryKeyPasswordLossNote.get(current_language()),
         inner_x + inner_w / 2.0,
         cy,
     );
@@ -893,7 +893,7 @@ fn render_page_show_recovery_key(
     cy += key_box_h + 10.0;
 
     // Copy button: copies the recovery key to clipboard
-    let copy_btn_label = "Скопировать ключ";
+    let copy_btn_label = ProfileKey::BtnCopyKey.get(current_language());
     let is_copy_hovered = hovered == Some("profile_mgr:recovery_key_copy");
     let copy_btn_bg = if is_copy_hovered {
         toolbar_theme.button_bg_hover.as_str()
@@ -924,7 +924,7 @@ fn render_page_show_recovery_key(
     cy += copy_btn_h + 12.0;
 
     // Confirm button: "Я записал"
-    let btn_label = "Я записал — продолжить";
+    let btn_label = ProfileKey::BtnRecoveryConfirmed.get(current_language());
     let is_btn_hovered = hovered == Some("profile_mgr:recovery_key_confirm");
     let btn_bg = if is_btn_hovered {
         toolbar_theme.button_bg_hover.as_str()

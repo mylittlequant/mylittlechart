@@ -4,7 +4,7 @@
 //! Tables live in `tables_common.rs`.
 
 use super::lang::Language;
-use super::tables_common::{TEXT_KEY_TABLE, TOOLTIP_KEY_TABLE, MONTH_TABLE_SHORT, MONTH_TABLE_FULL};
+use super::tables_common::{TEXT_KEY_TABLE, TOOLTIP_KEY_TABLE, MONTH_TABLE_SHORT, MONTH_TABLE_FULL, WEEKDAY_TABLE_SHORT};
 
 // =============================================================================
 // General Text Keys
@@ -156,6 +156,49 @@ pub fn month_names_short(lang: Language) -> [&'static str; 12] {
 }
 
 // =============================================================================
+// Weekday Names (for TimeScale day-of-week prefix)
+// =============================================================================
+
+/// Short weekday-name keys for the time axis' optional day-of-week prefix.
+///
+/// Variant order is **frozen** (Sunday=0 .. Saturday=6, matching
+/// `day_of_week_from_timestamp` in `chart/types/time_scale.rs`, where the
+/// Unix epoch — a Thursday — resolves to index 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum WeekdayKey {
+    Sunday    = 0,
+    Monday    = 1,
+    Tuesday   = 2,
+    Wednesday = 3,
+    Thursday  = 4,
+    Friday    = 5,
+    Saturday  = 6,
+}
+
+impl WeekdayKey {
+    /// Get short weekday name, En fallback for empty cells.
+    #[inline]
+    pub fn short(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&WEEKDAY_TABLE_SHORT[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for WeekdayKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&WEEKDAY_TABLE_SHORT[self as usize], lang_index)
+    }
+}
+
+/// Get localized short weekday names array, indexed Sunday=0 .. Saturday=6.
+pub fn weekday_names_short(lang: Language) -> [&'static str; 7] {
+    std::array::from_fn(|i| {
+        uzor::table_lookup!(&WEEKDAY_TABLE_SHORT[i], lang as usize)
+    })
+}
+
+// =============================================================================
 // Tooltip Keys
 // =============================================================================
 
@@ -238,6 +281,13 @@ impl Translatable for TooltipKey {
     }
 }
 
+impl Translatable for WeekdayKey {
+    /// Returns the short weekday name for the given language.
+    fn display_name(&self, lang: Language) -> &'static str {
+        self.short(lang)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +302,15 @@ mod tests {
     fn test_tooltip_keys() {
         assert_eq!(TooltipKey::CloseWindow.get(Language::En), "Close window");
         assert_eq!(TooltipKey::CloseWindow.get(Language::Ru), "Закрыть окно");
+    }
+
+    #[test]
+    fn test_weekday_keys() {
+        assert_eq!(WeekdayKey::Sunday.short(Language::En), "Sun");
+        assert_eq!(WeekdayKey::Sunday.short(Language::Ru), "Вс");
+        let names = weekday_names_short(Language::Ru);
+        assert_eq!(names[0], "Вс");
+        assert_eq!(names[4], "Чт");
     }
 
     #[test]

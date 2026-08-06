@@ -161,10 +161,11 @@ impl PriceScalePosition {
 
     /// Get display label for UI
     pub fn label(&self) -> &'static str {
+        let lang = current_language();
         match self {
-            Self::Left => "Слева",
-            Self::Right => "Справа",
-            Self::Hidden => "Скрыта",
+            Self::Left => SettingsKey::ScalePosLeft.get(lang),
+            Self::Right => SettingsKey::ScalePosRight.get(lang),
+            Self::Hidden => SettingsKey::ScalePosHidden.get(lang),
         }
     }
 
@@ -198,10 +199,11 @@ impl TimeScalePosition {
 
     /// Get display label for UI
     pub fn label(&self) -> &'static str {
+        let lang = current_language();
         match self {
-            Self::Top => "Сверху",
-            Self::Bottom => "Снизу",
-            Self::Hidden => "Скрыта",
+            Self::Top => SettingsKey::ScalePosTop.get(lang),
+            Self::Bottom => SettingsKey::ScalePosBottom.get(lang),
+            Self::Hidden => SettingsKey::ScalePosHidden.get(lang),
         }
     }
 
@@ -235,10 +237,11 @@ impl ScaleCornerVisibility {
 
     /// Get display label for UI
     pub fn label(&self) -> &'static str {
+        let lang = current_language();
         match self {
-            Self::Always => "Всегда",
-            Self::OnHover => "При наведении",
-            Self::Never => "Никогда",
+            Self::Always => SettingsKey::CornerAlways.get(lang),
+            Self::OnHover => SettingsKey::CornerOnHover.get(lang),
+            Self::Never => SettingsKey::CornerNever.get(lang),
         }
     }
 

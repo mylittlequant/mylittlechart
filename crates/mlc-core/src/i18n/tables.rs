@@ -330,12 +330,12 @@ pub(super) static CLOCK_KEY_TABLE: [[&str; N_LANG]; 5] = [
 ];
 
 // =============================================================================
-// SettingsKey table  (108 variants × N_LANG)
+// SettingsKey table  (131 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En                                          1=Ru                                              2..14=""
 
-pub(super) static SETTINGS_KEY_TABLE: [[&str; N_LANG]; 126] = [
+pub(super) static SETTINGS_KEY_TABLE: [[&str; N_LANG]; 131] = [
     // Header / footer
     /* 0  Title                   */ [ "Settings",                          "Настройки",                                 "Configuración",                "Einstellungen",                "Paramètres",                        "Configurações",                "设置",             "設定",                "설정",              "الإعدادات",             "Impostazioni",              "Ayarlar",                  "Ustawienia",                "Налаштування",                   "सेटिंग्स"                ],
     /* 1  ButtonTemplate          */ [ "Template",                          "Шаблон",                                    "Plantilla",                    "Vorlage",                      "Modèle",                            "Modelo",                       "模板",             "テンプレート",        "템플릿",            "قالب",                  "Modello",                   "Şablon",                   "Szablon",                   "Шаблон",                         "टेम्पलेट"                ],
@@ -484,6 +484,17 @@ pub(super) static SETTINGS_KEY_TABLE: [[&str; N_LANG]; 126] = [
     /* 123 TfDays                 */ [ "Days",                              "Дни",                                       "Días",                         "Tage",                         "Jours",                             "Dias",                         "天",               "日",                  "일",                "أيام",                  "Giorni",                    "Gün",                       "Dni",                        "Дні",                            "दिन"                     ],
     /* 124 TfWeeks                */ [ "Weeks",                             "Недели",                                    "Semanas",                      "Wochen",                       "Semaines",                          "Semanas",                      "周",               "週",                  "주",                "أسابيع",                "Settimane",                 "Hafta",                     "Tygodnie",                   "Тижні",                          "सप्ताह"                  ],
     /* 125 TfMonths               */ [ "Months",                            "Месяцы",                                    "Meses",                        "Monate",                       "Mois",                              "Meses",                        "月",               "月",                  "월",                "أشهر",                  "Mesi",                      "Ay",                        "Miesiące",                   "Місяці",                         "महीने"                   ],
+    // Default template-name prefix (shared by chart/primitive/indicator/compare
+    // "Save as..." flows — was 4 duplicated hardcoded Russian literals)
+    /* 126 DefaultTemplateNamePrefix */ [ "My template",                    "Мой шаблон",                                "Mi plantilla",                 "Meine Vorlage",                "Mon modèle",                        "Meu modelo",                   "我的模板",         "マイテンプレート",     "내 템플릿",         "قالبي",                 "Il mio modello",            "Şablonum",                  "Mój szablon",                "Мій шаблон",                     "मेरा टेम्पलेट"          ],
+    // Date-format dropdown examples (ScalesLines tab). Day/month/year letters
+    // follow each language's own convention (Windows/Excel short-date style);
+    // "MMM" is a deliberate cross-locale token for "month abbreviation".
+    // Separator + concrete digits mirror `DateFormat` in time_scale.rs exactly.
+    /* 127 DateFormatDayMonthYear */ [ "DD.MM.YYYY (26.01.2025)",           "ДД.ММ.ГГГГ (26.01.2025)",                   "DD.MM.AAAA (26.01.2025)",      "TT.MM.JJJJ (26.01.2025)",      "JJ.MM.AAAA (26.01.2025)",           "DD.MM.AAAA (26.01.2025)",      "DD.MM.YYYY (26.01.2025)", "DD.MM.YYYY (26.01.2025)", "DD.MM.YYYY (26.01.2025)", "DD.MM.YYYY (26.01.2025)", "GG.MM.AAAA (26.01.2025)",   "GG.AA.YYYY (26.01.2025)",   "DD.MM.RRRR (26.01.2025)",    "ДД.ММ.РРРР (26.01.2025)",        "DD.MM.YYYY (26.01.2025)" ],
+    /* 128 DateFormatMonthDayYear */ [ "MM/DD/YYYY (01/26/2025)",           "ММ/ДД/ГГГГ (01/26/2025)",                   "MM/DD/AAAA (01/26/2025)",      "MM/TT/JJJJ (01/26/2025)",      "MM/JJ/AAAA (01/26/2025)",           "MM/DD/AAAA (01/26/2025)",      "MM/DD/YYYY (01/26/2025)", "MM/DD/YYYY (01/26/2025)", "MM/DD/YYYY (01/26/2025)", "MM/DD/YYYY (01/26/2025)", "MM/GG/AAAA (01/26/2025)",   "AA/GG/YYYY (01/26/2025)",   "MM/DD/RRRR (01/26/2025)",    "ММ/ДД/РРРР (01/26/2025)",        "MM/DD/YYYY (01/26/2025)" ],
+    /* 129 DateFormatYearMonthDay */ [ "YYYY-MM-DD (2025-01-26)",           "ГГГГ-ММ-ДД (2025-01-26)",                   "AAAA-MM-DD (2025-01-26)",      "JJJJ-MM-TT (2025-01-26)",      "AAAA-MM-JJ (2025-01-26)",           "AAAA-MM-DD (2025-01-26)",      "YYYY-MM-DD (2025-01-26)", "YYYY-MM-DD (2025-01-26)", "YYYY-MM-DD (2025-01-26)", "YYYY-MM-DD (2025-01-26)", "AAAA-MM-GG (2025-01-26)",   "YYYY-AA-GG (2025-01-26)",   "RRRR-MM-DD (2025-01-26)",    "РРРР-ММ-ДД (2025-01-26)",        "YYYY-MM-DD (2025-01-26)" ],
+    /* 130 DateFormatDayMonthShort*/ [ "DD MMM (26 Jan)",                   "ДД MMM (26 Янв)",                           "DD MMM (26 Ene)",              "TT MMM (26 Jan)",              "JJ MMM (26 janv.)",                 "DD MMM (26 jan.)",             "DD MMM (26 1月)",         "DD MMM (26 1月)",         "DD MMM (26 1월)",         "DD MMM (26 يناير)",       "GG MMM (26 gen.)",          "GG MMM (26 Oca)",           "DD MMM (26 sty)",            "ДД MMM (26 Січ)",                "DD MMM (26 जन.)"        ],
 ];
 
 // =============================================================================
@@ -522,12 +533,12 @@ pub(super) static USER_SETTINGS_KEY_TABLE: [[&str; N_LANG]; 26] = [
 ];
 
 // =============================================================================
-// ProfileKey table  (23 variants × N_LANG)
+// ProfileKey table  (28 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En                                        1=Ru                                           2..14=""
 
-pub(super) static PROFILE_KEY_TABLE: [[&str; N_LANG]; 24] = [
+pub(super) static PROFILE_KEY_TABLE: [[&str; N_LANG]; 28] = [
     /* 0  ZeroTrust              */ [ "Zero-trust",                        "Нулевое доверие",                           "Cero confianza",                    "Null-Vertrauen",                       "Zéro confiance",                           "Zero confiança",                        "零信任",            "ゼロトラスト",            "제로 트러스트",       "ثقة معدومة",                "Zero-trust",                    "Sıfır Güven",                     "Zero-trust",                      "Нульова довіра",                        "शून्य-विश्वास"              ],
     /* 1  Profiles               */ [ "Profiles",                          "Профили",                                   "Perfiles",                          "Profile",                              "Profils",                                  "Perfis",                                "配置文件",          "プロフィール",            "프로필",              "الملفات الشخصية",           "Profili",                       "Profiller",                       "Profile",                         "Профілі",                               "प्रोफ़ाइल"                  ],
     /* 2  CreateNewProfile       */ [ "+ Create New Profile",              "+ Создать новый профиль",                   "+ Crear nuevo perfil",              "+ Neues Profil erstellen",             "+ Créer un nouveau profil",                "+ Criar novo perfil",                   "+ 新建配置文件",    "+ 新規プロフィール作成",   "+ 새 프로필 만들기",  "+ إنشاء ملف شخصي جديد",    "+ Crea nuovo profilo",          "+ Yeni Profil Oluştur",           "+ Utwórz nowy profil",            "+ Створити новий профіль",              "+ नया प्रोफ़ाइल बनाएं"      ],
@@ -552,6 +563,10 @@ pub(super) static PROFILE_KEY_TABLE: [[&str; N_LANG]; 24] = [
     /* 21 BackToProfiles         */ [ "Back to profiles",                  "К списку профилей",                         "Volver a perfiles",                 "Zurück zu Profilen",                   "Retour aux profils",                       "Voltar aos perfis",                     "返回配置文件",      "プロフィールに戻る",       "프로필로 돌아가기",   "العودة إلى الملفات الشخصية","Torna ai profili",              "Profillere Dön",                  "Wróć do profili",                 "Повернутися до профілів",               "प्रोफ़ाइल पर वापस जाएं" ],
     /* 22 Passphrase             */ [ "Passphrase",                        "Пароль",                                    "Frase de contraseña",               "Passphrase",                           "Phrase secrète",                           "Senha",                                 "密码短语",          "パスフレーズ",             "암호",                "كلمة المرور",               "Passphrase",                    "Parola",                          "Hasło",                           "Пароль",                                "पासफ्रेज़"                   ],
     /* 23 RecoveryKeyTitle       */ [ "Recovery Key",                      "Ключ восстановления",                        "Clave de recuperación",             "Wiederherstellungsschlüssel",          "Clé de récupération",                      "Chave de recuperação",                  "恢复密钥",          "回復キー",                "복구 키",             "مفتاح الاسترداد",           "Chiave di recupero",            "Kurtarma Anahtarı",               "Klucz odzyskiwania",              "Ключ відновлення",                      "रिकवरी कुंजी"               ],
+    /* 24 RecoveryKeyWriteDownWarning */ [ "Write it down and store it in a safe place.", "Запишите и сохраните в безопасное место.", "Anótela y guárdela en un lugar seguro.", "Schreiben Sie ihn auf und bewahren Sie ihn sicher auf.", "Notez-la et conservez-la en lieu sûr.", "Anote e guarde em um local seguro.", "请写下并妥善保存在安全的地方。", "書き留めて安全な場所に保管してください。", "적어서 안전한 곳에 보관하세요.", "اكتبها واحتفظ بها في مكان آمن.", "Annotala e conservala in un luogo sicuro.", "Yazın ve güvenli bir yerde saklayın.", "Zapisz go i przechowuj w bezpiecznym miejscu.", "Запишіть і зберігайте в безпечному місці.", "इसे लिख लें और सुरक्षित स्थान पर रखें।" ],
+    /* 25 RecoveryKeyPasswordLossNote */ [ "If you forget your password, this key will restore access.", "Если вы забудете пароль, этот ключ восстановит доступ.", "Si olvida su contraseña, esta clave restaurará el acceso.", "Wenn Sie Ihr Passwort vergessen, stellt dieser Schlüssel den Zugriff wieder her.", "Si vous oubliez votre mot de passe, cette clé restaurera l'accès.", "Se você esquecer sua senha, esta chave restaurará o acesso.", "如果您忘记密码，此密钥可恢复访问权限。", "パスワードを忘れた場合、このキーでアクセスを復元できます。", "비밀번호를 잊어버리면 이 키로 접근 권한을 복구할 수 있습니다.", "إذا نسيت كلمة المرور، سيعيد هذا المفتاح الوصول.", "Se dimentichi la password, questa chiave ripristinerà l'accesso.", "Şifrenizi unutursanız bu anahtar erişimi geri yükler.", "Jeśli zapomnisz hasła, ten klucz przywróci dostęp.", "Якщо ви забудете пароль, цей ключ відновить доступ.", "यदि आप अपना पासवर्ड भूल जाते हैं, तो यह कुंजी पहुंच बहाल कर देगी।" ],
+    /* 26 BtnCopyKey             */ [ "Copy key",                          "Скопировать ключ",                           "Copiar clave",                      "Schlüssel kopieren",                   "Copier la clé",                            "Copiar chave",                          "复制密钥",          "キーをコピー",            "키 복사",             "نسخ المفتاح",               "Copia chiave",                  "Anahtarı kopyala",                "Kopiuj klucz",                    "Копіювати ключ",                        "कुंजी कॉपी करें"            ],
+    /* 27 BtnRecoveryConfirmed   */ [ "I've written it down — continue",  "Я записал — продолжить",                     "Ya la anoté — continuar",           "Ich habe ihn notiert — weiter",        "Je l'ai notée — continuer",                "Já anotei — continuar",                 "已记录 — 继续",     "書き留めました — 続ける", "적었습니다 — 계속",   "لقد كتبتها — متابعة",       "L'ho annotata — continua",      "Yazdım — devam et",               "Zapisałem — kontynuuj",           "Я записав — продовжити",                "मैंने लिख लिया — जारी रखें" ],
 ];
 
 // =============================================================================
@@ -649,12 +664,12 @@ pub(super) static MODAL_KEY_TABLE: [[&str; N_LANG]; 76] = [
 ];
 
 // =============================================================================
-// IndicatorKey table  (21 variants × N_LANG)
+// IndicatorKey table  (29 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En                                              1=Ru                                           2..14=""
 
-pub(super) static INDICATOR_MODAL_KEY_TABLE: [[&str; N_LANG]; 28] = [
+pub(super) static INDICATOR_MODAL_KEY_TABLE: [[&str; N_LANG]; 29] = [
     /* 0  NoParams               */ [ "No configurable parameters",          "Нет настраиваемых параметров",               "Sin parámetros configurables",      "Keine konfigurierbaren Parameter",     "Aucun paramètre configurable",             "Sem parâmetros configuráveis",          "无可配置参数",      "設定可能なパラメーターなし","구성 가능한 파라미터 없음","لا توجد معاملات قابلة للضبط","Nessun parametro configurabile","Yapılandırılabilir parametre yok", "Brak konfigurowalnych parametrów",  "Немає налаштовуваних параметрів",       "कोई कॉन्फ़िगर करने योग्य पैरामीटर नहीं" ],
     /* 1  NoOutputs              */ [ "No configurable outputs",             "Нет настраиваемых выходов",                  "Sin salidas configurables",         "Keine konfigurierbaren Ausgaben",      "Aucune sortie configurable",               "Sem saídas configuráveis",              "无可配置输出",      "設定可能な出力なし",       "구성 가능한 출력 없음","لا توجد مخرجات قابلة للضبط","Nessun output configurabile",   "Yapılandırılabilir çıktı yok",    "Brak konfigurowalnych wyjść",     "Немає налаштовуваних виходів",          "कोई कॉन्फ़िगर करने योग्य आउटपुट नहीं" ],
     /* 2  EnableSignals          */ [ "Enable signals",                      "Включить сигналы",                           "Activar señales",                   "Signale aktivieren",                   "Activer les signaux",                      "Ativar sinais",                         "启用信号",          "シグナルを有効化",         "신호 활성화",         "تفعيل الإشارات",            "Abilita segnali",               "Sinyalleri Etkinleştir",          "Włącz sygnały",                   "Увімкнути сигнали",                     "सिग्नल सक्षम करें"          ],
@@ -684,6 +699,7 @@ pub(super) static INDICATOR_MODAL_KEY_TABLE: [[&str; N_LANG]; 28] = [
     /* 25 TextBold               */ [ "B",                                   "Ж",                                          "N",                                 "F",                                    "G",                                        "N",                                     "粗",                "太",                      "굵",                  "غ",                         "G",                             "K",                               "B",                               "Ж",                                     "B"                          ],
     /* 26 TextItalic             */ [ "I",                                   "К",                                          "C",                                 "K",                                    "I",                                        "I",                                     "斜",                "斜",                      "기",                  "م",                         "C",                             "İ",                               "K",                               "К",                                     "I"                          ],
     /* 27 TabInputs              */ [ "Parameters",                          "Параметры",                                  "Parámetros",                        "Parameter",                            "Paramètres",                               "Parâmetros",                            "参数",              "パラメーター",             "매개변수",            "المعاملات",                 "Parametri",                     "Parametreler",                    "Parametry",                       "Параметри",                             "पैरामीटर"                    ],
+    /* 28 Outputs                */ [ "Outputs:",                            "Выходы:",                                    "Salidas:",                          "Ausgaben:",                            "Sorties:",                                  "Saídas:",                               "输出：",            "出力：",                  "출력:",               "المخرجات:",                 "Output:",                        "Çıkışlar:",                       "Wyjścia:",                        "Виходи:",                                "आउटपुट:"                     ],
 ];
 
 // =============================================================================
@@ -939,12 +955,12 @@ pub(super) static PRIMITIVE_TOOLTIP_TABLE: [[&str; N_LANG]; 84] = [
 ];
 
 // =============================================================================
-// TradingKey table  (28 variants × N_LANG)
+// TradingKey table  (29 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En                    1=Ru                           2..14=""
 
-pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 28] = [
+pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
     /* 0  Bid              */ [ "BID",                  "БИД",                    "BID",              "BID",                   "BID",               "BID",               "买价",          "買値",           "매수호가",       "سعر الشراء",     "BID",                "BID",               "BID",               "БІД",                    "बिड"              ],
     /* 1  Ask              */ [ "ASK",                  "АСК",                    "ASK",              "ASK",                   "ASK",               "ASK",               "卖价",          "売値",           "매도호가",       "سعر البيع",      "ASK",                "ASK",               "ASK",               "АСК",                    "आस्क"             ],
     /* 2  Price            */ [ "PRICE",                "ЦЕНА",                   "PRECIO",           "PREIS",                 "PRIX",              "PREÇO",             "价格",          "価格",           "가격",           "السعر",          "PREZZO",             "FİYAT",             "CENA",              "ЦІНА",                   "मूल्य"            ],
@@ -973,6 +989,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 28] = [
     /* 25 Fee              */ [ "FEE",                  "КОМИССИЯ",               "COMISIÓN",         "GEBÜHR",                "FRAIS",             "TAXA",              "手续费",        "手数料",         "수수료",         "العمولة",        "COMMISSIONE",        "KOMİSYON",          "OPŁATA",            "КОМІСІЯ",                "शुल्क"            ],
     /* 26 NoTradesLog      */ [ "No trades",            "Нет сделок",             "Sin operaciones",  "Keine Trades",          "Aucune transaction","Sem trades",        "无交易",        "取引なし",       "거래 없음",      "لا توجد صفقات",  "Nessuna operazione", "İşlem yok",         "Brak transakcji",   "Немає угод",             "कोई ट्रेड नहीं"   ],
     /* 27 TotalPnlLog      */ [ "Total PnL:",           "Итого П/У:",             "P&L total:",       "Gesamt-GUV:",           "P&L total:",        "P&L total:",        "总盈亏:",       "合計損益:",      "총 손익:",       "إجمالي P&L:",    "P&L totale:",        "Toplam KZ:",        "Łączny Z/S:",       "Загальний П/З:",         "कुल P&L:"         ],
+    /* 28 ChartConnecting  */ [ "Chart — connecting",   "Chart — подключается",  "Chart — conectando","Chart — verbindet",    "Chart — connexion","Chart — conectando","图表 — 连接中","チャート — 接続中","차트 — 연결 중","الرسم البياني — يتصل","Chart — connessione","Chart — bağlanıyor","Chart — łączenie","Chart — з'єднання",     "चार्ट — कनेक्ट हो रहा है" ],
 ];
 
 // =============================================================================
@@ -1095,6 +1112,24 @@ pub(super) static CITY_KEY_TABLE: [[&str; N_LANG]; 25] = [
 ];
 
 // =============================================================================
+// HeadShouldersKey table  (5 named points × N_LANG)
+// =============================================================================
+//
+// Real per-language trading terminology, not word-for-word translation. The
+// neckline-point wording (rows 3-4) reuses each language's exact term
+// already established by `ConfigKey::ShowNeckline` above, for consistency.
+//
+//  Col:  0=En              1=Ru              2..14=""
+
+pub(super) static HEAD_SHOULDERS_KEY_TABLE: [[&str; N_LANG]; 5] = [
+    /* 0 LeftShoulder  */ [ "Left Shoulder",  "Левое плечо",    "Hombro izquierdo", "Linke Schulter", "Épaule gauche",  "Ombro esquerdo", "左肩",       "左肩",        "왼쪽 숄더",   "الكتف الأيسر",  "Spalla sinistra", "Sol Omuz",   "Lewe ramię",   "Ліве плече",    "बायां शोल्डर"  ],
+    /* 1 Head          */ [ "Head",           "Голова",         "Cabeza",            "Kopf",           "Tête",            "Cabeça",          "头部",       "頭",          "헤드",        "الرأس",          "Testa",            "Baş",         "Głowa",         "Голова",          "हेड"             ],
+    /* 2 RightShoulder */ [ "Right Shoulder", "Правое плечо",   "Hombro derecho",   "Rechte Schulter","Épaule droite",  "Ombro direito",  "右肩",       "右肩",        "오른쪽 숄더", "الكتف الأيمن",  "Spalla destra",   "Sağ Omuz",   "Prawe ramię",  "Праве плече",    "दायां शोल्डर"  ],
+    /* 3 Neckline1     */ [ "Neckline 1",     "Линия шеи 1",    "Línea de cuello 1","Nackenlinie 1",  "Ligne de cou 1", "Linha de pescoço 1","颈线 1",   "ネックライン 1","넥라인 1",    "خط العنق 1",    "Neckline 1",      "Boyun Çizgisi 1","Linia szyi 1", "Лінія шиї 1",    "नेकलाइन 1"      ],
+    /* 4 Neckline2     */ [ "Neckline 2",     "Линия шеи 2",    "Línea de cuello 2","Nackenlinie 2",  "Ligne de cou 2", "Linha de pescoço 2","颈线 2",   "ネックライン 2","넥라인 2",    "خط العنق 2",    "Neckline 2",      "Boyun Çizgisi 2","Linia szyi 2", "Лінія шиї 2",    "नेकलाइन 2"      ],
+];
+
+// =============================================================================
 // Completeness invariant (executable documentation)
 // =============================================================================
 //
@@ -1146,5 +1181,6 @@ mod completeness {
         assert_full("TRADING_KEY_TABLE", &TRADING_KEY_TABLE);
         assert_full("TOOLBAR_MENU_KEY_TABLE", &TOOLBAR_MENU_KEY_TABLE);
         assert_full("CITY_KEY_TABLE", &CITY_KEY_TABLE);
+        assert_full("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
     }
 }

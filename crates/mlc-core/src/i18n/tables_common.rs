@@ -111,6 +111,27 @@ pub(super) static MONTH_TABLE_FULL: [[&str; N_LANG]; 12] = [
 ];
 
 // =============================================================================
+// WeekdayKey table  (7 weekdays × N_LANG, Sunday=0 .. Saturday=6)
+// =============================================================================
+//
+// "MMM" in the chart_settings date-format dropdown examples is a deliberate
+// cross-locale token (spreadsheet format-code convention), not translated
+// here — this table is the actual localized short weekday names used by
+// TimeScale's optional day-of-week prefix.
+//
+//  Col:  0=En     1=Ru     2..14=""
+
+pub(super) static WEEKDAY_TABLE_SHORT: [[&str; N_LANG]; 7] = [
+    /* 0  Sunday    */ [ "Sun", "Вс", "Dom", "So", "dim.", "dom.", "周日", "日", "일", "أحد",   "dom.", "Paz", "nd", "Нд", "रवि"   ],
+    /* 1  Monday    */ [ "Mon", "Пн", "Lun", "Mo", "lun.", "seg.", "周一", "月", "월", "إثنين", "lun.", "Pzt", "pn", "Пн", "सोम"   ],
+    /* 2  Tuesday   */ [ "Tue", "Вт", "Mar", "Di", "mar.", "ter.", "周二", "火", "화", "ثلاثاء","mar.", "Sal", "wt", "Вт", "मंगल"  ],
+    /* 3  Wednesday */ [ "Wed", "Ср", "Mié", "Mi", "mer.", "qua.", "周三", "水", "수", "أربعاء","mer.", "Çar", "śr", "Ср", "बुध"   ],
+    /* 4  Thursday  */ [ "Thu", "Чт", "Jue", "Do", "jeu.", "qui.", "周四", "木", "목", "خميس",  "gio.", "Per", "cz", "Чт", "गुरु"  ],
+    /* 5  Friday    */ [ "Fri", "Пт", "Vie", "Fr", "ven.", "sex.", "周五", "金", "금", "جمعة",  "ven.", "Cum", "pt", "Пт", "शुक्र" ],
+    /* 6  Saturday  */ [ "Sat", "Сб", "Sáb", "Sa", "sam.", "sáb.", "周六", "土", "토", "سبت",   "sab.", "Cmt", "so", "Сб", "शनि"   ],
+];
+
+// =============================================================================
 // Completeness invariant (executable documentation)
 // =============================================================================
 //
@@ -137,5 +158,6 @@ mod completeness {
         assert_full("TOOLTIP_KEY_TABLE", &TOOLTIP_KEY_TABLE);
         assert_full("MONTH_TABLE_SHORT", &MONTH_TABLE_SHORT);
         assert_full("MONTH_TABLE_FULL", &MONTH_TABLE_FULL);
+        assert_full("WEEKDAY_TABLE_SHORT", &WEEKDAY_TABLE_SHORT);
     }
 }

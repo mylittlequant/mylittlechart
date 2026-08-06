@@ -16,6 +16,7 @@ use mlc_core::{
 };
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
+use mlc_core::i18n::{SettingsKey, t_settings};
 
 impl ChartApp {
     // -------------------------------------------------------------------------
@@ -106,14 +107,14 @@ impl ChartApp {
                     "template_save_as" => {
                         self.panel_app.chart_settings_state.template_dropdown_open = false;
                         self.panel_app.chart_settings_state.save_template_mode = true;
-                        let prefix = "Мой шаблон ";
+                        let prefix = t_settings(SettingsKey::DefaultTemplateNamePrefix);
                         let max_n = self.core.templates().chart_templates()
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
-                            .filter_map(|s| s.parse::<u32>().ok())
+                            .filter_map(|s| s.trim_start().parse::<u32>().ok())
                             .max()
                             .unwrap_or(0);
-                        let default_name = format!("{}{}", prefix, max_n + 1);
+                        let default_name = format!("{} {}", prefix, max_n + 1);
                         let field_id = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_TEMPLATE_NAME);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
@@ -2418,14 +2419,14 @@ impl ChartApp {
         if item_id == "template_save_as" {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
             self.panel_app.primitive_settings_state.save_template_mode = true;
-            let prefix = "Мой шаблон ";
+            let prefix = t_settings(SettingsKey::DefaultTemplateNamePrefix);
             let max_n = self.core.templates().primitive_templates()
                 .iter()
                 .filter_map(|t| t.name.strip_prefix(prefix))
-                .filter_map(|s| s.parse::<u32>().ok())
+                .filter_map(|s| s.trim_start().parse::<u32>().ok())
                 .max()
                 .unwrap_or(0);
-            let default_name = format!("{}{}", prefix, max_n + 1);
+            let default_name = format!("{} {}", prefix, max_n + 1);
             let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
             self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
             self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
@@ -3076,14 +3077,14 @@ impl ChartApp {
                     "template_save_as" => {
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.save_template_mode = true;
-                        let prefix = "Мой шаблон ";
+                        let prefix = t_settings(SettingsKey::DefaultTemplateNamePrefix);
                         let max_n = self.core.templates().indicator_templates()
                             .iter()
                             .filter_map(|t| t.name.strip_prefix(prefix))
-                            .filter_map(|s| s.parse::<u32>().ok())
+                            .filter_map(|s| s.trim_start().parse::<u32>().ok())
                             .max()
                             .unwrap_or(0);
-                        let default_name = format!("{}{}", prefix, max_n + 1);
+                        let default_name = format!("{} {}", prefix, max_n + 1);
                         let field_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);

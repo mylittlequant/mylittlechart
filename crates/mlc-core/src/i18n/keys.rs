@@ -24,6 +24,7 @@ use super::tables::{
     TRADING_KEY_TABLE,
     TOOLBAR_MENU_KEY_TABLE,
     CITY_KEY_TABLE,
+    HEAD_SHOULDERS_KEY_TABLE,
 };
 
 // =============================================================================
@@ -786,10 +787,27 @@ pub enum SettingsKey {
     TfDays                         = 123,
     TfWeeks                        = 124,
     TfMonths                       = 125,
+
+    // ---- chart_settings modal — default template name prefix (was a
+    // hardcoded Russian literal duplicated at 4 call sites across
+    // mlc-app/src/input/{settings,overlay}.rs; one key now) ----
+    DefaultTemplateNamePrefix      = 126,
+
+    // ---- chart_settings modal ScalesLines tab — date-format dropdown
+    // examples. The day/month/year letters are localized per language's own
+    // convention (e.g. DD/TT/JJ/GG for day); "MMM" is kept as a deliberate
+    // cross-locale token for "month abbreviation" (spreadsheet format-code
+    // convention) rather than translated. The separator (., /, -, space)
+    // and the concrete example digits are NOT localizable — they mirror the
+    // literal `DateFormat` variants in `chart/types/time_scale.rs` exactly. ----
+    DateFormatDayMonthYear         = 127,
+    DateFormatMonthDayYear         = 128,
+    DateFormatYearMonthDay         = 129,
+    DateFormatDayMonthShort        = 130,
 }
 
 impl SettingsKey {
-    pub const COUNT: usize = 126;
+    pub const COUNT: usize = 131;
 
     /// Get translation for this key
     #[inline]
@@ -924,10 +942,17 @@ pub enum ProfileKey {
 
     // ShowRecoveryKey page title
     RecoveryKeyTitle         = 23,
+
+    // ShowRecoveryKey page — subtitle + buttons (never localized before;
+    // four hardcoded Russian literals in `profile_manager.rs`)
+    RecoveryKeyWriteDownWarning  = 24,
+    RecoveryKeyPasswordLossNote  = 25,
+    BtnCopyKey                   = 26,
+    BtnRecoveryConfirmed         = 27,
 }
 
 impl ProfileKey {
-    pub const COUNT: usize = 24;
+    pub const COUNT: usize = 28;
 
     /// Get translation for this key.
     #[inline]
@@ -1216,10 +1241,13 @@ pub enum IndicatorKey {
     /// "Parameters" (Inputs tab label in the indicator settings modal —
     /// previously hardcoded Russian "Параметры" that never localized)
     TabInputs              = 27,
+    /// "Outputs:" (Info tab row label, prefixed to the output count —
+    /// previously a hardcoded Russian "Выходы: {}" format string)
+    Outputs                = 28,
 }
 
 impl IndicatorKey {
-    pub const COUNT: usize = 28;
+    pub const COUNT: usize = 29;
 
     /// Get translation for this key.
     #[inline]
@@ -1873,10 +1901,14 @@ pub enum TradingKey {
     Fee              = 25,
     NoTradesLog      = 26,
     TotalPnlLog      = 27,
+
+    // Center panel — chart-embed honest empty state (previously hardcoded
+    // Russian "Chart — подключается")
+    ChartConnecting  = 28,
 }
 
 impl TradingKey {
-    pub const COUNT: usize = 28;
+    pub const COUNT: usize = 29;
 
     /// Get translation for this key.
     #[inline]
@@ -2100,6 +2132,46 @@ impl uzor::i18n::Translate for CityKey {
     }
 }
 
+// =============================================================================
+// Head & Shoulders Pattern Point Keys
+// =============================================================================
+
+/// Named point labels for the `head_shoulders` drawing primitive's Coordinates
+/// tab (`drawing::get_point_labels`). Real per-language trading terminology,
+/// not a word-for-word translation — e.g. the two trough points are named
+/// after the neckline they define, reusing the same "neckline" vocabulary
+/// already established by `ConfigKey::ShowNeckline`.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `HEAD_SHOULDERS_KEY_TABLE`, and also the point order the primitive stores
+/// (left shoulder, head, right shoulder, then the two neckline troughs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum HeadShouldersKey {
+    LeftShoulder  = 0,
+    Head          = 1,
+    RightShoulder = 2,
+    Neckline1     = 3,
+    Neckline2     = 4,
+}
+
+impl HeadShouldersKey {
+    pub const COUNT: usize = 5;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&HEAD_SHOULDERS_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for HeadShouldersKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&HEAD_SHOULDERS_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2126,5 +2198,11 @@ mod tests {
     fn test_style_keys() {
         assert_eq!(StyleKey::Standard.get(Language::En), "Standard");
         assert_eq!(StyleKey::Standard.get(Language::Ru), "Стандарт");
+    }
+
+    #[test]
+    fn test_head_shoulders_keys() {
+        assert_eq!(HeadShouldersKey::Head.get(Language::En), "Head");
+        assert_eq!(HeadShouldersKey::Head.get(Language::Ru), "Голова");
     }
 }

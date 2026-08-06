@@ -32,6 +32,7 @@
 
 use serde::{Serialize, Deserialize};
 use crate::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::i18n::{TradingKey, current_language};
 use crate::panel_trait::TradingPanel;
 use crate::trading::order_flow::dom::DomState;
 use super::order_entry::OrderEntryState;
@@ -1140,7 +1141,7 @@ impl TradingPanel for TradingContainerState {
                 ctx.set_font("11px sans-serif");
                 ctx.set_text_align(TextAlign::Center);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text("Chart — подключается", dx + dw / 2.0, dy + dh / 2.0);
+                ctx.fill_text(TradingKey::ChartConnecting.get(current_language()), dx + dw / 2.0, dy + dh / 2.0);
             }
         }
 

@@ -27,7 +27,7 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use mlc_core::indicator_source::{SignalDisplayConfig, SignalShape};
 use uzor::types::Rect as WidgetRect;
 use uzor::render::{TextAlign, TextBaseline};
-use mlc_core::i18n::{IndicatorKey, t_indicator};
+use mlc_core::i18n::{IndicatorKey, t_indicator, SettingsKey, t_settings, TextKey, t_text};
 
 /// Render the indicator settings modal.
 ///
@@ -527,13 +527,13 @@ pub fn render_indicator_settings_modal(
                 .unwrap_or_else(TimeframeVisibilityConfig::all);
 
             let timeframes: [(&str, bool, bool, Option<(u32, u32)>, u32, u32); 7] = [
-                ("Тики", true, tf_config.ticks, None, 0, 0),
-                ("Секунды", false, tf_config.seconds.is_some(), tf_config.seconds, 1, 59),
-                ("Минуты", false, tf_config.minutes.is_some(), tf_config.minutes, 1, 59),
-                ("Часы", false, tf_config.hours.is_some(), tf_config.hours, 1, 24),
-                ("Дни", false, tf_config.days.is_some(), tf_config.days, 1, 366),
-                ("Недели", false, tf_config.weeks.is_some(), tf_config.weeks, 1, 52),
-                ("Месяцы", false, tf_config.months.is_some(), tf_config.months, 1, 12),
+                (t_settings(SettingsKey::TfTicks), true, tf_config.ticks, None, 0, 0),
+                (t_settings(SettingsKey::TfSeconds), false, tf_config.seconds.is_some(), tf_config.seconds, 1, 59),
+                (t_settings(SettingsKey::TfMinutes), false, tf_config.minutes.is_some(), tf_config.minutes, 1, 59),
+                (t_settings(SettingsKey::TfHours), false, tf_config.hours.is_some(), tf_config.hours, 1, 24),
+                (t_settings(SettingsKey::TfDays), false, tf_config.days.is_some(), tf_config.days, 1, 366),
+                (t_settings(SettingsKey::TfWeeks), false, tf_config.weeks.is_some(), tf_config.weeks, 1, 52),
+                (t_settings(SettingsKey::TfMonths), false, tf_config.months.is_some(), tf_config.months, 1, 12),
             ];
 
             let row_gap = 4.0;
@@ -1118,7 +1118,7 @@ pub fn render_indicator_settings_modal(
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
                 ctx.fill_text(t_indicator(IndicatorKey::Overlay), content_x + content_padding, row_y);
                 ctx.set_fill_color(text_color);
-                ctx.fill_text(if def.overlay { "Да" } else { "Нет" }, content_x + content_padding + 120.0, row_y);
+                ctx.fill_text(if def.overlay { t_text(TextKey::Yes) } else { t_text(TextKey::No) }, content_x + content_padding + 120.0, row_y);
                 row_y += row_height * 0.8;
 
                 // Bounds (if any)
@@ -1159,7 +1159,7 @@ pub fn render_indicator_settings_modal(
 
                 // Outputs count
                 ctx.set_fill_color(&toolbar_theme.item_text_muted);
-                ctx.fill_text(&format!("Выходы: {}", def.outputs.len()), content_x + content_padding, row_y);
+                ctx.fill_text(&format!("{} {}", t_indicator(IndicatorKey::Outputs), def.outputs.len()), content_x + content_padding, row_y);
                 row_y += row_height * 0.7;
 
                 for output in &def.outputs {
@@ -1276,7 +1276,7 @@ pub fn render_indicator_settings_modal(
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text("(нет шаблонов)", dd_x + 8.0, row_y + opt_h / 2.0);
+            ctx.fill_text(t_settings(SettingsKey::NoTemplates), dd_x + 8.0, row_y + opt_h / 2.0);
         } else {
             for tmpl in templates {
                 let row_id = format!("template_option:{}", tmpl.id);
