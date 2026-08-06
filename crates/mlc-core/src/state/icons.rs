@@ -565,10 +565,15 @@ pub const ICON_CROSS_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
   <circle cx="12" cy="12" r="2" fill="currentColor"/>
 </svg>"##;
 
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): the info
+/// box was small (8x5) and overlapped the diagonal's midpoint. Enlarged and
+/// pushed into the corner (less overlap) with a simple internal tick
+/// standing in for the readout text.
 pub const ICON_INFO_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 18L20 6"/>
+  <path d="M4 18L16 6"/>
   <circle cx="4" cy="18" r="2" fill="currentColor"/>
-  <rect x="14" y="4" width="8" height="5" rx="1"/>
+  <rect x="13" y="1" width="10" height="6" rx="1.5"/>
+  <path d="M15.5 4h5" stroke-width="1.3"/>
 </svg>"##;
 
 pub const ICON_TREND_ANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -583,28 +588,84 @@ pub const ICON_TREND_ANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" v
 // Channel Icons
 // =============================================================================
 
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): was 3
+/// near-parallel diagonals (1 solid + 2 dashed) crowding the same corners.
+/// Now ONE solid trend line plus two short perpendicular ticks marking the
+/// channel width at each end — reads clean at rail size.
 pub const ICON_REGRESSION_TREND: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 18L21 6"/><path d="M3 14L21 2" stroke-dasharray="2 2"/><path d="M3 22L21 10" stroke-dasharray="2 2"/>
+  <path d="M3 19L21 5"/>
+  <path d="M3 19L3 15" stroke-dasharray="2 2" opacity="0.6"/>
+  <path d="M21 5L21 9" stroke-dasharray="2 2" opacity="0.6"/>
 </svg>"##;
 
+/// Redrawn 2026-08-07 (icon audit item 4 — read as a mathematical sigma Σ):
+/// top+bottom horizontal boundaries plus a chevron on the left edge drew
+/// exactly the Σ glyph. Now one flat (horizontal) boundary and one sloped
+/// boundary — the actual "channel with one flat side" semantic.
 pub const ICON_FLAT_TOP_BOTTOM: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 6h18"/><path d="M3 18h18"/><path d="M3 6L10 12L3 18"/>
+  <path d="M3 6h18"/>
+  <path d="M3 18L21 10"/>
 </svg>"##;
 
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): was 4
+/// disconnected diagonal segments that read as scattered fragments. Now 2
+/// bent 2-segment polylines (top boundary, bottom boundary) — still reads
+/// as "non-parallel channel" with half the strokes.
 pub const ICON_DISJOINT_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 18L12 10"/><path d="M12 14L21 6"/><path d="M3 10L12 2"/><path d="M12 6L21 14"/>
+  <path d="M3 8L11 4L21 10"/>
+  <path d="M3 16L11 14L21 20"/>
 </svg>"##;
 
 // =============================================================================
 // Pitchfork Icons
 // =============================================================================
+// Redrawn 2026-08-07 (icon audit item 2): all 4 pitchfork variants shared
+// this one glyph, even though they are 4 distinct tools with different
+// median-line construction. Shared family silhouette (3-tine fork) kept —
+// they ARE a family — but the stem/handle treatment now differs per variant
+// to match its actual construction difference.
 
+/// Andrew's Pitchfork — the reference: straight median line down from the
+/// tine midpoint. Every other variant's stem is a variation on this one.
 pub const ICON_PITCHFORK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M12 20V8"/>
   <path d="M6 2v6c0 2 2 3 6 3s6-1 6-3V2"/>
   <path d="M6 2v4"/>
   <path d="M12 2v4"/>
   <path d="M18 2v4"/>
+</svg>"##;
+
+/// Schiff Pitchfork — median origin shifted to the midpoint of the first
+/// two tines (marked dot), not the handle center.
+pub const ICON_SCHIFF_PITCHFORK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 2v6c0 2 2 3 6 3s6-1 6-3V2"/>
+  <path d="M6 2v4"/>
+  <path d="M12 2v4"/>
+  <path d="M18 2v4"/>
+  <circle cx="9" cy="11" r="1.3" fill="currentColor"/>
+  <path d="M9 11L12 20"/>
+</svg>"##;
+
+/// Modified Schiff — median origin shifted further, to the midpoint of the
+/// last two tines (marked dot on the opposite side from Schiff).
+pub const ICON_MODIFIED_SCHIFF: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 2v6c0 2 2 3 6 3s6-1 6-3V2"/>
+  <path d="M6 2v4"/>
+  <path d="M12 2v4"/>
+  <path d="M18 2v4"/>
+  <circle cx="15" cy="11" r="1.3" fill="currentColor"/>
+  <path d="M15 11L12 20"/>
+</svg>"##;
+
+/// Inside Pitchfork — "projects backward through the handle": the median
+/// continues (dashed) past the tine base instead of stopping there.
+pub const ICON_INSIDE_PITCHFORK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 2v6c0 2 2 3 6 3s6-1 6-3V2"/>
+  <path d="M6 2v4"/>
+  <path d="M12 2v4"/>
+  <path d="M18 2v4"/>
+  <path d="M12 20V11"/>
+  <path d="M12 11V2" stroke-dasharray="2 2"/>
 </svg>"##;
 
 // =============================================================================
@@ -619,10 +680,14 @@ pub const ICON_FIB_RETRACEMENT: &str = r##"<svg xmlns="http://www.w3.org/2000/sv
   <path d="M4 4v16"/>
 </svg>"##;
 
+/// Redrawn 2026-08-07 (icon audit item 4 — read as "disabled"): the level
+/// guides used to span the full width and cross the trend leg at points
+/// that read like a prohibition slash. Now a proper A-B-C leg (3 points,
+/// matching "trend-based extension") with SHORT guides that don't cross it.
 pub const ICON_FIB_EXTENSION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L12 4L20 12"/>
-  <path d="M4 8h16" stroke-dasharray="2 2"/>
-  <path d="M4 14h16" stroke-dasharray="2 2"/>
+  <path d="M3 19L10 6L14 12L21 3"/>
+  <path d="M3 9h9" stroke-dasharray="2 2" opacity="0.7"/>
+  <path d="M12 15h9" stroke-dasharray="2 2" opacity="0.7"/>
 </svg>"##;
 
 pub const ICON_FIB_CHANNEL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -645,24 +710,28 @@ pub const ICON_FIB_TIME_ZONES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg
   <path d="M4 4v16"/><path d="M8 4v16"/><path d="M13 4v16" stroke-dasharray="2 2"/><path d="M20 4v16" stroke-dasharray="2 2"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): dropped the
+/// dashed bounding square (competed with the diagonal for attention);
+/// diagonal + 2 divider verticals + anchor dot IS the speed-resistance fan.
 pub const ICON_FIB_SPEED_RESISTANCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="2" y="2" width="20" height="20" stroke-dasharray="2 2"/>
   <path d="M2 22L22 2"/>
-  <path d="M8.67 2v20"/><path d="M15.33 2v20"/>
-  <circle cx="2" cy="22" r="1.2" fill="currentColor" stroke="none"/>
+  <path d="M8.67 2v20" opacity="0.7"/><path d="M15.33 2v20" opacity="0.7"/>
+  <circle cx="2" cy="22" r="1.3" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 pub const ICON_FIB_TREND_TIME: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 18L12 6L20 14"/><path d="M4 18v-14"/><path d="M12 6v12" stroke-dasharray="2 2"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 4 — read as "disabled"): the trend
+/// leg used to run the full corner-to-corner diagonal, which combined with
+/// the concentric arcs into a classic circle-slash "prohibited" glyph. The
+/// leg now stops short of the far corner.
 pub const ICON_FIB_ARCS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 20L20 4"/>
-  <path d="M4 13A7 7 0 0 1 11 20" stroke-dasharray="2 2"/>
-  <path d="M4 8A12 12 0 0 1 16 20" stroke-dasharray="2 2"/>
-  <path d="M4 3A17 17 0 0 1 21 20"/>
+  <path d="M4 20L14 8"/>
+  <path d="M4 14A6 6 0 0 1 9 20" stroke-dasharray="2 2"/>
+  <path d="M4 9A11 11 0 0 1 15 20" stroke-dasharray="2 2"/>
+  <path d="M4 4A16 16 0 0 1 20 20"/>
   <circle cx="4" cy="20" r="1.2" fill="currentColor" stroke="none"/>
 </svg>"##;
 
@@ -682,13 +751,32 @@ pub const ICON_FIB_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewB
 // Gann Icons
 // =============================================================================
 
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): dropped one
+/// of the two X diagonals (5 crossing strokes at full weight was a busy
+/// asterisk at rail size); the remaining diagonal + cross midlines are
+/// de-emphasized so the square border reads first.
 pub const ICON_GANN_BOX: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="4" y="4" width="16" height="16"/><path d="M4 4L20 20"/><path d="M20 4L4 20"/><path d="M12 4v16"/><path d="M4 12h16"/>
+  <rect x="4" y="4" width="16" height="16"/>
+  <path d="M4 4L20 20" opacity="0.6"/>
+  <path d="M12 4v16" opacity="0.6"/>
+  <path d="M4 12h16" opacity="0.6"/>
 </svg>"##;
 
+/// Resizable Gann square: bounding square + inscribed circle + dashed X —
+/// the circle is what distinguishes it from the fixed-size variant below.
 pub const ICON_GANN_SQUARE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="6" stroke-dasharray="2 2"/>
   <path d="M4 4L20 20" stroke-dasharray="2 2"/><path d="M20 4L4 20" stroke-dasharray="2 2"/>
+</svg>"##;
+
+/// Fixed-size Gann square (icon audit item 2 — was a byte-identical
+/// duplicate of the resizable variant). A fixed 3x3 grid subdivision reads
+/// as "equal fixed divisions", distinct from the resizable variant's
+/// inscribed circle + X.
+pub const ICON_GANN_SQUARE_FIXED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="4" width="16" height="16"/>
+  <path d="M4 9.33h16"/><path d="M4 14.67h16"/>
+  <path d="M9.33 4v16"/><path d="M14.67 4v16"/>
 </svg>"##;
 
 /// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
@@ -705,25 +793,39 @@ pub const ICON_GANN_FAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" view
 // Pattern Icons
 // =============================================================================
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 3 — indistinguishable zigzag column):
+/// marked all 5 vertices (X-A-B-C-D) with dots — the point COUNT is the
+/// distinguishing device, since XABCD and its 4/5-point siblings otherwise
+/// share the same "zigzag line" silhouette.
 pub const ICON_XABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 18L7 6L11 13L16 5L21 15"/>
+  <circle cx="2" cy="18" r="1.2" fill="currentColor"/><circle cx="7" cy="6" r="1.2" fill="currentColor"/><circle cx="11" cy="13" r="1.2" fill="currentColor"/><circle cx="16" cy="5" r="1.2" fill="currentColor"/><circle cx="21" cy="15" r="1.2" fill="currentColor"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 3): same 5-point count as XABCD (both
+/// MultiPointFixed(5)) so dots alone don't distinguish them — the final
+/// vertex (Cypher's defining C-D leg) is marked with a SQUARE instead of a
+/// circle, an enclosing-form device rather than just a different squiggle.
 pub const ICON_CYPHER_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 8L7 18L11 10L16 19L21 3"/>
+  <circle cx="2" cy="8" r="1.2" fill="currentColor"/><circle cx="7" cy="18" r="1.2" fill="currentColor"/><circle cx="11" cy="10" r="1.2" fill="currentColor"/><circle cx="16" cy="19" r="1.2" fill="currentColor"/>
+  <rect x="19.5" y="1.5" width="3" height="3" fill="currentColor"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 3): the neckline (already a good
+/// enclosing-form device) plus the 3 marked peaks — left shoulder, head,
+/// right shoulder — name the pattern in the glyph.
 pub const ICON_HEAD_SHOULDERS: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 18L6 9L10 15L12 4L14 15L18 9L22 18"/>
   <path d="M6 15L18 15" stroke-width="1.2"/>
+  <circle cx="6" cy="9" r="1.2" fill="currentColor"/><circle cx="12" cy="4" r="1.2" fill="currentColor"/><circle cx="18" cy="9" r="1.2" fill="currentColor"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 3): 4 marked vertices (A-B-C-D) —
+/// point count distinguishes it from the 5-point XABCD/Cypher siblings.
 pub const ICON_ABCD_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 18L9 6L15 15L20 5"/>
+  <circle cx="4" cy="18" r="1.2" fill="currentColor"/><circle cx="9" cy="6" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/><circle cx="20" cy="5" r="1.2" fill="currentColor"/>
 </svg>"##;
 
 /// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
@@ -733,9 +835,12 @@ pub const ICON_TRIANGLE_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/s
   <path d="M4 8L7 16L10 9L13 15L16 10L19 12"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 3): the 3 ascending peaks — the
+/// "three drives" — are marked, distinguishing device drawn directly from
+/// the pattern's name rather than an arbitrary vertex count.
 pub const ICON_THREE_DRIVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 20L6 12L8 15L12 8L14 11L18 4L22 7"/>
+  <circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="8" r="1.3" fill="currentColor"/><circle cx="18" cy="4" r="1.3" fill="currentColor"/>
 </svg>"##;
 
 // =============================================================================
@@ -767,12 +872,29 @@ pub const ICON_ELLIOTT_TRIANGLE: &str = r##"<svg xmlns="http://www.w3.org/2000/s
   <polyline points="2,5 6,18 10,7 14,15 18,10" stroke-width="1.2"/>
 </svg>"##;
 
-/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/).
+/// Generic base — used only when no double/triple distinction applies.
 pub const ICON_ELLIOTT_COMBO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <polyline points="2,6 5,13 7,9 9,15 13,5 16,12 18,8 22,16"/>
   <circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/>
   <circle cx="13" cy="5" r="1.2" fill="currentColor" stroke="none"/>
   <circle cx="22" cy="16" r="1.2" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// WXY double combination — same glyph as the generic combo base (3 marked
+/// legs = W-X-Y).
+pub const ICON_ELLIOTT_DOUBLE_COMBO: &str = ICON_ELLIOTT_COMBO;
+
+/// WXYXZ triple combination (icon audit item 2 — was byte-identical to the
+/// double combo). Busier zigzag with 5 marked legs (W-X-Y-X-Z) — MORE
+/// direction changes than the double combo, matching the extra W/X/Y/X/Z
+/// structure.
+pub const ICON_ELLIOTT_TRIPLE_COMBO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <polyline points="2,7 5,12 7,9 9,14 11,10 13,16 15,8 17,13 19,10 22,15"/>
+  <circle cx="9" cy="14" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="13" cy="16" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="17" cy="13" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="22" cy="15" r="1.1" fill="currentColor" stroke="none"/>
 </svg>"##;
 
 // =============================================================================
@@ -831,15 +953,24 @@ pub const ICON_PATH: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
   <path d="M4 18Q8 4 12 12T20 6"/>
 </svg>"##;
 
+/// Redrawn 2026-08-07 (icon audit item 4 — read as a capital A): the two
+/// dashed straight legs from each endpoint up to the control point formed
+/// exactly that triangle/crossbar silhouette. Dropped them; the control
+/// point is now a dimmer, unconnected dot — distinguishes from `arc` (no
+/// control-point marker at all) without reconstructing the "A".
 pub const ICON_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M4 18Q12 2 20 18"/>
-  <path d="M4 18L12 2" stroke-dasharray="2 2"/><path d="M12 2L20 18" stroke-dasharray="2 2"/>
-  <circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="12" cy="2" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/>
+  <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
+  <circle cx="20" cy="18" r="1.5" fill="currentColor"/>
+  <circle cx="12" cy="2" r="1.2" fill="currentColor" fill-opacity="0.5"/>
 </svg>"##;
 
+/// Simplified 2026-08-07 (icon audit item 5 — smudged at 24px): widened the
+/// vertical gap between the two S-curves (was 4px apart, now 9px) so they
+/// read as two distinct parallel waves instead of one blurred double line.
 pub const ICON_DOUBLE_CURVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 12Q8 4 12 12T20 12"/>
-  <path d="M4 16Q8 8 12 16T20 16" stroke-dasharray="2 2"/>
+  <path d="M3 9Q7 2 12 9T21 9"/>
+  <path d="M3 18Q7 11 12 18T21 18" stroke-dasharray="2 2"/>
 </svg>"##;
 
 // =============================================================================
@@ -852,11 +983,18 @@ pub const ICON_ARROW: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
   <path d="M19 5v6"/>
 </svg>"##;
 
-pub const ICON_ARROW_UP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+/// Solid sub-grammar (icon audit item 6): `viewBox="0 0 24 24" fill="currentColor"
+/// stroke="none"` — used for glyph/badge-style icons (triangle markers,
+/// filled arrows) whose recognizability depends on a filled silhouette
+/// rather than an outline. Normalized from the old `stroke-width="1"`
+/// (an accidental third weight, neither the outline grammar's 2 nor a
+/// deliberate solid choice).
+pub const ICON_ARROW_UP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="none">
   <path d="M12 4l8 14H4z"/>
 </svg>"##;
 
-pub const ICON_ARROW_DOWN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+/// Solid sub-grammar — see [`ICON_ARROW_UP`].
+pub const ICON_ARROW_DOWN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="none">
   <path d="M12 20l8-14H4z"/>
 </svg>"##;
 
@@ -972,12 +1110,47 @@ pub const ICON_PRICE_DATE_RANGE: &str = r##"<svg xmlns="http://www.w3.org/2000/s
 // Volume Icons
 // =============================================================================
 
+/// Generic base (bounded range) — see [`ICON_FIXED_VOLUME_PROFILE`] /
+/// [`ICON_ANCHORED_VOLUME_PROFILE`] for the two registered primitives.
 pub const ICON_VOLUME_PROFILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="4" y="4" width="8" height="3" fill="currentColor" fill-opacity="0.5"/>
   <rect x="4" y="8" width="14" height="3" fill="currentColor"/>
   <rect x="4" y="12" width="10" height="3" fill="currentColor" fill-opacity="0.5"/>
   <rect x="4" y="16" width="6" height="3" fill="currentColor" fill-opacity="0.3"/>
   <path d="M20 4v16"/>
+</svg>"##;
+
+/// Fixed volume profile: bars bounded by TWO vertical boundaries (left +
+/// right) — a profile over a fixed, closed range.
+pub const ICON_FIXED_VOLUME_PROFILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 3v18"/><path d="M20 3v18"/>
+  <rect x="4" y="6" width="8" height="3" fill="currentColor" fill-opacity="0.5"/>
+  <rect x="4" y="11" width="14" height="3" fill="currentColor"/>
+  <rect x="4" y="16" width="6" height="3" fill="currentColor" fill-opacity="0.3"/>
+</svg>"##;
+
+/// Anchored volume profile (icon audit item 2 — was byte-identical to the
+/// fixed variant). ONE anchor point (marked dot + stem), bars growing
+/// forward with no closing boundary — an open-ended profile from a single
+/// anchor, not a bounded range.
+pub const ICON_ANCHORED_VOLUME_PROFILE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="4" cy="4" r="1.5" fill="currentColor" stroke="none"/>
+  <path d="M4 4v16"/>
+  <rect x="4" y="7" width="8" height="3" fill="currentColor" fill-opacity="0.5"/>
+  <rect x="4" y="11" width="14" height="3" fill="currentColor"/>
+  <rect x="4" y="15" width="10" height="3" fill="currentColor" fill-opacity="0.5"/>
+</svg>"##;
+
+/// Anchored VWAP: anchor point (marked) + the VWAP line + dashed ±1/±2σ
+/// deviation bands (matches the tooltip). Was wrongly aliased to the plain
+/// Line Chart glyph (icon audit item 1 — unresolved, no distinguishing icon
+/// at all before this).
+pub const ICON_ANCHORED_VWAP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="4" cy="4" r="1.5" fill="currentColor" stroke="none"/>
+  <path d="M4 4v8"/>
+  <path d="M4 12h16"/>
+  <path d="M4 7h16" stroke-dasharray="2 2" opacity="0.7"/>
+  <path d="M4 17h16" stroke-dasharray="2 2" opacity="0.7"/>
 </svg>"##;
 
 // =============================================================================
@@ -1068,7 +1241,9 @@ pub const ICON_DELETE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBo
   <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
 </svg>"##;
 
-pub const ICON_LOCK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+/// Normalized 2026-08-07 (icon audit item 6): stroke-width 1.5 was an
+/// accidental third weight outside the outline grammar's 2.
+pub const ICON_LOCK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="5" y="11" width="14" height="10" rx="2"/>
   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
 </svg>"##;
@@ -1151,19 +1326,30 @@ pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
 // =============================================================================
 
 /// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 4 — read as the letter "L"): the
+/// bracket polyline was a literal L-glyph. Now a reward/risk position box —
+/// large reward zone above entry, small risk zone below, entry line, and an
+/// up-pointing chevron for direction. A lettermark is not an icon; this is
+/// the actual tool semantic (buy trade with stop/target).
 pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="4" width="18" height="9" stroke-width="1.2"/>
-  <rect x="3" y="13" width="18" height="6" stroke-width="1.2"/>
-  <line x1="3" y1="13" x2="21" y2="13"/>
-  <polyline points="6,6 6,11 9,11" stroke-width="1.3"/>
+  <rect x="3" y="3" width="18" height="9" stroke-width="1.2"/>
+  <rect x="3" y="12" width="18" height="5" stroke-width="1.2"/>
+  <line x1="3" y1="12" x2="21" y2="12"/>
+  <path d="M12 20v-6"/>
+  <path d="M9 17l3-3 3 3"/>
 </svg>"##;
 
 /// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
+/// Redrawn 2026-08-07 (icon audit item 4 — read as the letter "S"): the
+/// S-curve path was a literal S-glyph. Mirrors [`ICON_LONG_POSITION`]'s
+/// reward/risk box — small risk zone above entry, large reward zone below
+/// (price falling = profit), entry line, down-pointing chevron.
 pub const ICON_SHORT_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="4" width="18" height="7" stroke-width="1.2"/>
-  <rect x="3" y="11" width="18" height="9" stroke-width="1.2"/>
-  <line x1="3" y1="11" x2="21" y2="11"/>
-  <path d="M8,13.5 C8,12.5 5,12.5 5,14 C5,15.5 8,15.5 8,17 C8,18.5 5,18.5 5,17.5" stroke-width="1.3"/>
+  <rect x="3" y="3" width="18" height="5" stroke-width="1.2"/>
+  <rect x="3" y="8" width="18" height="9" stroke-width="1.2"/>
+  <line x1="3" y1="8" x2="21" y2="8"/>
+  <path d="M12 14v6"/>
+  <path d="M9 17l3 3 3-3"/>
 </svg>"##;
 
 // =============================================================================
@@ -2209,10 +2395,12 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "flat_top_bottom" | "flattopbottom" => Some(ICON_FLAT_TOP_BOTTOM),
         "disjoint_channel" | "disjointchannel" => Some(ICON_DISJOINT_CHANNEL),
 
-        // Pitchforks (all variants share the same icon)
-        "pitchfork" | "schiff_pitchfork" | "schiffpitchfork"
-        | "modified_schiff" | "modifiedschiff"
-        | "inside_pitchfork" | "insidepitchfork" => Some(ICON_PITCHFORK),
+        // Pitchforks — 4 distinct tools, 4 distinct glyphs (2026-08-07; used
+        // to collapse onto one shared ICON_PITCHFORK).
+        "pitchfork" => Some(ICON_PITCHFORK),
+        "schiff_pitchfork" | "schiffpitchfork" => Some(ICON_SCHIFF_PITCHFORK),
+        "modified_schiff" | "modifiedschiff" => Some(ICON_MODIFIED_SCHIFF),
+        "inside_pitchfork" | "insidepitchfork" => Some(ICON_INSIDE_PITCHFORK),
 
         // Fibonacci
         "fib_retracement" | "fibretracement" => Some(ICON_FIB_RETRACEMENT),
@@ -2229,7 +2417,8 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
 
         // Gann
         "gann_box" | "gannbox" => Some(ICON_GANN_BOX),
-        "gann_square" | "gannsquare" | "gann_square_fixed" => Some(ICON_GANN_SQUARE),
+        "gann_square" | "gannsquare" => Some(ICON_GANN_SQUARE),
+        "gann_square_fixed" | "gannsquarefixed" => Some(ICON_GANN_SQUARE_FIXED),
         "gann_fan" | "gannfan" => Some(ICON_GANN_FAN),
 
         // Patterns
@@ -2244,8 +2433,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "elliott_impulse" | "elliottimpulse" => Some(ICON_ELLIOTT_IMPULSE),
         "elliott_correction" | "elliottcorrection" => Some(ICON_ELLIOTT_CORRECTION),
         "elliott_triangle" | "elliotttriangle" => Some(ICON_ELLIOTT_TRIANGLE),
-        "elliott_combo" | "elliottcombo"
-        | "elliott_double_combo" | "elliott_triple_combo" => Some(ICON_ELLIOTT_COMBO),
+        "elliott_combo" | "elliottcombo" => Some(ICON_ELLIOTT_COMBO),
+        "elliott_double_combo" | "elliottdoublecombo" => Some(ICON_ELLIOTT_DOUBLE_COMBO),
+        "elliott_triple_combo" | "elliotttriplecombo" => Some(ICON_ELLIOTT_TRIPLE_COMBO),
 
         // Cycles
         "cycle_lines" | "cyclelines" => Some(ICON_CYCLE_LINES),
@@ -2294,8 +2484,10 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "price_date_range" | "pricedaterange" => Some(ICON_PRICE_DATE_RANGE),
 
         // Volume / projection
-        "volume_profile" | "volumeprofile"
-        | "fixed_volume_profile" | "anchored_volume_profile" => Some(ICON_VOLUME_PROFILE),
+        "volume_profile" | "volumeprofile" => Some(ICON_VOLUME_PROFILE),
+        "fixed_volume_profile" | "fixedvolumeprofile" => Some(ICON_FIXED_VOLUME_PROFILE),
+        "anchored_volume_profile" | "anchoredvolumeprofile" => Some(ICON_ANCHORED_VOLUME_PROFILE),
+        "anchored_vwap" | "anchoredvwap" => Some(ICON_ANCHORED_VWAP),
         "bars_pattern" | "barspattern" => Some(ICON_BARS_PATTERN),
         "price_projection" | "priceprojection" => Some(ICON_PRICE_PROJECTION),
         "projection" => Some(ICON_PROJECTION),

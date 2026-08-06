@@ -735,7 +735,7 @@ fn fib_section() -> ToolbarSectionDef {
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderGann.get(lang).to_string() },
             DropdownItemDef::action("gann_box", PN::GannBox.get(lang)).with_icon(ToolbarIconId::new("GannBox")),
-            DropdownItemDef::action("gann_square_fixed", PN::GannSquareFixed.get(lang)).with_icon(ToolbarIconId::new("GannSquare")),
+            DropdownItemDef::action("gann_square_fixed", PN::GannSquareFixed.get(lang)).with_icon(ToolbarIconId::new("GannSquareFixed")),
             DropdownItemDef::action("gann_square", PN::GannSquare.get(lang)).with_icon(ToolbarIconId::new("GannSquare")),
             DropdownItemDef::action("gann_fan", PN::GannFan.get(lang)).with_icon(ToolbarIconId::new("GannFan")),
         ]).with_icon(ToolbarIconId::new("FibRetracement"))
@@ -761,8 +761,8 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("elliott_impulse", PN::ElliottImpulse.get(lang)).with_icon(ToolbarIconId::new("ElliottImpulse")),
             DropdownItemDef::action("elliott_correction", PN::ElliottCorrection.get(lang)).with_icon(ToolbarIconId::new("ElliottCorrection")),
             DropdownItemDef::action("elliott_triangle", PN::ElliottTriangle.get(lang)).with_icon(ToolbarIconId::new("ElliottTriangle")),
-            DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottCombo")),
-            DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottCombo")),
+            DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottDoubleCombo")),
+            DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottTripleCombo")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
@@ -818,8 +818,8 @@ fn annotation_section() -> ToolbarSectionDef {
             DropdownItemDef::action("price_label", PN::PriceLabel.get(lang)).with_icon(ToolbarIconId::new("PriceLabel")),
             DropdownItemDef::action("sign", PN::Sign.get(lang)).with_icon(ToolbarIconId::new("Sign")),
             DropdownItemDef::action("flag", PN::Flag.get(lang)).with_icon(ToolbarIconId::new("Flag")),
-            DropdownItemDef::action("triangle_up", PN::TriangleUp.get(lang)).with_icon(ToolbarIconId::new("ArrowUp")),
-            DropdownItemDef::action("triangle_down", PN::TriangleDown.get(lang)).with_icon(ToolbarIconId::new("ArrowDown")),
+            DropdownItemDef::action("triangle_up", PN::TriangleUp.get(lang)).with_icon(ToolbarIconId::new("triangle_up")),
+            DropdownItemDef::action("triangle_down", PN::TriangleDown.get(lang)).with_icon(ToolbarIconId::new("triangle_down")),
         ]).with_icon(ToolbarIconId::new("Text"))
           .with_tooltip(t_toolbar(TK::AnnotationTool)),
     ])
@@ -848,51 +848,60 @@ fn emoji_items() -> Vec<DropdownItemDef> {
     vec![
         // Signals (emoji labels are icon descriptors — kept as EN, universal)
         DropdownItemDef::Header { label: MK::HeaderSignals.get(lang).to_string() },
-        DropdownItemDef::action("emoji_target", "Target").with_icon(ToolbarIconId::new("EmojiTarget")),
-        DropdownItemDef::action("emoji_flag", "Flag").with_icon(ToolbarIconId::new("EmojiFlag")),
-        DropdownItemDef::action("emoji_check", "Check").with_icon(ToolbarIconId::new("EmojiCheck")),
-        DropdownItemDef::action("emoji_cross", "Cross").with_icon(ToolbarIconId::new("EmojiCross")),
-        DropdownItemDef::action("emoji_warning", "Warning").with_icon(ToolbarIconId::new("EmojiWarning")),
-        DropdownItemDef::action("emoji_dollar", "Dollar").with_icon(ToolbarIconId::new("EmojiDollar")),
-        DropdownItemDef::action("emoji_lightning", "Lightning").with_icon(ToolbarIconId::new("EmojiLightning")),
-        DropdownItemDef::action("emoji_lock", "Lock").with_icon(ToolbarIconId::new("EmojiLock")),
-        DropdownItemDef::action("emoji_unlock", "Unlock").with_icon(ToolbarIconId::new("EmojiUnlock")),
-        DropdownItemDef::action("emoji_bell", "Bell").with_icon(ToolbarIconId::new("EmojiBell")),
-        DropdownItemDef::action("emoji_eye", "Eye").with_icon(ToolbarIconId::new("EmojiEye")),
-        DropdownItemDef::action("emoji_clock", "Clock").with_icon(ToolbarIconId::new("EmojiClock")),
+        // Icon id = the primitive's own type_id (snake_case), matching
+        // `PrimitiveMetadata.icon` set by `emoji_metadata()` — both routes
+        // resolve through `icon_svg()`'s `emoji_` prefix branch to the same
+        // per-type `EmojiType::svg()` glyph. Was PascalCase `"EmojiXxx"`
+        // (fixed 2026-08-07): most single-word names still resolved by
+        // accident (icon_svg's fallback strips the literal "emoji" prefix
+        // regardless of case), but the 6 multi-word names (ArrowUp/Down/
+        // Left/Right, ThumbsUp/Down) fell through to the generic sticker
+        // glyph — see the icon audit for the full defect writeup.
+        DropdownItemDef::action("emoji_target", "Target").with_icon(ToolbarIconId::new("emoji_target")),
+        DropdownItemDef::action("emoji_flag", "Flag").with_icon(ToolbarIconId::new("emoji_flag")),
+        DropdownItemDef::action("emoji_check", "Check").with_icon(ToolbarIconId::new("emoji_check")),
+        DropdownItemDef::action("emoji_cross", "Cross").with_icon(ToolbarIconId::new("emoji_cross")),
+        DropdownItemDef::action("emoji_warning", "Warning").with_icon(ToolbarIconId::new("emoji_warning")),
+        DropdownItemDef::action("emoji_dollar", "Dollar").with_icon(ToolbarIconId::new("emoji_dollar")),
+        DropdownItemDef::action("emoji_lightning", "Lightning").with_icon(ToolbarIconId::new("emoji_lightning")),
+        DropdownItemDef::action("emoji_lock", "Lock").with_icon(ToolbarIconId::new("emoji_lock")),
+        DropdownItemDef::action("emoji_unlock", "Unlock").with_icon(ToolbarIconId::new("emoji_unlock")),
+        DropdownItemDef::action("emoji_bell", "Bell").with_icon(ToolbarIconId::new("emoji_bell")),
+        DropdownItemDef::action("emoji_eye", "Eye").with_icon(ToolbarIconId::new("emoji_eye")),
+        DropdownItemDef::action("emoji_clock", "Clock").with_icon(ToolbarIconId::new("emoji_clock")),
         // Markers
         DropdownItemDef::Separator,
         DropdownItemDef::Header { label: MK::HeaderMarkers.get(lang).to_string() },
-        DropdownItemDef::action("emoji_star", "Star").with_icon(ToolbarIconId::new("EmojiStar")),
-        DropdownItemDef::action("emoji_heart", "Heart").with_icon(ToolbarIconId::new("EmojiHeart")),
-        DropdownItemDef::action("emoji_circle", "Circle").with_icon(ToolbarIconId::new("EmojiCircle")),
-        DropdownItemDef::action("emoji_diamond", "Diamond").with_icon(ToolbarIconId::new("EmojiDiamond")),
-        DropdownItemDef::action("emoji_square", "Square").with_icon(ToolbarIconId::new("EmojiSquare")),
-        DropdownItemDef::action("emoji_triangle", "Triangle").with_icon(ToolbarIconId::new("EmojiTriangle")),
-        DropdownItemDef::action("emoji_plus", "Plus").with_icon(ToolbarIconId::new("EmojiPlus")),
-        DropdownItemDef::action("emoji_minus", "Minus").with_icon(ToolbarIconId::new("EmojiMinus")),
-        DropdownItemDef::action("emoji_question", "Question").with_icon(ToolbarIconId::new("EmojiQuestion")),
-        DropdownItemDef::action("emoji_info", "Info").with_icon(ToolbarIconId::new("EmojiInfo")),
+        DropdownItemDef::action("emoji_star", "Star").with_icon(ToolbarIconId::new("emoji_star")),
+        DropdownItemDef::action("emoji_heart", "Heart").with_icon(ToolbarIconId::new("emoji_heart")),
+        DropdownItemDef::action("emoji_circle", "Circle").with_icon(ToolbarIconId::new("emoji_circle")),
+        DropdownItemDef::action("emoji_diamond", "Diamond").with_icon(ToolbarIconId::new("emoji_diamond")),
+        DropdownItemDef::action("emoji_square", "Square").with_icon(ToolbarIconId::new("emoji_square")),
+        DropdownItemDef::action("emoji_triangle", "Triangle").with_icon(ToolbarIconId::new("emoji_triangle")),
+        DropdownItemDef::action("emoji_plus", "Plus").with_icon(ToolbarIconId::new("emoji_plus")),
+        DropdownItemDef::action("emoji_minus", "Minus").with_icon(ToolbarIconId::new("emoji_minus")),
+        DropdownItemDef::action("emoji_question", "Question").with_icon(ToolbarIconId::new("emoji_question")),
+        DropdownItemDef::action("emoji_info", "Info").with_icon(ToolbarIconId::new("emoji_info")),
         // Emotions
         DropdownItemDef::Separator,
         DropdownItemDef::Header { label: MK::HeaderEmotions.get(lang).to_string() },
-        DropdownItemDef::action("emoji_thumbs_up", "Thumbs Up").with_icon(ToolbarIconId::new("EmojiThumbsUp")),
-        DropdownItemDef::action("emoji_thumbs_down", "Thumbs Down").with_icon(ToolbarIconId::new("EmojiThumbsDown")),
-        DropdownItemDef::action("emoji_fire", "Fire").with_icon(ToolbarIconId::new("EmojiFire")),
-        DropdownItemDef::action("emoji_rocket", "Rocket").with_icon(ToolbarIconId::new("EmojiRocket")),
-        DropdownItemDef::action("emoji_skull", "Skull").with_icon(ToolbarIconId::new("EmojiSkull")),
-        DropdownItemDef::action("emoji_crown", "Crown").with_icon(ToolbarIconId::new("EmojiCrown")),
-        DropdownItemDef::action("emoji_gem", "Gem").with_icon(ToolbarIconId::new("EmojiGem")),
-        DropdownItemDef::action("emoji_poop", "Poop").with_icon(ToolbarIconId::new("EmojiPoop")),
-        DropdownItemDef::action("emoji_frog", "Frog").with_icon(ToolbarIconId::new("EmojiFrog")),
-        DropdownItemDef::action("emoji_frogger", "Frogger").with_icon(ToolbarIconId::new("EmojiFrogger")),
+        DropdownItemDef::action("emoji_thumbs_up", "Thumbs Up").with_icon(ToolbarIconId::new("emoji_thumbs_up")),
+        DropdownItemDef::action("emoji_thumbs_down", "Thumbs Down").with_icon(ToolbarIconId::new("emoji_thumbs_down")),
+        DropdownItemDef::action("emoji_fire", "Fire").with_icon(ToolbarIconId::new("emoji_fire")),
+        DropdownItemDef::action("emoji_rocket", "Rocket").with_icon(ToolbarIconId::new("emoji_rocket")),
+        DropdownItemDef::action("emoji_skull", "Skull").with_icon(ToolbarIconId::new("emoji_skull")),
+        DropdownItemDef::action("emoji_crown", "Crown").with_icon(ToolbarIconId::new("emoji_crown")),
+        DropdownItemDef::action("emoji_gem", "Gem").with_icon(ToolbarIconId::new("emoji_gem")),
+        DropdownItemDef::action("emoji_poop", "Poop").with_icon(ToolbarIconId::new("emoji_poop")),
+        DropdownItemDef::action("emoji_frog", "Frog").with_icon(ToolbarIconId::new("emoji_frog")),
+        DropdownItemDef::action("emoji_frogger", "Frogger").with_icon(ToolbarIconId::new("emoji_frogger")),
         // Arrows
         DropdownItemDef::Separator,
         DropdownItemDef::Header { label: MK::HeaderArrows.get(lang).to_string() },
-        DropdownItemDef::action("emoji_arrow_up", "Arrow Up").with_icon(ToolbarIconId::new("EmojiArrowUp")),
-        DropdownItemDef::action("emoji_arrow_down", "Arrow Down").with_icon(ToolbarIconId::new("EmojiArrowDown")),
-        DropdownItemDef::action("emoji_arrow_left", "Arrow Left").with_icon(ToolbarIconId::new("EmojiArrowLeft")),
-        DropdownItemDef::action("emoji_arrow_right", "Arrow Right").with_icon(ToolbarIconId::new("EmojiArrowRight")),
+        DropdownItemDef::action("emoji_arrow_up", "Arrow Up").with_icon(ToolbarIconId::new("emoji_arrow_up")),
+        DropdownItemDef::action("emoji_arrow_down", "Arrow Down").with_icon(ToolbarIconId::new("emoji_arrow_down")),
+        DropdownItemDef::action("emoji_arrow_left", "Arrow Left").with_icon(ToolbarIconId::new("emoji_arrow_left")),
+        DropdownItemDef::action("emoji_arrow_right", "Arrow Right").with_icon(ToolbarIconId::new("emoji_arrow_right")),
     ]
 }
 
@@ -913,9 +922,9 @@ fn projection_section() -> ToolbarSectionDef {
             // Volume
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderVolume.get(lang).to_string() },
-            DropdownItemDef::action("fixed_volume_profile", PN::FixedVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("VolumeProfile")),
-            DropdownItemDef::action("anchored_volume_profile", PN::AnchoredVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("VolumeProfile")),
-            DropdownItemDef::action("anchored_vwap", "Anchored VWAP").with_icon(ToolbarIconId::new("LineChart")),
+            DropdownItemDef::action("fixed_volume_profile", PN::FixedVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("FixedVolumeProfile")),
+            DropdownItemDef::action("anchored_volume_profile", PN::AnchoredVolumeProfile.get(lang)).with_icon(ToolbarIconId::new("AnchoredVolumeProfile")),
+            DropdownItemDef::action("anchored_vwap", "Anchored VWAP").with_icon(ToolbarIconId::new("AnchoredVwap")),
             // Measurement
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderMeasurement.get(lang).to_string() },

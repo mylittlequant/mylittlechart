@@ -486,10 +486,19 @@ impl Emoji {
                 ctx.begin_path();
                 ctx.rect(cx - w * 0.5, cy, w, h * 0.7);
                 ctx.fill();
-                // Open shackle
+                // Open shackle — swung up and to the side so it visibly
+                // detaches from the body (2026-08-07: the previous version
+                // only shaved ~36 degrees off the closed loop, a gap too
+                // subtle to read at drawn size; indistinguishable from Lock).
                 ctx.set_stroke_width(2.5);
                 ctx.begin_path();
-                ctx.arc(cx, cy, w * 0.35, std::f64::consts::PI, std::f64::consts::PI * 0.2);
+                ctx.arc(
+                    cx + w * 0.15,
+                    cy - h * 0.25,
+                    w * 0.35,
+                    std::f64::consts::PI * 0.85,
+                    std::f64::consts::PI * 1.85,
+                );
                 ctx.stroke();
             }
             EmojiType::Bell => {
@@ -638,36 +647,29 @@ impl Emoji {
             }
 
             // === EMOTIONS ===
+            // Redrawn 2026-08-07 (icon audit): the previous thumb was a
+            // jagged hand-rolled polygon that read as an unrecognizable
+            // blob at drawn size. Now a rounded thumb tip (ellipse) plus a
+            // fist block (rect) — the same two-primitive silhouette used by
+            // most icon sets for this glyph, legible small.
             EmojiType::ThumbsUp => {
-                // Thumb
+                // Fist (base block)
                 ctx.begin_path();
-                ctx.move_to(cx - w * 0.1, cy - h * 0.8);
-                ctx.line_to(cx + w * 0.3, cy - h * 0.8);
-                ctx.quadratic_curve_to(cx + w * 0.5, cy - h * 0.8, cx + w * 0.5, cy - h * 0.5);
-                ctx.line_to(cx + w * 0.5, cy + h * 0.1);
-                ctx.line_to(cx - w * 0.3, cy + h * 0.1);
-                ctx.line_to(cx - w * 0.3, cy - h * 0.3);
-                ctx.close_path();
+                ctx.rect(cx - w * 0.55, cy + h * 0.05, w * 0.95, h * 0.75);
                 ctx.fill();
-                // Fist
+                // Thumb (rounded tip, pointing up)
                 ctx.begin_path();
-                ctx.rect(cx - w * 0.6, cy + h * 0.1, w * 0.8, h * 0.6);
+                ctx.ellipse(cx + w * 0.05, cy - h * 0.35, w * 0.32, h * 0.5, 0.0, 0.0, std::f64::consts::TAU);
                 ctx.fill();
             }
             EmojiType::ThumbsDown => {
-                // Thumb down (inverted)
+                // Fist (base block, mirrored to the top)
                 ctx.begin_path();
-                ctx.move_to(cx - w * 0.1, cy + h * 0.8);
-                ctx.line_to(cx + w * 0.3, cy + h * 0.8);
-                ctx.quadratic_curve_to(cx + w * 0.5, cy + h * 0.8, cx + w * 0.5, cy + h * 0.5);
-                ctx.line_to(cx + w * 0.5, cy - h * 0.1);
-                ctx.line_to(cx - w * 0.3, cy - h * 0.1);
-                ctx.line_to(cx - w * 0.3, cy + h * 0.3);
-                ctx.close_path();
+                ctx.rect(cx - w * 0.55, cy - h * 0.8, w * 0.95, h * 0.75);
                 ctx.fill();
-                // Fist
+                // Thumb (rounded tip, pointing down)
                 ctx.begin_path();
-                ctx.rect(cx - w * 0.6, cy - h * 0.7, w * 0.8, h * 0.6);
+                ctx.ellipse(cx + w * 0.05, cy + h * 0.35, w * 0.32, h * 0.5, 0.0, 0.0, std::f64::consts::TAU);
                 ctx.fill();
             }
             EmojiType::Fire => {
@@ -1256,7 +1258,13 @@ fn emoji_metadata(emoji_type: EmojiType) -> PrimitiveMetadata {
     };
 
     let display_name = emoji_type.label();
-    let icon = emoji_type.id();
+    // Full `type_id` ("emoji_target", not bare "target") so `icon_svg()`'s
+    // `emoji_` prefix branch always resolves this exact type's own glyph.
+    // A bare id used to accidentally collide with unrelated arms elsewhere
+    // in `icon_svg` (e.g. "circle"/"flag"/"triangle"/"bell") or resolve to
+    // nothing at all for the 22 types with no such coincidental match — see
+    // the icon audit for the full defect writeup.
+    let icon = type_id;
 
     PrimitiveMetadata {
         type_id,

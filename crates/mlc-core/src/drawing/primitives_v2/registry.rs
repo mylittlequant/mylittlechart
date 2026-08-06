@@ -392,7 +392,7 @@ mod hydration {
 #[cfg(test)]
 mod catalogue_dump {
     use super::*;
-    use crate::state::icons::Icon;
+    use crate::state::icons::icon_svg;
 
     /// SVG uses double quotes for its attributes; single quotes are equally
     /// valid there, so swapping them keeps the markup usable inside a JSON
@@ -406,6 +406,11 @@ mod catalogue_dump {
     /// Not a test — the machine half of the primitive audit, so the browser
     /// half only has to draw and photograph. Run with:
     /// `cargo test -p mylittlechart-core --lib dump_catalogue -- --ignored --nocapture`
+    ///
+    /// Resolves via `icon_svg()` — the SAME resolver the live toolbar rail
+    /// calls (`toolbar_core::render_icon`) — not the narrower `Icon` enum,
+    /// which never grew per-emoji-type variants and let this dumper report
+    /// false negatives for every `emoji_*` primitive (2026-08-07 audit).
     #[test]
     #[ignore]
     fn dump_catalogue() {
@@ -415,8 +420,7 @@ mod catalogue_dump {
         println!("[");
         for (n, id) in ids.iter().enumerate() {
             let m = reg.get(id).unwrap();
-            let icon = Icon::from_name(m.icon);
-            let svg = icon.map(|i| i.svg()).unwrap_or("");
+            let svg = icon_svg(m.icon).unwrap_or("");
             let comma = if n + 1 < ids.len() { "," } else { "" };
             println!(
                 "  {{\"type_id\":\"{}\",\"display_name\":\"{}\",\"kind\":\"{:?}\",\"click_behavior\":\"{:?}\",\"tooltip\":\"{}\",\"icon_name\":\"{}\",\"icon_resolved\":{},\"default_color\":\"{}\",\"supports_text\":{},\"has_levels\":{},\"svg\":\"{}\"}}{}",
@@ -426,7 +430,7 @@ mod catalogue_dump {
                 m.click_behavior,
                 q(m.tooltip),
                 q(m.icon),
-                icon.is_some(),
+                !svg.is_empty(),
                 q(m.default_color),
                 m.supports_text,
                 m.has_levels,
