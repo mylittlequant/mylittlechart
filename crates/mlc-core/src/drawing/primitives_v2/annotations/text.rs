@@ -7,7 +7,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
-    RenderContext,
+    RenderContext, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
@@ -90,7 +90,12 @@ impl Primitive for Text {
         let (x, y) = (vp.bar_to_x_f64(bar), vp.price_to_y(self.price, ps.price_min, ps.price_max));
         let text_content = self.get_text();
         let font_size = self.get_font_size();
-        let w = text_content.len() as f64 * font_size * 0.6;
+        // Empty content used to size the grab box to zero width, so a text
+        // primitive whose content got cleared (or a legacy row that never
+        // had content) could never be clicked again — no property bar, no
+        // way to reopen it and type new text. Floor the box at a normal
+        // click target so it's always reachable.
+        let w = (text_content.len() as f64 * font_size * 0.6).max(CONTROL_POINT_HIT_RADIUS * 2.0);
         let h = font_size * 1.2;
         if sx >= x && sx <= x + w && sy >= y - h && sy <= y { return HitTestResult::Body; }
         HitTestResult::Miss

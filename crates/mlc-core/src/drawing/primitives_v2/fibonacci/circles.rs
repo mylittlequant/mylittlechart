@@ -153,8 +153,10 @@ impl Primitive for FibCircles {
         if check_point_hit(sx, sy, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if check_point_hit(sx, sy, ex, ey) { return HitTestResult::ControlPoint(ControlPointType::Point2); }
 
-        let base_rx = (ex - cx).abs().max(1.0);
-        let base_ry = (ey - cy).abs().max(1.0);
+        // Same true-circle radius as render() — see the comment there.
+        let radius = ((ex - cx).powi(2) + (ey - cy).powi(2)).sqrt().max(1.0);
+        let base_rx = radius;
+        let base_ry = radius;
 
         for cfg in &self.level_configs {
             if !cfg.visible { continue; }
@@ -188,8 +190,17 @@ impl Primitive for FibCircles {
         let ex = ctx.ts_to_x_ms(self.edge_ts);
         let ey = ctx.price_to_y(self.edge_price);
 
-        let base_rx = (ex - cx).abs();
-        let base_ry = (ey - cy).abs();
+        // Radius trap: an rx taken from the raw ms-delta pixel width and a ry
+        // taken from the raw price-delta pixel height encode the chart's
+        // price/time pixel aspect ratio into the shape instead of drawing a
+        // circle. On a real chart that ratio is wildly skewed (bar spacing
+        // in px vs. price-per-px), so every level collapsed into a tiny
+        // degenerate cluster hugging the anchor. Fibonacci circles are true
+        // circles: one radius, the screen-space Euclidean distance between
+        // center and edge.
+        let radius = ((ex - cx).powi(2) + (ey - cy).powi(2)).sqrt().max(1.0);
+        let base_rx = radius;
+        let base_ry = radius;
 
         // === FILL RENDERING ===
         let mut visible_levels: Vec<(usize, f64, f64, f64)> = self.level_configs

@@ -221,9 +221,10 @@ impl Primitive for FibArcs {
             return HitTestResult::Body;
         }
 
-        // Calculate base radii for ellipse hit testing
-        let base_rx = (x2 - x1).abs().max(1.0);
-        let base_ry = (y2 - y1).abs().max(1.0);
+        // Same true-circle radius as render() — see the comment there.
+        let radius = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(1.0);
+        let base_rx = radius;
+        let base_ry = radius;
 
         // Check each arc level using ellipse equation (only visible levels)
         for cfg in &self.level_configs {
@@ -287,9 +288,16 @@ impl Primitive for FibArcs {
         let x2 = ctx.ts_to_x_ms(self.ts2);
         let y2 = ctx.price_to_y(self.price2);
 
-        // Calculate base radii from data coordinates for ellipse behavior
-        let base_rx = (x2 - x1).abs().max(1.0);
-        let base_ry = (y2 - y1).abs().max(1.0);
+        // Radius trap: an rx taken from the raw ms-delta pixel width and a ry
+        // taken from the raw price-delta pixel height encode the chart's
+        // price/time pixel aspect ratio into the shape instead of drawing an
+        // arc. On a real chart that ratio is wildly skewed (bar spacing in
+        // px vs. price-per-px), so every level collapsed into a flat sliver
+        // hugging the baseline. Fibonacci arcs are true circular arcs: one
+        // radius, the screen-space Euclidean distance between the anchors.
+        let radius = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(1.0);
+        let base_rx = radius;
+        let base_ry = radius;
 
         let baseline_angle = (y2 - y1).atan2(x2 - x1);
 
