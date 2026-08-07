@@ -208,15 +208,17 @@ impl Primitive for Path {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
-        vec![ConfigProperty::smooth(self.smooth).with_order(20)]
+        vec![
+            ConfigProperty::closed(self.closed).with_order(15),
+            ConfigProperty::smooth(self.smooth).with_order(20),
+        ]
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "smooth" {
-            if let Some(v) = value.as_bool() {
-                self.smooth = v;
-                return true;
-            }
+        match id {
+            "closed" => { if let Some(v) = value.as_bool() { self.closed = v; return true; } }
+            "smooth" => { if let Some(v) = value.as_bool() { self.smooth = v; return true; } }
+            _ => {}
         }
         false
     }

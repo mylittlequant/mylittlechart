@@ -11,6 +11,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,11 +38,10 @@ pub struct RotatedRectangle {
     pub height_ts: i64,
     pub height_price: f64,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl RotatedRectangle {
     pub fn new(center_ts: i64, center_price: f64, edge_ts: i64, edge_price: f64, height_ts: i64, height_price: f64, color: &str) -> Self {
@@ -54,7 +54,7 @@ impl RotatedRectangle {
                 ..Default::default()
             },
             center_ts, center_price, edge_ts, edge_price, height_ts, height_price,
-            fill: true, fill_opacity: 0.12,
+            fill: true, fill_opacity: AREA_FILL_OPACITY,
         }
     }
 
@@ -231,9 +231,6 @@ impl Primitive for RotatedRectangle {
                 return HitTestResult::Body;
             }
         }
-        if self.fill && point_in_quad(screen_x, screen_y, &screen_corners) {
-            return HitTestResult::Body;
-        }
         HitTestResult::Miss
     }
 
@@ -365,25 +362,6 @@ fn rotated_corners(cx: f64, cy: f64, half_width: f64, half_height: f64, rotation
         corners[i] = (cx + lx * cos_r - ly * sin_r, cy + lx * sin_r + ly * cos_r);
     }
     corners
-}
-
-fn point_in_quad(px: f64, py: f64, quad: &[(f64, f64)]) -> bool {
-    if quad.len() < 4 { return false; }
-    let mut winding = 0i32;
-    for i in 0..4 {
-        let (x1, y1) = quad[i];
-        let (x2, y2) = quad[(i + 1) % 4];
-        if y1 <= py {
-            if y2 > py && is_left(x1, y1, x2, y2, px, py) > 0.0 { winding += 1; }
-        } else if y2 <= py && is_left(x1, y1, x2, y2, px, py) < 0.0 {
-            winding -= 1;
-        }
-    }
-    winding != 0
-}
-
-fn is_left(x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
 }
 
 fn create_rotated_rectangle(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {

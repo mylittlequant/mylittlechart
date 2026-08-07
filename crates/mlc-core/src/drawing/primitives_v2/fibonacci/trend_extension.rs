@@ -15,7 +15,9 @@ use super::super::{
     render_primitive_text, draw_label_plate,
     config::{FibLevelConfig, LabelStyle},
 };
-use super::retracement::default_level_configs;
+// Shared level table with retracement, band fill on by default — see the
+// doc comment on `default_level_configs_filled` for why this family qualifies.
+use super::retracement::default_level_configs_filled as default_level_configs;
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
 where

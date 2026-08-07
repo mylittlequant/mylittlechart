@@ -34,6 +34,13 @@ pub struct AnchoredVwap {
     /// `2.0`).
     #[serde(default = "default_sigma_2")]
     pub sigma_2: f64,
+    /// Optional cap on the accumulation range. `None` runs to the last
+    /// loaded bar exactly as before — this field is purely additive.
+    /// `Some(ts)` stops the running VWAP/bands at that bar, letting the
+    /// user pull the anchored VWAP into a bounded box instead of an
+    /// unbounded ray.
+    #[serde(default)]
+    pub end_ts_ms: Option<i64>,
 }
 
 fn default_true() -> bool { true }
@@ -55,6 +62,35 @@ impl AnchoredVwap {
             show_stddev_2: true,
             sigma_1: 1.0,
             sigma_2: 2.0,
+            end_ts_ms: None,
+        }
+    }
+
+    /// Index of the anchor bar (floor of `anchor_ts` when between bars).
+    fn anchor_bar_idx(&self, bars: &[Bar]) -> usize {
+        let anchor_sec = self.anchor_ts / 1000;
+        match bars.binary_search_by_key(&anchor_sec, |b| b.timestamp) {
+            Ok(i) => i,
+            Err(i) => i.min(bars.len().saturating_sub(1)),
+        }
+    }
+
+    /// Index of the bar the accumulation stops at.
+    ///
+    /// `None` (the default) resolves to the last loaded bar, byte-identical
+    /// to the pre-cap behaviour. `Some(ts)` resolves to the last bar at or
+    /// before `ts`, clamped so it never falls before `anchor_idx` — a cap
+    /// dragged past the anchor degenerates to a single-bar VWAP instead of
+    /// an inverted range.
+    fn end_bar_idx(&self, bars: &[Bar], anchor_idx: usize) -> usize {
+        let last = bars.len().saturating_sub(1);
+        match self.end_ts_ms {
+            Some(end_ms) => {
+                let end_sec = end_ms / 1000;
+                let count = bars.partition_point(|b| b.timestamp <= end_sec);
+                count.saturating_sub(1).max(anchor_idx).min(last)
+            }
+            None => last,
         }
     }
 }
@@ -70,10 +106,16 @@ impl Primitive for AnchoredVwap {
     fn set_points(&mut self, pts: &[(i64, f64)]) {
         if let Some(&(t, _)) = pts.first() { self.anchor_ts = t; }
     }
-    fn translate(&mut self, td: i64, _pd: f64) { self.anchor_ts += td; }
+    fn translate(&mut self, td: i64, _pd: f64) {
+        self.anchor_ts += td;
+        if let Some(end) = self.end_ts_ms.as_mut() { *end += td; }
+    }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, _price: f64) {
-        if matches!(pt, ControlPointType::Point1 | ControlPointType::Move) {
-            self.anchor_ts = ts_ms;
+        match pt {
+            ControlPointType::Point1 => self.anchor_ts = ts_ms,
+            ControlPointType::Point2 => self.end_ts_ms = Some(ts_ms),
+            ControlPointType::Move => self.translate(ts_ms - self.anchor_ts, 0.0),
+            _ => {}
         }
     }
 
@@ -90,23 +132,25 @@ impl Primitive for AnchoredVwap {
         if (sx - x).abs() < 20.0 {
             return HitTestResult::ControlPoint(ControlPointType::Point1);
         }
-        if sx < x || bars.is_empty() {
+        if bars.is_empty() {
             return HitTestResult::Miss;
         }
-        let anchor_idx = {
-            let anchor_sec = self.anchor_ts / 1000;
-            match bars.binary_search_by_key(&anchor_sec, |b| b.timestamp) {
-                Ok(i) => i,
-                Err(i) => i.min(bars.len().saturating_sub(1)),
-            }
-        };
+        let anchor_idx = self.anchor_bar_idx(bars);
+        let end_idx = self.end_bar_idx(bars, anchor_idx);
+        let end_x = vp.bar_to_x_f64(end_idx as f64);
+        if (sx - end_x).abs() < 20.0 {
+            return HitTestResult::ControlPoint(ControlPointType::Point2);
+        }
+        if sx < x {
+            return HitTestResult::Miss;
+        }
         // Which bar the cursor is over.
         let hover = vp.x_to_bar_f64(sx).round();
         if !hover.is_finite() || hover < anchor_idx as f64 {
             return HitTestResult::Miss;
         }
         let hover_idx = (hover as usize).min(bars.len() - 1);
-        if hover_idx < anchor_idx {
+        if hover_idx < anchor_idx || hover_idx > end_idx {
             return HitTestResult::Miss;
         }
 
@@ -140,7 +184,13 @@ impl Primitive for AnchoredVwap {
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
         let b = timestamp_ms_to_bar_f64(bars, self.anchor_ts);
         let cy = vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max);
-        vec![ControlPoint::point1(vp.bar_to_x_f64(b), cy)]
+        let mut pts = vec![ControlPoint::point1(vp.bar_to_x_f64(b), cy)];
+        if !bars.is_empty() {
+            let anchor_idx = self.anchor_bar_idx(bars);
+            let end_idx = self.end_bar_idx(bars, anchor_idx);
+            pts.push(ControlPoint::point2(vp.bar_to_x_f64(end_idx as f64), cy));
+        }
+        pts
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
@@ -152,17 +202,14 @@ impl Primitive for AnchoredVwap {
         let chart_height = ctx.chart_height();
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
 
-        // ── Find anchor bar index ────────────────────────────────────────────
-        let anchor_ts_sec = self.anchor_ts / 1000;
-        let anchor_idx = match bars.binary_search_by_key(&anchor_ts_sec, |b| b.timestamp) {
-            Ok(i) => i,
-            Err(i) => i.min(bars.len().saturating_sub(1)),
-        };
+        // ── Find anchor + end bar index ──────────────────────────────────────
+        let anchor_idx = self.anchor_bar_idx(bars);
         if anchor_idx >= bars.len() { return; }
+        let end_idx = self.end_bar_idx(bars, anchor_idx);
+        if end_idx < anchor_idx { return; }
 
         // ── Compute running VWAP + stddev ────────────────────────────────────
-        let n = bars.len() - anchor_idx;
-        if n == 0 { return; }
+        let n = end_idx - anchor_idx + 1;
         let mut vwap_points: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd1_upper: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd1_lower: Vec<(f64, f64)> = Vec::with_capacity(n);
@@ -173,7 +220,7 @@ impl Primitive for AnchoredVwap {
         let mut cum_vol = 0.0_f64;
         let mut cum_vol_price2 = 0.0_f64;
 
-        for (step, b) in bars[anchor_idx..].iter().enumerate() {
+        for (step, b) in bars[anchor_idx..=end_idx].iter().enumerate() {
             let typical = (b.high + b.low + b.close) / 3.0;
             let v = b.volume.max(0.0);
             cum_vol_price += v * typical;

@@ -8,6 +8,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
+    PLATE_FILL_OPACITY, default_plate_fill_opacity,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
@@ -19,6 +20,13 @@ pub struct PriceLabel {
     // Legacy field for backwards compatibility
     #[serde(default)] pub custom_text: Option<String>,
     #[serde(default = "default_true")] pub show_line: bool,
+    /// Paint the price chip fill at all — off leaves only the price text.
+    #[serde(default = "default_true")]
+    pub fill: bool,
+    /// Chip fill opacity (0.0-1.0) — same translucent plate as the other
+    /// annotations (`b06f9f51`); this chip used to be painted fully opaque.
+    #[serde(default = "default_plate_fill_opacity")]
+    pub fill_opacity: f64,
 }
 fn default_true() -> bool { true }
 
@@ -39,6 +47,8 @@ impl PriceLabel {
             price,
             custom_text: None,
             show_line: true,
+            fill: true,
+            fill_opacity: PLATE_FILL_OPACITY,
         }
     }
 
@@ -124,13 +134,17 @@ impl Primitive for PriceLabel {
         }
 
         // Draw label background centered on anchor point
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.fill_rect(
-            crisp(x - label_width / 2.0, dpr),
-            crisp(y - label_height / 2.0, dpr),
-            label_width,
-            label_height,
-        );
+        if self.fill {
+            let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.fill_rect(
+                crisp(x - label_width / 2.0, dpr),
+                crisp(y - label_height / 2.0, dpr),
+                label_width,
+                label_height,
+            );
+        }
 
         // Draw price text centered
         ctx.set_fill_color(text_color);
@@ -202,15 +216,26 @@ impl Primitive for PriceLabel {
             ConfigProperty::show_line(self.show_line)
                 .with_category(PropertyCategory::Style)
                 .with_order(0),
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(1),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(2),
         ]
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "show_line" {
-            if let Some(v) = value.as_bool() {
-                self.show_line = v;
-                return true;
+        match id {
+            "show_line" => { if let Some(v) = value.as_bool() { self.show_line = v; return true; } }
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
             }
+            _ => {}
         }
         false
     }

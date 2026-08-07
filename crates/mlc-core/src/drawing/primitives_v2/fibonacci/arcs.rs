@@ -16,7 +16,11 @@ use super::super::{
     render_primitive_text,
     config::FibLevelConfig,
 };
-use super::retracement::default_level_configs;
+// Shared level table with retracement, band fill on by default — see the
+// doc comment on `default_level_configs_filled` for why this family qualifies
+// (the ring/wedge fill here uses the same nonzero-winding two-ellipse trick
+// as `circles`, so it's a real closed region, not an ambiguous curved one).
+use super::retracement::default_level_configs_filled as default_level_configs;
 
 /// Fibonacci Arcs
 #[derive(Clone, Debug, Serialize, Deserialize)]

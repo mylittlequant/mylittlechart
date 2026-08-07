@@ -11,6 +11,7 @@ use super::super::{
     RenderContext,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 /// Circle — center in (timestamp_ms, price), radius_ms = horizontal radius as duration
@@ -24,11 +25,10 @@ pub struct Circle {
     /// Vertical radius in price units
     pub radius_price: f64,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl Circle {
     pub fn new(center_ts: i64, center_price: f64, radius_ms: i64, radius_price: f64, color: &str) -> Self {
@@ -43,7 +43,7 @@ impl Circle {
             center_ts, center_price,
             radius_ms: radius_ms.max(1),
             radius_price: radius_price.abs().max(f64::EPSILON),
-            fill: true, fill_opacity: 0.12,
+            fill: true, fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -119,7 +119,6 @@ impl Primitive for Circle {
         let dist_sq = nx * nx + ny * ny;
 
         if (dist_sq.sqrt() - 1.0).abs() < HIT_TOLERANCE / rx.min(ry) { return HitTestResult::Body; }
-        if self.fill && dist_sq <= 1.0 { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 

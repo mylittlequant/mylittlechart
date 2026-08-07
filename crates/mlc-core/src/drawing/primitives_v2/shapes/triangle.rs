@@ -11,6 +11,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,11 +24,10 @@ pub struct Triangle {
     #[serde(default)]
     pub ts3: i64, pub price3: f64,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl Triangle {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, ts3: i64, price3: f64, color: &str) -> Self {
@@ -40,7 +40,7 @@ impl Triangle {
                 ..Default::default()
             },
             ts1, price1, ts2, price2, ts3, price3,
-            fill: true, fill_opacity: 0.12,
+            fill: true, fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -103,7 +103,6 @@ impl Primitive for Triangle {
         if point_to_line_distance(screen_x, screen_y, x2, y2, x3, y3) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, x3, y3, x1, y1) < HIT_TOLERANCE { return HitTestResult::Body; }
 
-        if self.fill && point_in_triangle(screen_x, screen_y, x1, y1, x2, y2, x3, y3) { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 
@@ -200,15 +199,6 @@ impl Primitive for Triangle {
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
-}
-
-fn point_in_triangle(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) -> bool {
-    let denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3);
-    if denom.abs() < 0.0001 { return false; }
-    let a = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / denom;
-    let b = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denom;
-    let c = 1.0 - a - b;
-    (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c)
 }
 
 fn create_triangle(points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {

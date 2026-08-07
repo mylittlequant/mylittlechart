@@ -1930,7 +1930,7 @@ pub fn render_sub_pane_primitives(
                     .iter()
                     .map(|cp| (cp.x, cp.y))
                     .collect();
-                draw_control_points(ctx, &screen_points);
+                draw_control_points(ctx, &screen_points, &state.theme.crosshair, &state.theme.background);
             }
         }
     }
@@ -2645,7 +2645,7 @@ pub fn render_main_chart_primitives(
                     .iter()
                     .map(|cp| (cp.x, cp.y))
                     .collect();
-                draw_control_points(ctx, &screen_points);
+                draw_control_points(ctx, &screen_points, &state.theme.crosshair, &state.theme.background);
             }
         }
     }

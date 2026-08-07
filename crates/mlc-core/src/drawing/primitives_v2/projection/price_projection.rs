@@ -27,6 +27,15 @@ impl PriceProjection {
             ts1, price1, ts2, price2, ts3, price3, show_percentage: true,
         }
     }
+
+    /// End timestamp of the short level-marker ticks drawn next to the
+    /// projection line — a quarter of the `ts1`..`ts2` anchor span past
+    /// `ts3`, so the tick scales with the tool's own anchors instead of a
+    /// fixed pixel count that changes shape on zoom.
+    fn tick_end_ts_ms(&self) -> i64 {
+        let span_ms = ((self.ts2 - self.ts1).abs() / 4).max(1);
+        self.ts3 + span_ms
+    }
 }
 
 impl Primitive for PriceProjection {
@@ -56,17 +65,37 @@ impl Primitive for PriceProjection {
         }
     }
     fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let pts = [(self.ts1, self.price1), (self.ts2, self.price2), (self.ts3, self.price3)];
-        let screen: Vec<_> = pts.iter().map(|(t, p)| {
-            let b = timestamp_ms_to_bar_f64(bars, *t);
-            (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
-        }).collect();
+        let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts1));
+        let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts2));
+        let x3 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts3));
+        let x3b = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.tick_end_ts_ms()));
+        let y1 = vp.price_to_y(self.price1, ps.price_min, ps.price_max);
+        let y2 = vp.price_to_y(self.price2, ps.price_min, ps.price_max);
+        let y3 = vp.price_to_y(self.price3, ps.price_min, ps.price_max);
+        let projected_price = self.price3 + (self.price2 - self.price1);
+        let y4 = vp.price_to_y(projected_price, ps.price_min, ps.price_max);
+
         let r = 8.0;
-        if (sx - screen[0].0).powi(2) + (sy - screen[0].1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
-        if (sx - screen[1].0).powi(2) + (sy - screen[1].1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
-        if (sx - screen[2].0).powi(2) + (sy - screen[2].1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point3); }
-        for i in 0..2 {
-            if point_to_line_distance(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if (sx - x1).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
+        if (sx - x2).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
+        if (sx - x3).powi(2) + (sy - y3).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point3); }
+
+        // Every stroke `render` actually draws, over its true extent — the
+        // source measurement line, the vertical projection line, the two
+        // horizontal price levels, and the two level-marker ticks. There is
+        // no fill on this primitive, so there is no interior to guard.
+        let strokes = [
+            (x1, y1, x2, y2),
+            (x3, y3, x3, y4),
+            (x1, y1, x2, y1),
+            (x1, y2, x2, y2),
+            (x3, y3, x3b, y3),
+            (x3, y4, x3b, y4),
+        ];
+        for (lx1, ly1, lx2, ly2) in strokes {
+            if point_to_line_distance(sx, sy, lx1, ly1, lx2, ly2) < HIT_TOLERANCE {
+                return HitTestResult::Body;
+            }
         }
         HitTestResult::Miss
     }
@@ -89,6 +118,7 @@ impl Primitive for PriceProjection {
         let y2 = ctx.price_to_y(self.price2);
         let x3 = ctx.ts_to_x_ms(self.ts3);
         let y3 = ctx.price_to_y(self.price3);
+        let x3b = ctx.ts_to_x_ms(self.tick_end_ts_ms());
 
         // Calculate the price movement to project
         let price_delta = self.price2 - self.price1;
@@ -137,12 +167,12 @@ impl Primitive for PriceProjection {
 
         ctx.begin_path();
         ctx.move_to(crisp(x3, dpr), crisp(y3, dpr));
-        ctx.line_to(crisp(x3 + 50.0, dpr), crisp(y3, dpr));
+        ctx.line_to(crisp(x3b, dpr), crisp(y3, dpr));
         ctx.stroke();
 
         ctx.begin_path();
         ctx.move_to(crisp(x3, dpr), crisp(y4, dpr));
-        ctx.line_to(crisp(x3 + 50.0, dpr), crisp(y4, dpr));
+        ctx.line_to(crisp(x3b, dpr), crisp(y4, dpr));
         ctx.stroke();
 
         ctx.set_line_dash(&[]);
@@ -159,7 +189,7 @@ impl Primitive for PriceProjection {
             use crate::render::{TextAlign, TextBaseline};
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&label, x3 + 55.0, y4);
+            ctx.fill_text(&label, x3b + 5.0, y4);
         }
 
         if let Some(ref text) = self.data.text {

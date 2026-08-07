@@ -11,11 +11,13 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE,
+    HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
+    level_ramp_color, level_rank,
     config::{FibLevelConfig, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::super::types::point_to_ray_distance;
 
 /// Level mode for Pitchfork - determines which levels are shown
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -102,11 +104,22 @@ pub const MAIN_VISIBLE: &[f64] = &[0.5, 1.0];
 pub const DEFAULT_PITCHFORK_LEVELS: &[f64] = &[-1.0, -0.5, 0.0, 0.5, 1.0];
 pub const MAIN_PITCHFORK_LEVELS: &[f64] = DEFAULT_PITCHFORK_LEVELS;
 
-/// Create default level configs for pitchfork (24 levels, only main visible)
+/// Create default level configs for pitchfork (24 levels, only main visible).
+/// Shared by `schiff`/`modified_schiff`/`inside_pitchfork` (they all import
+/// this function), so this one definition sets the default look for all 4
+/// pitchfork variants.
 pub fn default_level_configs() -> Vec<FibLevelConfig> {
+    let mut sorted: Vec<f64> = ALL_PITCHFORK_LEVELS.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ALL_PITCHFORK_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = MAIN_VISIBLE.contains(&level);
+        // Ramp colour by rank instead of every line falling back to the same stroke color.
+        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
+        // Band fill on by default — `render` draws it as a mirrored ±level
+        // quad from the handle, a real closed region (owner's own example
+        // of a "stack of parallel level lines" family).
+        config.fill_enabled = true;
         config
     }).collect()
 }
@@ -926,42 +939,6 @@ impl Primitive for Pitchfork {
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     let radius = 8.0;
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
-}
-
-fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
-}
-
-fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.max(0.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
 }
 
 // =============================================================================

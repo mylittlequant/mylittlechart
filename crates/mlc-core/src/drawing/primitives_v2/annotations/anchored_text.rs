@@ -8,7 +8,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, CONTROL_POINT_HIT_RADIUS,
-    render_primitive_text,
+    render_primitive_text, render_text_with_background, PLATE_FILL_OPACITY,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
@@ -112,13 +112,22 @@ impl Primitive for AnchoredText {
         let x = ctx.ts_to_x_ms(self.ts_ms);
         let y = ctx.price_to_y(self.price);
 
-        // Render text directly
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
-                render_primitive_text(ctx, text, x, y, &self.data.color.stroke);
+                if self.background {
+                    // `background` used to be dead wiring — set via
+                    // text_properties()/apply_text_property() but never read
+                    // by render(). Now it routes here, translucent at the
+                    // same constant as every other annotation plate
+                    // (`b06f9f51`), never a solid box behind the text.
+                    let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+                    let bg_color = format!("{}{:02x}", &base[..base.len().min(7)], (PLATE_FILL_OPACITY * 255.0) as u8);
+                    render_text_with_background(ctx, text, x, y, &self.data.color.stroke, Some(&bg_color), 4.0);
+                } else {
+                    render_primitive_text(ctx, text, x, y, &self.data.color.stroke);
+                }
             }
         }
-
     }
 
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {

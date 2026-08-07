@@ -390,6 +390,132 @@ mod hydration {
 }
 
 #[cfg(test)]
+mod hit_test_safety_net {
+    //! The hit-test seam's safety net (2026-08-07): `Primitive::control_points`
+    //! already returns every handle with its screen coordinates, and
+    //! `Primitive::geometry` (default: empty; a family opts in by overriding
+    //! it) is meant to return the strokes a primitive draws. Both this
+    //! module's tests exist to make two classes of defect impossible to ship
+    //! silently again:
+    //!
+    //! 1. A handle `control_points()` declares that nothing can ever grab
+    //!    (a per-primitive `hit_test` override whose own proximity math
+    //!    disagrees with what it just advertised — the exact bug class a
+    //!    prior arc found fourteen instances of, one hand-written radius
+    //!    literal at a time).
+    //! 2. A segment `geometry()` reports that its own `hit_test` cannot
+    //!    find — impossible today (every primitive's `geometry()` is still
+    //!    the empty default; no family has migrated), so this half of the
+    //!    test is currently a no-op that activates automatically as each
+    //!    family adopts `geometry()`.
+    //!
+    //! Every registered type is constructed through its own factory with the
+    //! SAME sample points the round-trip test above uses (proven to
+    //! construct every type without panicking), plus a matching `bars`/
+    //! `viewport`/`price_scale` triplet. For each control point, a click at
+    //! its EXACT reported coordinate must resolve to THAT SAME
+    //! `ControlPointType` via the primitive's own `hit_test` (whichever body
+    //! it runs — its own override, today, for every registered type, or the
+    //! new trait default once a primitive relies on it). For each `geometry`
+    //! segment, a click at its midpoint must resolve to `Body`.
+    //!
+    //! Every registered type constructs from the round-trip test's 7-point
+    //! fixture (verified above), so none is excluded here for construction
+    //! reasons.
+    use super::*;
+    use crate::{Bar, PriceScale, Viewport};
+    use super::super::traits::HitTestResult;
+
+    /// Same fixture as `hydration::every_registered_type_survives_a_round_trip`
+    /// — hourly points, price drifting 100..115 — plus a matching `bars`
+    /// slice so `timestamp_ms_to_bar_f64` resolves every timestamp to a real
+    /// (not extrapolated) bar index.
+    fn fixture() -> (Vec<(i64, f64)>, Vec<Bar>, Viewport, PriceScale) {
+        let pts = vec![
+            (1_700_000_000_000i64, 100.0f64),
+            (1_700_003_600_000, 110.0),
+            (1_700_007_200_000, 105.0),
+            (1_700_010_800_000, 115.0),
+            (1_700_014_400_000, 108.0),
+            (1_700_018_000_000, 112.0),
+            (1_700_021_600_000, 109.0),
+        ];
+        let bars: Vec<Bar> = pts
+            .iter()
+            .map(|(ts_ms, price)| Bar::new(ts_ms / 1000, *price, *price + 2.0, *price - 2.0, *price))
+            .collect();
+        let viewport = Viewport {
+            view_start: 0.0,
+            bar_spacing: 8.0,
+            bar_width_ratio: 0.8,
+            chart_width: 1200.0,
+            chart_height: 800.0,
+            bar_count: bars.len(),
+        };
+        let price_scale = PriceScale { price_min: 50.0, price_max: 150.0, ..Default::default() };
+        (pts, bars, viewport, price_scale)
+    }
+
+    #[test]
+    fn every_registered_type_control_points_and_geometry_are_hit_testable() {
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        let (pts, bars, viewport, price_scale) = fixture();
+        let mut ids: Vec<&str> = reg.all().map(|m| m.type_id).collect();
+        ids.sort_unstable();
+
+        let mut failures = Vec::new();
+        let mut checked_types = 0usize;
+        let mut checked_control_points = 0usize;
+        let mut checked_geometry_segments = 0usize;
+
+        for id in ids {
+            let Some(p) = reg.create(id, &pts, None) else {
+                failures.push(format!("{id}: no factory (cannot construct — see round-trip test)"));
+                continue;
+            };
+            checked_types += 1;
+
+            for cp in p.control_points(&bars, &viewport, &price_scale) {
+                checked_control_points += 1;
+                match p.hit_test(cp.x, cp.y, &bars, &viewport, &price_scale) {
+                    HitTestResult::ControlPoint(found) if found == cp.point_type => {}
+                    other => failures.push(format!(
+                        "{id}: click at its own {:?} ({:.2}, {:.2}) resolved to {:?}, not ControlPoint({:?})",
+                        cp.point_type, cp.x, cp.y, other, cp.point_type,
+                    )),
+                }
+            }
+
+            for seg in p.geometry(&bars, &viewport, &price_scale) {
+                // A zero-length segment collapses to a point that may
+                // legitimately coincide with a control point — not the
+                // defect this half of the test targets.
+                if (seg.x1 - seg.x2).abs() < 0.01 && (seg.y1 - seg.y2).abs() < 0.01 {
+                    continue;
+                }
+                checked_geometry_segments += 1;
+                let mx = (seg.x1 + seg.x2) / 2.0;
+                let my = (seg.y1 + seg.y2) / 2.0;
+                match p.hit_test(mx, my, &bars, &viewport, &price_scale) {
+                    HitTestResult::Body => {}
+                    other => failures.push(format!(
+                        "{id}: click at its own drawn segment's midpoint ({:.2}, {:.2}) resolved to {:?}, not Body",
+                        mx, my, other,
+                    )),
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "{} hit-test mismatches across {} types ({} control points, {} geometry segments checked):\n{}",
+            failures.len(), checked_types, checked_control_points, checked_geometry_segments,
+            failures.join("\n"),
+        );
+    }
+}
+
+#[cfg(test)]
 mod catalogue_dump {
     use super::*;
     use crate::state::icons::icon_svg;

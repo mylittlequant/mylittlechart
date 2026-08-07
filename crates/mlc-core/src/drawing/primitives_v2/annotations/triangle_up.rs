@@ -9,6 +9,8 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     render_primitive_text, TextAlign,
+    AREA_FILL_OPACITY, default_area_fill_opacity,
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,7 +20,16 @@ pub struct TriangleUp {
     pub ts1: i64, pub price1: f64, // Center point
     #[serde(default)]
     pub ts2: i64, pub price2: f64, // Size point
+    /// Paint the triangle body at all — off leaves only the outline + optional text.
+    #[serde(default = "default_true")]
+    pub fill: bool,
+    /// Triangle fill opacity (0.0-1.0) — this glyph carries no text on its
+    /// fill, so it is treated as a free-form shape (same tier `shapes/*`
+    /// uses), not a text plate; its size is user-resizable and unbounded.
+    #[serde(default = "default_area_fill_opacity")]
+    pub fill_opacity: f64,
 }
+fn default_true() -> bool { true }
 
 impl TriangleUp {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -31,7 +42,7 @@ impl TriangleUp {
         };
         data.text = Some(PrimitiveText::new(""));
 
-        Self { data, ts1, price1, ts2, price2 }
+        Self { data, ts1, price1, ts2, price2, fill: true, fill_opacity: AREA_FILL_OPACITY }
     }
 
     fn calculate_size(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> f64 {
@@ -106,7 +117,6 @@ impl Primitive for TriangleUp {
         let size = self.calculate_size_render(ctx);
         let s = size / 2.0;
 
-        ctx.set_fill_color(&self.data.color.stroke);
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
 
@@ -115,7 +125,14 @@ impl Primitive for TriangleUp {
         ctx.line_to(crisp(x - s, dpr), crisp(y + s, dpr));
         ctx.line_to(crisp(x + s, dpr), crisp(y + s, dpr));
         ctx.close_path();
-        ctx.fill();
+        // Fill is gated; the stroke below is NOT — a translucent triangle
+        // still needs a crisp edge or it dissolves into the candles.
+        if self.fill {
+            let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.fill();
+        }
         ctx.stroke();
 
         if let Some(ref text) = self.data.text {
@@ -142,6 +159,31 @@ impl Primitive for TriangleUp {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(0),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(1),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

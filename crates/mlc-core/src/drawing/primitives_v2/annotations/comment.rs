@@ -8,10 +8,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp, contrasting_text_color,
+    PLATE_FILL_OPACITY, default_plate_fill_opacity,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
-fn default_fill_opacity() -> f64 { 0.88 }
+fn default_true() -> bool { true }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comment {
@@ -25,8 +26,11 @@ pub struct Comment {
     pub text: String,
     #[serde(default)] pub author: String,
     #[serde(default)] pub timestamp: i64,
+    /// Paint the bubble fill at all — off leaves only the outline + tail edge.
+    #[serde(default = "default_true")]
+    pub fill: bool,
     /// Bubble fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_plate_fill_opacity")]
     pub fill_opacity: f64,
 }
 
@@ -47,7 +51,8 @@ impl Comment {
             text: String::new(),
             author: String::new(),
             timestamp: 0,
-            fill_opacity: 0.88,
+            fill: true,
+            fill_opacity: PLATE_FILL_OPACITY,
         }
     }
 
@@ -135,20 +140,22 @@ impl Primitive for Comment {
         // bottom-left edge, matching the tool's own rail icon instead of a
         // solid circle.
         let radius = 6.0_f64.min(width / 3.0).min(height / 3.0);
-        ctx.set_fill_color(&fill_color);
-        ctx.begin_path();
-        ctx.rounded_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height, radius);
-        ctx.fill();
+        if self.fill {
+            ctx.set_fill_color(&fill_color);
+            ctx.begin_path();
+            ctx.rounded_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height, radius);
+            ctx.fill();
 
-        let tail_w = (width * 0.22).clamp(5.0, 12.0);
-        let tail_h = (height * 0.35).clamp(5.0, 10.0);
-        let tail_x0 = min_x + width * 0.2;
-        ctx.begin_path();
-        ctx.move_to(crisp(tail_x0, dpr), crisp(max_y - 1.0, dpr));
-        ctx.line_to(crisp(tail_x0 + tail_w, dpr), crisp(max_y - 1.0, dpr));
-        ctx.line_to(crisp(tail_x0 + tail_w * 0.3, dpr), crisp(max_y + tail_h, dpr));
-        ctx.close_path();
-        ctx.fill();
+            let tail_w = (width * 0.22).clamp(5.0, 12.0);
+            let tail_h = (height * 0.35).clamp(5.0, 10.0);
+            let tail_x0 = min_x + width * 0.2;
+            ctx.begin_path();
+            ctx.move_to(crisp(tail_x0, dpr), crisp(max_y - 1.0, dpr));
+            ctx.line_to(crisp(tail_x0 + tail_w, dpr), crisp(max_y - 1.0, dpr));
+            ctx.line_to(crisp(tail_x0 + tail_w * 0.3, dpr), crisp(max_y + tail_h, dpr));
+            ctx.close_path();
+            ctx.fill();
+        }
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -234,6 +241,9 @@ impl Primitive for Comment {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(19),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::Style)
                 .with_order(20),
@@ -241,11 +251,15 @@ impl Primitive for Comment {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "fill_opacity" {
-            if let Some(v) = value.as_number() {
-                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
-                return true;
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
             }
+            _ => {}
         }
         false
     }

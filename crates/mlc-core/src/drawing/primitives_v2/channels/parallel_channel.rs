@@ -15,6 +15,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,12 +34,11 @@ pub struct ParallelChannel {
     pub extend_right: bool,
     #[serde(default = "default_true")]
     pub fill: bool,
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_area_fill_opacity")]
     pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl ParallelChannel {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, channel_offset: f64, color: &str) -> Self {
@@ -55,7 +55,7 @@ impl ParallelChannel {
             extend_left: false,
             extend_right: false,
             fill: true,
-            fill_opacity: 0.12,
+            fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -129,20 +129,6 @@ impl Primitive for ParallelChannel {
 
         if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, x1, py1, x2, py2) < HIT_TOLERANCE { return HitTestResult::Body; }
-
-        if self.fill {
-            let line_y_at_x = |x: f64, lx1: f64, ly1: f64, lx2: f64, ly2: f64| -> f64 {
-                if (lx2 - lx1).abs() < 0.001 { (ly1 + ly2) / 2.0 }
-                else { ly1 + (ly2 - ly1) * (x - lx1) / (lx2 - lx1) }
-            };
-            let main_y = line_y_at_x(screen_x, x1, y1, x2, y2);
-            let parallel_y = line_y_at_x(screen_x, x1, py1, x2, py2);
-            let min_y = main_y.min(parallel_y);
-            let max_y = main_y.max(parallel_y);
-            if screen_y >= min_y && screen_y <= max_y && screen_x >= x1.min(x2) && screen_x <= x1.max(x2) {
-                return HitTestResult::Body;
-            }
-        }
         HitTestResult::Miss
     }
 

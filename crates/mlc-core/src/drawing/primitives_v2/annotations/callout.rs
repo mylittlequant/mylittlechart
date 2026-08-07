@@ -8,12 +8,13 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp, contrasting_text_color,
+    PLATE_FILL_OPACITY, default_plate_fill_opacity,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 fn default_width() -> f64 { 100.0 }
 fn default_height() -> f64 { 50.0 }
-fn default_fill_opacity() -> f64 { 0.88 }
+fn default_true() -> bool { true }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Callout {
@@ -27,8 +28,11 @@ pub struct Callout {
     pub text: String,
     #[serde(default = "default_width")] pub bubble_width: f64,
     #[serde(default = "default_height")] pub bubble_height: f64,
+    /// Paint the bubble + tail fill at all — off leaves only the outlines.
+    #[serde(default = "default_true")]
+    pub fill: bool,
     /// Bubble fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_plate_fill_opacity")]
     pub fill_opacity: f64,
 }
 
@@ -49,7 +53,8 @@ impl Callout {
             text: String::new(),
             bubble_width: 100.0,
             bubble_height: 50.0,
-            fill_opacity: 0.88,
+            fill: true,
+            fill_opacity: PLATE_FILL_OPACITY,
         }
     }
 
@@ -138,13 +143,15 @@ impl Primitive for Callout {
         let base1 = (edge_x + perp_x * tail_half, edge_y + perp_y * tail_half);
         let base2 = (edge_x - perp_x * tail_half, edge_y - perp_y * tail_half);
 
-        ctx.set_fill_color(&fill_color);
-        ctx.begin_path();
-        ctx.move_to(crisp(base1.0, dpr), crisp(base1.1, dpr));
-        ctx.line_to(crisp(x1, dpr), crisp(y1, dpr));
-        ctx.line_to(crisp(base2.0, dpr), crisp(base2.1, dpr));
-        ctx.close_path();
-        ctx.fill();
+        if self.fill {
+            ctx.set_fill_color(&fill_color);
+            ctx.begin_path();
+            ctx.move_to(crisp(base1.0, dpr), crisp(base1.1, dpr));
+            ctx.line_to(crisp(x1, dpr), crisp(y1, dpr));
+            ctx.line_to(crisp(base2.0, dpr), crisp(base2.1, dpr));
+            ctx.close_path();
+            ctx.fill();
+        }
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -154,8 +161,10 @@ impl Primitive for Callout {
         ctx.line_to(crisp(base2.0, dpr), crisp(base2.1, dpr));
         ctx.stroke();
 
-        ctx.set_fill_color(&fill_color);
-        ctx.fill_rect(crisp(x2 - half_w, dpr), crisp(y2 - half_h, dpr), self.bubble_width, self.bubble_height);
+        if self.fill {
+            ctx.set_fill_color(&fill_color);
+            ctx.fill_rect(crisp(x2 - half_w, dpr), crisp(y2 - half_h, dpr), self.bubble_width, self.bubble_height);
+        }
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.stroke_rect(crisp(x2 - half_w, dpr), crisp(y2 - half_h, dpr), self.bubble_width, self.bubble_height);
 
@@ -244,6 +253,9 @@ impl Primitive for Callout {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(19),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::Style)
                 .with_order(20),
@@ -251,11 +263,15 @@ impl Primitive for Callout {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "fill_opacity" {
-            if let Some(v) = value.as_number() {
-                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
-                return true;
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
             }
+            _ => {}
         }
         false
     }

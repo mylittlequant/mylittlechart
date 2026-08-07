@@ -609,7 +609,7 @@ pub struct FibLevelConfig {
     pub group: Option<String>,
 }
 
-fn default_fill_opacity() -> f64 { 0.1 }
+use super::fill_defaults::{BAND_FILL_OPACITY, default_band_fill_opacity as default_fill_opacity};
 
 impl FibLevelConfig {
     pub fn new(level: f64) -> Self {
@@ -620,7 +620,7 @@ impl FibLevelConfig {
             width: None,
             style: "solid".to_string(),
             fill_color: None,
-            fill_opacity: 0.1,
+            fill_opacity: BAND_FILL_OPACITY,
             fill_enabled: false,
             group: None,
         }
@@ -634,7 +634,7 @@ impl FibLevelConfig {
             width: None,
             style: style.to_string(),
             fill_color: None,
-            fill_opacity: 0.1,
+            fill_opacity: BAND_FILL_OPACITY,
             fill_enabled: false,
             group: None,
         }
@@ -664,7 +664,7 @@ impl FibLevelConfig {
             width: None,
             style: "solid".to_string(),
             fill_color: None,
-            fill_opacity: 0.1,
+            fill_opacity: BAND_FILL_OPACITY,
             fill_enabled: false,
             group: Some(group.to_string()),
         }
@@ -1114,6 +1114,14 @@ impl ConfigProperty {
         Self::boolean("reverse", ConfigKey::Reverse.get(current_language()), value)
     }
 
+    /// Create "Closed" boolean property with i18n (free-form shape closure —
+    /// last point joins back to the first). Precondition for `fill` to paint
+    /// anything on a free-form shape (Polyline/Path); order it above the
+    /// "Fill" row in `style_properties()`.
+    pub fn closed(value: bool) -> Self {
+        Self::boolean("closed", ConfigKey::Closed.get(current_language()), value)
+    }
+
     /// Create "Fill" boolean property with i18n
     pub fn fill(value: bool) -> Self {
         Self::boolean("fill", ConfigKey::Fill.get(current_language()), value)
@@ -1200,6 +1208,13 @@ impl ConfigProperty {
     /// Create "Show P&L" boolean property with i18n
     pub fn show_pnl(value: bool) -> Self {
         Self::boolean("show_pnl", ConfigKey::ShowPnl.get(current_language()), value)
+    }
+
+    /// Create "Show Live Label" boolean property with i18n (long/short
+    /// position — gates the live-price text label; the live shading layer
+    /// and marker line always render regardless of this setting).
+    pub fn show_live_label(value: bool) -> Self {
+        Self::boolean("show_live_label", ConfigKey::ShowLiveLabel.get(current_language()), value)
     }
 
     /// Create "Stop Zone Color" color property with i18n (long/short position)

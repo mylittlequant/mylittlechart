@@ -14,8 +14,13 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::FibLevelConfig,
+    BAND_FILL_OPACITY, default_band_fill_opacity,
 };
-use super::retracement::default_level_configs;
+// Shared level table with retracement, band fill on by default — see the
+// doc comment on `default_level_configs_filled` for why this family qualifies.
+// Unrelated to `self.fill` below, which paints the whole wedge as one flat
+// triangle and stays off by default.
+use super::retracement::default_level_configs_filled as default_level_configs;
 
 /// Fibonacci Wedge
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,12 +47,11 @@ pub struct FibWedge {
     pub show_as_percent: bool,
     #[serde(default)]
     pub fill: bool,
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_band_fill_opacity")]
     pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.1 }
 fn default_label_position() -> String { "left".to_string() }
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
@@ -83,7 +87,7 @@ impl FibWedge {
             label_position: "left".to_string(),
             show_as_percent: true,
             fill: false,
-            fill_opacity: 0.1,
+            fill_opacity: BAND_FILL_OPACITY,
         }
     }
 
@@ -162,12 +166,6 @@ impl Primitive for FibWedge {
             }
         }
 
-        // A filled wedge answers over its whole body. An UNfilled one must not
-        // — an empty outline that swallows the candles inside it is the reason
-        // the area is gated on `fill` everywhere else.
-        if self.fill && point_in_triangle(sx, sy, x1, y1, x2, y2, x3, y3) {
-            return HitTestResult::Body;
-        }
         HitTestResult::Miss
     }
 
@@ -402,6 +400,7 @@ impl Primitive for FibWedge {
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
             ConfigProperty::fill(self.fill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
         ]
     }
 
@@ -413,6 +412,7 @@ impl Primitive for FibWedge {
             "show_as_percent" => { if let PropertyValue::Boolean(v) = value { self.show_as_percent = *v; return true; } }
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
             "fill" => { if let PropertyValue::Boolean(v) = value { self.fill = *v; return true; } }
+            "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
             _ => {}
         }
         false
@@ -454,14 +454,4 @@ pub fn metadata() -> PrimitiveMetadata {
         supports_text: true,
         has_levels: true,
     }
-}
-
-/// Barycentric containment, the same test the filled shapes use.
-fn point_in_triangle(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) -> bool {
-    let denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3);
-    if denom.abs() < 0.0001 { return false; }
-    let a = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) / denom;
-    let b = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) / denom;
-    let c = 1.0 - a - b;
-    (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c)
 }

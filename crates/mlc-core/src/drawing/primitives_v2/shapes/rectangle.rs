@@ -11,6 +11,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,12 +24,11 @@ pub struct Rectangle {
     pub ts2: i64,
     pub price2: f64,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
     #[serde(default)] pub border_radius: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl Rectangle {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -41,7 +41,7 @@ impl Rectangle {
                 ..Default::default()
             },
             ts1, price1, ts2, price2,
-            fill: true, fill_opacity: 0.12, border_radius: 0.0,
+            fill: true, fill_opacity: AREA_FILL_OPACITY, border_radius: 0.0,
         }
     }
 
@@ -99,9 +99,6 @@ impl Primitive for Rectangle {
         let x2 = viewport.bar_to_x_f64(bar2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
-        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-
         let corners = [
             (x1, y1, ControlPointType::Corner(0)),
             (x2, y1, ControlPointType::Corner(1)),
@@ -135,10 +132,6 @@ impl Primitive for Rectangle {
             if point_to_line_distance(screen_x, screen_y, lx1, ly1, lx2, ly2) < HIT_TOLERANCE {
                 return HitTestResult::Body;
             }
-        }
-
-        if self.fill && screen_x >= min_x && screen_x <= max_x && screen_y >= min_y && screen_y <= max_y {
-            return HitTestResult::Body;
         }
 
         HitTestResult::Miss

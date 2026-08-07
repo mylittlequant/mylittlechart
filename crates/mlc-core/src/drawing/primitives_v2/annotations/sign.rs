@@ -9,6 +9,8 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     render_primitive_text, TextAlign,
+    AREA_FILL_OPACITY, default_area_fill_opacity,
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -22,7 +24,18 @@ pub struct Sign {
     #[serde(default)]
     pub ts2: i64, pub price2: f64, // Size point
     pub sign_type: SignType,
+    /// Paint the glyph body at all — off leaves only the outline + optional text.
+    #[serde(default = "default_true")]
+    pub fill: bool,
+    /// Glyph fill opacity (0.0-1.0). These carry no text on the fill itself
+    /// (any label sits outside the glyph bounds), so they are treated as
+    /// free-form shapes rather than text plates — same tier `shapes/*`
+    /// already uses, and their size is user-resizable and unbounded just
+    /// like those shapes, not a fixed-size chip.
+    #[serde(default = "default_area_fill_opacity")]
+    pub fill_opacity: f64,
 }
+fn default_true() -> bool { true }
 
 impl Sign {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -39,6 +52,8 @@ impl Sign {
             data,
             ts1, price1, ts2, price2,
             sign_type: SignType::Circle,
+            fill: true,
+            fill_opacity: AREA_FILL_OPACITY,
         }
     }
 
@@ -114,18 +129,31 @@ impl Primitive for Sign {
         let size = self.calculate_size_render(ctx);
         let s = size / 2.0;
 
-        ctx.set_fill_color(&self.data.color.stroke);
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
+
+        // Fill is gated; the stroke outline below is NOT — a translucent
+        // glyph still needs a crisp edge or it dissolves into the candles.
+        let fill_color = if self.fill {
+            let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            Some(format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8))
+        } else {
+            None
+        };
 
         ctx.begin_path();
         match self.sign_type {
             SignType::Circle => {
                 ctx.arc(x, y, s, 0.0, std::f64::consts::TAU);
-                ctx.fill();
+                if let Some(ref fc) = fill_color { ctx.set_fill_color(fc); ctx.fill(); }
+                ctx.stroke();
             }
             SignType::Square => {
-                ctx.fill_rect(crisp(x - s, dpr), crisp(y - s, dpr), size, size);
+                if let Some(ref fc) = fill_color {
+                    ctx.set_fill_color(fc);
+                    ctx.fill_rect(crisp(x - s, dpr), crisp(y - s, dpr), size, size);
+                }
+                ctx.stroke_rect(crisp(x - s, dpr), crisp(y - s, dpr), size, size);
             }
             SignType::Diamond => {
                 ctx.move_to(crisp(x, dpr), crisp(y - s, dpr));
@@ -133,14 +161,16 @@ impl Primitive for Sign {
                 ctx.line_to(crisp(x, dpr), crisp(y + s, dpr));
                 ctx.line_to(crisp(x - s, dpr), crisp(y, dpr));
                 ctx.close_path();
-                ctx.fill();
+                if let Some(ref fc) = fill_color { ctx.set_fill_color(fc); ctx.fill(); }
+                ctx.stroke();
             }
             SignType::Triangle => {
                 ctx.move_to(crisp(x, dpr), crisp(y - s, dpr));
                 ctx.line_to(crisp(x + s, dpr), crisp(y + s, dpr));
                 ctx.line_to(crisp(x - s, dpr), crisp(y + s, dpr));
                 ctx.close_path();
-                ctx.fill();
+                if let Some(ref fc) = fill_color { ctx.set_fill_color(fc); ctx.fill(); }
+                ctx.stroke();
             }
             SignType::Star => {
                 for i in 0..5 {
@@ -151,7 +181,8 @@ impl Primitive for Sign {
                     else { ctx.line_to(crisp(px, dpr), crisp(py, dpr)); }
                 }
                 ctx.close_path();
-                ctx.fill();
+                if let Some(ref fc) = fill_color { ctx.set_fill_color(fc); ctx.fill(); }
+                ctx.stroke();
             }
             SignType::Cross => {
                 ctx.move_to(crisp(x - s, dpr), crisp(y, dpr));
@@ -203,6 +234,31 @@ impl Primitive for Sign {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(0),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(1),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

@@ -277,10 +277,19 @@ pub enum ConfigKey {
     // primitive_settings modal Coordinates tab — per-point row label
     // ("Point N") used when the primitive has no named point labels.
     PointLabel       = 118,
+
+    // Long/Short Position live-price label toggle (the shading layer and
+    // marker line always render; this gates the text label only).
+    ShowLiveLabel    = 119,
+
+    // Free-form shape closure (Polyline/Path): last point joins back to the
+    // first, turning an open segment chain into a closed shape. Precondition
+    // for a fill to paint anything — `render` gates fill on `closed && fill`.
+    Closed           = 120,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 119;
+    pub const COUNT: usize = 121;
 
     /// Get translation for this key
     #[inline]

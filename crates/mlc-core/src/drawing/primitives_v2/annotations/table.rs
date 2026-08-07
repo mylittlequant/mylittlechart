@@ -6,6 +6,8 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
     RenderContext, crisp,
+    BOX_ANNOTATION_FILL_OPACITY, default_box_annotation_fill_opacity,
+    PLATE_FILL_OPACITY,
 };
 use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory};
 
@@ -25,8 +27,10 @@ pub struct Table {
     #[serde(default = "default_header_text_color")] pub header_text_color: String,
     /// Cell text size in pixels — previously hardcoded to 11px with no control
     #[serde(default = "default_font_size")] pub font_size: f64,
+    /// Paint the table body fill at all — off leaves grid, header and text.
+    #[serde(default = "default_true")] pub fill: bool,
     /// Table body fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_box_annotation_fill_opacity")] pub fill_opacity: f64,
 }
 fn default_cols() -> u8 { 2 }
 fn default_true() -> bool { true }
@@ -35,7 +39,6 @@ fn default_grid_color() -> String { "#607D8B".to_string() }
 fn default_text_color() -> String { "#FFFFFF".to_string() }
 fn default_header_text_color() -> String { "#000000".to_string() }
 fn default_font_size() -> f64 { 13.0 }
-fn default_fill_opacity() -> f64 { 0.88 }
 
 impl Table {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -50,7 +53,8 @@ impl Table {
             text_color: "#FFFFFF".to_string(),
             header_text_color: "#000000".to_string(),
             font_size: 13.0,
-            fill_opacity: 0.88,
+            fill: true,
+            fill_opacity: BOX_ANNOTATION_FILL_OPACITY,
         }
     }
 }
@@ -117,13 +121,23 @@ impl Primitive for Table {
         let padding_x = 6.0;
         let font_size = self.font_size;
 
-        let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
-        let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
-        ctx.set_fill_color(&fill_color);
-        ctx.fill_rect(crisp(left, dpr), crisp(top, dpr), total_w, total_h);
+        if self.fill {
+            let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.fill_rect(crisp(left, dpr), crisp(top, dpr), total_w, total_h);
+        }
 
         if self.show_header && !self.rows.is_empty() {
-            ctx.set_fill_color(&self.header_color);
+            // Header reads as a header by being a translucency STEP above the
+            // body, not by being solid — same hue, plate-tier opacity (0.55)
+            // over the body's box-tier opacity (0.2 default). Fixed at the
+            // plate constant rather than tracking `fill_opacity` so the
+            // header still stands out even when the user drags body opacity
+            // up towards 1.0.
+            let header_base = &self.header_color;
+            let header_fill = format!("{}{:02x}", &header_base[..header_base.len().min(7)], (PLATE_FILL_OPACITY * 255.0) as u8);
+            ctx.set_fill_color(&header_fill);
             ctx.fill_rect(crisp(left, dpr), crisp(top, dpr), total_w, cell_h);
         }
 
@@ -286,9 +300,12 @@ impl Primitive for Table {
             ConfigProperty::font_size(self.font_size)
                 .with_category(PropertyCategory::Style)
                 .with_order(14),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+            ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::Style)
                 .with_order(15),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(16),
         ]
     }
 
@@ -321,6 +338,12 @@ impl Primitive for Table {
             "font_size" => {
                 if let Some(v) = value.as_number() {
                     self.font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "fill" => {
+                if let Some(v) = value.as_bool() {
+                    self.fill = v;
                     return true;
                 }
             }

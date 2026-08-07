@@ -15,9 +15,10 @@ use super::super::{
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle},
 };
+use super::super::types::{Segment, hit_test_strokes};
 
-// Use same levels as GannSquare
-use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE};
+// Use same levels — and the same ring-visibility filter — as GannSquare
+use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE, ring_level_visible};
 
 /// Create default level configs for Gann Square Fixed
 pub fn default_gann_square_fixed_configs() -> Vec<FibLevelConfig> {
@@ -28,6 +29,9 @@ pub fn default_gann_square_fixed_configs() -> Vec<FibLevelConfig> {
         config.visible = MAIN_GANN_SQUARE_VISIBLE.contains(&level);
         // Ramp colour by rank instead of every ring falling back to the same stroke color.
         config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
+        // Band fill on by default — `render` draws it as a square ring
+        // (outer rect minus inner rect via nonzero winding), a real closed region.
+        config.fill_enabled = true;
         config
     }).collect()
 }
@@ -275,20 +279,39 @@ impl Primitive for GannSquareFixed {
             return HitTestResult::ControlPoint(ControlPointType::Move);
         }
 
-        // Check square edges
+        // Every stroke `render` actually draws: the outer square, the
+        // concentric inner ring squares (gated by `ring_level_visible` — the
+        // same filter GannSquare's ring loop applies, so a ring hidden by
+        // its own visibility config can't stay clickable), the two
+        // diagonals, and the cardinal lines through center.
+        let mut segments = Vec::with_capacity(4 + self.level_configs.len() * 4 + 4);
         for i in 0..4 {
             let (x1, y1) = screen_corners[i];
             let (x2, y2) = screen_corners[(i + 1) % 4];
-            if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE {
-                return HitTestResult::Body;
-            }
+            segments.push(Segment::new(x1, y1, x2, y2));
         }
 
-        // Check diagonals
-        if point_to_line_distance(screen_x, screen_y, screen_corners[0].0, screen_corners[0].1, screen_corners[2].0, screen_corners[2].1) < HIT_TOLERANCE {
-            return HitTestResult::Body;
+        for config in &self.level_configs {
+            if !ring_level_visible(config) {
+                continue;
+            }
+            let half_w = half_bar_screen * config.level;
+            let half_h = half_price_screen * config.level;
+            segments.push(Segment::new(cx - half_w, cy - half_h, cx + half_w, cy - half_h)); // top
+            segments.push(Segment::new(cx + half_w, cy - half_h, cx + half_w, cy + half_h)); // right
+            segments.push(Segment::new(cx - half_w, cy + half_h, cx + half_w, cy + half_h)); // bottom
+            segments.push(Segment::new(cx - half_w, cy - half_h, cx - half_w, cy + half_h)); // left
         }
-        if point_to_line_distance(screen_x, screen_y, screen_corners[1].0, screen_corners[1].1, screen_corners[3].0, screen_corners[3].1) < HIT_TOLERANCE {
+
+        // Diagonals
+        segments.push(Segment::new(screen_corners[0].0, screen_corners[0].1, screen_corners[2].0, screen_corners[2].1));
+        segments.push(Segment::new(screen_corners[1].0, screen_corners[1].1, screen_corners[3].0, screen_corners[3].1));
+
+        // Cardinal lines through center
+        segments.push(Segment::new(cx - half_bar_screen, cy, cx + half_bar_screen, cy));
+        segments.push(Segment::new(cx, cy - half_price_screen, cx, cy + half_price_screen));
+
+        if hit_test_strokes(screen_x, screen_y, &segments, HIT_TOLERANCE) {
             return HitTestResult::Body;
         }
 
@@ -426,13 +449,12 @@ impl Primitive for GannSquareFixed {
         // quads above were the only visible trace of a level — the ring
         // OUTLINE itself, and its label, never rendered).
         for config in &self.level_configs {
-            if !config.visible {
+            // Same filter `hit_test` applies via `ring_level_visible` — keeps
+            // the drawn and clickable rings in agreement.
+            if !ring_level_visible(config) {
                 continue;
             }
             let ratio = config.level;
-            if ratio > 0.99 {
-                continue;
-            }
 
             let stroke_color = config.color.as_ref().unwrap_or(&self.data.color.stroke);
             ctx.set_stroke_color(stroke_color);
@@ -592,24 +614,6 @@ impl Primitive for GannSquareFixed {
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     let radius = 8.0;
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
-}
-
-fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
 }
 
 // =============================================================================

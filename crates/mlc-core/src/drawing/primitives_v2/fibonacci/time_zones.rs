@@ -31,6 +31,10 @@ pub fn default_time_zone_configs() -> Vec<FibLevelConfig> {
         config.visible = MAIN_TIME_ZONES.contains(&level);
         // Ramp colour by rank instead of every zone falling back to the same stroke color.
         config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
+        // Band fill on by default — the region between two adjacent zone
+        // lines is a full-height vertical strip (see the fill loop in
+        // `render` below), a real closed region, not an ambiguous curved one.
+        config.fill_enabled = true;
         config
     }).collect()
 }

@@ -15,6 +15,7 @@ use super::super::{
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle},
 };
+use super::super::types::{Segment, hit_test_strokes};
 
 /// All Gann Square ring levels (0.0 = center, 1.0 = outer edge)
 /// These represent concentric squares from center outward
@@ -39,6 +40,9 @@ pub fn default_gann_square_configs() -> Vec<FibLevelConfig> {
         config.visible = MAIN_GANN_SQUARE_VISIBLE.contains(&level);
         // Ramp colour by rank instead of every ring falling back to the same stroke color.
         config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
+        // Band fill on by default — `render` draws it as a square ring
+        // (outer rect minus inner rect via nonzero winding), a real closed region.
+        config.fill_enabled = true;
         config
     }).collect()
 }
@@ -237,43 +241,46 @@ impl Primitive for GannSquare {
         let max_y = y1.max(y2);
         let cx = (x1 + x2) / 2.0;
         let cy = (y1 + y2) / 2.0;
+        let half_w_full = (max_x - min_x) / 2.0;
+        let half_h_full = (max_y - min_y) / 2.0;
 
-        // Check square edges
-        if (screen_x - min_x).abs() < HIT_TOLERANCE && screen_y >= min_y && screen_y <= max_y {
-            return HitTestResult::Body;
-        }
-        if (screen_x - max_x).abs() < HIT_TOLERANCE && screen_y >= min_y && screen_y <= max_y {
-            return HitTestResult::Body;
-        }
-        if (screen_y - min_y).abs() < HIT_TOLERANCE && screen_x >= min_x && screen_x <= max_x {
-            return HitTestResult::Body;
-        }
-        if (screen_y - max_y).abs() < HIT_TOLERANCE && screen_x >= min_x && screen_x <= max_x {
-            return HitTestResult::Body;
+        // Every stroke `render` actually draws: the outer square, the
+        // concentric inner ring squares (gated by `ring_level_visible` — the
+        // same filter `render`'s ring loop applies, so a ring hidden by its
+        // own visibility config can't stay clickable), the cardinal lines
+        // (gated by `show_cardinal`) and the ordinal diagonals (gated by
+        // `show_ordinal`).
+        let mut segments = vec![
+            Segment::new(min_x, min_y, max_x, min_y), // top
+            Segment::new(max_x, min_y, max_x, max_y), // right
+            Segment::new(min_x, max_y, max_x, max_y), // bottom
+            Segment::new(min_x, min_y, min_x, max_y), // left
+        ];
+
+        for config in &self.level_configs {
+            if !ring_level_visible(config) {
+                continue;
+            }
+            let half_w = half_w_full * config.level;
+            let half_h = half_h_full * config.level;
+            segments.push(Segment::new(cx - half_w, cy - half_h, cx + half_w, cy - half_h)); // top
+            segments.push(Segment::new(cx + half_w, cy - half_h, cx + half_w, cy + half_h)); // right
+            segments.push(Segment::new(cx - half_w, cy + half_h, cx + half_w, cy + half_h)); // bottom
+            segments.push(Segment::new(cx - half_w, cy - half_h, cx - half_w, cy + half_h)); // left
         }
 
-        // Check cardinal lines (if enabled)
         if self.show_cardinal {
-            // Horizontal center line
-            if (screen_y - cy).abs() < HIT_TOLERANCE && screen_x >= min_x && screen_x <= max_x {
-                return HitTestResult::Body;
-            }
-            // Vertical center line
-            if (screen_x - cx).abs() < HIT_TOLERANCE && screen_y >= min_y && screen_y <= max_y {
-                return HitTestResult::Body;
-            }
+            segments.push(Segment::new(min_x, cy, max_x, cy));
+            segments.push(Segment::new(cx, min_y, cx, max_y));
         }
 
-        // Check ordinal lines (if enabled)
         if self.show_ordinal {
-            // Main diagonal
-            if point_to_line_distance(screen_x, screen_y, min_x, min_y, max_x, max_y) < HIT_TOLERANCE {
-                return HitTestResult::Body;
-            }
-            // Anti-diagonal
-            if point_to_line_distance(screen_x, screen_y, min_x, max_y, max_x, min_y) < HIT_TOLERANCE {
-                return HitTestResult::Body;
-            }
+            segments.push(Segment::new(min_x, min_y, max_x, max_y));
+            segments.push(Segment::new(min_x, max_y, max_x, min_y));
+        }
+
+        if hit_test_strokes(screen_x, screen_y, &segments, HIT_TOLERANCE) {
+            return HitTestResult::Body;
         }
 
         HitTestResult::Miss
@@ -382,14 +389,13 @@ impl Primitive for GannSquare {
 
         // Draw inner level squares using level_configs
         for config in &self.level_configs {
-            if !config.visible {
+            // Same filter `hit_test` applies via `ring_level_visible` — keeps
+            // the drawn and clickable rings in agreement. Skips the outer
+            // edge (1.0), already drawn above.
+            if !ring_level_visible(config) {
                 continue;
             }
             let ratio = config.level;
-            // Skip outer edge (1.0) - already drawn
-            if ratio > 0.99 {
-                continue;
-            }
 
             // Use per-level color/width/style if set
             let stroke_color = config.color.as_ref().unwrap_or(&self.data.color.stroke);
@@ -563,22 +569,13 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
 }
 
-fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
+/// Whether a ring level should be drawn/hit-tested — shared by `render` and
+/// `hit_test` (and by `gann_square_fixed`, which uses the identical
+/// concentric-ring filter) so a ring hidden by its own visibility config can
+/// never remain clickable. The outer edge (1.0) is already drawn as the
+/// square outline.
+pub(super) fn ring_level_visible(config: &FibLevelConfig) -> bool {
+    config.visible && config.level <= 0.99
 }
 
 // =============================================================================

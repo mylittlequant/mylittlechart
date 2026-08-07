@@ -5,7 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport};
-use super::types::{ControlPoint, ControlPointType, LineStyle, PrimitiveColor, PrimitiveText, CONTROL_POINT_RADIUS};
+use super::types::{
+    ControlPoint, ControlPointType, LineStyle, PrimitiveColor, PrimitiveText,
+    Segment, control_point_style, hit_test_strokes, HIT_TOLERANCE,
+};
 use crate::render::{RenderContext, crisp};
 use super::config::TimeframeVisibilityConfig;
 
@@ -263,6 +266,18 @@ pub trait Primitive: Send + Sync {
     /// Hit test at screen coordinates.
     ///
     /// `bars` is required to convert the primitive's stored timestamps to screen X.
+    ///
+    /// Default implementation (2026-08-07 hit-test seam): control points
+    /// first, via [`control_point_hit_test`](Self::control_point_hit_test)
+    /// — itself built directly on [`control_points`](Self::control_points),
+    /// so a handle is always grabbable exactly where it is drawn — then the
+    /// primitive's own [`geometry`](Self::geometry) segments for the body.
+    /// Interior fill is never a grab surface. Every primitive registered
+    /// today still provides its own `hit_test` override (this default is an
+    /// additive seam for primitives that opt in by implementing `geometry`,
+    /// not a cutover); a primitive that relies on this default without also
+    /// implementing `geometry` is selectable by its handles but not by its
+    /// body, because `geometry`'s own default is empty.
     fn hit_test(
         &self,
         screen_x: f64,
@@ -270,7 +285,18 @@ pub trait Primitive: Send + Sync {
         bars: &[Bar],
         viewport: &Viewport,
         price_scale: &PriceScale,
-    ) -> HitTestResult;
+    ) -> HitTestResult {
+        if let Some(point_type) =
+            self.control_point_hit_test(screen_x, screen_y, bars, viewport, price_scale)
+        {
+            return HitTestResult::ControlPoint(point_type);
+        }
+        let segments = self.geometry(bars, viewport, price_scale);
+        if !segments.is_empty() && hit_test_strokes(screen_x, screen_y, &segments, HIT_TOLERANCE) {
+            return HitTestResult::Body;
+        }
+        HitTestResult::Miss
+    }
 
     /// Get control points in screen coordinates.
     ///
@@ -281,6 +307,62 @@ pub trait Primitive: Send + Sync {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Vec<ControlPoint>;
+
+    /// Default control-point hit test, built directly on
+    /// [`control_points`](Self::control_points) — the single list both the
+    /// draw side (`draw_control_points`) and the hit-test side now walk, so
+    /// a handle drawn at a coordinate is always the same handle grabbable
+    /// at that coordinate. Radius comes from the active
+    /// [`control_point_style`], the same style `draw_control_points` reads,
+    /// so a configurable size can never drift from its own hitbox.
+    ///
+    /// Provided as its own trait method (not inlined into `hit_test`'s
+    /// default) so a primitive that wants control-point hit-testing without
+    /// the body fallback — or a caller that wants ONLY control points,
+    /// bypassing body geometry entirely — can call it directly.
+    fn control_point_hit_test(
+        &self,
+        screen_x: f64,
+        screen_y: f64,
+        bars: &[Bar],
+        viewport: &Viewport,
+        price_scale: &PriceScale,
+    ) -> Option<ControlPointType> {
+        let hit_r_sq = control_point_style().hit_radius().powi(2);
+        self.control_points(bars, viewport, price_scale)
+            .into_iter()
+            .find(|cp| {
+                let dx = cp.x - screen_x;
+                let dy = cp.y - screen_y;
+                dx * dx + dy * dy <= hit_r_sq
+            })
+            .map(|cp| cp.point_type)
+    }
+
+    /// The strokes this primitive draws, in screen space — the shared
+    /// source both a migrated `hit_test`'s body check AND (a future pass
+    /// could wire it) `render` would read, so "drawn but not
+    /// hit-testable" and "hit-testable but not drawn" both stop being
+    /// possible for whatever this method reports.
+    ///
+    /// Empty by default, matching every existing primitive today (each
+    /// still hand-rolls its own `hit_test` instead of overriding this).
+    /// Signature deliberately mirrors `hit_test`/`control_points`
+    /// — `(bars, viewport, price_scale)`, NOT `&mut dyn RenderContext` —
+    /// so it is the one number-producing path `hit_test`'s default and
+    /// (once a family migrates) `control_points`-adjacent code can share.
+    /// `render`'s OWN coordinate path still goes through `RenderContext`
+    /// (`ctx.bar_to_x`/`ctx.price_to_y`), which does not expose the
+    /// underlying `Viewport`/`PriceScale` it was seeded with — unifying
+    /// that side too needs `RenderContext` to grow a `viewport()`/
+    /// `price_scale()` accessor (or `render` itself to take
+    /// `(bars, viewport, price_scale)` instead of `ctx`), a wider refactor
+    /// than this pass. Migrating a family to `geometry` is explicitly out
+    /// of scope for this seam — see `registry.rs`'s
+    /// `every_registered_type_control_points_and_geometry_are_hit_testable`.
+    fn geometry(&self, _bars: &[Bar], _viewport: &Viewport, _price_scale: &PriceScale) -> Vec<Segment> {
+        Vec::new()
+    }
 
     // =========================================================================
     // Rendering
@@ -567,16 +649,45 @@ impl<T: Primitive + ?Sized> PrimitiveExt for T {}
 // Default Rendering
 // =============================================================================
 
-/// Render control points for any primitive
-pub fn draw_control_points(ctx: &mut dyn RenderContext, screen_points: &[(f64, f64)]) {
-    ctx.set_stroke_color(super::types::CONTROL_POINT_STROKE);
-    ctx.set_fill_color(super::types::CONTROL_POINT_FILL);
+/// Render control points for any primitive — the single choke point every
+/// selected primitive's handles paint through.
+///
+/// Shape and radius come from the active [`control_point_style`] (user-level
+/// setting, read fresh here every call — never cached, never per-primitive).
+/// `stroke`/`fill` are resolved by the CALLER from the active theme (the
+/// same `ChartTheme::crosshair`/`ChartTheme::background` fields the
+/// crosshair's own magnet dot already uses — see
+/// `mlc-app-layout/src/layout/render_chart.rs`) rather than the old literal
+/// [`super::types::CONTROL_POINT_STROKE`]/[`super::types::CONTROL_POINT_FILL`]
+/// hex constants, so a handle always matches the active theme instead of a
+/// hardcoded colour.
+pub fn draw_control_points(
+    ctx: &mut dyn RenderContext,
+    screen_points: &[(f64, f64)],
+    stroke: &str,
+    fill: &str,
+) {
+    let style = control_point_style();
+    let r = style.radius();
+
+    ctx.set_stroke_color(stroke);
+    ctx.set_fill_color(fill);
     ctx.set_stroke_width(1.5);
     ctx.set_line_dash(&[]);
 
     for (x, y) in screen_points {
         ctx.begin_path();
-        ctx.arc(*x, *y, CONTROL_POINT_RADIUS, 0.0, std::f64::consts::TAU);
+        match style.shape {
+            super::types::ControlPointShape::Circle => {
+                ctx.arc(*x, *y, r, 0.0, std::f64::consts::TAU);
+            }
+            super::types::ControlPointShape::Square => {
+                ctx.rect(*x - r, *y - r, r * 2.0, r * 2.0);
+            }
+            super::types::ControlPointShape::RoundedSquare => {
+                ctx.rounded_rect(*x - r, *y - r, r * 2.0, r * 2.0, style.corner_radius());
+            }
+        }
         ctx.fill();
         ctx.stroke();
     }

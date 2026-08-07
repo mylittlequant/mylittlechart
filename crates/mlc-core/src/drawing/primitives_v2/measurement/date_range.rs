@@ -9,6 +9,7 @@ use super::super::{
     render_primitive_text, TextAlign,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::super::types::{Segment, hit_test_strokes};
 use super::draw_stat_plate;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,8 +70,9 @@ impl Primitive for DateRange {
         let r = 8.0;
         if (sx - x1).powi(2) + (sy - y).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).powi(2) + (sy - y).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
-        let (min_x, max_x) = (x1.min(x2), x1.max(x2));
-        if (sy - y).abs() < HIT_TOLERANCE && sx >= min_x && sx <= max_x { return HitTestResult::Body; }
+        // Both vertical lines, over their whole drawn height — same
+        // geometry `render` strokes via `vertical_lines`.
+        if hit_test_strokes(sx, sy, &vertical_lines(x1, x2, vp.chart_height), HIT_TOLERANCE) { return HitTestResult::Body; }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -95,20 +97,18 @@ impl Primitive for DateRange {
         ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
         ctx.fill_rect(crisp(min_x, dpr), 0.0, w, ctx.chart_height());
 
-        // Draw the two vertical lines
+        // Draw the two vertical lines — same geometry `hit_test` tests via
+        // `vertical_lines`, so the drawn and clickable lines can't drift.
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_line_style(LineStyle::Solid);
         ctx.set_stroke_width(self.data.width);
 
-        ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), 0.0);
-        ctx.line_to(crisp(x1, dpr), ctx.chart_height());
-        ctx.stroke();
-
-        ctx.begin_path();
-        ctx.move_to(crisp(x2, dpr), 0.0);
-        ctx.line_to(crisp(x2, dpr), ctx.chart_height());
-        ctx.stroke();
+        for line in vertical_lines(x1, x2, ctx.chart_height()) {
+            ctx.begin_path();
+            ctx.move_to(crisp(line.x1, dpr), line.y1);
+            ctx.line_to(crisp(line.x2, dpr), line.y2);
+            ctx.stroke();
+        }
 
         // Stat plate: elapsed time (show_time) and/or bar count (show_bars).
         // Fall back to elapsed time alone so the ruler never renders blank.
@@ -200,6 +200,16 @@ impl Primitive for DateRange {
         if self.label_style.apply_property(id, value) { return true; }
         false
     }
+}
+
+/// The two full-height vertical lines — shared by `render` (draws each) and
+/// `hit_test` (tests each) so the drawn lines and the clickable lines can
+/// never disagree.
+fn vertical_lines(x1: f64, x2: f64, chart_height: f64) -> [Segment; 2] {
+    [
+        Segment::new(x1, 0.0, x1, chart_height),
+        Segment::new(x2, 0.0, x2, chart_height),
+    ]
 }
 
 pub fn metadata() -> PrimitiveMetadata {

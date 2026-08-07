@@ -3,6 +3,7 @@
 //! These types are used by all primitives and the drawing system.
 
 use serde::{Deserialize, Serialize};
+use std::sync::{OnceLock, RwLock};
 
 // Re-export LineStyle from annotations
 pub use crate::chart::annotations::price_line::LineStyle;
@@ -672,10 +673,142 @@ pub const CONTROL_POINT_RADIUS: f64 = 5.0;
 pub const CONTROL_POINT_HIT_RADIUS: f64 = 12.0;
 
 /// Control point stroke color
+///
+/// Literal fallback only — [`draw_control_points`](super::draw_control_points)
+/// no longer reads this directly. Live callers resolve stroke/fill from the
+/// active theme (`ChartTheme::crosshair` / `ChartTheme::background`, the same
+/// fields the crosshair's own magnet dot already uses) and thread them in as
+/// parameters. Kept as the documented pre-theming default and for any
+/// caller that still wants a hardcoded literal.
 pub const CONTROL_POINT_STROKE: &str = "#2196F3";
 
-/// Control point fill color
+/// Control point fill color — see [`CONTROL_POINT_STROKE`] doc.
 pub const CONTROL_POINT_FILL: &str = "#FFFFFF";
+
+// =============================================================================
+// Control Point Style (user-level, configurable) — 2026-08-07
+//
+// One process-wide setting for every drawing primitive's control-point
+// (handle) markers: shape and size. Read fresh, every frame, by
+// `draw_control_points` and by the default `Primitive::control_point_hit_test`
+// — never copied onto a primitive, never baked into a saved drawing.
+// Flipping the active style changes every existing drawing (including ones
+// loaded from disk months ago) on the very next frame, because both halves
+// call `control_point_style()` instead of caching a value.
+//
+// Colour is deliberately NOT part of this struct: colour must follow the
+// active THEME (a `RuntimeTheme` concept that lives above this crate's
+// theme-resolution boundary is not needed here — `mlc-core` already owns
+// `ChartTheme`/`RuntimeTheme` — see `draw_control_points`'s `stroke`/`fill`
+// parameters), while shape/size are pure user preference independent of
+// theme. Mixing the two into one persisted blob would make a theme switch
+// require re-deriving stroke/fill inside a settings struct instead of at
+// render time, which is exactly the "baked in" trap this seam avoids.
+//
+// Global, not per-`ChartApp`-instance, because the owner's ask is a
+// SYSTEM-level setting ("системная настройка (пользовательский уровень)")
+// — one look for every primitive, on every window, mirroring the existing
+// `uzor::i18n::{current_lang_index, set_lang_index}` global-language idiom
+// this codebase already uses for the same class of setting
+// (`mlc_core::i18n::{current_language, set_language}`).
+// =============================================================================
+
+/// Visual shape of a control-point (handle) marker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlPointShape {
+    /// Filled circle with a stroked ring — today's (and the default) look.
+    #[default]
+    Circle,
+    /// Filled square with rounded corners.
+    RoundedSquare,
+    /// Filled square, sharp corners.
+    Square,
+}
+
+/// Visual/hit-test size of a control-point (handle) marker. A small closed
+/// set (radio-button UI) rather than a free-typed pixel value, so a saved
+/// profile can never carry an out-of-range or degenerate radius.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlPointSize {
+    Small,
+    /// Matches [`CONTROL_POINT_RADIUS`] — today's (and the default) size.
+    #[default]
+    Medium,
+    Large,
+}
+
+impl ControlPointSize {
+    /// Visual radius in pixels.
+    pub fn radius_px(self) -> f64 {
+        match self {
+            Self::Small => 4.0,
+            Self::Medium => CONTROL_POINT_RADIUS,
+            Self::Large => 7.0,
+        }
+    }
+}
+
+/// User-level control-point (handle) style — geometry only (see the module
+/// doc above for why colour lives elsewhere). This is the ONE struct
+/// `draw_control_points` and the default `Primitive::control_point_hit_test`
+/// both read, via [`control_point_style`] — the single source of truth that
+/// closes the class of bug where a drawn handle's radius and its hitbox
+/// radius could independently drift (declared handles nothing could ever
+/// grab, or a grab zone bigger than what was drawn).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlPointStyle {
+    pub shape: ControlPointShape,
+    pub size: ControlPointSize,
+}
+
+impl ControlPointStyle {
+    /// Visual radius in pixels — what `draw_control_points` paints.
+    pub fn radius(&self) -> f64 {
+        self.size.radius_px()
+    }
+
+    /// Hit-test radius, derived from the visual radius. Preserves the
+    /// original 5px-visual / 12px-hit relationship (a fixed +7px grab
+    /// margin beyond what's drawn) at every size, so a configurable radius
+    /// can never drift from its own hitbox — the whole point of this seam.
+    pub fn hit_radius(&self) -> f64 {
+        self.radius() + (CONTROL_POINT_HIT_RADIUS - CONTROL_POINT_RADIUS)
+    }
+
+    /// Corner radius for [`ControlPointShape::RoundedSquare`] (ignored by
+    /// the other shapes) — a fixed proportion of the visual radius rather
+    /// than its own persisted/configurable knob, so "rounded square" stays
+    /// a single decision (shape) instead of growing a third setting.
+    pub fn corner_radius(&self) -> f64 {
+        self.radius() * 0.4
+    }
+}
+
+static CONTROL_POINT_STYLE: OnceLock<RwLock<ControlPointStyle>> = OnceLock::new();
+
+/// Read the active control-point style. Never fails — falls back to
+/// [`ControlPointStyle::default`] on a poisoned lock (a styling setting
+/// must never crash a render frame).
+pub fn control_point_style() -> ControlPointStyle {
+    CONTROL_POINT_STYLE
+        .get_or_init(|| RwLock::new(ControlPointStyle::default()))
+        .read()
+        .map(|guard| *guard)
+        .unwrap_or_default()
+}
+
+/// Set the active control-point style. Called once at startup (profile
+/// load, `ChartApp::apply_profile_state`) and again whenever the user
+/// changes the General-tab "Control Points" setting — every primitive's
+/// handles pick it up on the very next frame because both
+/// `draw_control_points` and `control_point_hit_test` read it fresh and
+/// never cache it.
+pub fn set_control_point_style(style: ControlPointStyle) {
+    let lock = CONTROL_POINT_STYLE.get_or_init(|| RwLock::new(ControlPointStyle::default()));
+    if let Ok(mut guard) = lock.write() {
+        *guard = style;
+    }
+}
 
 // =============================================================================
 // Geometry Utilities
@@ -704,4 +837,73 @@ pub fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f
     let ddx = px - proj_x;
     let ddy = py - proj_y;
     (ddx * ddx + ddy * ddy).sqrt()
+}
+
+/// Calculate distance from point to an infinite ray starting at `(x1, y1)`
+/// and pointing through `(x2, y2)` — like [`point_to_line_distance`] but
+/// only clamps the projection at the ray's origin (`t >= 0`), never at the
+/// far end. Promoted here from five byte-identical local copies (the
+/// `pitchforks` family — `pitchfork.rs`, `schiff.rs`, `modified_schiff.rs`,
+/// `inside_pitchfork.rs` — and `gann::gann_fan`), the primitives that draw
+/// an "extend" ray past one of their anchors.
+pub fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len_sq = dx * dx + dy * dy;
+
+    if len_sq < 0.0001 {
+        // Ray is a point
+        let ddx = px - x1;
+        let ddy = py - y1;
+        return (ddx * ddx + ddy * ddy).sqrt();
+    }
+
+    // Project point onto the ray, clamping only at the origin (t >= 0)
+    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
+    let t = t.max(0.0);
+
+    let proj_x = x1 + t * dx;
+    let proj_y = y1 + t * dy;
+
+    let ddx = px - proj_x;
+    let ddy = py - proj_y;
+    (ddx * ddx + ddy * ddy).sqrt()
+}
+
+// =============================================================================
+// Stroke hit-testing — shared by every family whose `hit_test` must cover
+// every segment its `render` actually draws (doctrine: every drawn edge is
+// clickable over its full length; the interior fill never is).
+// =============================================================================
+
+/// A single screen-space line segment — the drawn-stroke unit hit-testing
+/// operates on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Segment {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+}
+
+impl Segment {
+    pub fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+        Self { x1, y1, x2, y2 }
+    }
+}
+
+/// Shortest distance from `(px, py)` to any segment in `segments`.
+/// `f64::INFINITY` if `segments` is empty (never hits).
+pub fn nearest_segment_distance(px: f64, py: f64, segments: &[Segment]) -> f64 {
+    segments
+        .iter()
+        .map(|s| point_to_line_distance(px, py, s.x1, s.y1, s.x2, s.y2))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// True if `(px, py)` lies within `tol` pixels of any segment's drawn
+/// length. The one-call shape most `hit_test` bodies want: build the same
+/// segment list `render` draws, then test it.
+pub fn hit_test_strokes(px: f64, py: f64, segments: &[Segment], tol: f64) -> bool {
+    nearest_segment_distance(px, py, segments) < tol
 }

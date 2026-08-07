@@ -8,10 +8,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp, contrasting_text_color,
+    PLATE_FILL_OPACITY, default_plate_fill_opacity,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
-fn default_fill_opacity() -> f64 { 0.9 }
+fn default_true() -> bool { true }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signpost {
@@ -24,8 +25,11 @@ pub struct Signpost {
     #[serde(default)]
     pub text: String,
     #[serde(default)] pub direction: SignpostDirection,
+    /// Paint the arrow fill at all — off leaves only the stroke outline.
+    #[serde(default = "default_true")]
+    pub fill: bool,
     /// Arrow fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_plate_fill_opacity")]
     pub fill_opacity: f64,
 }
 
@@ -48,7 +52,8 @@ impl Signpost {
             ts1, price1, ts2, price2,
             text: String::new(),
             direction: SignpostDirection::Right,
-            fill_opacity: 0.9,
+            fill: true,
+            fill_opacity: PLATE_FILL_OPACITY,
         }
     }
 
@@ -156,7 +161,7 @@ impl Primitive for Signpost {
             }
         }
         ctx.close_path();
-        ctx.fill();
+        if self.fill { ctx.fill(); }
         ctx.stroke();
 
         let label = self.get_text();
@@ -252,6 +257,9 @@ impl Primitive for Signpost {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(19),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::Style)
                 .with_order(20),
@@ -259,11 +267,15 @@ impl Primitive for Signpost {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "fill_opacity" {
-            if let Some(v) = value.as_number() {
-                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
-                return true;
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
             }
+            _ => {}
         }
         false
     }

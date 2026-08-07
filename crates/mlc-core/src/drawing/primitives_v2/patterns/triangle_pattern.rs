@@ -8,6 +8,7 @@ use super::super::{
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -25,10 +26,9 @@ pub struct TrianglePattern {
     #[serde(default)] pub label_style: LabelStyle,
     #[serde(default = "default_true")] pub show_lines: bool,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
 }
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl TrianglePattern {
     pub fn new(ts1: i64, price1_top: f64, price1_bottom: f64, ts2: i64, price2_top: f64, price2_bottom: f64, color: &str) -> Self {
@@ -36,7 +36,7 @@ impl TrianglePattern {
             data: PrimitiveData { type_id: "triangle_pattern".to_string(), display_name: "Triangle Pattern".to_string(), color: PrimitiveColor::with_fill(color, color), width: 2.0, ..Default::default() },
             ts1, price1_top, price1_bottom, ts2, price2_top, price2_bottom, triangle_type: TriangleType::Symmetrical, show_labels: true,
             label_style: LabelStyle::default(), show_lines: true,
-            fill: true, fill_opacity: 0.12,
+            fill: true, fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -80,23 +80,12 @@ impl Primitive for TrianglePattern {
         // Check top and bottom lines
         if point_to_line_dist(sx, sy, screen[0].0, screen[0].1, screen[2].0, screen[2].1) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_dist(sx, sy, screen[1].0, screen[1].1, screen[3].0, screen[3].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+        // Check the two vertical bounds (dashed in render) — without these
+        // the interior fill-gated test used to be the only way to grab
+        // them; removing that test would otherwise make them ungrabbable.
+        if point_to_line_dist(sx, sy, screen[0].0, screen[0].1, screen[1].0, screen[1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_dist(sx, sy, screen[2].0, screen[2].1, screen[3].0, screen[3].1) < HIT_TOLERANCE { return HitTestResult::Body; }
 
-        // Interior, ranked last and only when filled — an unfilled outline
-        // must not swallow the candles it overlaps.
-        if self.fill {
-            let (x1, y1_top) = screen[0];
-            let (_, y1_bot) = screen[1];
-            let (x2, y2_top) = screen[2];
-            let (_, y2_bot) = screen[3];
-            let min_x = x1.min(x2);
-            let max_x = x1.max(x2);
-            if sx >= min_x && sx <= max_x {
-                let t = if (x2 - x1).abs() > 0.001 { (sx - x1) / (x2 - x1) } else { 0.5 };
-                let top_y = y1_top + t * (y2_top - y1_top);
-                let bot_y = y1_bot + t * (y2_bot - y1_bot);
-                if sy >= top_y.min(bot_y) && sy <= top_y.max(bot_y) { return HitTestResult::Body; }
-            }
-        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {

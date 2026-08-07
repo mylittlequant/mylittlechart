@@ -9,6 +9,7 @@ use super::super::{
     render_primitive_text, TextAlign,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
 };
+use super::super::types::{Segment, hit_test_strokes};
 use super::draw_stat_plate;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,8 +67,9 @@ impl Primitive for PriceRange {
         let r = 8.0;
         if (sx - x).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
-        let (min_y, max_y) = (y1.min(y2), y1.max(y2));
-        if (sx - x).abs() < HIT_TOLERANCE && sy >= min_y && sy <= max_y { return HitTestResult::Body; }
+        // Both horizontal lines, over their whole drawn width — same
+        // geometry `render` strokes via `horizontal_lines`.
+        if hit_test_strokes(sx, sy, &horizontal_lines(y1, y2, vp.chart_width), HIT_TOLERANCE) { return HitTestResult::Body; }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -91,20 +93,18 @@ impl Primitive for PriceRange {
         ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
         ctx.fill_rect(0.0, crisp(min_y, dpr), ctx.chart_width(), h);
 
-        // Draw the two horizontal lines
+        // Draw the two horizontal lines — same geometry `hit_test` tests via
+        // `horizontal_lines`, so the drawn and clickable lines can't drift.
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_line_style(LineStyle::Solid);
         ctx.set_stroke_width(self.data.width);
 
-        ctx.begin_path();
-        ctx.move_to(0.0, crisp(y1, dpr));
-        ctx.line_to(ctx.chart_width(), crisp(y1, dpr));
-        ctx.stroke();
-
-        ctx.begin_path();
-        ctx.move_to(0.0, crisp(y2, dpr));
-        ctx.line_to(ctx.chart_width(), crisp(y2, dpr));
-        ctx.stroke();
+        for line in horizontal_lines(y1, y2, ctx.chart_width()) {
+            ctx.begin_path();
+            ctx.move_to(crisp(line.x1, dpr), crisp(line.y1, dpr));
+            ctx.line_to(crisp(line.x2, dpr), crisp(line.y2, dpr));
+            ctx.stroke();
+        }
 
         // Stat plate: price delta (show_pips) and/or percentage change
         // (show_percentage) — independent toggles, either can stand alone.
@@ -190,6 +190,16 @@ impl Primitive for PriceRange {
         if self.label_style.apply_property(id, value) { return true; }
         false
     }
+}
+
+/// The two full-width horizontal lines — shared by `render` (draws each)
+/// and `hit_test` (tests each) so the drawn lines and the clickable lines
+/// can never disagree.
+fn horizontal_lines(y1: f64, y2: f64, chart_width: f64) -> [Segment; 2] {
+    [
+        Segment::new(0.0, y1, chart_width, y1),
+        Segment::new(0.0, y2, chart_width, y2),
+    ]
 }
 
 pub fn metadata() -> PrimitiveMetadata {

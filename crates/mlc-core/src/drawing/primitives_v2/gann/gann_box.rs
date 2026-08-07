@@ -8,13 +8,14 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
-    ControlPoint, ControlPointType,
+    ControlPoint, ControlPointType, ControlPointCursor,
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle},
 };
+use super::super::types::{Segment, hit_test_strokes};
 
 /// All Gann Box division levels (fraction of box: 0.0 = edge, 0.5 = center, 1.0 = opposite edge)
 /// These represent horizontal and vertical grid lines within the box
@@ -40,6 +41,9 @@ pub fn default_gann_box_configs() -> Vec<FibLevelConfig> {
         config.visible = MAIN_GANN_BOX_VISIBLE.contains(&level);
         // Ramp colour by rank instead of every grid line falling back to the same stroke color.
         config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
+        // Band fill on by default — `render` draws it as horizontal bands
+        // between adjacent grid levels, a real closed region.
+        config.fill_enabled = true;
         config
     }).collect()
 }
@@ -192,14 +196,31 @@ impl Primitive for GannBox {
 
     fn move_control_point(&mut self, point_type: ControlPointType, ts_ms: i64, price: f64) {
         match point_type {
-            ControlPointType::Point1 => {
+            // Corner index convention matches `shapes::rectangle::Rectangle`
+            // exactly: 0=(ts1,price1), 1=(ts2,price1), 2=(ts2,price2),
+            // 3=(ts1,price2). Every corner writes BOTH axes.
+            ControlPointType::Corner(0) => {
                 self.ts1 = ts_ms;
                 self.price1 = price;
             }
-            ControlPointType::Point2 => {
+            ControlPointType::Corner(1) => {
+                self.ts2 = ts_ms;
+                self.price1 = price;
+            }
+            ControlPointType::Corner(2) => {
                 self.ts2 = ts_ms;
                 self.price2 = price;
             }
+            ControlPointType::Corner(3) => {
+                self.ts1 = ts_ms;
+                self.price2 = price;
+            }
+            // Edge midpoints: 0=top(price1), 1=right(ts2), 2=bottom(price2),
+            // 3=left(ts1) — same convention as Rectangle.
+            ControlPointType::Edge(0) => { self.price1 = price; }
+            ControlPointType::Edge(1) => { self.ts2 = ts_ms; }
+            ControlPointType::Edge(2) => { self.price2 = price; }
+            ControlPointType::Edge(3) => { self.ts1 = ts_ms; }
             ControlPointType::Move => {
                 let ts_delta = ts_ms - self.ts1;
                 let price_delta = price - self.price1;
@@ -224,40 +245,72 @@ impl Primitive for GannBox {
         let x2 = viewport.bar_to_x_f64(b2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
-        // Check control points
-        if check_point_hit(screen_x, screen_y, x1, y1) {
-            return HitTestResult::ControlPoint(ControlPointType::Point1);
+        // Corners tested before edges before the body stroke, so a click at
+        // a shared endpoint always resolves to the corner, never the edge
+        // midpoint that sits at the middle of a side.
+        let corners = [
+            (x1, y1, ControlPointType::Corner(0)),
+            (x2, y1, ControlPointType::Corner(1)),
+            (x2, y2, ControlPointType::Corner(2)),
+            (x1, y2, ControlPointType::Corner(3)),
+        ];
+        for (cx, cy, cp_type) in corners {
+            if check_point_hit(screen_x, screen_y, cx, cy) {
+                return HitTestResult::ControlPoint(cp_type);
+            }
         }
-        if check_point_hit(screen_x, screen_y, x2, y2) {
-            return HitTestResult::ControlPoint(ControlPointType::Point2);
+
+        let edges = [
+            ((x1 + x2) / 2.0, y1, ControlPointType::Edge(0)),
+            (x2, (y1 + y2) / 2.0, ControlPointType::Edge(1)),
+            ((x1 + x2) / 2.0, y2, ControlPointType::Edge(2)),
+            (x1, (y1 + y2) / 2.0, ControlPointType::Edge(3)),
+        ];
+        for (ex, ey, cp_type) in edges {
+            if check_point_hit(screen_x, screen_y, ex, ey) {
+                return HitTestResult::ControlPoint(cp_type);
+            }
         }
 
         let min_x = x1.min(x2);
         let max_x = x1.max(x2);
         let min_y = y1.min(y2);
         let max_y = y1.max(y2);
+        let width = max_x - min_x;
+        let height = max_y - min_y;
 
-        // Check box edges
-        if (screen_x - min_x).abs() < HIT_TOLERANCE && screen_y >= min_y && screen_y <= max_y {
-            return HitTestResult::Body;
-        }
-        if (screen_x - max_x).abs() < HIT_TOLERANCE && screen_y >= min_y && screen_y <= max_y {
-            return HitTestResult::Body;
-        }
-        if (screen_y - min_y).abs() < HIT_TOLERANCE && screen_x >= min_x && screen_x <= max_x {
-            return HitTestResult::Body;
-        }
-        if (screen_y - max_y).abs() < HIT_TOLERANCE && screen_x >= min_x && screen_x <= max_x {
-            return HitTestResult::Body;
+        // Every stroke `render` actually draws: the 4 box edges, the inner
+        // grid lines (gated by `show_grid` + `grid_level_visible` — the
+        // exact filter `render`'s grid loop applies, so a level hidden by
+        // its own visibility config can't stay clickable), and the two
+        // diagonals (gated by `show_diagonals`, which the old check here
+        // ignored).
+        let mut segments = vec![
+            Segment::new(min_x, min_y, max_x, min_y), // top
+            Segment::new(max_x, min_y, max_x, max_y), // right
+            Segment::new(min_x, max_y, max_x, max_y), // bottom
+            Segment::new(min_x, min_y, min_x, max_y), // left
+        ];
+
+        if self.show_grid {
+            for config in &self.level_configs {
+                if !grid_level_visible(config) {
+                    continue;
+                }
+                let level = config.level;
+                let gx = min_x + width * level;
+                segments.push(Segment::new(gx, min_y, gx, max_y));
+                let gy = min_y + height * level;
+                segments.push(Segment::new(min_x, gy, max_x, gy));
+            }
         }
 
-        // Check diagonal 1x1 line
-        if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE {
-            return HitTestResult::Body;
+        if self.show_diagonals {
+            segments.push(Segment::new(x1, y1, x2, y2));
+            segments.push(Segment::new(x1, y2, x2, y1));
         }
 
-        // Check anti-diagonal
-        if point_to_line_distance(screen_x, screen_y, x1, y2, x2, y1) < HIT_TOLERANCE {
+        if hit_test_strokes(screen_x, screen_y, &segments, HIT_TOLERANCE) {
             return HitTestResult::Body;
         }
 
@@ -278,8 +331,14 @@ impl Primitive for GannBox {
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
         vec![
-            ControlPoint::point1(x1, y1),
-            ControlPoint::point2(x2, y2),
+            ControlPoint::new(ControlPointType::Corner(0), x1, y1, ControlPointCursor::ResizeNWSE),
+            ControlPoint::new(ControlPointType::Corner(1), x2, y1, ControlPointCursor::ResizeNESW),
+            ControlPoint::new(ControlPointType::Corner(2), x2, y2, ControlPointCursor::ResizeNWSE),
+            ControlPoint::new(ControlPointType::Corner(3), x1, y2, ControlPointCursor::ResizeNESW),
+            ControlPoint::new(ControlPointType::Edge(0), (x1 + x2) / 2.0, y1, ControlPointCursor::ResizeNS),
+            ControlPoint::new(ControlPointType::Edge(1), x2, (y1 + y2) / 2.0, ControlPointCursor::ResizeEW),
+            ControlPoint::new(ControlPointType::Edge(2), (x1 + x2) / 2.0, y2, ControlPointCursor::ResizeNS),
+            ControlPoint::new(ControlPointType::Edge(3), x1, (y1 + y2) / 2.0, ControlPointCursor::ResizeEW),
         ]
     }
 
@@ -351,14 +410,12 @@ impl Primitive for GannBox {
         // Draw grid lines if enabled - using level_configs
         if self.show_grid {
             for config in &self.level_configs {
-                if !config.visible {
+                // Same filter `hit_test` applies via `grid_level_visible` —
+                // keeps the drawn and clickable grid lines in agreement.
+                if !grid_level_visible(config) {
                     continue;
                 }
                 let level = config.level;
-                // Skip edges (0.0 and 1.0) - they're drawn as box outline
-                if !(0.01..=0.99).contains(&level) {
-                    continue;
-                }
 
                 // Use per-level color/width/style if set
                 let stroke_color = config.color.as_ref().unwrap_or(&self.data.color.stroke);
@@ -528,22 +585,12 @@ fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
 }
 
-fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
+/// Whether a grid level should be drawn/hit-tested — shared by `render` and
+/// `hit_test` so a level hidden by its own visibility config can never
+/// remain clickable. Levels at 0.0/1.0 are the box edge itself, already
+/// covered by the outline.
+fn grid_level_visible(config: &FibLevelConfig) -> bool {
+    config.visible && (0.01..=0.99).contains(&config.level)
 }
 
 // =============================================================================

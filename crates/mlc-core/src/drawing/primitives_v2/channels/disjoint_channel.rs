@@ -13,6 +13,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,12 +24,11 @@ pub struct DisjointChannel {
     pub line2_ts1: i64, pub line2_price1: f64,
     pub line2_ts2: i64, pub line2_price2: f64,
     #[serde(default = "default_true")] pub fill: bool,
-    #[serde(default = "default_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
     #[serde(default)] pub extend_right: bool,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl DisjointChannel {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, offset: f64, color: &str) -> Self {
@@ -44,7 +44,7 @@ impl DisjointChannel {
             line1_ts2: ts2, line1_price2: price2,
             line2_ts1: ts1, line2_price1: price1 + offset,
             line2_ts2: ts2, line2_price2: price2 + offset,
-            fill: true, fill_opacity: 0.12, extend_right: false,
+            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_right: false,
         }
     }
 
@@ -65,7 +65,7 @@ impl DisjointChannel {
             line1_ts2: l1_ts2, line1_price2: l1_price2,
             line2_ts1: l2_ts1, line2_price1: l2_price1,
             line2_ts2: l2_ts2, line2_price2: l2_price2,
-            fill: true, fill_opacity: 0.12, extend_right: false,
+            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_right: false,
         }
     }
 }
@@ -149,29 +149,6 @@ impl Primitive for DisjointChannel {
 
         if point_to_line_distance(screen_x, screen_y, l1_x1, l1_y1, l1_x2, l1_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, l2_x1, l2_y1, l2_x2, l2_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-
-        if self.fill {
-            let min_x = l1_x1.min(l1_x2).min(l2_x1).min(l2_x2);
-            let max_x = l1_x1.max(l1_x2).max(l2_x1).max(l2_x2);
-            let min_y = l1_y1.min(l1_y2).min(l2_y1).min(l2_y2);
-            let max_y = l1_y1.max(l1_y2).max(l2_y1).max(l2_y2);
-
-            if screen_x >= min_x && screen_x <= max_x && screen_y >= min_y && screen_y <= max_y {
-                let line_y = |x: f64, x1: f64, y1: f64, x2: f64, y2: f64| -> Option<f64> {
-                    if x < x1.min(x2) || x > x1.max(x2) { return None; }
-                    if (x2 - x1).abs() < 0.001 { return Some((y1 + y2) / 2.0); }
-                    Some(y1 + (y2 - y1) * (x - x1) / (x2 - x1))
-                };
-                if let (Some(y1_at_x), Some(y2_at_x)) = (
-                    line_y(screen_x, l1_x1, l1_y1, l1_x2, l1_y2),
-                    line_y(screen_x, l2_x1, l2_y1, l2_x2, l2_y2),
-                ) {
-                    if screen_y >= y1_at_x.min(y2_at_x) && screen_y <= y1_at_x.max(y2_at_x) {
-                        return HitTestResult::Body;
-                    }
-                }
-            }
-        }
         HitTestResult::Miss
     }
 

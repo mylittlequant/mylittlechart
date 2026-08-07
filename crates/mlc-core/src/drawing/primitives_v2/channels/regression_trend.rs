@@ -14,6 +14,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,7 +34,7 @@ pub struct RegressionTrend {
     pub show_center: bool,
     #[serde(default = "default_true")]
     pub fill: bool,
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_area_fill_opacity")]
     pub fill_opacity: f64,
     #[serde(default)]
     pub extend_right: bool,
@@ -41,7 +42,6 @@ pub struct RegressionTrend {
 
 fn default_true() -> bool { true }
 fn default_std_dev() -> f64 { 2.0 }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl RegressionTrend {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -58,7 +58,7 @@ impl RegressionTrend {
             use_upper_deviation: false,
             show_center: true,
             fill: true,
-            fill_opacity: 0.12,
+            fill_opacity: AREA_FILL_OPACITY,
             extend_right: false,
         }
     }
@@ -129,15 +129,6 @@ impl Primitive for RegressionTrend {
         if self.show_center && point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, x1, upper_y1, x2, upper_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, x1, lower_y1, x2, lower_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-
-        if self.fill {
-            let min_y = upper_y1.min(upper_y2).min(lower_y1).min(lower_y2);
-            let max_y = upper_y1.max(upper_y2).max(lower_y1).max(lower_y2);
-            let min_x = x1.min(x2); let max_x = x1.max(x2);
-            if screen_x >= min_x && screen_x <= max_x && screen_y >= min_y && screen_y <= max_y {
-                return HitTestResult::Body;
-            }
-        }
         HitTestResult::Miss
     }
 

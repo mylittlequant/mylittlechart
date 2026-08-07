@@ -15,11 +15,12 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
-    HIT_TOLERANCE,
+    HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::FibLevelConfig,
 };
+use super::super::types::point_to_ray_distance;
 
 use super::pitchfork::default_level_configs;
 
@@ -752,42 +753,6 @@ impl Primitive for InsidePitchfork {
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
     let radius = 8.0;
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
-}
-
-fn point_to_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.clamp(0.0, 1.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
-}
-
-fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let len_sq = dx * dx + dy * dy;
-
-    if len_sq == 0.0 {
-        return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt();
-    }
-
-    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
-    let t = t.max(0.0);
-
-    let proj_x = x1 + t * dx;
-    let proj_y = y1 + t * dy;
-
-    ((px - proj_x).powi(2) + (py - proj_y).powi(2)).sqrt()
 }
 
 // =============================================================================

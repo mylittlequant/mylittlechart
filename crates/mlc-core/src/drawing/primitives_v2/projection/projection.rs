@@ -10,6 +10,10 @@ use super::super::{
     config::{ConfigProperty, PropertyValue, LabelStyle},
 };
 
+/// Standard Fibonacci extension ratios, shared by `render` and `hit_test` so
+/// the drawn level lines and their hit regions never drift apart.
+const FIB_LEVELS: [f64; 10] = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.618, 2.0];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Projection {
     pub data: PrimitiveData,
@@ -26,6 +30,14 @@ impl Projection {
             data: PrimitiveData { type_id: "projection".to_string(), display_name: "Projection".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
             ts1, price1, ts2, price2, show_labels: true, show_levels: true,
         }
+    }
+
+    /// End timestamp the extension level lines run out to — the anchor
+    /// span (`ts1`..`ts2`) re-applied past `ts2`, the same
+    /// derived-relative-to-the-anchors relationship `BarsPattern::
+    /// projected_end_ms` uses, instead of the live viewport edge.
+    fn level_end_ts_ms(&self) -> i64 {
+        self.ts2 + (self.ts2 - self.ts1)
     }
 }
 
@@ -59,6 +71,20 @@ impl Primitive for Projection {
         if (sx - x1).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if (sx - x2).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         if point_to_line_distance(sx, sy, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+
+        // Every extension level line drawn by `render`, over its true
+        // (anchor-relative, finite) extent — only when actually rendered.
+        if self.show_levels {
+            let price_range = self.price2 - self.price1;
+            let level_end_bar = timestamp_ms_to_bar_f64(bars, self.level_end_ts_ms());
+            let level_end_x = vp.bar_to_x_f64(level_end_bar);
+            for &level in &FIB_LEVELS {
+                let y_level = vp.price_to_y(self.price1 + price_range * level, ps.price_min, ps.price_max);
+                if point_to_line_distance(sx, sy, x2, y_level, level_end_x, y_level) < HIT_TOLERANCE {
+                    return HitTestResult::Body;
+                }
+            }
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -79,7 +105,6 @@ impl Primitive for Projection {
 
         // Calculate standard Fibonacci projection levels
         let price_range = self.price2 - self.price1;
-        let fib_levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.618, 2.0];
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -103,16 +128,16 @@ impl Primitive for Projection {
             ctx.set_stroke_width(1.0);
             ctx.set_line_dash(&[4.0, 2.0]);
 
-            let chart_width = ctx.chart_width();
+            let level_end_x = ctx.ts_to_x_ms(self.level_end_ts_ms());
             let label_style = LabelStyle::default();
 
-            for &level in &fib_levels {
+            for &level in &FIB_LEVELS {
                 let projected_price = self.price1 + (price_range * level);
                 let y_level = ctx.price_to_y(projected_price);
 
                 ctx.begin_path();
                 ctx.move_to(crisp(x2, dpr), crisp(y_level, dpr));
-                ctx.line_to(crisp(chart_width, dpr), crisp(y_level, dpr));
+                ctx.line_to(crisp(level_end_x, dpr), crisp(y_level, dpr));
                 ctx.stroke();
 
                 // `show_labels` used to be a struct field with no reader
@@ -124,7 +149,7 @@ impl Primitive for Projection {
                     ctx.set_fill_color(&self.data.color.stroke);
                     ctx.set_text_align(crate::render::TextAlign::Center);
                     ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-                    let label_x = (chart_width - 50.0).max(x2 + 50.0);
+                    let label_x = (level_end_x - 50.0).max(x2 + 50.0);
                     draw_label_plate(ctx, label_x, y_level, &label, label_style.font_size, &label_style, &self.data.color.stroke);
                 }
             }

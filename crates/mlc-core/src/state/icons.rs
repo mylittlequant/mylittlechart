@@ -1331,12 +1331,17 @@ pub const ICON_MOVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
 /// large reward zone above entry, small risk zone below, entry line, and an
 /// up-pointing chevron for direction. A lettermark is not an icon; this is
 /// the actual tool semantic (buy trade with stop/target).
+/// Redrawn again 2026-08-07 (owner: the Long/Short arrows must be a true
+/// mirror, not a same-band chevron flip): box moved to y=2..14 and the
+/// stem+chevron assembly moved to y=17..22, a clear 3px gap below the box
+/// so the arrow no longer crosses a rect edge. Long's arrow stays BELOW
+/// the box, pointing up into it.
 pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="9" stroke-width="1.2"/>
-  <rect x="3" y="12" width="18" height="5" stroke-width="1.2"/>
-  <line x1="3" y1="12" x2="21" y2="12"/>
-  <path d="M12 20v-6"/>
-  <path d="M9 17l3-3 3 3"/>
+  <rect x="3" y="2" width="18" height="7" stroke-width="1.2"/>
+  <rect x="3" y="9" width="18" height="5" stroke-width="1.2"/>
+  <line x1="3" y1="9" x2="21" y2="9"/>
+  <path d="M12 22v-5"/>
+  <path d="M9 20l3-3 3 3"/>
 </svg>"##;
 
 /// Redrawn 2026-07-18 (owner-approved design round; see nemo/docs/mlc/research/icon-drafts/)
@@ -1344,12 +1349,17 @@ pub const ICON_LONG_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg"
 /// S-curve path was a literal S-glyph. Mirrors [`ICON_LONG_POSITION`]'s
 /// reward/risk box — small risk zone above entry, large reward zone below
 /// (price falling = profit), entry line, down-pointing chevron.
+/// Redrawn again 2026-08-07 (owner: "в СП стрелочка должна быть сверху" —
+/// a true mirror of Long, not the same y=14..20 band with only the chevron
+/// endpoints flipped, which crossed the box's own bottom edge at y=17).
+/// Box moved to y=10..22, arrow assembly moved to y=2..7 ABOVE the box,
+/// pointing down into it.
 pub const ICON_SHORT_POSITION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="5" stroke-width="1.2"/>
-  <rect x="3" y="8" width="18" height="9" stroke-width="1.2"/>
-  <line x1="3" y1="8" x2="21" y2="8"/>
-  <path d="M12 14v6"/>
-  <path d="M9 17l3 3 3-3"/>
+  <rect x="3" y="10" width="18" height="5" stroke-width="1.2"/>
+  <rect x="3" y="15" width="18" height="7" stroke-width="1.2"/>
+  <line x1="3" y1="15" x2="21" y2="15"/>
+  <path d="M12 2v5"/>
+  <path d="M9 4l3 3 3-3"/>
 </svg>"##;
 
 // =============================================================================

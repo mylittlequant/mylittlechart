@@ -46,7 +46,7 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 119] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 121] = [
     /* 0  Labels            */ [ "Labels",                     "Метки",                                  "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "В процентах",                            "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -169,6 +169,11 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 119] = [
     /* 117 EmptyPlaceholder */ [ "(empty)",                   "(пусто)",                 "(vacío)",                       "(leer)",                         "(vide)",                            "(vazio)",                "(空)",         "(空)",         "(비어 있음)",  "(فارغ)",             "(vuoto)",                "(boş)",                  "(puste)",                "(порожньо)",         "(खाली)"              ],
     // primitive_settings modal Coordinates tab per-point row label
     /* 118 PointLabel       */ [ "Point",                     "Точка",                   "Punto",                         "Punkt",                          "Point",                             "Ponto",                  "点",           "ポイント",     "포인트",       "نقطة",               "Punto",                  "Nokta",                  "Punkt",                  "Точка",              "बिंदु"               ],
+    // Long/Short Position live-price label toggle
+    /* 119 ShowLiveLabel    */ [ "Show Live Label",           "Показать текущую метку",  "Mostrar etiqueta en vivo",      "Live-Beschriftung anzeigen",     "Afficher l'étiquette en direct",    "Mostrar rótulo ao vivo", "显示实时标签", "ライブラベルを表示","실시간 레이블 표시","إظهار تسمية السعر الحالي","Mostra etichetta live","Canlı Etiketi Göster",  "Pokaż etykietę na żywo", "Показати поточну мітку","लाइव लेबल दिखाएं"   ],
+    // Free-form shape closure toggle (Polyline/Path) — last point joins back
+    // to the first. Shape-editing sense of "closed", not "hidden"/"finished".
+    /* 120 Closed           */ [ "Closed",                    "Замкнута",                "Cerrado",                       "Geschlossen",                    "Fermé",                             "Fechado",                "闭合",         "閉じた",       "닫힘",         "مغلق",              "Chiuso",                 "Kapalı",                "Zamknięty",              "Замкнена",           "बंद"                ],
 ];
 
 // =============================================================================

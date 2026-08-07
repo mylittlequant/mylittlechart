@@ -14,6 +14,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle},
+    BAND_FILL_OPACITY, default_band_fill_opacity,
 };
 
 /// Main/active Fibonacci levels (visible by default)
@@ -58,6 +59,31 @@ pub fn extended_level_configs() -> Vec<FibLevelConfig> {
     EXTENDED_LEVELS.iter().map(|&level| FibLevelConfig::new(level)).collect()
 }
 
+/// Same 30-level ramp as [`default_level_configs`], with per-level band fill
+/// turned on. Shared by every family whose levels bound a real closed region
+/// — a stack of parallel/vertical bands or a concentric ring — so the fill
+/// reads as a designed look out of the box rather than mud: this primitive's
+/// own horizontal bands, `channel` (parallel-ish band), `trend_extension`
+/// (horizontal band), `wedge` (bounded trapezoid between converging edges —
+/// not the separate whole-shape `fill` toggle), `arcs`/`circles` (annulus /
+/// ring via the nonzero-winding two-ellipse trick), `trend_time` (vertical
+/// band). Deliberately NOT used by `fan`/`speed_resistance` (their fill is
+/// an unbounded angular wedge from a shared apex, extended 2x chart-width —
+/// adjacent-ray sector areas can be wildly uneven depending on how bunched
+/// the levels are) or `spiral` (its per-level fill path reconnects to the
+/// spiral's own center on every band instead of tracing the gap between two
+/// consecutive loops, so it does not draw a band at all) — those three keep
+/// consuming the ramp-only [`default_level_configs`].
+pub fn default_level_configs_filled() -> Vec<FibLevelConfig> {
+    default_level_configs()
+        .into_iter()
+        .map(|mut cfg| {
+            cfg.fill_enabled = true;
+            cfg
+        })
+        .collect()
+}
+
 /// Create level configurations with fills between zones
 /// Different colors for different zones
 pub fn filled_level_configs() -> Vec<FibLevelConfig> {
@@ -88,7 +114,7 @@ pub struct FibRetracement {
     /// End price (point 2 - usually swing low or high)
     pub price2: f64,
     /// Fibonacci level configurations (with individual colors/widths)
-    #[serde(default = "default_level_configs", deserialize_with = "deserialize_level_configs")]
+    #[serde(default = "default_level_configs_filled", deserialize_with = "deserialize_level_configs")]
     pub level_configs: Vec<FibLevelConfig>,
     /// Show price labels
     #[serde(default = "default_true")]
@@ -111,7 +137,7 @@ pub struct FibRetracement {
     #[serde(default = "default_true")]
     pub show_fill: bool,
     /// Fill opacity (0.0 to 1.0)
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_band_fill_opacity")]
     pub fill_opacity: f64,
     /// Label position: "left", "right", "center"
     #[serde(default = "default_label_position")]
@@ -128,7 +154,6 @@ pub struct FibRetracement {
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.1 }
 fn default_label_position() -> String { "left".to_string() }
 
 /// Backward compatibility: deserialize old `levels: Vec<f64>` format
@@ -168,13 +193,13 @@ impl FibRetracement {
             price1,
             ts2,
             price2,
-            level_configs: default_level_configs(),
+            level_configs: default_level_configs_filled(),
             show_prices: true,
             show_percentages: true,
             extend_left: false,
             extend_right: true,
             show_fill: true,
-            fill_opacity: 0.1,
+            fill_opacity: BAND_FILL_OPACITY,
             label_position: "left".to_string(),
             show_as_percent: true,
             show_trend_line: true,

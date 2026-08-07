@@ -13,6 +13,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue},
+    AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -35,12 +36,11 @@ pub struct FlatTopBottom {
     pub flat_type: FlatType,
     #[serde(default = "default_true")]
     pub fill: bool,
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_area_fill_opacity")]
     pub fill_opacity: f64,
 }
 
 fn default_true() -> bool { true }
-fn default_fill_opacity() -> f64 { 0.12 }
 
 impl FlatTopBottom {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, flat_price: f64, color: &str) -> Self {
@@ -55,7 +55,7 @@ impl FlatTopBottom {
             },
             ts1, price1, ts2, price2,
             flat_price, flat_type,
-            fill: true, fill_opacity: 0.12,
+            fill: true, fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -126,17 +126,6 @@ impl Primitive for FlatTopBottom {
 
         if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         if point_to_line_distance(screen_x, screen_y, x1, flat_y, x2, flat_y) < HIT_TOLERANCE { return HitTestResult::Body; }
-
-        if self.fill {
-            let min_x = x1.min(x2); let max_x = x1.max(x2);
-            if screen_x >= min_x && screen_x <= max_x {
-                let t = if (x2 - x1).abs() > 0.001 { (screen_x - x1) / (x2 - x1) } else { 0.5 };
-                let sloped_y = y1 + t * (y2 - y1);
-                let min_y = sloped_y.min(flat_y);
-                let max_y = sloped_y.max(flat_y);
-                if screen_y >= min_y && screen_y <= max_y { return HitTestResult::Body; }
-            }
-        }
         HitTestResult::Miss
     }
 

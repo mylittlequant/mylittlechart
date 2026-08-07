@@ -8,10 +8,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp, contrasting_text_color,
+    BOX_ANNOTATION_FILL_OPACITY, default_box_annotation_fill_opacity,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
-fn default_fill_opacity() -> f64 { 0.88 }
+fn default_true() -> bool { true }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Note {
@@ -26,8 +27,11 @@ pub struct Note {
     #[serde(default)]
     pub content: String,
     #[serde(default)] pub expanded: bool,
+    /// Paint the note body fill at all — off leaves only the outline + fold.
+    #[serde(default = "default_true")]
+    pub fill: bool,
     /// Note fill opacity (0.0-1.0) — see `b06f9f51`, fill is a real property now
-    #[serde(default = "default_fill_opacity")]
+    #[serde(default = "default_box_annotation_fill_opacity")]
     pub fill_opacity: f64,
 }
 
@@ -48,7 +52,8 @@ impl Note {
             title: String::new(),
             content: String::new(),
             expanded: false,
-            fill_opacity: 0.88,
+            fill: true,
+            fill_opacity: BOX_ANNOTATION_FILL_OPACITY,
         }
     }
 
@@ -126,7 +131,7 @@ impl Primitive for Note {
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
 
-        ctx.fill_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height);
+        if self.fill { ctx.fill_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height); }
         ctx.stroke_rect(crisp(min_x, dpr), crisp(min_y, dpr), width, height);
 
         // Folded corner (sticky-note metaphor)
@@ -216,6 +221,9 @@ impl Primitive for Note {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(19),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::Style)
                 .with_order(20),
@@ -223,11 +231,15 @@ impl Primitive for Note {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
-        if id == "fill_opacity" {
-            if let Some(v) = value.as_number() {
-                self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
-                return true;
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
             }
+            _ => {}
         }
         false
     }

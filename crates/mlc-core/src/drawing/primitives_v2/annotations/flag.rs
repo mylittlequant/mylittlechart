@@ -9,6 +9,8 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     render_primitive_text, TextAlign,
+    AREA_FILL_OPACITY, default_area_fill_opacity,
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,8 +24,18 @@ pub struct Flag {
     #[serde(default)]
     pub text: String,
     #[serde(default = "default_flag_color")] pub flag_color: String,
+    /// Paint the banner fill at all — off leaves the pole + banner outline.
+    #[serde(default = "default_true")]
+    pub fill: bool,
+    /// Banner fill opacity (0.0-1.0) — the banner carries no text on its
+    /// fill (any label sits along the pole, not overlaid on the flag), so
+    /// it is treated as a free-form shape like `shapes/*`, not a text
+    /// plate; its size is user-resizable and unbounded.
+    #[serde(default = "default_area_fill_opacity")]
+    pub fill_opacity: f64,
 }
 fn default_flag_color() -> String { "#F44336".to_string() }
+fn default_true() -> bool { true }
 
 impl Flag {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -41,6 +53,8 @@ impl Flag {
             ts1, price1, ts2, price2,
             text: String::new(),
             flag_color: "#F44336".to_string(),
+            fill: true,
+            fill_opacity: AREA_FILL_OPACITY,
         }
     }
 }
@@ -112,18 +126,35 @@ impl Primitive for Flag {
         ctx.stroke();
 
         let flag_direction = if x2 >= x1 { 1.0 } else { -1.0 };
-        ctx.set_fill_color(&self.flag_color);
+        let tip_x = x1 + flag_width * flag_direction;
+
+        // Fill is gated; the banner outline below is NOT — a translucent
+        // banner still needs a crisp edge or it dissolves into the candles.
+        // Outline uses `flag_color` (the banner's own hue), not the pole's
+        // `data.color.stroke`, so the banner stays a self-consistent shape.
+        if self.fill {
+            let fill_color = format!("{}{:02x}", &self.flag_color[..self.flag_color.len().min(7)], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.begin_path();
+            ctx.move_to(crisp(x1, dpr), crisp(y1 - pole_height, dpr));
+            ctx.line_to(crisp(tip_x, dpr), crisp(y1 - pole_height + flag_height * 0.5, dpr));
+            ctx.line_to(crisp(x1, dpr), crisp(y1 - pole_height + flag_height, dpr));
+            ctx.close_path();
+            ctx.fill();
+        }
+
+        ctx.set_stroke_color(&self.flag_color);
         ctx.begin_path();
         ctx.move_to(crisp(x1, dpr), crisp(y1 - pole_height, dpr));
-        ctx.line_to(crisp(x1 + flag_width * flag_direction, dpr), crisp(y1 - pole_height + flag_height * 0.5, dpr));
+        ctx.line_to(crisp(tip_x, dpr), crisp(y1 - pole_height + flag_height * 0.5, dpr));
         ctx.line_to(crisp(x1, dpr), crisp(y1 - pole_height + flag_height, dpr));
         ctx.close_path();
-        ctx.fill();
+        ctx.stroke();
 
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
-                let min_x = x1.min(x1 + flag_width * flag_direction);
-                let max_x = x1.max(x1 + flag_width * flag_direction);
+                let min_x = x1.min(tip_x);
+                let max_x = x1.max(tip_x);
                 let min_y = y1 - pole_height;
                 let max_y = y1;
                 let text_offset = 8.0 + text.font_size / 2.0;
@@ -145,6 +176,31 @@ impl Primitive for Flag {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(0),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(1),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

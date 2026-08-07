@@ -77,11 +77,37 @@ impl Primitive for FixedVolumeProfile {
         }
         HitTestResult::Miss
     }
+    /// Two boundaries, each with a handle at both ends of the price band the
+    /// profile actually covers.
+    ///
+    /// The profile's vertical extent is DERIVED from the bars in
+    /// `[ts1, ts2]`, not user-set — there is no price for a corner to write,
+    /// so this stays a two-anchor time range like `hit_test` above, never a
+    /// box with corners. What it gets instead of the old single dot pinned
+    /// to the viewport's price-scale center (unrelated to where the profile
+    /// actually sits) is a handle at the top AND bottom of the real band,
+    /// so the boundary reads as the full-height edge `hit_test` already
+    /// treats it as (it matches any `sy` on the `x1`/`x2` column).
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let cy = vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max);
         let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts1));
         let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts2));
-        vec![ControlPoint::point1(x1, cy), ControlPoint::point2(x2, cy)]
+        let window = super::profile_render::bars_in_window(bars, self.ts1, self.ts2);
+        let (y_top, y_bot) = match super::profile_render::price_span(window) {
+            Some((lo, hi)) => (
+                vp.price_to_y(hi, ps.price_min, ps.price_max),
+                vp.price_to_y(lo, ps.price_min, ps.price_max),
+            ),
+            None => {
+                let cy = vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max);
+                (cy, cy)
+            }
+        };
+        vec![
+            ControlPoint::point1(x1, y_top),
+            ControlPoint::point1(x1, y_bot),
+            ControlPoint::point2(x2, y_top),
+            ControlPoint::point2(x2, y_bot),
+        ]
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {

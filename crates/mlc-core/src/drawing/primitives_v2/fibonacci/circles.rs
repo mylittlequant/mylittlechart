@@ -15,7 +15,11 @@ use super::super::{
     render_primitive_text,
     config::FibLevelConfig,
 };
-use super::retracement::default_level_configs;
+// Shared level table with retracement, band fill on by default — see the
+// doc comment on `default_level_configs_filled` for why this family qualifies
+// (nonzero-winding two-ellipse ring — the classic Fibonacci-circle "target"
+// look, a real closed region).
+use super::retracement::default_level_configs_filled as default_level_configs;
 
 /// Backward compatibility: deserialize old `levels: Vec<f64>` format
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>

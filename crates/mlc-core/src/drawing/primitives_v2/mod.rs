@@ -85,6 +85,7 @@ mod traits;
 mod types;
 pub mod registry;
 pub mod config;
+pub mod fill_defaults;
 
 /// Format a price value with smart precision for display in drawing primitives.
 /// Handles everything from BTC ($70000) to PEPE ($0.000000003).
@@ -291,7 +292,17 @@ pub use types::{
     ControlPoint, ControlPointType, ControlPointCursor,
     HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     CONTROL_POINT_STROKE, CONTROL_POINT_FILL,
-    point_to_line_distance, TextAnchor, normalize_text_rotation,
+    // User-level control-point style seam (2026-08-07): shape/size read at
+    // render time by `draw_control_points` and the default
+    // `Primitive::control_point_hit_test` — see `types.rs`'s "Control Point
+    // Style" section for why this is a single re-export line, unavoidable
+    // because both `mlc-app` (profile load/UI dispatch) and `mlc-app-layout`
+    // (render/settings-modal) need these names and neither owns `types.rs`.
+    ControlPointShape, ControlPointSize, ControlPointStyle,
+    control_point_style, set_control_point_style,
+    point_to_line_distance, point_to_ray_distance,
+    Segment, nearest_segment_distance, hit_test_strokes,
+    TextAnchor, normalize_text_rotation,
     LineTextParams, calculate_line_text_params,
     LineSegment, line_segments_avoiding_text,
 };
@@ -306,6 +317,11 @@ pub use config::{
     ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
     FibLevelConfig, TimeframeVisibilityConfig,
     SelectOption, WaveDegree, LabelStyle,
+};
+pub use fill_defaults::{
+    AREA_FILL_OPACITY, BAND_FILL_OPACITY, PLATE_FILL_OPACITY, BOX_ANNOTATION_FILL_OPACITY,
+    default_area_fill_opacity, default_band_fill_opacity, default_plate_fill_opacity,
+    default_box_annotation_fill_opacity,
 };
 
 // Re-export all primitives

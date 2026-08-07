@@ -15,7 +15,11 @@ use super::super::{
     render_primitive_text,
     config::FibLevelConfig,
 };
-use super::retracement::default_level_configs;
+// Shared level table with retracement, band fill on by default — see the
+// doc comment on `default_level_configs_filled` for why this family qualifies
+// (full-height vertical strip between two projected timestamps — same
+// bounded-band geometry as `time_zones`, not the curved/radial cases).
+use super::retracement::default_level_configs_filled as default_level_configs;
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
 where

@@ -8,6 +8,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
+    PLATE_FILL_OPACITY, default_plate_fill_opacity,
 };
 use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory};
 
@@ -22,6 +23,13 @@ pub struct PriceNote {
     #[serde(default)]
     pub text: String,
     #[serde(default = "default_true")] pub show_price: bool,
+    /// Paint the label chip fill at all — off leaves only the price text.
+    #[serde(default = "default_true")]
+    pub fill: bool,
+    /// Chip fill opacity (0.0-1.0) — same translucent plate as the other
+    /// annotations (`b06f9f51`); this chip used to be painted fully opaque.
+    #[serde(default = "default_plate_fill_opacity")]
+    pub fill_opacity: f64,
 }
 fn default_true() -> bool { true }
 
@@ -41,6 +49,8 @@ impl PriceNote {
             ts1, price1, ts2, price2,
             text: String::new(),
             show_price: true,
+            fill: true,
+            fill_opacity: PLATE_FILL_OPACITY,
         }
     }
 
@@ -156,13 +166,17 @@ impl Primitive for PriceNote {
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
-        ctx.set_fill_color(&self.data.color.stroke);
-        ctx.fill_rect(
-            crisp(chart_width - label_width - 4.0, dpr),
-            crisp(y1 - label_height / 2.0, dpr),
-            label_width + 4.0,
-            label_height,
-        );
+        if self.fill {
+            let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
+            let fill_color = format!("{}{:02x}", &fill_base[..fill_base.len().min(7)], (self.fill_opacity * 255.0) as u8);
+            ctx.set_fill_color(&fill_color);
+            ctx.fill_rect(
+                crisp(chart_width - label_width - 4.0, dpr),
+                crisp(y1 - label_height / 2.0, dpr),
+                label_width + 4.0,
+                label_height,
+            );
+        }
 
         ctx.set_fill_color(text_color);
         ctx.set_text_align(crate::render::TextAlign::Center);
@@ -243,6 +257,31 @@ impl Primitive for PriceNote {
             "show_price" => {
                 if let Some(v) = value.as_bool() {
                     self.show_price = v;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::fill(self.fill)
+                .with_category(PropertyCategory::Style)
+                .with_order(0),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
+                .with_category(PropertyCategory::Style)
+                .with_order(1),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
+            "fill_opacity" => {
+                if let Some(v) = value.as_number() {
+                    self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
                     return true;
                 }
             }
