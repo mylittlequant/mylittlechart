@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>mlc-ui-lab</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #131722; }
+    #chart {
+      display: block;
+      width: 100%;
+      height: 100%;
+      /* Canvas pixel buffer is set by Rust; CSS dimensions drive logical size */
+    }
+  </style>
+</head>
+<body>
+  <canvas id="chart" tabindex="0"></canvas>
+  <script>
+    // The canvas must be focusable AND focused for keydown events to land —
+    // same requirement as mlc-app-shell-web (uzor-window-web's keydown
+    // listener is on the canvas element, not on document/window).
+    document.addEventListener('DOMContentLoaded', function () {
+      var c = document.getElementById('chart');
+      if (c) { c.focus(); }
+    });
+    window.addEventListener('pointerdown', function () {
+      var c = document.getElementById('chart');
+      if (c && document.activeElement !== c) c.focus();
+    }, true);
+    var _style = document.createElement('style');
+    _style.textContent = '#chart:focus { outline: none; }';
+    document.head.appendChild(_style);
+    window.addEventListener('contextmenu', function (e) { e.preventDefault(); }, false);
+  </script>
+
+  <!--
+    wasm-pack outputs (via `wasm-pack build --dev --target web --out-dir pkg`):
+      pkg/mlc_ui_lab.js       (ES module glue)
+      pkg/mlc_ui_lab_bg.wasm  (binary)
+  -->
+  <script type="module">
+    import init from './pkg/mlc_ui_lab.js';
+    await init();
+    // The #[wasm_bindgen(start)] fn runs automatically inside init().
+  </script>
+</body>
+</html>
