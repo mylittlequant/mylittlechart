@@ -962,6 +962,7 @@ impl ChartApp {
                 let frame = self.frame_result.as_ref().and_then(|r| match ns.as_str() {
                     "chart_settings" => r.chart_settings.as_ref().map(|m| m.modal_rect),
                     "ind_settings" => r.indicator_settings.as_ref().map(|m| m.modal_rect),
+                    "prim_settings" => r.primitive_settings.as_ref().map(|m| m.modal_rect),
                     _ => None,
                 });
                 if let Some(f) = frame {
@@ -970,6 +971,10 @@ impl ChartApp {
                         "chart_settings" => self
                             .panel_app
                             .chart_settings_state
+                            .start_resize(edge, (x, y), pos, size),
+                        "prim_settings" => self
+                            .panel_app
+                            .primitive_settings_state
                             .start_resize(edge, (x, y), pos, size),
                         _ => self
                             .panel_app
@@ -2950,6 +2955,10 @@ impl ChartApp {
                 self.panel_app.indicator_settings_state.update_resize((x, y));
                 return;
             }
+            if self.panel_app.primitive_settings_state.resize_drag().is_some() {
+                self.panel_app.primitive_settings_state.update_resize((x, y));
+                return;
+            }
         }
 
         let _ = (x, dx);
@@ -4052,6 +4061,7 @@ impl ChartApp {
             use mlc_app_layout::ui::modal_settings::ResizableModal;
             if self.panel_app.chart_settings_state.end_resize()
                 || self.panel_app.indicator_settings_state.end_resize()
+                || self.panel_app.primitive_settings_state.end_resize()
             {
                 return;
             }

@@ -97,4 +97,27 @@ impl ZLayer {
         coord.push_layer(id.clone(), self.z_order(), self.is_modal());
         id
     }
+
+    /// Push this layer onto InputCoordinator with its default name, flagged
+    /// as persistent application chrome (stays hit-testable underneath an
+    /// active modal — see [`InputCoordinator::push_layer_ex`]).
+    ///
+    /// Use for furniture that must keep responding while a dropdown, popup,
+    /// or modal is open elsewhere on screen (e.g. the main toolbar). Do not
+    /// use for a variant whose OTHER call sites push transient popup/overlay
+    /// content under the same enum value — chrome is a per-call-site
+    /// decision, not a per-`ZLayer`-variant one.
+    pub fn push_chrome(self, coord: &mut InputCoordinator) -> LayerId {
+        let id = LayerId::new(self.layer_id());
+        coord.push_layer_ex(id.clone(), self.z_order(), self.is_modal(), true);
+        id
+    }
+
+    /// Push with a custom layer name, flagged as persistent application
+    /// chrome. See [`Self::push_chrome`].
+    pub fn push_named_chrome(self, coord: &mut InputCoordinator, name: &str) -> LayerId {
+        let id = LayerId::new(name);
+        coord.push_layer_ex(id.clone(), self.z_order(), self.is_modal(), true);
+        id
+    }
 }

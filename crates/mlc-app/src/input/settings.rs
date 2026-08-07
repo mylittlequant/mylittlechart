@@ -1681,6 +1681,16 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.open_select_dropdown = None;
         }
 
+        // Close line-style dropdown when clicking anything unrelated to it —
+        // mirrors the select-property guard above so at most one of the two
+        // (plus the template dropdown) is ever open at once.
+        if item_id != "line_style"
+            && item_id != "line_style_menu"
+            && !item_id.starts_with("line_style_option:")
+        {
+            self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
+        }
+
         // Get selected primitive id from settings state.
         let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
             Some(i) => i,

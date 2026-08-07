@@ -3,6 +3,7 @@
 use mlc_core::engine::render::RenderContext;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
+use crate::ui::modal_settings::ResizableModal;
 use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle, ActiveFieldRender};
 use mlc_core::drawing::LineStyle;
 use mlc_core::drawing::primitives_v2::config::PropertyType;
@@ -330,6 +331,7 @@ pub fn render_primitive_settings_modal(
         .with_footer(ModalFooter::Editor {
             template: Some(t_settings(SettingsKey::ButtonTemplate)),
         })
+        .resizable(state.size, state.min_size())
     };
     let (shell, layer_id) =
         begin_modal_shell(ctx, input_coordinator, &spec, &modal_theme, (screen_w, screen_h));
@@ -1798,32 +1800,6 @@ pub fn render_primitive_settings_modal(
         }
     }
 
-    // Build set of slider field IDs to determine which items need DRAG sense
-    let slider_field_ids: std::collections::HashSet<&str> = result.slider_tracks
-        .iter()
-        .map(|s| s.field_id.as_str())
-        .collect();
-
-    // Register all content items with coordinator (skip template_dropdown_menu —
-    // already registered early so it has lowest priority in hit_test_at)
-    for (item_id, item_rect) in &result.content_items {
-        if item_id == "template_dropdown_menu" {
-            continue;
-        }
-        let sense = if slider_field_ids.contains(item_id.as_str()) {
-            uzor::input::Sense::DRAG | uzor::input::Sense::SCROLL
-        } else {
-            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER
-        };
-
-        input_coordinator.register_on_layer(
-            format!("prim_settings:item:{}", item_id),
-            uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            sense,
-            &layer_id,
-        );
-    }
-
     // Deferred line style dropdown — draw AFTER footer so it appears on top.
     // Names come from `line_style_display_name`, the same lookup the Style
     // tab's dual-button label uses, so the two can never drift again.
@@ -1909,6 +1885,39 @@ pub fn render_primitive_settings_modal(
                 WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
             ));
         }
+    }
+
+    // Build set of slider field IDs to determine which items need DRAG sense
+    let slider_field_ids: std::collections::HashSet<&str> = result.slider_tracks
+        .iter()
+        .map(|s| s.field_id.as_str())
+        .collect();
+
+    // Register all content items with coordinator (skip template_dropdown_menu —
+    // already registered early so it has lowest priority in hit_test_at). This
+    // runs AFTER the two deferred dropdowns above (not before, as it used to):
+    // they push their option rects into `content_items` when rendered, so a
+    // pass that ran before them saw a `content_items` that did not contain
+    // those rects yet and never registered them — the dropdown painted but
+    // nothing in it was clickable. Running last also means the deferred
+    // options are the last ones registered, so they correctly win hit-testing
+    // over whatever base content happens to sit underneath them.
+    for (item_id, item_rect) in &result.content_items {
+        if item_id == "template_dropdown_menu" {
+            continue;
+        }
+        let sense = if slider_field_ids.contains(item_id.as_str()) {
+            uzor::input::Sense::DRAG | uzor::input::Sense::SCROLL
+        } else {
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER
+        };
+
+        input_coordinator.register_on_layer(
+            format!("prim_settings:item:{}", item_id),
+            uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
+            sense,
+            &layer_id,
+        );
     }
 
     // The footer goes in after the body — see `end_modal_shell`.

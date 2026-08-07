@@ -7082,7 +7082,13 @@ impl ChartApp {
             use uzor::input::Sense;
             use mlc_app_layout::ui::z_order::ZLayer;
 
-            let tb_layer = ZLayer::Toolbar.push(&mut self.input_coordinator.borrow_mut());
+            // Application chrome (2026-08-08): the main toolbar must stay
+            // clickable while a dropdown/popup/modal is open elsewhere on
+            // screen (owner report — colour picker inside primitive
+            // settings froze the whole screen). `push_chrome` marks this
+            // layer as reachable underneath a modal barrier; see
+            // `InputCoordinator::push_layer_ex`.
+            let tb_layer = ZLayer::Toolbar.push_chrome(&mut self.input_coordinator.borrow_mut());
 
             // Drawing toolbar (left side)
             for (id, rect) in &toolbar_result.left_toolbar.item_rects {
@@ -7659,7 +7665,10 @@ impl ChartApp {
                     {
                         use uzor::input::Sense;
                         use mlc_app_layout::ui::z_order::ZLayer;
-                        let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                        // Section/panel header chrome (2026-08-08) — stays
+                        // reachable underneath an open modal, same as the
+                        // main toolbar. See `ZLayer::push_named_chrome`.
+                        let tch_layer = ZLayer::Toolbar.push_named_chrome(&mut self.input_coordinator.borrow_mut(), "tch");
                         for (id, rect) in &th_result.top_toolbar.item_rects {
                             self.input_coordinator.borrow_mut().register_on_layer(
                                 format!("tch:{}", id),
@@ -7788,7 +7797,10 @@ impl ChartApp {
                         {
                             use uzor::input::Sense;
                             use mlc_app_layout::ui::z_order::ZLayer;
-                            let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                            // Section/panel header chrome (2026-08-08) — stays
+                        // reachable underneath an open modal, same as the
+                        // main toolbar. See `ZLayer::push_named_chrome`.
+                        let tch_layer = ZLayer::Toolbar.push_named_chrome(&mut self.input_coordinator.borrow_mut(), "tch");
                             for (id, rect) in &th_result.top_toolbar.item_rects {
                                 self.input_coordinator.borrow_mut().register_on_layer(
                                     format!("tch:{}", id),
@@ -7866,7 +7878,10 @@ impl ChartApp {
                     {
                         use uzor::input::Sense;
                         use mlc_app_layout::ui::z_order::ZLayer;
-                        let tch_layer = ZLayer::Toolbar.push_named(&mut self.input_coordinator.borrow_mut(), "tch");
+                        // Section/panel header chrome (2026-08-08) — stays
+                        // reachable underneath an open modal, same as the
+                        // main toolbar. See `ZLayer::push_named_chrome`.
+                        let tch_layer = ZLayer::Toolbar.push_named_chrome(&mut self.input_coordinator.borrow_mut(), "tch");
                         for (id, rect) in &th_result.top_toolbar.item_rects {
                             self.input_coordinator.borrow_mut().register_on_layer(
                                 format!("tch:{}", id),
