@@ -106,29 +106,20 @@ fn lab_bar_layer(coord: &mut uzor::input::InputCoordinator) -> uzor::input::Laye
     id
 }
 
-/// Widget id for a variant chip: `"lab:variant:{name}"`. Orthogonal to
-/// [`preset_widget_id`] — a variant renders under any theme preset, so the
-/// two switchers never interact.
-pub fn variant_widget_id(name: &str) -> String {
-    format!("lab:variant:{name}")
-}
-
 /// Draw the lab's control bar: one button per theme preset (`ThemeManager::presets()`,
-/// the exact list the app ships), one button per registered design variant
-/// (`crate::variants::VARIANTS`), plus a button that reopens the primitive
-/// settings modal after it has been closed via its own close button.
+/// the exact list the app ships) — applies to all four grid sectors at
+/// once — plus a button that reopens any sector whose modal was closed via
+/// its own close button.
 ///
 /// Registers hit regions on the coordinator's main layer under
-/// `lab:theme:{preset}` / `lab:variant:{name}` / `REOPEN_WIDGET_ID` — read
-/// back in `crate::render_one_frame`'s response loop.
+/// `lab:theme:{preset}` / `REOPEN_WIDGET_ID` — read back in
+/// `crate::render_one_frame`'s response loop.
 pub fn draw_lab_bar(
     ctx: &mut dyn mlc_core::render::RenderContext,
     coord: &mut uzor::input::InputCoordinator,
     screen_w: f64,
     theme_manager: &ThemeManager,
-    modal_open: bool,
-    variants: &[crate::variants::Variant],
-    active_variant: usize,
+    any_sector_closed: bool,
 ) {
     use mlc_core::render::{TextAlign, TextBaseline};
     use uzor::input::Sense;
@@ -166,42 +157,16 @@ pub fn draw_lab_bar(
         x += label_w + 6.0;
     }
 
-    // Separator between the theme switcher and the variant switcher — same
-    // z layer, orthogonal purpose: a variant renders under any theme.
-    x += 6.0;
-    ctx.set_stroke_color(&ft.toolbar_border);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x, 8.0);
-    ctx.line_to(x, BAR_HEIGHT - 8.0);
-    ctx.stroke();
-    x += 10.0;
-
-    for (i, variant) in variants.iter().enumerate() {
-        let label_w = ctx.measure_text(variant.name).max(40.0) + 16.0;
-        let rect = Rect { x, y: 8.0, width: label_w, height: BAR_HEIGHT - 16.0 };
-        let is_active = i == active_variant;
-        let bg = if is_active { &tt.item_bg_active } else { &tt.button_bg };
-        ctx.set_fill_color(bg);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
-        ctx.set_fill_color(if is_active { &tt.item_text_active } else { &tt.item_text });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(variant.name, rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
-        coord.register_on_layer(variant_widget_id(variant.name), rect, Sense::CLICK, &layer);
-        x += label_w + 6.0;
-    }
-
-    let reopen_label = if modal_open { "Settings open" } else { "Reopen Primitive Settings" };
+    let reopen_label = if any_sector_closed { "Reopen closed sectors" } else { "All sectors open" };
     let reopen_w = ctx.measure_text(reopen_label) + 16.0;
     let reopen_rect = Rect { x: screen_w - reopen_w - 8.0, y: 8.0, width: reopen_w, height: BAR_HEIGHT - 16.0 };
-    ctx.set_fill_color(if modal_open { &tt.button_bg } else { &tt.accent });
+    ctx.set_fill_color(if any_sector_closed { &tt.accent } else { &tt.button_bg });
     ctx.fill_rounded_rect(reopen_rect.x, reopen_rect.y, reopen_rect.width, reopen_rect.height, 4.0);
     ctx.set_fill_color(&tt.item_text_active);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(reopen_label, reopen_rect.x + reopen_rect.width / 2.0, reopen_rect.y + reopen_rect.height / 2.0);
-    if !modal_open {
+    if any_sector_closed {
         coord.register_on_layer(REOPEN_WIDGET_ID, reopen_rect, Sense::CLICK, &layer);
     }
 }
