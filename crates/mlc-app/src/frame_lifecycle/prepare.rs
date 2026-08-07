@@ -147,6 +147,15 @@ impl ChartApp {
         // checkbox reflects the persisted profile value.
         self.panel_app.user_settings_state.trading_panel_topbar_takeover =
             self.core.user().profile().ui.trading_panel_topbar_takeover;
+        // Sync control-point shape/size (control-point-style-ui arc,
+        // 2026-08-08) so the General tab's pickers reflect the persisted
+        // profile value — same defense-in-depth as the topbar-takeover sync
+        // above (`apply_profile_state` and the click handlers already write
+        // these mirrors immediately, this is the per-frame backstop).
+        self.panel_app.user_settings_state.control_point_shape =
+            self.core.user().profile().ui.control_point_shape;
+        self.panel_app.user_settings_state.control_point_size =
+            self.core.user().profile().ui.control_point_size;
         // Sync data_load settings into user_settings_state for the DATA & CACHE sliders.
         // Only update the cached values when the slider is not being dragged so the
         // handle does not snap back to the committed value on every frame during drag.

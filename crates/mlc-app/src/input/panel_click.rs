@@ -5043,6 +5043,36 @@ impl ChartApp {
                 "trading_panel_topbar_takeover" => {
                     self.toggle_trading_panel_topbar_takeover();
                 }
+                // Control-point shape option selected — hit id: "control_point_shape:{Variant}"
+                rest if rest.starts_with("control_point_shape:") => {
+                    use mlc_core::drawing::primitives_v2::ControlPointShape;
+                    let shape_str = &rest["control_point_shape:".len()..];
+                    let shape = match shape_str {
+                        "Circle" => ControlPointShape::Circle,
+                        "RoundedSquare" => ControlPointShape::RoundedSquare,
+                        "Square" => ControlPointShape::Square,
+                        _ => {
+                            eprintln!("[ChartApp] user_settings unknown control point shape: {}", shape_str);
+                            return;
+                        }
+                    };
+                    self.set_control_point_shape(shape);
+                }
+                // Control-point size option selected — hit id: "control_point_size:{Variant}"
+                rest if rest.starts_with("control_point_size:") => {
+                    use mlc_core::drawing::primitives_v2::ControlPointSize;
+                    let size_str = &rest["control_point_size:".len()..];
+                    let size = match size_str {
+                        "Small" => ControlPointSize::Small,
+                        "Medium" => ControlPointSize::Medium,
+                        "Large" => ControlPointSize::Large,
+                        _ => {
+                            eprintln!("[ChartApp] user_settings unknown control point size: {}", size_str);
+                            return;
+                        }
+                    };
+                    self.set_control_point_size(size);
+                }
                 "e2e_passphrase_input" => {
                     self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
@@ -7298,6 +7328,49 @@ impl ChartApp {
         self.panel_app.user_settings_state.trading_panel_topbar_takeover = now_on;
         self.autosave_snapshot();
         eprintln!("[ChartApp] trading_panel_topbar_takeover = {}", now_on);
+    }
+
+    /// Set `ProfileUiSettings::control_point_shape`, push it into the live
+    /// global control-point style (`draw_control_points` and the default
+    /// `control_point_hit_test` read it fresh next frame — every existing
+    /// drawing adopts it, no primitive touched), mirror it into
+    /// `user_settings_state` so the Shape radio group reflects the pick the
+    /// same frame it's clicked (mirrors `toggle_trading_panel_topbar_takeover`'s
+    /// dual-write above), and autosave — the User Settings modal's
+    /// General-tab "Control points" Shape picker (control-point-style-ui
+    /// arc, 2026-08-08).
+    pub(crate) fn set_control_point_shape(&mut self, shape: mlc_core::drawing::primitives_v2::ControlPointShape) {
+        let style = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.control_point_shape = shape;
+            mlc_core::drawing::primitives_v2::ControlPointStyle {
+                shape: ui.control_point_shape,
+                size: ui.control_point_size,
+            }
+        };
+        mlc_core::drawing::primitives_v2::set_control_point_style(style);
+        self.panel_app.user_settings_state.control_point_shape = shape;
+        self.autosave_snapshot();
+        eprintln!("[ChartApp] control_point_shape = {:?}", shape);
+    }
+
+    /// Set `ProfileUiSettings::control_point_size` — same shape as
+    /// [`Self::set_control_point_shape`] above for the Size picker.
+    pub(crate) fn set_control_point_size(&mut self, size: mlc_core::drawing::primitives_v2::ControlPointSize) {
+        let style = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.control_point_size = size;
+            mlc_core::drawing::primitives_v2::ControlPointStyle {
+                shape: ui.control_point_shape,
+                size: ui.control_point_size,
+            }
+        };
+        mlc_core::drawing::primitives_v2::set_control_point_style(style);
+        self.panel_app.user_settings_state.control_point_size = size;
+        self.autosave_snapshot();
+        eprintln!("[ChartApp] control_point_size = {:?}", size);
     }
 
     /// Route a click inside the `symbol_selector` inline fast-search

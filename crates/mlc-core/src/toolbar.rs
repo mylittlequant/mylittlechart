@@ -670,6 +670,17 @@ fn layout_menu_items() -> Vec<DropdownItemDef> {
 
 // === Drawing tool sections ===
 
+/// The cursor section holds navigation modes, not primitive creators.
+///
+/// They still land in `active_tool_id` when picked, so anything that asks "is
+/// a drawing tool active?" must exclude them — otherwise a canvas click is
+/// routed to the create-a-primitive path, which has nothing to create, and
+/// never reaches primitive selection. That is what made every existing drawing
+/// unselectable the moment the crosshair was picked from the toolbar.
+pub fn is_cursor_tool(tool_id: &str) -> bool {
+    matches!(tool_id, "crosshair" | "hand")
+}
+
 fn cursor_section() -> ToolbarSectionDef {
     ToolbarSectionDef::new(vec![
         ToolbarItemDef::quick_select("cursor_tools", vec![

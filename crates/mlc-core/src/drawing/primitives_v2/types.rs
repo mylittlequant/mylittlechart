@@ -716,10 +716,11 @@ pub const CONTROL_POINT_FILL: &str = "#FFFFFF";
 /// Visual shape of a control-point (handle) marker.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlPointShape {
-    /// Filled circle with a stroked ring — today's (and the default) look.
-    #[default]
+    /// Filled circle with a stroked ring.
     Circle,
-    /// Filled square with rounded corners.
+    /// Filled square with rounded corners — the default look (owner's call:
+    /// soft corners over a plain circle).
+    #[default]
     RoundedSquare,
     /// Filled square, sharp corners.
     Square,

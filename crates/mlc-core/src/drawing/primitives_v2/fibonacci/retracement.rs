@@ -10,7 +10,7 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle, TextAlign,
-    HIT_TOLERANCE,
+    HIT_TOLERANCE, point_to_line_distance, control_point_style,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle},
@@ -309,6 +309,17 @@ impl Primitive for FibRetracement {
         }
         if check_point_hit(screen_x, screen_y, x2, y2) {
             return HitTestResult::ControlPoint(ControlPointType::Point2);
+        }
+
+        // The trend line between the two anchors is a drawn stroke, so it is
+        // a grab surface like any other edge. It was rendered and never
+        // hit-tested — the diagonal was the one part of the tool a click
+        // could not reach. `trend_extension` and `trend_time` already test
+        // their connecting segments; this brings retracement in line.
+        if self.show_trend_line
+            && point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE
+        {
+            return HitTestResult::Body;
         }
 
         // Check each level line (only visible ones)
@@ -783,7 +794,10 @@ impl Primitive for FibRetracement {
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    let radius = 8.0;
+    // Read the shared handle style rather than a local literal, so the grab
+    // zone tracks the size the user picked and can never drift from what
+    // `draw_control_points` actually painted.
+    let radius = control_point_style().hit_radius();
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
 }
 

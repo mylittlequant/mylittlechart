@@ -883,10 +883,21 @@ pub enum UserSettingsKey {
 
     // General tab — workspace toggle (workspace-panel arc, Stage 4)
     TradingPanelTopbarTakeover = 25,
+
+    // General tab — "Control points" group (handle shape/size, 2026-08-08)
+    SectionControlPoints           = 26,
+    ControlPointShapeLabel         = 27,
+    ControlPointSizeLabel          = 28,
+    ControlPointShapeCircle        = 29,
+    ControlPointShapeRoundedSquare = 30,
+    ControlPointShapeSquare        = 31,
+    ControlPointSizeSmall          = 32,
+    ControlPointSizeMedium         = 33,
+    ControlPointSizeLarge          = 34,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 26;
+    pub const COUNT: usize = 35;
 
     /// Get translation for this key.
     #[inline]

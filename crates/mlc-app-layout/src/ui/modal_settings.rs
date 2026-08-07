@@ -9,6 +9,7 @@ use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
+use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use uzor::app_context::TextInputState;
 use mlc_alert_delivery::NotificationSettings;
 
@@ -3148,6 +3149,15 @@ pub struct UserSettingsState {
     /// Synced from `ProfileUiSettings::trading_panel_topbar_takeover` before
     /// each render.
     pub trading_panel_topbar_takeover: bool,
+    /// Active control-point (handle) shape, synced from
+    /// `ProfileUiSettings::control_point_shape` before each render — drives
+    /// which radio option the General tab's "Control points" Shape picker
+    /// shows as selected.
+    pub control_point_shape: ControlPointShape,
+    /// Active control-point (handle) size, synced from
+    /// `ProfileUiSettings::control_point_size` before each render — same
+    /// role as `control_point_shape` for the Size picker.
+    pub control_point_size: ControlPointSize,
     /// Whether the internal Agent API server is enabled.
     pub server_enabled: bool,
     /// Port the server listens on.
@@ -3304,6 +3314,8 @@ impl Default for UserSettingsState {
             language: "en".to_string(),
             diagnostics_enabled: false,
             trading_panel_topbar_takeover: false,
+            control_point_shape: ControlPointShape::default(),
+            control_point_size: ControlPointSize::default(),
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),

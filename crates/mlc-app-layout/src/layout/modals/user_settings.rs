@@ -9,6 +9,7 @@ use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
+use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_theme::ToolbarTheme;
@@ -296,6 +297,143 @@ fn render_general_tab(
 
         // Advance past the rendered rows using their actual bottom edge.
         if let Some((_, ry, _, rh)) = lang_radio_result.option_rects.last() {
+            cy = ry + rh + 16.0;
+        }
+    }
+
+    // ── Section: CONTROL POINTS ──────────────────────────────────────────────
+    // Two compact radio groups (Shape, Size) — same idiom as the LANGUAGE
+    // section above (`draw_radio_group`, compact single-line rows), each
+    // preceded by a small muted caption identifying which knob it is since,
+    // unlike LANGUAGE, this section hosts two closed-choice groups instead
+    // of one (control-point-style-ui arc, 2026-08-08).
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(UserSettingsKey::SectionControlPoints.get(current_language()), x, cy);
+    cy += 20.0;
+
+    {
+        let shape_options = [
+            RadioOption {
+                key: "Circle",
+                label: UserSettingsKey::ControlPointShapeCircle.get(current_language()),
+                description: "",
+            },
+            RadioOption {
+                key: "RoundedSquare",
+                label: UserSettingsKey::ControlPointShapeRoundedSquare.get(current_language()),
+                description: "",
+            },
+            RadioOption {
+                key: "Square",
+                label: UserSettingsKey::ControlPointShapeSquare.get(current_language()),
+                description: "",
+            },
+        ];
+        let shape_selected = match state.control_point_shape {
+            ControlPointShape::Circle => 0,
+            ControlPointShape::RoundedSquare => 1,
+            ControlPointShape::Square => 2,
+        };
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::ControlPointShapeLabel.get(current_language()), x, cy);
+        cy += 16.0;
+
+        let shape_radio_result = draw_radio_group(
+            ctx,
+            &shape_options,
+            shape_selected,
+            state.hovered_item_id.as_deref(),
+            x,
+            cy,
+            available_w,
+            scroll_widget_theme,
+            true, // compact — shape options are single-line (no description)
+        );
+
+        for (i, (rx, ry, rw, rh)) in shape_radio_result.option_rects.iter().enumerate() {
+            let hit_id = format!("user_settings:control_point_shape:{}", shape_options[i].key);
+            result.content_items.push((
+                format!("control_point_shape:{}", shape_options[i].key),
+                WidgetRect::new(*rx, *ry, *rw, *rh),
+            ));
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                uzor::types::Rect::new(*rx, *ry, *rw, *rh),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+
+        if let Some((_, ry, _, rh)) = shape_radio_result.option_rects.last() {
+            cy = ry + rh + 12.0;
+        }
+    }
+
+    {
+        let size_options = [
+            RadioOption {
+                key: "Small",
+                label: UserSettingsKey::ControlPointSizeSmall.get(current_language()),
+                description: "",
+            },
+            RadioOption {
+                key: "Medium",
+                label: UserSettingsKey::ControlPointSizeMedium.get(current_language()),
+                description: "",
+            },
+            RadioOption {
+                key: "Large",
+                label: UserSettingsKey::ControlPointSizeLarge.get(current_language()),
+                description: "",
+            },
+        ];
+        let size_selected = match state.control_point_size {
+            ControlPointSize::Small => 0,
+            ControlPointSize::Medium => 1,
+            ControlPointSize::Large => 2,
+        };
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::ControlPointSizeLabel.get(current_language()), x, cy);
+        cy += 16.0;
+
+        let size_radio_result = draw_radio_group(
+            ctx,
+            &size_options,
+            size_selected,
+            state.hovered_item_id.as_deref(),
+            x,
+            cy,
+            available_w,
+            scroll_widget_theme,
+            true, // compact — size options are single-line (no description)
+        );
+
+        for (i, (rx, ry, rw, rh)) in size_radio_result.option_rects.iter().enumerate() {
+            let hit_id = format!("user_settings:control_point_size:{}", size_options[i].key);
+            result.content_items.push((
+                format!("control_point_size:{}", size_options[i].key),
+                WidgetRect::new(*rx, *ry, *rw, *rh),
+            ));
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                uzor::types::Rect::new(*rx, *ry, *rw, *rh),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+
+        if let Some((_, ry, _, rh)) = size_radio_result.option_rects.last() {
             cy = ry + rh + 16.0;
         }
     }

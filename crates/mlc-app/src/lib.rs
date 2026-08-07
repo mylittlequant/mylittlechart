@@ -4631,6 +4631,24 @@ impl ChartApp {
         // the backfill planner's no-zip fetch floor both read this global.
         mlc_backend_data_bridge::set_trade_raw_window_days(profile.domain.data_load.trade_raw_window_days);
 
+        // Control-point (handle) shape/size (control-point-style-ui arc,
+        // 2026-08-08) — process-level like the two settings above:
+        // `set_control_point_style` writes the one global `draw_control_points`
+        // and the default `control_point_hit_test` read fresh every frame, so
+        // every drawing (including ones loaded from disk long before this
+        // window existed) adopts the persisted style on the very next frame,
+        // no primitive touched. Mirrored into `user_settings_state` here too
+        // so the General tab's pickers show the right selection immediately
+        // rather than waiting for `prepare()`'s per-frame sync to catch up.
+        mlc_core::drawing::primitives_v2::set_control_point_style(
+            mlc_core::drawing::primitives_v2::ControlPointStyle {
+                shape: profile.ui.control_point_shape,
+                size: profile.ui.control_point_size,
+            },
+        );
+        self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
+        self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

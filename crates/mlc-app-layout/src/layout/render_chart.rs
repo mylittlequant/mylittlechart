@@ -1930,7 +1930,11 @@ pub fn render_sub_pane_primitives(
                     .iter()
                     .map(|cp| (cp.x, cp.y))
                     .collect();
-                draw_control_points(ctx, &screen_points, &state.theme.crosshair, &state.theme.background);
+                // Handle border takes the theme's foreground token and the fill
+                // its surface token, so a handle reads as a chip punched out of
+                // the chart in every preset. `crosshair` was the wrong border —
+                // it is a dimmed guide colour, not a UI-chrome one.
+                draw_control_points(ctx, &screen_points, &state.theme.text, &state.theme.background);
             }
         }
     }
@@ -2645,7 +2649,11 @@ pub fn render_main_chart_primitives(
                     .iter()
                     .map(|cp| (cp.x, cp.y))
                     .collect();
-                draw_control_points(ctx, &screen_points, &state.theme.crosshair, &state.theme.background);
+                // Handle border takes the theme's foreground token and the fill
+                // its surface token, so a handle reads as a chip punched out of
+                // the chart in every preset. `crosshair` was the wrong border —
+                // it is a dimmed guide colour, not a UI-chrome one.
+                draw_control_points(ctx, &screen_points, &state.theme.text, &state.theme.background);
             }
         }
     }

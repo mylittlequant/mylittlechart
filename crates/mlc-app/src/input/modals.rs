@@ -1423,7 +1423,14 @@ impl ChartApp {
         //    Handles both main chart and sub-pane areas.  Sub-panes share the
         //    X-axis (bar index) with the main chart but have their own Y-axis
         //    (price range = indicator values, e.g. RSI 0-100).
-        let tool_id_opt = self.panel_app.toolbar_state.active_tool_id.clone();
+        //    Cursor-section tools (crosshair, hand) are navigation modes, not
+        //    primitive creators — they must fall through to selection below.
+        let tool_id_opt = self
+            .panel_app
+            .toolbar_state
+            .active_tool_id
+            .clone()
+            .filter(|id| !mlc_core::toolbar::is_cursor_tool(id));
         if let Some(ref _tool_id) = tool_id_opt {
             // Read the frame-cached layout so we get the exact same main_chart rect
             // that render_full_chart_panel uses.  This accounts for sub-panes

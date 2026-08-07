@@ -82,6 +82,13 @@ impl ChartApp {
                 // at toggle time, same preserve-live-value pattern as
                 // `split_symbol_compare` above.
                 trading_panel_topbar_takeover: existing.ui.trading_panel_topbar_takeover,
+                // Control-point shape/size (control-point-style-ui arc,
+                // 2026-08-08): mutated in-place via `set_control_point_shape`/
+                // `set_control_point_size` at pick time, same
+                // preserve-live-value pattern as `trading_panel_topbar_takeover`
+                // above.
+                control_point_shape: existing.ui.control_point_shape,
+                control_point_size: existing.ui.control_point_size,
             },
         }
     }

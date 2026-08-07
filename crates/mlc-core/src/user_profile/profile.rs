@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
+
 // =============================================================================
 // Schema version
 // =============================================================================
@@ -585,6 +587,26 @@ pub struct ProfileUiSettings {
     /// daemon/headless consumer reads this.
     #[serde(default)]
     pub trading_panel_topbar_takeover: bool,
+
+    /// Visual shape of every drawing primitive's control-point (handle)
+    /// marker — a process-wide rendering preference, same class as
+    /// `active_theme` (one look for every chart/window, not per-window
+    /// state). Applied to the live global via
+    /// `mlc_core::drawing::primitives_v2::set_control_point_style` at
+    /// profile load (`ChartApp::apply_profile_state`) and again on every
+    /// User Settings General-tab pick (control-point-style-ui arc,
+    /// 2026-08-08). Mutated in-place at pick time, not by
+    /// `build_user_profile`'s snapshot — same preserve-live-value pattern
+    /// as `trading_panel_topbar_takeover` above. No daemon/headless
+    /// consumer reads this (rendering-only).
+    #[serde(default)]
+    pub control_point_shape: ControlPointShape,
+
+    /// Visual/hit-test size of every drawing primitive's control-point
+    /// (handle) marker — see `control_point_shape`'s doc above for the full
+    /// rationale; same process-wide, mutated-in-place, rendering-only class.
+    #[serde(default)]
+    pub control_point_size: ControlPointSize,
 }
 
 fn default_true() -> bool {
@@ -614,6 +636,8 @@ impl ProfileUiSettings {
             symbol_quick_search: true,
             panel_gear_opens_modal: false,
             trading_panel_topbar_takeover: false,
+            control_point_shape: ControlPointShape::default(),
+            control_point_size: ControlPointSize::default(),
         }
     }
 }
