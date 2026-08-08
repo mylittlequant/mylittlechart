@@ -11,7 +11,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -205,8 +205,8 @@ impl Primitive for Polyline {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::closed(self.closed).with_order(19),
-            ConfigProperty::fill(self.fill).with_order(20),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+            ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
         ]
     }
 

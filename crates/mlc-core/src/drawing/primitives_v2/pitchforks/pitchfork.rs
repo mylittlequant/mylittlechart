@@ -836,12 +836,12 @@ impl Primitive for Pitchfork {
     fn level_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::level_mode(self.level_mode.as_str())
-                .with_category(PropertyCategory::Levels).with_order(0),
+                .with_category(PropertyCategory::LevelsBase).with_order(0),
             ConfigProperty::extend_lines(self.extend)
-                .with_category(PropertyCategory::Levels)
+                .with_category(PropertyCategory::LevelsBase)
                 .with_order(1),
             ConfigProperty::show_labels(self.show_labels)
-                .with_category(PropertyCategory::Levels)
+                .with_category(PropertyCategory::LevelsBase)
                 .with_order(2),
         ]
     }

@@ -1,13 +1,15 @@
-//! Shared modal-shell setup for every custom body this crate draws (the
-//! approved 3-tab design in `crate::approved_design`, the template
-//! management panel in `crate::templates_variant`). Both reuse the exact
-//! chrome builders `render_primitive_settings_modal` (baseline) is built
-//! on — header, tab strip, footer — so the frame around a custom body is
-//! the real shell, not a drawn approximation of it. Callers hand their own
-//! tab strip in (`tab_items`/`active_tab_idx`) rather than this module
-//! deriving one from `PrimitiveSettingsTab` — the approved design's three
-//! tabs (Вид/Уровни/Размещение) are not baseline's five, and the templates
-//! panel has none at all.
+//! Shared modal-shell setup for every custom body this crate draws. Before
+//! the 2026-08-08 port this served both the approved 3-tab design
+//! (`crate::approved_design`) and the template management panel
+//! (`crate::templates_variant`); the approved design is now the real
+//! `render_primitive_settings_modal` in `mlc-app-layout` (which builds its
+//! own shell directly), so this module's only remaining caller is the
+//! templates panel. It still reuses the exact chrome builders
+//! `render_primitive_settings_modal` is built on — header, tab strip,
+//! footer — so the frame around a custom body is the real shell, not a
+//! drawn approximation of it. Callers hand their own tab strip in
+//! (`tab_items`/`active_tab_idx`) rather than this module deriving one from
+//! `PrimitiveSettingsTab` — the templates panel has no tab strip at all.
 //!
 //! This is the ONE place that decides how wide the modal is and where its
 //! content box sits (`content_left`/`content_right`) — every row either

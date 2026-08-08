@@ -393,14 +393,14 @@ impl Primitive for FibWedge {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::ConfigProperty;
+        use super::super::config::{ConfigProperty, PropertyCategory};
         vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
-            ConfigProperty::fill(self.fill).with_order(20),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+            ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
         ]
     }
 

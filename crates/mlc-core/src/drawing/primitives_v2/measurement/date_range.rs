@@ -165,16 +165,16 @@ impl Primitive for DateRange {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let mut props = vec![
             ConfigProperty::show_duration(self.show_time)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10),
             ConfigProperty::show_bar_count(self.show_bars)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(11),
             ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(13),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(14),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));

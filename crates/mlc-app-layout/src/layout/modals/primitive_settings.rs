@@ -1,169 +1,340 @@
 //! Primitive settings modal renderer.
+//!
+//! The tab strip is DERIVED, not fixed: up to four tabs — Levels (the level
+//! ladder) / Appearance (line/fill) / Labels (content/font/style/position)
+//! / Placement (points + timeframe visibility) — in that fixed order,
+//! filtered per primitive by [`available_tabs`] to only the ones that type
+//! actually has anything for (a primitive with no level ladder never shows
+//! Levels; one that declares nothing label-related and overrides
+//! `Primitive::text_properties()` never shows Labels — see
+//! `mlc_core::drawing::primitives_v2::config::PropertyCategory`'s own doc).
+//! Placement is unconditional. Replaces the original five-tab set
+//! (Style/Text/Coordinates/Levels/Visibility, retired 2026-08-08) and that
+//! set's own three-tab successor (Вид/Уровни/Размещение, same day, Labels
+//! not yet split out of Вид) — ported from the `mlc-ui-lab` "approved
+//! design" prototype (owner direction, 2026-08-07, after live review) —
+//! hard cutover each time, no compatibility variants kept alongside these.
+//! Each tab's own row-drawing lives in its own sibling module
+//! (`primitive_settings_vid`/`_labels`/`_levels`/`_placement`); this file
+//! owns the modal shell (header/tabs/scroll/footer/resize), the strip's own
+//! per-primitive membership ([`available_tabs`]) and the colour-picker
+//! popup.
 
 use mlc_core::engine::render::RenderContext;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use uzor::types::Rect as WidgetRect;
 use crate::ui::modal_settings::ResizableModal;
-use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab, DualSliderHandle, ActiveFieldRender};
-use mlc_core::drawing::LineStyle;
-use mlc_core::drawing::primitives_v2::config::PropertyType;
-use crate::layout::render_frame::{
-    PrimitiveSettingsResult,
-    SliderTrackInfo,
-};
+use crate::ui::modal_settings::{PrimitiveSettingsState, PrimitiveSettingsTab};
+use crate::layout::render_frame::PrimitiveSettingsResult;
 use crate::layout::toolbar_state::ToolbarState;
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::widgets::{SliderConfig, render_single_slider, render_dual_slider, SliderEditingInfo};
-use crate::ui::widgets::types::WidgetState;
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::{
-    begin_modal_shell, end_modal_shell, labelled_tabs_width, ModalFooter, ModalPlacement,
-    ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
+    begin_modal_shell, draw_input, draw_input_cursor, end_modal_shell, labelled_tabs_width, InputConfig,
+    InputType, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
+    WidgetState, WidgetTheme,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
+use crate::ui::widgets::SETTINGS_BUTTON_RADIUS;
+use crate::ui::modal_settings::LevelSet;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
-use mlc_core::i18n::{IndicatorKey, SettingsKey, ConfigKey, StyleKey, current_language, t_indicator, t_settings};
+use mlc_core::drawing::primitives_v2::Primitive;
+use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, t_settings};
 
-/// Localized display name for a `LineStyle` variant. Shared by the Style
-/// tab's dual-button label and its deferred dropdown list so the two never
-/// drift — they used to be two separate hardcoded-Russian match arms with
-/// the same five strings typed out twice.
-fn line_style_display_name(style: LineStyle, lang: mlc_core::i18n::Language) -> &'static str {
-    match style {
-        LineStyle::Solid => StyleKey::Solid.get(lang),
-        LineStyle::Dashed => StyleKey::Dashed.get(lang),
-        LineStyle::Dotted => StyleKey::Dotted.get(lang),
-        LineStyle::LargeDashed => StyleKey::LargeDashed.get(lang),
-        LineStyle::SparseDotted => StyleKey::SparseDotted.get(lang),
+use super::{
+    primitive_settings_intent, primitive_settings_labels, primitive_settings_levels,
+    primitive_settings_placement, primitive_settings_vid,
+};
+
+// =============================================================================
+// Tab strip membership — the ONE place that decides which tabs exist for a
+// given primitive (item 1, 2026-08-08 4-tab cutover).
+// =============================================================================
+
+/// The tabs `prim` actually has anything for, in the enum's own fixed strip
+/// order (`PrimitiveSettingsTab::all()`) — never the order `prim` happened
+/// to declare its own properties in. `Levels` appears only when the
+/// primitive has a level ladder (the ladder itself forces it — a bespoke
+/// collection, not a declared property, per `PropertyCategory`'s own doc);
+/// `Appearance`/`Labels` appear only when that tab body's own `has_content`
+/// says there is something to draw (a declared property in the matching
+/// category, or — for `Appearance` — the bespoke base-stroke row a
+/// level-less primitive always has, or — for `Labels` — the bespoke
+/// content/style/position block a primitive without custom
+/// `text_properties()` always has); `Placement` is unconditional — the
+/// points table and timeframe chips are bespoke collections every
+/// primitive has, not declared properties.
+///
+/// Each tab body (`primitive_settings_vid`/`_labels`/`_levels`/
+/// `_placement`) owns its OWN internal grouping, but none of them decides
+/// whether IT ITSELF is present in the strip — that membership decision
+/// lives here, once, so the strip built for the header and the content
+/// pane drawn below it can never disagree about which tabs exist. Never
+/// empty: `Placement` always passes its own filter.
+fn available_tabs(prim: &dyn Primitive) -> Vec<PrimitiveSettingsTab> {
+    PrimitiveSettingsTab::all()
+        .iter()
+        .copied()
+        .filter(|tab| match tab {
+            PrimitiveSettingsTab::Levels => prim.level_configs().is_some(),
+            PrimitiveSettingsTab::Appearance => primitive_settings_vid::has_content(prim),
+            PrimitiveSettingsTab::Labels => primitive_settings_labels::has_content(prim),
+            PrimitiveSettingsTab::Placement => true,
+        })
+        .collect()
+}
+
+/// `state.active_tab` if it names one of `available`, otherwise the first
+/// available tab. Covers the case `PrimitiveSettingsState::active_tab`'s
+/// own doc promises but cannot itself guarantee — `open()` only ever sees a
+/// `primitive_id`, never the primitive, so it cannot know this primitive's
+/// real tab set; this is the one place that DOES have `prim` in hand, so
+/// the fallback happens here, every render, rather than trusting whatever
+/// tab was active for a PREVIOUS primitive (or a still-open modal switched
+/// to a differently-shaped one) to still be valid for THIS one. `available`
+/// is never empty (`Placement` is unconditional), so this always resolves
+/// to a real tab.
+fn resolve_active_tab(state: &PrimitiveSettingsState, available: &[PrimitiveSettingsTab]) -> PrimitiveSettingsTab {
+    if available.contains(&state.active_tab) {
+        state.active_tab
+    } else {
+        available.first().copied().unwrap_or(PrimitiveSettingsTab::Placement)
     }
 }
 
-fn render_level_item(
-    ctx: &mut dyn RenderContext,
-    frame_theme: &FrameTheme,
-    toolbar_theme: &ToolbarTheme,
-    prim_data: &mlc_core::drawing::PrimitiveData,
-    result: &mut PrimitiveSettingsResult,
-    active_field_id: Option<&str>,
-    active_render: &ActiveFieldRender,
-    x: f64,
-    y: f64,
-    row_height: f64,
-    level_idx: usize,
-    config: &mlc_core::drawing::FibLevelConfig,
-) {
-    let field_id = format!("level_{}_value", level_idx);
-    let level_label = format!("{:.3}", config.level);
+// =============================================================================
+// Template menu — merged system-preset + user-template list (item 3, 2026-08-08 review)
+// =============================================================================
 
-    // Check if this field is being edited
-    let is_editing = active_field_id == Some(field_id.as_str());
+/// One row in the merged Template menu list — either a canned system
+/// level-set preset (not stored, not renameable, not deletable) or a
+/// user-saved [`mlc_core::templates::PrimitiveTemplate`] (stored, its own
+/// rename/delete row actions — see `draw_template_row` below).
+enum TemplateListEntry<'a> {
+    System(LevelSet),
+    User(&'a mlc_core::templates::PrimitiveTemplate),
+}
 
-    // Visibility checkbox - clickable
-    let check_rect = WidgetRect::new(x, y + 4.0, 16.0, 16.0);
-    ctx.set_fill_color(if config.visible { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-    ctx.fill_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 2.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 2.0);
-    if config.visible {
-        ctx.set_stroke_color(&toolbar_theme.item_text_active);
-        ctx.set_stroke_width(2.0);
-        ctx.begin_path();
-        ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
-        ctx.line_to(check_rect.x + 6.0, check_rect.bottom() - 3.0);
-        ctx.line_to(check_rect.right() - 3.0, check_rect.y + 3.0);
-        ctx.stroke();
+impl<'a> TemplateListEntry<'a> {
+    /// This row's own position key — a system preset's `LevelSet::id()`, or
+    /// a user template's own `id`. The SAME string [`merged_template_list`]
+    /// reads back out of a persisted order, and `mlc-app`'s drag-to-reorder
+    /// commit writes back in (via `result.template_menu_rows`) — there is
+    /// only ever this one string identifying a row, never a positional
+    /// index (a drag or an add/delete would silently repoint an index at
+    /// the wrong row the next time the list is not in the order it was
+    /// computed against).
+    fn key(&self) -> &str {
+        match self {
+            TemplateListEntry::System(s) => s.id(),
+            TemplateListEntry::User(t) => t.id.as_str(),
+        }
     }
-    result.content_items.push((format!("level_{}_visible", level_idx), check_rect));
+}
 
-    // Level value input - editable field
-    let value_rect = WidgetRect::new(x + 24.0, y + 2.0, 55.0, row_height - 4.0);
+/// Merge the four system level-set presets with the user's saved primitive
+/// templates into one ordered list — no divider between the two kinds
+/// (item 3), drag-reorderable as one list (item 4).
+///
+/// `order` is the persisted position-key sequence
+/// (`mlc-backend`'s `TemplateManager::primitive_template_order`, threaded in
+/// from the caller as `template_order`): every key it names places that row
+/// where `order` says. Anything `order` never named — a system preset that
+/// has never been dragged, or a template created since the last reorder —
+/// falls back to its own natural position, appended after everything
+/// `order` DOES place: system presets first (their own canonical order),
+/// then templates (their own list order). An empty `order` (nothing has
+/// ever been dragged) is exactly that fallback in full — the pre-reorder
+/// layout this feature replaces, so a fresh install renders identically to
+/// before this existed.
+fn merged_template_list<'a>(
+    templates: &'a [mlc_core::templates::PrimitiveTemplate],
+    order: &[String],
+) -> Vec<TemplateListEntry<'a>> {
+    let mut remaining_system: Vec<LevelSet> = LevelSet::PRESETS.to_vec();
+    let mut remaining_user: Vec<&mlc_core::templates::PrimitiveTemplate> = templates.iter().collect();
+    let mut out = Vec::with_capacity(order.len() + remaining_system.len() + remaining_user.len());
 
-    // Get display text and cursor/selection from active_render (populated from TextFieldStore).
-    let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
-        (active_render.text.as_str(), active_render.cursor, active_render.selection_start, Some(active_render.cursor))
+    for key in order {
+        if let Some(pos) = remaining_system.iter().position(|s| s.id() == key.as_str()) {
+            out.push(TemplateListEntry::System(remaining_system.remove(pos)));
+            continue;
+        }
+        if let Some(pos) = remaining_user.iter().position(|t| &t.id == key) {
+            out.push(TemplateListEntry::User(remaining_user.remove(pos)));
+        }
+        // A key naming neither (a template deleted since `order` was last
+        // saved) is silently dropped — nothing left to place for it.
+    }
+    for s in remaining_system {
+        out.push(TemplateListEntry::System(s));
+    }
+    for t in remaining_user {
+        out.push(TemplateListEntry::User(t));
+    }
+    out
+}
+
+/// Height of a tab-name header in the cross-tab settings-search result view
+/// (item 8, 2026-08-08 follow-up) — see [`draw_search_tab_header`].
+const SEARCH_TAB_HEADER_H: f64 = 24.0;
+
+/// Gap between two consecutive tab sections in the cross-tab search result
+/// view — a little more breathing room than `GROUP_GAP` inside a tab (each
+/// tab module's own constant), so a glance at the list tells a tab boundary
+/// apart from an ordinary group boundary within one tab.
+const SEARCH_TAB_GAP: f64 = 14.0;
+
+/// Kept equal to `ScrollableConfig::default().scrollbar_width` — this is
+/// the one place `content_right` (what every tab module lays its rows out
+/// against) and the scrollbar strip `ScrollableContainer` actually reserves
+/// are computed from the SAME number, so a row drawn flush to
+/// `content_right` never ends up half under the scrollbar's clip.
+const SCROLLBAR_WIDTH: f64 = 8.0;
+
+/// Small breathing room between the last content column and the scrollbar
+/// strip. Item 2 (2026-08-08 review): the scrollbar itself sits flush with
+/// the modal's own right edge — `modal_right - SCROLLBAR_WIDTH` — and
+/// `content_right` stops this much short of THAT, both derived from the
+/// same `modal_right` expression so they cannot drift apart.
+const CONTENT_SCROLLBAR_GAP: f64 = 6.0;
+
+/// Widget id for the modal-wide settings search field. Moved into the
+/// footer (item 8, 2026-08-08 review) — filters rows across all three
+/// tabs, not only Вид, which is why the tab modules read it via
+/// [`search_query`]/[`search_matches`] rather than owning a copy each.
+/// `pub`, not `pub(crate)`: `mlc-app`'s own click dispatch
+/// (`input/settings.rs`) matches against it directly to start editing.
+pub const SEARCH_FIELD_ID: &str = "prim_settings_search";
+
+/// Live settings-search query — the field's own live buffer while it is
+/// focused, nothing otherwise. Not persisted once the field blurs: each tab
+/// reads this straight from the in-progress edit buffer during render, the
+/// same way any other in-progress edit already does, with no second copy
+/// of the string kept anywhere.
+pub(crate) fn search_query(state: &PrimitiveSettingsState) -> String {
+    if state.active_field_id.as_deref() == Some(SEARCH_FIELD_ID) {
+        state.active_render.text.to_lowercase()
     } else {
-        (&level_label as &str, level_label.len(), None, None)
-    };
-
-    // Draw input using centralized system
-    let level_input_config = InputConfig::new(display_text)
-        .with_focused(is_editing)
-        .with_type(InputType::Number)
-        .with_font_size(12.0)
-        .with_padding(4.0)
-        .with_radius(3.0)
-        .with_cursor(cursor_pos)
-        .with_selection(selection_start, selection_end);
-
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let widget_state = WidgetState::Normal;
-    let level_input_result = draw_input(ctx, &level_input_config, widget_state, value_rect, &widget_theme);
-
-    // Draw cursor if editing
-    if is_editing {
-        draw_input_cursor(
-            ctx,
-            level_input_result.cursor_x,
-            level_input_result.cursor_y,
-            level_input_result.cursor_height,
-            &toolbar_theme.item_text,
-        );
-        // Expose char positions for drag-to-select
-        result.active_input_char_positions = level_input_result.char_x_positions;
-        result.active_input_rect = Some(value_rect);
+        String::new()
     }
+}
 
-    result.content_items.push((field_id, value_rect));
+/// Whether `query` matches any of `texts` (case-insensitive substring), or
+/// `query` is empty — the shared predicate every tab's own row/group
+/// filtering calls, so "no query" and "matched" are decided identically
+/// everywhere.
+pub(crate) fn search_matches(query: &str, texts: &[&str]) -> bool {
+    query.is_empty() || texts.iter().any(|t| t.to_lowercase().contains(query))
+}
 
-    // Color button - clickable (inline draw_color_button logic)
-    let level_color = config.color.as_deref().unwrap_or(&prim_data.color.stroke);
+/// Query-aware body height for one tab, used by both [`search_results_height`]
+/// and [`draw_search_results`] so the two can never disagree about which
+/// tabs contribute or how much space they need.
+fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+    match tab {
+        PrimitiveSettingsTab::Levels => primitive_settings_levels::search_content_height(prim, state),
+        PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height_for_query(prim, state),
+    }
+}
 
-    let color_rect = WidgetRect::new(x + 85.0, y + 4.0, 16.0, row_height - 8.0);
+/// Body height for [`draw_search_results`] — the sum of every AVAILABLE
+/// tab's own query-aware height ([`tab_query_height`]), each already zero
+/// when that tab has nothing matching `state`'s live query, plus one
+/// [`SEARCH_TAB_HEADER_H`] and one [`SEARCH_TAB_GAP`] for every tab that
+/// DOES contribute — mirrors `draw_search_results`'s own bookkeeping so the
+/// scroll container is sized to exactly what that function paints.
+fn search_results_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+    let mut h = 0.0;
+    let mut any = false;
+    for tab in available_tabs(prim) {
+        let tab_h = tab_query_height(tab, prim, state);
+        if tab_h > 0.0 {
+            if any { h += SEARCH_TAB_GAP; }
+            h += SEARCH_TAB_HEADER_H + tab_h;
+            any = true;
+        }
+    }
+    h
+}
 
-    // Draw color swatch
-    ctx.set_fill_color(level_color);
-    ctx.fill_rounded_rect(color_rect.x, color_rect.y, color_rect.width, color_rect.height, 3.0);
-    // Draw border
+/// Cross-tab settings-search result body (item 8, 2026-08-08 follow-up):
+/// with a non-empty query the content area stops being "the active tab" and
+/// becomes a single list of every matching setting from all AVAILABLE tabs
+/// ([`available_tabs`]), in tab order, each introduced by a header naming
+/// that tab — nothing else is drawn (no palette cards / global
+/// fill-opacity row / add-level row on Levels, no group on
+/// Appearance/Labels/Placement whose every row was filtered out; see each
+/// tab's own `content_height_for_query`/`search_content_height` doc
+/// comment). Reuses each tab's own row drawing verbatim
+/// (`primitive_settings_vid::draw`, `primitive_settings_labels::draw`,
+/// `primitive_settings_levels::draw_search`,
+/// `primitive_settings_placement::draw`) — the per-row `search_matches`
+/// gates inside them are the SAME ones the single-tab view already used,
+/// not a second matching rule. Rows land in `result.content_items` under
+/// their own real ids exactly as they would in their own tab, so a control
+/// found through search is fully functional where it is found.
+#[allow(clippy::too_many_arguments)]
+fn draw_search_results(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    row_y: &mut f64,
+    prim: &dyn Primitive,
+) {
+    let mut any = false;
+    for tab in available_tabs(prim) {
+        if tab_query_height(tab, prim, state) <= 0.0 {
+            continue;
+        }
+        if any { *row_y += SEARCH_TAB_GAP; }
+        draw_search_tab_header(ctx, toolbar_theme, x0, x1, *row_y, tab.label());
+        *row_y += SEARCH_TAB_HEADER_H;
+        match tab {
+            PrimitiveSettingsTab::Levels => {
+                primitive_settings_levels::draw_search(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            }
+            PrimitiveSettingsTab::Appearance => {
+                primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            }
+            PrimitiveSettingsTab::Labels => {
+                primitive_settings_labels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            }
+            PrimitiveSettingsTab::Placement => {
+                primitive_settings_placement::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            }
+        }
+        any = true;
+    }
+}
+
+/// Paints one tab-name header in the cross-tab search result view — plain
+/// chrome, not registered as a `content_items` entry (no click/hover sense
+/// needed for a label), so it is not counted by any of the tabs' own
+/// "did I draw anything" bool returns and does not participate in hit
+/// testing; it is still clipped and scrolled correctly because it is
+/// painted between the same `scrollable.begin()`/`end()` calls as every
+/// other body row.
+fn draw_search_tab_header(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x0: f64, x1: f64, y: f64, label: &str) {
+    use mlc_core::render::{TextAlign, TextBaseline};
+    ctx.set_fill_color(&toolbar_theme.background);
+    ctx.fill_rect(x0, y, (x1 - x0).max(0.0), SEARCH_TAB_HEADER_H);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.accent);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label.to_uppercase(), x0, y + SEARCH_TAB_HEADER_H / 2.0 + 2.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(color_rect.x, color_rect.y, color_rect.width, color_rect.height, 3.0);
-    result.content_items.push((format!("level_{}_color", level_idx), color_rect));
-
-    // Fill toggle button - shows fill color swatch with opacity indicator
-    let fill_color = config.fill_color.as_deref()
-        .or(config.color.as_deref())
-        .unwrap_or(&prim_data.color.stroke);
-
-    let fill_rect = WidgetRect::new(x + 103.0, y + 4.0, 16.0, row_height - 8.0);
-
-    // Draw fill swatch background
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rounded_rect(fill_rect.x, fill_rect.y, fill_rect.width, fill_rect.height, 3.0);
-
-    if config.fill_enabled {
-        // Draw fill color with opacity
-        ctx.set_fill_color_alpha(fill_color, config.fill_opacity);
-        ctx.fill_rounded_rect(fill_rect.x, fill_rect.y, fill_rect.width, fill_rect.height, 3.0);
-        ctx.reset_alpha();
-    }
-
-    // Draw border (highlighted if fill enabled)
-    ctx.set_stroke_color(if config.fill_enabled { &toolbar_theme.item_bg_active } else { &toolbar_theme.separator });
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(fill_rect.x, fill_rect.y, fill_rect.width, fill_rect.height, 3.0);
-
-    // Draw diagonal line through if fill disabled (visual indicator)
-    if !config.fill_enabled {
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.move_to(fill_rect.x + 2.0, fill_rect.bottom() - 2.0);
-        ctx.line_to(fill_rect.right() - 2.0, fill_rect.y + 2.0);
-        ctx.stroke();
-    }
-
-    result.content_items.push((format!("level_{}_fill", level_idx), fill_rect));
+    ctx.begin_path();
+    ctx.move_to(x0, y + SEARCH_TAB_HEADER_H - 2.0);
+    ctx.line_to(x1, y + SEARCH_TAB_HEADER_H - 2.0);
+    ctx.stroke();
 }
 
 /// Render primitive settings modal.
@@ -174,6 +345,9 @@ fn render_level_item(
 /// `screen_w` and `screen_h` are the total available screen dimensions
 /// (used for centering and clamping the modal position).
 /// `default_modal_y` is the Y offset from the top for default positioning.
+/// `template_order` is the Template menu's persisted merged display order
+/// (`mlc-backend`'s `TemplateManager::primitive_template_order`) — see
+/// [`merged_template_list`] for how it is applied.
 pub fn render_primitive_settings_modal(
     ctx: &mut dyn RenderContext,
     screen_w: f64,
@@ -187,16 +361,9 @@ pub fn render_primitive_settings_modal(
     _current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     templates: &[mlc_core::templates::PrimitiveTemplate],
+    template_order: &[String],
 ) -> PrimitiveSettingsResult {
-    use mlc_core::render::{TextAlign, TextBaseline};
-    use mlc_core::drawing::primitives_v2::PrimitiveRegistry;
-
     let mut result = PrimitiveSettingsResult::default();
-    // Deferred line style dropdown — rendered after footer to avoid z-overlap
-    let mut deferred_line_style_dropdown: Option<(f64, f64, f64, String)> = None;
-    // Deferred Select property dropdown — rendered after footer to avoid z-overlap
-    // Fields: (x, y, width, id_prefix, options: Vec<(value, label)>)
-    let mut deferred_select_dropdown: Option<(f64, f64, f64, String, Vec<(String, String)>)> = None;
 
     // Get primitive info
     let Some(prim_id) = state.primitive_id else {
@@ -205,89 +372,62 @@ pub fn render_primitive_settings_modal(
     let Some(prim) = primitives.iter().find(|p| p.data().id == prim_id) else {
         return result;
     };
+    let prim = prim.as_ref();
 
     let prim_name = prim.display_name();
-    let prim_type_id = prim.type_id();
-
-    // Get capabilities from registry
-    let (supports_text, has_levels) = {
-        let registry = PrimitiveRegistry::global().read().unwrap();
-        (registry.supports_text(prim_type_id), registry.has_levels(prim_type_id))
-    };
-
-    // Get available tabs for this primitive
-    let tabs = state.available_tabs(supports_text, has_levels);
-
-    // Get primitive data for content rendering
-    let prim_data = prim.data().clone();
 
     // Layout constants. Header, tab-bar and footer heights are the shell's —
     // this modal no longer has an opinion about them.
     let modal_padding = 12.0;
     let close_btn_size = 20.0;
     let title_close_gap = 12.0;
-    let row_height = 28.0;
-    let row_gap = 8.0;
+    // Only feeds the MINIMUM modal-width floor below (dominated by the
+    // `.max(400.0)` a few lines down either way) — no tab lays a fixed
+    // label column out against it any more.
     let label_width = 170.0;
 
-    // Get style_properties for current primitive
-    let style_props = prim.style_properties();
-    // Get level_properties for current primitive
-    let level_props = prim.level_properties();
-    // Get text_properties for current primitive
-    let text_props = prim.text_properties();
+    // The tabs THIS primitive actually has (item 1, 2026-08-08 4-tab
+    // cutover) — never the fixed 4, and `resolved_tab` is what `state.
+    // active_tab` falls back to the instant it names a tab not in this set
+    // (switched from a differently-shaped primitive, or a stale default).
+    // Both the header strip and every match on "the active tab" below read
+    // off THESE two, never `state.active_tab` directly, so they can never
+    // disagree about what is showing.
+    let available_tab_list = available_tabs(prim);
+    let resolved_tab = resolve_active_tab(state, &available_tab_list);
+
+    let tab_items: Vec<ModalTab<'_>> = available_tab_list.iter().map(|t| ModalTab::new(t.id(), t.label())).collect();
+    let active_tab_idx = available_tab_list.iter().position(|t| *t == resolved_tab).unwrap_or(0);
+
+    // Cross-tab settings search (item 8, 2026-08-08 follow-up): a non-empty
+    // query replaces "the active tab" with a combined search-result body
+    // spanning every available tab — see `draw_search_results`/
+    // `search_results_height` below.
+    let query = search_query(state);
 
     // True height the active tab's rows need — padding excluded (the shell's
-    // `content_height` is body-only, see `ModalShellSpec::content_height` doc).
-    // NOT clamped: a hard `.clamp(.., 400.0)` here used to throw away the
-    // real number the row loop below needed, so a tab past ~11 rows (the
-    // label-plumbing pass's 9 extra LabelStyle rows on top of the existing
-    // ones gets there on its own) drew straight past the frame the shell
-    // built for the clamped height, with the footer landing mid-content.
-    // The ceiling now lives on the shell (`max_content_height` below), which
-    // reports the difference as `shell.overflow` for the `ScrollableContainer`
-    // to actually scroll instead of silently discarding it.
-    let rows_height = (match state.active_tab {
-        PrimitiveSettingsTab::Style => {
-            let base_rows = if prim_data.color.fill.is_some() { 4 } else { 3 };
-            let extra_rows = style_props.len();
-            (base_rows + extra_rows) as f64 * (row_height + row_gap)
+    // `content_height` is body-only, see `ModalShellSpec::content_height`
+    // doc). NOT clamped: the shell's own `max_content_height` below is the
+    // ceiling; this is the real number, so `ScrollableContainer` can report
+    // the true overflow instead of silently discarding it.
+    let content_height = if query.is_empty() {
+        match resolved_tab {
+            PrimitiveSettingsTab::Levels => primitive_settings_levels::content_height(prim, state),
+            PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height(prim),
+            PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
+            PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
         }
-        PrimitiveSettingsTab::Text => {
-            if let Some(ref props) = text_props {
-                props.len() as f64 * (row_height + row_gap)
-            } else {
-                4.0 * (row_height + row_gap) + 120.0
-            }
-        }
-        PrimitiveSettingsTab::Coordinates => {
-            let points = prim.points();
-            points.len().max(1) as f64 * (row_height + row_gap)
-        }
-        PrimitiveSettingsTab::Levels => {
-            let level_props_rows = level_props.len();
-            let level_configs_rows = if let Some(configs) = prim.level_configs() {
-                configs.len().div_ceil(3).max(1) as f64 * (row_height + row_gap)
-            } else {
-                0.0
-            };
-            (level_props_rows as f64 * (row_height + row_gap)) + level_configs_rows
-        }
-        PrimitiveSettingsTab::Visibility => {
-            9.0 * (row_height + row_gap)
-        }
-    }).max(row_height);
+    } else {
+        search_results_height(prim, state)
+    };
 
-    // Ceiling on the body. A short tab (e.g. Visibility) still sizes the
-    // frame to its content; a long one (Style, now that primitives can carry
-    // 20+ style properties) stops growing here and scrolls the rest.
+    // Ceiling on the body. A short tab still sizes the frame to its
+    // content; a long one (the ladder with many levels, or Вид with every
+    // group expanded) stops growing here and scrolls the rest.
     let max_content_height = (screen_h - 250.0).clamp(200.0, 460.0);
 
     // The shell lays the tab strip out; this modal only needs to know how wide
     // the strip will be, so it asks the same code rather than measuring twice.
-    let tab_items: Vec<ModalTab<'_>> =
-        tabs.iter().map(|t| ModalTab::new(t.id(), t.label())).collect();
-    let active_tab = tabs.iter().position(|t| *t == state.active_tab).unwrap_or(0);
     let tabs_row_width = labelled_tabs_width(ctx, &tab_items);
 
     // Calculate title width
@@ -295,10 +435,13 @@ pub fn render_primitive_settings_modal(
     let title_text = prim_name.to_string();
     let title_width = ctx.measure_text(&title_text);
 
-    // Modal width
+    // Modal width. The floor was 400 — visibly cramped the first time it
+    // opens, before any manual resize (item 9, 2026-08-08 review): raised
+    // to give the reflowed rows (item 9's other half, see the tab bodies'
+    // own `x1`-derived control columns) room to actually show it.
     let min_header_width = title_width + title_close_gap + close_btn_size + modal_padding * 2.0;
     let min_content_width = label_width + 150.0 + modal_padding * 2.0;
-    let modal_width = min_header_width.max(tabs_row_width).max(min_content_width).max(400.0);
+    let modal_width = min_header_width.max(tabs_row_width).max(min_content_width).max(560.0);
 
     let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,
@@ -317,7 +460,7 @@ pub fn render_primitive_settings_modal(
             "prim_settings",
             &title_text,
             modal_width,
-            rows_height,
+            content_height,
         )
         .with_max_content_height(max_content_height)
         // The layer keeps its old name: it is the key
@@ -325,8 +468,12 @@ pub fn render_primitive_settings_modal(
         .layer_named("primitive_settings")
         .with_tabs(ModalTabs::Horizontal {
             items: &tab_items,
-            active: active_tab,
-            fit: TabFit::Labels,
+            active: active_tab_idx,
+            // Delta 2 (2026-08-08 port): tabs stretched to equal shares of
+            // the modal width, not packed to their own label widths from
+            // the left — still true with a variable tab COUNT (1-4) since
+            // the 4-tab cutover.
+            fit: TabFit::Equal,
         })
         .with_footer(ModalFooter::Editor {
             template: Some(t_settings(SettingsKey::ButtonTemplate)),
@@ -341,1290 +488,80 @@ pub fn render_primitive_settings_modal(
     result.header_rect = shell.header;
     result.close_btn_rect = shell.close_btn.unwrap_or_default();
     result.tab_rects = shell.tab_rects.clone();
-    result.total_content_height = rows_height;
+    result.total_content_height = content_height;
     result.viewport_height = shell.content.height;
 
     // === CONTENT AREA ===
     // `shell.content` is the VIEWPORT the body draws into — not the height it
-    // asked for (`rows_height`). When they differ the body scrolls, via the
+    // asked for (`content_height`). When they differ the body scrolls, via the
     // `ScrollableContainer` set up below.
     result.content_rect = WidgetRect::new(modal_x, shell.content.y, shell.frame.width, shell.content.height);
 
-    // Render tab content
+    // Delta 3 (2026-08-08 port), corrected item 2 (2026-08-08 review): the
+    // scrollbar now sits flush with the modal's own right edge —
+    // `modal_right - SCROLLBAR_WIDTH`, no `modal_padding` gap after it —
+    // and `content_right` stops `CONTENT_SCROLLBAR_GAP` short of THAT.
+    // Both read off `modal_right`, so they cannot drift apart.
+    //
+    // `ScrollableContainer` derives its own scrollbar track x from
+    // `viewport.x + viewport.width - scrollbar_width`; feeding it
+    // `shell.content` directly lands the bar `modal_padding` short of the
+    // edge (the body viewport is inset by the body's own padding on every
+    // side). `scroll_viewport` widens the RIGHT edge only, out to
+    // `modal_right`, so the container's own arithmetic lands the bar in
+    // the right place without a second copy of it here.
+    // From the SHELL's frame, never from `modal_width`. `modal_width` is the
+    // intrinsic width this modal asks for; `.resizable(state.size, ..)` lets
+    // the user override it, and the shell returns the width it actually drew.
+    // Reading the intrinsic one here laid every row out at the pre-resize
+    // width while the frame around them grew — content stranded in the left
+    // half with the old content edge still visible as a hairline.
+    let modal_right = shell.frame.x + shell.frame.width;
     let content_left = modal_x + modal_padding;
-    let control_left = content_left + label_width + 8.0;
-    let control_width = modal_width - modal_padding * 2.0 - label_width - 8.0;
+    let content_right = modal_right - SCROLLBAR_WIDTH - CONTENT_SCROLLBAR_GAP;
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let scrollable = ScrollableContainer::new(shell.content, &state.scroll, Some(ScrollableConfig::default()));
+    let scroll_config = ScrollableConfig { scrollbar_width: SCROLLBAR_WIDTH, ..ScrollableConfig::default() };
+    let scroll_viewport = WidgetRect::new(shell.content.x, shell.content.y, modal_right - shell.content.x, shell.content.height);
+    let scrollable = ScrollableContainer::new(scroll_viewport, &state.scroll, Some(scroll_config));
     scrollable.begin(ctx);
     let mut row_y = scrollable.content_y();
 
-    // Helper closure to draw a label
-    let draw_label = |ctx: &mut dyn RenderContext, label: &str, y: f64| {
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, content_left, y + row_height / 2.0);
-    };
-
-    // Helper closure to draw a color button
-    let draw_color_button = |ctx: &mut dyn RenderContext, color: &str, x: f64, y: f64, w: f64, h: f64| {
-        ctx.set_fill_color(color);
-        ctx.fill_rounded_rect(x, y, w, h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, y, w, h, 4.0);
-    };
-
-    match state.active_tab {
-        PrimitiveSettingsTab::Style => {
-            // === STYLE TAB ===
-
-            let lang = current_language();
-
-            // Row 1: Stroke Color
-            draw_label(ctx, ConfigKey::LineColorLabel.get(lang), row_y);
-            let color_btn_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
-            draw_color_button(ctx, &prim_data.color.stroke, color_btn_rect.x, color_btn_rect.y, color_btn_rect.width, color_btn_rect.height);
-            result.content_items.push(("stroke_color".to_string(), color_btn_rect));
-            row_y += row_height + row_gap;
-
-            // Row 2: Stroke Width (using centralized slider component)
-            let slider_config = SliderConfig::new(1.0, 10.0)
-                .with_step(0.1);
-
-            let slider_width = 280.0;
-            let slider_rect = WidgetRect::new(content_left, row_y, slider_width, row_height);
-            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-
-            let hovered = state.slider_drag.as_ref()
-                .map(|d| d.field_id == "stroke_width")
-                .unwrap_or(false);
-
-            // During drag, show the floating (preview) value instead of the stored value.
-            let stroke_width_display = state.slider_drag.as_ref()
-                .filter(|d| d.field_id == "stroke_width")
-                .and_then(|d| d.floating_value)
-                .unwrap_or(prim_data.width);
-
-            // Build editing info if the user is actively typing into the value field.
-            let ar = &state.active_render;
-            let stroke_width_editing = if state.active_field_id.as_deref() == Some("stroke_width_value") {
-                Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
-            } else {
-                None
-            };
-
-            let slider_result = render_single_slider(
-                ctx,
-                &slider_config,
-                stroke_width_display,
-                slider_rect,
-                ConfigKey::WidthLabel.get(lang),
-                &widget_theme,
-                hovered,
-                stroke_width_editing,
-            );
-
-            result.content_items.push(("stroke_width".to_string(), slider_result.full_rect));
-            if let Some(input_rect) = slider_result.input_rect {
-                result.content_items.push(("stroke_width_value".to_string(), input_rect));
-
-                // Expose cursor and char positions so click-to-cursor and drag-to-select work.
-                if state.active_field_id.as_deref() == Some("stroke_width_value") {
-                    result.active_input_rect = Some(input_rect);
-                    if let Some(ref ir) = slider_result.input_result {
-                        result.active_input_char_positions = ir.char_x_positions.clone();
-                    }
-                }
+    if query.is_empty() {
+        match resolved_tab {
+            PrimitiveSettingsTab::Levels => {
+                primitive_settings_levels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim, shell.content.bottom());
             }
-
-            if let Some(widget_track_info) = slider_result.track_info {
-                result.slider_tracks.push(SliderTrackInfo {
-                    field_id: "stroke_width".to_string(),
-                    track_x: widget_track_info.track_x,
-                    track_width: widget_track_info.track_width,
-                    min_val: widget_track_info.min_val,
-                    max_val: widget_track_info.max_val,
-                });
+            PrimitiveSettingsTab::Appearance => {
+                primitive_settings_vid::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
             }
-            row_y += row_height + row_gap;
-
-            // Row 3: Line Style — dual button (left cycles, right opens dropdown)
-            draw_label(ctx, ConfigKey::Style.get(lang), row_y);
-            let style_label = line_style_display_name(prim_data.style, lang);
-            let btn_total_width = control_width.min(160.0);
-            let chevron_part = 22.0;
-            let text_part = btn_total_width - chevron_part;
-            let btn_rect = WidgetRect::new(control_left, row_y + 2.0, btn_total_width, row_height - 4.0);
-
-            // Draw button background
-            ctx.set_fill_color(&frame_theme.toolbar_bg);
-            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 4.0);
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 4.0);
-
-            // Style preview: short line sample drawn left of the label
-            {
-                let preview_x_start = btn_rect.x + 8.0;
-                let preview_x_end = preview_x_start + 30.0;
-                let preview_y = btn_rect.center_y();
-                ctx.set_stroke_color(&toolbar_theme.item_text);
-                ctx.set_stroke_width(1.5);
-                match prim_data.style {
-                    LineStyle::Solid => {
-                        ctx.begin_path();
-                        ctx.move_to(preview_x_start, preview_y);
-                        ctx.line_to(preview_x_end, preview_y);
-                        ctx.stroke();
-                    }
-                    LineStyle::Dashed => {
-                        let dash_len = 5.0;
-                        let gap = 3.0;
-                        let mut x = preview_x_start;
-                        while x < preview_x_end {
-                            ctx.begin_path();
-                            ctx.move_to(x, preview_y);
-                            ctx.line_to((x + dash_len).min(preview_x_end), preview_y);
-                            ctx.stroke();
-                            x += dash_len + gap;
-                        }
-                    }
-                    LineStyle::Dotted => {
-                        let gap = 4.0;
-                        let mut x = preview_x_start;
-                        while x <= preview_x_end {
-                            ctx.begin_path();
-                            ctx.arc(x, preview_y, 1.0, 0.0, std::f64::consts::TAU);
-                            ctx.fill();
-                            x += gap;
-                        }
-                    }
-                    LineStyle::LargeDashed => {
-                        let dash_len = 9.0;
-                        let gap = 4.0;
-                        let mut x = preview_x_start;
-                        while x < preview_x_end {
-                            ctx.begin_path();
-                            ctx.move_to(x, preview_y);
-                            ctx.line_to((x + dash_len).min(preview_x_end), preview_y);
-                            ctx.stroke();
-                            x += dash_len + gap;
-                        }
-                    }
-                    LineStyle::SparseDotted => {
-                        let gap = 7.0;
-                        let mut x = preview_x_start;
-                        while x <= preview_x_end {
-                            ctx.begin_path();
-                            ctx.arc(x, preview_y, 1.0, 0.0, std::f64::consts::TAU);
-                            ctx.fill();
-                            x += gap;
-                        }
-                    }
-                }
+            PrimitiveSettingsTab::Labels => {
+                primitive_settings_labels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
             }
-
-            // Label text (right of the preview, clipped to text zone)
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(&toolbar_theme.item_text);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.save();
-            ctx.begin_path();
-            ctx.rect(btn_rect.x + 44.0, btn_rect.y, text_part - 44.0, btn_rect.height);
-            ctx.clip();
-            ctx.fill_text(style_label, btn_rect.x + 44.0, btn_rect.center_y());
-            ctx.restore();
-
-            // Vertical separator between text part and chevron part
-            let sep_x = btn_rect.x + text_part;
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(sep_x, btn_rect.y);
-            ctx.line_to(sep_x, btn_rect.bottom());
-            ctx.stroke();
-
-            // Chevron arrow in the right part
-            ctx.set_fill_color(&toolbar_theme.item_text);
-            let arrow_cx = sep_x + chevron_part / 2.0;
-            let arrow_cy = btn_rect.center_y();
-            ctx.begin_path();
-            ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
-            ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
-            ctx.line_to(arrow_cx, arrow_cy + 3.0);
-            ctx.close_path();
-            ctx.fill();
-
-            // Register two separate hit areas
-            let cycle_rect = WidgetRect::new(btn_rect.x, btn_rect.y, text_part, btn_rect.height);
-            let menu_rect = WidgetRect::new(sep_x, btn_rect.y, chevron_part, btn_rect.height);
-            result.content_items.push(("line_style".to_string(), cycle_rect));
-            result.content_items.push(("line_style_menu".to_string(), menu_rect));
-            row_y += row_height + row_gap;
-
-            // Deferred: line style dropdown renders AFTER footer to avoid z-order overlap
-            if state.open_line_style_dropdown {
-                deferred_line_style_dropdown = Some((btn_rect.x, btn_rect.bottom() + 2.0, btn_total_width, prim_data.style.as_str().to_string()));
-            }
-
-            // Row 4: Fill Color (if applicable)
-            if let Some(ref fill_color) = prim_data.color.fill {
-                draw_label(ctx, ConfigKey::FillColorLabel.get(lang), row_y);
-                let fill_btn_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
-                draw_color_button(ctx, fill_color, fill_btn_rect.x, fill_btn_rect.y, fill_btn_rect.width, fill_btn_rect.height);
-                result.content_items.push(("fill_color".to_string(), fill_btn_rect));
-                row_y += row_height + row_gap;
-            }
-
-            // === ADDITIONAL STYLE PROPERTIES ===
-            for prop in &style_props {
-                match &prop.prop_type {
-                    PropertyType::Boolean => {
-                        draw_label(ctx, &prop.name, row_y);
-                        let is_checked = prop.value.as_bool().unwrap_or(false);
-                        let checkbox_size = 18.0;
-                        let checkbox_x = control_left;
-                        let checkbox_y = row_y + (row_height - checkbox_size) / 2.0;
-
-                        ctx.set_fill_color(if is_checked { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                        ctx.fill_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-
-                        if is_checked {
-                            ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                            ctx.set_stroke_width(2.0);
-                            ctx.begin_path();
-                            ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
-                            ctx.line_to(checkbox_x + 7.0, checkbox_y + checkbox_size - 5.0);
-                            ctx.line_to(checkbox_x + checkbox_size - 4.0, checkbox_y + 4.0);
-                            ctx.stroke();
-                        }
-
-                        let checkbox_rect = WidgetRect::new(checkbox_x, checkbox_y, checkbox_size, checkbox_size);
-                        result.content_items.push((format!("style_prop:{}", prop.id), checkbox_rect));
-                        row_y += row_height + row_gap;
-                    }
-                    PropertyType::Select { options } => {
-                        draw_label(ctx, &prop.name, row_y);
-                        let current_value = prop.value.as_string().unwrap_or("");
-                        let display_label = options.iter()
-                            .find(|o| o.value == current_value)
-                            .map(|o| o.label.as_str())
-                            .unwrap_or(current_value);
-
-                        let dropdown_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(140.0), row_height - 4.0);
-                        ctx.set_fill_color(&frame_theme.toolbar_bg);
-                        ctx.fill_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.stroke_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-
-                        ctx.set_font("12px sans-serif");
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        ctx.set_text_align(TextAlign::Left);
-                        ctx.set_text_baseline(TextBaseline::Middle);
-                        let chevron_part = 22.0;
-                        let text_part = dropdown_rect.width - chevron_part;
-                        // Clip text so it doesn't overflow into arrow zone
-                        ctx.save();
-                        ctx.begin_path();
-                        ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                        ctx.clip();
-                        ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
-                        ctx.restore();
-
-                        // Vertical separator between text part and chevron part
-                        let sep_x = dropdown_rect.x + text_part;
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.begin_path();
-                        ctx.move_to(sep_x, dropdown_rect.y);
-                        ctx.line_to(sep_x, dropdown_rect.bottom());
-                        ctx.stroke();
-
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        let arrow_cx = sep_x + chevron_part / 2.0;
-                        let arrow_cy = dropdown_rect.center_y();
-                        ctx.begin_path();
-                        ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
-                        ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
-                        ctx.line_to(arrow_cx, arrow_cy + 3.0);
-                        ctx.close_path();
-                        ctx.fill();
-
-                        // Two hit zones: left = cycle, right = open dropdown
-                        let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                        let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
-                        result.content_items.push((format!("style_prop:{}", prop.id), cycle_zone));
-                        result.content_items.push((format!("style_prop_menu:{}", prop.id), menu_zone));
-
-                        // Deferred: record geometry if this prop's dropdown is open
-                        if state.open_select_dropdown.as_ref()
-                            .map(|(k, id)| k == "style" && id == prop.id.as_str())
-                            .unwrap_or(false)
-                        {
-                            let opts: Vec<(String, String)> = options.iter()
-                                .map(|o| (o.value.clone(), o.label.clone()))
-                                .collect();
-                            deferred_select_dropdown = Some((
-                                dropdown_rect.x,
-                                dropdown_rect.bottom() + 2.0,
-                                dropdown_rect.width,
-                                format!("style_prop_option:{}:", prop.id),
-                                opts,
-                            ));
-                        }
-
-                        row_y += row_height + row_gap;
-                    }
-                    PropertyType::Number { min, max, .. } => {
-                        let current_value = prop.value.as_number().unwrap_or(0.0);
-                        let min_val = min.unwrap_or(0.0);
-                        let max_val = max.unwrap_or(100.0);
-
-                        let slider_config = SliderConfig::new(min_val, max_val)
-                            .with_step(1.0)
-                            .without_input();
-
-                        let slider_width = 200.0;
-                        let slider_rect = WidgetRect::new(content_left, row_y, slider_width, row_height);
-                        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-
-                        let field_id = format!("style_prop:{}", prop.id);
-                        let hovered = state.slider_drag.as_ref()
-                            .map(|d| d.field_id == field_id)
-                            .unwrap_or_else(|| state.hovered_item_id.as_deref() == Some(field_id.as_str()));
-
-                        // During drag, use floating preview value.
-                        let display_value = state.slider_drag.as_ref()
-                            .filter(|d| d.field_id == field_id)
-                            .and_then(|d| d.floating_value)
-                            .unwrap_or(current_value);
-
-                        let slider_result = render_single_slider(
-                            ctx,
-                            &slider_config,
-                            display_value,
-                            slider_rect,
-                            &format!("{}:", prop.name),
-                            &widget_theme,
-                            hovered,
-                            None,
-                        );
-
-                        ctx.set_font("11px sans-serif");
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        ctx.set_text_align(TextAlign::Left);
-                        ctx.set_text_baseline(TextBaseline::Middle);
-                        let value_x = slider_result.track_rect.right() + 12.0;
-                        ctx.fill_text(&format!("{:.0}", current_value), value_x, row_y + row_height / 2.0);
-
-                        result.content_items.push((field_id.clone(), slider_result.full_rect));
-
-                        if let Some(widget_track_info) = slider_result.track_info {
-                            result.slider_tracks.push(SliderTrackInfo {
-                                field_id,
-                                track_x: widget_track_info.track_x,
-                                track_width: widget_track_info.track_width,
-                                min_val,
-                                max_val,
-                            });
-                        }
-
-                        row_y += row_height + row_gap;
-                    }
-                    PropertyType::Color => {
-                        draw_label(ctx, &prop.name, row_y);
-                        let color_value = prop.value.as_color().unwrap_or("#ffffff");
-                        let color_btn_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
-                        draw_color_button(ctx, color_value, color_btn_rect.x, color_btn_rect.y, color_btn_rect.width, color_btn_rect.height);
-                        result.content_items.push((format!("style_prop:{}", prop.id), color_btn_rect));
-                        row_y += row_height + row_gap;
-                    }
-                    _ => {}
-                }
+            PrimitiveSettingsTab::Placement => {
+                primitive_settings_placement::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
             }
         }
-
-        PrimitiveSettingsTab::Text => {
-            // === TEXT TAB ===
-            let lang = current_language();
-            if let Some(ref props) = text_props {
-                for prop in props {
-                    match &prop.prop_type {
-                        PropertyType::Text { .. } => {
-                            draw_label(ctx, &prop.name, row_y);
-                            let input_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
-                            let field_id = format!("text_prop:{}", prop.id);
-                            let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
-
-                            let default_text = prop.value.as_string().unwrap_or("");
-                            let empty_placeholder = ConfigKey::EmptyPlaceholder.get(lang);
-                            let ar = &state.active_render;
-                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
-                                (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
-                            } else {
-                                (if default_text.is_empty() { empty_placeholder } else { default_text }, default_text.len(), None, None)
-                            };
-
-                            let input_config = InputConfig::new(display_text)
-                                .with_focused(is_editing)
-                                .with_type(InputType::Text)
-                                .with_font_size(12.0)
-                                .with_padding(8.0)
-                                .with_radius(4.0)
-                                .with_cursor(cursor_pos)
-                                .with_selection(selection_start, selection_end);
-
-                            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-                            let widget_state = WidgetState::Normal;
-                            let input_result = draw_input(ctx, &input_config, widget_state, input_rect, &widget_theme);
-
-                            if is_editing {
-                                draw_input_cursor(
-                                    ctx,
-                                    input_result.cursor_x,
-                                    input_result.cursor_y,
-                                    input_result.cursor_height,
-                                    &toolbar_theme.item_text,
-                                );
-                                result.active_input_char_positions = input_result.char_x_positions;
-                                result.active_input_rect = Some(input_rect);
-                            }
-
-                            result.content_items.push((field_id, input_rect));
-                            row_y += row_height + row_gap;
-                        }
-                        PropertyType::Number { min: _, max: _, .. } => {
-                            draw_label(ctx, &prop.name, row_y);
-                            let current_val = prop.value.as_number().unwrap_or(0.0);
-                            let input_rect = WidgetRect::new(control_left, row_y + 2.0, 70.0, row_height - 4.0);
-                            let field_id = format!("text_prop:{}", prop.id);
-                            let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
-
-                            let default_text = format!("{:.0}", current_val);
-                            let ar = &state.active_render;
-                            let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
-                                (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
-                            } else {
-                                (default_text.as_str(), default_text.len(), None, None)
-                            };
-
-                            let input_config = InputConfig::new(display_text)
-                                .with_focused(is_editing)
-                                .with_type(InputType::Number)
-                                .with_font_size(12.0)
-                                .with_padding(8.0)
-                                .with_radius(4.0)
-                                .with_cursor(cursor_pos)
-                                .with_selection(selection_start, selection_end);
-
-                            let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-                            let widget_state = WidgetState::Normal;
-                            let input_result = draw_input(ctx, &input_config, widget_state, input_rect, &widget_theme);
-
-                            if is_editing {
-                                draw_input_cursor(
-                                    ctx,
-                                    input_result.cursor_x,
-                                    input_result.cursor_y,
-                                    input_result.cursor_height,
-                                    &toolbar_theme.item_text,
-                                );
-                                result.active_input_char_positions = input_result.char_x_positions;
-                                result.active_input_rect = Some(input_rect);
-                            }
-
-                            result.content_items.push((field_id, input_rect));
-                            row_y += row_height + row_gap;
-                        }
-                        PropertyType::Boolean => {
-                            draw_label(ctx, &prop.name, row_y);
-                            let is_checked = prop.value.as_bool().unwrap_or(false);
-                            let checkbox_size = 18.0;
-                            let checkbox_x = control_left;
-                            let checkbox_y = row_y + (row_height - checkbox_size) / 2.0;
-
-                            ctx.set_fill_color(if is_checked { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                            ctx.fill_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-                            ctx.set_stroke_color(&toolbar_theme.separator);
-                            ctx.set_stroke_width(1.0);
-                            ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-
-                            if is_checked {
-                                ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                                ctx.set_stroke_width(2.0);
-                                ctx.begin_path();
-                                ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
-                                ctx.line_to(checkbox_x + 7.0, checkbox_y + checkbox_size - 5.0);
-                                ctx.line_to(checkbox_x + checkbox_size - 4.0, checkbox_y + 4.0);
-                                ctx.stroke();
-                            }
-
-                            let checkbox_rect = WidgetRect::new(checkbox_x, checkbox_y, checkbox_size, checkbox_size);
-                            result.content_items.push((format!("text_prop:{}", prop.id), checkbox_rect));
-                            row_y += row_height + row_gap;
-                        }
-                        PropertyType::Color => {
-                            draw_label(ctx, &prop.name, row_y);
-                            let color_val = prop.value.as_color().unwrap_or("#ffffff");
-                            let color_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
-                            draw_color_button(ctx, color_val, color_rect.x, color_rect.y, color_rect.width, color_rect.height);
-                            result.content_items.push((format!("text_prop:{}", prop.id), color_rect));
-                            row_y += row_height + row_gap;
-                        }
-                        PropertyType::Select { options } => {
-                            draw_label(ctx, &prop.name, row_y);
-                            let current_value = prop.value.as_string().unwrap_or("");
-                            let display_label = options.iter()
-                                .find(|o| o.value == current_value)
-                                .map(|o| o.label.as_str())
-                                .unwrap_or(current_value);
-
-                            let dropdown_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
-                            ctx.set_fill_color(&frame_theme.toolbar_bg);
-                            ctx.fill_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-                            ctx.set_stroke_color(&toolbar_theme.separator);
-                            ctx.set_stroke_width(1.0);
-                            ctx.stroke_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-
-                            ctx.set_font("12px sans-serif");
-                            ctx.set_fill_color(&toolbar_theme.item_text);
-                            ctx.set_text_align(TextAlign::Left);
-                            ctx.set_text_baseline(TextBaseline::Middle);
-                            let chevron_part = 22.0;
-                            let text_part = dropdown_rect.width - chevron_part;
-                            // Clip text so it doesn't overflow into arrow zone
-                            ctx.save();
-                            ctx.begin_path();
-                            ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                            ctx.clip();
-                            ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
-                            ctx.restore();
-
-                            // Vertical separator between text part and chevron part
-                            let sep_x = dropdown_rect.x + text_part;
-                            ctx.set_stroke_color(&toolbar_theme.separator);
-                            ctx.set_stroke_width(1.0);
-                            ctx.begin_path();
-                            ctx.move_to(sep_x, dropdown_rect.y);
-                            ctx.line_to(sep_x, dropdown_rect.bottom());
-                            ctx.stroke();
-
-                            ctx.set_fill_color(&toolbar_theme.item_text);
-                            let arrow_cx = sep_x + chevron_part / 2.0;
-                            let arrow_cy = dropdown_rect.center_y();
-                            ctx.begin_path();
-                            ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
-                            ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
-                            ctx.line_to(arrow_cx, arrow_cy + 3.0);
-                            ctx.close_path();
-                            ctx.fill();
-
-                            // Two hit zones: left = cycle, right = open dropdown
-                            let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                            let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
-                            result.content_items.push((format!("text_prop:{}", prop.id), cycle_zone));
-                            result.content_items.push((format!("text_prop_menu:{}", prop.id), menu_zone));
-
-                            // Deferred: record geometry if this prop's dropdown is open
-                            if state.open_select_dropdown.as_ref()
-                                .map(|(k, id)| k == "text" && id == prop.id.as_str())
-                                .unwrap_or(false)
-                            {
-                                let opts: Vec<(String, String)> = options.iter()
-                                    .map(|o| (o.value.clone(), o.label.clone()))
-                                    .collect();
-                                deferred_select_dropdown = Some((
-                                    dropdown_rect.x,
-                                    dropdown_rect.bottom() + 2.0,
-                                    dropdown_rect.width,
-                                    format!("text_prop_option:{}:", prop.id),
-                                    opts,
-                                ));
-                            }
-
-                            row_y += row_height + row_gap;
-                        }
-                        _ => {}
-                    }
-                }
-            } else if supports_text {
-                // Default text UI
-                let text_data = prim_data.text.as_ref();
-                let current_content = text_data.map(|t| t.content.as_str()).unwrap_or("");
-                let current_font_size = text_data.map(|t| t.font_size).unwrap_or(14.0);
-                let current_bold = text_data.map(|t| t.bold).unwrap_or(false);
-                let current_italic = text_data.map(|t| t.italic).unwrap_or(false);
-                let current_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or(&prim_data.color.stroke);
-
-                // Row 1: Text content
-                draw_label(ctx, ConfigKey::Content.get(lang), row_y);
-                let input_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
-
-                let is_editing = state.active_field_id.as_deref() == Some("text_content");
-
-                let ar = &state.active_render;
-                let (display_text, cursor_pos, selection_start, selection_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
-                    let text = if ar.text.is_empty() { "" } else { &ar.text };
-                    (text, ar.cursor, ar.selection_start, Some(ar.cursor))
-                } else {
-                    (if current_content.is_empty() { ConfigKey::EmptyPlaceholder.get(lang) } else { current_content }, current_content.len(), None, None)
-                };
-
-                let content_input_config = InputConfig::new(display_text)
-                    .with_focused(is_editing)
-                    .with_type(InputType::Text)
-                    .with_font_size(12.0)
-                    .with_padding(8.0)
-                    .with_radius(4.0)
-                    .with_cursor(cursor_pos)
-                    .with_selection(selection_start, selection_end);
-
-                let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-                let widget_state = WidgetState::Normal;
-                let content_input_result = draw_input(ctx, &content_input_config, widget_state, input_rect, &widget_theme);
-
-                if is_editing {
-                    draw_input_cursor(
-                        ctx,
-                        content_input_result.cursor_x,
-                        content_input_result.cursor_y,
-                        content_input_result.cursor_height,
-                        &toolbar_theme.item_text,
-                    );
-                }
-
-                // Store char positions and input rect for click-to-cursor and drag-to-select
-                result.text_content_char_x_positions = content_input_result.char_x_positions.clone();
-                result.text_content_input_rect = Some(input_rect);
-                if is_editing {
-                    result.active_input_char_positions = content_input_result.char_x_positions;
-                    result.active_input_rect = Some(input_rect);
-                }
-
-                result.content_items.push(("text_content".to_string(), input_rect));
-                row_y += row_height + row_gap;
-
-                // Row 2: Font size
-                draw_label(ctx, ConfigKey::FontSize.get(lang), row_y);
-                let font_size_rect = WidgetRect::new(control_left, row_y + 2.0, 80.0, row_height - 4.0);
-
-                let is_editing_font_size = state.active_field_id.as_deref() == Some("text_font_size");
-
-                let font_size_str = format!("{:.0}", current_font_size);
-                let ar = &state.active_render;
-                let (fs_display, fs_cursor, fs_sel_start, fs_sel_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing_font_size {
-                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
-                } else {
-                    (font_size_str.as_str(), font_size_str.len(), None, None)
-                };
-
-                let font_size_input_config = InputConfig::new(fs_display)
-                    .with_focused(is_editing_font_size)
-                    .with_type(InputType::Text)
-                    .with_font_size(12.0)
-                    .with_padding(8.0)
-                    .with_radius(4.0)
-                    .with_cursor(fs_cursor)
-                    .with_selection(fs_sel_start, fs_sel_end);
-
-                let font_size_input_result = draw_input(ctx, &font_size_input_config, WidgetState::Normal, font_size_rect, &widget_theme);
-
-                if is_editing_font_size {
-                    draw_input_cursor(
-                        ctx,
-                        font_size_input_result.cursor_x,
-                        font_size_input_result.cursor_y,
-                        font_size_input_result.cursor_height,
-                        &toolbar_theme.item_text,
-                    );
-                    result.active_input_char_positions = font_size_input_result.char_x_positions;
-                    result.active_input_rect = Some(font_size_rect);
-                }
-
-                result.content_items.push(("text_font_size".to_string(), font_size_rect));
-                row_y += row_height + row_gap;
-
-                // Row 3: Bold/Italic toggles
-                draw_label(ctx, ConfigKey::TextStyleLabel.get(lang), row_y);
-                // Bold toggle
-                let bold_rect = WidgetRect::new(control_left, row_y + 4.0, 20.0, 20.0);
-                ctx.set_fill_color(if current_bold { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                ctx.fill_rounded_rect(bold_rect.x, bold_rect.y, bold_rect.width, bold_rect.height, 3.0);
-                ctx.set_stroke_color(&toolbar_theme.separator);
-                ctx.stroke_rounded_rect(bold_rect.x, bold_rect.y, bold_rect.width, bold_rect.height, 3.0);
-                if current_bold {
-                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                    ctx.set_stroke_width(2.0);
-                    ctx.begin_path();
-                    ctx.move_to(bold_rect.x + 5.0, bold_rect.center_y());
-                    ctx.line_to(bold_rect.x + 8.0, bold_rect.bottom() - 5.0);
-                    ctx.line_to(bold_rect.right() - 5.0, bold_rect.y + 5.0);
-                    ctx.stroke();
-                }
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.fill_text(mlc_core::i18n::IndicatorKey::TextBold.get(mlc_core::i18n::current_language()), bold_rect.right() + 4.0, row_y + row_height / 2.0);
-                result.content_items.push(("text_bold".to_string(), bold_rect));
-
-                // Italic toggle
-                let italic_rect = WidgetRect::new(control_left + 50.0, row_y + 4.0, 20.0, 20.0);
-                ctx.set_fill_color(if current_italic { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                ctx.fill_rounded_rect(italic_rect.x, italic_rect.y, italic_rect.width, italic_rect.height, 3.0);
-                ctx.set_stroke_color(&toolbar_theme.separator);
-                ctx.stroke_rounded_rect(italic_rect.x, italic_rect.y, italic_rect.width, italic_rect.height, 3.0);
-                if current_italic {
-                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                    ctx.set_stroke_width(2.0);
-                    ctx.begin_path();
-                    ctx.move_to(italic_rect.x + 5.0, italic_rect.center_y());
-                    ctx.line_to(italic_rect.x + 8.0, italic_rect.bottom() - 5.0);
-                    ctx.line_to(italic_rect.right() - 5.0, italic_rect.y + 5.0);
-                    ctx.stroke();
-                }
-                ctx.set_font("italic 12px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.fill_text(mlc_core::i18n::IndicatorKey::TextItalic.get(mlc_core::i18n::current_language()), italic_rect.right() + 4.0, row_y + row_height / 2.0);
-                result.content_items.push(("text_italic".to_string(), italic_rect));
-                row_y += row_height + row_gap;
-
-                // Row 4: Text color
-                draw_label(ctx, ConfigKey::TextColor.get(lang), row_y);
-                let text_color_rect = WidgetRect::new(control_left, row_y + 2.0, 60.0, row_height - 4.0);
-                draw_color_button(ctx, current_color, text_color_rect.x, text_color_rect.y, text_color_rect.width, text_color_rect.height);
-                result.content_items.push(("text_color".to_string(), text_color_rect));
-                row_y += row_height + row_gap;
-
-                // Row 5: Text position - 9-point grid selector
-                let current_v_align = text_data.map(|t| t.v_align.as_str()).unwrap_or("start");
-                let current_h_align = text_data.map(|t| t.h_align.as_str()).unwrap_or("center");
-
-                draw_label(ctx, ConfigKey::PositionLabel.get(lang), row_y);
-                row_y += row_height;
-
-                let cell_size = 28.0;
-                let cell_spacing = 2.0;
-                let grid_size = cell_size * 3.0 + cell_spacing * 2.0;
-
-                let grid_x = control_left;
-                let grid_y = row_y;
-
-                ctx.set_fill_color(&frame_theme.toolbar_bg);
-                ctx.fill_rounded_rect(grid_x - 4.0, grid_y - 4.0, grid_size + 8.0, grid_size + 8.0, 4.0);
-                ctx.set_stroke_color(&toolbar_theme.separator);
-                ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(grid_x - 4.0, grid_y - 4.0, grid_size + 8.0, grid_size + 8.0, 4.0);
-
-                let v_aligns = ["start", "center", "end"];
-                let h_aligns = ["start", "center", "end"];
-
-                for (row_idx, v_align) in v_aligns.iter().enumerate() {
-                    for (col_idx, h_align) in h_aligns.iter().enumerate() {
-                        let cell_x = grid_x + col_idx as f64 * (cell_size + cell_spacing);
-                        let cell_y = grid_y + row_idx as f64 * (cell_size + cell_spacing);
-
-                        let is_selected = current_v_align == *v_align && current_h_align == *h_align;
-                        let is_hovered = state.hovered_item_id.as_deref() == Some(&format!("text_pos_{}_{}", v_align, h_align));
-
-                        let cell_bg: &str = if is_selected {
-                            &toolbar_theme.item_bg_active
-                        } else if is_hovered {
-                            &toolbar_theme.item_bg_hover
-                        } else {
-                            &frame_theme.toolbar_bg
-                        };
-                        ctx.set_fill_color(cell_bg);
-                        ctx.fill_rounded_rect(cell_x, cell_y, cell_size, cell_size, 3.0);
-
-                        let indicator_size = 6.0;
-                        let indicator_color = if is_selected { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text };
-
-                        let indicator_x = match *h_align {
-                            "start" => cell_x + 6.0,
-                            "center" => cell_x + cell_size / 2.0,
-                            "end" => cell_x + cell_size - 6.0,
-                            _ => cell_x + cell_size / 2.0,
-                        };
-                        let indicator_y = match *v_align {
-                            "start" => cell_y + 6.0,
-                            "center" => cell_y + cell_size / 2.0,
-                            "end" => cell_y + cell_size - 6.0,
-                            _ => cell_y + cell_size / 2.0,
-                        };
-
-                        ctx.set_fill_color(indicator_color);
-                        ctx.begin_path();
-                        ctx.arc(indicator_x, indicator_y, indicator_size / 2.0, 0.0, std::f64::consts::TAU);
-                        ctx.fill();
-
-                        let cell_rect = WidgetRect::new(cell_x, cell_y, cell_size, cell_size);
-                        result.content_items.push((format!("text_pos_{}_{}", v_align, h_align), cell_rect));
-                    }
-                }
-            } else {
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text(t_indicator(IndicatorKey::NoTextSupport), content_left, row_y);
-            }
-        }
-
-        PrimitiveSettingsTab::Coordinates => {
-            // === COORDINATES TAB ===
-            let lang = current_language();
-            let points = prim.points();
-            let point_labels = mlc_core::drawing::get_point_labels(prim_type_id, points.len());
-
-            let field_width = 80.0;
-            let field_height = 24.0;
-            let field_gap = 8.0;
-
-            for (i, (bar, price)) in points.iter().enumerate() {
-                let label = point_labels.get(i).map(|s| s.as_str()).unwrap_or("");
-                let point_label = if label.is_empty() {
-                    format!("{} {}:", ConfigKey::PointLabel.get(lang), i + 1)
-                } else {
-                    format!("{}:", label)
-                };
-
-                draw_label(ctx, &point_label, row_y);
-
-                let field_y = row_y + (row_height - field_height) / 2.0;
-
-                // Price field
-                let price_field_id = format!("coord_{}_price", i);
-                let price_rect = WidgetRect::new(control_left, field_y, field_width, field_height);
-                let is_editing_price = state.active_field_id.as_deref() == Some(price_field_id.as_str());
-
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Bottom);
-                ctx.fill_text(t_indicator(IndicatorKey::PriceLabel), control_left, field_y - 2.0);
-
-                let price_text = format!("{:.4}", price);
-                let ar = &state.active_render;
-                let (price_display, price_cursor, price_sel_start, price_sel_end) = if is_editing_price {
-                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
-                } else {
-                    (price_text.as_str(), price_text.len(), None, None)
-                };
-
-                let price_input_config = InputConfig::new(price_display)
-                    .with_focused(is_editing_price)
-                    .with_type(InputType::Number)
-                    .with_font_size(12.0)
-                    .with_padding(4.0)
-                    .with_radius(4.0)
-                    .with_cursor(price_cursor)
-                    .with_selection(price_sel_start, price_sel_end);
-
-                let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-                let widget_state = WidgetState::Normal;
-                let price_input_result = draw_input(ctx, &price_input_config, widget_state, price_rect, &widget_theme);
-
-                if is_editing_price {
-                    draw_input_cursor(
-                        ctx,
-                        price_input_result.cursor_x,
-                        price_input_result.cursor_y,
-                        price_input_result.cursor_height,
-                        &toolbar_theme.item_text,
-                    );
-                    result.active_input_char_positions = price_input_result.char_x_positions;
-                    result.active_input_rect = Some(price_rect);
-                }
-
-                result.content_items.push((price_field_id, price_rect));
-
-                // Bar field
-                let bar_field_id = format!("coord_{}_bar", i);
-                let bar_rect = WidgetRect::new(control_left + field_width + field_gap, field_y, field_width, field_height);
-                let is_editing_bar = state.active_field_id.as_deref() == Some(bar_field_id.as_str());
-
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Bottom);
-                ctx.fill_text(t_indicator(IndicatorKey::BarLabel), bar_rect.x, field_y - 2.0);
-
-                let bar_text = format!("{:.0}", bar);
-                let ar = &state.active_render;
-                let (bar_display, bar_cursor, bar_sel_start, bar_sel_end) = if is_editing_bar {
-                    (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
-                } else {
-                    (bar_text.as_str(), bar_text.len(), None, None)
-                };
-
-                let bar_input_config = InputConfig::new(bar_display)
-                    .with_focused(is_editing_bar)
-                    .with_type(InputType::Number)
-                    .with_font_size(12.0)
-                    .with_padding(4.0)
-                    .with_radius(4.0)
-                    .with_cursor(bar_cursor)
-                    .with_selection(bar_sel_start, bar_sel_end);
-
-                let bar_input_result = draw_input(ctx, &bar_input_config, widget_state, bar_rect, &widget_theme);
-
-                if is_editing_bar {
-                    draw_input_cursor(
-                        ctx,
-                        bar_input_result.cursor_x,
-                        bar_input_result.cursor_y,
-                        bar_input_result.cursor_height,
-                        &toolbar_theme.item_text,
-                    );
-                    result.active_input_char_positions = bar_input_result.char_x_positions;
-                    result.active_input_rect = Some(bar_rect);
-                }
-
-                result.content_items.push((bar_field_id, bar_rect));
-
-                row_y += row_height + row_gap + 8.0;
-            }
-        }
-
-        PrimitiveSettingsTab::Levels => {
-            // === LEVELS TAB ===
-            if has_levels {
-                if let Some(configs) = prim.level_configs() {
-                    let col_width = 125.0;
-                    let col_gap = 8.0;
-                    let col1_x = content_left;
-                    let col2_x = content_left + col_width + col_gap;
-                    let col3_x = content_left + (col_width + col_gap) * 2.0;
-
-                    let num_levels = configs.len();
-                    let cols = 3;
-                    let rows_needed = num_levels.div_ceil(cols);
-
-                    for row_idx in 0..rows_needed {
-                        let col1_idx = row_idx * cols;
-                        let col2_idx = row_idx * cols + 1;
-                        let col3_idx = row_idx * cols + 2;
-
-                        if col1_idx < num_levels {
-                            let config = &configs[col1_idx];
-                            render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
-                                             col1_x, row_y, row_height, col1_idx, config);
-                        }
-
-                        if col2_idx < num_levels {
-                            let config = &configs[col2_idx];
-                            render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
-                                             col2_x, row_y, row_height, col2_idx, config);
-                        }
-
-                        if col3_idx < num_levels {
-                            let config = &configs[col3_idx];
-                            render_level_item(ctx, frame_theme, toolbar_theme, &prim_data,
-                                             &mut result, state.active_field_id.as_deref(), &state.active_render,
-                                             col3_x, row_y, row_height, col3_idx, config);
-                        }
-
-                        row_y += row_height + row_gap;
-                    }
-                } else {
-                    ctx.set_font("12px sans-serif");
-                    ctx.set_fill_color(&toolbar_theme.item_text);
-                    ctx.set_text_align(TextAlign::Left);
-                    ctx.set_text_baseline(TextBaseline::Top);
-                    ctx.fill_text(t_indicator(IndicatorKey::NoLevelsSupport), content_left, row_y);
-                }
-            } else {
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text(t_indicator(IndicatorKey::NoLevelsSupport), content_left, row_y);
-            }
-
-            if !level_props.is_empty() {
-                row_y += row_gap * 2.0;
-            }
-            for prop in &level_props {
-                match &prop.prop_type {
-                    PropertyType::Boolean => {
-                        draw_label(ctx, &prop.name, row_y);
-                        let is_checked = prop.value.as_bool().unwrap_or(false);
-                        let checkbox_size = 18.0;
-                        let checkbox_x = control_left;
-                        let checkbox_y = row_y + (row_height - checkbox_size) / 2.0;
-
-                        ctx.set_fill_color(if is_checked { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                        ctx.fill_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.stroke_rounded_rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size, 3.0);
-
-                        if is_checked {
-                            ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                            ctx.set_stroke_width(2.0);
-                            ctx.begin_path();
-                            ctx.move_to(checkbox_x + 4.0, checkbox_y + checkbox_size / 2.0);
-                            ctx.line_to(checkbox_x + 7.0, checkbox_y + checkbox_size - 5.0);
-                            ctx.line_to(checkbox_x + checkbox_size - 4.0, checkbox_y + 4.0);
-                            ctx.stroke();
-                        }
-
-                        let checkbox_rect = WidgetRect::new(checkbox_x, checkbox_y, checkbox_size, checkbox_size);
-                        result.content_items.push((format!("level_prop:{}", prop.id), checkbox_rect));
-                        row_y += row_height + row_gap;
-                    }
-                    PropertyType::Select { options } => {
-                        draw_label(ctx, &prop.name, row_y);
-                        let current_value = prop.value.as_string().unwrap_or("");
-                        let display_label = options.iter()
-                            .find(|o| o.value == current_value)
-                            .map(|o| o.label.as_str())
-                            .unwrap_or(current_value);
-
-                        let dropdown_rect = WidgetRect::new(control_left, row_y + 2.0, control_width.min(180.0), row_height - 4.0);
-                        ctx.set_fill_color(&frame_theme.toolbar_bg);
-                        ctx.fill_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.stroke_rounded_rect(dropdown_rect.x, dropdown_rect.y, dropdown_rect.width, dropdown_rect.height, 4.0);
-
-                        ctx.set_font("12px sans-serif");
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        ctx.set_text_align(TextAlign::Left);
-                        ctx.set_text_baseline(TextBaseline::Middle);
-                        let chevron_part = 22.0;
-                        let text_part = dropdown_rect.width - chevron_part;
-                        // Clip text so it doesn't overflow into arrow zone
-                        ctx.save();
-                        ctx.begin_path();
-                        ctx.rect(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                        ctx.clip();
-                        ctx.fill_text(display_label, dropdown_rect.x + 8.0, dropdown_rect.center_y());
-                        ctx.restore();
-
-                        // Vertical separator between text part and chevron part
-                        let sep_x = dropdown_rect.x + text_part;
-                        ctx.set_stroke_color(&toolbar_theme.separator);
-                        ctx.set_stroke_width(1.0);
-                        ctx.begin_path();
-                        ctx.move_to(sep_x, dropdown_rect.y);
-                        ctx.line_to(sep_x, dropdown_rect.bottom());
-                        ctx.stroke();
-
-                        ctx.set_fill_color(&toolbar_theme.item_text);
-                        let arrow_cx = sep_x + chevron_part / 2.0;
-                        let arrow_cy = dropdown_rect.center_y();
-                        ctx.begin_path();
-                        ctx.move_to(arrow_cx - 4.0, arrow_cy - 2.0);
-                        ctx.line_to(arrow_cx + 4.0, arrow_cy - 2.0);
-                        ctx.line_to(arrow_cx, arrow_cy + 3.0);
-                        ctx.close_path();
-                        ctx.fill();
-
-                        // Two hit zones: left = cycle, right = open dropdown
-                        let cycle_zone = WidgetRect::new(dropdown_rect.x, dropdown_rect.y, text_part, dropdown_rect.height);
-                        let menu_zone = WidgetRect::new(sep_x, dropdown_rect.y, chevron_part, dropdown_rect.height);
-                        result.content_items.push((format!("level_prop:{}", prop.id), cycle_zone));
-                        result.content_items.push((format!("level_prop_menu:{}", prop.id), menu_zone));
-
-                        // Deferred: record geometry if this prop's dropdown is open
-                        if state.open_select_dropdown.as_ref()
-                            .map(|(k, id)| k == "level" && id == prop.id.as_str())
-                            .unwrap_or(false)
-                        {
-                            let opts: Vec<(String, String)> = options.iter()
-                                .map(|o| (o.value.clone(), o.label.clone()))
-                                .collect();
-                            deferred_select_dropdown = Some((
-                                dropdown_rect.x,
-                                dropdown_rect.bottom() + 2.0,
-                                dropdown_rect.width,
-                                format!("level_prop_option:{}:", prop.id),
-                                opts,
-                            ));
-                        }
-
-                        row_y += row_height + row_gap;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        PrimitiveSettingsTab::Visibility => {
-            // === VISIBILITY TAB ===
-            let tf_config = prim_data.timeframe_visibility.clone()
-                .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
-
-            let timeframes: [(&str, bool, bool, Option<(u32, u32)>, u32, u32); 7] = [
-                (t_settings(SettingsKey::TfTicks), true, tf_config.ticks, None, 0, 0),
-                (t_settings(SettingsKey::TfSeconds), false, tf_config.seconds.is_some(), tf_config.seconds, 1, 59),
-                (t_settings(SettingsKey::TfMinutes), false, tf_config.minutes.is_some(), tf_config.minutes, 1, 59),
-                (t_settings(SettingsKey::TfHours), false, tf_config.hours.is_some(), tf_config.hours, 1, 24),
-                (t_settings(SettingsKey::TfDays), false, tf_config.days.is_some(), tf_config.days, 1, 366),
-                (t_settings(SettingsKey::TfWeeks), false, tf_config.weeks.is_some(), tf_config.weeks, 1, 52),
-                (t_settings(SettingsKey::TfMonths), false, tf_config.months.is_some(), tf_config.months, 1, 12),
-            ];
-
-            let checkbox_size = 16.0;
-            let label_width_tf = 70.0;
-            let input_width = 32.0;
-            let slider_width_tf = 140.0;
-            let gap = 6.0;
-
-            for (i, (label, is_bool_only, enabled, range, min_allowed, max_allowed)) in timeframes.iter().enumerate() {
-                let check_x = content_left;
-                let check_y = row_y + (row_height - checkbox_size) / 2.0;
-
-                let check_rect = WidgetRect::new(check_x, check_y, checkbox_size, checkbox_size);
-                ctx.set_fill_color(if *enabled { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                ctx.fill_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
-                ctx.set_stroke_color(&toolbar_theme.separator);
-                ctx.set_stroke_width(1.0);
-                ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
-                if *enabled {
-                    ctx.set_stroke_color(&toolbar_theme.item_text_active);
-                    ctx.set_stroke_width(2.0);
-                    ctx.begin_path();
-                    ctx.move_to(check_rect.x + 3.0, check_rect.center_y());
-                    ctx.line_to(check_rect.x + 6.0, check_rect.bottom() - 3.0);
-                    ctx.line_to(check_rect.right() - 3.0, check_rect.y + 3.0);
-                    ctx.stroke();
-                }
-
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&toolbar_theme.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, check_x + checkbox_size + 6.0, row_y + row_height / 2.0);
-
-                let checkbox_hit = WidgetRect::new(check_x, row_y, checkbox_size + 6.0 + label_width_tf, row_height);
-                result.content_items.push((format!("tf_{}_toggle", i), checkbox_hit));
-
-                if !*is_bool_only && *enabled {
-                    let controls_x = content_left + checkbox_size + 6.0 + label_width_tf + gap;
-                    let (current_min, current_max) = range.unwrap_or((*min_allowed, *max_allowed));
-
-                    let slider_config = SliderConfig::new(*min_allowed as f64, *max_allowed as f64)
-                        .with_step(1.0);
-
-                    let total_width = input_width * 2.0 + slider_width_tf + gap * 2.0;
-                    let slider_rect = WidgetRect::new(controls_x, row_y, total_width, row_height);
-                    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-
-                    let min_field_id = format!("tf_{}_min", i);
-                    let max_field_id = format!("tf_{}_max", i);
-
-                    let ar = &state.active_render;
-                    let editing_min_info = if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
-                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
-                    } else {
-                        None
-                    };
-
-                    let editing_max_info = if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
-                        Some(SliderEditingInfo { text: ar.text.as_str(), cursor: ar.cursor, selection_start: ar.selection_start })
-                    } else {
-                        None
-                    };
-
-                    let slider_field_id = format!("tf_{}_slider", i);
-                    let hovered = state.slider_drag.as_ref()
-                        .map(|d| d.field_id == slider_field_id)
-                        .unwrap_or_else(|| state.hovered_item_id.as_deref() == Some(slider_field_id.as_str()));
-
-                    // During drag, apply floating preview to the dragged handle.
-                    let (display_min, display_max) = if let Some(ref drag) = state.slider_drag {
-                        if drag.field_id == slider_field_id {
-                            if let Some(float_val) = drag.floating_value {
-                                let fv = float_val.round() as u32;
-                                let (cmin, cmax) = (current_min, current_max);
-                                match drag.dual_handle {
-                                    Some(DualSliderHandle::Min) => (fv.min(cmax), cmax),
-                                    Some(DualSliderHandle::Max) => (cmin, fv.max(cmin)),
-                                    None => (cmin, cmax),
-                                }
-                            } else {
-                                (current_min, current_max)
-                            }
-                        } else {
-                            (current_min, current_max)
-                        }
-                    } else {
-                        (current_min, current_max)
-                    };
-
-                    let slider_result = render_dual_slider(
-                        ctx,
-                        &slider_config,
-                        display_min as f64,
-                        display_max as f64,
-                        slider_rect,
-                        "",
-                        &widget_theme,
-                        hovered,
-                        editing_min_info,
-                        editing_max_info,
-                    );
-
-                    result.content_items.push((slider_field_id.clone(), slider_result.full_rect));
-
-                    if let Some(min_input_rect) = slider_result.min_input_rect {
-                        result.content_items.push((min_field_id.clone(), min_input_rect));
-
-                        // Expose cursor/char positions so click-to-cursor and drag-to-select work.
-                        if state.active_field_id.as_deref() == Some(min_field_id.as_str()) {
-                            result.active_input_rect = Some(min_input_rect);
-                            if let Some(ref ir) = slider_result.min_input_result {
-                                result.active_input_char_positions = ir.char_x_positions.clone();
-                            }
-                        }
-                    }
-                    if let Some(max_input_rect) = slider_result.max_input_rect {
-                        result.content_items.push((max_field_id.clone(), max_input_rect));
-
-                        // Expose cursor/char positions so click-to-cursor and drag-to-select work.
-                        if state.active_field_id.as_deref() == Some(max_field_id.as_str()) {
-                            result.active_input_rect = Some(max_input_rect);
-                            if let Some(ref ir) = slider_result.max_input_result {
-                                result.active_input_char_positions = ir.char_x_positions.clone();
-                            }
-                        }
-                    }
-
-                    if let Some(widget_track_info) = slider_result.track_info {
-                        result.slider_tracks.push(SliderTrackInfo {
-                            field_id: slider_field_id,
-                            track_x: widget_track_info.track_x,
-                            track_width: widget_track_info.track_width,
-                            min_val: *min_allowed as f64,
-                            max_val: *max_allowed as f64,
-                        });
-                    }
-                }
-
-                row_y += row_height + row_gap;
-            }
-        }
+    } else {
+        draw_search_results(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
     }
 
+    // Everything the tab bodies pushed lives inside the scrolling viewport.
+    // Anything appended after this index (the template menu, the footer
+    // search field) sits OUTSIDE it and must not be culled against it.
+    let body_items_end = result.content_items.len();
+
     // Closes the clip opened by `scrollable.begin()` above and draws the
-    // scrollbar. Registration for the tab-content widgets pushed during the
-    // match above is NOT clipped by this — only paint is — but that is safe
-    // here for the same reason it is safe in every other scrolling modal in
-    // this codebase: `end_modal_shell` below registers the footer LAST, and
-    // last-registered wins the hit test, so a row scrolled out of view can
-    // never swallow a click meant for Template/OK.
-    let scroll_result = scrollable.end(ctx, rows_height, &widget_theme);
+    // scrollbar.
+    //
+    // The clip governs PAINT only — the rects the match above pushed are
+    // registered at their raw coordinates, including rows scrolled past the
+    // bottom of the viewport and therefore lying under the footer. Relying
+    // on "the footer registers last and last-registered wins" only ever
+    // covered clicks that land exactly on Template/OK; hover, and any click
+    // in the empty footer band between the buttons, still reached the row
+    // hidden underneath. So body items are culled against the viewport at
+    // registration time below.
+    let scroll_result = scrollable.end(ctx, content_height, &widget_theme);
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
 
@@ -1659,6 +596,34 @@ pub fn render_primitive_settings_modal(
         );
     }
 
+    // === LEVELS TAB: "+ добавить уровень" quick-value dropdown ===
+    // Painted here — after `scrollable.end()` above closed the ladder's own
+    // scroll clip, and after `body_items_end` was captured — so it is
+    // neither clipped by the ladder's viewport nor culled against it at
+    // registration time below (mirrors `template_dropdown_menu`'s own
+    // outside-the-clip treatment, a few lines down). `open_upward` was
+    // already decided by `primitive_settings_levels::draw_add_row`, from
+    // the space between the input and this same viewport's bottom edge —
+    // the only place that knows it (item 2 follow-up, 2026-08-08).
+    if let Some((field_rect, open_upward)) = result.add_chip_dropdown_anchor {
+        primitive_settings_levels::draw_add_chip_dropdown(ctx, toolbar_theme, &mut result, field_rect, content_right, open_upward);
+    }
+
+    // === Split cycle+chevron control's dropdown (item 1, 2026-08-09
+    // restore) ===
+    // Painted here for the same reason `draw_add_chip_dropdown` above is:
+    // after `scrollable.end()` closed whichever tab's own scroll clip, and
+    // after `body_items_end` was captured, so it is neither clipped by that
+    // tab's own viewport nor culled against it at registration time below.
+    // `.take()`, not a `Copy` read: `ValueDropdownAnchor` owns a `String`
+    // and (for a `Select` row) a `Vec`, so this also leaves
+    // `result.value_dropdown_anchor` `None` for the next frame's own fresh
+    // read — mirrors `add_chip_dropdown_anchor` being recomputed every
+    // frame instead of persisted.
+    if let Some(anchor) = result.value_dropdown_anchor.take() {
+        primitive_settings_vid::draw_value_dropdown(ctx, toolbar_theme, &mut result, &anchor);
+    }
+
     // === TEMPLATE FOOTER ===
     // Single 52px row: "Шаблон" outline button left, "Отмена" + "OK" right.
     {
@@ -1672,25 +637,94 @@ pub fn render_primitive_settings_modal(
         if let (Some(template_btn), true) = (shell.template_btn, state.template_dropdown_open) {
             let button_y = template_btn.y;
             let button_height = template_btn.height;
-            let button_padding = 12.0;
             let template_btn_width = template_btn.width;
             let template_btn_x = template_btn.x;
             let opt_h = 28.0;
             let sep_h = 1.0;
-            let delete_btn_w = 24.0;
-            let fixed_rows = 2_usize;
-            let tmpl_rows = templates.len().max(1); // at least 1 for "(нет шаблонов)"
-            let total_h = opt_h * (fixed_rows + tmpl_rows) as f64 + sep_h + 6.0;
-            let menu_w = template_btn_width.max(180.0);
+            let action_btn_w = 24.0;
+            let action_gap = 2.0;
+
+            // Item 3 (2026-08-08 review): system level-set presets show
+            // whenever the PRIMITIVE itself has levels to offer a set for
+            // — not gated to the Levels tab happening to be the active one
+            // right now. The Template menu names one control for the whole
+            // primitive; switching tabs must not hide the choice.
+            let show_level_sets = prim.level_configs().is_some();
+
+            // Item 3: system presets + user templates, one merged,
+            // drag-reordered list — no divider between the two kinds.
+            let all_entries = merged_template_list(templates, template_order);
+            let entries: Vec<TemplateListEntry> = if show_level_sets {
+                all_entries
+            } else {
+                all_entries.into_iter().filter(|e| matches!(e, TemplateListEntry::User(_))).collect()
+            };
+
+            // "Save as…" is an action, and it only exists when there is
+            // something NEW to save: the live settings have drifted from
+            // the REFERENCE the primitive itself persistently claims —
+            // `PrimitiveData::style_reference` (a template id or a system
+            // level-set preset id, `#[serde(default)]` so it survives
+            // reload with the drawing). Three rules have been tried here
+            // and rejected before this one, all for the same underlying
+            // reason: they read from something that does not survive a
+            // reload — `applied_template_id` (modal-only state, showed the
+            // action before the user touched a pixel), "matches no row in
+            // the merged list" (a SYSTEM row only ever compared level
+            // COMPOSITION, so recolouring a level, changing its width/
+            // style, toggling its band, or flipping timeframe visibility
+            // all left the primitive still reading as "Standard"), and a
+            // session-only `settings_baseline` snapshot captured fresh
+            // every time the modal opened — which on reload re-captured
+            // the ALREADY-DRIFTED loaded state as the new baseline,
+            // silently erasing the drift the owner had specifically
+            // reported. Resolving a persisted reference by ID, at the
+            // moment it is needed, is what survives all three failure
+            // modes: a template resolves against the live template store
+            // (so an edit to the template itself is also visible here); a
+            // level-set resolves against the preset's own fixed
+            // definition (`primitive_settings_intent::resolve_level_set_
+            // reference`). `None` — no reference has ever been established
+            // for this primitive, OR the primitive's own creation-time
+            // reference (`DrawingManager::initial_style_reference`, in
+            // `mlc-backend`) found nothing nameable to stamp (a level
+            // composition matching no system preset, or a primitive with
+            // no level ladder at all, seeded only from the bubble's own
+            // un-id'd last-used-style snapshot) — SHOWS the action rather
+            // than hiding it (2026-08-09 fix): a state that matches
+            // nothing on record is exactly a state worth offering to save,
+            // not one that should hide the offer. A reference naming
+            // something that no longer exists (a deleted template) reads
+            // as drift and shows the action too, the same as any other
+            // mismatch.
+            let show_save_as = match &prim.data().style_reference {
+                None => true,
+                Some(mlc_core::drawing::StyleReference::Template(tmpl_id)) => {
+                    match templates.iter().find(|t| &t.id == tmpl_id) {
+                        Some(reference) => !reference.matches_primitive(prim),
+                        None => true,
+                    }
+                }
+                Some(mlc_core::drawing::StyleReference::LevelSet(set_id)) => {
+                    match primitive_settings_intent::resolve_level_set_reference(set_id, prim) {
+                        Some(reference) => !reference.matches_primitive(prim),
+                        None => true,
+                    }
+                }
+            };
+
+            let save_as_h = if show_save_as { opt_h + sep_h + 2.0 } else { 0.0 };
+            let total_h = save_as_h + entries.len() as f64 * opt_h + 6.0;
+            let menu_w = template_btn_width.max(200.0);
             let dd_x = template_btn_x;
             let menu_y = button_y + button_height + 2.0;
 
             // Menu background + border
             ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-            ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
+            ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS);
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
+            ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS);
 
             // Register background FIRST with coordinator (last-registered wins, so
             // items registered AFTER will override this in hit_test_at)
@@ -1703,188 +737,175 @@ pub fn render_primitive_settings_modal(
 
             let mut row_y = menu_y + 3.0;
 
-            // Row 1: "Сохранить как..."
-            let is_sa_hovered = state.hovered_item_id.as_deref() == Some("template_save_as");
-            if is_sa_hovered {
-                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-            }
-            ctx.set_fill_color(&toolbar_theme.item_text);
-            ctx.set_font("11px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(t_settings(SettingsKey::SaveAsTemplate), dd_x + 8.0, row_y + opt_h / 2.0);
-            result.content_items.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
-            row_y += opt_h;
-
-            // Row 2: "Применить по умолчанию"
-            let is_def_hovered = state.hovered_item_id.as_deref() == Some("template_default");
-            if is_def_hovered {
-                ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-            }
-            ctx.set_fill_color(&toolbar_theme.item_text);
-            ctx.set_font("11px sans-serif");
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(t_settings(SettingsKey::ApplyDefault), dd_x + 8.0, row_y + opt_h / 2.0);
-            result.content_items.push(("template_default".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
-            row_y += opt_h;
-
-            // Separator
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(dd_x + 4.0, row_y);
-            ctx.line_to(dd_x + menu_w - 4.0, row_y);
-            ctx.stroke();
-            row_y += sep_h + 2.0;
-
-            // Saved templates list
-            if templates.is_empty() {
-                ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            // "Save as…" — its own top row, own colour, present only while
+            // the current settings differ from the applied template (item
+            // 5). Not part of the merged list below: it is an action, not
+            // a row that could ever be dragged or carry a check mark.
+            if show_save_as {
+                let is_sa_hovered = state.hovered_item_id.as_deref() == Some("template_save_as");
+                if is_sa_hovered {
+                    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+                    ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                }
+                // Same weight as every other row in the menu — it was
+                // painted in the accent colour, which read as "selected"
+                // on a row that is an action and can never be current.
+                ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_font("11px sans-serif");
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(t_settings(SettingsKey::NoTemplates), dd_x + 8.0, row_y + opt_h / 2.0);
-            } else {
-                for tmpl in templates {
-                    let row_id = format!("template_option:{}", tmpl.id);
-                    let del_id = format!("template_delete:{}", tmpl.id);
-                    let is_row_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
-                    let is_del_hovered = state.hovered_item_id.as_deref() == Some(del_id.as_str());
+                ctx.fill_text(t_settings(SettingsKey::SaveAsTemplate), dd_x + 8.0, row_y + opt_h / 2.0);
+                result.content_items.push(("template_save_as".to_string(), WidgetRect::new(dd_x, row_y, menu_w, opt_h)));
+                row_y += opt_h;
 
-                    if is_row_hovered || is_del_hovered {
-                        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-                        ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.begin_path();
+                ctx.move_to(dd_x + 4.0, row_y);
+                ctx.line_to(dd_x + menu_w - 4.0, row_y);
+                ctx.stroke();
+                row_y += sep_h + 2.0;
+            }
+
+            // The merged system-preset + user-template list (items 3/4).
+            // `result.template_menu_rows` records every row's own key and
+            // on-screen rect, in THIS exact paint order — `mlc-app`'s own
+            // drag-to-reorder reads it back to compute the drop index and
+            // the reorder commit, so the two can never disagree about what
+            // order the list is actually in.
+            for entry in &entries {
+                let key = entry.key().to_string();
+                let row_rect = WidgetRect::new(dd_x, row_y, menu_w, opt_h);
+                result.template_menu_rows.push((key, row_rect));
+
+                match entry {
+                    TemplateListEntry::System(preset) => {
+                        let row_id = format!("levels_set_option:{}", preset.id());
+                        let is_current = state.level_set == *preset;
+                        let is_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
+                        if is_current || is_hovered {
+                            ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
+                            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                        }
+                        ctx.set_fill_color(if is_current { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+                        ctx.set_font("11px sans-serif");
+                        ctx.set_text_align(TextAlign::Left);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        ctx.fill_text(preset.label(), dd_x + 8.0, row_y + opt_h / 2.0);
+                        result.content_items.push((row_id, row_rect));
                     }
+                    TemplateListEntry::User(tmpl) => {
+                        let row_id = format!("template_option:{}", tmpl.id);
+                        let rename_id = format!("template_rename:{}", tmpl.id);
+                        let del_id = format!("template_delete:{}", tmpl.id);
+                        let editing_field = format!("template_name:{}", tmpl.id);
+                        let is_editing = state.active_field_id.as_deref() == Some(editing_field.as_str());
+                        // The currently-applied entry's own mark (item 3):
+                        // the same highlight a system row's own `is_current`
+                        // already draws with, so a glance at either kind
+                        // reads identically.
+                        let is_current = state.applied_template_id.as_deref() == Some(tmpl.id.as_str());
+                        let is_row_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
+                        let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_id.as_str());
+                        let is_del_hovered = state.hovered_item_id.as_deref() == Some(del_id.as_str());
 
-                    ctx.set_fill_color(&toolbar_theme.item_text);
-                    ctx.set_font("11px sans-serif");
-                    ctx.set_text_align(TextAlign::Left);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
+                        if is_current || is_row_hovered || is_rename_hovered || is_del_hovered {
+                            ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
+                            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                        }
 
-                    let del_x = dd_x + menu_w - delete_btn_w - 4.0;
-                    let del_y = row_y + (opt_h - 24.0) / 2.0;
-                    let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
-                    draw_svg_icon(ctx, crate::ui::Icon::Close.svg(), del_x, del_y, 24.0, 24.0, del_color);
+                        let icons_w = 2.0 * action_btn_w + action_gap;
+                        let name_w = (menu_w - icons_w - 12.0).max(20.0);
 
-                    let name_w = menu_w - delete_btn_w - 8.0;
-                    result.content_items.push((row_id, WidgetRect::new(dd_x, row_y, name_w, opt_h)));
-                    result.content_items.push((del_id, WidgetRect::new(del_x, del_y, delete_btn_w, 24.0)));
+                        if is_editing {
+                            // Rename in place, in the row (item 4) — the
+                            // same shared inline-edit buffer
+                            // (`state.active_render`) every other sub-field
+                            // in this modal already uses, focused by the
+                            // pencil click below via `start_prim_field_editing`.
+                            let ar = &state.active_render;
+                            let field_rect = WidgetRect::new(dd_x + 8.0, row_y + 3.0, name_w, opt_h - 6.0);
+                            let cfg = InputConfig::new(ar.text.as_str())
+                                .with_focused(true)
+                                .with_type(InputType::Text)
+                                .with_font_size(11.0)
+                                .with_padding(4.0)
+                                .with_radius(3.0)
+                                .with_cursor(ar.cursor)
+                                .with_selection(ar.selection_start, Some(ar.cursor));
+                            let res = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
+                            draw_input_cursor(ctx, res.cursor_x, res.cursor_y, res.cursor_height, &toolbar_theme.item_text);
+                            result.active_input_char_positions = res.char_x_positions;
+                            result.active_input_rect = Some(field_rect);
+                            result.content_items.push((editing_field, field_rect));
+                        } else {
+                            ctx.set_fill_color(if is_current { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+                            ctx.set_font("11px sans-serif");
+                            ctx.set_text_align(TextAlign::Left);
+                            ctx.set_text_baseline(TextBaseline::Middle);
+                            ctx.save();
+                            ctx.begin_path();
+                            ctx.rect(dd_x + 8.0, row_y, name_w, opt_h);
+                            ctx.clip();
+                            ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
+                            ctx.restore();
+                            result.content_items.push((row_id, WidgetRect::new(dd_x, row_y, name_w + 8.0, opt_h)));
+                        }
 
-                    row_y += opt_h;
+                        // System rows get neither action (item 4) — only a
+                        // user row draws these two.
+                        let icon_y = row_y + (opt_h - action_btn_w) / 2.0;
+                        let del_x = dd_x + menu_w - action_btn_w - 4.0;
+                        let rename_x = del_x - action_gap - action_btn_w;
+
+                        let rename_color = if is_rename_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+                        draw_svg_icon(ctx, crate::ui::Icon::Pencil.svg(), rename_x, icon_y, action_btn_w, action_btn_w, rename_color);
+                        result.content_items.push((rename_id, WidgetRect::new(rename_x, icon_y, action_btn_w, action_btn_w)));
+
+                        // Trash idiom, not a bare "×" (item 4).
+                        let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
+                        draw_svg_icon(ctx, crate::ui::Icon::Delete.svg(), del_x, icon_y, action_btn_w, action_btn_w, del_color);
+                        result.content_items.push((del_id, WidgetRect::new(del_x, icon_y, action_btn_w, action_btn_w)));
+                    }
                 }
+                row_y += opt_h;
             }
 
             // Register dropdown background LAST so specific items win in hit-test
             result.content_items.push(("template_dropdown_menu".to_string(), WidgetRect::new(dd_x, menu_y, menu_w, total_h)));
-
-            let _ = is_sa_hovered;
-            let _ = is_def_hovered;
-            let _ = button_padding;
         }
     }
 
-    // Draw hover highlight for hovered content item (skip non-interactive background rects)
+    // Draw hover highlight for hovered content item (skip non-interactive
+    // background rects). Painted at `SETTINGS_BUTTON_RADIUS` — the SAME
+    // constant every button shape in this modal now draws its own rounded
+    // rect with (item 1, 2026-08-08 review) — so the highlight can never
+    // mismatch the shape underneath it again.
     if let Some(ref hovered_id) = state.hovered_item_id {
-        if hovered_id != "template_dropdown_menu" {
+        if hovered_id != "template_dropdown_menu" && hovered_id != SEARCH_FIELD_ID {
             for (id, rect) in &result.content_items {
                 if id == hovered_id {
                     ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.1));
-                    ctx.fill_rounded_rect(rect.x - 2.0, rect.y - 2.0, rect.width + 4.0, rect.height + 4.0, 4.0);
+                    ctx.fill_rounded_rect(rect.x - 2.0, rect.y - 2.0, rect.width + 4.0, rect.height + 4.0, SETTINGS_BUTTON_RADIUS);
                     break;
                 }
             }
         }
     }
 
-    // Deferred line style dropdown — draw AFTER footer so it appears on top.
-    // Names come from `line_style_display_name`, the same lookup the Style
-    // tab's dual-button label uses, so the two can never drift again.
-    if let Some((drop_x, drop_y, btn_w, current_style_str)) = deferred_line_style_dropdown {
-        let dd_lang = current_language();
-        let all_styles: &[LineStyle] = &[
-            LineStyle::Solid,
-            LineStyle::Dashed,
-            LineStyle::Dotted,
-            LineStyle::LargeDashed,
-            LineStyle::SparseDotted,
-        ];
-        let dropdown_items: Vec<DropdownItem> = all_styles.iter()
-            .map(|style| DropdownItem::item(style.as_str(), line_style_display_name(*style, dd_lang)))
-            .collect();
-        let dropdown_cfg = DropdownConfig {
-            items: dropdown_items,
-            min_width: btn_w,
-            max_width: btn_w + 40.0,
-            item_height: 28.0,
-            separator_height: 9.0,
-            header_height: 28.0,
-            padding: 4.0,
-            item_padding_x: 12.0,
-            radius: 4.0,
-            icon_size: 16.0,
-            font_size: 13.0,
-            shadow_blur: 24.0,
-            grid_columns: None,
-                            clamp_x: None,
-        };
-        let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
-        let dropdown_result = render_dropdown(
-            ctx,
-            &dropdown_cfg,
-            (drop_x, drop_y),
-            &dropdown_theme,
-            Some(&current_style_str),
-            |_ctx, _icon, _rect, _color| {},
-        );
-        for (item_id, item_rect) in &dropdown_result.item_rects {
-            result.content_items.push((
-                format!("line_style_option:{}", item_id),
-                WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            ));
-        }
-    }
-
-    // Deferred Select property dropdown — draw AFTER footer so it appears on top
-    if let Some((drop_x, drop_y, btn_w, id_prefix, options)) = deferred_select_dropdown {
-        let dropdown_items: Vec<DropdownItem> = options.iter()
-            .map(|(val, label)| DropdownItem::item(&format!("{}{}", id_prefix, val), label))
-            .collect();
-        let dropdown_cfg = DropdownConfig {
-            items: dropdown_items,
-            min_width: btn_w,
-            max_width: btn_w + 40.0,
-            item_height: 28.0,
-            separator_height: 9.0,
-            header_height: 28.0,
-            padding: 4.0,
-            item_padding_x: 12.0,
-            radius: 4.0,
-            icon_size: 16.0,
-            font_size: 13.0,
-            shadow_blur: 24.0,
-            grid_columns: None,
-                            clamp_x: None,
-        };
-        let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
-        let hovered = state.hovered_item_id.as_deref();
-        let dropdown_result = render_dropdown(
-            ctx,
-            &dropdown_cfg,
-            (drop_x, drop_y),
-            &dropdown_theme,
-            hovered,
-            |_ctx, _icon, _rect, _color| {},
-        );
-        for (item_id, item_rect) in &dropdown_result.item_rects {
-            result.content_items.push((
-                item_id.clone(),
-                WidgetRect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
-            ));
-        }
+    // === FOOTER SEARCH FIELD (item 8, 2026-08-08 review) ===
+    // Horizontally centred between Template and OK, filters all three tabs
+    // (`search_query`/`search_matches` above). Registered here so the
+    // generic loop below picks it up like any other content item; its
+    // VISUALS are painted after `end_modal_shell` further down — this
+    // modal's footer background is drawn there, and painting the field
+    // before it would just get covered.
+    if let (Some(template_btn), Some(primary_btn)) = (shell.template_btn, shell.primary_btn) {
+        let gap = 8.0;
+        let search_x = template_btn.right() + gap;
+        let search_w = (primary_btn.x - gap - search_x).max(40.0);
+        let search_rect = WidgetRect::new(search_x, template_btn.y, search_w, template_btn.height);
+        result.content_items.push((SEARCH_FIELD_ID.to_string(), search_rect));
     }
 
     // Build set of slider field IDs to determine which items need DRAG sense
@@ -1894,19 +915,40 @@ pub fn render_primitive_settings_modal(
         .collect();
 
     // Register all content items with coordinator (skip template_dropdown_menu —
-    // already registered early so it has lowest priority in hit_test_at). This
-    // runs AFTER the two deferred dropdowns above (not before, as it used to):
-    // they push their option rects into `content_items` when rendered, so a
-    // pass that ran before them saw a `content_items` that did not contain
-    // those rects yet and never registered them — the dropdown painted but
-    // nothing in it was clickable. Running last also means the deferred
-    // options are the last ones registered, so they correctly win hit-testing
-    // over whatever base content happens to sit underneath them.
-    for (item_id, item_rect) in &result.content_items {
+    // already registered early so it has lowest priority in hit_test_at).
+    for (idx, (item_id, item_rect)) in result.content_items.iter().enumerate() {
         if item_id == "template_dropdown_menu" {
             continue;
         }
-        let sense = if slider_field_ids.contains(item_id.as_str()) {
+        // Body items are confined to the scroll viewport: a row that scrolled
+        // out of sight must stop taking hover and clicks, and a row only half
+        // past the bottom edge keeps exactly the half still visible. Items
+        // appended after the body (template menu, footer search) are not
+        // inside the viewport and are registered whole.
+        let item_rect = if idx < body_items_end {
+            let top = item_rect.y.max(scroll_viewport.y);
+            let bottom = (item_rect.y + item_rect.height).min(scroll_viewport.y + scroll_viewport.height);
+            if bottom <= top {
+                continue;
+            }
+            WidgetRect::new(item_rect.x, top, item_rect.width, bottom - top)
+        } else {
+            *item_rect
+        };
+        let item_rect = &item_rect;
+        let sense = if item_id == "levels_global_opacity" {
+            // Item 5 (2026-08-08 review): a plain click on this slider's
+            // track never reached the drag pipeline under DRAG-only sense.
+            // Mirrors `compare_settings.rs`'s own
+            // `cmp_settings:line_width_slider` — the modal-settings
+            // family's precedent for "a slider that must respond to a bare
+            // click" — which registers CLICK alongside DRAG.
+            // `handle_prim_settings_item` (`mlc-app`'s `input/settings.rs`)
+            // also applies the value directly on click now, a second,
+            // deterministic path that does not depend on drag-start/
+            // drag-end timing.
+            uzor::input::Sense::CLICK | uzor::input::Sense::DRAG | uzor::input::Sense::SCROLL
+        } else if slider_field_ids.contains(item_id.as_str()) {
             uzor::input::Sense::DRAG | uzor::input::Sense::SCROLL
         } else {
             uzor::input::Sense::CLICK | uzor::input::Sense::HOVER
@@ -1922,6 +964,36 @@ pub fn render_primitive_settings_modal(
 
     // The footer goes in after the body — see `end_modal_shell`.
     end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+
+    // Paint the footer search field's own visuals LAST — after the
+    // footer's own background fill above, so they are not painted over by
+    // it. Its widget was already registered by the generic `content_items`
+    // loop; this only draws (item 8, 2026-08-08 review).
+    if let Some(search_rect) = result.content_items.iter().find(|(id, _)| id == SEARCH_FIELD_ID).map(|(_, r)| *r) {
+        use mlc_core::render::{TextAlign, TextBaseline};
+        let is_editing = state.active_field_id.as_deref() == Some(SEARCH_FIELD_ID);
+        ctx.set_fill_color(&toolbar_theme.background);
+        ctx.fill_rounded_rect(search_rect.x, search_rect.y, search_rect.width, search_rect.height, SETTINGS_BUTTON_RADIUS);
+        ctx.set_stroke_color(if is_editing { &toolbar_theme.accent } else { &toolbar_theme.separator });
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(search_rect.x, search_rect.y, search_rect.width, search_rect.height, SETTINGS_BUTTON_RADIUS);
+        ctx.set_font("11.5px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.save();
+        ctx.begin_path();
+        ctx.rect(search_rect.x, search_rect.y, search_rect.width - 6.0, search_rect.height);
+        ctx.clip();
+        if is_editing {
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.fill_text(&state.active_render.text, search_rect.x + 9.0, search_rect.center_y());
+            result.active_input_rect = Some(search_rect);
+        } else {
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.fill_text(ConfigKey::SearchSettingsPlaceholder.get(current_language()), search_rect.x + 9.0, search_rect.center_y());
+        }
+        ctx.restore();
+    }
 
     result
 }

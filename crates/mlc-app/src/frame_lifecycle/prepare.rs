@@ -143,29 +143,30 @@ impl ChartApp {
         };
         // Sync diagnostics flag so the checkbox reflects the current state.
         self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
-        // Sync the topbar-takeover bool (workspace-panel arc, Stage 4) so its
-        // checkbox reflects the persisted profile value.
-        self.panel_app.user_settings_state.trading_panel_topbar_takeover =
-            self.core.user().profile().ui.trading_panel_topbar_takeover;
-        // Sync control-point shape/size (control-point-style-ui arc,
-        // 2026-08-08) so the General tab's pickers reflect the persisted
-        // profile value — same defense-in-depth as the topbar-takeover sync
-        // above (`apply_profile_state` and the click handlers already write
-        // these mirrors immediately, this is the per-frame backstop).
-        self.panel_app.user_settings_state.control_point_shape =
-            self.core.user().profile().ui.control_point_shape;
-        self.panel_app.user_settings_state.control_point_size =
-            self.core.user().profile().ui.control_point_size;
-        // Sync data_load settings into user_settings_state for the DATA & CACHE sliders.
-        // Only update the cached values when the slider is not being dragged so the
-        // handle does not snap back to the committed value on every frame during drag.
-        if !self.panel_app.user_settings_state.is_data_slider_dragging() {
+        // Mirror the persisted profile into the settings-modal state.
+        //
+        // ONE `core.user()` guard for the whole block. That call is a
+        // `RwLock::read()`, and this runs every frame — taking a separate
+        // guard per field (which is how the topbar-takeover and
+        // control-point mirrors were first written) buys nothing and puts
+        // three lock acquisitions per frame where one does the job.
+        {
             let user_guard = self.core.user();
-            let dl = &user_guard.profile().domain.data_load;
-            self.panel_app.user_settings_state.data_bg_bars      = dl.background_bar_count;
-            self.panel_app.user_settings_state.data_max_bars     = dl.max_loaded_bars;
-            self.panel_app.user_settings_state.data_store_size_mb = dl.max_store_size_mb;
-            self.panel_app.user_settings_state.data_cleanup_days  = dl.store_cleanup_days;
+            let profile = user_guard.profile();
+            self.panel_app.user_settings_state.trading_panel_topbar_takeover =
+                profile.ui.trading_panel_topbar_takeover;
+            self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
+            self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
+            // The DATA & CACHE sliders keep their committed value while the
+            // user is dragging one, so the handle does not snap back on
+            // every frame mid-drag.
+            if !self.panel_app.user_settings_state.is_data_slider_dragging() {
+                let dl = &profile.domain.data_load;
+                self.panel_app.user_settings_state.data_bg_bars      = dl.background_bar_count;
+                self.panel_app.user_settings_state.data_max_bars     = dl.max_loaded_bars;
+                self.panel_app.user_settings_state.data_store_size_mb = dl.max_store_size_mb;
+                self.panel_app.user_settings_state.data_cleanup_days  = dl.store_cleanup_days;
+            }
         }
 
         // Sync viewport dimensions.

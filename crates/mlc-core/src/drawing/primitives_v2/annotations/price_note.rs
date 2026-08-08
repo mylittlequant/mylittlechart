@@ -197,22 +197,22 @@ impl Primitive for PriceNote {
 
         Some(vec![
             ConfigProperty::content(content)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(0),
             ConfigProperty::font_size(font_size)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(1),
             ConfigProperty::bold(bold)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(2),
             ConfigProperty::italic(italic)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(3),
             ConfigProperty::text_color(text_color)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(4),
             ConfigProperty::show_price(self.show_price)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(5),
         ])
     }
@@ -268,10 +268,10 @@ impl Primitive for PriceNote {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(0),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
         ]
     }

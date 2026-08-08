@@ -40,6 +40,21 @@ const CAT_INDICATOR_SETS: &str = "indicator_sets";
 /// Filename used for the serialized [`IndicatorSetManager`] state.
 const INDICATOR_SET_MANAGER_FILE: &str = "indicator_set_manager.json";
 
+/// Filename used for the persisted primitive-settings Template menu's
+/// merged display order (item 4, 2026-08-08 review) — sibling to
+/// [`INDICATOR_SET_MANAGER_FILE`], same one-small-file-alongside-the-
+/// per-item-files shape. A flat list of position keys spanning BOTH kinds
+/// of row the menu shows: a system level-set preset's own `LevelSet::id()`
+/// (`"standard"`/`"extended"`/`"key_only"`/`"all"` — `LevelSet` lives in
+/// `mlc-app-layout`, out of reach from here, so this store only ever sees
+/// its id strings) and a user `PrimitiveTemplate::id`. There is no file to
+/// attach an "order" field to for a system preset (it is not a stored
+/// template), which is why this is a separate small file rather than a
+/// field on `PrimitiveTemplate` itself — mirrors how `IndicatorSetManager`
+/// already keeps cross-cutting ordering/selection state next to, not
+/// inside, the per-item template files.
+const PRIMITIVE_TEMPLATE_ORDER_FILE: &str = "primitive_template_order.json";
+
 /// Central registry for all template types.
 ///
 /// Load from disk once at startup with [`TemplateManager::load_from_default_dir`], then
@@ -63,6 +78,10 @@ pub struct TemplateManager {
     /// Manager for named collections of indicator sets (active-set selection,
     /// ordering, add/remove/rename operations).
     pub indicator_set_manager: IndicatorSetManager,
+    /// Merged display order for the primitive-settings Template menu's
+    /// system-preset + user-template list — see
+    /// [`PRIMITIVE_TEMPLATE_ORDER_FILE`]'s own doc for the key shape.
+    pub primitive_template_order: Vec<String>,
     /// Encryption key for write-through persistence.  `None` means plaintext.
     pub vault_key: Option<VaultKey>,
 }
@@ -77,6 +96,7 @@ impl TemplateManager {
             chart_templates: Vec::new(),
             indicator_sets: Vec::new(),
             indicator_set_manager: IndicatorSetManager::new(),
+            primitive_template_order: Vec::new(),
             vault_key: None,
         }
     }
@@ -97,6 +117,7 @@ impl TemplateManager {
             chart_templates: load_all_templates(&category_dir(CAT_CHART), key),
             indicator_sets: load_all_templates(&category_dir(CAT_INDICATOR_SETS), key),
             indicator_set_manager: load_indicator_set_manager(&root),
+            primitive_template_order: load_primitive_template_order(&root),
             vault_key: key.copied(),
         }
     }
@@ -129,6 +150,7 @@ impl TemplateManager {
             save_template(t, &t.id, &sets_dir, key)?;
         }
         save_indicator_set_manager(&self.indicator_set_manager, &root)?;
+        save_primitive_template_order(&self.primitive_template_order, &root)?;
         Ok(())
     }
 
@@ -160,6 +182,36 @@ impl TemplateManager {
         } else {
             Ok(false)
         }
+    }
+
+    /// Rename a primitive template by `id` and immediately persist the
+    /// rename to its own file (item 4, 2026-08-08 review — the primitive-
+    /// settings Template menu's per-row pencil action).
+    ///
+    /// Returns `true` if the template was found and renamed.
+    pub fn rename_primitive_template(&mut self, id: &str, new_name: &str) -> Result<bool, TemplateError> {
+        let Some(t) = self.primitive_templates.iter_mut().find(|t| t.id == id) else {
+            return Ok(false);
+        };
+        t.name = new_name.to_string();
+        let dir = category_dir(CAT_PRIMITIVES);
+        save_template(t, &t.id, &dir, self.vault_key.as_ref())?;
+        Ok(true)
+    }
+
+    /// Replace the primitive-settings Template menu's merged display order
+    /// wholesale and immediately persist it (item 4, 2026-08-08 review —
+    /// the menu's own drag-to-reorder commit).
+    pub fn set_primitive_template_order(&mut self, order: Vec<String>) -> Result<(), TemplateError> {
+        self.primitive_template_order = order;
+        self.save_primitive_template_order()
+    }
+
+    /// Persist the in-memory primitive-template-list order to the default
+    /// templates root immediately — the same "call after any mutation"
+    /// contract [`Self::save_indicator_set_manager`] already documents.
+    pub fn save_primitive_template_order(&self) -> Result<(), TemplateError> {
+        save_primitive_template_order(&self.primitive_template_order, &templates_root())
     }
 
     /// Return all primitive templates whose `type_id` matches the given string.
@@ -371,6 +423,33 @@ fn save_indicator_set_manager(
 ) -> Result<(), TemplateError> {
     let path = dir.join(INDICATOR_SET_MANAGER_FILE);
     let json = serde_json::to_string_pretty(manager)?;
+    mlc_vault::global_storage().write(&path_key(&path), json.as_bytes())?;
+    Ok(())
+}
+
+/// Load the primitive-settings Template menu's merged display order from
+/// `{dir}/primitive_template_order.json`.
+///
+/// Returns an empty order if the file does not exist or cannot be parsed —
+/// an empty order is a legitimate, common value (nothing has ever been
+/// dragged yet), read by its sole consumer as "every row keeps its natural
+/// position", so startup always succeeds either way.
+fn load_primitive_template_order(dir: &Path) -> Vec<String> {
+    let path = dir.join(PRIMITIVE_TEMPLATE_ORDER_FILE);
+    let key = path_key(&path);
+    mlc_vault::global_storage()
+        .read(&key)
+        .ok()
+        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Serialize `order` to `{dir}/primitive_template_order.json`.
+fn save_primitive_template_order(order: &[String], dir: &Path) -> Result<(), TemplateError> {
+    let path = dir.join(PRIMITIVE_TEMPLATE_ORDER_FILE);
+    let json = serde_json::to_string_pretty(order)?;
     mlc_vault::global_storage().write(&path_key(&path), json.as_bytes())?;
     Ok(())
 }

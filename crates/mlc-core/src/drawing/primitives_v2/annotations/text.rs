@@ -135,19 +135,19 @@ impl Primitive for Text {
 
         Some(vec![
             ConfigProperty::content(content)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(0),
             ConfigProperty::font_size(font_size)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(1),
             ConfigProperty::bold(bold)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(2),
             ConfigProperty::italic(italic)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(3),
             ConfigProperty::text_color(color)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(4),
         ])
     }

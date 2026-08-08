@@ -1073,27 +1073,34 @@ impl ChartApp {
         use crate::text_input::*;
         match action {
             TextAction::Commit(_) => {
+                // "create" — the shell names a creator dialog's primary
+                // action `create`, not `save` (see each `handle_*_tmpl_modal_click`'s
+                // own match arms); Enter must land on the exact same arm the
+                // "Save" button's click does, or it silently falls through
+                // to the `_ => unhandled` arm and never saves anything.
+                // "create"/"close" never read (x, y) — only the "input"
+                // arm does — so the keyboard path passes no real coordinates.
                 if id == PRIMITIVE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_prim_tmpl_modal_click("save");
+                    self.handle_prim_tmpl_modal_click("create", 0.0, 0.0);
                 } else if id == INDICATOR_SETTINGS_TEMPLATE_NAME {
-                    self.handle_ind_tmpl_modal_click("save");
+                    self.handle_ind_tmpl_modal_click("create", 0.0, 0.0);
                 } else if id == COMPARE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_cmp_tmpl_modal_click("save");
+                    self.handle_cmp_tmpl_modal_click("create", 0.0, 0.0);
                 } else if id == CHART_SETTINGS_TEMPLATE_NAME {
-                    self.handle_chart_tmpl_modal_click("save");
+                    self.handle_chart_tmpl_modal_click("create", 0.0, 0.0);
                 }
             }
             // Escape in the name field takes the same exit the ✕ does — the
             // dialogs no longer have a Cancel to route it through.
             TextAction::Cancel => {
                 if id == PRIMITIVE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_prim_tmpl_modal_click("close");
+                    self.handle_prim_tmpl_modal_click("close", 0.0, 0.0);
                 } else if id == INDICATOR_SETTINGS_TEMPLATE_NAME {
-                    self.handle_ind_tmpl_modal_click("close");
+                    self.handle_ind_tmpl_modal_click("close", 0.0, 0.0);
                 } else if id == COMPARE_SETTINGS_TEMPLATE_NAME {
-                    self.handle_cmp_tmpl_modal_click("close");
+                    self.handle_cmp_tmpl_modal_click("close", 0.0, 0.0);
                 } else if id == CHART_SETTINGS_TEMPLATE_NAME {
-                    self.handle_chart_tmpl_modal_click("close");
+                    self.handle_chart_tmpl_modal_click("close", 0.0, 0.0);
                 }
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}

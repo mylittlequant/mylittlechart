@@ -9,6 +9,15 @@ use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::ui::toolbar_core::IconId;
 use uzor::types::Rect as WidgetRect;
 
+/// Corner radius every button/pill/segment/chip in the settings modals
+/// (primitive settings, and any sibling that wants to agree with it) draws
+/// with — one rectangle shape everywhere, so the generic hover/active
+/// highlight (painted with this same constant) never mismatches the button
+/// underneath it. Replaces a mix of fully-rounded pills (`height / 2.0`)
+/// and near-rectangles (radius 3) that used to disagree with each other and
+/// with the highlight (item 1, 2026-08-08 owner review).
+pub const SETTINGS_BUTTON_RADIUS: f64 = 4.0;
+
 /// Button configuration
 #[derive(Clone, Debug)]
 pub struct ButtonConfig {

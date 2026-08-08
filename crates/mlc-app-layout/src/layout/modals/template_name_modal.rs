@@ -43,8 +43,12 @@ pub struct TemplateNameModalResult {
 /// have the form `"{ns_prefix}:{id}"`.
 ///
 /// `field_id` — the `TextFieldStore` key whose text, cursor, and selection are
-/// rendered inside the input box.  The field must already be registered and
-/// focused by the caller before this function is called.
+/// rendered inside the input box.  The field must already be registered
+/// (the caller does this once, at `ChartApp` construction) — registration is
+/// the only precondition. Focus is NOT a caller precondition: while this
+/// modal is open it OWNS text focus and reasserts it every frame (see the
+/// body below), so it never depends on the opener's one-time `focus()` call
+/// surviving whatever else runs between frames.
 ///
 /// This one dims the screen and cannot be dragged, both deliberately: it opens
 /// ON TOP of the settings modal that asked for it, so there is nowhere useful
@@ -102,6 +106,21 @@ pub fn render_template_name_modal(
             result.input_rect = input_rect;
 
             let wid = uzor::WidgetId::from(field_id);
+
+            // This modal owns text focus for as long as it is open — assert
+            // it every frame instead of trusting the opener's one-time
+            // `focus()` call (2026-08-09 fix: the field went untypable
+            // because whatever ran between the opening click and the next
+            // keystroke could steal the store's single global focus slot,
+            // and nothing ever reclaimed it). Guarded on `is_focused`: uzor's
+            // `TextFieldStore::focus` clears `engaged` even when the target
+            // is already focused (arming is silent by design), so calling it
+            // unconditionally every frame would blank the caret the instant
+            // a keystroke set `engaged = true`.
+            if !coord.text_fields().is_focused(&wid) {
+                coord.text_fields_mut().focus(wid.clone());
+            }
+
             let display_text = coord.text_fields().text(&wid).to_string();
             let cursor_pos = coord.text_fields().cursor(&wid);
             let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {

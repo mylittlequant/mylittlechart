@@ -196,13 +196,13 @@ impl Primitive for Comment {
 
         Some(vec![
             ConfigProperty::comment(content)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(0),
             ConfigProperty::font_size(font_size)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(1),
             ConfigProperty::text_color(color)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(2),
         ])
     }
@@ -242,10 +242,10 @@ impl Primitive for Comment {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(19),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(20),
         ]
     }

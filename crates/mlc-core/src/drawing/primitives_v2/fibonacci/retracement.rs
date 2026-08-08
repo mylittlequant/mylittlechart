@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -36,16 +37,81 @@ pub const DEFAULT_LEVELS: &[f64] = MAIN_LEVELS;
 /// Extended Fibonacci levels (including extensions)
 pub const EXTENDED_LEVELS: &[f64] = &[0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.618, 2.0, 2.618];
 
-/// Create default level configurations with 30 levels
-/// Main levels (0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0) are visible by default
-/// Other levels are pre-added but disabled
+/// Fibonacci levels singled out as "key" levels for the Levels tab's
+/// "Только ключевые" system preset — both retracement endpoints plus the
+/// golden zone. **Ambiguous in the approved spec** (`fib_modal.html`'s
+/// answer #1 names "Только ключевые" but never lists its values) — needs
+/// the owner's sign-off, flagged again here as it was where this constant
+/// used to live (`mlc-app-layout::layout::modals::primitive_settings_intent`,
+/// carried over unchanged from the ui-lab prototype's own
+/// `level_presets::KEY_ONLY_LEVELS`). Moved here 2026-08-09 (primitive-
+/// settings "Save as…" reference fix) so both `mlc-backend`
+/// (creation-time `StyleReference::LevelSet` stamping) and `mlc-app-layout`
+/// (the Levels tab UI) read the exact same list — see
+/// [`level_set_values`]/[`level_set_id_for_composition`].
+pub const KEY_ONLY_LEVELS: &[f64] = &[0.0, 0.382, 0.5, 0.618, 1.0];
+
+/// Floating-point tolerance for comparing a level value against a system
+/// level-set preset's own canonical value list.
+const LEVEL_SET_MATCH_EPS: f64 = 1e-9;
+
+/// The four system level-set preset ids
+/// [`crate::drawing::StyleReference::LevelSet`] can name, in display order.
+/// Never `"custom"` — see that variant's own doc for why "custom" names no
+/// fixed definition of its own.
+pub const LEVEL_SET_IDS: [&str; 4] = ["standard", "extended", "key_only", "all"];
+
+/// The canonical value list a system level-set preset id stands for, or
+/// `None` for any id that does not name one of the four real presets
+/// (including `"custom"`, or a stale/unknown id).
+pub fn level_set_values(id: &str) -> Option<&'static [f64]> {
+    match id {
+        "standard" => Some(MAIN_LEVELS),
+        "extended" => Some(EXTENDED_LEVELS),
+        "key_only" => Some(KEY_ONLY_LEVELS),
+        "all" => Some(ALL_LEVELS),
+        _ => None,
+    }
+}
+
+/// Which system level-set preset id (if any) a raw composition of level
+/// values exactly matches: same value set, order-independent, no partial
+/// credit. `None` means the composition matches none of the four — a
+/// "custom" composition, which has no fixed definition of its own to name
+/// it with.
+///
+/// The single canonical "which preset does this composition match" answer
+/// — both `mlc-backend` (stamping a freshly-created primitive's
+/// `StyleReference::LevelSet` from its seeded composition) and
+/// `mlc-app-layout` (the Levels tab's own `current_level_set` display,
+/// keyed off [`level_set_values`] the same way) read off this, so the two
+/// can never independently redefine "what a preset means" and drift apart.
+pub fn level_set_id_for_composition(levels: &[f64]) -> Option<&'static str> {
+    LEVEL_SET_IDS.into_iter().find(|id| {
+        let target = level_set_values(id).unwrap_or(&[]);
+        levels.len() == target.len()
+            && target.iter().all(|v| levels.iter().any(|c| (*c - *v).abs() < LEVEL_SET_MATCH_EPS))
+    })
+}
+
+/// Create default level configurations — the approved Levels-tab ladder
+/// design (`nemo/docs/mlc/...` primitive-settings port, 2026-08-08) treats
+/// the row list as "what is really enabled, not a catalogue": the ladder
+/// shows exactly the entries `level_configs()` holds, with none of them
+/// hidden-but-present. Seeding all 30 [`ALL_LEVELS`] with 23 disabled (the
+/// previous behaviour) would render a 30-row ladder on every freshly placed
+/// primitive instead of the intended list-of-7-you-add-to. [`ALL_LEVELS`]
+/// and [`EXTENDED_LEVELS`] stay in place for the ladder's own "+ добавить
+/// уровень" quick-add chips and `extended_level_configs()`; only the
+/// DEFAULT seed changes. Existing saved drawings keep whatever they were
+/// serialized with (30 rows for anything created before this change) — no
+/// migration.
 pub fn default_level_configs() -> Vec<FibLevelConfig> {
-    let mut sorted: Vec<f64> = ALL_LEVELS.to_vec();
+    let mut sorted: Vec<f64> = MAIN_LEVELS.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    ALL_LEVELS.iter().map(|&level| {
+    MAIN_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
-        // Only enable main levels by default
-        config.visible = MAIN_LEVELS.contains(&level);
+        config.visible = true;
         // Ramp colour by rank so 0.382 reads differently from 0.618 at a
         // glance — previously every level fell back to the primitive's own
         // single stroke color, so no level stood out from any other.
@@ -303,11 +369,15 @@ impl Primitive for FibRetracement {
         let x2 = viewport.bar_to_x_f64(bar2);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
-        // Check control points
-        if check_point_hit(screen_x, screen_y, x1, y1) {
+        // Check control points. The handle radius is read ONCE per hit-test,
+        // not once per point: `control_point_style()` takes a global
+        // `RwLock::read()`, and hit_test runs on every click and every hover
+        // move over the chart.
+        let handle_r = control_point_style().hit_radius();
+        if check_point_hit(screen_x, screen_y, x1, y1, handle_r) {
             return HitTestResult::ControlPoint(ControlPointType::Point1);
         }
-        if check_point_hit(screen_x, screen_y, x2, y2) {
+        if check_point_hit(screen_x, screen_y, x2, y2, handle_r) {
             return HitTestResult::ControlPoint(ControlPointType::Point2);
         }
 
@@ -689,22 +759,84 @@ impl Primitive for FibRetracement {
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::ConfigProperty;
+        use super::super::config::{ConfigProperty, PropertyCategory};
         let mut props = vec![
-            ConfigProperty::show_prices(self.show_prices).with_order(10),
-            ConfigProperty::show_levels(self.show_percentages).with_order(11),
-            ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
-            ConfigProperty::label_position(&self.label_position).with_order(13),
-            ConfigProperty::extend_left(self.extend_left).with_order(20),
-            ConfigProperty::extend_right(self.extend_right).with_order(21),
-            ConfigProperty::show_trend_line(self.show_trend_line).with_order(22),
-            ConfigProperty::fill(self.show_fill).with_order(23),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(24),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+            // Levels/Base — the stroke every level falls back to when it
+            // has no colour/width/line-style of its own (`render`, above:
+            // `cfg.color.unwrap_or(&self.data.color.stroke)`, and the width
+            // equivalent). Ids match the base `PrimitiveData` fields on
+            // purpose (`"stroke_color"`/`"stroke_width"`/`"line_style"`) —
+            // the click dispatch already special-cases these three ids to
+            // write `PrimitiveData` directly (`mlc-app`'s
+            // `input/settings.rs`), so declaring them here only makes the
+            // Levels tab's base row a real, generic, declared control
+            // instead of an assumption the modal hardcoded; it does not
+            // change how a click on them is applied.
+            ConfigProperty::color("stroke_color", SettingsKey::Color.get(current_language()), &self.data.color.stroke)
+                .with_category(PropertyCategory::LevelsBase).with_order(0),
+            ConfigProperty::number("stroke_width", ConfigKey::WidthLabel.get(current_language()), self.data.width, Some(1.0), Some(10.0))
+                .with_category(PropertyCategory::LevelsBase).with_order(1),
+            ConfigProperty::line_style("line_style", ConfigKey::Style.get(current_language()), self.data.style.as_str())
+                .with_category(PropertyCategory::LevelsBase).with_order(2),
+
+            // Levels/Base — how far the level lines reach, and whether the
+            // dashed connector between point 1 and point 2 draws. Moved
+            // here from Appearance/Line in the 4-tab cutover (2026-08-08):
+            // both belong to the SAME drawn object as the ladder, not to a
+            // separate "the shape's own line" the way they would on a
+            // primitive with no levels — `extend_left`/`extend_right` say
+            // how far every level line runs, and the trend line connects
+            // the two anchors the whole ladder is built between. This,
+            // together with declaring no Appearance/Line or Appearance/Fill
+            // property at all (`fill_master`'s own doc below covers why
+            // `show_fill`/`fill_opacity` were never declared), is what
+            // makes `available_tabs` (`mlc-app-layout`) render
+            // Levels · Labels · Placement for this primitive with no
+            // Appearance tab at all — nothing keys off this type's id to
+            // hide it; it falls out of what this method does and does not
+            // declare.
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::LevelsBase).with_order(10),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::LevelsBase).with_order(11),
+            ConfigProperty::show_trend_line(self.show_trend_line).with_category(PropertyCategory::LevelsBase).with_order(12),
+
+            // Labels — pills + label position (the ladder's own per-level
+            // styling stays on the Levels tab; these are the primitive-wide
+            // label toggles). Its own tab since the 4-tab cutover
+            // (2026-08-08) — previously shared the Appearance tab under
+            // `AppearanceLabels`.
+            ConfigProperty::show_prices(self.show_prices).with_category(PropertyCategory::LabelsText).with_order(10),
+            ConfigProperty::show_levels(self.show_percentages).with_category(PropertyCategory::LabelsText).with_order(11),
+            ConfigProperty::show_as_percent(self.show_as_percent).with_category(PropertyCategory::LabelsText).with_order(12),
+            ConfigProperty::label_position(&self.label_position).with_category(PropertyCategory::LabelsText).with_order(13),
+
+            // `show_fill`/`fill_opacity` deliberately NOT declared here —
+            // see this impl's own doc above `apply_style_property` for why.
+
+            // Labels — label font/colour + the shared
+            // bold/offset/background/border block below.
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
         props
+    }
+
+    /// `fill_master()` override — see the `Primitive` trait's own doc.
+    /// `show_fill`/`fill_opacity` are real fields (`render`, above, gates
+    /// every band on them), just not part of the DECLARED list any more:
+    /// they used to double as a `style_prop:fill`/`style_prop:fill_opacity`
+    /// row that the Appearance tab drew for every level-less primitive and
+    /// suppressed for every level-having one via a `has_levels` special
+    /// case — the exact
+    /// per-type branching the generic tab renderer (`primitive_settings_vid`)
+    /// no longer does. Declaring them here would put them back in the
+    /// Appearance tab's generic FILL group, right back to two on-screen
+    /// controls for the one master field the Levels tab's global row already
+    /// owns. `apply_style_property` below keeps handling `"fill"`/
+    /// `"fill_opacity"` — that half is not id-listing, it is the write path
+    /// this override's sibling (the Levels tab's global row) still uses.
+    fn fill_master(&self) -> Option<(bool, f64)> {
+        Some((self.show_fill, self.fill_opacity))
     }
 
     fn apply_style_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
@@ -793,11 +925,11 @@ impl Primitive for FibRetracement {
     }
 }
 
-fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
-    // Read the shared handle style rather than a local literal, so the grab
-    // zone tracks the size the user picked and can never drift from what
-    // `draw_control_points` actually painted.
-    let radius = control_point_style().hit_radius();
+/// `radius` comes from the shared handle style rather than a local literal,
+/// so the grab zone tracks the size the user picked and can never drift from
+/// what `draw_control_points` actually painted. The caller resolves it once
+/// per hit-test — reading it here would take a global lock per point.
+fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64, radius: f64) -> bool {
     (sx - px).powi(2) + (sy - py).powi(2) <= radius * radius
 }
 

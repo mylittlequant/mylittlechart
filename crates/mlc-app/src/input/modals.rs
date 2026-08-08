@@ -1715,7 +1715,13 @@ impl ChartApp {
             if local_x >= 0.0 && local_x <= chart_rect.width
                 && local_y >= 0.0 && local_y <= chart_rect.height
             {
-                let hit_bars_main: Vec<mlc_core::Bar> = self.active_chart_bars();
+                // Bars from the bubble this click already resolved — NOT via
+                // `active_chart_bars()`, whose tag-registry lookup lags and
+                // hands back an empty series for the first seconds of a
+                // session, making every primitive on screen unclickable.
+                let hit_bars_main: Vec<mlc_core::Bar> = active_bid_hit
+                    .map(|bid| self.bars_for_bubble(bid))
+                    .unwrap_or_default();
                 if let Some(window) = self.panel_app.panel_grid.active_container() {
                     // Use corrected viewport dimensions from the layout so that
                     // hit-test coordinate mapping matches the render path exactly.
@@ -1773,7 +1779,9 @@ impl ChartApp {
                         vp.chart_height = content.height;
                         vp
                     });
-                let hit_bars_sub: Vec<mlc_core::Bar> = self.active_chart_bars();
+                let hit_bars_sub: Vec<mlc_core::Bar> = active_bid_hit
+                    .map(|bid| self.bars_for_bubble(bid))
+                    .unwrap_or_default();
                 if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
                     let sub_hit_prim_id = active_bid_hit
                         .and_then(|bid| self.core.drawings().hit_test_in_pane(bid, plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale));

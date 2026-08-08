@@ -98,6 +98,29 @@ pub enum SyncMode {
     Everywhere,
 }
 
+/// What a primitive currently claims to be built from — the reference its
+/// own "Save as…" visibility is diffed against (see
+/// [`crate::templates::PrimitiveTemplate::matches_primitive`]). Persisted on
+/// [`PrimitiveData`] so it survives a reload exactly like the settings
+/// themselves do — unlike a session-only baseline snapshot, which a reload
+/// re-captures from the (possibly already-drifted) loaded state and so can
+/// never detect drift that happened before the reload.
+///
+/// Deliberately holds an ID, never a value snapshot: a snapshot would be a
+/// second copy of the settings that can itself go stale (e.g. if the
+/// template it was copied from is later edited), where an ID always
+/// resolves against the live source of truth — the template store or the
+/// system preset's own fixed definition — at the moment it is read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StyleReference {
+    /// A user-saved [`crate::templates::PrimitiveTemplate::id`].
+    Template(String),
+    /// A system level-set preset id (e.g. `"standard"`, `"extended"`,
+    /// `"key_only"`, `"all"` — never `"custom"`, which is a derived display
+    /// state with no fixed definition of its own, not a real preset).
+    LevelSet(String),
+}
+
 /// Core primitive data that all primitives share
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PrimitiveData {
@@ -152,6 +175,21 @@ pub struct PrimitiveData {
     /// Account type label this primitive was created for (e.g. `"S"`, `"F"`).
     #[serde(default)]
     pub account_type: String,
+    /// What this primitive currently claims to be built from — see
+    /// [`StyleReference`]. `None` means nothing NAMEABLE has been
+    /// established: either no template/preset was ever applied and the
+    /// primitive's seeded starting composition matches none of the system
+    /// level-set presets either (a "custom" starting point, or a
+    /// primitive with no level ladder at all — see
+    /// `mlc-backend`'s `DrawingManager::initial_style_reference`, which
+    /// stamps this on creation), or a reference that was established has
+    /// since become unresolvable. "Save as…" reads `None` as SHOWN, not
+    /// hidden — a state that matches nothing on record is exactly a state
+    /// worth offering to save (2026-08-09; see
+    /// `mlc-app-layout`'s `primitive_settings::show_save_as` for the full
+    /// read).
+    #[serde(default)]
+    pub style_reference: Option<StyleReference>,
 }
 
 impl Default for PrimitiveData {
@@ -176,6 +214,7 @@ impl Default for PrimitiveData {
             symbol: String::new(),
             exchange: String::new(),
             account_type: String::new(),
+            style_reference: None,
         }
     }
 }
@@ -483,6 +522,32 @@ pub trait Primitive: Send + Sync {
     /// Returns true if property was handled
     fn apply_style_property(&mut self, _id: &str, _value: &super::config::PropertyValue) -> bool {
         false
+    }
+
+    /// The primitive's own single band-fill on/off + opacity, if it has
+    /// one — the value the Levels tab's global fill row edits
+    /// (`primitive_settings_levels::draw_global_opacity_row`, `mlc-app-layout`).
+    /// `None` means "this type has no primitive-wide fill master" (e.g.
+    /// Pitchfork), which the caller reads as "draw nothing for that row" —
+    /// not "false", which would render a checkbox that does nothing.
+    ///
+    /// Default reads the same `"fill"`/`"fill_opacity"` ids every
+    /// `style_properties()` override already exposes for `style_prop:*`
+    /// dispatch — this is the pre-existing behaviour for every primitive
+    /// that declares those two ids (e.g. `FibWedge`). Override only where,
+    /// like `FibRetracement`, the master field is no longer part of the
+    /// declared list — its own doc explains why the declaration was
+    /// removed (it duplicated this exact control).
+    fn fill_master(&self) -> Option<(bool, f64)> {
+        let props = self.style_properties();
+        let on = props.iter().find(|p| p.id == "fill").and_then(|p| p.value.as_bool())?;
+        let opacity = props
+            .iter()
+            .find(|p| p.id == "fill_opacity")
+            .and_then(|p| p.value.as_number())
+            .map(|pct| (pct / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        Some((on, opacity))
     }
 
     // =========================================================================

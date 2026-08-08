@@ -102,6 +102,73 @@ pub struct PrimitiveSettingsResult {
     pub scrollbar_handle_rect: Option<WidgetRect>,
     /// Scrollbar track rect, when the tab overflows (for click-to-page).
     pub scrollbar_track_rect: Option<WidgetRect>,
+    /// Anchor for the Levels tab's "+ добавить уровень" quick-value
+    /// dropdown: `(input_field_rect, open_upward)`, set only while that
+    /// input has focus. `open_upward` is decided by
+    /// `primitive_settings_levels::draw_add_row` from the space between the
+    /// input and the viewport's own bottom edge (the footer's top) — the
+    /// only place that knows it. The outer pass
+    /// (`primitive_settings::render_primitive_settings_modal`) paints and
+    /// registers the menu from this, OUTSIDE the ladder's own scroll clip
+    /// and after `body_items_end`, so it is neither clipped by the ladder's
+    /// viewport nor culled against it (item 2 follow-up, 2026-08-08).
+    pub add_chip_dropdown_anchor: Option<(WidgetRect, bool)>,
+    /// Template-menu row rects, in the exact on-screen order they were
+    /// painted: `(position_key, row_rect)` — a system preset's own
+    /// `LevelSet::id()` or a user template's own `id`. Populated only while
+    /// the Template dropdown is open (item 4, 2026-08-08 review). The sole
+    /// reader is `mlc-app`'s own drag-to-reorder handling
+    /// (`WatchlistModalState::drag_reorder`'s own precedent): computing the
+    /// drop index from these rects, and reading the row keys back off this
+    /// SAME list on drag-end, means the reorder commit can never disagree
+    /// with what was actually drawn — there is no second copy of "what
+    /// order is the list in" for the two to drift apart from.
+    pub template_menu_rows: Vec<(String, WidgetRect)>,
+    /// Anchor for the split cycle+chevron control's dropdown (item 1,
+    /// 2026-08-09 restore of the pre-generic-property control): set by
+    /// `primitive_settings_vid::draw_split_value_control` whenever the row
+    /// it just drew is the ONE `PrimitiveSettingsState::open_value_dropdown`
+    /// names. At most one row can ever set this per frame — that state
+    /// field is a single `Option<String>`, so opening a new row's menu
+    /// always replaces the previous value; the one-open-at-a-time guarantee
+    /// lives THERE, not here. Painted and registered by the outer pass
+    /// (`primitive_settings::render_primitive_settings_modal`), after
+    /// `scrollable.end()` closes whichever tab's own scroll clip and after
+    /// `body_items_end` is captured — mirrors `add_chip_dropdown_anchor`'s
+    /// own outside-the-clip treatment, for the same reason: a row's own
+    /// clip must not cut a menu hanging below it.
+    pub value_dropdown_anchor: Option<ValueDropdownAnchor>,
+}
+
+/// Anchor + enough context for the outer pass to paint the split control's
+/// dropdown — see [`PrimitiveSettingsResult::value_dropdown_anchor`]'s own
+/// doc.
+#[derive(Clone, Debug)]
+pub struct ValueDropdownAnchor {
+    /// The button's own rect — the menu opens flush below it, the same
+    /// placement rule `template_dropdown_menu` uses off the Template
+    /// button.
+    pub button_rect: WidgetRect,
+    /// The row's own field id (`"line_style"`, `"style_prop:{id}"`, …) —
+    /// option rows register under `{field_id}::opt:{value}` and the
+    /// chevron itself under `{field_id}::menu`.
+    pub field_id: String,
+    /// The option currently in effect, highlighted in the list.
+    pub current_value: String,
+    /// Which shape the option rows draw in.
+    pub kind: ValueDropdownKind,
+}
+
+/// See [`ValueDropdownAnchor::kind`].
+#[derive(Clone, Debug)]
+pub enum ValueDropdownKind {
+    /// A line-style row — every option paints as a graphic preview (an
+    /// actual solid/dashed/dotted/large-dashed/sparse-dotted line sample),
+    /// never the style's own name (item 1, 2026-08-09).
+    LineStyle,
+    /// An ordinary `Select` row — its own `(value, label)` options, drawn as
+    /// plain text rows.
+    Select(Vec<(String, String)>),
 }
 
 // =============================================================================

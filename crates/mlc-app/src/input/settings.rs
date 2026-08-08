@@ -14,8 +14,6 @@ use mlc_core::{
     ThemeSettingsPanel,
     UIStyle,
 };
-use mlc_app_layout::ui::modal_settings::DualSliderHandle;
-use mlc_core::drawing::TimeframeVisibilityConfig;
 use mlc_core::i18n::{SettingsKey, t_settings};
 
 impl ChartApp {
@@ -1344,20 +1342,27 @@ impl ChartApp {
             "template" => {
                 self.panel_app.primitive_settings_state.template_dropdown_open =
                     !self.panel_app.primitive_settings_state.template_dropdown_open;
+                // The Template button lives outside `handle_prim_settings_item`
+                // (it is `rest == "template"`, not `item:template`), so the
+                // split control's own close-on-unrelated-click logic there
+                // never sees this click — close it here instead, so the two
+                // dropdowns can never both be open at once.
+                self.panel_app.primitive_settings_state.open_value_dropdown = None;
             }
             "modal_bg" => {
-                // Click inside modal body — close template dropdown if open
+                // Click inside modal body — close the Template menu if open.
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
+                self.panel_app.primitive_settings_state.open_value_dropdown = None;
             }
             _ if rest.starts_with("tab:") => {
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
+                self.panel_app.primitive_settings_state.open_value_dropdown = None;
                 let tab_id = &rest["tab:".len()..];
                 let tab = match tab_id {
-                    "style"       => Some(PrimitiveSettingsTab::Style),
-                    "text"        => Some(PrimitiveSettingsTab::Text),
-                    "coordinates" => Some(PrimitiveSettingsTab::Coordinates),
-                    "levels"      => Some(PrimitiveSettingsTab::Levels),
-                    "visibility"  => Some(PrimitiveSettingsTab::Visibility),
+                    "levels"     => Some(PrimitiveSettingsTab::Levels),
+                    "appearance" => Some(PrimitiveSettingsTab::Appearance),
+                    "labels"     => Some(PrimitiveSettingsTab::Labels),
+                    "placement"  => Some(PrimitiveSettingsTab::Placement),
                     _ => None,
                 };
                 if let Some(t) = tab {
@@ -1470,8 +1475,18 @@ impl ChartApp {
                         // Same read-guard-alive-through-if-let trap as text_content above.
                         let existing = self.core.drawings().get_data(bid, prim_id);
                         if let Some(mut data) = existing {
-                            data.width = width.clamp(0.5, 20.0);
+                            let clamped = width.clamp(0.5, 20.0);
+                            data.width = clamped;
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
+                            // Global writer (item 3, 2026-08-09) — see
+                            // `sliders.rs`'s own mirror of this write for why.
+                            let mut guard = self.core.drawings_mut();
+                            if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                                mlc_app_layout::layout::modals::primitive_settings_intent::apply_global_width(
+                                    &mut configs, &self.panel_app.primitive_settings_state, clamped,
+                                );
+                                guard.set_level_configs(bid, prim_id, configs);
+                            }
                         }
                     }
                 }
@@ -1496,48 +1511,46 @@ impl ChartApp {
                 }
             }
             eprintln!("[ChartApp] prim_settings text_font_size auto-committed: {}", text);
-        } else if field.starts_with("tf_") && field.ends_with("_min") {
+        } else if field.starts_with("tf_") && (field.ends_with("_min") || field.ends_with("_max")) {
             if let Ok(val) = text.trim().parse::<u32>() {
-                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
-                    if let Some(tf_idx) = field.strip_prefix("tf_")
-                        .and_then(|s| s.strip_suffix("_min"))
-                        .and_then(|s| s.parse::<usize>().ok())
-                    {
-                        self.apply_tf_min_value(prim_id, tf_idx, val);
+                if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
+                    // Read bound to a plain `let` first — see the
+                    // `text_content` branch above's own comment on why a
+                    // `self.core.drawings()` read guard alive through an
+                    // `if let` scrutinee traps wasm32's reentrant `RwLock`.
+                    let existing = self.core.drawings().get_data(bid, prim_id);
+                    if let Some(mut data) = existing {
+                        let mut tf = data.timeframe_visibility.unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
+                        mlc_app_layout::layout::modals::primitive_settings_intent::apply_tf_bound(&mut tf, &field, val);
+                        data.timeframe_visibility = Some(tf);
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
+                        self.sync_drawing_back_to_group();
                     }
                 }
             }
-        } else if field.starts_with("tf_") && field.ends_with("_max") {
-            if let Ok(val) = text.trim().parse::<u32>() {
-                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
-                    if let Some(tf_idx) = field.strip_prefix("tf_")
-                        .and_then(|s| s.strip_suffix("_max"))
-                        .and_then(|s| s.parse::<usize>().ok())
-                    {
-                        self.apply_tf_max_value(prim_id, tf_idx, val);
+        } else if field == "levels_add_value" {
+            if let Ok(v) = text.trim().parse::<f64>() {
+                if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
+                    let mut guard = self.core.drawings_mut();
+                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                        mlc_app_layout::layout::modals::primitive_settings_intent::add_level(&mut configs, &mut self.panel_app.primitive_settings_state, v);
+                        guard.set_level_configs(bid, prim_id, configs);
                     }
                 }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
             }
-        } else if field.starts_with("level_") && field.ends_with("_value") {
-            if let Ok(val) = text.trim().parse::<f64>() {
-                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
-                    if let Some(level_idx) = field.strip_prefix("level_")
-                        .and_then(|s| s.strip_suffix("_value"))
-                        .and_then(|s| s.parse::<usize>().ok())
-                    {
-                        if let Some(bid) = active_bid_prim {
-                            let mut guard = self.core.drawings_mut();
-                            if let Some(prim) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id) {
-                                if let Some(mut configs) = prim.level_configs() {
-                                    if level_idx < configs.len() {
-                                        configs[level_idx].level = val;
-                                        guard.set_level_configs(bid, prim_id, configs);
-                                    }
-                                }
-                            }
-                        }
+        } else if let Some(key) = field.strip_prefix("level_v").and_then(|s| s.strip_suffix("_value")) {
+            if let (Ok(old_level), Ok(new_level)) = (key.parse::<f64>(), text.trim().parse::<f64>()) {
+                if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
+                    let mut guard = self.core.drawings_mut();
+                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                        mlc_app_layout::layout::modals::primitive_settings_intent::rename_level(&mut configs, &mut self.panel_app.primitive_settings_state, old_level, new_level);
+                        guard.set_level_configs(bid, prim_id, configs);
                     }
                 }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
             }
         } else if field.starts_with("coord_") && field.ends_with("_price") {
             if let Ok(price) = text.trim().parse::<f64>() {
@@ -1632,6 +1645,18 @@ impl ChartApp {
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             eprintln!("[ChartApp] prim_settings style_prop '{}' auto-committed: {}", prop_id, text);
+        } else if let Some(tmpl_id) = field.strip_prefix("template_name:") {
+            // Template menu rename-in-place commit (item 4, 2026-08-08
+            // review) — an empty name is silently rejected, same as the
+            // "Save as…" name prompt's own `if !name.is_empty()` guard.
+            let new_name = text.trim();
+            if !new_name.is_empty() {
+                self.template_actions.push(crate::TemplateAction::RenamePrimitive {
+                    id: tmpl_id.to_string(),
+                    name: new_name.to_string(),
+                });
+                eprintln!("[ChartApp] prim_settings template renamed: {} -> {}", tmpl_id, new_name);
+            }
         } else {
             eprintln!("[ChartApp] prim_settings '{}' editing auto-closed (value: {})", field, text);
         }
@@ -1659,36 +1684,70 @@ impl ChartApp {
         }
     }
 
+    /// Stamp `PrimitiveData::style_reference` for whichever primitive
+    /// `primitive_settings_state.primitive_id` names right now — the
+    /// persisted reference `show_save_as`
+    /// (`mlc_app_layout::layout::modals::primitive_settings`) resolves and
+    /// diffs the live settings against. Replaces the earlier session-only
+    /// `settings_baseline` snapshot, which a reload silently re-captured
+    /// from the already-drifted loaded state — see
+    /// `mlc_core::drawing::StyleReference`'s own doc.
+    ///
+    /// Applying a saved user TEMPLATE does not call this: `PrimitiveTemplate
+    /// ::apply_to_primitive_data` stamps its own id directly as part of
+    /// applying, so the reference can never disagree with "the template
+    /// that was actually just written." This helper is for the write a
+    /// template's own apply path cannot do for itself — a system level-set
+    /// preset (`apply_levels_intent` only ever sees `&mut Vec<FibLevelConfig>`,
+    /// never the `PrimitiveData` the reference lives on) — and for
+    /// "Save as…" itself, which mints a brand-new template id nothing else
+    /// has written yet.
+    pub(super) fn stamp_primitive_style_reference(&mut self, reference: mlc_core::drawing::StyleReference) {
+        let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return };
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
+        // The read MUST land in its own `let` statement before the write.
+        // `if let Some(mut data) = self.core.drawings().get_data(..)` reads
+        // fine and deadlocks: `drawings()` returns a facade that OWNS the
+        // manager's `RwLockReadGuard`, and edition-2021 keeps an `if let`
+        // scrutinee temporary alive for the whole body — so the
+        // `drawings_mut()` below re-acquires the same lock for writing while
+        // that read guard is still held. `std::sync::RwLock` is not
+        // re-entrant: on wasm32 there is no other thread to ever release it,
+        // so the app hangs instead of panicking (this is what broke applying
+        // a level-set preset, 2026-08-09). Same trap as
+        // `commit_prim_editing_text_inner`'s own note.
+        let data_opt = self.core.drawings().get_data(bid, prim_id);
+        if let Some(mut data) = data_opt {
+            data.style_reference = Some(reference);
+            self.core.drawings_mut().set_data(bid, prim_id, &data);
+        }
+    }
+
     /// Handle a click on a specific primitive settings item.
     fn handle_prim_settings_item(&mut self, item_id: &str, x: f64, _y: f64) {
         use mlc_core::drawing::primitives_v2::{LineStyle, TextAlign};
         use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
         let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
-        // Close template dropdown on any non-dropdown click
-        if !item_id.starts_with("template_") {
+        // Close template dropdown on any non-dropdown click. The Levels
+        // tab's level-set rows (`levels_set_option:*`) now live INSIDE this
+        // same dropdown (item 3, 2026-08-08 review — the standalone
+        // "Набор" row + its own dropdown are gone), so they must not close
+        // it either.
+        if !item_id.starts_with("template_") && !item_id.starts_with("levels_set_option:") {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
         }
 
-        // Close select-property dropdown when clicking anything unrelated to it
-        if !item_id.starts_with("style_prop_menu:")
-            && !item_id.starts_with("style_prop_option:")
-            && !item_id.starts_with("text_prop_menu:")
-            && !item_id.starts_with("text_prop_option:")
-            && !item_id.starts_with("level_prop_menu:")
-            && !item_id.starts_with("level_prop_option:")
-        {
-            self.panel_app.primitive_settings_state.open_select_dropdown = None;
-        }
-
-        // Close line-style dropdown when clicking anything unrelated to it —
-        // mirrors the select-property guard above so at most one of the two
-        // (plus the template dropdown) is ever open at once.
-        if item_id != "line_style"
-            && item_id != "line_style_menu"
-            && !item_id.starts_with("line_style_option:")
-        {
-            self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
+        // Close the split control's own dropdown on any click that is
+        // neither its chevron nor one of its own option rows (item 1,
+        // 2026-08-09 restore) — mirrors the Template-dropdown rule above.
+        // `open_value_dropdown` is a single `Option<String>`, so the
+        // toggle/option handlers below never need this branch to have
+        // spared them: a click that DOES match one of the two shapes below
+        // reaches its own `return` before this state matters again this
+        // frame, and the toggle handler overwrites the field itself anyway.
+        if !item_id.ends_with("::menu") && !item_id.contains("::opt:") {
+            self.panel_app.primitive_settings_state.open_value_dropdown = None;
         }
 
         // Get selected primitive id from settings state.
@@ -1702,6 +1761,71 @@ impl ChartApp {
 
         let screen_w = self.width as f64;
         let screen_h = self.height as f64;
+
+        // ── Split cycle+chevron control: chevron opens/closes the dropdown ──────
+        if let Some(fid) = item_id.strip_suffix("::menu") {
+            let open = &mut self.panel_app.primitive_settings_state.open_value_dropdown;
+            *open = if open.as_deref() == Some(fid) { None } else { Some(fid.to_string()) };
+            return;
+        }
+
+        // ── Split cycle+chevron control: a dropdown option was picked ───────────
+        // `fid` is the row's own field id (`"line_style"`, `"style_prop:{id}"`,
+        // `"text_prop:{id}"`), `val` the option's own value string — see
+        // `mlc_app_layout`'s `primitive_settings_vid::draw_split_value_control`
+        // for how the two are joined into one id.
+        if let Some(sep_idx) = item_id.find("::opt:") {
+            let fid = &item_id[..sep_idx];
+            let val = &item_id[sep_idx + "::opt:".len()..];
+            self.panel_app.primitive_settings_state.open_value_dropdown = None;
+
+            if fid == "line_style" {
+                let new_style = LineStyle::from_str(val);
+                let data_opt = active_bid_prim.and_then(|bid| self.core.drawings().get_data(bid, prim_id));
+                if let Some(mut data) = data_opt {
+                    data.style = new_style;
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().set_data(bid, prim_id, &data);
+                        // Global writer (item 3, 2026-08-09) — see
+                        // `primitive_settings_intent::apply_global_style`'s own doc.
+                        let mut guard = self.core.drawings_mut();
+                        if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                            mlc_app_layout::layout::modals::primitive_settings_intent::apply_global_style(
+                                &mut configs, &self.panel_app.primitive_settings_state, data.style,
+                            );
+                            guard.set_level_configs(bid, prim_id, configs);
+                        }
+                    }
+                    self.sync_drawing_back_to_group();
+                    eprintln!("[ChartApp] prim_settings line_style selected: {}", val);
+                }
+                self.snapshot_primitive_settings_to_user_manager(prim_id);
+                return;
+            }
+
+            if let Some(prop_id) = fid.strip_prefix("style_prop:") {
+                let new_val = PropertyValue::String(val.to_string());
+                if let Some(bid) = active_bid_prim {
+                    self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop_id, &new_val);
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] prim_settings style_prop '{}' selected: {}", prop_id, val);
+                return;
+            }
+
+            if let Some(prop_id) = fid.strip_prefix("text_prop:") {
+                let new_val = PropertyValue::String(val.to_string());
+                if let Some(bid) = active_bid_prim {
+                    self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
+                }
+                eprintln!("[ChartApp] prim_settings text_prop '{}' selected: {}", prop_id, val);
+                return;
+            }
+
+            eprintln!("[ChartApp] prim_settings dropdown option unhandled field: {}", fid);
+            return;
+        }
 
         // ── Color swatches ────────────────────────────────────────────────────
         if matches!(item_id, "stroke_color" | "fill_color" | "text_color") {
@@ -1726,8 +1850,6 @@ impl ChartApp {
 
         // ── Line style cycling ────────────────────────────────────────────────
         if item_id == "line_style" {
-            // Close any open dropdown first
-            self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
             let data_opt = active_bid_prim
                 .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
             if let Some(mut data) = data_opt {
@@ -1741,6 +1863,20 @@ impl ChartApp {
                 let style_str = data.style.as_str().to_string();
                 if let Some(bid) = active_bid_prim {
                     self.core.drawings_mut().set_data(bid, prim_id, &data);
+                    // Global writer (item 3, 2026-08-09): the base style
+                    // also reaches every level's own `cfg.style` directly —
+                    // `FibLevelConfig::style` is a plain always-populated
+                    // `String`, never a fallback, so this used to change
+                    // nothing any level's own render read. See
+                    // `primitive_settings_intent::apply_global_style`'s own
+                    // doc.
+                    let mut guard = self.core.drawings_mut();
+                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                        mlc_app_layout::layout::modals::primitive_settings_intent::apply_global_style(
+                            &mut configs, &self.panel_app.primitive_settings_state, data.style,
+                        );
+                        guard.set_level_configs(bid, prim_id, configs);
+                    }
                 }
                 self.sync_drawing_back_to_group();
                 eprintln!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
@@ -1749,83 +1885,67 @@ impl ChartApp {
             return;
         }
 
-        // ── Line style menu (chevron) — toggle dropdown ───────────────────────
-        if item_id == "line_style_menu" {
-            self.panel_app.primitive_settings_state.open_line_style_dropdown =
-                !self.panel_app.primitive_settings_state.open_line_style_dropdown;
-            eprintln!("[ChartApp] prim_settings line_style_menu toggled: {}", self.panel_app.primitive_settings_state.open_line_style_dropdown);
+        // ── Settings search (footer, item 8) — start inline text editing.
+        // Never committed: every tab reads this same live buffer during
+        // render to filter its own rows/groups
+        // (`primitive_settings::search_query`), so there is nothing to
+        // write back on blur.
+        if item_id == mlc_app_layout::layout::modals::primitive_settings::SEARCH_FIELD_ID {
+            self.start_prim_field_editing(item_id, "", false);
             return;
         }
 
-        // ── Line style option from dropdown ───────────────────────────────────
-        if let Some(style_name) = item_id.strip_prefix("line_style_option:") {
-            let new_style = match style_name {
-                "solid"         => Some(LineStyle::Solid),
-                "dashed"        => Some(LineStyle::Dashed),
-                "dotted"        => Some(LineStyle::Dotted),
-                "large_dashed"  => Some(LineStyle::LargeDashed),
-                "sparse_dotted" => Some(LineStyle::SparseDotted),
-                _               => None,
-            };
-            if let Some(style) = new_style {
-                let data_opt = active_bid_prim
-                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
-                if let Some(mut data) = data_opt {
-                    data.style = style;
-                    if let Some(bid) = active_bid_prim {
-                        self.core.drawings_mut().set_data(bid, prim_id, &data);
-                    }
-                    self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings line_style set to: {}", style_name);
-                }
+        // ── "Fill opacity (to next level)" — jump to the clicked position on
+        // a bare click (item 5, 2026-08-08 review). This slider is DRAG-sense
+        // like every other one in this modal, but registered with CLICK too
+        // (see `primitive_settings.rs`'s registration loop) specifically for
+        // this id, so `process_click` actually reaches this branch instead
+        // of falling through to `modal_bg`.
+        if item_id == "levels_global_opacity" {
+            let track = self.frame_result.as_ref()
+                .and_then(|r| r.primitive_settings.as_ref())
+                .and_then(|ps| ps.slider_tracks.iter().find(|t| t.field_id == "levels_global_opacity"))
+                .cloned();
+            if let Some(t) = track {
+                let value = ((x - t.track_x) / t.track_width).clamp(0.0, 1.0) * (t.max_val - t.min_val) + t.min_val;
+                self.apply_slider_value("levels_global_opacity", value);
+                eprintln!("[ChartApp] prim_settings levels_global_opacity click-applied: {value:.3}");
             }
-            self.panel_app.primitive_settings_state.open_line_style_dropdown = false;
-            self.snapshot_primitive_settings_to_user_manager(prim_id);
             return;
         }
 
-        // ── Select property menu (chevron) — toggle dropdown ─────────────────
-        for prefix in &["style_prop_menu:", "text_prop_menu:", "level_prop_menu:"] {
-            if let Some(prop_id) = item_id.strip_prefix(prefix) {
-                let kind = if prefix.starts_with("style") { "style" }
-                           else if prefix.starts_with("text") { "text" }
-                           else { "level" };
-                let key = (kind.to_string(), prop_id.to_string());
-                if self.panel_app.primitive_settings_state.open_select_dropdown.as_ref() == Some(&key) {
-                    self.panel_app.primitive_settings_state.open_select_dropdown = None;
-                } else {
-                    self.panel_app.primitive_settings_state.open_select_dropdown = Some(key);
-                }
-                eprintln!("[ChartApp] prim_settings {}{} toggled select dropdown", prefix, prop_id);
-                return;
+        // ── Levels tab: global fill toggle — mirrors the primitive's own
+        // fill master (`Primitive::fill_master`) directly. See
+        // `mlc_app_layout::layout::modals::primitive_settings_levels::
+        // draw_global_opacity_row`'s own doc for why this, not a bulk write
+        // across every level's own `fill_enabled`, is the single source of
+        // truth (2026-08-08 appearance-surface consolidation). Not routed
+        // through `primitive_settings_intent::parse_levels_click` — that
+        // module only ever mutates `level_configs()`. The WRITE below still
+        // goes through `apply_property(..., PropertyKind::Style, "fill", ..)`
+        // — every `apply_style_property` override that ever handled `"fill"`
+        // keeps handling it (that half never depended on the id being part
+        // of the DECLARED list `style_properties()` returns; only reading
+        // "what is it right now" needed `fill_master`, since a type like
+        // `FibRetracement` no longer declares `"fill"` there — its own doc
+        // in `mlc-core` explains why).
+        if item_id == "levels_global_fill_toggle" {
+            let current = active_bid_prim
+                .and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| p.fill_master())
+                        .map(|(on, _)| on)
+                })
+                .unwrap_or(false);
+            if let Some(bid) = active_bid_prim {
+                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, "fill", &PropertyValue::Boolean(!current));
             }
-        }
-
-        // ── Select property option — apply value and close dropdown ───────────
-        for prefix in &["style_prop_option:", "text_prop_option:", "level_prop_option:"] {
-            if let Some(rest) = item_id.strip_prefix(prefix) {
-                // rest = "{prop_id}:{value}"
-                if let Some(colon_pos) = rest.find(':') {
-                    let prop_id = &rest[..colon_pos];
-                    let value = &rest[colon_pos + 1..];
-                    let new_val = mlc_core::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
-                    if let Some(bid) = active_bid_prim {
-                        let kind = if prefix.starts_with("style") {
-                            mlc_core::drawing::primitives_v2::PropertyKind::Style
-                        } else if prefix.starts_with("text") {
-                            mlc_core::drawing::primitives_v2::PropertyKind::Text
-                        } else {
-                            mlc_core::drawing::primitives_v2::PropertyKind::Level
-                        };
-                        self.core.drawings_mut().apply_property(bid, prim_id, kind, prop_id, &new_val);
-                    }
-                    self.sync_drawing_back_to_group();
-                    self.autosave_snapshot();
-                    self.panel_app.primitive_settings_state.open_select_dropdown = None;
-                    eprintln!("[ChartApp] prim_settings {}{}:{} applied", prefix, prop_id, value);
-                }
-                return;
-            }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
+            eprintln!("[ChartApp] prim_settings levels_global_fill_toggle: {} -> {}", current, !current);
+            return;
         }
 
         // ── Stroke width value — start inline text editing ───────────────────
@@ -1922,196 +2042,110 @@ impl ChartApp {
             return;
         }
 
-        // ── Timeframe visibility toggle: tf_{i}_toggle ────────────────────────
-        if item_id.starts_with("tf_") && item_id.ends_with("_toggle") {
-            let data_opt = active_bid_prim
-                .and_then(|bid| self.core.drawings().get_data(bid, prim_id));
-            if let Some(mut data) = data_opt {
-                let mut tf_config = data.timeframe_visibility.clone()
-                    .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
-                if let Some(tf_idx) = item_id.strip_prefix("tf_")
-                    .and_then(|s| s.strip_suffix("_toggle"))
-                    .and_then(|s| s.parse::<usize>().ok())
-                {
-                    match tf_idx {
-                        0 => tf_config.ticks = !tf_config.ticks,
-                        1 => tf_config.seconds = if tf_config.seconds.is_some() { None } else { Some((1, 59)) },
-                        2 => tf_config.minutes = if tf_config.minutes.is_some() { None } else { Some((1, 59)) },
-                        3 => tf_config.hours = if tf_config.hours.is_some() { None } else { Some((1, 24)) },
-                        4 => tf_config.days = if tf_config.days.is_some() { None } else { Some((1, 366)) },
-                        5 => tf_config.weeks = if tf_config.weeks.is_some() { None } else { Some((1, 52)) },
-                        6 => tf_config.months = if tf_config.months.is_some() { None } else { Some((1, 12)) },
-                        _ => {}
-                    }
-                    data.timeframe_visibility = Some(tf_config);
-                    if let Some(bid) = active_bid_prim {
+        // ── Placement tab: время/индекс-бара toggle + tf_{class}_toggle /
+        // tf_{class}_{min,max} ─────────────────────────────────────────────
+        if item_id.starts_with("placement_time_mode:") || item_id.starts_with("tf_") {
+            let data_opt = active_bid_prim.and_then(|bid| self.core.drawings().get_data(bid, prim_id));
+            let mut tf = data_opt.as_ref()
+                .and_then(|d| d.timeframe_visibility.clone())
+                .unwrap_or_else(mlc_core::drawing::TimeframeVisibilityConfig::all);
+            if let Some(intent) = mlc_app_layout::layout::modals::primitive_settings_intent::parse_placement_click(item_id, &tf) {
+                use mlc_app_layout::layout::modals::primitive_settings_intent::PlacementIntent;
+                if let PlacementIntent::StartTfBoundEditing { field_id, seed } = &intent {
+                    self.start_prim_field_editing(field_id, seed, true);
+                    return;
+                }
+                let changed = mlc_app_layout::layout::modals::primitive_settings_intent::apply_placement_intent(
+                    &intent, &mut self.panel_app.primitive_settings_state, &mut tf,
+                );
+                if changed {
+                    if let (Some(bid), Some(mut data)) = (active_bid_prim, data_opt) {
+                        data.timeframe_visibility = Some(tf);
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
+                        self.sync_drawing_back_to_group();
+                    }
+                }
+                eprintln!("[ChartApp] prim_settings placement intent: {:?}", intent);
+                return;
+            }
+        }
+
+        // ── Levels tab: levels_row_select / levels_add_chip / levels_add_value
+        // / levels_color_mode:{mono,palette} / level_v{key}_{visible,fill,
+        // delete,style,value} — NOT levels_global_fill_toggle/
+        // levels_global_opacity, both handled by their own dedicated blocks
+        // above (they reach a scalar primitive field, not level_configs) ──
+        if let Some(intent) = mlc_app_layout::layout::modals::primitive_settings_intent::parse_levels_click(item_id) {
+            use mlc_app_layout::layout::modals::primitive_settings_intent::LevelsIntent;
+            match &intent {
+                LevelsIntent::StartValueEditing { seed, .. } => {
+                    self.start_prim_field_editing(item_id, seed, true);
+                }
+                LevelsIntent::StartAddEditing => {
+                    self.start_prim_field_editing(item_id, "", false);
+                }
+                _ => {
+                    if let Some(bid) = active_bid_prim {
+                        let mut guard = self.core.drawings_mut();
+                        if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                            mlc_app_layout::layout::modals::primitive_settings_intent::apply_levels_intent(
+                                &intent, &mut self.panel_app.primitive_settings_state, &mut configs,
+                            );
+                            guard.set_level_configs(bid, prim_id, configs);
+                        }
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings tf_{}_toggle toggled", tf_idx);
-                }
-            }
-            return;
-        }
-
-        // ── Timeframe min/max inputs — start inline text editing ─────────────
-        if item_id.starts_with("tf_") && (item_id.ends_with("_min") || item_id.ends_with("_max")) {
-            use mlc_core::drawing::TimeframeVisibilityConfig;
-
-            let is_min = item_id.ends_with("_min");
-            let current_val: String = if let Some(tf_idx) = item_id.strip_prefix("tf_")
-                .and_then(|s| if is_min { s.strip_suffix("_min") } else { s.strip_suffix("_max") })
-                .and_then(|s| s.parse::<usize>().ok())
-            {
-                active_bid_prim
-                    .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
-                    .map(|data| {
-                        let tf = data.timeframe_visibility.unwrap_or_else(TimeframeVisibilityConfig::all);
-                        let range = match tf_idx {
-                            1 => tf.seconds.unwrap_or((1, 59)),
-                            2 => tf.minutes.unwrap_or((1, 59)),
-                            3 => tf.hours.unwrap_or((1, 24)),
-                            4 => tf.days.unwrap_or((1, 366)),
-                            5 => tf.weeks.unwrap_or((1, 52)),
-                            6 => tf.months.unwrap_or((1, 12)),
-                            _ => (0, 0),
-                        };
-                        if is_min { range.0.to_string() } else { range.1.to_string() }
-                    })
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            self.start_prim_field_editing(item_id, &current_val, true);
-            eprintln!("[ChartApp] prim_settings {} editing started", item_id);
-            return;
-        }
-
-        // ── Timeframe slider: tf_{i}_slider — click-to-position ──────────────
-        if item_id.starts_with("tf_") && item_id.ends_with("_slider") {
-            // Click-to-position: find the track info and jump closest handle to x.
-            let track_info_opt: Option<(f64, f64, f64, f64)> = if let Some(ref result) = self.frame_result {
-                result.primitive_settings.as_ref().and_then(|ps| {
-                    ps.slider_tracks.iter().find(|t| t.field_id == item_id)
-                        .map(|t| (t.track_x, t.track_width, t.min_val, t.max_val))
-                })
-            } else {
-                None
-            };
-
-            if let Some((track_x, track_width, min_val, max_val)) = track_info_opt {
-                let t = ((x - track_x) / track_width).clamp(0.0, 1.0);
-                let clicked_val = min_val + t * (max_val - min_val);
-
-                // Determine which handle is closest.
-                let handle_and_range: Option<(DualSliderHandle, u32, u32)> = if let Some(tf_idx) = item_id
-                    .strip_prefix("tf_").and_then(|s| s.strip_suffix("_slider"))
-                    .and_then(|s| s.parse::<usize>().ok())
-                {
-                    active_bid_prim
-                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
-                        .and_then(|data| {
-                            let tf_config = data.timeframe_visibility
-                                .unwrap_or_else(TimeframeVisibilityConfig::all);
-                            let (cur_min, cur_max): (u32, u32) = match tf_idx {
-                                1 => tf_config.seconds.unwrap_or((1, 59)),
-                                2 => tf_config.minutes.unwrap_or((1, 59)),
-                                3 => tf_config.hours.unwrap_or((1, 24)),
-                                4 => tf_config.days.unwrap_or((1, 366)),
-                                5 => tf_config.weeks.unwrap_or((1, 52)),
-                                6 => tf_config.months.unwrap_or((1, 12)),
-                                _ => return None,
-                            };
-                            let min_pos = (cur_min as f64 - min_val) / (max_val - min_val);
-                            let max_pos = (cur_max as f64 - min_val) / (max_val - min_val);
-                            let handle = if (t - min_pos).abs() <= (t - max_pos).abs() {
-                                DualSliderHandle::Min
-                            } else {
-                                DualSliderHandle::Max
-                            };
-                            Some((handle, cur_min, cur_max))
-                        })
-                } else {
-                    None
-                };
-
-                if let Some((handle, _cur_min, _cur_max)) = handle_and_range {
-                    self.apply_dual_slider_value(item_id, clicked_val.round() as u32, handle);
-                } else {
-                    // Fallback: use position to pick handle and apply
-                    let handle = if t <= 0.5 { DualSliderHandle::Min } else { DualSliderHandle::Max };
-                    self.apply_dual_slider_value(item_id, clicked_val.round() as u32, handle);
-                }
-            }
-            return;
-        }
-
-        // ── Level visibility: level_{i}_visible ───────────────────────────────
-        if item_id.starts_with("level_") && item_id.ends_with("_visible") && !item_id.starts_with("level_prop:") {
-            let parts: Vec<&str> = item_id.split('_').collect();
-            if parts.len() >= 3 {
-                if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    if let Some(bid) = active_bid_prim {
-                        let mut guard = self.core.drawings_mut();
-                        if let Some(mut configs) = guard.primitives(bid).iter()
-                            .find(|p| p.data().id == prim_id)
-                            .and_then(|p| p.level_configs())
-                        {
-                            if level_idx < configs.len() {
-                                configs[level_idx].visible = !configs[level_idx].visible;
-                                let new_vis = configs[level_idx].visible;
-                                guard.set_level_configs(bid, prim_id, configs);
-                                eprintln!("[ChartApp] prim_settings level_{}_visible = {}", level_idx, new_vis);
-                            }
-                        }
+                    self.autosave_snapshot();
+                    // Picking a level-set preset re-establishes the
+                    // "Save as…" reference (`ApplyPreset` is the ONE
+                    // `LevelsIntent` variant that counts as applying, not
+                    // editing — see `stamp_primitive_style_reference`'s own
+                    // doc). Every other arm above is a plain edit and must
+                    // stay counted as drift against whatever reference is
+                    // already there. `apply_levels_intent` only ever sees
+                    // `&mut Vec<FibLevelConfig>`, never the `PrimitiveData`
+                    // the reference lives on, so this write happens here,
+                    // host-side, same as "Save as…" itself.
+                    if let LevelsIntent::ApplyPreset(set) = &intent {
+                        self.stamp_primitive_style_reference(
+                            mlc_core::drawing::StyleReference::LevelSet(set.id().to_string()),
+                        );
                     }
                 }
             }
+            eprintln!("[ChartApp] prim_settings levels intent: {:?}", intent);
             return;
         }
 
-        // ── Level fill toggle: level_{i}_fill ─────────────────────────────────
-        if item_id.starts_with("level_") && item_id.ends_with("_fill") && !item_id.starts_with("level_prop:") {
-            let parts: Vec<&str> = item_id.split('_').collect();
-            if parts.len() >= 3 {
-                if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    if let Some(bid) = active_bid_prim {
-                        let mut guard = self.core.drawings_mut();
-                        if let Some(mut configs) = guard.primitives(bid).iter()
-                            .find(|p| p.data().id == prim_id)
-                            .and_then(|p| p.level_configs())
-                        {
-                            if level_idx < configs.len() {
-                                configs[level_idx].fill_enabled = !configs[level_idx].fill_enabled;
-                                let new_fill = configs[level_idx].fill_enabled;
-                                guard.set_level_configs(bid, prim_id, configs);
-                                eprintln!("[ChartApp] prim_settings level_{}_fill = {}", level_idx, new_fill);
-                            }
-                        }
-                    }
-                }
-            }
-            return;
-        }
-
-        // ── Level color: level_{i}_color ──────────────────────────────────────
-        if item_id.starts_with("level_") && item_id.ends_with("_color") && !item_id.starts_with("level_prop:") {
-            let parts: Vec<&str> = item_id.split('_').collect();
-            if parts.len() >= 3 {
-                if let Ok(level_idx) = parts[1].parse::<usize>() {
+        // ── Level colour swatch: level_v{key}_{color,fill_color} — opens
+        // the colour picker through the same generic path baseline's own
+        // stroke_color/fill_color swatches use. `level_v{key}_fill` (bare)
+        // is NOT handled here any more: it is the ladder row's own on/off
+        // toggle now, parsed by `parse_levels_click` above (checked first,
+        // `return`s before this block runs) — see
+        // `mlc_app_layout::layout::modals::primitive_settings_levels`'s own
+        // module doc for the 2026-08-08 follow-up that inverted this.
+        if let Some(rest) = item_id.strip_prefix("level_v") {
+            // `_fill_color`/`_fill` checked BEFORE the plain `_color`
+            // suffix: `"..._fill_color".strip_suffix("_color")` also
+            // succeeds (it just leaves an invalid `"..._fill"` key), so the
+            // longer, fill-specific suffixes must be tried first.
+            if let Some(key) = rest.strip_suffix("_fill_color").or_else(|| rest.strip_suffix("_fill")).or_else(|| rest.strip_suffix("_color")) {
+                if let Ok(level) = key.parse::<f64>() {
+                    let is_fill = rest.ends_with("_fill_color") || rest.ends_with("_fill");
                     let current_color: Option<String> = active_bid_prim
                         .and_then(|bid| {
                             let guard = self.core.drawings();
                             guard.primitives(bid).iter()
                                 .find(|p| p.data().id == prim_id)
                                 .and_then(|p| {
-                                    if let Some(configs) = p.level_configs() {
-                                        if level_idx < configs.len() {
-                                            return configs[level_idx].color.clone()
-                                                .or_else(|| Some(p.data().color.stroke.clone()));
-                                        }
+                                    let configs = p.level_configs()?;
+                                    let cfg = configs.iter().find(|c| (c.level - level).abs() < 1e-9)?;
+                                    if is_fill {
+                                        cfg.fill_color.clone().or_else(|| cfg.color.clone()).or_else(|| Some(p.data().color.stroke.clone()))
+                                    } else {
+                                        cfg.color.clone().or_else(|| Some(p.data().color.stroke.clone()))
                                     }
-                                    None
                                 })
                         });
                     let widget_id_str = format!("prim_settings:item:{}", item_id);
@@ -2120,41 +2154,10 @@ impl ChartApp {
                     self.panel_app.primitive_settings_state.open_color_picker_smart(
                         item_id, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] prim_settings opened color picker for level_{}_color", level_idx);
+                    eprintln!("[ChartApp] prim_settings opened color picker for {}", item_id);
+                    return;
                 }
             }
-            return;
-        }
-
-        // ── Level value: level_{i}_value ─ start inline text editing ─────────
-        if item_id.starts_with("level_") && item_id.ends_with("_value") && !item_id.starts_with("level_prop:") {
-            let parts: Vec<&str> = item_id.split('_').collect();
-            let current_val: String = if parts.len() >= 3 {
-                if let Ok(level_idx) = parts[1].parse::<usize>() {
-                    active_bid_prim
-                        .and_then(|bid| {
-                            let guard = self.core.drawings();
-                            guard.primitives(bid).iter()
-                                .find(|p| p.data().id == prim_id)
-                                .and_then(|p| {
-                                    if let Some(configs) = p.level_configs() {
-                                        if level_idx < configs.len() {
-                                            return Some(format!("{:.4}", configs[level_idx].level));
-                                        }
-                                    }
-                                    None
-                                })
-                        })
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-            self.start_prim_field_editing(item_id, &current_val, true);
-            eprintln!("[ChartApp] prim_settings {} editing started", item_id);
-            return;
         }
 
         // ── Coordinate editing: coord_{idx}_{price|bar} ── start inline editing
@@ -2262,63 +2265,6 @@ impl ChartApp {
             return;
         }
 
-        // ── Level properties: level_prop:{id} ────────────────────────────────
-        if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
-            let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
-                .and_then(|bid| {
-                    let guard = self.core.drawings();
-                    guard.primitives(bid).iter()
-                        .find(|p| p.data().id == prim_id)
-                        .and_then(|p| {
-                            let level_props = p.level_properties();
-                            level_props.iter().find(|prop| prop.id == prop_id)
-                                .map(|prop| (prop.prop_type.clone(), prop.value.clone()))
-                        })
-                });
-
-            if let Some((prop_type, prop_value)) = prop_info {
-                match prop_type {
-                    PropertyType::Boolean => {
-                        let current = prop_value.as_bool().unwrap_or(false);
-                        let new_val = PropertyValue::Boolean(!current);
-                        if let Some(bid) = active_bid_prim {
-                            self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
-                        }
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
-                    }
-                    PropertyType::Select { ref options } => {
-                        let current = prop_value.as_string().unwrap_or_default().to_string();
-                        let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
-                        let next_idx = (current_idx + 1) % options.len().max(1);
-                        if let Some(next_opt) = options.get(next_idx) {
-                            let new_val = PropertyValue::String(next_opt.value.clone());
-                            let next_value = next_opt.value.clone();
-                            if let Some(bid) = active_bid_prim {
-                                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
-                            }
-                            eprintln!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
-                        }
-                    }
-                    PropertyType::Color => {
-                        let current_color = prop_value.as_color().unwrap_or("#ffffff");
-                        let widget_id_str = format!("prim_settings:item:{}", item_id);
-                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
-                        let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
-                        self.panel_app.primitive_settings_state.open_color_picker_smart(
-                            item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
-                        );
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' color picker opened", prop_id);
-                    }
-                    _ => {
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' unsupported type", prop_id);
-                    }
-                }
-            } else {
-                eprintln!("[ChartApp] prim_settings level_prop '{}' not found", prop_id);
-            }
-            return;
-        }
-
         // ── Text properties: text_prop:{id} ───────────────────────────────────
         if let Some(prop_id) = item_id.strip_prefix("text_prop:") {
             let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
@@ -2391,7 +2337,7 @@ impl ChartApp {
             return;
         }
 
-        // ── Template delete button ────────────────────────────────────────────
+        // ── Template delete button (trash) ─────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_delete:") {
             eprintln!("[ChartApp] prim_settings deleted primitive template: {}", tmpl_id);
             if self.panel_app.primitive_settings_state.applied_template_id.as_deref() == Some(tmpl_id) {
@@ -2401,25 +2347,43 @@ impl ChartApp {
             return;
         }
 
+        // ── Template rename button (pencil) — start in-place editing, in the
+        // row, without leaving the menu (item 4, 2026-08-08 review). Commit
+        // happens through the same generic path every other sub-field in
+        // this modal already uses (`commit_prim_editing_text_inner`'s own
+        // `template_name:` branch below).
+        if let Some(tmpl_id) = item_id.strip_prefix("template_rename:") {
+            let current_name = self.core.templates().get_primitive_template(tmpl_id)
+                .map(|t| t.name.clone())
+                .unwrap_or_default();
+            let field_id = format!("template_name:{}", tmpl_id);
+            self.start_prim_field_editing(&field_id, &current_name, true);
+            eprintln!("[ChartApp] prim_settings template rename started: {}", tmpl_id);
+            return;
+        }
+
         // ── Template option selected ──────────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_option:") {
             let tmpl_opt = self.core.templates().get_primitive_template(tmpl_id).cloned();
             if let Some(tmpl) = tmpl_opt {
                 self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
-                // Apply the template to the primitive
+                // Apply the template to the primitive — flat style fields,
+                // level ladder (if the template carries one), and typed
+                // style/text properties, all in one facade call reaching the
+                // primitive directly (no PrimitiveData round-trip needed).
                 if let Some(bid) = active_bid_prim {
-                    // Same read-guard-alive-through-if-let trap as
-                    // commit_prim_editing_text_inner's text_content branch above.
-                    let existing = self.core.drawings().get_data(bid, prim_id);
-                    if let Some(mut data) = existing {
-                        tmpl.apply_to_primitive_data(&mut data);
-                        self.core.drawings_mut().set_data(bid, prim_id, &data);
-                    }
+                    self.core.drawings_mut().apply_primitive_template(bid, prim_id, &tmpl);
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
+                // No separate "Save as…" re-stamp needed here — applying a
+                // template writes `data.style_reference =
+                // StyleReference::Template(tmpl.id)` itself, as part of
+                // `apply_primitive_template` -> `PrimitiveTemplate::
+                // apply_to_primitive_data` above, so the reference can
+                // never disagree with what was actually just applied.
                 eprintln!("[ChartApp] prim_settings template applied: {}", tmpl.name);
             }
             return;
@@ -2444,29 +2408,13 @@ impl ChartApp {
             return;
         }
 
-        // ── Template "По умолчанию" (from dropdown) ───────────────────────────
-        if item_id == "template_default" {
-            self.panel_app.primitive_settings_state.template_dropdown_open = false;
-            self.panel_app.primitive_settings_state.applied_template_id = None;
-            // Reset primitive to factory defaults
-            if let Some(bid) = active_bid_prim {
-                // Same read-guard-alive-through-if-let trap as
-                // commit_prim_editing_text_inner's text_content branch above.
-                let existing = self.core.drawings().get_data(bid, prim_id);
-                if let Some(data) = existing {
-                    let type_id = data.type_id.clone();
-                    let default_tmpl = mlc_core::templates::PrimitiveTemplate::new_with_defaults(&type_id, "__default__");
-                    let mut data_copy = data;
-                    default_tmpl.apply_to_primitive_data(&mut data_copy);
-                    self.core.drawings_mut().set_data(bid, prim_id, &data_copy);
-                }
-            }
-            self.sync_drawing_back_to_group();
-            self.autosave_snapshot();
-            self.snapshot_primitive_settings_to_user_manager(prim_id);
-            eprintln!("[ChartApp] prim_settings template reset to defaults");
-            return;
-        }
+        // "Apply default" (item 3, 2026-08-08 review) is gone from this
+        // modal's own Template menu — superseded by the system entries now
+        // always present in the very same merged list
+        // (`mlc_app_layout::layout::modals::primitive_settings`'s own
+        // `merged_template_list`). `template_default` is still real for
+        // chart settings and indicator settings, which keep their own
+        // separate menus and did not change.
 
         eprintln!("[ChartApp] prim_settings item not handled: {}", item_id);
     }
@@ -2476,10 +2424,16 @@ impl ChartApp {
     // =========================================================================
 
     /// Handle clicks in the template name modal for primitive settings ("prim_tmpl:*").
-    pub(crate) fn handle_prim_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_prim_tmpl_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
-            "modal_bg" | "input" => {
-                // No-op — click inside the modal is absorbed.
+            "modal_bg" => {
+                // No-op — click inside the modal but outside the input is absorbed.
+            }
+            "input" => {
+                // Click-to-cursor — focus the field and place the caret at the
+                // click position, mirroring every other text input in this
+                // codebase (e.g. the chart-browser search field).
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
             }
             "close" => {
                 self.panel_app.primitive_settings_state.save_template_mode = false;
@@ -2500,11 +2454,30 @@ impl ChartApp {
                 };
                 let active_bid_tmpl = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
                 if !name.is_empty() {
-                    if let Some(data) = active_bid_tmpl
-                        .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
-                    {
-                        let tmpl = mlc_core::templates::PrimitiveTemplate::from_primitive_data(&data, &name);
+                    // Reads the live primitive (not just a `PrimitiveData`
+                    // snapshot) so the template also captures the level
+                    // ladder and typed style/text properties, not only the
+                    // flat fields.
+                    let tmpl = active_bid_tmpl.and_then(|bid| {
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter()
+                            .find(|p| p.data().id == prim_id)
+                            .map(|p| mlc_core::templates::PrimitiveTemplate::from_primitive(p.as_ref(), &name))
+                    });
+                    if let Some(tmpl) = tmpl {
                         eprintln!("[ChartApp] prim_tmpl saved: {}", name);
+                        // Mark the freshly-saved template as the applied one
+                        // (item 5, 2026-08-08 review) AND re-establish the
+                        // "Save as…" reference from it: the current settings
+                        // ARE what it stores the instant it is created (it
+                        // was captured from THIS primitive above), so both
+                        // must read as satisfied — not still dirty against
+                        // whatever was applied/opened before — the next
+                        // time the Template menu opens.
+                        self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
+                        self.stamp_primitive_style_reference(
+                            mlc_core::drawing::StyleReference::Template(tmpl.id.clone()),
+                        );
                         self.template_actions.push(crate::TemplateAction::AddPrimitive(tmpl));
                     }
                 }
@@ -2518,9 +2491,13 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for indicator settings ("ind_tmpl:*").
-    pub(crate) fn handle_ind_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_ind_tmpl_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
-            "modal_bg" | "input" => {}
+            "modal_bg" => {}
+            "input" => {
+                // Click-to-cursor — see `handle_prim_tmpl_modal_click`'s "input" arm.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+            }
             "close" => {
                 self.panel_app.indicator_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
@@ -2565,9 +2542,13 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for compare settings ("cmp_tmpl:*").
-    pub(crate) fn handle_cmp_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_cmp_tmpl_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
-            "modal_bg" | "input" => {}
+            "modal_bg" => {}
+            "input" => {
+                // Click-to-cursor — see `handle_prim_tmpl_modal_click`'s "input" arm.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+            }
             "close" => {
                 self.panel_app.compare_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
@@ -2597,10 +2578,14 @@ impl ChartApp {
     }
 
     /// Handle clicks in the template name modal for chart settings ("chart_tmpl:*").
-    pub(crate) fn handle_chart_tmpl_modal_click(&mut self, rest: &str) {
+    pub(crate) fn handle_chart_tmpl_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
-            "modal_bg" | "input" => {
-                // No-op — click inside the modal is absorbed.
+            "modal_bg" => {
+                // No-op — click inside the modal but outside the input is absorbed.
+            }
+            "input" => {
+                // Click-to-cursor — see `handle_prim_tmpl_modal_click`'s "input" arm.
+                self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
             }
             "close" => {
                 self.panel_app.chart_settings_state.save_template_mode = false;

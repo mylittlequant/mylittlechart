@@ -1,0 +1,224 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fib Retracement — полная модалка</title>
+<style>
+  :root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+  *{box-sizing:border-box}
+  body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:24px}
+  h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 4px;letter-spacing:.05em;text-transform:uppercase}
+  .sub{color:var(--mut);font-size:12px;margin:0 0 20px}
+  .rail{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .col{width:404px}
+  .cap{font-size:12px;color:var(--mut);margin-bottom:7px}
+  .cap b{color:var(--tx);font-size:12.5px}
+
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .mh{padding:11px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+  .mh span{color:var(--mut);font-weight:400}
+  .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px}
+  .tabs span{padding:7px 12px;font-size:11.5px;color:var(--mut)}
+  .tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+  .body{padding:11px 13px}
+  .foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line);gap:8px}
+  .btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 12px;font-size:11.5px;white-space:nowrap}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+  .row .lab{color:var(--tx);font-size:12px}
+  .sw{width:40px;height:16px;border-radius:3px}
+  .sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:80px}
+  .sl b{position:absolute;top:0;bottom:0;background:var(--acc);border-radius:2px}
+  .sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+  .num{width:52px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center;color:var(--tx)}
+  .sel{width:132px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+  .chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative;flex:0 0 auto}
+  .chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+  .chk.off{background:transparent;border:1px solid var(--mut)}.chk.off::after{content:""}
+
+  .grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+  .grp>h5{margin:0;padding:6px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+  .grp>h5 em{font-style:normal;color:#5d626e;font-size:10px;text-transform:none;letter-spacing:0}
+  .grp>div{padding:5px 9px 8px}
+  .inline{display:flex;gap:6px;flex-wrap:wrap;padding:3px 0}
+  .pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+  .pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .search{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 9px;font-size:11.5px;color:#5d626e;margin-bottom:9px}
+  .align{display:grid;grid-template-columns:repeat(3,19px);gap:3px}
+  .align u{text-decoration:none;height:19px;border:1px solid var(--line);border-radius:3px}
+  .align u.on{background:var(--acc);border-color:var(--acc)}
+
+  .ramps{display:flex;gap:6px;margin-bottom:8px}
+  .ramp{flex:1;border:1px solid var(--line);border-radius:4px;padding:4px}
+  .ramp.on{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .ramp .bars{display:flex;height:18px;border-radius:2px;overflow:hidden}
+  .ramp .bars s{flex:1;text-decoration:none}
+  .ramp span{display:block;text-align:center;font-size:9.5px;color:var(--mut);margin-top:3px}
+
+  .lad{border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .lrow{display:grid;grid-template-columns:16px 46px 1fr 34px 14px;gap:7px;align-items:center;padding:5px 8px}
+  .lrow+.lrow,.insp+.lrow{border-top:1px solid rgba(255,255,255,.05)}
+  .lrow.off{opacity:.4}
+  .lrow.sel{background:rgba(41,98,255,.13)}
+  .lbar{height:13px;border-radius:2px;position:relative;overflow:hidden}
+  .lbar i{position:absolute;left:0;right:0;top:5px;height:2px}
+  .chip{width:13px;height:13px;border-radius:3px}
+  .chips{display:flex;gap:4px}
+  .x{color:#4a4f5a;font-size:13px;text-align:center}
+  .dot{width:5px;height:5px;border-radius:50%;background:#e0a458;position:absolute;top:-2px;right:-2px}
+  .insp{background:var(--panel2);padding:8px 10px;display:grid;grid-template-columns:auto 1fr;gap:6px 9px;align-items:center;font-size:11.5px}
+  .insp .lab{color:var(--mut)}
+  .seg{display:flex;gap:3px}
+  .seg u{text-decoration:none;padding:2px 8px;border:1px solid var(--line);border-radius:3px;font-size:11px;color:var(--mut)}
+  .seg u.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .add{display:flex;align-items:center;gap:7px;padding:6px 8px;border-top:1px solid var(--line);color:var(--mut);font-size:11.5px}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{text-align:left;color:var(--mut);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:3px 4px;border-bottom:1px solid var(--line)}
+  td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
+  td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;color:var(--tx);font-size:11.5px}
+  .prop{width:404px;font-size:11.5px;color:var(--mut);line-height:1.6}
+  .prop h3{color:var(--tx);font-size:12.5px;margin:0 0 8px;border-left:3px solid var(--acc);padding-left:8px}
+  .prop h4{color:var(--tx);font-size:12px;margin:16px 0 5px}
+  .prop b{color:var(--tx)}
+  .prop em{color:#c9a227;font-style:normal}
+</style>
+
+<h1>Fib Retracement — полная модалка, три вкладки</h1>
+<p class="sub">Вид · Уровни · Размещение. Показаны все три состояния разом, чтобы не кликать. Ширина 404 px.</p>
+
+<div class="rail">
+  <!-- ВИД -->
+  <div class="col">
+    <div class="cap"><b>Вид</b> — линия, заливка, подписи (бывшие Style + Text)</div>
+    <div class="modal">
+      <div class="mh">Fib Retracement <span>изменён</span></div>
+      <div class="tabs"><span class="on">Вид</span><span>Уровни</span><span>Размещение</span></div>
+      <div class="body">
+        <input class="search" value="поиск по настройкам…">
+        <div class="grp"><h5>Линия</h5><div id="g-line"></div></div>
+        <div class="grp"><h5>Заливка</h5><div id="g-fill"></div></div>
+        <div class="grp"><h5>Подписи <em>что показывать и чем</em></h5><div id="g-label"></div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <!-- УРОВНИ -->
+  <div class="col">
+    <div class="cap"><b>Уровни</b> — набор, палитра, лестница с инспектором</div>
+    <div class="modal">
+      <div class="mh">Fib Retracement <span>изменён</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Уровни</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="row" style="padding-bottom:8px"><span class="lab">Набор</span><div class="sel"><span>Стандартный</span><span style="color:var(--mut)">▾</span></div><span class="btn" style="padding:3px 8px">вернуть</span></div>
+        <div class="ramps" id="ramps"></div>
+        <div class="row" style="padding:2px 0 9px"><span class="lab" style="white-space:nowrap">Заливка между</span><div class="sl"><b style="width:14%"></b><i style="left:14%"></i></div><span style="color:var(--mut);font-size:11.5px;width:34px;text-align:right">14 %</span></div>
+        <div class="lad" id="lad"></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <!-- РАЗМЕЩЕНИЕ -->
+  <div class="col">
+    <div class="cap"><b>Размещение</b> — точки и таймфреймы (бывшие Coordinates + Visibility)</div>
+    <div class="modal">
+      <div class="mh">Fib Retracement <span>изменён</span></div>
+      <div class="tabs"><span>Вид</span><span>Уровни</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Точки <em>2</em></h5><div>
+          <table><thead><tr><th>Точка</th><th>Цена</th><th>Время</th></tr></thead><tbody id="coord"></tbody></table>
+          <div class="inline" style="margin-top:6px"><span class="pill on">время</span><span class="pill">индекс бара</span></div>
+        </div></div>
+        <div class="grp"><h5>Виден на таймфреймах</h5><div>
+          <div class="inline" id="vis"></div>
+          <div id="visr" style="margin-top:6px"></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <!-- ОТВЕТЫ -->
+  <div class="prop">
+    <h3>Два твоих вопроса</h3>
+
+    <h4>1. Уровни: спавн своих против предустановленных</h4>
+    Сегодня список — это <b>каталог из тридцати значений с галками</b>, где включены семь. Своё значение ввести нельзя, лишнее убрать нельзя, и двадцать три мёртвые строки занимают вкладку.
+    <br><br>
+    Предлагаю развернуть смысл: <b>список — это то, что реально включено</b>, а не каталог. Строк ровно столько, сколько уровней у объекта. Значение правится двойным кликом, как ты просил. Строка удаляется крестиком справа. Внизу «<b>+ добавить уровень</b>» — поле ввода плюс чипы частых значений рядом, чтобы каталог не потерялся, а перестал быть единственным способом.
+    <br><br>
+    Сверху <b>«Набор»</b>: Стандартный / Расширенный / Только ключевые / Свой. Выбор набора заменяет список целиком. Как только тронул что-то руками, набор становится «Свой», а кнопка «вернуть» рядом возвращает исходный. Это и есть твои «динамические линии по количеству» плюс «вернуть дефолтные».
+    <br><br>
+    <em>Набор и палитра — разные оси и обе живут наверху:</em> набор отвечает, какие уровни существуют, палитра — какими они цветами. Поэтому смена палитры не трогает состав, а смена набора не сбрасывает ручные цвета тех строк, что остались.
+
+    <h4>2. Многоточечные примитивы</h4>
+    Восемь точек Эллиотта дают длинную таблицу, и таймфреймы уезжают под скролл. Строить сейчас не буду, но механизм назову, потому что он <b>один и тот же для обеих вкладок</b>:
+    <br><br>
+    <b>Группы сворачиваются и помнят состояние</b>, а внутри группы таблица получает свой потолок высоты с собственной прокруткой. Тогда восемь точек не выталкивают таймфреймы, а тридцать уровней не выталкивают набор и палитру. Одно решение закрывает и «Размещение» с восемью точками, и «Уровни» с длинным списком.
+    <br><br>
+    Что <b>не</b> предлагаю и почему: прятать часть точек за «показать все» — потому что тогда координаты нельзя проверить одним взглядом, а это единственное, ради чего в эту вкладку заходят.
+  </div>
+</div>
+
+<script>
+const row=(l,c)=>`<div class="row"><span class="lab">${l}</span>${c}</div>`;
+const chk=(on)=>`<div class="chk${on?'':' off'}"></div>`;
+const sl=(p)=>`<div class="sl"><b style="width:${p}%"></b><i style="left:${p}%"></i></div>`;
+const sel=(v)=>`<div class="sel"><span>${v}</span><span style="color:var(--mut)">▾</span></div>`;
+
+const $=(id)=>document.getElementById(id);
+$('g-line').innerHTML = row('Цвет','<div class="sw" style="background:#2196f3"></div>')+
+  row('Толщина', sl(8)+'<input class="num" value="1.00">')+
+  row('Стиль', sel('—— Сплошная'))+
+  row('Продлить', '<div class="seg"><u>влево</u><u class="on">вправо</u></div>')+
+  row('Линия тренда', chk(1));
+$('g-fill').innerHTML = row('Заливка',chk(1))+row('Прозрачность', sl(10)+'<span style="color:var(--mut);font-size:11.5px;width:34px;text-align:right">10 %</span>');
+$('g-label').innerHTML = '<div class="inline"><span class="pill on">цена</span><span class="pill on">уровень</span><span class="pill on">процент</span></div>'+
+  row('Положение', sel('Слева'))+
+  row('Кегль', sl(20)+'<span style="color:var(--mut);font-size:11.5px;width:34px;text-align:right">12</span>')+
+  row('Свой текст','<input class="num" style="width:132px" value="">')+
+  row('Начертание','<div class="seg"><u>Ж</u><u>К</u></div>')+
+  row('Выравнивание','<div class="align">'+[...Array(9)].map((_,i)=>`<u class="${i===4?'on':''}"></u>`).join('')+'</div>');
+
+const ramps=[['Классика',['#f23645','#f5a623','#e3c800','#4caf50','#26a69a']],
+             ['Тепло',['#7f1d1d','#c2410c','#f59e0b','#fbbf24','#fde68a']],
+             ['Холод',['#1e3a8a','#2563eb','#0ea5e9','#22d3ee','#a5f3fc']],
+             ['Моно',['#3a3f4b','#565c69','#787b86','#9aa0ab','#c9ced8']]];
+document.getElementById('ramps').innerHTML = ramps.map(([n,c],i)=>
+  `<div class="ramp ${i===0?'on':''}"><div class="bars">${c.map(x=>`<s style="background:${x}"></s>`).join('')}</div><span>${n}</span></div>`).join('');
+
+const L=[['0.000','#f23645',1,0],['0.236','#ff7a45',1,0],['0.382','#f5a623',1,1],
+         ['0.500','#e3c800',1,0],['0.618','#a8d900',1,0],['0.786','#4caf50',1,0],['1.000','#26a69a',1,0]];
+document.getElementById('lad').innerHTML = L.map(([v,c,on,over],i)=>{
+  const nxt=L[i+1];
+  const band = nxt?`background:linear-gradient(${c}2e,${nxt[1]}2e)`:'';
+  const sel = i===4;
+  return `<div class="lrow ${on?'':'off'} ${sel?'sel':''}">
+    ${chk(on)}<input class="num" value="${v}" style="width:46px">
+    <div class="lbar" style="${band}"><i style="background:${c}"></i></div>
+    <div class="chips" style="position:relative"><div class="chip" style="background:${c}"></div><div class="chip" style="background:${c};opacity:.3"></div>${over?'<div class="dot"></div>':''}</div>
+    <div class="x">×</div></div>`+
+  (sel?`<div class="insp">
+    <span class="lab">Ширина</span><div class="sl"><b style="width:26%"></b><i style="left:26%"></i></div>
+    <span class="lab">Стиль</span><div class="seg"><u class="on">──</u><u>- -</u><u>· ·</u></div>
+    <span class="lab">Заливка</span><div style="display:flex;gap:6px;align-items:center">${chk(1)}<div class="chip" style="background:${c};opacity:.35"></div><span style="color:#5d626e">до 0.786</span></div>
+    <span class="lab">Прозрачность</span><div class="sl"><b style="width:14%"></b><i style="left:14%"></i></div>
+  </div>`:'');
+}).join('') + `<div class="add"><span style="color:var(--acc)">+</span> добавить уровень
+  <input class="num" style="width:52px" value="1.272">
+  <span class="pill">1.618</span><span class="pill">2.618</span></div>`;
+
+const pts=[['Начало','63 877.84','06.08 07:00'],['Конец','64 940.67','07.08 15:00']];
+document.getElementById('coord').innerHTML = pts.map(([n,p,t])=>
+  `<tr><td style="color:var(--mut)">${n}</td><td><input value="${p}"></td><td><input value="${t}"></td></tr>`).join('');
+
+const tfs=[['Секунды',0],['Минуты',1],['Часы',1],['Дни',1],['Недели',0],['Месяцы',0],['Диапазоны',0]];
+document.getElementById('vis').innerHTML = tfs.map(([l,on])=>`<span class="pill${on?' on':''}">${l}</span>`).join('');
+const rg={'Минуты':['1 — 45',8,46],'Часы':['1 — 12',4,30],'Дни':['1 — 7',2,18]};
+document.getElementById('visr').innerHTML = tfs.filter(([,o])=>o).map(([l])=>{
+  const [t,a,b]=rg[l]||['весь класс',0,100];
+  return `<div class="row" style="padding:2px 0"><span class="lab" style="width:56px;font-size:11.5px">${l}</span>
+    <div class="sl" style="margin:0 6px"><b style="width:${b-a}%;margin-left:${a}%"></b><i style="left:${a}%"></i><i style="left:${b}%"></i></div>
+    <span style="color:var(--mut);font-size:11px;width:48px;text-align:right">${t}</span></div>`;
+}).join('');
+</script>

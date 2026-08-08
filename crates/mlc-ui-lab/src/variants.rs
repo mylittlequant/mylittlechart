@@ -1,12 +1,14 @@
 //! Registry of primitive-settings modal design variants.
 //!
-//! A "variant" is a single function matching [`RenderFn`] — the real
-//! `render_primitive_settings_modal` signature plus one trailing parameter,
-//! `&mut DesignUiState`, for the lab-only per-sector UI state the approved
-//! design and the templates panel need (which of their own tabs is open,
-//! набор/palette/inspector selection, ...) and that has no home on
-//! `PrimitiveSettingsState` itself (out of this crate's scope). Baseline
-//! never reads it.
+//! A "variant" is a single function matching [`RenderFn`] — exactly the
+//! real `render_primitive_settings_modal` signature. Before the 2026-08-08
+//! port this carried one extra trailing parameter, `&mut DesignUiState`,
+//! for the lab-only per-sector UI state the approved design needed and
+//! that had no home on `PrimitiveSettingsState` — that state is folded
+//! into `PrimitiveSettingsState` itself now (the app owns it, it is the
+//! real modal's state), so every variant here is a direct, unmodified
+//! `render_primitive_settings_modal` call — `approved` included, see
+//! `crate::approved_design`'s own module doc.
 //!
 //! Two-sector layout (owner direction, 2026-08-07, after live review of the
 //! four-sector Levels-tab comparison): `baseline` next to the `approved`
@@ -16,6 +18,14 @@
 //! nothing in the unused cell is simpler and safer than reshaping the
 //! grid). `crate::lib`'s sector loop draws all four every frame — there is
 //! no "active variant" to switch between.
+//!
+//! Since the hard-cutover port, `baseline` and `approved` call the exact
+//! SAME function and so render identically — the earlier five-tab layout
+//! no longer exists anywhere in the codebase to compare against. Both
+//! sectors are kept (rather than collapsed to one) because the point of
+//! this registry is comparing named variants, and removing `baseline`
+//! would be a design decision about the LAB, not something this port asked
+//! for.
 
 use mlc_app_layout::layout::modals::primitive_settings::render_primitive_settings_modal;
 use mlc_app_layout::layout::render_frame::PrimitiveSettingsResult;
@@ -28,11 +38,7 @@ use mlc_core::render::RenderContext;
 use mlc_core::templates::PrimitiveTemplate;
 use uzor::input::InputCoordinator;
 
-use crate::design_state::DesignUiState;
-
-/// The real `render_primitive_settings_modal` signature plus one trailing
-/// `&mut DesignUiState` for the lab-only per-sector state the approved
-/// design and the templates panel need.
+/// The real `render_primitive_settings_modal` signature.
 pub type RenderFn = fn(
     &mut dyn RenderContext,
     f64,
@@ -46,7 +52,7 @@ pub type RenderFn = fn(
     u64,
     &mut InputCoordinator,
     &[PrimitiveTemplate],
-    &mut DesignUiState,
+    &[String],
 ) -> PrimitiveSettingsResult;
 
 /// One named design.
@@ -54,31 +60,6 @@ pub struct Variant {
     /// Shown as the sector label and in the debug readout.
     pub name: &'static str,
     pub render: RenderFn,
-}
-
-/// Adapter: the real baseline function ignores the trailing
-/// `&mut DesignUiState` — it ships unmodified, byte-for-byte the shipped
-/// `mlc-app-layout` renderer.
-#[allow(clippy::too_many_arguments)]
-fn render_baseline(
-    ctx: &mut dyn RenderContext,
-    screen_w: f64,
-    screen_h: f64,
-    default_modal_y: f64,
-    state: &PrimitiveSettingsState,
-    primitives: &[Box<dyn Primitive>],
-    frame_theme: &FrameTheme,
-    toolbar_theme: &ToolbarTheme,
-    toolbar_state: &ToolbarState,
-    current_time_ms: u64,
-    coord: &mut InputCoordinator,
-    templates: &[PrimitiveTemplate],
-    _design_ui: &mut DesignUiState,
-) -> PrimitiveSettingsResult {
-    render_primitive_settings_modal(
-        ctx, screen_w, screen_h, default_modal_y, state, primitives, frame_theme, toolbar_theme,
-        toolbar_state, current_time_ms, coord, templates,
-    )
 }
 
 /// The fourth grid cell — deliberately empty (see the module doc).
@@ -96,16 +77,18 @@ fn render_empty(
     _current_time_ms: u64,
     _coord: &mut InputCoordinator,
     _templates: &[PrimitiveTemplate],
-    _design_ui: &mut DesignUiState,
+    _template_order: &[String],
 ) -> PrimitiveSettingsResult {
     PrimitiveSettingsResult::default()
 }
 
-/// The registry: baseline (unmodified), the approved 3-tab design
-/// (`crate::approved_design`), the templates panel (`crate::templates_variant`),
-/// and an empty fourth cell.
+/// The registry: baseline (== the real modal, unmodified), the approved
+/// design (`crate::approved_design` — also the real modal, see its own
+/// module doc for why), the templates panel
+/// (`crate::templates_variant::render_templates_panel`), and an empty
+/// fourth cell.
 pub const VARIANTS: &[Variant] = &[
-    Variant { name: "baseline", render: render_baseline },
+    Variant { name: "baseline", render: render_primitive_settings_modal },
     Variant { name: "approved", render: crate::approved_design::render },
     Variant { name: "templates", render: crate::templates_variant::render_templates_panel },
     Variant { name: "\u{2014}", render: render_empty },

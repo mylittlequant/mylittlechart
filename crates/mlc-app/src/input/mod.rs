@@ -539,13 +539,27 @@ impl ChartApp {
     /// widget accumulation. Canvas-level cursor affordances (crosshair,
     /// hover glow, overlay reveals) must consult THIS — never hand-check
     /// individual popup rects.
+    ///
+    /// Two checks, ORed, because a direct widget hit is not the whole
+    /// story: `topmost_layer_z_at` only fires when the point lands on a
+    /// widget's OWN registered rect, so a point over a modal's dimmed
+    /// backdrop — or over a lower modal stacked underneath a smaller one,
+    /// like the "Save as…" name dialog sitting on top of its parent
+    /// settings modal — hits nothing and reports no occlusion at all
+    /// (2026-08-09 fix: the crosshair leaked through both). `InputCoordinator
+    /// ::is_blocked_by_modal` is the coordinator's own answer to "is this
+    /// point inside the reach of any active modal layer, hit or not" and
+    /// covers exactly that gap; it is a no-op (`false`) when no modal is
+    /// open, so the Dropdown-tier check above still owns plain (non-modal)
+    /// popups on its own.
     pub(crate) fn cursor_over_popup(&self, x: f64, y: f64) -> bool {
-        self.input_coordinator
-            .borrow()
+        let coord = self.input_coordinator.borrow();
+        let over_registered_popup = coord
             .topmost_layer_z_at(x, y)
             .map_or(false, |z| {
                 z >= mlc_app_layout::ui::z_order::ZLayer::Dropdown.z_order()
-            })
+            });
+        over_registered_popup || coord.is_blocked_by_modal(x, y)
     }
 
     /// True while any modal is open that should suppress chart-level
@@ -1751,6 +1765,32 @@ impl ChartApp {
             }
         }
 
+        // Primitive-settings Template menu row drag — begin drag-to-reorder
+        // (item 4, 2026-08-08 review). Mirrors the watchlist modal's own
+        // `drag_reorder_pending` precedent above: a raw geometric check
+        // against last frame's own row rects (`template_menu_rows`), not an
+        // InputCoordinator DRAG-sense registration — a short click on the
+        // same rect still reaches its own CLICK-sense row handler untouched.
+        if self.panel_app.primitive_settings_state.template_dropdown_open {
+            if let Some(ref ps) = self.frame_result.as_ref().and_then(|r| r.primitive_settings.as_ref()) {
+                // Guard: starting the drag on the row's own rename/delete
+                // icon must stay a plain click, not a reorder — same
+                // guard shape as the watchlist modal's own `over_delete`.
+                let over_icon = live_hover.as_deref()
+                    .and_then(|h| h.strip_prefix("prim_settings:item:"))
+                    .map(|h| h.starts_with("template_delete:") || h.starts_with("template_rename:"))
+                    .unwrap_or(false);
+                if !over_icon {
+                    let found_key = ps.template_menu_rows.iter()
+                        .find(|(_, rect)| rect.contains(x, y))
+                        .map(|(key, _)| key.clone());
+                    if let Some(key) = found_key {
+                        self.panel_app.primitive_settings_state.template_drag_reorder_pending = Some((key, x, y));
+                    }
+                }
+            }
+        }
+
         // Modal header drags — dispatched via InputCoordinator registration.
         // Each modal registers its header rect with Sense::DRAG during render.
         // Bind first so the RefMut is dropped before the body: handlers below
@@ -2859,7 +2899,11 @@ impl ChartApp {
         }
 
         let active_bid_ds = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-        let ds_bars = self.active_chart_bars();
+        // Same rule as the click path: bars come from the bubble already
+        // resolved above, never from the lagging tag-registry lookup.
+        let ds_bars = active_bid_ds
+            .map(|bid| self.bars_for_bubble(bid))
+            .unwrap_or_default();
         let drag_start_hit = if let Some(bid) = active_bid_ds {
             let mut dreg = self.core.drawings_mut();
             let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut dreg, bid);
@@ -3363,6 +3407,45 @@ impl ChartApp {
                     ((relative_y / item_h).round() as usize).min(row_count)
                 };
                 self.standalone_panels.watchlist_modal.drop_index = Some(drop);
+            }
+            return;
+        }
+
+        // Primitive-settings Template menu drag-to-reorder: promote pending
+        // drag once mouse moves >= 5px (item 4, 2026-08-08 review) — same
+        // threshold and shape as the watchlist modal's own promotion above.
+        if let Some((ref pending_key, start_x, start_y)) = self.panel_app.primitive_settings_state.template_drag_reorder_pending.clone() {
+            let dx = x - start_x;
+            let dy = y - start_y;
+            if dx * dx + dy * dy >= 25.0 {
+                self.panel_app.primitive_settings_state.template_drag_reorder_pending = None;
+                self.panel_app.primitive_settings_state.template_drag_reorder = Some((pending_key.clone(), y));
+                self.ui_drag_active = true;
+                eprintln!("[ChartApp] prim_settings template menu drag-reorder promoted: {}", pending_key);
+            }
+        }
+
+        // Primitive-settings Template menu drag-to-reorder: update drop
+        // index from mouse Y. Unlike the watchlist blocks above (fixed row
+        // height, one geometry to trust), this menu's own row count varies
+        // with tab/save-as visibility, so the drop index is read straight
+        // off each row's own rendered rect (`template_menu_rows`) rather
+        // than replicated offset arithmetic — the nearest row boundary to
+        // the pointer, by comparing `y` against each row's own vertical
+        // midpoint.
+        if self.panel_app.primitive_settings_state.template_drag_reorder.is_some() {
+            if let Some((ref k, _)) = self.panel_app.primitive_settings_state.template_drag_reorder.clone() {
+                self.panel_app.primitive_settings_state.template_drag_reorder = Some((k.clone(), y));
+            }
+            if let Some(ref ps) = self.frame_result.as_ref().and_then(|r| r.primitive_settings.as_ref()) {
+                let mut drop = ps.template_menu_rows.len();
+                for (i, (_, rect)) in ps.template_menu_rows.iter().enumerate() {
+                    if y < rect.y + rect.height / 2.0 {
+                        drop = i;
+                        break;
+                    }
+                }
+                self.panel_app.primitive_settings_state.template_drop_index = Some(drop);
             }
             return;
         }
@@ -4216,6 +4299,40 @@ impl ChartApp {
             self.sidebar_state.watchlist_sep_drag = None;
             self.persist_watchlists();
             eprintln!("[ChartApp] Watchlist sep drag ended");
+            return;
+        }
+
+        // End primitive-settings Template menu drag-to-reorder (item 4,
+        // 2026-08-08 review): clear any pending drag that never promoted,
+        // then — if one WAS promoted — commit it. The new order is read
+        // straight off `template_menu_rows` (this frame's own rendered row
+        // keys), not recomputed by hand, so the commit can never disagree
+        // with what was actually on screen when the drag started.
+        self.panel_app.primitive_settings_state.template_drag_reorder_pending = None;
+        if let Some((from_key, _)) = self.panel_app.primitive_settings_state.template_drag_reorder.take() {
+            let drop_idx = self.panel_app.primitive_settings_state.template_drop_index.take();
+            let keys: Vec<String> = self.frame_result.as_ref()
+                .and_then(|r| r.primitive_settings.as_ref())
+                .map(|ps| ps.template_menu_rows.iter().map(|(k, _)| k.clone()).collect())
+                .unwrap_or_default();
+            if let Some(from_idx) = keys.iter().position(|k| k == &from_key) {
+                let mut new_order = keys.clone();
+                let removed = new_order.remove(from_idx);
+                // `drop_idx` is a gap index (0..=keys.len()) in the
+                // PRE-removal list; once past `from_idx` it must shift left
+                // by one to land in the post-removal list — the same
+                // adjustment `WatchlistManager::reorder_symbol`'s own caller
+                // makes below.
+                let mut to_idx = drop_idx.unwrap_or(from_idx).min(new_order.len() + 1);
+                if to_idx > from_idx {
+                    to_idx -= 1;
+                }
+                new_order.insert(to_idx.min(new_order.len()), removed);
+                if new_order != keys {
+                    eprintln!("[ChartApp] prim_settings template menu reordered: {} -> {}", from_key, to_idx);
+                    self.template_actions.push(crate::TemplateAction::ReorderPrimitiveTemplates { order: new_order });
+                }
+            }
             return;
         }
 

@@ -188,17 +188,17 @@ impl Primitive for Table {
 
         props.push(
             ConfigProperty::rows_count(self.rows.len() as f64)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(0)
         );
         props.push(
             ConfigProperty::columns_count(self.columns as f64)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(1)
         );
         props.push(
             ConfigProperty::show_header(self.show_header)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(2)
         );
 
@@ -215,7 +215,7 @@ impl Primitive for Table {
                     };
                     props.push(
                         ConfigProperty::text(&id, &label, cell_value)
-                            .with_category(PropertyCategory::Text)
+                            .with_category(PropertyCategory::LabelsText)
                             .with_order(3 + (row_idx * self.columns as usize + col_idx) as i32)
                     );
                 }
@@ -286,25 +286,25 @@ impl Primitive for Table {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::header_color(&self.header_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10),
             ConfigProperty::grid_color(&self.grid_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(11),
             ConfigProperty::text_color(&self.text_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(12),
             ConfigProperty::header_text_color(&self.header_text_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(13),
             ConfigProperty::font_size(self.font_size)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(14),
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(15),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(16),
         ]
     }

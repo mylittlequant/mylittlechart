@@ -561,6 +561,10 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.apply_template_style(&mut self.bubbles, bid, prim_id, template)
     }
 
+    pub fn apply_primitive_template(&mut self, bid: BubbleId, prim_id: u64, template: &mlc_core::templates::PrimitiveTemplate) {
+        self.mgr.apply_primitive_template(&mut self.bubbles, bid, prim_id, template)
+    }
+
     // ---- Last-used style --------------------------------------------------
 
     pub fn save_last_style_from_data(&mut self, bid: BubbleId, data: &PrimitiveData) {

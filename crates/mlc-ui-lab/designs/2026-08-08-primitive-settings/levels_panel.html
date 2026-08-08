@@ -1,0 +1,175 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Levels panel — variants</title>
+<style>
+  :root{
+    --bg:#131722; --panel:#1e222d; --panel2:#252932; --line:#2a2e39;
+    --tx:#d1d4dc; --mut:#787b86; --acc:#2962ff; --acc2:#4a7dff;
+  }
+  *{box-sizing:border-box}
+  body{background:#0d1017;color:var(--tx);font:13px/1.4 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:28px}
+  h1{font-size:15px;font-weight:600;color:var(--mut);margin:0 0 22px;letter-spacing:.04em;text-transform:uppercase}
+  .rail{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .col{width:400px;flex:0 0 auto}
+  .cap{font-size:12px;color:var(--mut);margin:0 0 8px;display:flex;gap:8px;align-items:baseline}
+  .cap b{color:var(--tx);font-size:13px;font-weight:600}
+  .tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#1f3a2a;color:#4caf82;letter-spacing:.03em}
+  .note{font-size:11.5px;color:var(--mut);margin:10px 2px 0;line-height:1.55}
+  .note em{color:#c9a227;font-style:normal}
+
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .mh{padding:12px 14px;font-weight:600;font-size:13px;border-bottom:1px solid var(--line)}
+  .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 6px}
+  .tabs span{padding:8px 11px;font-size:12px;color:var(--mut);cursor:default}
+  .tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+  .body{padding:12px}
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}
+  .btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:6px 12px;font-size:12px}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  /* current grid */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .cell{display:flex;align-items:center;gap:5px}
+  .cell input[type=text]{width:56px;background:var(--bg);border:1px solid var(--line);color:var(--tx);border-radius:3px;padding:3px 5px;font-size:11.5px}
+  .sw{width:15px;height:15px;border-radius:3px;flex:0 0 auto}
+  .stl{width:15px;height:15px;border-radius:3px;background:var(--panel2);flex:0 0 auto;position:relative}
+  .stl::after{content:"";position:absolute;inset:0;background:linear-gradient(45deg,transparent 44%,var(--mut) 44%,var(--mut) 56%,transparent 56%)}
+
+  /* ladder */
+  .lad{border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .lrow{display:grid;grid-template-columns:20px 52px 1fr auto;gap:8px;align-items:center;padding:6px 8px;position:relative}
+  .lrow + .lrow{border-top:1px solid rgba(255,255,255,.04)}
+  .lrow .val{font-variant-numeric:tabular-nums;font-size:12px}
+  .lrow .off{opacity:.38}
+  .band{height:100%;border-radius:2px}
+  .lbar{height:14px;border-radius:2px;position:relative;overflow:hidden}
+  .lbar i{position:absolute;left:0;right:0;top:6px;height:2px;display:block}
+  .chip{width:14px;height:14px;border-radius:3px}
+  .mini{font-size:10.5px;color:var(--mut)}
+  .hdr{display:grid;grid-template-columns:20px 52px 1fr auto;gap:8px;padding:5px 8px;background:var(--panel2);font-size:10.5px;color:var(--mut);letter-spacing:.04em;text-transform:uppercase}
+
+  /* inspector */
+  .insp{background:var(--panel2);border-top:1px solid var(--line);padding:9px 10px;display:grid;grid-template-columns:auto 1fr;gap:7px 10px;align-items:center;font-size:11.5px}
+  .insp .lab{color:var(--mut)}
+  .slider{height:3px;background:var(--line);border-radius:2px;position:relative}
+  .slider b{position:absolute;left:0;top:0;bottom:0;background:var(--acc);border-radius:2px}
+  .slider i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+  .seg{display:flex;gap:3px}
+  .seg u{text-decoration:none;padding:3px 8px;border:1px solid var(--line);border-radius:3px;font-size:11px;color:var(--mut)}
+  .seg u.on{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  /* ramp picker */
+  .ramps{display:flex;gap:7px;margin-bottom:10px}
+  .ramp{flex:1;border:1px solid var(--line);border-radius:4px;padding:5px;cursor:default}
+  .ramp.on{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .ramp .bars{display:flex;height:22px;border-radius:2px;overflow:hidden}
+  .ramp .bars s{flex:1;text-decoration:none}
+  .ramp span{display:block;text-align:center;font-size:10px;color:var(--mut);margin-top:4px}
+  .glob{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;margin-bottom:10px;font-size:11.5px}
+</style>
+
+<h1>Панель уровней — текущая и три варианта · ширина 400 px, как у настоящей модалки</h1>
+<div class="rail" id="rail"></div>
+
+<script>
+const L = [
+  {v:'0.000', c:'#f23645', on:true},
+  {v:'0.236', c:'#ff7a45', on:true},
+  {v:'0.382', c:'#f5a623', on:true},
+  {v:'0.500', c:'#e3c800', on:true},
+  {v:'0.618', c:'#a8d900', on:true},
+  {v:'0.786', c:'#4caf50', on:true},
+  {v:'1.000', c:'#26a69a', on:true},
+  {v:'1.272', c:'#2196f3', on:false},
+  {v:'1.618', c:'#5c6bc0', on:false},
+  {v:'2.618', c:'#9c27b0', on:false},
+];
+const rail = document.getElementById('rail');
+
+function shell(title, tab, bodyHTML, footExtra){
+  return `<div class="modal">
+    <div class="mh">Fib Retracement</div>
+    <div class="tabs"><span>Style</span><span>Text</span><span>Coordinates</span><span class="on">Levels</span><span>Visibility</span></div>
+    <div class="body">${bodyHTML}</div>
+    <div class="foot"><button class="btn">${footExtra||'Template'}</button><button class="btn p">OK</button></div>
+  </div>`;
+}
+function col(capHTML, inner, note){
+  const d = document.createElement('div');
+  d.className='col';
+  d.innerHTML = `<div class="cap">${capHTML}</div>${inner}<div class="note">${note}</div>`;
+  rail.appendChild(d);
+}
+
+/* ---------- CURRENT ---------- */
+const cur = L.concat(L.slice(0,8)).map(l=>`<div class="cell">
+  <input type="checkbox" ${l.on?'checked':''}><input type="text" value="${l.v}">
+  <div class="sw" style="background:${l.c}"></div><div class="stl"></div></div>`).join('');
+col('<b>Сейчас</b>',
+  shell('','', `<div class="grid">${cur}</div>`),
+  'Галка, значение, цвет линии, стиль. <em>Заливки между уровнями здесь нет вообще</em> — то, что ты просишь настраивать, из этой панели недоступно. Ни ширины линии, ни прозрачности на уровень. Порядок чтения ломается: значения идут слева направо с переносом, а не лестницей, поэтому 0.5 оказывается под 0.0.');
+
+/* ---------- A: LADDER ---------- */
+function ladderRows(withBand){
+  return L.map((l,i)=>{
+    const nxt = L[i+1];
+    const band = (withBand && nxt) ? `background:linear-gradient(${l.c}2e,${nxt.c}2e)` : '';
+    return `<div class="lrow ${l.on?'':'off'}">
+      <input type="checkbox" ${l.on?'checked':''}>
+      <span class="val">${l.v}</span>
+      <div class="lbar" style="${band}"><i style="background:${l.c}"></i></div>
+      <div style="display:flex;gap:5px"><div class="chip" style="background:${l.c}"></div><div class="chip" style="background:${l.c};opacity:.25"></div></div>
+    </div>`;
+  }).join('');
+}
+col('<b>Вариант A — Лестница</b> <span class="tag">минимальная правка</span>',
+  shell('','', `<div class="lad"><div class="hdr"><span></span><span>Уровень</span><span>Линия · заливка над ней</span><span></span></div>${ladderRows(true)}</div>`),
+  'Один вертикальный список по возрастанию. Полоса в строке — это сам уровень: линия её цвета, а фон полосы — заливка до следующего уровня, так что <em>панель показывает результат, а не описывает его</em>. Справа два чипа: цвет линии и цвет заливки. Дёшево в реализации, читается сразу. Минус: ширина, стиль и прозрачность на уровень сюда не влезают — только через общий ряд.');
+
+/* ---------- B: LADDER + INSPECTOR ---------- */
+const bRows = L.map((l,i)=>{
+  const nxt=L[i+1];
+  const band = nxt?`background:linear-gradient(${l.c}2e,${nxt.c}2e)`:'';
+  const sel = i===4;
+  return `<div class="lrow ${l.on?'':'off'}" style="${sel?'background:rgba(41,98,255,.13)':''}">
+    <input type="checkbox" ${l.on?'checked':''}>
+    <span class="val">${l.v}</span>
+    <div class="lbar" style="${band}"><i style="background:${l.c}"></i></div>
+    <div style="display:flex;gap:5px"><div class="chip" style="background:${l.c}"></div><div class="chip" style="background:${l.c};opacity:.25"></div></div>
+  </div>` + (sel ? `<div class="insp">
+    <span class="lab">Цвет линии</span><div style="display:flex;gap:6px;align-items:center"><div class="chip" style="background:${l.c}"></div><span class="mini">${l.c}</span></div>
+    <span class="lab">Ширина</span><div class="slider"><b style="width:28%"></b><i style="left:28%"></i></div>
+    <span class="lab">Стиль</span><div class="seg"><u class="on">──</u><u>- -</u><u>· ·</u></div>
+    <span class="lab">Заливка</span><div style="display:flex;gap:6px;align-items:center"><input type="checkbox" checked><div class="chip" style="background:${l.c};opacity:.35"></div><span class="mini">до 0.786</span></div>
+    <span class="lab">Прозрачность</span><div class="slider"><b style="width:14%"></b><i style="left:14%"></i></div>
+  </div>`:'');
+}).join('');
+col('<b>Вариант B — Лестница + инспектор</b> <span class="tag">полный контроль</span>',
+  shell('','', `<div class="lad"><div class="hdr"><span></span><span>Уровень</span><span>Линия · заливка над ней</span><span></span></div>${bRows}</div>`),
+  'То же, но выбранная строка раскрывается инспектором прямо на месте: цвет, ширина, стиль, включение заливки, её цвет и прозрачность. <em>Закрывает весь список того, что ты перечислил</em>, и не требует второй колонки — в 400 px раскладка на два столбца была бы тесной. Минус: список становится длиннее, нужен скролл (он в модалке уже есть).');
+
+/* ---------- C: RAMP-FIRST ---------- */
+const ramps = [
+  {n:'Классика', c:['#f23645','#f5a623','#e3c800','#4caf50','#26a69a']},
+  {n:'Тепло',    c:['#7f1d1d','#c2410c','#f59e0b','#fbbf24','#fde68a']},
+  {n:'Холод',    c:['#1e3a8a','#2563eb','#0ea5e9','#22d3ee','#a5f3fc']},
+  {n:'Моно',     c:['#3a3f4b','#565c69','#787b86','#9aa0ab','#c9ced8']},
+];
+const cRamps = ramps.map((r,i)=>`<div class="ramp ${i===0?'on':''}">
+  <div class="bars">${r.c.map(c=>`<s style="background:${c}"></s>`).join('')}</div><span>${r.n}</span></div>`).join('');
+const cRows = L.map((l,i)=>{
+  const nxt=L[i+1];
+  const band = nxt?`background:linear-gradient(${l.c}2e,${nxt.c}2e)`:'';
+  return `<div class="lrow ${l.on?'':'off'}">
+    <input type="checkbox" ${l.on?'checked':''}>
+    <span class="val">${l.v}</span>
+    <div class="lbar" style="${band}"><i style="background:${l.c}"></i></div>
+    <span class="mini">${i===2?'своё':''}</span>
+  </div>`;
+}).join('');
+col('<b>Вариант C — Шаблон сверху</b> <span class="tag">рекомендую</span>',
+  shell('','', `<div class="ramps">${cRamps}</div>
+    <div class="glob"><span class="mini">Заливка между уровнями</span><div class="slider"><b style="width:14%"></b><i style="left:14%"></i></div><span class="mini">14%</span></div>
+    <div class="lad">${cRows}</div>`, 'Сбросить к шаблону'),
+  'Панель начинается с готовой палитры — одним кликом весь инструмент выглядит собранным, и это же решает твою задачу «дефолтный шаблон». Ниже один ползунок общей прозрачности заливки и та же лестница. Строка, которую тронули руками, помечается «своё» и перестаёт слушать палитру. <em>Инспектор из B никуда не девается</em> — он открывается по строке; C добавляет над ним слой, который убирает 90% ручной возни.');
+</script>

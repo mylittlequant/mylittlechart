@@ -46,6 +46,13 @@ impl<'a> Templates<'a> {
         &self.mgr.indicator_sets
     }
 
+    /// Merged display order for the primitive-settings Template menu's
+    /// system-preset + user-template list — see `TemplateManager`'s own
+    /// field doc for the key shape.
+    pub fn primitive_template_order(&self) -> &[String] {
+        &self.mgr.primitive_template_order
+    }
+
     pub fn get_primitive_template(&self, id: &str) -> Option<&PrimitiveTemplate> {
         self.mgr.get_primitive_template(id)
     }
@@ -145,6 +152,18 @@ impl<'a> TemplatesMut<'a> {
 
     pub fn remove_primitive_template(&mut self, id: &str) -> Result<bool, TemplateError> {
         self.mgr.remove_primitive_template(id)
+    }
+
+    pub fn rename_primitive_template(&mut self, id: &str, new_name: &str) -> Result<bool, TemplateError> {
+        self.mgr.rename_primitive_template(id, new_name)
+    }
+
+    pub fn primitive_template_order(&self) -> &[String] {
+        &self.mgr.primitive_template_order
+    }
+
+    pub fn set_primitive_template_order(&mut self, order: Vec<String>) -> Result<(), TemplateError> {
+        self.mgr.set_primitive_template_order(order)
     }
 
     pub fn add_indicator_template(&mut self, template: IndicatorTemplate) -> Result<(), TemplateError> {

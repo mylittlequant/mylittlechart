@@ -1262,6 +1262,13 @@ pub enum TemplateAction {
     AddPrimitive(mlc_core::templates::primitive_template::PrimitiveTemplate),
     /// Remove a primitive template by id.
     RemovePrimitive { id: String },
+    /// Rename a primitive template by id (Template menu's own per-row
+    /// pencil action, item 4, 2026-08-08 review).
+    RenamePrimitive { id: String, name: String },
+    /// Replace the Template menu's merged system-preset + user-template
+    /// display order wholesale (the menu's own drag-to-reorder commit,
+    /// item 4, 2026-08-08 review).
+    ReorderPrimitiveTemplates { order: Vec<String> },
     /// Add an indicator template.
     AddIndicator(mlc_core::templates::indicator_template::IndicatorTemplate),
     /// Remove an indicator template by id.
@@ -1305,6 +1312,12 @@ impl ChartApp {
                 }
                 TemplateAction::RemovePrimitive { id } => {
                     let _ = templates.remove_primitive_template(&id);
+                }
+                TemplateAction::RenamePrimitive { id, name } => {
+                    let _ = templates.rename_primitive_template(&id, &name);
+                }
+                TemplateAction::ReorderPrimitiveTemplates { order } => {
+                    let _ = templates.set_primitive_template_order(order);
                 }
                 TemplateAction::AddIndicator(t) => {
                     let _ = templates.add_indicator_template(t);
@@ -2463,6 +2476,25 @@ impl ChartApp {
         self.panel_app.panel_grid.active_container_id()
             .map(|cid| self.bars_for_chart(cid))
             .unwrap_or_default()
+    }
+
+    /// Bars for a bubble the caller has ALREADY resolved.
+    ///
+    /// [`Self::bars_for_chart`] re-resolves the bubble through the tag
+    /// registry, and that registry is populated later than a container's own
+    /// `current_tag_id` — so early in a session it answers `None` and the
+    /// `unwrap_or_default()` hands back an EMPTY series. Every drawing
+    /// hit-test already holds the right `BubbleId` (it resolves the drawing
+    /// session from `current_tag_id`), so re-deriving the bubble a second way
+    /// buys nothing and costs correctness: with an empty series
+    /// `timestamp_ms_to_bar_f64` maps both anchors of every primitive to a
+    /// degenerate x, and the hit-test misses objects that are plainly drawn
+    /// on screen until the tag registry catches up. Render never takes that
+    /// path, which is why the primitive is visible and dead at the same time.
+    ///
+    /// Any code path holding a `BubbleId` must use this.
+    pub fn bars_for_bubble(&self, bid: mlc_core::BubbleId) -> Vec<mlc_core::Bar> {
+        self.core.bubbles().bars(bid).to_vec()
     }
 
     /// Phase X0 / C5c helper: resolve bars for the chart attached to `leaf_id`.
@@ -9905,6 +9937,47 @@ impl ChartApp {
                     &pni_id,
                     (r.x, r.y, r.width, r.height),
                     pni.char_x_positions.clone(),
+                );
+            }
+            // Template name overlay modal (save-as dialog) — one instance per
+            // settings modal it can be opened from. Without this, the field's
+            // `last_rect` is never populated and `on_drag_start`'s hit-test
+            // never finds it, so a click inside the field takes no caret
+            // (2026-08-09 fix, mirrors chart_browser/preset_name_input above).
+            if let Some(ref ptn) = fr.prim_template_name {
+                let r = &ptn.input_rect;
+                let id = WidgetId::from(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &id,
+                    (r.x, r.y, r.width, r.height),
+                    ptn.char_x_positions.clone(),
+                );
+            }
+            if let Some(ref itn) = fr.ind_template_name {
+                let r = &itn.input_rect;
+                let id = WidgetId::from(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &id,
+                    (r.x, r.y, r.width, r.height),
+                    itn.char_x_positions.clone(),
+                );
+            }
+            if let Some(ref ctn) = fr.cmp_template_name {
+                let r = &ctn.input_rect;
+                let id = WidgetId::from(text_input::COMPARE_SETTINGS_TEMPLATE_NAME);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &id,
+                    (r.x, r.y, r.width, r.height),
+                    ctn.char_x_positions.clone(),
+                );
+            }
+            if let Some(ref htn) = fr.chart_template_name {
+                let r = &htn.input_rect;
+                let id = WidgetId::from(text_input::CHART_SETTINGS_TEMPLATE_NAME);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &id,
+                    (r.x, r.y, r.width, r.height),
+                    htn.char_x_positions.clone(),
                 );
             }
         }

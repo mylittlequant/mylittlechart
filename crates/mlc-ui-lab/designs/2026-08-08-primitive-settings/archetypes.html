@@ -1,0 +1,225 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Архетипы модалок</title>
+<style>
+  :root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+  *{box-sizing:border-box}
+  body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:24px}
+  h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 4px;letter-spacing:.05em;text-transform:uppercase}
+  .sub{color:var(--mut);font-size:12px;margin:0 0 20px;max-width:900px}
+  .rail{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .col{width:404px}
+  .cap{font-size:12px;color:var(--mut);margin-bottom:7px}
+  .cap b{color:var(--tx);font-size:12.5px}
+  .cap i{font-style:normal;color:#5d626e}
+
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .mh{padding:10px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+  .mh span{color:var(--mut);font-weight:400}
+  .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px}
+  .tabs span{padding:7px 12px;font-size:11.5px;color:var(--mut)}
+  .tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+  .body{padding:11px 13px}
+  .foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line);gap:8px}
+  .btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 12px;font-size:11.5px;white-space:nowrap}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+  .row .lab{color:var(--tx);font-size:12px}
+  .sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:70px}
+  .sl b{position:absolute;top:0;bottom:0;background:var(--acc);border-radius:2px}
+  .sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+  .num{width:56px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center;color:var(--tx)}
+  .sel{width:140px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+  .chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative;flex:0 0 auto}
+  .chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+  .chk.off{background:transparent;border:1px solid var(--mut)}.chk.off::after{content:""}
+  .sw{width:38px;height:16px;border-radius:3px}
+
+  .grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+  .grp>h5{margin:0;padding:6px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+  .grp>h5 em{font-style:normal;color:#5d626e;font-size:10px;text-transform:none;letter-spacing:0}
+  .grp>div{padding:5px 9px 8px;max-height:230px;overflow:auto}
+  .inline{display:flex;gap:6px;flex-wrap:wrap;padding:3px 0}
+  .pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+  .pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{text-align:left;color:var(--mut);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:3px 4px;border-bottom:1px solid var(--line)}
+  td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
+  td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;color:var(--tx);font-size:11.5px}
+  td.k{color:var(--acc);font-weight:600;width:34px}
+
+  .lad{border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .lrow{display:grid;grid-template-columns:16px 52px 1fr 30px 14px;gap:7px;align-items:center;padding:5px 8px}
+  .lrow+.lrow{border-top:1px solid rgba(255,255,255,.05)}
+  .lbar{height:13px;border-radius:2px;position:relative;overflow:hidden}
+  .lbar i{position:absolute;left:0;right:0;top:5px;height:2px}
+  .chip{width:13px;height:13px;border-radius:3px}
+  .chips{display:flex;gap:4px}
+  .x{color:#4a4f5a;font-size:13px;text-align:center}
+  .add{display:flex;align-items:center;gap:7px;padding:6px 8px;border-top:1px solid var(--line);color:var(--mut);font-size:11.5px}
+
+  .cells{display:grid;gap:2px;font-size:11px}
+  .cells div{background:var(--bg);border:1px solid var(--line);border-radius:2px;padding:2px 4px;color:var(--tx)}
+  .cells div.h{background:var(--panel2);color:var(--mut);font-weight:600}
+
+  .stat{display:flex;justify-content:space-between;font-size:11.5px;padding:2px 0}
+  .stat b{color:var(--tx);font-variant-numeric:tabular-nums}
+  .good{color:#26a69a}.bad{color:#f23645}
+
+  .prop{width:404px;font-size:11.5px;color:var(--mut);line-height:1.6}
+  .prop h3{color:var(--tx);font-size:12.5px;margin:0 0 8px;border-left:3px solid var(--acc);padding-left:8px}
+  .prop h4{color:var(--tx);font-size:12px;margin:15px 0 5px}
+  .prop b{color:var(--tx)}
+  .prop em{color:#c9a227;font-style:normal}
+  .prop table{margin:6px 0 10px}
+  .prop td{padding:2px 4px;font-size:11px}
+</style>
+
+<h1>Архетипы модалок — что не похоже на Fib</h1>
+<p class="sub">121 идентификатор — это 86 настоящих структур: 36 из них один и тот же эмодзи. Архетипов десять, четвёртая вкладка не нужна ни одному. Ниже четыре, которые отличаются сильнее всего.</p>
+
+<div class="rail">
+
+  <!-- ELLIOTT -->
+  <div class="col">
+    <div class="cap"><b>Elliott Impulse</b> — <i>именованные точки, степень волны</i></div>
+    <div class="modal">
+      <div class="mh">Elliott Impulse <span>Размещение</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Волны <em>6 точек</em></h5><div>
+          <table><thead><tr><th></th><th>Цена</th><th>Время</th></tr></thead><tbody id="ell"></tbody></table>
+        </div></div>
+        <div class="grp"><h5>Виден на таймфреймах</h5><div><div class="inline" id="ell-tf"></div></div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="prop" style="width:auto;margin-top:9px">
+      Вкладка «Уровни» скрыта — у Эллиотта их нет, флаг уже есть в метаданных типа.
+      <br><br><em>Настоящая находка:</em> имена волн в коде есть (<b>1 2 3 4 5</b> для импульса, <b>A B C</b> для коррекции, по степени), но таблица координат их не знает и печатает «1..N». Здесь они подставлены — строка перестаёт быть безымянной.
+    </div>
+  </div>
+
+  <!-- LONG POSITION -->
+  <div class="col">
+    <div class="cap"><b>Long Position</b> — <i>сделка, а не фигура</i></div>
+    <div class="modal">
+      <div class="mh">Long Position <span>Размещение</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Сделка</h5><div>
+          <table><tbody id="pos"></tbody></table>
+        </div></div>
+        <div class="grp"><h5>Объём и результат</h5><div>
+          <div class="row"><span class="lab">Объём</span><input class="num" value="1.00"></div>
+          <div class="row"><span class="lab">Показывать P&amp;L</span><div class="chk"></div></div>
+          <div style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px">
+            <div class="stat"><span>Риск</span><b class="bad">−437.59</b></div>
+            <div class="stat"><span>Цель</span><b class="good">+875.19</b></div>
+            <div class="stat"><span>Отношение</span><b>1 : 2.00</b></div>
+          </div>
+        </div></div>
+        <div class="grp"><h5>Срок</h5><div>
+          <div class="row"><span class="lab">С</span><input class="num" style="width:118px" value="06.08 07:00"></div>
+          <div class="row"><span class="lab">По</span><input class="num" style="width:118px" value="07.08 15:00"></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="prop" style="width:auto;margin-top:9px">
+      У позиции точки — это <b>вход, стоп и цель</b>, а не «Точка 1/2/3». Названы, и рядом сразу расстояние в цене и в процентах.
+      <br><br>Риск, цель и отношение <em>не редактируются</em> — они считаются. Поэтому стоят под чертой как результат, а не как поля: иначе пользователь пытается их править и не понимает, почему не выходит.
+    </div>
+  </div>
+
+  <!-- GANN FAN -->
+  <div class="col">
+    <div class="cap"><b>Gann Fan</b> — <i>та же лестница, другая единица</i></div>
+    <div class="modal">
+      <div class="mh">Gann Fan <span>Углы</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Углы</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="row" style="padding-bottom:8px"><span class="lab">Набор</span><div class="sel"><span>Классический 1×N</span><span style="color:var(--mut)">▾</span></div><span class="btn" style="padding:3px 8px">вернуть</span></div>
+        <div class="lad" id="gann"></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="prop" style="width:auto;margin-top:9px">
+      Лестница та же самая, <b>меняется только формат значения</b>: у фибо это отношение <code>0.618</code>, здесь наклон <code>2×1</code>, у временных зон — счёт баров, у квадратов — доля кольца.
+      <br><br>Поэтому средняя вкладка <em>называется по типу</em>: «Уровни» у фибо, «Углы» у Ганна, «Ячейки» у таблицы. Одна механика, честное имя.
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="col">
+    <div class="cap"><b>Table</b> — <i>средняя вкладка = свой список</i></div>
+    <div class="modal">
+      <div class="mh">Table <span>Ячейки</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Ячейки</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="row"><span class="lab">Размер</span><input class="num" value="3"><span style="color:var(--mut)">×</span><input class="num" value="3"></div>
+        <div class="row"><span class="lab">Шапка</span><div class="chk"></div></div>
+        <div style="margin-top:8px" id="cells"></div>
+        <div class="add" style="border:none;padding-left:0">+ строка &nbsp; + колонка</div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="prop" style="width:auto;margin-top:9px">
+      У таблицы нет уровней, но есть <b>свой динамический список</b> — ячейки. Структурно это та же задача: строк столько, сколько создал пользователь, добавляются и удаляются.
+      <br><br>Значит средняя вкладка — не «уровни», а <em>«собственная коллекция типа»</em>. У кого её нет — вкладок две.
+    </div>
+  </div>
+
+  <!-- NOTES -->
+  <div class="prop">
+    <h3>Что из этого следует</h3>
+
+    <h4>Три вкладки держатся, четвёртой не нужно</h4>
+    Проверено по всем архетипам. Метаданные типа уже несут флаги наличия уровней и поддержки текста — скрытие вкладок механическое, не ручное.
+    <br><br>Форма: <b>Вид</b> · <b>&lt;своя коллекция&gt;</b> · <b>Размещение</b>. Средняя появляется только у тех, у кого есть что перечислять, и называется по существу: Уровни / Углы / Кольца / Ячейки.
+
+    <h4>Недостаёт не вкладки, а одного механизма</h4>
+    <b>Сворачиваемая группа с потолком высоты и своей прокруткой.</b> Она нужна в четырёх местах сразу: таблица точек у Эллиотта и гармоник (до девяти строк), лестница уровней, каталог вил на двадцать четыре значения, сетка ячеек у таблицы. Сделать один раз — закрывает все четыре.
+
+    <h4>Три дефекта, всплывших по дороге</h4>
+    <table>
+      <tr><td><b>brush</b></td><td>нет <code>style_properties</code> вообще — даже стиль линии не читается при отрисовке</td></tr>
+      <tr><td><b>image</b></td><td>ноль настроек и текст не поддерживается — самая пустая поверхность в базе</td></tr>
+      <tr><td><b>Эллиотт</b></td><td>имена волн есть в коде и не доходят до таблицы координат</td></tr>
+    </table>
+
+    <h4>Поправка ко мне</h4>
+    Я говорил «восемь точек Эллиотта». По коду максимум <b>девять</b> (тройная комбинация), у импульса и треугольника — шесть.
+  </div>
+</div>
+
+<script>
+const el=(id)=>document.getElementById(id);
+const waves=[['0','63 640.00','06.08 03:00'],['1','63 877.84','06.08 07:00'],['2','64 210.10','06.08 13:00'],
+             ['3','65 040.67','07.08 02:00'],['4','64 620.30','07.08 09:00'],['5','65 480.12','07.08 19:00']];
+el('ell').innerHTML = waves.map(([k,p,t])=>
+  `<tr><td class="k">${k}</td><td><input value="${p}"></td><td><input value="${t}"></td></tr>`).join('');
+const tfs=[['Секунды',0],['Минуты',1],['Часы',1],['Дни',1],['Недели',0],['Месяцы',0]];
+el('ell-tf').innerHTML = tfs.map(([l,on])=>`<span class="pill${on?' on':''}">${l}</span>`).join('');
+
+const pos=[['Вход','63 490.13','','#2962ff'],['Стоп','62 811.20','−678.93 · −1.07 %','#f23645'],['Цель','64 847.98','+1 357.85 · +2.14 %','#26a69a']];
+el('pos').innerHTML = pos.map(([k,v,d,c])=>
+  `<tr><td style="width:44px;color:${c};font-weight:600">${k}</td><td><input value="${v}"></td>
+   <td style="color:var(--mut);text-align:right;white-space:nowrap">${d}</td></tr>`).join('');
+
+const angles=[['4×1','#f23645'],['3×1','#ff7a45'],['2×1','#f5a623'],['1×1','#e3c800'],['1×2','#a8d900'],['1×3','#4caf50'],['1×4','#26a69a']];
+el('gann').innerHTML = angles.map(([v,c],i)=>{
+  const nxt=angles[i+1];
+  const band = nxt?`background:linear-gradient(${c}2e,${nxt[1]}2e)`:'';
+  return `<div class="lrow"><div class="chk"></div><input class="num" value="${v}" style="width:52px">
+    <div class="lbar" style="${band}"><i style="background:${c}"></i></div>
+    <div class="chips"><div class="chip" style="background:${c}"></div><div class="chip" style="background:${c};opacity:.3"></div></div>
+    <div class="x">×</div></div>`;
+}).join('') + `<div class="add"><span style="color:var(--acc)">+</span> добавить угол <input class="num" style="width:52px" value="1×8"></div>`;
+
+const grid=[['Уровень','Цена','Δ'],['0.618','64 534.67','+2.1 %'],['0.500','64 409.25','+1.6 %'],['0.382','64 283.84','+1.1 %']];
+el('cells').innerHTML = `<div class="cells" style="grid-template-columns:repeat(3,1fr)">`+
+  grid.map((r,i)=>r.map(c=>`<div class="${i===0?'h':''}">${c}</div>`).join('')).join('')+`</div>`;
+</script>

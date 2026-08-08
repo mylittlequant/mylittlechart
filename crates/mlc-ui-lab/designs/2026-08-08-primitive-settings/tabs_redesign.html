@@ -1,0 +1,284 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Вкладки настроек — сейчас и предложение</title>
+<style>
+  :root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+  *{box-sizing:border-box}
+  body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:26px}
+  h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 6px;letter-spacing:.05em;text-transform:uppercase}
+  h2{font-size:13px;font-weight:600;margin:30px 0 12px;color:var(--tx);border-left:3px solid var(--acc);padding-left:9px}
+  .sub{color:var(--mut);font-size:12px;margin:0 0 20px}
+  .pair{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+  .col{width:400px}
+  .cap{font-size:11.5px;color:var(--mut);margin-bottom:7px;display:flex;gap:7px;align-items:center}
+  .cap b{color:var(--tx);font-size:12.5px}
+  .tag{font-size:10px;padding:1px 6px;border-radius:3px;background:#3a2a1f;color:#e0a458}
+  .tag.g{background:#1f3a2a;color:#4caf82}
+  .note{font-size:11.5px;color:var(--mut);margin-top:9px;line-height:1.55;max-width:400px}
+  .note em{color:#c9a227;font-style:normal}
+
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .mh{padding:11px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line)}
+  .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px;flex-wrap:wrap}
+  .tabs span{padding:7px 10px;font-size:11.5px;color:var(--mut)}
+  .tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+  .body{padding:11px 13px;max-height:430px;overflow:auto}
+  .foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line)}
+  .btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 11px;font-size:11.5px}
+  .btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+  .row .lab{color:var(--tx);font-size:12px}
+  .sw{width:44px;height:17px;border-radius:3px;background:#f5a623}
+  .sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:90px}
+  .sl b{position:absolute;left:0;top:0;bottom:0;background:var(--acc);border-radius:2px}
+  .sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+  .num{width:46px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center}
+  .sel{width:140px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+  .chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative}
+  .chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+  .chk.off{background:transparent;border:1px solid var(--mut)}
+  .chk.off::after{content:""}
+
+  .grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+  .grp>h5{margin:0;padding:5px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between}
+  .grp>div{padding:4px 9px 7px}
+  .inline{display:flex;gap:7px;flex-wrap:wrap;padding:4px 0}
+  .pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+  .pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .search{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 9px;font-size:11.5px;color:var(--mut);margin-bottom:9px}
+  .align{display:grid;grid-template-columns:repeat(3,20px);gap:3px}
+  .align u{text-decoration:none;height:20px;border:1px solid var(--line);border-radius:3px}
+  .align u.on{background:var(--acc);border-color:var(--acc)}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{text-align:left;color:var(--mut);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;padding:4px 5px;border-bottom:1px solid var(--line)}
+  td{padding:4px 5px;border-bottom:1px solid rgba(255,255,255,.04)}
+  td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;color:var(--tx);font-size:11.5px}
+</style>
+
+<h1>Вкладки настроек примитива — сейчас и предложение</h1>
+<p class="sub">Содержимое взято из кода модалки, не из головы. Ширина 400 px, как у настоящей.</p>
+
+<!-- ============ STYLE ============ -->
+<h2>Style — 13 строк подряд, без группировки</h2>
+<div class="pair">
+  <div class="col">
+    <div class="cap"><b>Сейчас</b></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span class="on">Style</span><span>Text</span><span>Coordinates</span><span>Levels</span><span>Visibility</span></div>
+      <div class="body" id="cur-style"></div>
+      <div class="foot"><button class="btn">Template</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Цвет, ширина и стиль линии стоят вперемешку с шестью галками про подписи, двумя про продление и заливкой. <em>Ничто не сгруппировано</em>, поэтому чтобы поменять вид подписи, глаз проходит весь список.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Предложение</b> <span class="tag g">те же строки, три группы</span></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span class="on">Вид</span><span>Уровни</span><span>Точки</span><span>Показ</span></div>
+      <div class="body">
+        <input class="search" value="поиск по настройкам…">
+        <div class="grp"><h5>Линия</h5><div id="g-line"></div></div>
+        <div class="grp"><h5>Заливка</h5><div id="g-fill"></div></div>
+        <div class="grp"><h5>Подписи <span>▾</span></h5><div id="g-label"></div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Ни одна настройка не добавлена и не убрана — только разложены по смыслу. Группы сворачиваются. Сверху поиск: набрал «прозрач» — видишь все строки прозрачности из всех групп сразу. <em>Вкладок стало 4 вместо 5</em>: Text влился в «Подписи», потому что это про одно и то же.</div>
+  </div>
+</div>
+
+<!-- ============ TEXT ============ -->
+<h2>Text — отдельная вкладка ради шести строк</h2>
+<div class="pair">
+  <div class="col">
+    <div class="cap"><b>Сейчас</b></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Style</span><span class="on">Text</span><span>Coordinates</span><span>Levels</span><span>Visibility</span></div>
+      <div class="body" id="cur-text"></div>
+      <div class="foot"><button class="btn">Template</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Содержимое, размер, жирный, курсив, цвет и сетка выравнивания 3×3. Шесть контролов занимают целую вкладку, а <em>соседние настройки подписей живут в Style</em> — размер шрифта подписи там, размер шрифта текста здесь.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Предложение</b> <span class="tag g">внутрь «Подписи»</span></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span class="on">Вид</span><span>Уровни</span><span>Точки</span><span>Показ</span></div>
+      <div class="body">
+        <div class="grp"><h5>Подписи</h5><div id="g-text"></div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Всё про текст в одном месте: что показывать, чем, как выровнять. Кегль подписи и кегль текста стоят рядом и видно, что это две разные вещи.</div>
+  </div>
+</div>
+
+<!-- ============ COORDINATES ============ -->
+<h2>Coordinates — список полей вместо таблицы</h2>
+<div class="pair">
+  <div class="col">
+    <div class="cap"><b>Сейчас</b></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Style</span><span>Text</span><span class="on">Coordinates</span><span>Levels</span><span>Visibility</span></div>
+      <div class="body" id="cur-coord"></div>
+      <div class="foot"><button class="btn">Template</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">На каждую точку — подпись и два поля, «Цена» и «Бар». <em>Бар — это индекс свечи</em>, число без смысла для человека: чтобы понять, когда это было, надо считать. Даты нет.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Предложение</b> <span class="tag g">таблица, дата вместо индекса</span></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Вид</span><span>Уровни</span><span class="on">Точки</span><span>Показ</span></div>
+      <div class="body">
+        <table><thead><tr><th>Точка</th><th>Цена</th><th>Время</th></tr></thead><tbody id="g-coord"></tbody></table>
+        <div class="inline" style="margin-top:9px"><span class="pill on">время</span><span class="pill">индекс бара</span></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Одна строка на точку, три колонки, читается сверху вниз. Время показано по-человечески, а индекс бара остаётся <em>переключателем</em> для тех, кому он нужен — не исчезает, просто перестаёт быть единственным вариантом.</div>
+  </div>
+</div>
+
+<!-- ============ VISIBILITY ============ -->
+<h2>Visibility — семь строк там, где хватит одной полосы</h2>
+<div class="pair">
+  <div class="col">
+    <div class="cap"><b>Сейчас</b></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Style</span><span>Text</span><span>Coordinates</span><span>Levels</span><span class="on">Visibility</span></div>
+      <div class="body" id="cur-vis"></div>
+      <div class="foot"><button class="btn">Template</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Строка на каждый класс таймфрейма: галка, подпись и двухползунковый диапазон. Занимает всю вкладку, а <em>с одного взгляда не видно, где объект вообще виден</em> — надо прочитать семь строк.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Предложение</b> <span class="tag g">шкала НЕ одна — по одной на включённый класс</span></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Вид</span><span>Уровни</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div style="font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Виден на таймфреймах</div>
+        <div class="inline" id="g-vis"></div>
+        <div class="grp" style="margin-top:11px"><h5>Диапазоны включённых <span>▾</span></h5><div id="g-vis-ranges"></div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note"><em>Единой шкалы нет и быть не может</em> — 45 минут и 45 месяцев несравнимы. Модель остаётся прежней: у каждого класса свой диапазон. Меняется только то, что <b>шкала показывается лишь у включённых классов</b>. Выключил недели — их ползунок исчез, а не стоит мёртвым. Сейчас все семь шкал висят всегда, включая выключенные, и из-за этого вкладка выглядит забитой, а ответ на главный вопрос — где объект виден — приходится собирать глазами по галкам.</div>
+  </div>
+</div>
+
+<!-- ============ MERGED PLACEMENT ============ -->
+<h2>Координаты + Видимость → одна вкладка «Размещение»</h2>
+<div class="pair">
+  <div class="col">
+    <div class="cap"><b>Предложение</b> <span class="tag g">3 вкладки вместо 5</span></div>
+    <div class="modal">
+      <div class="mh">Fib Retracement</div>
+      <div class="tabs"><span>Вид</span><span>Уровни</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Точки</h5><div>
+          <table><thead><tr><th>Точка</th><th>Цена</th><th>Время</th></tr></thead><tbody id="m-coord"></tbody></table>
+          <div class="inline" style="margin-top:7px"><span class="pill on">время</span><span class="pill">индекс бара</span></div>
+        </div></div>
+        <div class="grp"><h5>Виден на таймфреймах</h5><div>
+          <div class="inline" id="m-vis"></div>
+          <div id="m-vis-ranges" style="margin-top:7px"></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><button class="btn p">OK</button></div>
+    </div>
+    <div class="note">Ты прав, они об одном: <b>где и когда объект существует на графике</b>. Точки задают положение в цене и времени, таймфреймы — в каком масштабе он вообще показывается. Обе группы короткие, вместе занимают меньше экрана, чем сейчас занимает одна.<br><br>Итог: <em>Вид · Уровни · Размещение</em>. Пять вкладок ужимаются до трёх, ни одна настройка не теряется.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Чего это стоит</b> <span class="tag">риск</span></div>
+    <div class="modal" style="background:transparent;border-style:dashed">
+      <div class="body" style="max-height:none">
+        <p style="margin:0 0 10px;font-size:12px;color:var(--tx)">Три места, где склейка может выйти боком:</p>
+        <p style="margin:0 0 9px;font-size:11.5px;color:var(--mut)"><b style="color:var(--tx)">1. Длина.</b> У примитива с восемью точками (Эллиотт, XABCD) таблица точек становится длинной, и таймфреймы уезжают под скролл. Лечится тем, что группы сворачиваются и последняя раскрытая запоминается.</p>
+        <p style="margin:0 0 9px;font-size:11.5px;color:var(--mut)"><b style="color:var(--tx)">2. Привычка.</b> Кто помнит, что видимость лежит в своей вкладке, будет её искать. Цена разовая.</p>
+        <p style="margin:0;font-size:11.5px;color:var(--mut)"><b style="color:var(--tx)">3. Не для всех типов.</b> У части примитивов вкладка «Уровни» пустая, у части — пустые «Точки». Список вкладок уже строится по типу, так что это не новая проблема, но при трёх вкладках пустая заметнее, чем при пяти.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const row=(l,c)=>`<div class="row"><span class="lab">${l}</span>${c}</div>`;
+const chk=(on)=>`<div class="chk${on?'':' off'}"></div>`;
+const sl=(p)=>`<div class="sl"><b style="width:${p}%"></b><i style="left:${p}%"></i></div>`;
+const sel=(v)=>`<div class="sel"><span>${v}</span><span style="color:var(--mut)">▾</span></div>`;
+
+document.getElementById('cur-style').innerHTML =
+  row('Line Color','<div class="sw" style="background:#2196f3"></div>')+
+  row('Width', sl(8)+'<input class="num" value="1.00">')+
+  row('Style', sel('—— Solid'))+
+  row('Prices',chk(1))+row('Levels',chk(1))+row('Percentages',chk(1))+
+  row('Label Position', sel('Left'))+
+  row('Extend Left',chk(0))+row('Extend Right',chk(1))+row('Trend Line',chk(1))+
+  row('Fill',chk(1))+
+  row('Fill Opacity', sl(10)+'<span style="color:var(--mut);font-size:11.5px">10</span>')+
+  row('Label Font Size', sl(20)+'<span style="color:var(--mut);font-size:11.5px">12</span>');
+
+document.getElementById('g-line').innerHTML =
+  row('Цвет','<div class="sw" style="background:#2196f3"></div>')+
+  row('Толщина', sl(8)+'<input class="num" value="1.00">')+
+  row('Стиль', sel('—— Сплошная'))+
+  row('Продлить влево',chk(0))+row('Продлить вправо',chk(1))+row('Линия тренда',chk(1));
+document.getElementById('g-fill').innerHTML =
+  row('Заливка',chk(1))+row('Прозрачность', sl(10)+'<span style="color:var(--mut);font-size:11.5px">10 %</span>');
+document.getElementById('g-label').innerHTML =
+  '<div class="inline"><span class="pill on">цена</span><span class="pill on">уровень</span><span class="pill on">процент</span></div>'+
+  row('Положение', sel('Слева'))+
+  row('Кегль', sl(20)+'<span style="color:var(--mut);font-size:11.5px">12</span>');
+
+document.getElementById('cur-text').innerHTML =
+  row('Content','<input class="num" style="width:150px" value="">')+
+  row('Font Size', sl(20)+'<span style="color:var(--mut);font-size:11.5px">12</span>')+
+  row('Bold',chk(0))+row('Italic',chk(0))+
+  row('Color','<div class="sw" style="background:#d1d4dc"></div>')+
+  row('Alignment','<div class="align">'+[...Array(9)].map((_,i)=>`<u class="${i===4?'on':''}"></u>`).join('')+'</div>');
+document.getElementById('g-text').innerHTML =
+  '<div class="inline"><span class="pill on">цена</span><span class="pill on">уровень</span><span class="pill on">процент</span></div>'+
+  row('Текст','<input class="num" style="width:150px" value="">')+
+  row('Кегль текста', sl(20)+'<span style="color:var(--mut);font-size:11.5px">12</span>')+
+  row('Начертание','<div class="inline" style="padding:0"><span class="pill">Ж</span><span class="pill">К</span></div>')+
+  row('Цвет','<div class="sw" style="background:#d1d4dc"></div>')+
+  row('Выравнивание','<div class="align">'+[...Array(9)].map((_,i)=>`<u class="${i===4?'on':''}"></u>`).join('')+'</div>');
+
+const pts=[['Начало','63 877.84','06.08 07:00'],['Конец','64 940.67','07.08 15:00']];
+document.getElementById('cur-coord').innerHTML = pts.map(([n,p],i)=>
+  `<div style="margin-bottom:9px"><div style="font-size:11.5px;color:var(--mut);margin-bottom:3px">${n}:</div>
+   ${row('Price','<input class="num" style="width:110px" value="'+p+'">')}
+   ${row('Bar','<input class="num" style="width:110px" value="'+(120+i*34)+'">')}</div>`).join('');
+document.getElementById('g-coord').innerHTML = pts.map(([n,p,t])=>
+  `<tr><td style="color:var(--mut)">${n}</td><td><input value="${p}"></td><td><input value="${t}"></td></tr>`).join('');
+
+const tfs=[['Секунды',0],['Минуты',1],['Часы',1],['Дни',1],['Недели',0],['Месяцы',0],['Диапазоны',0]];
+document.getElementById('cur-vis').innerHTML = tfs.map(([l,on])=>
+  `<div class="row">${chk(on)}<span class="lab" style="flex:1;margin-left:7px">${l}</span>${sl(on?50:0)}</div>`).join('');
+const chips = tfs.map(([l,on])=>`<span class="pill${on?' on':''}">${l}</span>`).join('');
+const ranges = {'Минуты':['1 — 45',8,46],'Часы':['1 — 12',4,30],'Дни':['1 — 7',2,18]};
+const rangeRows = tfs.filter(([,on])=>on).map(([l])=>{
+  const [txt,a,b] = ranges[l] || ['весь класс',0,100];
+  return `<div class="row" style="padding:3px 0"><span class="lab" style="width:64px">${l}</span>
+    <div class="sl" style="margin:0 6px"><b style="width:${b-a}%;margin-left:${a}%"></b><i style="left:${a}%"></i><i style="left:${b}%"></i></div>
+    <span style="color:var(--mut);font-size:11.5px;width:52px;text-align:right">${txt}</span></div>`;
+}).join('');
+document.getElementById('g-vis').innerHTML = chips;
+document.getElementById('g-vis-ranges').innerHTML = rangeRows;
+document.getElementById('m-vis').innerHTML = chips;
+document.getElementById('m-vis-ranges').innerHTML = rangeRows;
+document.getElementById('m-coord').innerHTML = pts.map(([n,p,t])=>
+  `<tr><td style="color:var(--mut)">${n}</td><td><input value="${p}"></td><td><input value="${t}"></td></tr>`).join('');
+</script>

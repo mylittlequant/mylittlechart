@@ -638,6 +638,7 @@ impl ChartPanelApp {
                     current_time_ms,
                     input_coordinator,
                     template_manager.primitive_templates(),
+                    template_manager.primitive_template_order(),
                 ));
             }
         }

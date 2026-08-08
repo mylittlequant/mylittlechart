@@ -111,10 +111,10 @@ impl Primitive for Highlighter {
         // owner brighten it per-primitive instead of only via the source default.
         vec![
             ConfigProperty::fill_opacity(self.opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(20),
             ConfigProperty::number("brush_size", "Brush Size", self.brush_size, Some(4.0), Some(60.0))
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(21),
         ]
     }

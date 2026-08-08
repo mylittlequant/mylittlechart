@@ -12,7 +12,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -247,8 +247,8 @@ impl Primitive for DisjointChannel {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
-            ConfigProperty::fill(self.fill).with_order(20),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(21),
+            ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
         ]
     }
 

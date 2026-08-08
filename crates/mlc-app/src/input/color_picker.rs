@@ -664,6 +664,31 @@ impl ChartApp {
                 } else {
                     None
                 };
+                // Level colour swatch: `level_v{key}_color` (the level's own
+                // line) / `level_v{key}_fill_color` (its band, from the row
+                // inspector). `{key}` is the level's VALUE, not a row index
+                // (see `vkey()` in `primitive_settings_levels.rs`), so this
+                // resolves by matching `FibLevelConfig::level`, same as
+                // `mlc-app-layout/.../primitive_settings_intent.rs`'s own
+                // `set_level_color_by_value` (the `mlc-ui-lab` host's
+                // equivalent of this block — mlc-app can't call it directly:
+                // it operates on `&mut dyn Primitive`, mlc-app only ever
+                // gets a `Vec<FibLevelConfig>` out of the drawings facade).
+                // `_fill_color` is checked BEFORE the plain `_color` suffix:
+                // `"..._fill_color".strip_suffix("_color")` also succeeds
+                // (leaving an unparseable `"..._fill"` key), so the longer,
+                // fill-specific suffix must be tried first — same trap
+                // already fixed in `mlc-app/src/input/settings.rs`'s own
+                // `level_v*` swatch-click dispatch.
+                let level_color_change: Option<(f64, bool)> = field.strip_prefix("level_v").and_then(|rest| {
+                    if let Some(key) = rest.strip_suffix("_fill_color") {
+                        key.parse::<f64>().ok().map(|level| (level, true))
+                    } else if let Some(key) = rest.strip_suffix("_color") {
+                        key.parse::<f64>().ok().map(|level| (level, false))
+                    } else {
+                        None
+                    }
+                });
                 match field.as_str() {
                     "stroke_color" => {
                         data.color.stroke = color.to_string();
@@ -676,14 +701,25 @@ impl ChartApp {
                             text.color = Some(color.to_string());
                         }
                     }
-                    _ if field.starts_with("level_") && field.ends_with("_color") => {
-                        eprintln!("[ChartApp] level color change: {} = {}", field, color);
-                    }
                     _ => {}
                 }
                 let mut guard = self.core.drawings_mut();
                 if let Some((prop_id, value)) = style_prop_change {
                     guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, &prop_id, &value);
+                }
+                if let Some((level, is_fill)) = level_color_change {
+                    let configs = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs());
+                    if let Some(mut configs) = configs {
+                        if let Some(cfg) = configs.iter_mut().find(|c| (c.level - level).abs() < 1e-9) {
+                            if is_fill {
+                                cfg.fill_color = Some(color.to_string());
+                                cfg.fill_enabled = true;
+                            } else {
+                                cfg.color = Some(color.to_string());
+                            }
+                        }
+                        guard.set_level_configs(bid, prim_id, configs);
+                    }
                 }
                 guard.set_data(bid, prim_id, &data);
             }

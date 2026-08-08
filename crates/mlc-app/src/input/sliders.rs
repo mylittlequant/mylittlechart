@@ -77,6 +77,17 @@ impl ChartApp {
                 if let Some(data) = data_opt {
                     self.core.drawings_mut().set_data(bid, prim_id, &data);
                 }
+                // Global writer (item 3, 2026-08-09): the base width also
+                // reaches every level's own `cfg.width` directly, exactly
+                // the contract the palette already has for colour — see
+                // `primitive_settings_intent::apply_global_width`'s own doc.
+                let mut guard = self.core.drawings_mut();
+                if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                    mlc_app_layout::layout::modals::primitive_settings_intent::apply_global_width(
+                        &mut configs, &self.panel_app.primitive_settings_state, value,
+                    );
+                    guard.set_level_configs(bid, prim_id, configs);
+                }
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
@@ -104,6 +115,67 @@ impl ChartApp {
                 self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
             }
             self.autosave_snapshot();
+            return;
+        }
+
+        // Уровни tab — the global "Заливка между" slider: writes the
+        // PRIMITIVE's own `fill_opacity` style property directly (the same
+        // single field `FibRetracement::render` — and every other
+        // level-ladder primitive's own fill — actually reads for every
+        // band), not a bulk per-level write. See
+        // `mlc_app_layout::layout::modals::primitive_settings_levels::
+        // draw_global_opacity_row`'s own doc for why this is the single
+        // source of truth (2026-08-08 appearance-surface consolidation —
+        // collapses Вид's old `fill_opacity` FILL row into this one).
+        if field_id == "levels_global_opacity" {
+            use mlc_core::drawing::primitives_v2::config::PropertyValue;
+            let clamped_pct = value.clamp(0.0, 1.0) * 100.0;
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+            if let Some(bid) = active_bid {
+                self.core.drawings_mut().apply_property(
+                    bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, "fill_opacity",
+                    &PropertyValue::Number(clamped_pct),
+                );
+            }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
+            return;
+        }
+
+        // Уровни tab — one level's own width/fill-opacity, from its
+        // inspector row.
+        if let Some(key) = field_id.strip_prefix("level_v").and_then(|s| s.strip_suffix("_width")) {
+            if let (Ok(level), true) = (key.parse::<f64>(), value > 0.0) {
+                let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                if let Some(bid) = active_bid {
+                    let mut guard = self.core.drawings_mut();
+                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                        if let Some(cfg) = configs.iter_mut().find(|c| (c.level - level).abs() < 1e-9) {
+                            cfg.width = Some(value);
+                        }
+                        guard.set_level_configs(bid, prim_id, configs);
+                    }
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+            }
+            return;
+        }
+        if let Some(key) = field_id.strip_prefix("level_v").and_then(|s| s.strip_suffix("_fill_opacity")) {
+            if let Ok(level) = key.parse::<f64>() {
+                let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                if let Some(bid) = active_bid {
+                    let mut guard = self.core.drawings_mut();
+                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                        if let Some(cfg) = configs.iter_mut().find(|c| (c.level - level).abs() < 1e-9) {
+                            cfg.fill_opacity = value.clamp(0.0, 1.0);
+                        }
+                        guard.set_level_configs(bid, prim_id, configs);
+                    }
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+            }
             return;
         }
 
@@ -396,56 +468,6 @@ impl ChartApp {
 
         eprintln!("[ChartApp] cmp_settings tf_{}_slider {:?}: {}", tf_idx, handle, value);
         self.autosave_snapshot();
-    }
-
-    /// Apply a new minimum value for the timeframe range at `tf_idx` on primitive `prim_id`.
-    pub(crate) fn apply_tf_min_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
-        use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-        if let Some(bid) = active_bid {
-            let data_opt = self.core.drawings().get_data(bid, prim_id);
-            if let Some(mut data) = data_opt {
-                let mut tf = data.timeframe_visibility.clone()
-                    .unwrap_or_else(TimeframeVisibilityConfig::all);
-                match tf_idx {
-                    1 => { if let Some((_, max)) = tf.seconds { tf.seconds = Some((val.min(max), max)); } }
-                    2 => { if let Some((_, max)) = tf.minutes { tf.minutes = Some((val.min(max), max)); } }
-                    3 => { if let Some((_, max)) = tf.hours   { tf.hours   = Some((val.min(max), max)); } }
-                    4 => { if let Some((_, max)) = tf.days    { tf.days    = Some((val.min(max), max)); } }
-                    5 => { if let Some((_, max)) = tf.weeks   { tf.weeks   = Some((val.min(max), max)); } }
-                    6 => { if let Some((_, max)) = tf.months  { tf.months  = Some((val.min(max), max)); } }
-                    _ => {}
-                }
-                data.timeframe_visibility = Some(tf);
-                self.core.drawings_mut().set_data(bid, prim_id, &data);
-                eprintln!("[ChartApp] prim_settings tf_{}_min committed: {}", tf_idx, val);
-            }
-        }
-    }
-
-    /// Apply a new maximum value for the timeframe range at `tf_idx` on primitive `prim_id`.
-    pub(crate) fn apply_tf_max_value(&mut self, prim_id: u64, tf_idx: usize, val: u32) {
-        use mlc_core::drawing::TimeframeVisibilityConfig;
-        let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-        if let Some(bid) = active_bid {
-            let data_opt = self.core.drawings().get_data(bid, prim_id);
-            if let Some(mut data) = data_opt {
-                let mut tf = data.timeframe_visibility.clone()
-                    .unwrap_or_else(TimeframeVisibilityConfig::all);
-                match tf_idx {
-                    1 => { if let Some((min, _)) = tf.seconds { tf.seconds = Some((min, val.max(min))); } }
-                    2 => { if let Some((min, _)) = tf.minutes { tf.minutes = Some((min, val.max(min))); } }
-                    3 => { if let Some((min, _)) = tf.hours   { tf.hours   = Some((min, val.max(min))); } }
-                    4 => { if let Some((min, _)) = tf.days    { tf.days    = Some((min, val.max(min))); } }
-                    5 => { if let Some((min, _)) = tf.weeks   { tf.weeks   = Some((min, val.max(min))); } }
-                    6 => { if let Some((min, _)) = tf.months  { tf.months  = Some((min, val.max(min))); } }
-                    _ => {}
-                }
-                data.timeframe_visibility = Some(tf);
-                self.core.drawings_mut().set_data(bid, prim_id, &data);
-                eprintln!("[ChartApp] prim_settings tf_{}_max committed: {}", tf_idx, val);
-            }
-        }
     }
 
 }

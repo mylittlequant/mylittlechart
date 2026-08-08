@@ -238,10 +238,10 @@ impl Primitive for Sign {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(0),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
         ]
     }

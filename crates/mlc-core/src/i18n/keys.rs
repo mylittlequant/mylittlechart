@@ -286,10 +286,63 @@ pub enum ConfigKey {
     // first, turning an open segment chain into a closed shape. Precondition
     // for a fill to paint anything — `render` gates fill on `closed && fill`.
     Closed           = 120,
+
+    // ---- primitive_settings modal — approved tab design (Appearance /
+    // Levels / Placement replacing Style/Text/Coordinates/Levels/Visibility,
+    // 2026-08-08 port; Labels split out of Appearance into its own tab the
+    // same day — see `TabVid`'s rename to `TabAppearance` below, its
+    // discriminant/table row is unchanged, only the identifier followed the
+    // tab's own rename) ----
+    TabAppearance                = 121,
+    TabPlacement                = 122,
+    GroupLine                   = 123,
+    LabelsGroupHint              = 124,
+    BoldAbbrev                  = 125,
+    ItalicAbbrev                 = 126,
+    SearchSettingsPlaceholder    = 127,
+    GlobalFillBetween            = 128,
+    EmptyLadder                  = 129,
+    AddLevel                     = 130,
+    UpToLevel                    = 131,
+    GroupPoints                  = 132,
+    TimeModeTime                 = 133,
+    TimeModeBarIndex             = 134,
+    NotAvailable                 = 135,
+    GroupVisibleOnTimeframes     = 136,
+
+    // primitive_settings modal — Levels tab "Набор" (preset) selector +
+    // palette cards, restored 2026-08-08. `LevelPillLabel` is the pill's
+    // own compact word ("уровень") — `Levels` (id=1) stays the tab name
+    // ("Уровни") and cannot be reused here.
+    LevelPillLabel               = 137,
+    SetLabel                     = 138,
+    LevelSetStandard             = 139,
+    LevelSetExtended             = 140,
+    LevelSetKeyOnly              = 141,
+    LevelSetCustom               = 142,
+    // The Template footer menu's set-and-templates extension (2026-08-08
+    // review): the default entry that seeds the ladder with the full
+    // many-level catalogue (`ALL_LEVELS` in
+    // `mlc-core::drawing::primitives_v2::fibonacci::retracement`).
+    LevelSetAll                  = 143,
+
+    // Levels tab palette card names (`primitive_settings_palettes::PALETTES`)
+    // — previously bare Russian literals on the `Palette` struct itself,
+    // never localized (i18n audit, 2026-08-08 review).
+    PaletteClassic                = 144,
+    PaletteWarm                   = 145,
+    PaletteCold                   = 146,
+    PaletteMono                   = 147,
+
+    // Levels tab top section (2026-08-08 appearance-surface consolidation)
+    // — the Моно/Палитра colour-mode segmented control that replaces the
+    // per-primitive LINE/FILL split for a level-capable primitive.
+    ColorModeMono                 = 148,
+    ColorModePalette              = 149,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 121;
+    pub const COUNT: usize = 150;
 
     /// Get translation for this key
     #[inline]
@@ -813,10 +866,15 @@ pub enum SettingsKey {
     DateFormatMonthDayYear         = 128,
     DateFormatYearMonthDay         = 129,
     DateFormatDayMonthShort        = 130,
+
+    // ---- primitive_settings modal — Placement tab "Виден на таймфреймах"
+    // chip row (2026-08-08 3-tab port): the one class TfTicks..TfMonths
+    // didn't cover.
+    TfRanges                       = 131,
 }
 
 impl SettingsKey {
-    pub const COUNT: usize = 131;
+    pub const COUNT: usize = 132;
 
     /// Get translation for this key
     #[inline]
@@ -2205,7 +2263,7 @@ mod tests {
     #[test]
     fn test_config_keys() {
         assert_eq!(ConfigKey::Labels.get(Language::En), "Labels");
-        assert_eq!(ConfigKey::Labels.get(Language::Ru), "Метки");
+        assert_eq!(ConfigKey::Labels.get(Language::Ru), "Подписи");
     }
 
     #[test]

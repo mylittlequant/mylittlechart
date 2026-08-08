@@ -5,7 +5,7 @@
 //!
 //! Reuses the exact model the footer's own template dropdown already uses
 //! everywhere in this app — `mlc_core::templates::PrimitiveTemplate`,
-//! `from_primitive_data` / `apply_to_primitive_data` — this is a bigger
+//! `from_primitive` / `apply_to_primitive` — this is a bigger
 //! SURFACE for the same data, not a parallel template system. Rename is
 //! the one capability that dropdown never had; it is real, typed keyboard
 //! input through the same shared inline-edit buffer every other sub-field
@@ -27,7 +27,6 @@ use mlc_core::templates::PrimitiveTemplate;
 use uzor::input::InputCoordinator;
 use uzor::types::Rect as WidgetRect;
 
-use crate::design_state::DesignUiState;
 use crate::shell_common;
 
 const BLOCK_GAP: f64 = 10.0;
@@ -54,7 +53,7 @@ pub fn render_templates_panel(
     _current_time_ms: u64,
     coord: &mut InputCoordinator,
     templates: &[PrimitiveTemplate],
-    _design_ui: &mut DesignUiState,
+    _template_order: &[String],
 ) -> PrimitiveSettingsResult {
     let mut result = PrimitiveSettingsResult::default();
     let Some(prim_id) = state.primitive_id else { return result };

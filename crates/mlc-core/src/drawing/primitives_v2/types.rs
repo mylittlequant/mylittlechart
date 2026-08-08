@@ -13,7 +13,7 @@ pub use crate::chart::annotations::price_line::LineStyle;
 // =============================================================================
 
 /// Color configuration for primitives
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrimitiveColor {
     /// Stroke/border color (hex)
     pub stroke: String,

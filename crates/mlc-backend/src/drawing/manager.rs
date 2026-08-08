@@ -23,13 +23,14 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, SettingsTemplate, TemplateStyle,
     TimeframeVisibilityConfig,
 };
+use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
 use mlc_core::drawing::primitives_v2::{
     ClickBehavior, ControlPoint, ControlPointType, HitTestResult, LineStyle, Primitive,
     PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
 };
-use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot};
+use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
 use mlc_core::ids::BubbleId;
 use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
@@ -65,6 +66,15 @@ fn apply_last_style_snapshot(prim: &mut Box<dyn Primitive>, style: &TemplateStyl
     for (prop_id, value) in &style.style_properties {
         prim.apply_style_property(prop_id, value);
     }
+    // Empty means either "this primitive type has no ladder" or "captured
+    // before this field existed" — either way, leave prim's own ladder
+    // (its factory default) alone rather than clearing it.
+    if !style.level_configs.is_empty() {
+        prim.set_level_configs(style.level_configs.clone());
+    }
+    for (prop_id, value) in &style.text_properties {
+        prim.apply_text_property(prop_id, value);
+    }
 }
 
 /// Compute a fingerprint for a `TemplateStyle` snapshot (preview cache key).
@@ -78,6 +88,13 @@ fn style_fingerprint(style: &TemplateStyle) -> u64 {
     style.show_labels.hash(&mut h);
     style.show_prices.hash(&mut h);
     for (k, v) in &style.style_properties {
+        k.hash(&mut h);
+        format!("{v:?}").hash(&mut h);
+    }
+    // FibLevelConfig has no Hash impl (carries f64s) — Debug-format like the
+    // PropertyValue entries above rather than adding one for a cache key.
+    format!("{:?}", style.level_configs).hash(&mut h);
+    for (k, v) in &style.text_properties {
         k.hash(&mut h);
         format!("{v:?}").hash(&mut h);
     }
@@ -667,6 +684,12 @@ impl DrawingManager {
         if let Some(style) = last_style {
             apply_last_style_snapshot(&mut prim, style);
         }
+        // Stamp the reference this freshly-placed primitive actually starts
+        // from — see `Self::initial_style_reference`. Runs AFTER
+        // `apply_last_style_snapshot` above, so it reads the primitive's
+        // real seeded state (registry factory default, then the bubble's
+        // last-used style if any), not the type's bare factory default.
+        prim.data_mut().style_reference = Self::initial_style_reference(prim.as_ref());
         if let Some(variant) = session.tool_variant.clone() {
             Self::apply_variant_to_primitive(&mut prim, &variant);
         }
@@ -675,6 +698,41 @@ impl DrawingManager {
         b.primitives.push(prim);
         session.selected = Some(id);
         id
+    }
+
+    /// What a freshly-created primitive's `style_reference` starts as —
+    /// see [`mlc_core::drawing::StyleReference`] and
+    /// [`mlc_core::drawing::primitives_v2::PrimitiveData::style_reference`]'s
+    /// own doc for the shared `None`-means-shown reading this feeds.
+    ///
+    /// A level-capable primitive's seeded composition (only the currently
+    /// VISIBLE levels — an invisible entry inherited from a `last_style`
+    /// snapshot is not "in" the composition any more than a deleted level
+    /// on a live primitive is, see `apply_level_set`'s own visible-is-the-
+    /// ground-truth contract in `mlc-app-layout`) is matched against the
+    /// four system level-set presets via
+    /// [`level_set_id_for_composition`] — the SAME canonical matching
+    /// `mlc-app-layout`'s own `current_level_set`
+    /// (`primitive_settings_intent.rs`) uses, both sourced off
+    /// `mlc_core::drawing::primitives_v2::fibonacci::retracement`'s preset
+    /// value lists — so creation-time stamping here and the modal's own
+    /// live read of "which набор is this" can never independently redefine
+    /// "what a preset means" and drift apart. A composition matching none
+    /// of the four presets is "custom" — there is no id to name it with,
+    /// so this falls through to `None`, same as a primitive with no ladder
+    /// at all.
+    ///
+    /// A primitive with no level ladder has nothing else nameable to stamp
+    /// either: the only OTHER starting point `apply_last_style_snapshot`
+    /// can seed it from is a raw `TemplateStyle` snapshot, which — unlike a
+    /// `PrimitiveTemplate` or a level-set preset — carries no id of its own
+    /// to resolve back against later (see `TemplateStyle`'s own doc). So
+    /// `None` is the honest answer for every non-ladder primitive too, not
+    /// a placeholder that should have been something else.
+    fn initial_style_reference(prim: &dyn Primitive) -> Option<StyleReference> {
+        let levels = prim.level_configs()?;
+        let composition: Vec<f64> = levels.iter().filter(|c| c.visible).map(|c| c.level).collect();
+        level_set_id_for_composition(&composition).map(|id| StyleReference::LevelSet(id.to_string()))
     }
 
     fn apply_variant_to_primitive(prim: &mut Box<dyn Primitive>, variant: &str) {
@@ -1078,6 +1136,14 @@ impl DrawingManager {
             prim_data.display_name = data.display_name.clone();
             prim_data.text = data.text.clone();
             prim_data.timeframe_visibility = data.timeframe_visibility.clone();
+            // Every caller of this method is a read-modify-write of a live
+            // `get_data` snapshot, so the reference travels with the rest of
+            // the snapshot. Omitting it made `stamp_primitive_style_reference`
+            // (`mlc-app`) a silent no-op: it wrote the field on its own copy
+            // and this whitelist dropped it, so applying a level-set preset
+            // never re-established what the primitive was made from and
+            // "Save as…" stayed lit (2026-08-09).
+            prim_data.style_reference = data.style_reference.clone();
         }
     }
 
@@ -1294,6 +1360,26 @@ impl DrawingManager {
         }
     }
 
+    /// Apply a saved [`mlc_core::templates::PrimitiveTemplate`] to a live
+    /// primitive — the flat style fields, the level ladder (written whenever
+    /// `prim` itself supports one, per `PrimitiveTemplate`'s own
+    /// target-capability gating), and the typed style/text properties, all
+    /// through `PrimitiveTemplate::apply_to_primitive`, which reaches the
+    /// primitive directly rather than round-tripping through a cloned
+    /// `PrimitiveData`. Mirrors [`Self::apply_template_style`]'s shape for
+    /// the legacy `SettingsTemplate` above.
+    pub(crate) fn apply_primitive_template(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        prim_id: u64,
+        template: &mlc_core::templates::PrimitiveTemplate,
+    ) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) else { return };
+        template.apply_to_primitive(prim.as_mut());
+    }
+
     // =========================================================================
     // Save last-used style
     // =========================================================================
@@ -1309,6 +1395,11 @@ impl DrawingManager {
             show_labels: None,
             show_prices: None,
             style_properties: Vec::new(),
+            // No `dyn Primitive` available here (only a `PrimitiveData`
+            // snapshot) — nothing to read the ladder or typed properties
+            // from, same reasoning as `style_properties` above.
+            level_configs: Vec::new(),
+            text_properties: Vec::new(),
         };
         if let Ok(mut store) = b.last_used_style.write() {
             store.insert(data.type_id.clone(), style);
@@ -1326,6 +1417,14 @@ impl DrawingManager {
             .filter(|prop| !prop.readonly)
             .map(|prop| (prop.id, prop.value))
             .collect();
+        let text_props: Vec<(String, PropertyValue)> = prim
+            .text_properties()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|prop| !prop.readonly)
+            .map(|prop| (prop.id, prop.value))
+            .collect();
+        let level_configs = prim.level_configs().unwrap_or_default();
         let style = TemplateStyle {
             color: Some(data.color.stroke.clone()),
             width: Some(data.width),
@@ -1335,6 +1434,8 @@ impl DrawingManager {
             show_labels: None,
             show_prices: None,
             style_properties: style_props,
+            level_configs,
+            text_properties: text_props,
         };
         if let Ok(mut store) = b.last_used_style.write() {
             store.insert(type_id, style);

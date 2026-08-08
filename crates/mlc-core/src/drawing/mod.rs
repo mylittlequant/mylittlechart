@@ -125,7 +125,7 @@ pub trait DrawingRenderView {
 pub use primitives_v2::{
     // Core trait
     Primitive as PrimitiveTrait,
-    PrimitiveData, PrimitiveKind, ClickBehavior,
+    PrimitiveData, PrimitiveKind, ClickBehavior, StyleReference,
     // Registry
     PrimitiveRegistry, PrimitiveFactory, PrimitiveMetadata,
     // Hit testing

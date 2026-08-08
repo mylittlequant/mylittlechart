@@ -175,11 +175,11 @@ impl Primitive for ElliottCorrection {
             .collect();
 
         let mut props = vec![
-            ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::Style).with_order(10),
-            ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::Style).with_order(11),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::Style).with_order(12),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::Style).with_order(13),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::Style).with_order(14),
+            ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
+            ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(12),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::AppearanceLine).with_order(13),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::AppearanceLine).with_order(14),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props

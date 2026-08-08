@@ -3871,7 +3871,7 @@ impl ChartApp {
         }
         // ── Template name overlay modal for primitive settings ────────────────
         if let Some(rest) = widget_id.strip_prefix("prim_tmpl:") {
-            self.handle_prim_tmpl_modal_click(rest);
+            self.handle_prim_tmpl_modal_click(rest, x, y);
             return;
         }
         if let Some(rest) = widget_id.strip_prefix("ind_settings:") {
@@ -3880,7 +3880,7 @@ impl ChartApp {
         }
         // ── Template name overlay modal for indicator settings ────────────────
         if let Some(rest) = widget_id.strip_prefix("ind_tmpl:") {
-            self.handle_ind_tmpl_modal_click(rest);
+            self.handle_ind_tmpl_modal_click(rest, x, y);
             return;
         }
         if let Some(rest) = widget_id.strip_prefix("alert_set:") {
@@ -3897,12 +3897,12 @@ impl ChartApp {
         }
         // ── Template name overlay modal for compare settings ──────────────────
         if let Some(rest) = widget_id.strip_prefix("cmp_tmpl:") {
-            self.handle_cmp_tmpl_modal_click(rest);
+            self.handle_cmp_tmpl_modal_click(rest, x, y);
             return;
         }
         // ── Template name overlay modal for chart settings ────────────────────
         if let Some(rest) = widget_id.strip_prefix("chart_tmpl:") {
-            self.handle_chart_tmpl_modal_click(rest);
+            self.handle_chart_tmpl_modal_click(rest, x, y);
             return;
         }
         if let Some(rest) = widget_id.strip_prefix("cmp_settings:") {

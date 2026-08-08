@@ -355,23 +355,23 @@ impl LabelStyle {
     pub fn style_properties(&self, fallback_color: &str, order_start: i32) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::boolean("label_bold", ConfigKey::Bold.get(current_language()), self.font_weight == "bold")
-                .with_category(PropertyCategory::Style).with_order(order_start),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start),
             ConfigProperty::number("label_offset", ConfigKey::LabelOffset.get(current_language()), self.offset_y, Some(0.0), Some(60.0))
-                .with_category(PropertyCategory::Style).with_order(order_start + 1),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 1),
             ConfigProperty::boolean("label_background", ConfigKey::ShowBackground.get(current_language()), self.background_color.is_some())
-                .with_category(PropertyCategory::Style).with_order(order_start + 2),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 2),
             ConfigProperty::color("label_background_color", ConfigKey::LabelBackgroundColor.get(current_language()), self.background_color.as_deref().unwrap_or(fallback_color))
-                .with_category(PropertyCategory::Style).with_order(order_start + 3),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 3),
             ConfigProperty::number("label_padding", ConfigKey::LabelPadding.get(current_language()), self.background_padding, Some(0.0), Some(20.0))
-                .with_category(PropertyCategory::Style).with_order(order_start + 4),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 4),
             ConfigProperty::number("label_radius", ConfigKey::LabelRadius.get(current_language()), self.background_radius, Some(0.0), Some(20.0))
-                .with_category(PropertyCategory::Style).with_order(order_start + 5),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 5),
             ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_color.is_some())
-                .with_category(PropertyCategory::Style).with_order(order_start + 6),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 6),
             ConfigProperty::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), self.border_color.as_deref().unwrap_or(fallback_color))
-                .with_category(PropertyCategory::Style).with_order(order_start + 7),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 7),
             ConfigProperty::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), self.border_width, Some(0.5), Some(6.0))
-                .with_category(PropertyCategory::Style).with_order(order_start + 8),
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 8),
         ]
     }
 
@@ -825,21 +825,73 @@ impl TimeframeVisibilityConfig {
 // Config Property Definition
 // =============================================================================
 
-/// Category for grouping properties in UI
+/// Where a property's control renders in the primitive-settings modal —
+/// each variant names both a TAB (`Levels`/`Appearance`/`Labels`/
+/// `Placement`, encoded by the variant's own name prefix) and a named GROUP
+/// within that tab. A primitive declares this per property
+/// (`ConfigProperty::category`); the modal buckets by it, sorts within a
+/// bucket by `ConfigProperty::order`, and renders each control from its own
+/// `PropertyType` — see `primitive_settings_vid`/`_labels`/`_levels`/
+/// `_placement` in `mlc-app-layout`. A group nobody declared into renders
+/// nothing (no header, no gap): the modal's layout follows the
+/// declaration, not the other way around.
+///
+/// The TAB STRIP itself is derived, not fixed: `mlc-app-layout`'s
+/// `available_tabs` builds it from the distinct tabs present among a
+/// primitive's own declared properties, plus whichever tabs its bespoke
+/// (non-`ConfigProperty`) collections force — a level ladder forces
+/// `Levels`, the points table and timeframe chips force `Placement`
+/// unconditionally. A tab with nothing in it (declared or bespoke) never
+/// appears — a type with no level ladder shows no Levels tab, a type that
+/// declares nothing into `AppearanceLine`/`AppearanceFill` and has no base
+/// stroke to fall back to (i.e. it has levels, so that fallback lives on
+/// the Levels tab instead) shows no Appearance tab either. Tab STRIP order
+/// is the enum's own declaration order (`Levels`, `Appearance`, `Labels`,
+/// `Placement`), never the order a primitive happened to declare its
+/// properties in.
+///
+/// No variant carries a user-facing string — every group's header resolves
+/// through an existing `ConfigKey`/`SettingsKey` at render time, the same
+/// way every OTHER display string in this module already does. Replaces the
+/// old five-tab vocabulary (`Style`/`Text`/`Coordinates`/`Levels`/
+/// `Visibility`/`Inputs`), retired with the 3-tab cutover (2026-08-08); the
+/// 3-tab set itself was in turn superseded the same day by this 4-tab,
+/// declared-strip vocabulary (`Labels` split out of the old `Appearance`
+/// catch-all into a tab of its own) — hard cutover both times, no
+/// compatibility variants kept alongside these.
+///
+/// Extending this (a new group, or a 5th tab) never requires touching the
+/// modal's own grouping/sorting/empty-group-suppression code — only
+/// `available_tabs` and the tab module that owns the new variant need to
+/// learn about it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropertyCategory {
-    /// Style tab - colors, line styles, fills
-    Style,
-    /// Text tab - text content, font, alignment
-    Text,
-    /// Coordinates tab - points, bars, prices
-    Coordinates,
-    /// Levels tab - level mode, level configs
-    Levels,
-    /// Visibility tab - timeframe visibility
-    Visibility,
-    /// Inputs tab - specific parameters (like Fib levels)
-    Inputs,
+    /// Levels tab — the base stroke (colour/width/line style) every level
+    /// falls back to when it has no override of its own, plus any other
+    /// property that belongs with the ladder rather than the shape's own
+    /// line (e.g. a Fibonacci retracement's `extend_left`/`extend_right`/
+    /// `show_trend_line` — see its own `style_properties()` doc for why
+    /// those moved here out of `AppearanceLine`).
+    LevelsBase,
+    /// Appearance tab — stroke colour / width / line style, extend
+    /// left/right, trend line — everything about how the LINE itself
+    /// looks (as opposed to a fill or a label).
+    AppearanceLine,
+    /// Appearance tab — fill on/off + opacity.
+    AppearanceFill,
+    /// Labels tab — content/position/font/style/pills and every other
+    /// text-adjacent control (font size, colour, background, border,
+    /// alignment). Its own tab since the 4-tab cutover (2026-08-08) — it
+    /// used to share the Appearance tab (`AppearanceLabels`) with the line
+    /// and fill groups above.
+    LabelsText,
+    /// Placement tab — per-point anchor properties, alongside the points
+    /// table itself (which is a bespoke collection, not a declared
+    /// property — see `primitive_settings_placement`'s own doc).
+    PlacementPoints,
+    /// Placement tab — timeframe-visibility properties, alongside the
+    /// timeframe chip row itself (also bespoke).
+    PlacementTimeframes,
 }
 
 /// A single configurable property
@@ -871,7 +923,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Color,
             value: PropertyValue::Color(value.to_string()),
-            category: PropertyCategory::Style,
+            category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -885,7 +937,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Number { min, max, step: None },
             value: PropertyValue::Number(value),
-            category: PropertyCategory::Style,
+            category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -899,7 +951,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Boolean,
             value: PropertyValue::Boolean(value),
-            category: PropertyCategory::Style,
+            category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -913,7 +965,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::LineStyle,
             value: PropertyValue::LineStyle(value.to_string()),
-            category: PropertyCategory::Style,
+            category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -927,7 +979,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Coordinate,
             value: PropertyValue::Coordinate { bar, price },
-            category: PropertyCategory::Coordinates,
+            category: PropertyCategory::PlacementPoints,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -941,7 +993,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Text { multiline: true, max_length: Some(1000) },
             value: PropertyValue::String(value.to_string()),
-            category: PropertyCategory::Text,
+            category: PropertyCategory::LabelsText,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -955,7 +1007,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Text { multiline: false, max_length: Some(200) },
             value: PropertyValue::String(value.to_string()),
-            category: PropertyCategory::Text,
+            category: PropertyCategory::LabelsText,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -969,7 +1021,7 @@ impl ConfigProperty {
             name: name.to_string(),
             prop_type: PropertyType::Select { options },
             value: PropertyValue::String(value.to_string()),
-            category: PropertyCategory::Style,
+            category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
             tooltip: None,
@@ -1454,6 +1506,21 @@ pub struct TemplateStyle {
     /// `apply_style_property()` on the next creation of the same primitive type.
     #[serde(default)]
     pub style_properties: Vec<(String, PropertyValue)>,
+    /// Full level ladder captured via `Primitive::level_configs()`, restored
+    /// via `Primitive::set_level_configs()` on the next primitive of the same
+    /// type — the last-used-style analogue of `PrimitiveTemplate::level_configs`.
+    /// Empty means either "this primitive type has no ladder" or "captured
+    /// before this field existed" (`#[serde(default)]`); both read the same
+    /// way on apply: the freshly-created primitive's own default ladder is
+    /// left alone rather than cleared.
+    #[serde(default)]
+    pub level_configs: Vec<FibLevelConfig>,
+    /// Per-type text properties captured via `Primitive::text_properties()`,
+    /// restored via `Primitive::apply_text_property()` — the last-used-style
+    /// analogue of `PrimitiveTemplate::custom_text_properties`. Distinct from
+    /// `style_properties` above, which only covers `Primitive::style_properties()`.
+    #[serde(default)]
+    pub text_properties: Vec<(String, PropertyValue)>,
 }
 
 

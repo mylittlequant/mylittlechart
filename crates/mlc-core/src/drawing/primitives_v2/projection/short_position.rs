@@ -409,28 +409,28 @@ impl Primitive for ShortPosition {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let mut props = vec![
             ConfigProperty::show_pnl(self.show_pnl)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10),
             ConfigProperty::quantity(self.quantity)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(11),
             ConfigProperty::stop_zone_color(&self.stop_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(12),
             ConfigProperty::target_zone_color(&self.target_color)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(13),
             ConfigProperty::fill_opacity(self.zone_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(14),
             ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(15),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(16),
             ConfigProperty::show_live_label(self.show_live_label)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(17),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));

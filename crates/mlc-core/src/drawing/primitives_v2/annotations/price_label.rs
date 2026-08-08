@@ -162,16 +162,16 @@ impl Primitive for PriceLabel {
 
         Some(vec![
             ConfigProperty::font_size(font_size)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(0),
             ConfigProperty::bold(bold)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(1),
             ConfigProperty::italic(italic)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(2),
             ConfigProperty::text_color(text_color)
-                .with_category(PropertyCategory::Text)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(3),
         ])
     }
@@ -214,13 +214,13 @@ impl Primitive for PriceLabel {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::show_line(self.show_line)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(0),
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(2),
         ]
     }

@@ -288,51 +288,129 @@ pub struct SliderDragState {
 // Primitive Settings Tab
 // =============================================================================
 
-/// Tab in primitive settings modal
+/// Tab in the primitive settings modal — the vocabulary a primitive type
+/// declares its settings surface INTO
+/// (`mlc_core::drawing::primitives_v2::config::PropertyCategory`), not a
+/// fixed set every primitive shows: `Levels` (the level ladder), `Appearance`
+/// (line/fill), `Labels` (content/font/style/position — split out of
+/// `Appearance` in the 4-tab cutover, 2026-08-08), `Placement` (points +
+/// timeframe visibility). [`all`](Self::all) lists every tab in STRIP
+/// ORDER — the order this enum declares them in, fixed regardless of which
+/// order a primitive happens to declare its own properties. Which of these
+/// actually appear for a given primitive is `available_tabs`'s job
+/// (`crate::layout::modals::primitive_settings`), not this type's: a
+/// primitive with no level ladder never has `Levels`, and `Placement` is
+/// unconditional (the points table and timeframe chips are bespoke
+/// collections every primitive has, not declared properties — see
+/// `PropertyCategory`'s own doc).
+///
+/// Replaces the earlier five-tab set (Style/Text/Coordinates/Levels/
+/// Visibility, retired 2026-08-08) and that set's own three-tab successor
+/// (Вид/Уровни/Размещение, same day) — hard cutover both times, no
+/// compatibility variants kept alongside these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PrimitiveSettingsTab {
-    #[default]
-    Style,
-    Text,
-    Coordinates,
     Levels,
-    Visibility,
+    #[default]
+    Appearance,
+    Labels,
+    Placement,
 }
 
 impl PrimitiveSettingsTab {
     /// Get tab ID string
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Style => "style",
-            Self::Text => "text",
-            Self::Coordinates => "coordinates",
             Self::Levels => "levels",
-            Self::Visibility => "visibility",
+            Self::Appearance => "appearance",
+            Self::Labels => "labels",
+            Self::Placement => "placement",
         }
     }
 
     /// Get tab display label (localized via current language)
     pub fn label(&self) -> &'static str {
-        use mlc_core::i18n::{ConfigKey, SettingsKey, current_language};
+        use mlc_core::i18n::{ConfigKey, current_language};
         let lang = current_language();
         match self {
-            Self::Style => ConfigKey::Style.get(lang),
-            Self::Text => SettingsKey::Text.get(lang),
-            Self::Coordinates => ConfigKey::Coordinates.get(lang),
             Self::Levels => ConfigKey::Levels.get(lang),
-            Self::Visibility => ConfigKey::Visibility.get(lang),
+            Self::Appearance => ConfigKey::TabAppearance.get(lang),
+            Self::Labels => ConfigKey::Labels.get(lang),
+            Self::Placement => ConfigKey::TabPlacement.get(lang),
         }
     }
 
-    /// All available tabs
+    /// Every tab this modal knows how to draw, in fixed STRIP order —
+    /// `available_tabs` (`crate::layout::modals::primitive_settings`)
+    /// filters this down to the ones a given primitive actually has
+    /// anything for; this is never itself the per-primitive tab set.
     pub fn all() -> &'static [PrimitiveSettingsTab] {
-        &[
-            Self::Style,
-            Self::Text,
-            Self::Coordinates,
-            Self::Levels,
-            Self::Visibility,
-        ]
+        &[Self::Levels, Self::Appearance, Self::Labels, Self::Placement]
+    }
+}
+
+/// "время" (a formatted date/time, real) vs "индекс бара" (needs the
+/// chart's own bar/timeframe data to convert a millisecond timestamp to a
+/// bar index — see `crate::layout::modals::primitive_settings_placement`).
+/// Kept as a real toggle either way so the inert side is visibly present,
+/// not silently dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TimeDisplayMode {
+    #[default]
+    Time,
+    BarIndex,
+}
+
+/// Which canned level set is active in the Levels tab's ladder composition.
+/// "Стандартный"/"Расширенный"/"Только ключевые" name a fixed value list
+/// (`mlc_core::drawing::primitives_v2::fibonacci::retracement::{MAIN_LEVELS,
+/// EXTENDED_LEVELS}` + a hand-picked key-levels list); `All` is the full
+/// many-level catalogue (`retracement::ALL_LEVELS`) — the footer Template
+/// menu's default entry (2026-08-08 review). `Custom` is not a generator —
+/// it is what the selector shows once the level VALUES on the primitive
+/// (not their colours) no longer match any of the four, per the approved
+/// spec: "как только тронул что-то руками, набор становится «Свой»".
+/// Folded in from the ui-lab prototype's own `LevelSet` (2026-08-08 port);
+/// the standalone "Набор" row + its own dropdown were deleted the same day
+/// (owner review) — the choice now lives in the footer Template menu
+/// (`crate::layout::modals::primitive_settings::render_primitive_settings_modal`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LevelSet {
+    #[default]
+    Standard,
+    Extended,
+    KeyOnly,
+    All,
+    Custom,
+}
+
+impl LevelSet {
+    pub const PRESETS: [LevelSet; 4] = [LevelSet::Standard, LevelSet::Extended, LevelSet::KeyOnly, LevelSet::All];
+
+    pub fn label(self) -> &'static str {
+        use mlc_core::i18n::{ConfigKey, current_language};
+        let lang = current_language();
+        match self {
+            LevelSet::Standard => ConfigKey::LevelSetStandard.get(lang),
+            LevelSet::Extended => ConfigKey::LevelSetExtended.get(lang),
+            LevelSet::KeyOnly => ConfigKey::LevelSetKeyOnly.get(lang),
+            LevelSet::All => ConfigKey::LevelSetAll.get(lang),
+            LevelSet::Custom => ConfigKey::LevelSetCustom.get(lang),
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            LevelSet::Standard => "standard",
+            LevelSet::Extended => "extended",
+            LevelSet::KeyOnly => "key_only",
+            LevelSet::All => "all",
+            LevelSet::Custom => "custom",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::PRESETS.into_iter().find(|s| s.id() == id)
     }
 }
 
@@ -347,7 +425,14 @@ pub struct PrimitiveSettingsState {
     pub is_open: bool,
     /// Stable id of the primitive being edited.
     pub primitive_id: Option<u64>,
-    /// Current active tab
+    /// Current active tab. Not guaranteed to be one this primitive
+    /// actually has (e.g. right after `open()`, which cannot see the
+    /// primitive to check) — the render call
+    /// (`crate::layout::modals::primitive_settings::render_primitive_settings_modal`,
+    /// via its own `resolve_active_tab`) falls back to the first tab that
+    /// IS available for the current primitive every time this is stale, so
+    /// this field itself never needs to be kept in sync with which
+    /// primitive is open.
     pub active_tab: PrimitiveSettingsTab,
     /// Modal position (for dragging)
     pub position: Option<(f64, f64)>,
@@ -376,24 +461,91 @@ pub struct PrimitiveSettingsState {
     pub slider_drag: Option<SliderDragState>,
     /// Whether the user is drag-selecting text in the active text input.
     pub text_select_dragging: bool,
-    /// Whether the line-style dropdown is open.
-    pub open_line_style_dropdown: bool,
-    /// Currently open Select-property dropdown: (prop_kind, prop_id).
-    /// prop_kind is "style", "text", or "level".
-    pub open_select_dropdown: Option<(String, String)>,
     // ---- Template UI state ----
     /// Whether the template dropdown is open.
     pub template_dropdown_open: bool,
+    /// Which `PropertyType::LineStyle`/`Select` row's split cycle+chevron
+    /// control has its dropdown open (item 1, 2026-08-09 restore) — the
+    /// row's own field id (`"line_style"`, `"style_prop:{id}"`, …), or
+    /// `None` when none is. A single `Option`, not a per-row bool: setting
+    /// it to a new row's id is what GUARANTEES only one of these dropdowns
+    /// is ever open at once — the same shape `IndicatorSettingsState::
+    /// open_param_dropdown` already uses for its own single-open-at-a-time
+    /// dropdown. Cleared whenever the modal opens/closes or the click lands
+    /// somewhere unrelated (`mlc-app`'s `input/settings.rs`, mirroring
+    /// `template_dropdown_open`'s own close-on-unrelated-click rule).
+    pub open_value_dropdown: Option<String>,
     /// ID of the currently applied template (None = no template applied).
     pub applied_template_id: Option<String>,
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
+    /// Template-menu drag-to-reorder: `(dragging_key, current_mouse_y)` —
+    /// `key` is a row's own position key (`LevelSet::id()` for a system
+    /// preset, `PrimitiveTemplate::id` for a user template), the same
+    /// mechanism `WatchlistModalState::drag_reorder` already uses for its
+    /// own row list (item 4, 2026-08-08 review).
+    pub template_drag_reorder: Option<(String, f64)>,
+    /// Pending template-menu drag-to-reorder: `(key, start_x, start_y)` —
+    /// promoted to `template_drag_reorder` only once the pointer has moved
+    /// at least 5px from the start position, so a short click still reaches
+    /// the row's own click handler (mirrors
+    /// `WatchlistModalState::drag_reorder_pending`'s own doc for why).
+    pub template_drag_reorder_pending: Option<(String, f64, f64)>,
+    /// Drop target index during a template-menu drag-to-reorder.
+    pub template_drop_index: Option<usize>,
     /// Scroll state for the tab content area. The label-plumbing pass (item 1
     /// of the primitives batch) grew the Style tab past a fixed-height body
     /// with nowhere for the overflow to go; this plus `ScrollableContainer`
     /// in the renderer is the fix.
     pub scroll: ScrollState,
+
+    // =========================================================================
+    // Уровни tab (`crate::layout::modals::primitive_settings_levels`) —
+    // folded in from the ui-lab prototype's own `DesignUiState` (2026-08-08
+    // port): the app owns this now, it is the real modal's state, not a lab
+    // toy.
+    // =========================================================================
+    /// Level VALUES explicitly removed from the ladder view via "×" this
+    /// session — independent of each entry's own `FibLevelConfig::visible`
+    /// (the checkbox: dims a row, keeps it in the list; see
+    /// `is_level_selected`'s sibling doc). The underlying
+    /// `Primitive::level_configs()` is never touched by an exclusion — an
+    /// excluded value's colour/width/style/fill survive untouched, so
+    /// re-adding it via "+ добавить уровень" gets it back exactly as it
+    /// was. Cleared on `open()`: reopening the modal always starts from
+    /// everything the primitive actually has, never a stale hidden set from
+    /// a previous session. Value-keyed rather than index-keyed because the
+    /// ladder is a sorted, filtered VIEW over the primitive's own level
+    /// list — a positional index would point at a different level the
+    /// moment a row is added, removed, or resorted.
+    pub levels_excluded: Vec<f64>,
+    /// Level values marked "touched by hand" (colour/width/style/fill
+    /// only — composition changes do not set this). Value-keyed for the
+    /// same reason `levels_excluded` is.
+    pub level_overridden: Vec<f64>,
+    /// Level value whose inspector row is expanded, if any. Value-keyed for
+    /// the same reason `levels_excluded` is.
+    pub selected_level: Option<f64>,
+    /// Which canned level set the ladder currently matches — the "Набор"
+    /// selector's own value. Recomputed after every composition-changing
+    /// action (add/delete/rename a level), not just when the user picks a
+    /// preset directly.
+    pub level_set: LevelSet,
+    /// Index into the Levels tab's own palette table
+    /// (`crate::layout::modals::primitive_settings_palettes::PALETTES`) for
+    /// the chosen colour ramp.
+    pub palette: usize,
+
+    // =========================================================================
+    // Размещение tab (`crate::layout::modals::primitive_settings_placement`)
+    // =========================================================================
+    pub time_display_mode: TimeDisplayMode,
 }
+
+/// Float-equality tolerance for level-value lookups (ratios like `0.618`
+/// round-trip through `format!("{:.3}")` text fields, so an exact `==`
+/// would reject a value it just displayed).
+const LEVEL_VALUE_EPS: f64 = 1e-9;
 
 impl PrimitiveSettingsState {
     /// Create new state (closed)
@@ -402,12 +554,76 @@ impl PrimitiveSettingsState {
     }
 
     /// Open settings for a primitive
+    ///
+    /// Does not touch "Save as…" visibility: that reads
+    /// `PrimitiveData::style_reference`, which lives on the primitive
+    /// itself (persisted with the drawing) rather than in this
+    /// session-only modal state — opening the modal is no longer a
+    /// baseline-establishing moment (see `mlc_core::drawing::
+    /// StyleReference`'s own doc for why a persisted reference replaced
+    /// the open-time snapshot this method used to also reset here).
     pub fn open(&mut self, primitive_id: u64) {
         self.is_open = true;
         self.primitive_id = Some(primitive_id);
-        self.active_tab = PrimitiveSettingsTab::Style;
+        // The render call resolves the real per-primitive tab set
+        // (`available_tabs`) and falls back off THIS value the instant it
+        // is not among them — see that function's own doc. `Appearance` is
+        // just a reasonable starting guess, not a claim that this
+        // primitive has one.
+        self.active_tab = PrimitiveSettingsTab::Appearance;
         self.scroll.reset();
+        self.levels_excluded.clear();
+        self.level_overridden.clear();
+        self.selected_level = None;
+        self.level_set = LevelSet::Standard;
+        self.palette = 0;
+        self.time_display_mode = TimeDisplayMode::Time;
+        self.open_value_dropdown = None;
         // Don't reset position - keep last position for convenience
+    }
+
+    // =========================================================================
+    // Levels tab — value-keyed bookkeeping (folded in from the ui-lab
+    // prototype's `DesignUiState`, see the field docs above for why
+    // value-keyed).
+    // =========================================================================
+
+    pub fn is_level_excluded(&self, level: f64) -> bool {
+        self.levels_excluded.iter().any(|v| (*v - level).abs() < LEVEL_VALUE_EPS)
+    }
+
+    pub fn exclude_level(&mut self, level: f64) {
+        if !self.is_level_excluded(level) {
+            self.levels_excluded.push(level);
+        }
+    }
+
+    /// Drop a value's exclusion — called when re-adding a level that was
+    /// previously removed via "×", so it rejoins the ladder view.
+    pub fn unexclude_level(&mut self, level: f64) {
+        self.levels_excluded.retain(|v| (*v - level).abs() >= LEVEL_VALUE_EPS);
+    }
+
+    pub fn is_level_overridden(&self, level: f64) -> bool {
+        self.level_overridden.iter().any(|v| (*v - level).abs() < LEVEL_VALUE_EPS)
+    }
+
+    pub fn mark_level_overridden(&mut self, level: f64) {
+        if !self.is_level_overridden(level) {
+            self.level_overridden.push(level);
+        }
+    }
+
+    /// Drop a value's override flag — called when that level is deleted, so
+    /// a re-added level at the same value starts clean rather than
+    /// inheriting a stale "touched by hand" mark from a row that no longer
+    /// exists.
+    pub fn clear_level_overridden(&mut self, level: f64) {
+        self.level_overridden.retain(|v| (*v - level).abs() >= LEVEL_VALUE_EPS);
+    }
+
+    pub fn is_level_selected(&self, level: f64) -> bool {
+        self.selected_level.map(|s| (s - level).abs() < LEVEL_VALUE_EPS).unwrap_or(false)
     }
 
     /// Close the modal
@@ -422,10 +638,12 @@ impl PrimitiveSettingsState {
         self.active_field_id = None;
         self.slider_drag = None;
         self.text_select_dragging = false;
-        self.open_line_style_dropdown = false;
-        self.open_select_dropdown = None;
         self.template_dropdown_open = false;
+        self.open_value_dropdown = None;
         self.save_template_mode = false;
+        self.template_drag_reorder = None;
+        self.template_drag_reorder_pending = None;
+        self.template_drop_index = None;
     }
 
     /// Check if open
@@ -603,20 +821,6 @@ impl PrimitiveSettingsState {
             floating_value: Some(initial_value),
             floating_value2: None,
         });
-    }
-
-    /// Get available tabs for a primitive (based on capabilities)
-    pub fn available_tabs(&self, supports_text: bool, has_levels: bool) -> Vec<PrimitiveSettingsTab> {
-        let mut tabs = vec![PrimitiveSettingsTab::Style];
-        if supports_text {
-            tabs.push(PrimitiveSettingsTab::Text);
-        }
-        tabs.push(PrimitiveSettingsTab::Coordinates);
-        if has_levels {
-            tabs.push(PrimitiveSettingsTab::Levels);
-        }
-        tabs.push(PrimitiveSettingsTab::Visibility);
-        tabs
     }
 
     // =========================================================================

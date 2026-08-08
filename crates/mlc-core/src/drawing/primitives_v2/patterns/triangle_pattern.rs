@@ -204,10 +204,10 @@ impl Primitive for TrianglePattern {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let mut props = vec![
             ConfigProperty::show_labels(self.show_labels)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10),
             ConfigProperty::show_lines(self.show_lines)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(11),
             ConfigProperty::triangle_type(match self.triangle_type {
                 TriangleType::Symmetrical => "symmetrical",
@@ -215,19 +215,19 @@ impl Primitive for TrianglePattern {
                 TriangleType::Descending => "descending",
                 TriangleType::Expanding => "expanding",
             })
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(12),
             ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(13),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceLine)
                 .with_order(14),
             ConfigProperty::fill(self.fill)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
-                .with_category(PropertyCategory::Style)
+                .with_category(PropertyCategory::AppearanceFill)
                 .with_order(21),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));

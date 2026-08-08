@@ -16,19 +16,7 @@
 #[cfg(target_arch = "wasm32")]
 mod approved_design;
 #[cfg(target_arch = "wasm32")]
-mod approved_levels;
-#[cfg(target_arch = "wasm32")]
-mod approved_placement;
-#[cfg(target_arch = "wasm32")]
-mod approved_vid;
-#[cfg(target_arch = "wasm32")]
-mod design_state;
-#[cfg(target_arch = "wasm32")]
 mod dispatch;
-#[cfg(target_arch = "wasm32")]
-mod level_presets;
-#[cfg(target_arch = "wasm32")]
-mod palettes;
 #[cfg(target_arch = "wasm32")]
 mod render_context;
 #[cfg(target_arch = "wasm32")]
@@ -79,9 +67,6 @@ use uzor::render::{Masking, Painter, ShapeHelpers, TextRenderer};
 use uzor::types::Rect;
 #[cfg(target_arch = "wasm32")]
 use uzor_window_web::WebWindowProvider;
-
-#[cfg(target_arch = "wasm32")]
-use design_state::DesignUiState;
 
 // ─── Sector grid ────────────────────────────────────────────────────────────
 
@@ -140,17 +125,16 @@ fn sync_sector_regions(coord: &mut InputCoordinator, rects: &[Rect; 4]) {
 
 /// Everything one grid sector owns: its own copy of the primitive-settings
 /// modal state (open/closed, active tab, scroll position, colour picker,
-/// text-edit focus, ...), the lab-only design UI state the approved design
-/// and the templates panel need (`crate::design_state::DesignUiState`), and
-/// the drag geometry captured from its own most recently rendered frame.
-/// All four sectors point at the SAME primitive (`LabState::primitives`) —
-/// only this bookkeeping is per-sector, which is what keeps an edit in one
-/// sector visible in the other three while selection/inspector/palette/
-/// scroll stay independent.
+/// text-edit focus, and — since the 2026-08-08 port folded it in — the
+/// Levels/Placement tab's own session bookkeeping too), and the drag
+/// geometry captured from its own most recently rendered frame. All four
+/// sectors point at the SAME primitive (`LabState::primitives`) — only this
+/// bookkeeping is per-sector, which is what keeps an edit in one sector
+/// visible in the other three while selection/inspector/scroll stay
+/// independent.
 #[cfg(target_arch = "wasm32")]
 struct Sector {
     state: PrimitiveSettingsState,
-    design_ui: DesignUiState,
     drag_geometry: dispatch::DragGeometry,
 }
 
@@ -160,7 +144,7 @@ impl Sector {
         let mut state = PrimitiveSettingsState::new();
         state.open(primitive_id);
         state.active_tab = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::Levels;
-        Self { state, design_ui: DesignUiState::default(), drag_geometry: dispatch::DragGeometry::default() }
+        Self { state, drag_geometry: dispatch::DragGeometry::default() }
     }
 }
 
@@ -375,7 +359,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                         lab_active_primitive(&sectors[sidx].state, primitives),
                     ) {
                         for ch in chars {
-                            dispatch::apply_char(ch, &mut sectors[sidx].state, prim, coord, templates, &mut sectors[sidx].design_ui);
+                            dispatch::apply_char(ch, &mut sectors[sidx].state, prim, coord, templates);
                         }
                     }
                 }
@@ -390,7 +374,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                         if sectors[sidx].state.color_picker.hex_editing {
                             dispatch::apply_hex_key(key, &mut sectors[sidx].state, prim);
                         } else if let Some(kp) = key_press_from(key) {
-                            dispatch::apply_key(kp, &mut sectors[sidx].state, prim, coord, templates, &mut sectors[sidx].design_ui);
+                            dispatch::apply_key(kp, &mut sectors[sidx].state, prim, coord, templates);
                         }
                     }
                 }
@@ -437,7 +421,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                         if let Some(wid) = child.process_drag_end() {
                             let sector = &mut sectors[sidx];
                             if let Some(prim) = lab_active_primitive(&sector.state, primitives) {
-                                dispatch::on_drag_end(wid.as_str(), &mut sector.state, prim, &mut sector.design_ui);
+                                dispatch::on_drag_end(wid.as_str(), &mut sector.state, prim);
                             }
                         }
                     }
@@ -529,7 +513,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                 now_ms as u64,
                 coord,
                 &templates_for_render,
-                &mut sector.design_ui,
+                &[],
             );
 
             dispatch::register_dropdown_option_patch(coord, &result);
@@ -634,7 +618,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                     let LabState { coordinator, sectors, primitives, templates, .. } = &mut *lab;
                     if let Some(prev_coord) = coordinator.scoped_region_coordinator_mut(SECTOR_IDS[prev_idx]) {
                         if let Some(prim) = lab_active_primitive(&sectors[prev_idx].state, primitives) {
-                            dispatch::commit_active_field(&mut sectors[prev_idx].state, prim, prev_coord, templates, &mut sectors[prev_idx].design_ui);
+                            dispatch::commit_active_field(&mut sectors[prev_idx].state, prim, prev_coord, templates);
                         }
                     }
                 }
@@ -652,10 +636,10 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                     templates,
                 };
                 let handled = dispatch::apply_approved_design_click(
-                    routed_id, &mut sector.state, prim, coord, &mut click_ctx, &mut sector.design_ui,
+                    routed_id, &mut sector.state, prim, coord, &mut click_ctx,
                 );
                 if !handled {
-                    dispatch::apply_primitive_settings_click(routed_id, &mut sector.state, prim, coord, &mut click_ctx, &mut sector.design_ui);
+                    dispatch::apply_primitive_settings_click(routed_id, &mut sector.state, prim, coord, &mut click_ctx);
                 }
             }
         }
