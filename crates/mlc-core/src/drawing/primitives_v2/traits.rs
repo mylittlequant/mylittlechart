@@ -115,10 +115,23 @@ pub enum SyncMode {
 pub enum StyleReference {
     /// A user-saved [`crate::templates::PrimitiveTemplate::id`].
     Template(String),
-    /// A system level-set preset id (e.g. `"standard"`, `"extended"`,
-    /// `"key_only"`, `"all"` — never `"custom"`, which is a derived display
-    /// state with no fixed definition of its own, not a real preset).
-    LevelSet(String),
+    /// A built-in system template id — names one row of
+    /// [`crate::templates::PrimitiveTemplate::system_templates`] for this
+    /// primitive's type: `"standard"`/`"extended"`/`"key_only"`/`"all"` for
+    /// a level-having type (the same four ids
+    /// `fibonacci::retracement::level_set_values`/`level_set_id_for_composition`
+    /// name), or just `"standard"` for any other type. Never `"custom"`,
+    /// which is a derived display state with no fixed definition of its
+    /// own, not a real system row.
+    ///
+    /// Serialized as `"LevelSet"` (`#[serde(rename)]` below) — the wire
+    /// name is historical, from when this variant could only ever name one
+    /// of the four Fibonacci level-set presets. Every drawing already on
+    /// disk keeps resolving under the old name; the field this lives on
+    /// (`PrimitiveData::style_reference`) is `#[serde(default)]`, so a file
+    /// that predates this variant entirely also still loads.
+    #[serde(rename = "LevelSet")]
+    System(String),
 }
 
 /// Core primitive data that all primitives share

@@ -214,7 +214,7 @@ pub use primitives_v2::TextAnchor;
 pub use primitives_v2::config::{
     ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
     FibLevelConfig, TimeframeVisibilityConfig,
-    SelectOption, SettingsTemplate, TemplateStyle,
+    SelectOption, TemplateStyle,
 };
 
 // System signals (strategy-generated markers) - types and manager

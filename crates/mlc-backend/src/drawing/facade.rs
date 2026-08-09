@@ -11,7 +11,7 @@
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use mlc_core::drawing::primitives_v2::config::{
-    FibLevelConfig, PropertyKind, PropertyValue, SettingsTemplate, TemplateStyle,
+    FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::{
@@ -555,10 +555,6 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn set_show_on_all_timeframes(&mut self, bid: BubbleId, prim_id: u64) {
         self.mgr.set_show_on_all_timeframes(&mut self.bubbles, bid, prim_id)
-    }
-
-    pub fn apply_template_style(&mut self, bid: BubbleId, prim_id: u64, template: &SettingsTemplate) {
-        self.mgr.apply_template_style(&mut self.bubbles, bid, prim_id, template)
     }
 
     pub fn apply_primitive_template(&mut self, bid: BubbleId, prim_id: u64, template: &mlc_core::templates::PrimitiveTemplate) {

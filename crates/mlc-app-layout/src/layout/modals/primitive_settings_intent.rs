@@ -47,11 +47,9 @@
 
 use mlc_core::drawing::primitives_v2::config::FibLevelConfig;
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::{
-    default_level_configs_filled, ALL_LEVELS, EXTENDED_LEVELS, KEY_ONLY_LEVELS, MAIN_LEVELS,
+    ALL_LEVELS, EXTENDED_LEVELS, KEY_ONLY_LEVELS, MAIN_LEVELS,
 };
-use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::{LineStyle, TimeframeVisibilityConfig};
-use mlc_core::templates::PrimitiveTemplate;
 
 use crate::layout::modals::primitive_settings_palettes::PALETTES;
 use crate::ui::modal_settings::{LevelSet, PrimitiveSettingsState, TimeDisplayMode};
@@ -63,8 +61,10 @@ const EPS: f64 = 1e-9;
 /// `mlc_core::drawing::primitives_v2::fibonacci::retracement` — the single
 /// canonical home for these four lists (`KEY_ONLY_LEVELS`'s own "needs
 /// owner sign-off" flag lives there now too) — so this crate's own
-/// `current_level_set` and `mlc-backend`'s creation-time
-/// `StyleReference::LevelSet` stamping can never read two different
+/// `current_level_set` (the Levels tab's own "which набор is this"
+/// display), `mlc-backend`'s creation-time `StyleReference::System`
+/// stamping, and `mlc_core::templates::PrimitiveTemplate::system_templates`
+/// (the Template menu's system rows) can never read two different
 /// definitions of the same preset.
 fn preset_values(set: LevelSet) -> &'static [f64] {
     match set {
@@ -74,88 +74,6 @@ fn preset_values(set: LevelSet) -> &'static [f64] {
         LevelSet::All => ALL_LEVELS,
         LevelSet::Custom => &[],
     }
-}
-
-/// Resolve a system level-set preset id (`StyleReference::LevelSet`'s own
-/// payload — `LevelSet::id()`, e.g. `"standard"`) into a comparison
-/// reference for `PrimitiveTemplate::matches_primitive` — the same
-/// full-payload check a saved user template is diffed with (see
-/// `crate::layout::modals::primitive_settings`'s own `show_save_as`).
-///
-/// **A `LevelSet(id)` reference means the preset's own canonical seed** —
-/// what the ladder looks like when the preset alone defines it, with
-/// nothing hand-set on top. Built by running [`apply_level_set`] — the SAME
-/// function `LevelsIntent::ApplyPreset` calls to actually apply a preset —
-/// against [`default_level_configs_filled`]'s fixed 7-entry ladder
-/// (rank-ramped colour, default width/style, band fill on), seeded through
-/// a scratch (default) [`PrimitiveSettingsState`] rather than the caller's
-/// live modal state. That scratch state is safe to use here for the same
-/// reason it always was: every level `apply_level_set` writes reaches
-/// `configs` unconditionally (a level leaving the target composition
-/// always gets `cfg.visible = false`; every level in the target always
-/// gets `cfg.visible = true`, or a fresh entry, regardless of what
-/// `state.levels_excluded` already knew — see that function's own doc), so
-/// a scratch state reproduces byte-identical `configs` output to the real
-/// session state for an otherwise-untouched primitive.
-///
-/// **This used to seed from a COPY of `prim`'s own CURRENT ladder instead**
-/// — which made a hand-set colour/width/style/band on any RETAINED level
-/// invisible to the comparison: `apply_level_set` deliberately preserves
-/// those fields on a level that stays in the composition (see its own doc:
-/// "смена набора не сбрасывает ручные цвета тех строк, что остались"), so
-/// running it against a copy of the very state being compared baked that
-/// edit into both sides and cancelled it out — editing a level's colour,
-/// width, or band never lit "Save as". Seeding from a FIXED shape instead
-/// of the live primitive is what fixes that: the reference no longer moves
-/// when the primitive does, so a hand-set value on a retained level now
-/// reads as drift the same way a composition or visibility change already
-/// did.
-///
-/// The fixed shape is [`default_level_configs_filled`], not the plainer
-/// [`default_level_configs`] — this has to equal what
-/// `mlc-backend`'s `DrawingManager::finalize_new_primitive` actually seeds
-/// a freshly drawn primitive with, or a brand-new, untouched one would read
-/// as drift on the very first frame. `FibRetracement::new` (`mlc-core`)
-/// seeds its own `level_configs` from `default_level_configs_filled`
-/// specifically (per-level band fill ON by default, matching this
-/// primitive's own filled-band rendering) — `default_level_configs` alone
-/// differs in exactly one field (`fill_enabled: false` instead of `true`)
-/// and would NOT match a freshly drawn fib, re-lighting "Save as" on a
-/// primitive nobody has touched. Every OTHER level-having primitive type
-/// that shares this same preset menu (`wedge`, `channel`,
-/// `trend_extension`, `spiral`, `speed_resistance`, `circles`, `arcs`,
-/// `fan`, `trend_time`) seeds its own fresh ladder from the plain
-/// (unfilled) `default_level_configs` instead of the filled variant — this
-/// resolver does not branch on primitive type, so a freshly drawn one of
-/// THOSE could show a spurious "Save as" the same way `fib_retracement`
-/// used to, for the same underlying reason (fixed reference now assumes
-/// filled, that primitive's own real seed is not). Pre-existing scope gap
-/// — the four presets already applied uniformly to any
-/// `level_configs()`-having primitive before this change, unrelated to
-/// what this fix touches, and not exercised by drawing a fib — flagged
-/// rather than silently left for someone to rediscover.
-///
-/// Comparison depth this now buys: composition (which levels exist),
-/// per-level VISIBILITY, and per-level colour/width/line-style/band are ALL
-/// compared correctly for every level the preset defines, because the
-/// reference no longer starts from a copy of the thing it is compared
-/// against. A saved user `PrimitiveTemplate` already had this depth (it
-/// snapshots values at save time rather than resolving a live id); this
-/// closes the gap that was specific to `StyleReference::LevelSet`.
-///
-/// Returns `None` for an id that does not name one of the four real
-/// presets (`"custom"`, or a stale/unknown id), or for a primitive with no
-/// level ladder at all (`prim.level_configs()` returns `None`) — the
-/// caller reads either the same way it reads a deleted user template:
-/// nothing to resolve, so "Save as…" shows.
-pub fn resolve_level_set_reference(id: &str, prim: &dyn Primitive) -> Option<PrimitiveTemplate> {
-    let set = LevelSet::from_id(id)?;
-    prim.level_configs()?;
-    let mut configs = default_level_configs_filled();
-    apply_level_set(&mut configs, &mut PrimitiveSettingsState::default(), set);
-    let mut tmpl = PrimitiveTemplate::from_primitive(prim, "");
-    tmpl.level_configs = configs;
-    Some(tmpl)
 }
 
 // =============================================================================
@@ -198,11 +116,6 @@ pub enum LevelsIntent {
     StartValueEditing { level: f64, seed: String },
     /// `levels_add_value` — start editing the "+ добавить уровень" field.
     StartAddEditing,
-    /// `levels_set_option:{id}` — replace the composition wholesale with
-    /// one of the four canned presets, offered from the footer Template
-    /// menu (the standalone "Набор" row + its own dropdown were deleted
-    /// 2026-08-08 — the owner rejected them live).
-    ApplyPreset(LevelSet),
     /// `levels_palette:{i}` — recolour every non-overridden level in the
     /// composition from one of the four palette ramps.
     ApplyPalette(usize),
@@ -229,9 +142,6 @@ pub fn parse_levels_click(item_id: &str) -> Option<LevelsIntent> {
     }
     if item_id == "levels_add_value" {
         return Some(LevelsIntent::StartAddEditing);
-    }
-    if let Some(id) = item_id.strip_prefix("levels_set_option:") {
-        return LevelSet::from_id(id).map(LevelsIntent::ApplyPreset);
     }
     if let Some(idx_str) = item_id.strip_prefix("levels_palette:") {
         return idx_str.parse::<usize>().ok().map(LevelsIntent::ApplyPalette);
@@ -288,13 +198,6 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
         }
         LevelsIntent::AddValue(level) => add_level(configs, state, *level),
         LevelsIntent::StartValueEditing { .. } | LevelsIntent::StartAddEditing => {}
-        LevelsIntent::ApplyPreset(set) => {
-            apply_level_set(configs, state, *set);
-            state.level_set = *set;
-            // Picking a set closes the footer Template menu it now lives
-            // in, same as picking a saved template already does.
-            state.template_dropdown_open = false;
-        }
         LevelsIntent::ApplyPalette(idx) => {
             state.palette = *idx;
             apply_palette(configs, state, *idx);
@@ -307,73 +210,6 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
                     cfg.color = None;
                 }
             }
-        }
-    }
-}
-
-/// Replace the composition wholesale with `set`'s canonical value list, and
-/// make sure every one of those values has a real `FibLevelConfig` on
-/// `configs` to draw from: an existing entry keeps its colour/width/style/
-/// fill (hand-set or not) and is simply un-excluded; a value with no
-/// existing entry gets a fresh one. Entries for values LEAVING the
-/// composition are excluded, not deleted — their colour/width/style/fill
-/// survive untouched, per the approved spec: "смена набора не сбрасывает
-/// ручные цвета тех строк, что остались".
-///
-/// `state.exclude_level` alone only hides a row from the MODAL's own ladder
-/// view (`levels_excluded` is session-only UI bookkeeping, see its own doc
-/// comment on `PrimitiveSettingsState`) — it is invisible to the chart's own
-/// renderer, which reads nothing but each entry's `cfg.visible`. Every other
-/// composition-narrowing edit in this module already writes BOTH
-/// (`LevelsIntent::Delete` sets `c.visible = false` alongside its own
-/// `exclude_level`); this one used to set only the state-side flag, so
-/// applying a preset updated the ladder but silently left every level that
-/// left the composition still `visible: true` on the primitive — the chart
-/// never lost them (2026-08-08 fix, owner review item 1). Setting
-/// `cfg.visible = false` here is what actually reaches the chart: the
-/// caller (`mlc-app`'s `handle_prim_settings_item`) writes `configs` back
-/// through `set_level_configs` on the SAME `_` arm every other
-/// `LevelsIntent` variant already uses, so this fix needed no new
-/// write-back path, undo step, or autosave call — only this function was
-/// missing half of what it should have written.
-///
-/// A system набор is a whole-settings default, not just a value list
-/// (owner direction, 2026-08-09: "шаблоны это настройки в целом") — so
-/// every level ENTERING the target composition also gets a uniform line:
-/// `width = None` (inherit the primitive's own `data.width`, which is what
-/// makes the ladder read as one thickness) and `style = "solid"`. Colour
-/// and fill are left exactly as they were — the approved rule "смена
-/// набора не сбрасывает ручные цвета тех строк, что остались" stays, and
-/// so does the rank colour ramp a caller may apply separately
-/// (`ApplyPalette`/`SetColorMode`). This is the ONLY place that performs
-/// this normalization: both callers — `LevelsIntent::ApplyPreset` (via
-/// `apply_levels_intent` above) and [`resolve_level_set_reference`] (the
-/// "Save as…" comparison reference) — call through here, which is what
-/// keeps the applied result and the comparison reference identical. A
-/// second copy of this rule anywhere else is a bug.
-pub fn apply_level_set(configs: &mut Vec<FibLevelConfig>, state: &mut PrimitiveSettingsState, set: LevelSet) {
-    let target = preset_values(set);
-    let currently_visible: Vec<f64> = configs
-        .iter()
-        .map(|c| c.level)
-        .filter(|level| !state.is_level_excluded(*level))
-        .collect();
-    for level in currently_visible {
-        if !target.iter().any(|v| (*v - level).abs() < EPS) {
-            state.exclude_level(level);
-            set_level_config(configs, level, |c| c.visible = false);
-        }
-    }
-    for &level in target {
-        state.unexclude_level(level);
-        if let Some(cfg) = configs.iter_mut().find(|c| (c.level - level).abs() < EPS) {
-            cfg.visible = true;
-            cfg.width = None;
-            cfg.style = "solid".to_string();
-        } else {
-            // `FibLevelConfig::new` already constructs with `width: None` /
-            // `style: "solid"` — nothing more to normalize on a fresh entry.
-            configs.push(FibLevelConfig::new(level));
         }
     }
 }
@@ -396,8 +232,8 @@ pub fn current_level_set(configs: &[FibLevelConfig], state: &PrimitiveSettingsSt
 
 /// Recolour every non-overridden level in the (non-excluded) composition
 /// from `palette_idx`'s five stops, ranked by ascending level value.
-/// Palette changes never touch which levels exist — only [`apply_level_set`]
-/// does — per the spec's "набор и палитра — разные оси".
+/// Palette changes never touch which levels exist — per the spec's "набор
+/// и палитра — разные оси".
 pub fn apply_palette(configs: &mut [FibLevelConfig], state: &PrimitiveSettingsState, palette_idx: usize) {
     let palette = &PALETTES[palette_idx.min(PALETTES.len().saturating_sub(1))];
     let mut sorted_vals: Vec<f64> =

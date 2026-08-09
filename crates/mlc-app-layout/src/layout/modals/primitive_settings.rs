@@ -35,13 +35,12 @@ use crate::ui::widgets::{
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::widgets::SETTINGS_BUTTON_RADIUS;
-use crate::ui::modal_settings::LevelSet;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, t_settings};
 
 use super::{
-    primitive_settings_intent, primitive_settings_labels, primitive_settings_levels,
+    primitive_settings_labels, primitive_settings_levels,
     primitive_settings_placement, primitive_settings_vid,
 };
 
@@ -102,75 +101,52 @@ fn resolve_active_tab(state: &PrimitiveSettingsState, available: &[PrimitiveSett
 }
 
 // =============================================================================
-// Template menu — merged system-preset + user-template list (item 3, 2026-08-08 review)
+// Template menu — merged system-row + user-template list (item 3, 2026-08-08
+// review; system rows became real `PrimitiveTemplate`s, 2026-08-09)
 // =============================================================================
 
-/// One row in the merged Template menu list — either a canned system
-/// level-set preset (not stored, not renameable, not deletable) or a
-/// user-saved [`mlc_core::templates::PrimitiveTemplate`] (stored, its own
-/// rename/delete row actions — see `draw_template_row` below).
-enum TemplateListEntry<'a> {
-    System(LevelSet),
-    User(&'a mlc_core::templates::PrimitiveTemplate),
-}
-
-impl<'a> TemplateListEntry<'a> {
-    /// This row's own position key — a system preset's `LevelSet::id()`, or
-    /// a user template's own `id`. The SAME string [`merged_template_list`]
-    /// reads back out of a persisted order, and `mlc-app`'s drag-to-reorder
-    /// commit writes back in (via `result.template_menu_rows`) — there is
-    /// only ever this one string identifying a row, never a positional
-    /// index (a drag or an add/delete would silently repoint an index at
-    /// the wrong row the next time the list is not in the order it was
-    /// computed against).
-    fn key(&self) -> &str {
-        match self {
-            TemplateListEntry::System(s) => s.id(),
-            TemplateListEntry::User(t) => t.id.as_str(),
-        }
-    }
-}
-
-/// Merge the four system level-set presets with the user's saved primitive
-/// templates into one ordered list — no divider between the two kinds
-/// (item 3), drag-reorderable as one list (item 4).
+/// Merge `prim`'s type's system rows
+/// ([`mlc_core::templates::PrimitiveTemplate::system_templates`]) with the
+/// user's saved primitive templates into one ordered list — no divider
+/// between the two kinds (item 3), drag-reorderable as one list (item 4).
+/// Both kinds are the SAME type now (`PrimitiveTemplate::builtin`
+/// distinguishes them), so this returns one flat `Vec<&PrimitiveTemplate>`
+/// rather than an entry enum — every row applies through the identical
+/// `template_option:{id}` path (see [`render_primitive_settings_modal`]'s
+/// own template-footer block).
 ///
 /// `order` is the persisted position-key sequence
 /// (`mlc-backend`'s `TemplateManager::primitive_template_order`, threaded in
 /// from the caller as `template_order`): every key it names places that row
-/// where `order` says. Anything `order` never named — a system preset that
-/// has never been dragged, or a template created since the last reorder —
-/// falls back to its own natural position, appended after everything
-/// `order` DOES place: system presets first (their own canonical order),
-/// then templates (their own list order). An empty `order` (nothing has
-/// ever been dragged) is exactly that fallback in full — the pre-reorder
-/// layout this feature replaces, so a fresh install renders identically to
-/// before this existed.
+/// where `order` says. Anything `order` never named — a system row that has
+/// never been dragged, or a template created since the last reorder — falls
+/// back to its own natural position, appended after everything `order` DOES
+/// place: system rows first (their own canonical order), then templates
+/// (their own list order). An empty `order` (nothing has ever been dragged)
+/// is exactly that fallback in full — the pre-reorder layout this feature
+/// replaces, so a fresh install renders identically to before this existed.
 fn merged_template_list<'a>(
-    templates: &'a [mlc_core::templates::PrimitiveTemplate],
+    system: &'a [mlc_core::templates::PrimitiveTemplate],
+    user: &'a [mlc_core::templates::PrimitiveTemplate],
     order: &[String],
-) -> Vec<TemplateListEntry<'a>> {
-    let mut remaining_system: Vec<LevelSet> = LevelSet::PRESETS.to_vec();
-    let mut remaining_user: Vec<&mlc_core::templates::PrimitiveTemplate> = templates.iter().collect();
+) -> Vec<&'a mlc_core::templates::PrimitiveTemplate> {
+    let mut remaining_system: Vec<&mlc_core::templates::PrimitiveTemplate> = system.iter().collect();
+    let mut remaining_user: Vec<&mlc_core::templates::PrimitiveTemplate> = user.iter().collect();
     let mut out = Vec::with_capacity(order.len() + remaining_system.len() + remaining_user.len());
 
     for key in order {
-        if let Some(pos) = remaining_system.iter().position(|s| s.id() == key.as_str()) {
-            out.push(TemplateListEntry::System(remaining_system.remove(pos)));
+        if let Some(pos) = remaining_system.iter().position(|t| &t.id == key) {
+            out.push(remaining_system.remove(pos));
             continue;
         }
         if let Some(pos) = remaining_user.iter().position(|t| &t.id == key) {
-            out.push(TemplateListEntry::User(remaining_user.remove(pos)));
+            out.push(remaining_user.remove(pos));
         }
         // A key naming neither (a template deleted since `order` was last
         // saved) is silently dropped — nothing left to place for it.
     }
-    for s in remaining_system {
-        out.push(TemplateListEntry::System(s));
-    }
-    for t in remaining_user {
-        out.push(TemplateListEntry::User(t));
-    }
+    out.extend(remaining_system);
+    out.extend(remaining_user);
     out
 }
 
@@ -655,33 +631,41 @@ pub fn render_primitive_settings_modal(
             let action_btn_w = 24.0;
             let action_gap = 2.0;
 
-            // Item 3 (2026-08-08 review): system level-set presets show
-            // whenever the PRIMITIVE itself has levels to offer a set for
-            // — not gated to the Levels tab happening to be the active one
-            // right now. The Template menu names one control for the whole
-            // primitive; switching tabs must not hide the choice.
-            let show_level_sets = prim.level_configs().is_some();
+            // System rows are a real `PrimitiveTemplate` per type now (2026-
+            // 08-09) — every type has at least the `"standard"` row, so
+            // unlike the old level-set presets there is no "does this
+            // primitive even have anything to offer" gate any more: system
+            // rows always show. Built from a FACTORY instance of `prim`'s
+            // own type, never from `prim` itself — a system row names what
+            // the type looks like out of the box, not what this one
+            // instance has since become (see
+            // `mlc_core::templates::PrimitiveTemplate::system_templates`'s
+            // own doc for why the caller, not that function, constructs the
+            // instance).
+            let factory = mlc_core::drawing::PrimitiveRegistry::global()
+                .read()
+                .ok()
+                .and_then(|reg| reg.create(prim.type_id(), &[], None));
+            let system_templates: Vec<mlc_core::templates::PrimitiveTemplate> = factory
+                .as_deref()
+                .map(mlc_core::templates::PrimitiveTemplate::system_templates)
+                .unwrap_or_default();
 
-            // Item 3: system presets + user templates, one merged,
+            // Item 3: system rows + user templates, one merged,
             // drag-reordered list — no divider between the two kinds.
-            let all_entries = merged_template_list(templates, template_order);
-            let entries: Vec<TemplateListEntry> = if show_level_sets {
-                all_entries
-            } else {
-                all_entries.into_iter().filter(|e| matches!(e, TemplateListEntry::User(_))).collect()
-            };
+            let entries = merged_template_list(&system_templates, templates, template_order);
 
             // "Save as…" is an action, and it only exists when there is
             // something NEW to save: the live settings have drifted from
             // the REFERENCE the primitive itself persistently claims —
             // `PrimitiveData::style_reference` (a template id or a system
-            // level-set preset id, `#[serde(default)]` so it survives
-            // reload with the drawing). Three rules have been tried here
-            // and rejected before this one, all for the same underlying
-            // reason: they read from something that does not survive a
-            // reload — `applied_template_id` (modal-only state, showed the
-            // action before the user touched a pixel), "matches no row in
-            // the merged list" (a SYSTEM row only ever compared level
+            // template id, `#[serde(default)]` so it survives reload with
+            // the drawing). Three rules have been tried here and rejected
+            // before this one, all for the same underlying reason: they
+            // read from something that does not survive a reload —
+            // `applied_template_id` (modal-only state, showed the action
+            // before the user touched a pixel), "matches no row in the
+            // merged list" (a SYSTEM row only ever compared level
             // COMPOSITION, so recolouring a level, changing its width/
             // style, toggling its band, or flipping timeframe visibility
             // all left the primitive still reading as "Standard"), and a
@@ -693,21 +677,22 @@ pub fn render_primitive_settings_modal(
             // moment it is needed, is what survives all three failure
             // modes: a template resolves against the live template store
             // (so an edit to the template itself is also visible here); a
-            // level-set resolves against the preset's own fixed
-            // definition (`primitive_settings_intent::resolve_level_set_
-            // reference`). `None` — no reference has ever been established
-            // for this primitive, OR the primitive's own creation-time
-            // reference (`DrawingManager::initial_style_reference`, in
+            // system reference resolves against `system_templates` above —
+            // the SAME rows this menu is drawing, so a row that reads as
+            // current and a "no drift" verdict can never disagree. `None`
+            // — no reference has ever been established for this primitive,
+            // OR the primitive's own creation-time reference
+            // (`DrawingManager::initial_style_reference`, in
             // `mlc-backend`) found nothing nameable to stamp (a level
-            // composition matching no system preset, or a primitive with
+            // composition matching no system template, or a primitive with
             // no level ladder at all, seeded only from the bubble's own
             // un-id'd last-used-style snapshot) — SHOWS the action rather
             // than hiding it (2026-08-09 fix): a state that matches
             // nothing on record is exactly a state worth offering to save,
             // not one that should hide the offer. A reference naming
-            // something that no longer exists (a deleted template) reads
-            // as drift and shows the action too, the same as any other
-            // mismatch.
+            // something that no longer exists (a deleted template, or a
+            // system id this type no longer mints) reads as drift and
+            // shows the action too, the same as any other mismatch.
             let show_save_as = match &prim.data().style_reference {
                 None => true,
                 Some(mlc_core::drawing::StyleReference::Template(tmpl_id)) => {
@@ -716,8 +701,8 @@ pub fn render_primitive_settings_modal(
                         None => true,
                     }
                 }
-                Some(mlc_core::drawing::StyleReference::LevelSet(set_id)) => {
-                    match primitive_settings_intent::resolve_level_set_reference(set_id, prim) {
+                Some(mlc_core::drawing::StyleReference::System(set_id)) => {
+                    match system_templates.iter().find(|t| &t.id == set_id) {
                         Some(reference) => !reference.matches_primitive(prim),
                         None => true,
                     }
@@ -778,7 +763,7 @@ pub fn render_primitive_settings_modal(
                 row_y += sep_h + 2.0;
             }
 
-            // The merged system-preset + user-template list (items 3/4).
+            // The merged system-row + user-template list (items 3/4).
             // `result.template_menu_rows` records every row's own key and
             // on-screen rect, in THIS exact paint order — `mlc-app`'s own
             // drag-to-reorder reads it back to compute the drop index and
@@ -790,111 +775,94 @@ pub fn render_primitive_settings_modal(
             // row derived their own highlight independently before this
             // (system rows from the live level composition, user rows from
             // the session-only `applied_template_id`), so applying a user
-            // template and then a system preset left BOTH lit: the template's
+            // template and then a system row left BOTH lit: the template's
             // session flag was never cleared by anything but its own delete
             // (2026-08-09, owner-reported). A reference names one row by id,
             // so two rows lighting at once is now unrepresentable.
             let current_key: Option<&str> = match &prim.data().style_reference {
                 Some(mlc_core::drawing::StyleReference::Template(id)) => Some(id.as_str()),
-                Some(mlc_core::drawing::StyleReference::LevelSet(id)) => Some(id.as_str()),
+                Some(mlc_core::drawing::StyleReference::System(id)) => Some(id.as_str()),
                 None => None,
             };
 
-            for entry in &entries {
-                let key = entry.key().to_string();
+            // One shape, one apply path, for every row — a system row
+            // (`tmpl.builtin`) differs only in that it is NOT renameable or
+            // deletable (no pencil, no trash): both draw the same
+            // `template_option:{id}` click target, the same current-row
+            // highlight, and (for a user row) the same in-place rename.
+            for tmpl in &entries {
                 let row_rect = WidgetRect::new(dd_x, row_y, menu_w, opt_h);
-                result.template_menu_rows.push((key, row_rect));
+                result.template_menu_rows.push((tmpl.id.clone(), row_rect));
 
-                match entry {
-                    TemplateListEntry::System(preset) => {
-                        let row_id = format!("levels_set_option:{}", preset.id());
-                        let is_current = current_key == Some(preset.id());
-                        let is_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
-                        if is_current || is_hovered {
-                            ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
-                            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-                        }
-                        ctx.set_fill_color(if is_current { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
-                        ctx.set_font("11px sans-serif");
-                        ctx.set_text_align(TextAlign::Left);
-                        ctx.set_text_baseline(TextBaseline::Middle);
-                        ctx.fill_text(preset.label(), dd_x + 8.0, row_y + opt_h / 2.0);
-                        result.content_items.push((row_id, row_rect));
-                    }
-                    TemplateListEntry::User(tmpl) => {
-                        let row_id = format!("template_option:{}", tmpl.id);
-                        let rename_id = format!("template_rename:{}", tmpl.id);
-                        let del_id = format!("template_delete:{}", tmpl.id);
-                        let editing_field = format!("template_name:{}", tmpl.id);
-                        let is_editing = state.active_field_id.as_deref() == Some(editing_field.as_str());
-                        // The currently-applied entry's own mark (item 3):
-                        // the same highlight a system row's own `is_current`
-                        // already draws with, so a glance at either kind
-                        // reads identically — and now from the same single
-                        // source, see `current_key` above.
-                        let is_current = current_key == Some(tmpl.id.as_str());
-                        let is_row_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
-                        let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_id.as_str());
-                        let is_del_hovered = state.hovered_item_id.as_deref() == Some(del_id.as_str());
+                let row_id = format!("template_option:{}", tmpl.id);
+                let rename_id = format!("template_rename:{}", tmpl.id);
+                let del_id = format!("template_delete:{}", tmpl.id);
+                let editing_field = format!("template_name:{}", tmpl.id);
+                let is_editing = !tmpl.builtin && state.active_field_id.as_deref() == Some(editing_field.as_str());
+                let is_current = current_key == Some(tmpl.id.as_str());
+                let is_row_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
+                let is_rename_hovered = !tmpl.builtin && state.hovered_item_id.as_deref() == Some(rename_id.as_str());
+                let is_del_hovered = !tmpl.builtin && state.hovered_item_id.as_deref() == Some(del_id.as_str());
 
-                        if is_current || is_row_hovered || is_rename_hovered || is_del_hovered {
-                            ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
-                            ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
-                        }
+                if is_current || is_row_hovered || is_rename_hovered || is_del_hovered {
+                    ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
+                    ctx.fill_rounded_rect(dd_x + 1.0, row_y, menu_w - 2.0, opt_h, 3.0);
+                }
 
-                        let icons_w = 2.0 * action_btn_w + action_gap;
-                        let name_w = (menu_w - icons_w - 12.0).max(20.0);
+                // System rows get neither action (item 4) — only a user row
+                // reserves the icon columns.
+                let icons_w = if tmpl.builtin { 0.0 } else { 2.0 * action_btn_w + action_gap };
+                let name_w = (menu_w - icons_w - 12.0).max(20.0);
 
-                        if is_editing {
-                            // Rename in place, in the row (item 4) — the
-                            // same shared inline-edit buffer
-                            // (`state.active_render`) every other sub-field
-                            // in this modal already uses, focused by the
-                            // pencil click below via `start_prim_field_editing`.
-                            let ar = &state.active_render;
-                            let field_rect = WidgetRect::new(dd_x + 8.0, row_y + 3.0, name_w, opt_h - 6.0);
-                            let cfg = InputConfig::new(ar.text.as_str())
-                                .with_focused(true)
-                                .with_type(InputType::Text)
-                                .with_font_size(11.0)
-                                .with_padding(4.0)
-                                .with_radius(3.0)
-                                .with_cursor(ar.cursor)
-                                .with_selection(ar.selection_start, Some(ar.cursor));
-                            let res = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
-                            draw_input_cursor(ctx, res.cursor_x, res.cursor_y, res.cursor_height, &toolbar_theme.item_text);
-                            result.active_input_char_positions = res.char_x_positions;
-                            result.active_input_rect = Some(field_rect);
-                            result.content_items.push((editing_field, field_rect));
-                        } else {
-                            ctx.set_fill_color(if is_current { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
-                            ctx.set_font("11px sans-serif");
-                            ctx.set_text_align(TextAlign::Left);
-                            ctx.set_text_baseline(TextBaseline::Middle);
-                            ctx.save();
-                            ctx.begin_path();
-                            ctx.rect(dd_x + 8.0, row_y, name_w, opt_h);
-                            ctx.clip();
-                            ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
-                            ctx.restore();
-                            result.content_items.push((row_id, WidgetRect::new(dd_x, row_y, name_w + 8.0, opt_h)));
-                        }
+                if is_editing {
+                    // Rename in place, in the row (item 4) — the same
+                    // shared inline-edit buffer (`state.active_render`)
+                    // every other sub-field in this modal already uses,
+                    // focused by the pencil click below via
+                    // `start_prim_field_editing`. Never reached for a
+                    // system row: `is_editing` is forced `false` above.
+                    let ar = &state.active_render;
+                    let field_rect = WidgetRect::new(dd_x + 8.0, row_y + 3.0, name_w, opt_h - 6.0);
+                    let cfg = InputConfig::new(ar.text.as_str())
+                        .with_focused(true)
+                        .with_type(InputType::Text)
+                        .with_font_size(11.0)
+                        .with_padding(4.0)
+                        .with_radius(3.0)
+                        .with_cursor(ar.cursor)
+                        .with_selection(ar.selection_start, Some(ar.cursor));
+                    let res = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
+                    draw_input_cursor(ctx, res.cursor_x, res.cursor_y, res.cursor_height, &toolbar_theme.item_text);
+                    result.active_input_char_positions = res.char_x_positions;
+                    result.active_input_rect = Some(field_rect);
+                    result.content_items.push((editing_field, field_rect));
+                } else {
+                    ctx.set_fill_color(if is_current { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+                    ctx.set_font("11px sans-serif");
+                    ctx.set_text_align(TextAlign::Left);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.save();
+                    ctx.begin_path();
+                    ctx.rect(dd_x + 8.0, row_y, name_w, opt_h);
+                    ctx.clip();
+                    ctx.fill_text(&tmpl.name, dd_x + 8.0, row_y + opt_h / 2.0);
+                    ctx.restore();
+                    result.content_items.push((row_id, WidgetRect::new(dd_x, row_y, name_w + 8.0, opt_h)));
+                }
 
-                        // System rows get neither action (item 4) — only a
-                        // user row draws these two.
-                        let icon_y = row_y + (opt_h - action_btn_w) / 2.0;
-                        let del_x = dd_x + menu_w - action_btn_w - 4.0;
-                        let rename_x = del_x - action_gap - action_btn_w;
+                if !tmpl.builtin {
+                    let icon_y = row_y + (opt_h - action_btn_w) / 2.0;
+                    let del_x = dd_x + menu_w - action_btn_w - 4.0;
+                    let rename_x = del_x - action_gap - action_btn_w;
 
-                        let rename_color = if is_rename_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
-                        draw_svg_icon(ctx, crate::ui::Icon::Pencil.svg(), rename_x, icon_y, action_btn_w, action_btn_w, rename_color);
-                        result.content_items.push((rename_id, WidgetRect::new(rename_x, icon_y, action_btn_w, action_btn_w)));
+                    let rename_color = if is_rename_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+                    draw_svg_icon(ctx, crate::ui::Icon::Pencil.svg(), rename_x, icon_y, action_btn_w, action_btn_w, rename_color);
+                    result.content_items.push((rename_id, WidgetRect::new(rename_x, icon_y, action_btn_w, action_btn_w)));
 
-                        // Trash idiom, not a bare "×" (item 4).
-                        let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
-                        draw_svg_icon(ctx, crate::ui::Icon::Delete.svg(), del_x, icon_y, action_btn_w, action_btn_w, del_color);
-                        result.content_items.push((del_id, WidgetRect::new(del_x, icon_y, action_btn_w, action_btn_w)));
-                    }
+                    // Trash idiom, not a bare "×" (item 4).
+                    let del_color = if is_del_hovered { &toolbar_theme.danger } else { &toolbar_theme.item_text_muted };
+                    draw_svg_icon(ctx, crate::ui::Icon::Delete.svg(), del_x, icon_y, action_btn_w, action_btn_w, del_color);
+                    result.content_items.push((del_id, WidgetRect::new(del_x, icon_y, action_btn_w, action_btn_w)));
                 }
                 row_y += opt_h;
             }

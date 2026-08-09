@@ -1693,15 +1693,14 @@ impl ChartApp {
     /// from the already-drifted loaded state — see
     /// `mlc_core::drawing::StyleReference`'s own doc.
     ///
-    /// Applying a saved user TEMPLATE does not call this: `PrimitiveTemplate
-    /// ::apply_to_primitive_data` stamps its own id directly as part of
-    /// applying, so the reference can never disagree with "the template
-    /// that was actually just written." This helper is for the write a
-    /// template's own apply path cannot do for itself — a system level-set
-    /// preset (`apply_levels_intent` only ever sees `&mut Vec<FibLevelConfig>`,
-    /// never the `PrimitiveData` the reference lives on) — and for
-    /// "Save as…" itself, which mints a brand-new template id nothing else
-    /// has written yet.
+    /// Applying a saved template — user OR system, both the same
+    /// `PrimitiveTemplate` type now — does not call this:
+    /// `PrimitiveTemplate::apply_to_primitive_data` stamps its own id
+    /// directly as part of applying (`StyleReference::System`/`Template`
+    /// depending on `PrimitiveTemplate::builtin`), so the reference can
+    /// never disagree with "the template that was actually just written."
+    /// This helper is for "Save as…" alone, which mints a brand-new
+    /// template id nothing else has written yet.
     pub(super) fn stamp_primitive_style_reference(&mut self, reference: mlc_core::drawing::StyleReference) {
         let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id else { return };
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
@@ -1729,12 +1728,12 @@ impl ChartApp {
         use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
         let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
-        // Close template dropdown on any non-dropdown click. The Levels
-        // tab's level-set rows (`levels_set_option:*`) now live INSIDE this
-        // same dropdown (item 3, 2026-08-08 review — the standalone
-        // "Набор" row + its own dropdown are gone), so they must not close
-        // it either.
-        if !item_id.starts_with("template_") && !item_id.starts_with("levels_set_option:") {
+        // Close template dropdown on any non-dropdown click. Every row in
+        // it — system or user — is a `template_option:{id}` click (item 3,
+        // 2026-08-08 review — the standalone "Набор" row + its own dropdown
+        // are gone; system rows folded into this same list 2026-08-09), so
+        // one prefix now covers the whole menu.
+        if !item_id.starts_with("template_") {
             self.panel_app.primitive_settings_state.template_dropdown_open = false;
         }
 
@@ -2093,40 +2092,20 @@ impl ChartApp {
                             );
                             guard.set_level_configs(bid, prim_id, configs);
                         }
-                        // A system набор is a whole-settings default, not
-                        // just a level list (owner direction, 2026-08-09) —
-                        // it also restores the label plate + colour
-                        // inheritance. Applied through the SAME `guard`
-                        // (`DrawingsMut`), before it drops at the end of
-                        // this block, same as `set_level_configs` just
-                        // above — a second `self.core.drawings_mut()` call
-                        // here would try to re-acquire the RwLock this one
-                        // already holds and hang (see
-                        // `stamp_primitive_style_reference`'s own doc for
-                        // the exact trap this sidesteps).
-                        if let LevelsIntent::ApplyPreset(_) = &intent {
-                            for (id, value) in mlc_core::drawing::primitives_v2::config::level_set_label_defaults() {
-                                guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, id, &value);
-                            }
-                        }
                     }
                     self.sync_drawing_back_to_group();
                     self.autosave_snapshot();
-                    // Picking a level-set preset re-establishes the
-                    // "Save as…" reference (`ApplyPreset` is the ONE
-                    // `LevelsIntent` variant that counts as applying, not
-                    // editing — see `stamp_primitive_style_reference`'s own
-                    // doc). Every other arm above is a plain edit and must
-                    // stay counted as drift against whatever reference is
-                    // already there. `apply_levels_intent` only ever sees
-                    // `&mut Vec<FibLevelConfig>`, never the `PrimitiveData`
-                    // the reference lives on, so this write happens here,
-                    // host-side, same as "Save as…" itself.
-                    if let LevelsIntent::ApplyPreset(set) = &intent {
-                        self.stamp_primitive_style_reference(
-                            mlc_core::drawing::StyleReference::LevelSet(set.id().to_string()),
-                        );
-                    }
+                    // No `stamp_primitive_style_reference` call here any
+                    // more: a system набор is now applied as a real
+                    // `PrimitiveTemplate` through the `template_option:`
+                    // path below (`apply_primitive_template` ->
+                    // `PrimitiveTemplate::apply_to_primitive`), which
+                    // stamps the reference — and restores the label plate
+                    // + colour inheritance via `custom_style_properties` —
+                    // itself, as part of applying. Every `LevelsIntent`
+                    // reaching this arm is a plain per-row edit and stays
+                    // counted as drift against whatever reference is
+                    // already there.
                 }
             }
             eprintln!("[ChartApp] prim_settings levels intent: {:?}", intent);
@@ -2380,14 +2359,33 @@ impl ChartApp {
         }
 
         // ── Template option selected ──────────────────────────────────────────
+        // One row shape, one apply path (2026-08-09): a Template menu row
+        // names either a user-saved template (the store below) or a system
+        // (built-in) one — `PrimitiveTemplate::system_templates` for THIS
+        // primitive's type, synthesized fresh from a factory instance, not
+        // persisted anywhere for `get_primitive_template` to find. Try the
+        // user store first (the common case, no registry lookup needed);
+        // fall back to resolving a system row only when it misses.
         if let Some(tmpl_id) = item_id.strip_prefix("template_option:") {
-            let tmpl_opt = self.core.templates().get_primitive_template(tmpl_id).cloned();
+            let user_tmpl = self.core.templates().get_primitive_template(tmpl_id).cloned();
+            let tmpl_opt = user_tmpl.or_else(|| {
+                let type_id = active_bid_prim.and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .map(|p| p.type_id().to_string())
+                })?;
+                let factory = mlc_core::drawing::PrimitiveRegistry::global().read().ok()?.create(&type_id, &[], None)?;
+                mlc_core::templates::PrimitiveTemplate::resolve_system(tmpl_id, factory.as_ref())
+            });
             if let Some(tmpl) = tmpl_opt {
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive — flat style fields,
                 // level ladder (if the template carries one), and typed
                 // style/text properties, all in one facade call reaching the
                 // primitive directly (no PrimitiveData round-trip needed).
+                // The SAME path for a user or a system row — they are the
+                // same type now.
                 if let Some(bid) = active_bid_prim {
                     self.core.drawings_mut().apply_primitive_template(bid, prim_id, &tmpl);
                 }
@@ -2395,11 +2393,12 @@ impl ChartApp {
                 self.autosave_snapshot();
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
                 // No separate "Save as…" re-stamp needed here — applying a
-                // template writes `data.style_reference =
-                // StyleReference::Template(tmpl.id)` itself, as part of
-                // `apply_primitive_template` -> `PrimitiveTemplate::
-                // apply_to_primitive_data` above, so the reference can
-                // never disagree with what was actually just applied.
+                // template writes `data.style_reference` itself
+                // (`StyleReference::System`/`Template` depending on
+                // `tmpl.builtin`), as part of `apply_primitive_template` ->
+                // `PrimitiveTemplate::apply_to_primitive_data` above, so the
+                // reference can never disagree with what was actually just
+                // applied.
                 eprintln!("[ChartApp] prim_settings template applied: {}", tmpl.name);
             }
             return;

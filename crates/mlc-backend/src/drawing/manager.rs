@@ -20,7 +20,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 
 use mlc_core::drawing::primitives_v2::config::{
-    FibLevelConfig, PropertyKind, PropertyValue, SettingsTemplate, TemplateStyle,
+    FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
@@ -708,11 +708,9 @@ impl DrawingManager {
     /// A level-capable primitive's seeded composition (only the currently
     /// VISIBLE levels — an invisible entry inherited from a `last_style`
     /// snapshot is not "in" the composition any more than a deleted level
-    /// on a live primitive is, see `apply_level_set`'s own visible-is-the-
-    /// ground-truth contract in `mlc-app-layout`) is matched against the
-    /// four system level-set presets via
-    /// [`level_set_id_for_composition`] — the SAME canonical matching
-    /// `mlc-app-layout`'s own `current_level_set`
+    /// on a live primitive is) is matched against the four system template
+    /// ids via [`level_set_id_for_composition`] — the SAME canonical
+    /// matching `mlc-app-layout`'s own `current_level_set`
     /// (`primitive_settings_intent.rs`) uses, both sourced off
     /// `mlc_core::drawing::primitives_v2::fibonacci::retracement`'s preset
     /// value lists — so creation-time stamping here and the modal's own
@@ -723,16 +721,22 @@ impl DrawingManager {
     /// at all.
     ///
     /// A primitive with no level ladder has nothing else nameable to stamp
-    /// either: the only OTHER starting point `apply_last_style_snapshot`
-    /// can seed it from is a raw `TemplateStyle` snapshot, which — unlike a
-    /// `PrimitiveTemplate` or a level-set preset — carries no id of its own
-    /// to resolve back against later (see `TemplateStyle`'s own doc). So
-    /// `None` is the honest answer for every non-ladder primitive too, not
-    /// a placeholder that should have been something else.
+    /// either — unchanged by
+    /// [`mlc_core::templates::PrimitiveTemplate::system_templates`] now
+    /// also minting a `"standard"` row for a non-ladder type: this
+    /// function only ever matches a seeded LADDER composition against the
+    /// four preset value lists, so a non-ladder type still falls through to
+    /// `None` here (pre-existing behaviour, unchanged by this rename — a
+    /// freshly drawn non-ladder primitive still shows "Save as…" rather
+    /// than reading as already matching its own "standard" row). The only
+    /// OTHER starting point `apply_last_style_snapshot` can seed it from is
+    /// a raw `TemplateStyle` snapshot, which — unlike a `PrimitiveTemplate`
+    /// — carries no id of its own to resolve back against later (see
+    /// `TemplateStyle`'s own doc).
     fn initial_style_reference(prim: &dyn Primitive) -> Option<StyleReference> {
         let levels = prim.level_configs()?;
         let composition: Vec<f64> = levels.iter().filter(|c| c.visible).map(|c| c.level).collect();
-        level_set_id_for_composition(&composition).map(|id| StyleReference::LevelSet(id.to_string()))
+        level_set_id_for_composition(&composition).map(|id| StyleReference::System(id.to_string()))
     }
 
     fn apply_variant_to_primitive(prim: &mut Box<dyn Primitive>, variant: &str) {
@@ -1336,38 +1340,15 @@ impl DrawingManager {
         }
     }
 
-    pub(crate) fn apply_template_style(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, template: &SettingsTemplate) {
-        let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) else { return };
-        let data = prim.data_mut();
-        if let Some(ref color) = template.style.color {
-            data.color.stroke = color.clone();
-        }
-        if let Some(width) = template.style.width {
-            data.width = width;
-        }
-        if let Some(ref line_style) = template.style.line_style {
-            data.style = match line_style.as_str() {
-                "dashed" => LineStyle::Dashed,
-                "dotted" => LineStyle::Dotted,
-                "large_dashed" => LineStyle::LargeDashed,
-                "sparse_dotted" => LineStyle::SparseDotted,
-                _ => LineStyle::Solid,
-            };
-        }
-        if let Some(ref tfv) = template.timeframe_visibility {
-            data.timeframe_visibility = Some(tfv.clone());
-        }
-    }
-
     /// Apply a saved [`mlc_core::templates::PrimitiveTemplate`] to a live
     /// primitive — the flat style fields, the level ladder (written whenever
     /// `prim` itself supports one, per `PrimitiveTemplate`'s own
     /// target-capability gating), and the typed style/text properties, all
     /// through `PrimitiveTemplate::apply_to_primitive`, which reaches the
     /// primitive directly rather than round-tripping through a cloned
-    /// `PrimitiveData`. Mirrors [`Self::apply_template_style`]'s shape for
-    /// the legacy `SettingsTemplate` above.
+    /// `PrimitiveData`. The ONE apply path for both a system
+    /// (`PrimitiveTemplate::builtin`) row and a user-saved one — they are
+    /// the same type, applied the same way.
     pub(crate) fn apply_primitive_template(
         &mut self,
         bubbles: &mut BubbleStore,

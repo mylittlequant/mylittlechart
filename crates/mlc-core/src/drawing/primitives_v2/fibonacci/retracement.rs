@@ -46,7 +46,7 @@ pub const EXTENDED_LEVELS: &[f64] = &[0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0,
 /// carried over unchanged from the ui-lab prototype's own
 /// `level_presets::KEY_ONLY_LEVELS`). Moved here 2026-08-09 (primitive-
 /// settings "Save as…" reference fix) so both `mlc-backend`
-/// (creation-time `StyleReference::LevelSet` stamping) and `mlc-app-layout`
+/// (creation-time `StyleReference::System` stamping) and `mlc-app-layout`
 /// (the Levels tab UI) read the exact same list — see
 /// [`level_set_values`]/[`level_set_id_for_composition`].
 pub const KEY_ONLY_LEVELS: &[f64] = &[0.0, 0.382, 0.5, 0.618, 1.0];
@@ -56,9 +56,11 @@ pub const KEY_ONLY_LEVELS: &[f64] = &[0.0, 0.382, 0.5, 0.618, 1.0];
 const LEVEL_SET_MATCH_EPS: f64 = 1e-9;
 
 /// The four system level-set preset ids
-/// [`crate::drawing::StyleReference::LevelSet`] can name, in display order.
-/// Never `"custom"` — see that variant's own doc for why "custom" names no
-/// fixed definition of its own.
+/// [`crate::drawing::StyleReference::System`] can name, in display order —
+/// also the four ids
+/// [`crate::templates::PrimitiveTemplate::system_templates`] mints for any
+/// level-having primitive type. Never `"custom"` — see that variant's own
+/// doc for why "custom" names no fixed definition of its own.
 pub const LEVEL_SET_IDS: [&str; 4] = ["standard", "extended", "key_only", "all"];
 
 /// The canonical value list a system level-set preset id stands for, or
@@ -82,7 +84,7 @@ pub fn level_set_values(id: &str) -> Option<&'static [f64]> {
 ///
 /// The single canonical "which preset does this composition match" answer
 /// — both `mlc-backend` (stamping a freshly-created primitive's
-/// `StyleReference::LevelSet` from its seeded composition) and
+/// `StyleReference::System` from its seeded composition) and
 /// `mlc-app-layout` (the Levels tab's own `current_level_set` display,
 /// keyed off [`level_set_values`] the same way) read off this, so the two
 /// can never independently redefine "what a preset means" and drift apart.

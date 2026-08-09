@@ -114,8 +114,8 @@ pub struct PrimitiveSettingsResult {
     /// viewport nor culled against it (item 2 follow-up, 2026-08-08).
     pub add_chip_dropdown_anchor: Option<(WidgetRect, bool)>,
     /// Template-menu row rects, in the exact on-screen order they were
-    /// painted: `(position_key, row_rect)` — a system preset's own
-    /// `LevelSet::id()` or a user template's own `id`. Populated only while
+    /// painted: `(position_key, row_rect)` — a system row's or a user
+    /// template's own `PrimitiveTemplate::id`. Populated only while
     /// the Template dropdown is open (item 4, 2026-08-08 review). The sole
     /// reader is `mlc-app`'s own drag-to-reorder handling
     /// (`WatchlistModalState::drag_reorder`'s own precedent): computing the

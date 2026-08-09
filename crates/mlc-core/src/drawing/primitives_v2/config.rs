@@ -1,4 +1,4 @@
-//! Primitive Configuration System
+﻿//! Primitive Configuration System
 //!
 //! Provides a unified way to configure primitives through:
 //! - Inline toolbar (quick settings: color, width, style)
@@ -17,7 +17,7 @@
 //! - Constraints (min/max, options, etc.)
 
 use serde::{Deserialize, Serialize};
-use crate::i18n::{Language, WaveDegreeKey, StyleKey, ConfigKey, LabelPositionKey, current_language};
+use crate::i18n::{Language, WaveDegreeKey, ConfigKey, LabelPositionKey, current_language};
 
 // =============================================================================
 // Elliott Wave Degree and Notation
@@ -273,7 +273,24 @@ pub struct LabelStyle {
     /// Background corner radius
     #[serde(default = "default_label_radius")]
     pub background_radius: f64,
-    /// Border color (if None, no border)
+    /// Whether the plate draws a border at all. A separate flag, NOT
+    /// `border_color.is_some()` (2026-08-09): the UI row for the colour
+    /// shows the RESOLVED value (falling back to the label colour when
+    /// unset), so a template — which captures declared property values —
+    /// wrote that resolved colour back on apply and silently turned the
+    /// border ON for every primitive it touched. That is what put a
+    /// coloured ring around every fib label and what kept "Save as…" lit
+    /// after applying a system template: the applied state could never
+    /// equal the template it came from. An `Option` that doubles as an
+    /// on/off switch cannot round-trip through a UI that has to render
+    /// SOMETHING when it is `None` — so the switch is its own field now.
+    /// `#[serde(default)]` = false: drawings carrying a `border_color` from
+    /// before this split load with the border off, which is the state their
+    /// owner actually chose (nobody ever enabled it deliberately).
+    #[serde(default)]
+    pub border_enabled: bool,
+    /// Border colour. `None` means "use the label's own colour" — a colour
+    /// only, never an on/off switch (see [`Self::border_enabled`]).
     pub border_color: Option<String>,
     /// Border width
     #[serde(default = "default_border_width")]
@@ -300,6 +317,7 @@ impl Default for LabelStyle {
             background_color: default_label_background_color(),
             background_padding: 4.0,
             background_radius: 3.0,
+            border_enabled: false,
             border_color: None,
             border_width: 1.0,
             offset_y: 15.0,
@@ -328,6 +346,7 @@ impl LabelStyle {
     /// Create a circled/bordered label style (for circled numbers like ①②③)
     pub fn circled(border_color: &str) -> Self {
         Self {
+            border_enabled: true,
             border_color: Some(border_color.to_string()),
             border_width: 1.5,
             background_radius: 10.0,
@@ -373,7 +392,7 @@ impl LabelStyle {
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 5),
             ConfigProperty::number("label_radius", ConfigKey::LabelRadius.get(current_language()), self.background_radius, Some(0.0), Some(20.0))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 6),
-            ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_color.is_some())
+            ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_enabled)
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 7),
             ConfigProperty::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), self.border_color.as_deref().unwrap_or(fallback_color))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 8),
@@ -433,15 +452,12 @@ impl LabelStyle {
                 if let Some(v) = value.as_number() { self.background_radius = v.max(0.0); return true; }
             }
             "label_border" => {
-                if let Some(v) = value.as_bool() {
-                    self.border_color = if v {
-                        Some(self.border_color.clone().unwrap_or_else(|| "#666666".to_string()))
-                    } else {
-                        None
-                    };
-                    return true;
-                }
+                if let Some(v) = value.as_bool() { self.border_enabled = v; return true; }
             }
+            // Sets the COLOUR only. Turning the border on is
+            // `label_border`'s job — writing this row must never enable it,
+            // or applying any template re-enables the border on every
+            // primitive it touches (see `border_enabled`'s own doc).
             "label_border_color" => {
                 if let Some(c) = value.as_color() { self.border_color = Some(c.to_string()); return true; }
             }
@@ -1504,29 +1520,17 @@ impl ConfigProperty {
 }
 
 // =============================================================================
-// Settings Templates System
+// Last-used style snapshot
 // =============================================================================
-
-/// A saved template of primitive settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SettingsTemplate {
-    /// Unique ID
-    pub id: String,
-    /// User-assigned name
-    pub name: String,
-    /// Type of primitive this applies to (e.g., "fib_retracement", "trend_line", or "*" for all)
-    pub primitive_type: String,
-    /// Style properties (color, width, line_style)
-    pub style: TemplateStyle,
-    /// Fib-specific settings (only for Fib primitives)
-    pub fib_levels: Option<Vec<FibLevelConfig>>,
-    /// Timeframe visibility (optional)
-    pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
-    /// Is this a built-in template (non-deletable)
-    pub builtin: bool,
-    /// Creation timestamp
-    pub created_at: u64,
-}
+//
+// `TemplateStyle` is NOT part of the (now-deleted) legacy `SettingsTemplate`
+// system — it is the bubble's per-type "last used" style, captured every
+// time a primitive of that type is finalized and replayed onto the NEXT one
+// drawn (`DrawingManager::save_last_style_for_primitive` /
+// `apply_last_style_snapshot` in `mlc-backend`). Unrelated to
+// `mlc_core::templates::PrimitiveTemplate` (a named, user-saved or system
+// row in the Template menu) — this has no id, is never shown as a menu row,
+// and is overwritten unconditionally on every finalize.
 
 /// Style portion of a template
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1566,270 +1570,4 @@ pub struct TemplateStyle {
     /// `style_properties` above, which only covers `Primitive::style_properties()`.
     #[serde(default)]
     pub text_properties: Vec<(String, PropertyValue)>,
-}
-
-
-impl SettingsTemplate {
-    /// Create a new template with given name and type
-    pub fn new(id: &str, name: &str, primitive_type: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            name: name.to_string(),
-            primitive_type: primitive_type.to_string(),
-            style: TemplateStyle::default(),
-            fib_levels: None,
-            timeframe_visibility: None,
-            builtin: false,
-            created_at: 0,
-        }
-    }
-
-    /// Create from primitive JSON
-    pub fn from_primitive_json(id: &str, name: &str, primitive_type: &str, json: &str) -> Option<Self> {
-        // Parse JSON to extract style properties
-        let value: serde_json::Value = serde_json::from_str(json).ok()?;
-
-        let mut template = Self::new(id, name, primitive_type);
-
-        // Extract style from data.color (or direct color field)
-        if let Some(data) = value.get("data") {
-            if let Some(color) = data.get("color") {
-                if let Some(stroke) = color.get("stroke").and_then(|s| s.as_str()) {
-                    template.style.color = Some(stroke.to_string());
-                }
-            }
-            if let Some(width) = data.get("width").and_then(|w| w.as_f64()) {
-                template.style.width = Some(width);
-            }
-            if let Some(line_style) = data.get("line_style").and_then(|s| s.as_str()) {
-                template.style.line_style = Some(line_style.to_string());
-            }
-            if let Some(show_labels) = data.get("show_labels").and_then(|s| s.as_bool()) {
-                template.style.show_labels = Some(show_labels);
-            }
-            if let Some(show_prices) = data.get("show_prices").and_then(|s| s.as_bool()) {
-                template.style.show_prices = Some(show_prices);
-            }
-        }
-
-        // Extract Fib levels if present
-        if let Some(levels) = value.get("level_configs") {
-            if let Ok(fib_levels) = serde_json::from_value::<Vec<FibLevelConfig>>(levels.clone()) {
-                template.fib_levels = Some(fib_levels);
-            }
-        }
-
-        // Extract timeframe visibility
-        if let Some(data) = value.get("data") {
-            if let Some(tfv) = data.get("timeframe_visibility") {
-                if let Ok(config) = serde_json::from_value::<TimeframeVisibilityConfig>(tfv.clone()) {
-                    template.timeframe_visibility = Some(config);
-                }
-            }
-        }
-
-        Some(template)
-    }
-
-    /// Get builtin templates for a primitive type
-    pub fn builtin_templates(primitive_type: &str) -> Vec<Self> {
-        match primitive_type {
-            "fib_retracement" => vec![
-                Self::fib_standard(),
-                Self::fib_extended(),
-                Self::fib_colored_fills(),
-            ],
-            "trend_line" => vec![
-                Self::line_standard(),
-                Self::line_thick(),
-                Self::line_dashed(),
-            ],
-            _ => vec![],
-        }
-    }
-
-    // Built-in Fibonacci templates
-    fn fib_standard() -> Self {
-        use super::fibonacci::retracement::default_level_configs;
-        Self {
-            id: "fib_standard".to_string(),
-            name: StyleKey::Standard.get(current_language()).to_string(),
-            primitive_type: "fib_retracement".to_string(),
-            style: TemplateStyle {
-                color: Some("#787b86".to_string()),
-                width: Some(1.0),
-                line_style: Some("solid".to_string()),
-                ..Default::default()
-            },
-            fib_levels: Some(default_level_configs()),
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    fn fib_extended() -> Self {
-        use super::fibonacci::retracement::extended_level_configs;
-        Self {
-            id: "fib_extended".to_string(),
-            name: StyleKey::Extended.get(current_language()).to_string(),
-            primitive_type: "fib_retracement".to_string(),
-            style: TemplateStyle {
-                color: Some("#787b86".to_string()),
-                width: Some(1.0),
-                line_style: Some("solid".to_string()),
-                ..Default::default()
-            },
-            fib_levels: Some(extended_level_configs()),
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    fn fib_colored_fills() -> Self {
-        use super::fibonacci::retracement::filled_level_configs;
-        Self {
-            id: "fib_filled".to_string(),
-            name: StyleKey::Filled.get(current_language()).to_string(),
-            primitive_type: "fib_retracement".to_string(),
-            style: TemplateStyle {
-                color: Some("#787b86".to_string()),
-                width: Some(1.0),
-                line_style: Some("solid".to_string()),
-                ..Default::default()
-            },
-            fib_levels: Some(filled_level_configs()),
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    // Built-in line templates
-    fn line_standard() -> Self {
-        Self {
-            id: "line_standard".to_string(),
-            name: StyleKey::Standard.get(current_language()).to_string(),
-            primitive_type: "trend_line".to_string(),
-            style: TemplateStyle {
-                color: Some("#2962ff".to_string()),
-                width: Some(1.0),
-                line_style: Some("solid".to_string()),
-                ..Default::default()
-            },
-            fib_levels: None,
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    fn line_thick() -> Self {
-        Self {
-            id: "line_thick".to_string(),
-            name: StyleKey::Thick.get(current_language()).to_string(),
-            primitive_type: "trend_line".to_string(),
-            style: TemplateStyle {
-                color: Some("#2962ff".to_string()),
-                width: Some(3.0),
-                line_style: Some("solid".to_string()),
-                ..Default::default()
-            },
-            fib_levels: None,
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    fn line_dashed() -> Self {
-        Self {
-            id: "line_dashed".to_string(),
-            name: StyleKey::Dashed.get(current_language()).to_string(),
-            primitive_type: "trend_line".to_string(),
-            style: TemplateStyle {
-                color: Some("#787b86".to_string()),
-                width: Some(1.0),
-                line_style: Some("dashed".to_string()),
-                ..Default::default()
-            },
-            fib_levels: None,
-            timeframe_visibility: None,
-            builtin: true,
-            created_at: 0,
-        }
-    }
-
-    /// Convert to JSON
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
-    }
-
-    /// Parse from JSON
-    pub fn from_json(json: &str) -> Option<Self> {
-        serde_json::from_str(json).ok()
-    }
-}
-
-/// Collection of templates
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct TemplateCollection {
-    /// User-created templates
-    pub templates: Vec<SettingsTemplate>,
-}
-
-impl TemplateCollection {
-    /// Create empty collection
-    pub fn new() -> Self {
-        Self { templates: Vec::new() }
-    }
-
-    /// Add a template
-    pub fn add(&mut self, template: SettingsTemplate) {
-        // Remove existing template with same ID
-        self.templates.retain(|t| t.id != template.id);
-        self.templates.push(template);
-    }
-
-    /// Remove a template by ID
-    pub fn remove(&mut self, id: &str) -> bool {
-        let len_before = self.templates.len();
-        self.templates.retain(|t| t.id != id || t.builtin);
-        self.templates.len() < len_before
-    }
-
-    /// Get template by ID
-    pub fn get(&self, id: &str) -> Option<&SettingsTemplate> {
-        self.templates.iter().find(|t| t.id == id)
-    }
-
-    /// Get all templates for a primitive type (including built-in)
-    pub fn templates_for_type(&self, primitive_type: &str) -> Vec<&SettingsTemplate> {
-        self.templates
-            .iter()
-            .filter(|t| t.primitive_type == primitive_type || t.primitive_type == "*")
-            .collect()
-    }
-
-    /// Get combined list of builtin + user templates for a type
-    pub fn all_templates_for_type(&self, primitive_type: &str) -> Vec<SettingsTemplate> {
-        let mut result = SettingsTemplate::builtin_templates(primitive_type);
-        for t in &self.templates {
-            if t.primitive_type == primitive_type || t.primitive_type == "*" {
-                result.push(t.clone());
-            }
-        }
-        result
-    }
-
-    /// To JSON
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
-    }
-
-    /// From JSON
-    pub fn from_json(json: &str) -> Self {
-        serde_json::from_str(json).unwrap_or_default()
-    }
 }

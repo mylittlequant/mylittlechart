@@ -165,8 +165,11 @@ pub(crate) fn draw_label_plate(
         ctx.rounded_rect(bg_x, bg_y, bg_w, bg_h, radius);
         ctx.fill();
 
-        if let Some(ref border_color) = label_style.border_color {
-            ctx.set_stroke_color(border_color);
+        // Gated on the explicit flag, not on the colour being set — see
+        // `LabelStyle::border_enabled`. `None` here means "no colour of its
+        // own", which falls back to the label's colour, not "no border".
+        if label_style.border_enabled {
+            ctx.set_stroke_color(label_style.border_color.as_deref().unwrap_or(label_color));
             ctx.set_stroke_width(label_style.border_width);
             ctx.stroke();
         }

@@ -361,19 +361,22 @@ pub enum TimeDisplayMode {
     BarIndex,
 }
 
-/// Which canned level set is active in the Levels tab's ladder composition.
-/// "Стандартный"/"Расширенный"/"Только ключевые" name a fixed value list
-/// (`mlc_core::drawing::primitives_v2::fibonacci::retracement::{MAIN_LEVELS,
-/// EXTENDED_LEVELS}` + a hand-picked key-levels list); `All` is the full
-/// many-level catalogue (`retracement::ALL_LEVELS`) — the footer Template
-/// menu's default entry (2026-08-08 review). `Custom` is not a generator —
-/// it is what the selector shows once the level VALUES on the primitive
-/// (not their colours) no longer match any of the four, per the approved
-/// spec: "как только тронул что-то руками, набор становится «Свой»".
-/// Folded in from the ui-lab prototype's own `LevelSet` (2026-08-08 port);
-/// the standalone "Набор" row + its own dropdown were deleted the same day
-/// (owner review) — the choice now lives in the footer Template menu
-/// (`crate::layout::modals::primitive_settings::render_primitive_settings_modal`).
+/// Which canned level set the Levels tab's ladder COMPOSITION currently
+/// matches — a read-only derived classification
+/// ([`crate::layout::modals::primitive_settings_intent::current_level_set`]),
+/// not a control any more: the standalone "Набор" row + its own dropdown
+/// were deleted 2026-08-08 (owner review), and applying one of these value
+/// lists moved into the footer Template menu as a real
+/// [`mlc_core::templates::PrimitiveTemplate`] system row (2026-08-09,
+/// `PrimitiveTemplate::system_templates`) — this type carries no id/label
+/// of its own any more, only the four value lists themselves
+/// (`primitive_settings_intent::preset_values`), sourced from
+/// `mlc_core::drawing::primitives_v2::fibonacci::retracement::{MAIN_LEVELS,
+/// EXTENDED_LEVELS, KEY_ONLY_LEVELS, ALL_LEVELS}`. `Custom` is not a
+/// generator — it is what this classification reads as once the level
+/// VALUES on the primitive (not their colours) no longer match any of the
+/// four, per the approved spec: "как только тронул что-то руками, набор
+/// становится «Свой»".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LevelSet {
     #[default]
@@ -386,32 +389,6 @@ pub enum LevelSet {
 
 impl LevelSet {
     pub const PRESETS: [LevelSet; 4] = [LevelSet::Standard, LevelSet::Extended, LevelSet::KeyOnly, LevelSet::All];
-
-    pub fn label(self) -> &'static str {
-        use mlc_core::i18n::{ConfigKey, current_language};
-        let lang = current_language();
-        match self {
-            LevelSet::Standard => ConfigKey::LevelSetStandard.get(lang),
-            LevelSet::Extended => ConfigKey::LevelSetExtended.get(lang),
-            LevelSet::KeyOnly => ConfigKey::LevelSetKeyOnly.get(lang),
-            LevelSet::All => ConfigKey::LevelSetAll.get(lang),
-            LevelSet::Custom => ConfigKey::LevelSetCustom.get(lang),
-        }
-    }
-
-    pub fn id(self) -> &'static str {
-        match self {
-            LevelSet::Standard => "standard",
-            LevelSet::Extended => "extended",
-            LevelSet::KeyOnly => "key_only",
-            LevelSet::All => "all",
-            LevelSet::Custom => "custom",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::PRESETS.into_iter().find(|s| s.id() == id)
-    }
 }
 
 // =============================================================================
@@ -483,10 +460,10 @@ pub struct PrimitiveSettingsState {
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
     /// Template-menu drag-to-reorder: `(dragging_key, current_mouse_y)` —
-    /// `key` is a row's own position key (`LevelSet::id()` for a system
-    /// preset, `PrimitiveTemplate::id` for a user template), the same
-    /// mechanism `WatchlistModalState::drag_reorder` already uses for its
-    /// own row list (item 4, 2026-08-08 review).
+    /// `key` is a row's own position key (`PrimitiveTemplate::id`, for a
+    /// system row or a user template alike), the same mechanism
+    /// `WatchlistModalState::drag_reorder` already uses for its own row
+    /// list (item 4, 2026-08-08 review).
     pub template_drag_reorder: Option<(String, f64)>,
     /// Pending template-menu drag-to-reorder: `(key, start_x, start_y)` —
     /// promoted to `template_drag_reorder` only once the pointer has moved

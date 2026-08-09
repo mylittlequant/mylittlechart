@@ -44,15 +44,16 @@ const INDICATOR_SET_MANAGER_FILE: &str = "indicator_set_manager.json";
 /// merged display order (item 4, 2026-08-08 review) — sibling to
 /// [`INDICATOR_SET_MANAGER_FILE`], same one-small-file-alongside-the-
 /// per-item-files shape. A flat list of position keys spanning BOTH kinds
-/// of row the menu shows: a system level-set preset's own `LevelSet::id()`
-/// (`"standard"`/`"extended"`/`"key_only"`/`"all"` — `LevelSet` lives in
-/// `mlc-app-layout`, out of reach from here, so this store only ever sees
-/// its id strings) and a user `PrimitiveTemplate::id`. There is no file to
-/// attach an "order" field to for a system preset (it is not a stored
-/// template), which is why this is a separate small file rather than a
-/// field on `PrimitiveTemplate` itself — mirrors how `IndicatorSetManager`
-/// already keeps cross-cutting ordering/selection state next to, not
-/// inside, the per-item template files.
+/// of row the menu shows: a system (built-in) row's own
+/// `PrimitiveTemplate::id` (`"standard"`/`"extended"`/`"key_only"`/`"all"`
+/// — synthesized fresh every time by
+/// `PrimitiveTemplate::system_templates`, out of reach from here, so this
+/// store only ever sees its id strings) and a user `PrimitiveTemplate::id`.
+/// There is no file to attach an "order" field to for a system row (it is
+/// not a stored template), which is why this is a separate small file
+/// rather than a field on `PrimitiveTemplate` itself — mirrors how
+/// `IndicatorSetManager` already keeps cross-cutting ordering/selection
+/// state next to, not inside, the per-item template files.
 const PRIMITIVE_TEMPLATE_ORDER_FILE: &str = "primitive_template_order.json";
 
 /// Central registry for all template types.

@@ -41,12 +41,15 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drawing::primitives_v2::{
-    config::{FibLevelConfig, PropertyValue, TimeframeVisibilityConfig},
+    config::{level_set_label_defaults, FibLevelConfig, PropertyValue, TimeframeVisibilityConfig},
     // PrimitiveColor, PrimitiveText, TextAlign, and LineStyle are re-exported
     // from the primitives_v2 module (types sub-module is private).
     PrimitiveColor, PrimitiveText, TextAlign, LineStyle,
     Primitive, PrimitiveData, StyleReference,
+    level_rank, level_ramp_color,
 };
+use crate::drawing::primitives_v2::fibonacci::retracement::{level_set_values, LEVEL_SET_IDS};
+use crate::i18n::{current_language, ConfigKey, StyleKey};
 use crate::utils::unix_timestamp_parts;
 
 // =============================================================================
@@ -137,6 +140,16 @@ pub struct PrimitiveTemplate {
     /// than failing to parse.
     #[serde(default)]
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
+
+    // ---- System vs. user --------------------------------------------------
+    /// Whether this is a system (built-in) row — synthesized fresh by
+    /// [`Self::system_templates`] every time the Template menu needs one,
+    /// never persisted, never renameable or deletable. `#[serde(default)]`
+    /// so a template already on disk — which predates this field and is,
+    /// definitionally, user-saved (a system row is never written to disk)
+    /// — loads as `false`.
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 impl PrimitiveTemplate {
@@ -162,6 +175,7 @@ impl PrimitiveTemplate {
             custom_style_properties: Vec::new(),
             custom_text_properties: Vec::new(),
             timeframe_visibility: None,
+            builtin: false,
         }
     }
 
@@ -210,6 +224,7 @@ impl PrimitiveTemplate {
             // Timeframe visibility IS a flat `PrimitiveData` field, unlike
             // the three above — captured here, not in `from_primitive`.
             timeframe_visibility: data.timeframe_visibility.clone(),
+            builtin: false,
         }
     }
 
@@ -246,6 +261,103 @@ impl PrimitiveTemplate {
         tmpl
     }
 
+    // ---- System (built-in) templates ---------------------------------------
+
+    /// The [`Self::builtin`] rows this primitive's TYPE offers in the
+    /// Template menu — never persisted, never user-editable, recomputed
+    /// fresh every call from `prim`'s own current settings.
+    ///
+    /// `prim` must be a FACTORY instance — a freshly constructed default of
+    /// this type (`crate::drawing::PrimitiveRegistry::create`), never the
+    /// live primitive being edited: a system row names what THIS TYPE looks
+    /// like out of the box, not what the user has since done to one
+    /// instance of it. The caller constructs that instance
+    /// (`mlc-backend`/`mlc-app-layout` today) rather than this function
+    /// reaching into the global registry itself — this keeps the template
+    /// value type testable against any `&dyn Primitive` stand-in, and
+    /// leaves the "how do I seed a representative instance of this type"
+    /// decision at the one or two call sites that already have to make it
+    /// for other reasons (creating/previewing a primitive), instead of
+    /// growing a second, possibly-diverging copy of it here.
+    ///
+    /// A level-capable type (`prim.level_configs()` is `Some`) gets the four
+    /// canonical rows — `"standard"`/`"extended"`/`"key_only"`/`"all"`, the
+    /// SAME ids [`level_set_values`]/
+    /// [`crate::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition`]
+    /// name — each narrowed/extended from `prim`'s own seeded ladder to that
+    /// preset's value list (see [`narrow_to_target`]). This is what closes
+    /// the level-seeding inconsistency documented for the nine non-
+    /// `fib_retracement` level types that share this same preset menu
+    /// (`docs/mlc/audits/primitive-settings-state-and-remaining-types-2026-08-09.md`
+    /// §3.1): "standard" is never a hardcoded fib value list here, it is
+    /// whatever `prim` — the type's OWN factory — actually seeded, so a
+    /// freshly drawn primitive of ANY level-having type always matches its
+    /// own "standard" row, by construction, without this function needing
+    /// to know which types happen to seed filled vs. unfilled bands.
+    ///
+    /// A type with no ladder at all gets exactly one row, `"standard"`,
+    /// that IS the type's factory look (flat style fields + typed style/
+    /// text properties, nothing to narrow).
+    ///
+    /// Every row also merges
+    /// [`crate::drawing::primitives_v2::config::level_set_label_defaults`]
+    /// into `custom_style_properties` — a system template is a whole
+    /// settings default, not just a level list (owner direction,
+    /// 2026-08-09), so it restores the label plate + colour inheritance the
+    /// same way applying one already does.
+    pub fn system_templates(prim: &dyn Primitive) -> Vec<PrimitiveTemplate> {
+        let lang = current_language();
+        if prim.level_configs().is_some() {
+            LEVEL_SET_IDS
+                .iter()
+                .map(|&id| {
+                    let name = match id {
+                        "standard" => StyleKey::Standard.get(lang),
+                        "extended" => StyleKey::Extended.get(lang),
+                        "key_only" => ConfigKey::LevelSetKeyOnly.get(lang),
+                        "all" => ConfigKey::LevelSetAll.get(lang),
+                        // LEVEL_SET_IDS is the fixed 4-entry array named
+                        // above — no fifth id ever reaches this arm.
+                        _ => id,
+                    };
+                    Self::system_template(prim, id, name, level_set_values(id).unwrap_or(&[]))
+                })
+                .collect()
+        } else {
+            vec![Self::system_template(prim, "standard", StyleKey::Standard.get(lang), &[])]
+        }
+    }
+
+    /// Resolve one [`Self::system_templates`] row by id — the reading
+    /// [`StyleReference::System`] names. `None` for an id that matches none
+    /// of `factory`'s own current system rows (a stale id left over from a
+    /// row set that has since changed, or a plain unknown id).
+    pub fn resolve_system(id: &str, factory: &dyn Primitive) -> Option<Self> {
+        Self::system_templates(factory).into_iter().find(|t| t.id == id)
+    }
+
+    /// One [`Self::system_templates`] row: `prim`'s factory-seeded style and
+    /// typed properties verbatim (via [`Self::from_primitive`]), `id`/`name`
+    /// overwriting the generated id/name that constructor mints, `builtin`
+    /// forced `true`, the ladder narrowed to `target` when non-empty (see
+    /// [`narrow_to_target`]), and the label defaults merged in — see
+    /// [`Self::system_templates`]'s own doc for why each of these.
+    fn system_template(prim: &dyn Primitive, id: &str, name: &str, target: &[f64]) -> Self {
+        let mut tmpl = Self::from_primitive(prim, name);
+        tmpl.id = id.to_string();
+        tmpl.builtin = true;
+        if !target.is_empty() {
+            tmpl.level_configs = narrow_to_target(&tmpl.level_configs, target);
+        }
+        for (prop_id, value) in level_set_label_defaults() {
+            match tmpl.custom_style_properties.iter_mut().find(|(pid, _)| pid == prop_id) {
+                Some(existing) => existing.1 = value,
+                None => tmpl.custom_style_properties.push((prop_id.to_string(), value)),
+            }
+        }
+        tmpl
+    }
+
     // ---- Application -------------------------------------------------------
 
     /// Apply the template's style to an existing [`PrimitiveData`].
@@ -256,17 +368,24 @@ impl PrimitiveTemplate {
     /// properties live on the concrete primitive impl, not on
     /// `PrimitiveData` — use [`Self::apply_to_primitive`] to write those too.
     ///
-    /// Also stamps [`PrimitiveData::style_reference`] to
-    /// `StyleReference::Template(self.id.clone())` — applying a template
-    /// makes it the reference the primitive is compared against from now
-    /// on ("Save as…" shows again once the primitive drifts from THIS
+    /// Also stamps [`PrimitiveData::style_reference`] — applying a template
+    /// makes it the reference the primitive is compared against from now on
+    /// ("Save as…" shows again once the primitive drifts from THIS
     /// template, not from whatever was applied or edited before it).
+    /// `StyleReference::System(self.id.clone())` for a [`Self::builtin`]
+    /// row, `StyleReference::Template(self.id.clone())` for a user-saved
+    /// one — same field, same shape, the two are otherwise applied through
+    /// this identical path.
     pub fn apply_to_primitive_data(&self, data: &mut PrimitiveData) {
         data.color = self.color.clone();
         data.width = self.width;
         data.style = self.style;
         data.timeframe_visibility = self.timeframe_visibility.clone();
-        data.style_reference = Some(StyleReference::Template(self.id.clone()));
+        data.style_reference = Some(if self.builtin {
+            StyleReference::System(self.id.clone())
+        } else {
+            StyleReference::Template(self.id.clone())
+        });
 
         // Apply text formatting if the primitive already has a text block.
         if let Some(text) = &mut data.text {
@@ -383,9 +502,9 @@ impl PrimitiveTemplate {
     /// running this saved look?"); the settings modal's own "Save as…"
     /// visibility (`mlc-app-layout::layout::modals::primitive_settings`)
     /// asks it of whatever [`PrimitiveData::style_reference`] resolves to —
-    /// a template looked up by id, or a system level-set preset's own
-    /// fixed definition — to decide whether anything has moved since that
-    /// reference was established. Both readings use this same function;
+    /// a user template looked up by id, or a system row resolved fresh via
+    /// [`Self::resolve_system`] — to decide whether anything has moved
+    /// since that reference was established. Both readings use this same function;
     /// only the object on the left of the comparison changes.
     ///
     /// Every section below gates on what `prim` itself exposes, never on
@@ -460,4 +579,50 @@ fn apply_text_template(text: &mut PrimitiveText, tmpl: &PrimitiveTemplate) {
     if let Some(ref align) = tmpl.text_v_align {
         text.v_align = TextAlign::from_str(align);
     }
+}
+
+/// Floating-point tolerance for matching a level value against a system
+/// template's target composition — mirrors `fibonacci::retracement`'s own
+/// private `LEVEL_SET_MATCH_EPS` (not reusable directly: that constant is
+/// private to its module), same value.
+const SYSTEM_TEMPLATE_EPS: f64 = 1e-9;
+
+/// Narrow/extend `factory_configs` (a level-having primitive's factory-
+/// seeded ladder — whatever fill/colour/group that type's own constructor
+/// happens to set, read verbatim from [`Primitive::level_configs`] by
+/// [`PrimitiveTemplate::system_template`]) to exactly `target`'s value
+/// list.
+///
+/// A target value already present in `factory_configs` is reused VERBATIM
+/// — colour, fill, group all carry over, since that entry's colour already
+/// came from the factory's own rank ramp — only `width`/`style` are then
+/// forced to `None`/`"solid"` (uniform thickness; the primitive's own
+/// `data.width` governs). A target value with no match in the factory seed
+/// (`"extended"`/`"key_only"`/`"all"` reaching past a `"standard"`-sized
+/// seed) gets a fresh entry whose colour is computed by the SAME ramp
+/// function ([`level_ramp_color`]/[`level_rank`]) the factory itself used
+/// to colour its own entries, run over `target` this time — reusing the
+/// mechanism, never inventing a new palette.
+fn narrow_to_target(factory_configs: &[FibLevelConfig], target: &[f64]) -> Vec<FibLevelConfig> {
+    let mut sorted_target = target.to_vec();
+    sorted_target.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    target
+        .iter()
+        .map(|&level| {
+            let mut cfg = factory_configs
+                .iter()
+                .find(|c| (c.level - level).abs() < SYSTEM_TEMPLATE_EPS)
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut fresh = FibLevelConfig::new(level);
+                    fresh.color = Some(level_ramp_color(level_rank(level, &sorted_target), sorted_target.len()));
+                    fresh
+                });
+            cfg.visible = true;
+            cfg.width = None;
+            cfg.style = "solid".to_string();
+            cfg
+        })
+        .collect()
 }

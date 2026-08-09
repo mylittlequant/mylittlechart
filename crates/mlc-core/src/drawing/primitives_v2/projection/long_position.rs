@@ -482,8 +482,9 @@ fn draw_line_label(ctx: &mut dyn RenderContext, x: f64, y: f64, text: &str, labe
         ctx.rounded_rect(x, bg_y, text_width + padding * 2.0, label_style.font_size + padding * 2.0, label_style.background_radius);
         ctx.fill();
 
-        if let Some(ref border) = label_style.border_color {
-            ctx.set_stroke_color(border);
+        // Gated on the explicit flag — see `LabelStyle::border_enabled`.
+        if label_style.border_enabled {
+            ctx.set_stroke_color(label_style.border_color.as_deref().unwrap_or(text_color));
             ctx.set_stroke_width(label_style.border_width);
             ctx.stroke();
         }
