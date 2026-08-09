@@ -46,7 +46,6 @@ use crate::drawing::primitives_v2::{
     // from the primitives_v2 module (types sub-module is private).
     PrimitiveColor, PrimitiveText, TextAlign, LineStyle,
     Primitive, PrimitiveData, StyleReference,
-    level_rank, level_ramp_color,
 };
 use crate::drawing::primitives_v2::fibonacci::retracement::{level_set_values, LEVEL_SET_IDS};
 use crate::i18n::{current_language, ConfigKey, StyleKey};
@@ -150,6 +149,23 @@ pub struct PrimitiveTemplate {
     /// — loads as `false`.
     #[serde(default)]
     pub builtin: bool,
+
+    // ---- Fill master (level-band fill on/off + opacity) ---------------------
+    /// `(show_fill, fill_opacity)` verbatim from [`Primitive::fill_master`],
+    /// or `None` for a type that has no band fill of its own.
+    ///
+    /// These two are real fields on the primitive but deliberately NOT
+    /// declared as `ConfigProperty`s (see `fibonacci::retracement`'s own
+    /// `fill_master` doc), so `custom_style_properties` — which captures only
+    /// declared properties — never saw them. A template that cannot carry
+    /// them cannot regulate the band fill at all: applying one left whatever
+    /// opacity the target already had, which is how a system template stopped
+    /// being "the whole settings" (owner-reported, 2026-08-09). Written back
+    /// through the same `apply_style_property` ids the write path already
+    /// owns — `"fill"`, and `"fill_opacity"` in PERCENT, which is what that
+    /// setter expects.
+    #[serde(default)]
+    pub fill_master: Option<(bool, f64)>,
 }
 
 impl PrimitiveTemplate {
@@ -176,6 +192,7 @@ impl PrimitiveTemplate {
             custom_text_properties: Vec::new(),
             timeframe_visibility: None,
             builtin: false,
+            fill_master: None,
         }
     }
 
@@ -225,6 +242,9 @@ impl PrimitiveTemplate {
             // the three above — captured here, not in `from_primitive`.
             timeframe_visibility: data.timeframe_visibility.clone(),
             builtin: false,
+            // Like the three above, this one needs the concrete primitive —
+            // `from_primitive` fills it.
+            fill_master: None,
         }
     }
 
@@ -258,6 +278,7 @@ impl PrimitiveTemplate {
                 .map(|p| (p.id, p.value))
                 .collect();
         }
+        tmpl.fill_master = prim.fill_master();
         tmpl
     }
 
@@ -440,6 +461,13 @@ impl PrimitiveTemplate {
         for (id, value) in &self.custom_text_properties {
             prim.apply_text_property(id, value);
         }
+        // The band fill master, which no declared property covers — see the
+        // `fill_master` field's own doc. `"fill_opacity"`'s setter takes a
+        // PERCENT, `Primitive::fill_master` reports a 0.0..=1.0 fraction.
+        if let Some((show_fill, opacity)) = self.fill_master {
+            prim.apply_style_property("fill", &PropertyValue::Boolean(show_fill));
+            prim.apply_style_property("fill_opacity", &PropertyValue::Number(opacity * 100.0));
+        }
     }
 
     /// Returns `true` if this template stores level configuration.
@@ -528,6 +556,19 @@ impl PrimitiveTemplate {
                 return false;
             }
         }
+        // Compared only when the TARGET has a fill master at all, same rule
+        // every other section here follows: gate on what `prim` exposes,
+        // never on whether this template's own field happens to be empty.
+        if let Some(current_fill) = prim.fill_master() {
+            match self.fill_master {
+                Some((show, opacity)) => {
+                    if show != current_fill.0 || (opacity - current_fill.1).abs() > f64::EPSILON {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
         let current_style_props = prim.style_properties();
         let style_props_match = current_style_props.iter().all(|p| {
             self.custom_style_properties
@@ -593,19 +634,30 @@ const SYSTEM_TEMPLATE_EPS: f64 = 1e-9;
 /// [`PrimitiveTemplate::system_template`]) to exactly `target`'s value
 /// list.
 ///
-/// A target value already present in `factory_configs` is reused VERBATIM
-/// — colour, fill, group all carry over, since that entry's colour already
-/// came from the factory's own rank ramp — only `width`/`style` are then
-/// forced to `None`/`"solid"` (uniform thickness; the primitive's own
-/// `data.width` governs). A target value with no match in the factory seed
-/// (`"extended"`/`"key_only"`/`"all"` reaching past a `"standard"`-sized
-/// seed) gets a fresh entry whose colour is computed by the SAME ramp
-/// function ([`level_ramp_color`]/[`level_rank`]) the factory itself used
-/// to colour its own entries, run over `target` this time — reusing the
-/// mechanism, never inventing a new palette.
+/// Every entry comes out UNIFORM, because a system template is a base look
+/// and a base look has no ladder of its own colours (owner direction,
+/// 2026-08-09): `width: None` and `style: "solid"` (the primitive's own
+/// `data.width` governs thickness), `color: None` (every level draws in the
+/// primitive's stroke — per-level hues are what the Levels tab's Палитра
+/// MODE is for, not what a base template ships), and the band fill copied
+/// from the factory's own first seeded entry so a value the seed never had
+/// is filled exactly like the ones it did.
+///
+/// That last part is the defect this closes: a fresh entry used to be a
+/// bare `FibLevelConfig::new`, whose `fill_enabled` is false and whose
+/// colour was then computed by a ramp run over a DIFFERENT length than the
+/// factory's own — so "All levels" rendered its upper half unfilled and in
+/// a visibly different colour sequence from its lower half.
 fn narrow_to_target(factory_configs: &[FibLevelConfig], target: &[f64]) -> Vec<FibLevelConfig> {
-    let mut sorted_target = target.to_vec();
-    sorted_target.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // The factory's own fill convention, read off its first seeded entry:
+    // some level-having types seed filled bands, others deliberately do not
+    // (`fan`/`speed_resistance`/`spiral` — see `default_level_configs_filled`'s
+    // own doc), and a fresh entry must follow whichever this type is rather
+    // than default to "unfilled" and leave half a ladder bare.
+    let (seed_fill_enabled, seed_fill_opacity) = factory_configs
+        .first()
+        .map(|c| (c.fill_enabled, c.fill_opacity))
+        .unwrap_or((false, crate::drawing::primitives_v2::BAND_FILL_OPACITY));
 
     target
         .iter()
@@ -614,14 +666,13 @@ fn narrow_to_target(factory_configs: &[FibLevelConfig], target: &[f64]) -> Vec<F
                 .iter()
                 .find(|c| (c.level - level).abs() < SYSTEM_TEMPLATE_EPS)
                 .cloned()
-                .unwrap_or_else(|| {
-                    let mut fresh = FibLevelConfig::new(level);
-                    fresh.color = Some(level_ramp_color(level_rank(level, &sorted_target), sorted_target.len()));
-                    fresh
-                });
+                .unwrap_or_else(|| FibLevelConfig::new(level));
             cfg.visible = true;
             cfg.width = None;
             cfg.style = "solid".to_string();
+            cfg.color = None;
+            cfg.fill_enabled = seed_fill_enabled;
+            cfg.fill_opacity = seed_fill_opacity;
             cfg
         })
         .collect()

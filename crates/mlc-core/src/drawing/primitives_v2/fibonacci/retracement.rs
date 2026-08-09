@@ -13,7 +13,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE, point_to_line_distance, control_point_style,
     RenderContext, crisp,
-    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    render_primitive_text, draw_label_plate,
     config::{FibLevelConfig, LabelStyle},
     BAND_FILL_OPACITY, default_band_fill_opacity,
 };
@@ -109,15 +109,16 @@ pub fn level_set_id_for_composition(levels: &[f64]) -> Option<&'static str> {
 /// serialized with (30 rows for anything created before this change) — no
 /// migration.
 pub fn default_level_configs() -> Vec<FibLevelConfig> {
-    let mut sorted: Vec<f64> = MAIN_LEVELS.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // No per-level colour: every level draws in the primitive's own stroke.
+    // The rank ramp used to be seeded here, which made the BASE look a
+    // rainbow ladder and — worse — made it a half-rainbow the moment a
+    // preset added values the 7-entry seed never had, since those got their
+    // colours from a ramp run over a different length. Per-level hues are
+    // what the Levels tab's Палитра MODE applies on demand (`apply_palette`);
+    // a base look ships without one (owner direction, 2026-08-09).
     MAIN_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = true;
-        // Ramp colour by rank so 0.382 reads differently from 0.618 at a
-        // glance — previously every level fell back to the primitive's own
-        // single stroke color, so no level stood out from any other.
-        config.color = Some(level_ramp_color(level_rank(level, &sorted), sorted.len()));
         config
     }).collect()
 }
