@@ -690,8 +690,18 @@ impl Primitive for FibRetracement {
         let y1 = ctx.price_to_y(self.price1);
         let y2 = ctx.price_to_y(self.price2);
 
-        // Draw connecting line from point 1 to point 2 (if enabled)
+        // Draw connecting line from point 1 to point 2 (if enabled).
+        //
+        // Sets its OWN stroke colour and width. It used to set neither, so it
+        // inherited whatever the last level line in the loop above happened to
+        // leave on the context — with the rank colour ramp that is the topmost
+        // level, which is why the trend line rendered green on a fib whose
+        // base stroke is blue (owner-reported, 2026-08-09). The trend line
+        // belongs to the primitive as a whole, so it draws in the primitive's
+        // own stroke, not in some level's.
         if self.show_trend_line {
+            ctx.set_stroke_color(&self.data.color.stroke);
+            ctx.set_stroke_width(self.data.width);
             ctx.set_line_dash(&[4.0, 4.0]);
             ctx.begin_path();
             ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
