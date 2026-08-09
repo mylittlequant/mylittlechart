@@ -537,10 +537,11 @@ fn save_current_as_template(prim: &dyn Primitive, ctx: &mut ClickCtx) {
     ctx.templates.push(tmpl);
 }
 
-fn apply_template(id: &str, state: &mut PrimitiveSettingsState, prim: &mut dyn Primitive, ctx: &ClickCtx) {
+fn apply_template(id: &str, _state: &mut PrimitiveSettingsState, prim: &mut dyn Primitive, ctx: &ClickCtx) {
     let Some(tmpl) = ctx.templates.iter().find(|t| t.id == id).cloned() else { return };
+    // `apply_to_primitive` stamps `data.style_reference` itself, which is the
+    // only thing the Template menu's current-row highlight reads now.
     tmpl.apply_to_primitive(prim);
-    state.applied_template_id = Some(tmpl.id.clone());
 }
 
 // =============================================================================

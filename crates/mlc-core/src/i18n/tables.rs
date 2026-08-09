@@ -46,7 +46,7 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 150] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 151] = [
     /* 0  Labels            */ [ "Labels",                     "Подписи",                                "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "процент",                                "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -217,6 +217,7 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 150] = [
     // (2026-08-08 appearance-surface consolidation).
     /* 148 ColorModeMono     */ [ "Mono",                     "Моно",                    "Mono",                         "Mono",                           "Mono",                               "Mono",                   "单色",         "モノ",         "모노",         "أحادي",             "Mono",                   "Mono",                  "Mono",                   "Моно",               "मोनो"               ],
     /* 149 ColorModePalette  */ [ "Palette",                  "Палитра",                 "Paleta",                       "Palette",                        "Palette",                            "Paleta",                 "调色板",       "パレット",     "팔레트",       "لوحة الألوان",       "Tavolozza",              "Palet",                  "Paleta",                 "Палітра",            "पैलेट"              ],
+    /* 150 LabelColorInherit*/ [ "Inherit Line Color",       "Наследовать цвет линии",  "Heredar color de línea",       "Linienfarbe erben",              "Hériter couleur de ligne",           "Herdar cor da linha",    "继承线条颜色", "線の色を継承", "선 색상 상속", "وراثة لون الخط",     "Eredita colore linea",   "Çizgi Rengini Devral",   "Dziedzicz kolor linii",  "Успадкувати колір лінії","रेखा रंग विरासत में लें" ],
 ];
 
 // =============================================================================

@@ -299,6 +299,22 @@ impl PrimitiveTemplate {
         if prim.level_configs().is_some() {
             prim.set_level_configs(self.level_configs.clone());
         }
+        // Load-bearing order: this iterates `custom_style_properties` in
+        // CAPTURED order (`from_primitive`'s `style_properties().into_iter()
+        // ...collect()`, itself the primitive's own declaration-push order —
+        // never re-sorted by `ConfigProperty::order`), not applied-in-any-
+        // order. That is what keeps a label's "inherit line colour" toggle
+        // (`"label_color_inherit"`, `LabelStyle::style_properties`) correct
+        // after a template round-trip: every caller of
+        // `LabelStyle::style_properties` pushes its own `"label_color"` row
+        // first and only THEN extends with the label-style block, whose own
+        // first entry is `"label_color_inherit"` — so the inherit row is
+        // always captured, and therefore always applied, strictly after
+        // `"label_color"`. `LabelStyle::apply_property`'s inherit-ON branch
+        // writes `self.color = None` unconditionally, so applying it last
+        // is what lets a saved "inherit" template restore the link instead
+        // of the `"label_color"` write two steps earlier silently pinning a
+        // concrete colour back in.
         for (id, value) in &self.custom_style_properties {
             prim.apply_style_property(id, value);
         }

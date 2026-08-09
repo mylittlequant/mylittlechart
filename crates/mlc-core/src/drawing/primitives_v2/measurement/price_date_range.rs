@@ -271,7 +271,7 @@ impl Primitive for PriceDateRange {
             }
             _ => {}
         }
-        if self.label_style.apply_property(id, value) { return true; }
+        if self.label_style.apply_property(id, value, &self.data.color.stroke) { return true; }
         false
     }
 }

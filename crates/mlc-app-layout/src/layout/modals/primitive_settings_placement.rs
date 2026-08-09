@@ -168,6 +168,7 @@ pub fn draw(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) -> bool {
@@ -183,13 +184,13 @@ pub fn draw(
     let show_points = group_points_matches(prim, &query);
 
     if show_tf {
-        draw_timeframes_group(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+        draw_timeframes_group(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
         if show_points {
             *row_y += GROUP_GAP;
         }
     }
     if show_points {
-        draw_points_group(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+        draw_points_group(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
     }
     show_tf || show_points
 }
@@ -233,6 +234,7 @@ fn draw_points_group(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) {
@@ -301,7 +303,7 @@ fn draw_points_group(
     // Any declared `PropertyCategory::PlacementPoints` properties — see
     // this module's own doc. No primitive declares any today.
     for prop in &declared_points_rows(prim) {
-        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop);
+        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop);
         *row_y += ROW_H;
     }
 
@@ -423,6 +425,7 @@ fn draw_timeframes_group(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) {
@@ -488,7 +491,7 @@ fn draw_timeframes_group(
     // Any declared `PropertyCategory::PlacementTimeframes` properties — see
     // this module's own doc. No primitive declares any today.
     for prop in &declared_timeframes_rows(prim) {
-        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop);
+        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, mlc_core::drawing::primitives_v2::PropertyKind::Style, prop);
         *row_y += ROW_H;
     }
 

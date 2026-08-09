@@ -348,30 +348,37 @@ impl LabelStyle {
     /// Config properties for the parts of the struct beyond `font_size`/
     /// `color` (those two predate this method — every call site already
     /// wires them at fixed orders 13/14 via `ConfigProperty::label_font_size`/
-    /// `label_color`). This appends the remaining 6 fields — bold, offset,
-    /// background on/off + color, padding, corner radius, border on/off +
-    /// color + width — starting at `order_start`. Callers `.extend()` this
-    /// into their own `style_properties()`.
+    /// `label_color`). This appends the "inherit line colour" toggle FIRST,
+    /// at `order_start` (see [`Self::apply_property`]'s own doc for why it
+    /// must be applied after each caller's own `"label_color"` write — this
+    /// row's position immediately after that row, whatever order the caller
+    /// used for it, is what makes that ordering hold), then the remaining 6
+    /// fields — bold, offset, background on/off + color, padding, corner
+    /// radius, border on/off + color + width — at `order_start + 1 ..=
+    /// order_start + 9`. Callers `.extend()` this into their own
+    /// `style_properties()`.
     pub fn style_properties(&self, fallback_color: &str, order_start: i32) -> Vec<ConfigProperty> {
         vec![
-            ConfigProperty::boolean("label_bold", ConfigKey::Bold.get(current_language()), self.font_weight == "bold")
+            ConfigProperty::boolean("label_color_inherit", ConfigKey::LabelColorInherit.get(current_language()), self.color.is_none())
                 .with_category(PropertyCategory::LabelsText).with_order(order_start),
-            ConfigProperty::number("label_offset", ConfigKey::LabelOffset.get(current_language()), self.offset_y, Some(0.0), Some(60.0))
+            ConfigProperty::boolean("label_bold", ConfigKey::Bold.get(current_language()), self.font_weight == "bold")
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 1),
-            ConfigProperty::boolean("label_background", ConfigKey::ShowBackground.get(current_language()), self.background_color.is_some())
+            ConfigProperty::number("label_offset", ConfigKey::LabelOffset.get(current_language()), self.offset_y, Some(0.0), Some(60.0))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 2),
-            ConfigProperty::color("label_background_color", ConfigKey::LabelBackgroundColor.get(current_language()), self.background_color.as_deref().unwrap_or(fallback_color))
+            ConfigProperty::boolean("label_background", ConfigKey::ShowBackground.get(current_language()), self.background_color.is_some())
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 3),
-            ConfigProperty::number("label_padding", ConfigKey::LabelPadding.get(current_language()), self.background_padding, Some(0.0), Some(20.0))
+            ConfigProperty::color("label_background_color", ConfigKey::LabelBackgroundColor.get(current_language()), self.background_color.as_deref().unwrap_or(fallback_color))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 4),
-            ConfigProperty::number("label_radius", ConfigKey::LabelRadius.get(current_language()), self.background_radius, Some(0.0), Some(20.0))
+            ConfigProperty::number("label_padding", ConfigKey::LabelPadding.get(current_language()), self.background_padding, Some(0.0), Some(20.0))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 5),
-            ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_color.is_some())
+            ConfigProperty::number("label_radius", ConfigKey::LabelRadius.get(current_language()), self.background_radius, Some(0.0), Some(20.0))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 6),
-            ConfigProperty::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), self.border_color.as_deref().unwrap_or(fallback_color))
+            ConfigProperty::boolean("label_border", ConfigKey::LabelBorder.get(current_language()), self.border_color.is_some())
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 7),
-            ConfigProperty::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), self.border_width, Some(0.5), Some(6.0))
+            ConfigProperty::color("label_border_color", ConfigKey::LabelBorderColor.get(current_language()), self.border_color.as_deref().unwrap_or(fallback_color))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 8),
+            ConfigProperty::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), self.border_width, Some(0.5), Some(6.0))
+                .with_category(PropertyCategory::LabelsText).with_order(order_start + 9),
         ]
     }
 
@@ -379,8 +386,24 @@ impl LabelStyle {
     /// `id` was recognized. `font_size`/`color` are NOT handled here — they
     /// stay on the per-primitive `"label_font_size"`/`"label_color"` ids
     /// callers already had; this only owns the ids it mints above.
-    pub fn apply_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+    ///
+    /// `fallback_color` is the primitive's own stroke colour
+    /// (`self.data.color.stroke` at every call site) — turning inherit OFF
+    /// with no colour chosen yet has nowhere else to source a concrete
+    /// value from, and leaving `self.color` at `None` would make the
+    /// checkbox look like it did nothing. Turning inherit back ON always
+    /// writes `None`, regardless of what colour was pinned before —
+    /// `self.color.is_none()` is the checkbox's own read
+    /// ([`Self::style_properties`]'s `"label_color_inherit"` row), so this
+    /// is the only write that can ever uncheck it again.
+    pub fn apply_property(&mut self, id: &str, value: &PropertyValue, fallback_color: &str) -> bool {
         match id {
+            "label_color_inherit" => {
+                if let Some(v) = value.as_bool() {
+                    self.color = if v { None } else { Some(self.color.clone().unwrap_or_else(|| fallback_color.to_string())) };
+                    return true;
+                }
+            }
             "label_bold" => {
                 if let Some(v) = value.as_bool() {
                     self.font_weight = if v { "bold".to_string() } else { "normal".to_string() };
@@ -429,6 +452,28 @@ impl LabelStyle {
         }
         false
     }
+}
+
+/// Property writes a system набор (level-set preset) performs on every
+/// primitive's `LabelStyle` when applied — the label-plate half of "шаблоны
+/// это настройки в целом" (owner direction, 2026-08-09): a preset restores
+/// the label plate to the product default and re-establishes label colour
+/// INHERITANCE (`label_color_inherit = true`, i.e. `LabelStyle.color =
+/// None` — "use the line's own colour"), not just the level value list.
+///
+/// Ids are exactly the ones [`LabelStyle::apply_property`] already owns —
+/// this mints no new ones — and the numbers are read from the same
+/// `default_label_*` functions `LabelStyle::default()` itself uses, so
+/// there is one source for them, not a second copy. Does not touch
+/// `LabelStyle::default()` or any `default_label_*` value.
+pub fn level_set_label_defaults() -> Vec<(&'static str, PropertyValue)> {
+    vec![
+        ("label_color_inherit", PropertyValue::Boolean(true)),
+        ("label_bold", PropertyValue::Boolean(false)),
+        ("label_padding", PropertyValue::Number(default_label_padding())),
+        ("label_radius", PropertyValue::Number(default_label_radius())),
+        ("label_background", PropertyValue::Boolean(true)),
+    ]
 }
 
 // =============================================================================

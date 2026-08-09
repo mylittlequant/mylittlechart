@@ -183,7 +183,7 @@ pub fn render_compare_settings_modal(
         draw_template_menu(ctx, template_btn, state, toolbar_theme, input_coordinator, &layer_id, templates);
     }
 
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &[]);
 
     result
 }

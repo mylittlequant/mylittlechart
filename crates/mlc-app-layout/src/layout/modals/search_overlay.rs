@@ -482,7 +482,7 @@ pub fn render_search_overlay(
         );
     }
 
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &[]);
     result
 }
 

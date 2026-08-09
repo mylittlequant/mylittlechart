@@ -374,7 +374,7 @@ impl Primitive for FibTimeZones {
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
         }
-        if self.label_style.apply_property(id, value) { return true; }
+        if self.label_style.apply_property(id, value, &self.data.color.stroke) { return true; }
         false
     }
 

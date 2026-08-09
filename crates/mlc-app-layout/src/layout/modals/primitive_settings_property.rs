@@ -37,7 +37,7 @@ use crate::layout::render_frame::PrimitiveSettingsResult;
 
 use super::primitive_settings_vid::{
     draw_bool_row, draw_label, draw_slider_row, draw_split_value_control, line_style_display_name, SplitValueKind,
-    LABEL_COLUMN_W, ROW_H,
+    ROW_H,
 };
 
 /// One declared property plus which generically-dispatchable family it came
@@ -111,6 +111,7 @@ pub(crate) fn draw_property_row(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     y: f64,
     kind: PropertyKind,
     prop: &ConfigProperty,
@@ -120,9 +121,9 @@ pub(crate) fn draw_property_row(
 
     match &prop.prop_type {
         PropertyType::Color => {
-            draw_label(ctx, toolbar_theme, x0, y, &prop.name);
-            let swatch_w = (x1 - (x0 + LABEL_COLUMN_W)).clamp(40.0, 60.0);
-            let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 3.0, swatch_w, ROW_H - 6.0);
+            draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);
+            let swatch_w = (x1 - (x0 + label_col)).clamp(40.0, 60.0);
+            let rect = WidgetRect::new(x0 + label_col, y + 3.0, swatch_w, ROW_H - 6.0);
             let color = prop.value.as_color().unwrap_or("#888888");
             ctx.set_fill_color(color);
             ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
@@ -135,7 +136,7 @@ pub(crate) fn draw_property_row(
             let value = prop.value.as_number().unwrap_or(0.0);
             let lo = min.unwrap_or(0.0);
             let hi = max.unwrap_or(100.0);
-            draw_number_slider(ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, &fid, &prop.name, value, lo, hi);
+            draw_number_slider(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, &fid, &prop.name, value, lo, hi);
         }
         // `PropertyType::Integer` is never constructed by any
         // `style_properties()`/`text_properties()` implementation today
@@ -149,27 +150,27 @@ pub(crate) fn draw_property_row(
             };
             let lo = min.map(|v| v as f64).unwrap_or(0.0);
             let hi = max.map(|v| v as f64).unwrap_or(100.0);
-            draw_number_slider(ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, &fid, &prop.name, value, lo, hi);
+            draw_number_slider(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, &fid, &prop.name, value, lo, hi);
         }
         PropertyType::Boolean => {
             let checked = prop.value.as_bool().unwrap_or(false);
-            draw_bool_row(ctx, toolbar_theme, result, x0, y, &prop.name, checked, &fid);
+            draw_bool_row(ctx, toolbar_theme, result, x0, label_col, y, &prop.name, checked, &fid);
         }
         PropertyType::LineStyle => {
-            draw_label(ctx, toolbar_theme, x0, y, &prop.name);
+            draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);
             let value = prop.value.as_string().unwrap_or("solid");
             let style = LineStyle::from_str(value);
             let display = line_style_display_name(style, lang);
-            let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-            let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 2.0, control_w, ROW_H - 4.0);
+            let control_w = (x1 - (x0 + label_col)).max(100.0);
+            let rect = WidgetRect::new(x0 + label_col, y + 2.0, control_w, ROW_H - 4.0);
             draw_split_value_control(ctx, toolbar_theme, state, result, rect, &fid, display, SplitValueKind::LineStyle(style));
         }
         PropertyType::Select { options } => {
-            draw_label(ctx, toolbar_theme, x0, y, &prop.name);
+            draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);
             let current = prop.value.as_string().unwrap_or("").to_string();
             let display = options.iter().find(|o| o.value == current).map(|o| o.label.clone()).unwrap_or_else(|| current.clone());
-            let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-            let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 2.0, control_w, ROW_H - 4.0);
+            let control_w = (x1 - (x0 + label_col)).max(100.0);
+            let rect = WidgetRect::new(x0 + label_col, y + 2.0, control_w, ROW_H - 4.0);
             let opts: Vec<(String, String)> = options.iter().map(|o| (o.value.clone(), o.label.clone())).collect();
             draw_split_value_control(
                 ctx, toolbar_theme, state, result, rect, &fid, &display,
@@ -177,7 +178,7 @@ pub(crate) fn draw_property_row(
             );
         }
         PropertyType::Text { .. } => {
-            draw_label(ctx, toolbar_theme, x0, y, &prop.name);
+            draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);
             let is_editing = state.active_field_id.as_deref() == Some(fid.as_str());
             let committed = prop.value.as_string().unwrap_or("").to_string();
             let ar = &state.active_render;
@@ -186,8 +187,8 @@ pub(crate) fn draw_property_row(
             } else {
                 (committed.as_str(), committed.len(), None, None)
             };
-            let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-            let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 2.0, control_w, ROW_H - 4.0);
+            let control_w = (x1 - (x0 + label_col)).max(100.0);
+            let rect = WidgetRect::new(x0 + label_col, y + 2.0, control_w, ROW_H - 4.0);
             let cfg = InputConfig::new(display)
                 .with_focused(is_editing)
                 .with_type(InputType::Text)
@@ -221,6 +222,7 @@ fn draw_number_slider(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     y: f64,
     fid: &str,
     name: &str,
@@ -229,5 +231,5 @@ fn draw_number_slider(
     hi: f64,
 ) {
     let step = if (hi - lo) <= 20.0 { 0.1 } else { 1.0 };
-    draw_slider_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, fid, name, value, lo, hi, step, true);
+    draw_slider_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, fid, name, value, lo, hi, step, true);
 }

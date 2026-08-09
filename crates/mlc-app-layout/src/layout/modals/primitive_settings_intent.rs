@@ -336,6 +336,21 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
 /// `LevelsIntent` variant already uses, so this fix needed no new
 /// write-back path, undo step, or autosave call — only this function was
 /// missing half of what it should have written.
+///
+/// A system набор is a whole-settings default, not just a value list
+/// (owner direction, 2026-08-09: "шаблоны это настройки в целом") — so
+/// every level ENTERING the target composition also gets a uniform line:
+/// `width = None` (inherit the primitive's own `data.width`, which is what
+/// makes the ladder read as one thickness) and `style = "solid"`. Colour
+/// and fill are left exactly as they were — the approved rule "смена
+/// набора не сбрасывает ручные цвета тех строк, что остались" stays, and
+/// so does the rank colour ramp a caller may apply separately
+/// (`ApplyPalette`/`SetColorMode`). This is the ONLY place that performs
+/// this normalization: both callers — `LevelsIntent::ApplyPreset` (via
+/// `apply_levels_intent` above) and [`resolve_level_set_reference`] (the
+/// "Save as…" comparison reference) — call through here, which is what
+/// keeps the applied result and the comparison reference identical. A
+/// second copy of this rule anywhere else is a bug.
 pub fn apply_level_set(configs: &mut Vec<FibLevelConfig>, state: &mut PrimitiveSettingsState, set: LevelSet) {
     let target = preset_values(set);
     let currently_visible: Vec<f64> = configs
@@ -353,7 +368,11 @@ pub fn apply_level_set(configs: &mut Vec<FibLevelConfig>, state: &mut PrimitiveS
         state.unexclude_level(level);
         if let Some(cfg) = configs.iter_mut().find(|c| (c.level - level).abs() < EPS) {
             cfg.visible = true;
+            cfg.width = None;
+            cfg.style = "solid".to_string();
         } else {
+            // `FibLevelConfig::new` already constructs with `width: None` /
+            // `style: "solid"` — nothing more to normalize on a fresh entry.
             configs.push(FibLevelConfig::new(level));
         }
     }

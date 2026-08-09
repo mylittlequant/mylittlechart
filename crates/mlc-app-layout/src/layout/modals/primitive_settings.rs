@@ -276,6 +276,7 @@ fn search_results_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -
 /// their own real ids exactly as they would in their own tab, so a control
 /// found through search is fully functional where it is found.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn draw_search_results(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
@@ -284,6 +285,7 @@ fn draw_search_results(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) {
@@ -300,13 +302,13 @@ fn draw_search_results(
                 primitive_settings_levels::draw_search(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
             }
             PrimitiveSettingsTab::Appearance => {
-                primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+                primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
             }
             PrimitiveSettingsTab::Labels => {
-                primitive_settings_labels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+                primitive_settings_labels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
             }
             PrimitiveSettingsTab::Placement => {
-                primitive_settings_placement::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+                primitive_settings_placement::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
             }
         }
         any = true;
@@ -375,6 +377,15 @@ pub fn render_primitive_settings_modal(
     let prim = prim.as_ref();
 
     let prim_name = prim.display_name();
+
+    // One shared, measured label column for EVERY row in this render —
+    // checkboxes, colour swatches, cycle buttons, text inputs and slider
+    // tracks all start flush at `content_left + label_col` (row-spacing fix,
+    // 2026-08-09: replaces the old flat `LABEL_COLUMN_W` constant, which
+    // both truncated a caption as long as "Label Background Color" and left
+    // sliders to measure their own, different label). See
+    // `primitive_settings_vid::compute_label_col`'s own doc.
+    let label_col = primitive_settings_vid::compute_label_col(ctx, prim);
 
     // Layout constants. Header, tab-bar and footer heights are the shell's —
     // this modal no longer has an opinion about them.
@@ -529,20 +540,20 @@ pub fn render_primitive_settings_modal(
     if query.is_empty() {
         match resolved_tab {
             PrimitiveSettingsTab::Levels => {
-                primitive_settings_levels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim, shell.content.bottom());
+                primitive_settings_levels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim, shell.content.bottom());
             }
             PrimitiveSettingsTab::Appearance => {
-                primitive_settings_vid::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
+                primitive_settings_vid::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
             }
             PrimitiveSettingsTab::Labels => {
-                primitive_settings_labels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
+                primitive_settings_labels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
             }
             PrimitiveSettingsTab::Placement => {
-                primitive_settings_placement::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
+                primitive_settings_placement::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
             }
         }
     } else {
-        draw_search_results(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, &mut row_y, prim);
+        draw_search_results(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
     }
 
     // Everything the tab bodies pushed lives inside the scrolling viewport.
@@ -773,6 +784,22 @@ pub fn render_primitive_settings_modal(
             // drag-to-reorder reads it back to compute the drop index and
             // the reorder commit, so the two can never disagree about what
             // order the list is actually in.
+            // Exactly ONE row in this list can read as current, and which one
+            // is decided by the SAME persisted reference `show_save_as` above
+            // diffs against — `PrimitiveData::style_reference`. Both kinds of
+            // row derived their own highlight independently before this
+            // (system rows from the live level composition, user rows from
+            // the session-only `applied_template_id`), so applying a user
+            // template and then a system preset left BOTH lit: the template's
+            // session flag was never cleared by anything but its own delete
+            // (2026-08-09, owner-reported). A reference names one row by id,
+            // so two rows lighting at once is now unrepresentable.
+            let current_key: Option<&str> = match &prim.data().style_reference {
+                Some(mlc_core::drawing::StyleReference::Template(id)) => Some(id.as_str()),
+                Some(mlc_core::drawing::StyleReference::LevelSet(id)) => Some(id.as_str()),
+                None => None,
+            };
+
             for entry in &entries {
                 let key = entry.key().to_string();
                 let row_rect = WidgetRect::new(dd_x, row_y, menu_w, opt_h);
@@ -781,7 +808,7 @@ pub fn render_primitive_settings_modal(
                 match entry {
                     TemplateListEntry::System(preset) => {
                         let row_id = format!("levels_set_option:{}", preset.id());
-                        let is_current = state.level_set == *preset;
+                        let is_current = current_key == Some(preset.id());
                         let is_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
                         if is_current || is_hovered {
                             ctx.set_fill_color(if is_current { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
@@ -803,8 +830,9 @@ pub fn render_primitive_settings_modal(
                         // The currently-applied entry's own mark (item 3):
                         // the same highlight a system row's own `is_current`
                         // already draws with, so a glance at either kind
-                        // reads identically.
-                        let is_current = state.applied_template_id.as_deref() == Some(tmpl.id.as_str());
+                        // reads identically — and now from the same single
+                        // source, see `current_key` above.
+                        let is_current = current_key == Some(tmpl.id.as_str());
                         let is_row_hovered = state.hovered_item_id.as_deref() == Some(row_id.as_str());
                         let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_id.as_str());
                         let is_del_hovered = state.hovered_item_id.as_deref() == Some(del_id.as_str());
@@ -962,8 +990,24 @@ pub fn render_primitive_settings_modal(
         );
     }
 
+    // The scrollbar's own rect sits inside the resize grip's right-edge
+    // strip (`RESIZE_GRIP + 3` wide at `frame.right()`), so re-register it
+    // here — AFTER `end_modal_shell` draws the grips — to win the hit test
+    // there while leaving the rest of that strip resizable. See
+    // `end_modal_shell`'s own doc for why re-registering the same id is the
+    // whole fix.
+    let mut priority_regions: Vec<(&str, WidgetRect, uzor::input::Sense)> = Vec::new();
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = WidgetRect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        priority_regions.push(("prim_settings:scrollbar_handle", inflated, uzor::input::Sense::DRAG));
+    }
+    if let Some(ref track_rect) = result.scrollbar_track_rect {
+        let track = WidgetRect::new(track_rect.x, track_rect.y, track_rect.width, track_rect.height);
+        priority_regions.push(("prim_settings:scrollbar_track", track, uzor::input::Sense::CLICK));
+    }
+
     // The footer goes in after the body — see `end_modal_shell`.
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &priority_regions);
 
     // Paint the footer search field's own visuals LAST — after the
     // footer's own background fill above, so they are not painted over by

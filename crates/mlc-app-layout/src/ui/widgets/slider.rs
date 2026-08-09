@@ -81,6 +81,15 @@ pub struct SliderConfig {
     pub label_spacing: f64,
     /// Track-to-input spacing
     pub track_input_spacing: f64,
+    /// Fixed offset from `rect.x` to where the track begins, overriding the
+    /// default "measure this row's own label" behaviour. `None` (every
+    /// existing caller) keeps that default unchanged. `Some(w)` is how a
+    /// caller lines this slider's track up with a shared label column other
+    /// rows in the same modal also start their own control at — the label
+    /// is still drawn at `rect.x`, only the track/handle/input positions
+    /// shift (see [`render_single_slider`]'s own doc). Set via
+    /// [`Self::with_label_column`].
+    pub label_column: Option<f64>,
 }
 
 impl Default for SliderConfig {
@@ -96,6 +105,7 @@ impl Default for SliderConfig {
             show_input: true,
             label_spacing: 12.0,    // More space after label
             track_input_spacing: 12.0, // More space before input
+            label_column: None,
         }
     }
 }
@@ -155,6 +165,14 @@ impl SliderConfig {
     /// Set custom track-input spacing
     pub fn with_track_input_spacing(mut self, spacing: f64) -> Self {
         self.track_input_spacing = spacing;
+        self
+    }
+
+    /// Fix the offset from `rect.x` to the track at `w`, instead of
+    /// measuring this row's own label — see [`Self::label_column`]'s own
+    /// doc.
+    pub fn with_label_column(mut self, w: f64) -> Self {
+        self.label_column = Some(w);
         self
     }
 
@@ -394,9 +412,11 @@ pub fn render_single_slider<'a>(
     let label_width = ctx.measure_text(label);
 
     // Calculate available space for track
-    // Label takes: label_width + label_spacing
+    // Label takes: label_column (if a caller fixed one, e.g. to line up with
+    // a shared label column other rows in the same modal use) or this row's
+    // own measured label_width + label_spacing otherwise.
     // Input takes: input_width + track_input_spacing (if shown)
-    let label_section_width = label_width + config.label_spacing;
+    let label_section_width = config.label_column.unwrap_or(label_width + config.label_spacing);
     let input_section_width = if config.show_input {
         config.input_width + config.track_input_spacing
     } else {
@@ -407,13 +427,16 @@ pub fn render_single_slider<'a>(
     let track_width = rect.width - label_section_width - input_section_width;
 
     // Layout: [Label] [spacing] [Track] [spacing] [Input]
+    let x_start_track = x_start + label_section_width;
     let mut x = x_start;
 
-    // Draw label (centered on center_y using Middle baseline)
+    // Draw label (centered on center_y using Middle baseline) — always at
+    // `rect.x`, even with a fixed `label_column`: only the track/handle/
+    // input positions move when one is set.
     ctx.set_fill_color(&theme.text_normal);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, x, center_y);
-    x += label_width + config.label_spacing;
+    x = x_start_track;
 
     // Track position (centered vertically on center_y)
     let track_x = x;

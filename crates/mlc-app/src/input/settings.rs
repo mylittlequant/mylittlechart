@@ -2093,6 +2093,22 @@ impl ChartApp {
                             );
                             guard.set_level_configs(bid, prim_id, configs);
                         }
+                        // A system набор is a whole-settings default, not
+                        // just a level list (owner direction, 2026-08-09) —
+                        // it also restores the label plate + colour
+                        // inheritance. Applied through the SAME `guard`
+                        // (`DrawingsMut`), before it drops at the end of
+                        // this block, same as `set_level_configs` just
+                        // above — a second `self.core.drawings_mut()` call
+                        // here would try to re-acquire the RwLock this one
+                        // already holds and hang (see
+                        // `stamp_primitive_style_reference`'s own doc for
+                        // the exact trap this sidesteps).
+                        if let LevelsIntent::ApplyPreset(_) = &intent {
+                            for (id, value) in mlc_core::drawing::primitives_v2::config::level_set_label_defaults() {
+                                guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, id, &value);
+                            }
+                        }
                     }
                     self.sync_drawing_back_to_group();
                     self.autosave_snapshot();
@@ -2340,9 +2356,10 @@ impl ChartApp {
         // ── Template delete button (trash) ─────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_delete:") {
             eprintln!("[ChartApp] prim_settings deleted primitive template: {}", tmpl_id);
-            if self.panel_app.primitive_settings_state.applied_template_id.as_deref() == Some(tmpl_id) {
-                self.panel_app.primitive_settings_state.applied_template_id = None;
-            }
+            // Nothing to un-mark here: a primitive still referencing the
+            // deleted template resolves it to nothing, which reads as drift
+            // (no row current, "Save as…" shown) the next time the menu is
+            // drawn — see `primitive_settings`'s own `current_key`.
             self.template_actions.push(crate::TemplateAction::RemovePrimitive { id: tmpl_id.to_string() });
             return;
         }
@@ -2366,7 +2383,6 @@ impl ChartApp {
         if let Some(tmpl_id) = item_id.strip_prefix("template_option:") {
             let tmpl_opt = self.core.templates().get_primitive_template(tmpl_id).cloned();
             if let Some(tmpl) = tmpl_opt {
-                self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive — flat style fields,
                 // level ladder (if the template carries one), and typed
@@ -2466,15 +2482,13 @@ impl ChartApp {
                     });
                     if let Some(tmpl) = tmpl {
                         eprintln!("[ChartApp] prim_tmpl saved: {}", name);
-                        // Mark the freshly-saved template as the applied one
-                        // (item 5, 2026-08-08 review) AND re-establish the
-                        // "Save as…" reference from it: the current settings
-                        // ARE what it stores the instant it is created (it
-                        // was captured from THIS primitive above), so both
-                        // must read as satisfied — not still dirty against
-                        // whatever was applied/opened before — the next
-                        // time the Template menu opens.
-                        self.panel_app.primitive_settings_state.applied_template_id = Some(tmpl.id.clone());
+                        // Re-establish the reference from the template just
+                        // minted (item 5, 2026-08-08 review): the current
+                        // settings ARE what it stores the instant it is
+                        // created (it was captured from THIS primitive
+                        // above), so the next Template menu must read it as
+                        // the current row and drop "Save as…" — not still
+                        // dirty against whatever was applied before.
                         self.stamp_primitive_style_reference(
                             mlc_core::drawing::StyleReference::Template(tmpl.id.clone()),
                         );

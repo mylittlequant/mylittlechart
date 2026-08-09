@@ -231,7 +231,7 @@ pub fn end_tab_body_shell(
         footer: ModalFooter::Editor { template: Some(t_settings(SettingsKey::ButtonTemplate)) },
         ..ModalShellSpec::new("prim_settings", "", 0.0, 0.0)
     };
-    end_modal_shell(ctx, coord, &end_spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, coord, &end_spec, &modal_theme, &shell, &layer_id, &[]);
 }
 
 /// Make the scrollable body read as bounded. `ScrollableContainer`'s own

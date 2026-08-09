@@ -221,7 +221,7 @@ pub fn render_alert_settings_modal(
         ),
     }
 
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &[]);
 
     // The two dropdowns come AFTER the shell closes, on a layer of their own.
     // Twelve conditions are 336px of list inside a body barely 200px tall, so

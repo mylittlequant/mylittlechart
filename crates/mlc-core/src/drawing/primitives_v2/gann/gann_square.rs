@@ -557,7 +557,7 @@ impl Primitive for GannSquare {
             }
             _ => {}
         }
-        if self.label_style.apply_property(id, value) {
+        if self.label_style.apply_property(id, value, &self.data.color.stroke) {
             return true;
         }
         false

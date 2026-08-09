@@ -453,6 +453,7 @@ pub fn render_chart_browser(
         &modal_theme,
         &shell,
         &layer_id,
+        &[],
     );
     result
 }

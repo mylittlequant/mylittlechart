@@ -339,10 +339,17 @@ pub enum ConfigKey {
     // per-primitive LINE/FILL split for a level-capable primitive.
     ColorModeMono                 = 148,
     ColorModePalette              = 149,
+
+    // `LabelStyle::style_properties` — the "inherit the line's own colour"
+    // toggle (2026-08-09 label-colour-inherit fix): `LabelStyle::color ==
+    // None` means "no override, use the per-level/per-primitive stroke
+    // colour"; this checkbox is the only UI path back to `None` once a
+    // colour has been chosen — see `LabelStyle::apply_property`'s own doc.
+    LabelColorInherit             = 150,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 150;
+    pub const COUNT: usize = 151;
 
     /// Get translation for this key
     #[inline]

@@ -276,7 +276,7 @@ pub fn render_trading_container_modal(
         }
     }
 
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &[]);
     result
 }
 

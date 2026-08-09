@@ -517,7 +517,7 @@ where
 {
     let (shell, layer_id) = begin_modal_shell(ctx, coord, spec, theme, screen);
     body(ctx, coord, &layer_id, &shell);
-    end_modal_shell(ctx, coord, spec, theme, &shell, &layer_id);
+    end_modal_shell(ctx, coord, spec, theme, &shell, &layer_id, &[]);
     shell
 }
 
@@ -670,6 +670,17 @@ pub fn begin_modal_shell(
 /// modal that laid its own chrome by hand did exactly this, and moving the
 /// footer above the body broke the Appearance tab of chart settings the day it
 /// was tried.
+///
+/// `priority_regions` is the same trick applied one more time, for whatever
+/// the body registered ahead of the resize grips and needs to outrank them —
+/// today that is a scrollbar handle/track sitting inside the right-edge grip
+/// strip (`resize_grip_rects`' `RESIZE_GRIP + 3`-wide `Right` zone at
+/// `frame.right()`). The coordinator resolves a hit by walking a layer in
+/// reverse registration order, so re-registering the SAME id here — after
+/// `draw_resize_grips` — is the whole fix: last-registered wins, no rect
+/// geometry needs to know about the other's shape. Each entry is drawn again
+/// too (paint mirrors registration order for the same reason), which is a
+/// no-op for a rect the body already painted at this exact position.
 pub fn end_modal_shell(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -677,6 +688,7 @@ pub fn end_modal_shell(
     theme: &ModalTheme,
     shell: &ModalShell,
     layer_id: &LayerId,
+    priority_regions: &[(&str, WidgetRect, Sense)],
 ) {
     if let Some(f) = shell.footer {
         hairline(ctx, &theme.footer_border, f.x, f.y, f.right());
@@ -684,6 +696,9 @@ pub fn end_modal_shell(
     }
     if spec.resizable {
         draw_resize_grips(ctx, coord, layer_id, spec.ns, shell.frame, theme);
+    }
+    for (id, rect, sense) in priority_regions {
+        coord.register_on_layer(*id, *rect, *sense, layer_id);
     }
     coord.pop_layer(layer_id);
 }

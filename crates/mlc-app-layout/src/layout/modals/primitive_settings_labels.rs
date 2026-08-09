@@ -33,13 +33,12 @@ use mlc_core::drawing::primitives_v2::config::PropertyCategory;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::TextAlign as PrimTextAlign;
 use mlc_core::i18n::{current_language, ConfigKey};
-use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::render::RenderContext;
 use uzor::types::Rect as WidgetRect;
 
 use super::primitive_settings_property::{declared_properties, draw_property_row, properties_in, DeclaredProperty};
-use super::primitive_settings_vid::{draw_label, draw_toggle_segment, LABEL_COLUMN_W, ROW_H};
+use super::primitive_settings_vid::{draw_label, draw_toggle_segment, ROW_H};
 
-const GROUP_HEADER_H: f64 = 22.0;
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const ALIGN_H: f64 = 72.0;
 
@@ -67,7 +66,7 @@ pub fn content_height(prim: &dyn Primitive) -> f64 {
     let labels_props = properties_in(&all, PropertyCategory::LabelsText);
     let has_custom_text = prim.text_properties().is_some();
     let inner = labels_props.len() as f64 * ROW_H + if has_custom_text { 0.0 } else { TEXT_BLOCK_H };
-    if inner > 0.0 { GROUP_HEADER_H + inner + GROUP_PAD_BOTTOM } else { 0.0 }
+    if inner > 0.0 { inner + GROUP_PAD_BOTTOM } else { 0.0 }
 }
 
 /// Query-aware body height for the cross-tab settings-search result view
@@ -96,7 +95,7 @@ fn query_height(prim: &dyn Primitive, query: &str) -> f64 {
     let text_block_matches = !has_custom_text
         && matches(query, &[labels_header, ConfigKey::Content.get(lang), ConfigKey::TextStyleLabel.get(lang), ConfigKey::PositionLabel.get(lang)]);
     let inner = labels_props.len() as f64 * ROW_H + if text_block_matches { TEXT_BLOCK_H } else { 0.0 };
-    if inner > 0.0 { GROUP_HEADER_H + inner + GROUP_PAD_BOTTOM } else { 0.0 }
+    if inner > 0.0 { inner + GROUP_PAD_BOTTOM } else { 0.0 }
 }
 
 /// Draws the Labels tab's own rows. Returns `true` if at least one
@@ -113,6 +112,7 @@ pub fn draw(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) -> bool {
@@ -123,7 +123,6 @@ pub fn draw(
 
     let all = declared_properties(prim);
     let labels_header = ConfigKey::Labels.get(lang);
-    let labels_hint = ConfigKey::LabelsGroupHint.get(lang);
     let labels_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::LabelsText)
         .into_iter()
         .filter(|(p, _)| matches(&query, &[labels_header, p.name.as_str()]))
@@ -133,48 +132,19 @@ pub fn draw(
         && matches(&query, &[labels_header, ConfigKey::Content.get(lang), ConfigKey::TextStyleLabel.get(lang), ConfigKey::PositionLabel.get(lang)]);
 
     if !labels_props.is_empty() || draw_text_block {
-        draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, labels_header, Some(labels_hint));
-        *row_y += GROUP_HEADER_H;
-
         for (prop, kind) in &labels_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, *kind, prop);
+            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
             *row_y += ROW_H;
         }
 
         if draw_text_block {
-            draw_text_block_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            draw_text_block_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
         }
 
         *row_y += GROUP_PAD_BOTTOM;
     }
 
     result.content_items.len() > items_before
-}
-
-fn draw_group_header(
-    ctx: &mut dyn RenderContext,
-    toolbar_theme: &ToolbarTheme,
-    x0: f64,
-    x1: f64,
-    y: f64,
-    title: &str,
-    sub: Option<&str>,
-) {
-    // No contrasting bar, matching every other tab's own group headers.
-    let rect = WidgetRect::new(x0, y, (x1 - x0).max(0.0), GROUP_HEADER_H);
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
-    ctx.set_font("10.5px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&title.to_uppercase(), rect.center_x(), rect.center_y());
-    if let Some(s) = sub {
-        ctx.set_font("10px sans-serif");
-        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text_muted, 0.7));
-        ctx.set_text_align(TextAlign::Right);
-        ctx.fill_text(s, rect.right() - 6.0, rect.center_y());
-    }
 }
 
 // =============================================================================
@@ -184,6 +154,7 @@ fn draw_group_header(
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn draw_text_block_rows(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
@@ -192,13 +163,14 @@ fn draw_text_block_rows(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) {
     let lang = current_language();
     let text_block = prim.data().text.clone();
 
-    draw_label(ctx, toolbar_theme, x0, *row_y, ConfigKey::Content.get(lang));
+    draw_label(ctx, toolbar_theme, x0, label_col, *row_y, ConfigKey::Content.get(lang));
     let field_id = "text_content";
     let is_editing = state.active_field_id.as_deref() == Some(field_id);
     let current = text_block.as_ref().map(|t| t.content.clone()).unwrap_or_default();
@@ -208,8 +180,8 @@ fn draw_text_block_rows(
     } else {
         (current.as_str(), current.len(), None, None)
     };
-    let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-    let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, *row_y + 2.0, control_w, ROW_H - 4.0);
+    let control_w = (x1 - (x0 + label_col)).max(100.0);
+    let rect = WidgetRect::new(x0 + label_col, *row_y + 2.0, control_w, ROW_H - 4.0);
     let cfg = InputConfig::new(display)
         .with_focused(is_editing)
         .with_type(InputType::Text)
@@ -227,11 +199,11 @@ fn draw_text_block_rows(
     result.content_items.push((field_id.to_string(), rect));
     *row_y += ROW_H;
 
-    draw_label(ctx, toolbar_theme, x0, *row_y, ConfigKey::TextStyleLabel.get(lang));
+    draw_label(ctx, toolbar_theme, x0, label_col, *row_y, ConfigKey::TextStyleLabel.get(lang));
     let bold = text_block.as_ref().map(|t| t.bold).unwrap_or(false);
     let italic = text_block.as_ref().map(|t| t.italic).unwrap_or(false);
     let seg_w = 30.0;
-    let bold_rect = WidgetRect::new(x0 + LABEL_COLUMN_W, *row_y + 2.0, seg_w, ROW_H - 4.0);
+    let bold_rect = WidgetRect::new(x0 + label_col, *row_y + 2.0, seg_w, ROW_H - 4.0);
     let italic_rect = WidgetRect::new(bold_rect.right() + 4.0, *row_y + 2.0, seg_w, ROW_H - 4.0);
     draw_toggle_segment(ctx, toolbar_theme, bold_rect, ConfigKey::BoldAbbrev.get(lang), bold);
     draw_toggle_segment(ctx, toolbar_theme, italic_rect, ConfigKey::ItalicAbbrev.get(lang), italic);
@@ -239,10 +211,10 @@ fn draw_text_block_rows(
     result.content_items.push(("text_italic".to_string(), italic_rect));
     *row_y += ROW_H;
 
-    draw_label(ctx, toolbar_theme, x0, *row_y, ConfigKey::PositionLabel.get(lang));
+    draw_label(ctx, toolbar_theme, x0, label_col, *row_y, ConfigKey::PositionLabel.get(lang));
     let v_align = text_block.as_ref().map(|t| t.v_align).unwrap_or(PrimTextAlign::Center);
     let h_align = text_block.as_ref().map(|t| t.h_align).unwrap_or(PrimTextAlign::Center);
-    draw_align_grid(ctx, toolbar_theme, result, x0 + LABEL_COLUMN_W, *row_y, v_align, h_align);
+    draw_align_grid(ctx, toolbar_theme, result, x0 + label_col, *row_y, v_align, h_align);
     *row_y += ALIGN_H;
 }
 

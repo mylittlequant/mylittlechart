@@ -32,7 +32,7 @@ use crate::layout::modals::primitive_settings_palettes::PALETTES;
 use crate::layout::modals::primitive_settings_property::{declared_properties, draw_property_row, properties_in};
 use crate::layout::modals::primitive_settings_vid::{
     draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment, line_style_display_name,
-    SplitValueKind, LABEL_COLUMN_W,
+    SplitValueKind,
 };
 use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
@@ -254,6 +254,7 @@ pub fn draw(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
     footer_top: f64,
@@ -264,7 +265,7 @@ pub fn draw(
     let query = super::primitive_settings::search_query(state);
     let is_palette = is_palette_mode(&configs, state);
 
-    draw_top_section(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, prim, is_palette);
+    draw_top_section(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, prim, is_palette);
     *row_y += top_section_h(prim, is_palette);
 
     // Палитра mode only — see `is_palette_mode`'s own doc. Switching to
@@ -357,6 +358,7 @@ fn draw_top_section(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: f64,
     prim: &dyn Primitive,
     is_palette: bool,
@@ -410,7 +412,7 @@ fn draw_top_section(
                     i += 3;
                     continue;
                 }
-                draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, mlc_core::drawing::primitives_v2::PropertyKind::Style, &props[i]);
+                draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, mlc_core::drawing::primitives_v2::PropertyKind::Style, &props[i]);
                 y += ROW_H;
                 i += 1;
             }
@@ -424,9 +426,9 @@ fn draw_top_section(
             // control has nothing left to control.
             if !is_palette {
                 let color_label = SettingsKey::Color.get(lang);
-                draw_label(ctx, toolbar_theme, x0, y, color_label);
-                let swatch_w = (x1 - (x0 + LABEL_COLUMN_W)).clamp(40.0, 60.0);
-                let color_rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 3.0, swatch_w, ROW_H - 6.0);
+                draw_label(ctx, toolbar_theme, x0, label_col, y, color_label);
+                let swatch_w = (x1 - (x0 + label_col)).clamp(40.0, 60.0);
+                let color_rect = WidgetRect::new(x0 + label_col, y + 3.0, swatch_w, ROW_H - 6.0);
                 ctx.set_fill_color(&prim.data().color.stroke);
                 ctx.fill_rounded_rect(color_rect.x, color_rect.y, color_rect.width, color_rect.height, 4.0);
                 ctx.set_stroke_color(&toolbar_theme.separator);
@@ -444,7 +446,7 @@ fn draw_top_section(
             // `primitive_settings_intent::apply_global_width`'s own doc.
             let width_label = ConfigKey::WidthLabel.get(lang);
             draw_slider_row(
-                ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, "stroke_width", width_label,
+                ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, "stroke_width", width_label,
                 prim.data().width, 1.0, 10.0, 0.1, true,
             );
             y += ROW_H;
@@ -453,9 +455,9 @@ fn draw_top_section(
             // Appearance tab used. A global writer too (item 3) — see
             // `primitive_settings_intent::apply_global_style`'s own doc.
             let style_label = ConfigKey::Style.get(lang);
-            draw_label(ctx, toolbar_theme, x0, y, style_label);
-            let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-            let style_rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + 2.0, control_w, ROW_H - 4.0);
+            draw_label(ctx, toolbar_theme, x0, label_col, y, style_label);
+            let control_w = (x1 - (x0 + label_col)).max(100.0);
+            let style_rect = WidgetRect::new(x0 + label_col, y + 2.0, control_w, ROW_H - 4.0);
             let style = prim.data().style;
             draw_split_value_control(
                 ctx, toolbar_theme, state, result, style_rect, "line_style", line_style_display_name(style, lang),

@@ -623,7 +623,21 @@ pub fn render_settings_modal(
         );
     }
 
-    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id);
+    // The scrollbar's own rect sits inside the resize grip's right-edge
+    // strip, so re-register it here — AFTER `end_modal_shell` draws the
+    // grips — to win the hit test there while leaving the rest of that
+    // strip resizable. See `end_modal_shell`'s own doc.
+    let mut priority_regions: Vec<(&str, WidgetRect, uzor::input::Sense)> = Vec::new();
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = WidgetRect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        priority_regions.push(("chart_settings:scrollbar_handle", inflated, uzor::input::Sense::DRAG));
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        let track = WidgetRect::new(tr.x, tr.y, tr.width, tr.height);
+        priority_regions.push(("chart_settings:scrollbar_track", track, uzor::input::Sense::CLICK));
+    }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &priority_regions);
 
     result
 }

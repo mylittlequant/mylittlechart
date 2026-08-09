@@ -12,9 +12,9 @@
 //! cutover (2026-08-08); this module keeps the shared row-drawing widgets
 //! (`draw_label`/`draw_bool_row`/`draw_slider_row`/`draw_split_value_control`/
 //! `draw_toggle_segment`/`line_style_display_name`/`ROW_H`/
-//! [`LABEL_COLUMN_W`]) that module and `primitive_settings_levels`/
-//! `primitive_settings_property` import, since it already owned them before
-//! the split.
+//! [`compute_label_col`]) that module and `primitive_settings_levels`/
+//! `primitive_settings_placement`/`primitive_settings_property` import,
+//! since it already owned them before the split.
 //!
 //! Generic since the 2026-08-08 declared-properties pass: this module no
 //! longer names any property id or draws a group whose membership it
@@ -57,7 +57,7 @@ use crate::layout::render_frame::{PrimitiveSettingsResult, ValueDropdownAnchor, 
 use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
-use mlc_core::drawing::primitives_v2::config::PropertyCategory;
+use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyType};
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, StyleKey};
@@ -71,35 +71,67 @@ const GROUP_HEADER_H: f64 = 22.0;
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const GROUP_GAP: f64 = 9.0;
 
-/// Width of the label column every row in the primitive-settings modal's
-/// declared-property family reserves before its control begins — checkbox /
-/// colour swatch / cycle button / text input all start at
-/// `x0 + LABEL_COLUMN_W`, here and in `primitive_settings_property`,
-/// `primitive_settings_levels` (its bespoke Levels/Base fallback rows) and
-/// `primitive_settings_labels` (its bespoke text-content row). Sliders are
-/// NOT part of this column: `render_single_slider` measures its own label
-/// and reserves exactly that width, a different, already self-consistent
-/// layout this constant does not govern.
-///
-/// Single hoisted source of truth (row-spacing fix, 2026-08-08): every one
-/// of these rows used to hardcode this offset independently as a bare
-/// `90.0` literal, including `primitive_settings_property::draw_property_row`,
-/// which inherited the number unchanged even though the labels flowing
-/// through it are typically longer than this tab's own bespoke rows
-/// ("Label Background Color" / "Show Background" vs "Color" / "Width" /
-/// "Style") — long enough, at this row's 12px font, to run the label text
-/// straight into where the control started. Widened from `90.0` and paired
-/// with [`LABEL_CONTROL_GAP`] (see `draw_label`'s own clip) so a checkbox or
-/// colour swatch can no longer sit flush against even the longest label a
-/// `ConfigKey` localizes to.
-pub(crate) const LABEL_COLUMN_W: f64 = 110.0;
-
 /// Breathing room `draw_label` leaves between the end of its own clipped
-/// text and [`LABEL_COLUMN_W`] — the "gap" half of "label column and
+/// text and the live `label_col` a modal render computed
+/// ([`compute_label_col`]) — the "gap" half of "label column and
 /// label→control gap". Previously `draw_label` did not clip at all, so an
 /// overlong label simply painted straight through the point its own column
 /// was supposed to stop at.
 const LABEL_CONTROL_GAP: f64 = 8.0;
+
+/// Computes the ONE label-column width every row in this modal — checkbox,
+/// colour swatch, cycle button, text input, and (via
+/// [`crate::ui::widgets::SliderConfig::label_column`]) the slider track —
+/// starts flush against, for THIS primitive's render. Replaces the old flat
+/// `LABEL_COLUMN_W` constant (deleted, 2026-08-09 shared-label-column fix):
+/// a fixed number truncated a caption as long as "Label Background Color"
+/// while every slider row measured its own, different label and started its
+/// own track wherever that happened to end — the same modal showing two
+/// different left edges depending on which kind of control a row was.
+///
+/// Measured from the widest caption that can appear in THIS primitive's
+/// body: every declared `ConfigProperty.name`
+/// (`primitive_settings_property::declared_properties`) plus the bespoke row
+/// captions the tab bodies draw themselves OUTSIDE the generic property
+/// dispatch — the base-stroke colour/width/style row (`draw_base_stroke_rows`
+/// below, and `primitive_settings_levels`'s own Levels/Base fallback, byte-
+/// for-byte the same three captions) and the text-content block
+/// (`primitive_settings_labels::draw_text_block_rows`). A caption that
+/// renders through [`draw_slider_row`] is measured with the trailing `":"`
+/// that function appends to its own label, so the column is never one glyph
+/// short for exactly those rows. Clamped to `90.0..=220.0`: neither an
+/// unusually short caption set (nothing declared, base row only) nor an
+/// unusually long one can push a checkbox off the edge of a narrow modal or
+/// eat most of a wide one.
+pub(crate) fn compute_label_col(ctx: &mut dyn RenderContext, prim: &dyn Primitive) -> f64 {
+    let lang = current_language();
+    ctx.set_font("12px sans-serif");
+
+    let mut captions: Vec<String> = declared_properties(prim)
+        .into_iter()
+        .map(|(p, _)| {
+            if matches!(p.prop_type, PropertyType::Number { .. } | PropertyType::Integer { .. }) {
+                format!("{}:", p.name)
+            } else {
+                p.name
+            }
+        })
+        .collect();
+
+    // Bespoke base-stroke row (`draw_base_stroke_rows` below, and
+    // `primitive_settings_levels`'s own Levels/Base fallback).
+    captions.push(SettingsKey::Color.get(lang).to_string());
+    captions.push(format!("{}:", ConfigKey::WidthLabel.get(lang)));
+    captions.push(ConfigKey::Style.get(lang).to_string());
+
+    // Bespoke text-content block (`primitive_settings_labels::draw_text_block_rows`).
+    captions.push(ConfigKey::Content.get(lang).to_string());
+    captions.push(ConfigKey::TextStyleLabel.get(lang).to_string());
+    captions.push(ConfigKey::PositionLabel.get(lang).to_string());
+
+    let max_w = captions.iter().map(|c| ctx.measure_text(c)).fold(0.0_f64, f64::max);
+    (max_w + LABEL_CONTROL_GAP).clamp(90.0, 220.0)
+}
 
 /// Height of the bespoke base-stroke row (colour + width + line style) —
 /// see this module's own doc for why it is not `ConfigProperty`-driven.
@@ -231,6 +263,7 @@ pub fn draw(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) -> bool {
@@ -267,10 +300,10 @@ pub fn draw(
         *row_y += header_h;
 
         if draw_base_stroke {
-            draw_base_stroke_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+            draw_base_stroke_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
         }
         for (prop, kind) in &line_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, *kind, prop);
+            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
             *row_y += ROW_H;
         }
 
@@ -295,7 +328,7 @@ pub fn draw(
         draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::Fill.get(lang), None);
         *row_y += GROUP_HEADER_H;
         for (prop, kind) in &fill_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, *kind, prop);
+            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
             *row_y += ROW_H;
         }
         if *row_y == group_top + GROUP_HEADER_H {
@@ -323,6 +356,7 @@ fn draw_base_stroke_rows(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     row_y: &mut f64,
     prim: &dyn Primitive,
 ) {
@@ -331,9 +365,9 @@ fn draw_base_stroke_rows(
     let width = prim.data().width;
     let style = prim.data().style;
 
-    draw_label(ctx, toolbar_theme, x0, *row_y, SettingsKey::Color.get(lang));
-    let swatch_w = (x1 - (x0 + LABEL_COLUMN_W)).clamp(40.0, 60.0);
-    let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, *row_y + 3.0, swatch_w, ROW_H - 6.0);
+    draw_label(ctx, toolbar_theme, x0, label_col, *row_y, SettingsKey::Color.get(lang));
+    let swatch_w = (x1 - (x0 + label_col)).clamp(40.0, 60.0);
+    let rect = WidgetRect::new(x0 + label_col, *row_y + 3.0, swatch_w, ROW_H - 6.0);
     ctx.set_fill_color(&stroke);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -343,14 +377,14 @@ fn draw_base_stroke_rows(
     *row_y += ROW_H;
 
     draw_slider_row(
-        ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, "stroke_width", ConfigKey::WidthLabel.get(lang),
+        ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, "stroke_width", ConfigKey::WidthLabel.get(lang),
         width, 1.0, 10.0, 0.1, true,
     );
     *row_y += ROW_H;
 
-    draw_label(ctx, toolbar_theme, x0, *row_y, ConfigKey::Style.get(lang));
-    let control_w = (x1 - (x0 + LABEL_COLUMN_W)).max(100.0);
-    let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, *row_y + 2.0, control_w, ROW_H - 4.0);
+    draw_label(ctx, toolbar_theme, x0, label_col, *row_y, ConfigKey::Style.get(lang));
+    let control_w = (x1 - (x0 + label_col)).max(100.0);
+    let rect = WidgetRect::new(x0 + label_col, *row_y + 2.0, control_w, ROW_H - 4.0);
     draw_split_value_control(
         ctx, toolbar_theme, state, result, rect, "line_style", line_style_display_name(style, lang),
         SplitValueKind::LineStyle(style),
@@ -405,17 +439,18 @@ fn draw_group_header(
 }
 
 /// Draws `text` left-aligned in the row's label column, clipped to
-/// [`LABEL_COLUMN_W`] minus [`LABEL_CONTROL_GAP`] so it can never run into
-/// the control that starts at `x + LABEL_COLUMN_W` — see those constants'
-/// own doc for why this clip exists (row-spacing fix, 2026-08-08).
-pub(crate) fn draw_label(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, y: f64, text: &str) {
+/// `label_col` minus [`LABEL_CONTROL_GAP`] so it can never run into the
+/// control that starts at `x + label_col` — see [`compute_label_col`]'s own
+/// doc for how that width is chosen (row-spacing fix, 2026-08-08; per-
+/// primitive measured column, 2026-08-09).
+pub(crate) fn draw_label(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, label_col: f64, y: f64, text: &str) {
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.save();
     ctx.begin_path();
-    ctx.rect(x, y, (LABEL_COLUMN_W - LABEL_CONTROL_GAP).max(0.0), ROW_H);
+    ctx.rect(x, y, (label_col - LABEL_CONTROL_GAP).max(0.0), ROW_H);
     ctx.clip();
     ctx.fill_text(text, x, y + ROW_H / 2.0);
     ctx.restore();
@@ -426,13 +461,14 @@ pub(crate) fn draw_bool_row(
     toolbar_theme: &ToolbarTheme,
     result: &mut PrimitiveSettingsResult,
     x0: f64,
+    label_col: f64,
     y: f64,
     label: &str,
     checked: bool,
     field_id: &str,
 ) {
-    draw_label(ctx, toolbar_theme, x0, y, label);
-    let rect = WidgetRect::new(x0 + LABEL_COLUMN_W, y + (ROW_H - 16.0) / 2.0, 16.0, 16.0);
+    draw_label(ctx, toolbar_theme, x0, label_col, y, label);
+    let rect = WidgetRect::new(x0 + label_col, y + (ROW_H - 16.0) / 2.0, 16.0, 16.0);
     ctx.set_fill_color(if checked { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -710,6 +746,7 @@ pub(crate) fn draw_slider_row(
     result: &mut PrimitiveSettingsResult,
     x0: f64,
     x1: f64,
+    label_col: f64,
     y: f64,
     field_id: &str,
     label: &str,
@@ -723,7 +760,7 @@ pub(crate) fn draw_slider_row(
 
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    let mut cfg = SliderConfig::new(min, max).with_step(step);
+    let mut cfg = SliderConfig::new(min, max).with_step(step).with_label_column(label_col);
     if !with_input {
         cfg = cfg.without_input();
     }

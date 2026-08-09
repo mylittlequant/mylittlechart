@@ -475,8 +475,11 @@ pub struct PrimitiveSettingsState {
     /// somewhere unrelated (`mlc-app`'s `input/settings.rs`, mirroring
     /// `template_dropdown_open`'s own close-on-unrelated-click rule).
     pub open_value_dropdown: Option<String>,
-    /// ID of the currently applied template (None = no template applied).
-    pub applied_template_id: Option<String>,
+    // No `applied_template_id` here, deliberately (deleted 2026-08-09): which
+    // Template-menu row reads as current is derived from the primitive's own
+    // persisted `PrimitiveData::style_reference`, never from session state
+    // that outlives what it describes. The other settings modals still carry
+    // their own copy because they have no equivalent persisted reference yet.
     /// When true, show the template name input for "Save as Template".
     pub save_template_mode: bool,
     /// Template-menu drag-to-reorder: `(dragging_key, current_mouse_y)` —

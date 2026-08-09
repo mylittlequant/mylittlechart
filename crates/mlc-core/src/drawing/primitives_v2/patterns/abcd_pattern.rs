@@ -218,7 +218,7 @@ impl Primitive for AbcdPattern {
             }
             _ => {}
         }
-        if self.label_style.apply_property(id, value) { return true; }
+        if self.label_style.apply_property(id, value, &self.data.color.stroke) { return true; }
         false
     }
 }
