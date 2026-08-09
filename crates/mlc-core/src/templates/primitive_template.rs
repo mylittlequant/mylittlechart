@@ -370,6 +370,21 @@ impl PrimitiveTemplate {
         if !target.is_empty() {
             tmpl.level_configs = narrow_to_target(&tmpl.level_configs, target);
         }
+        // "All levels" ships with NO painting of any kind (owner direction,
+        // 2026-08-09): thirty lines is a reference grid, and thirty stacked
+        // bands under it is mud, not information. `narrow_to_target` already
+        // cleared the per-level colours; this also puts the band fill out on
+        // every level AND on the master, so the row reads as a plain ladder
+        // the moment it is applied. Every other system row keeps the type's
+        // own factory fill.
+        if id == ALL_LEVELS_SET_ID {
+            for cfg in tmpl.level_configs.iter_mut() {
+                cfg.fill_enabled = false;
+            }
+            if let Some((_, opacity)) = tmpl.fill_master {
+                tmpl.fill_master = Some((false, opacity));
+            }
+        }
         for (prop_id, value) in level_set_label_defaults() {
             match tmpl.custom_style_properties.iter_mut().find(|(pid, _)| pid == prop_id) {
                 Some(existing) => existing.1 = value,
@@ -627,6 +642,9 @@ fn apply_text_template(text: &mut PrimitiveText, tmpl: &PrimitiveTemplate) {
 /// private `LEVEL_SET_MATCH_EPS` (not reusable directly: that constant is
 /// private to its module), same value.
 const SYSTEM_TEMPLATE_EPS: f64 = 1e-9;
+
+/// The one system-row id that ships unpainted — see [`PrimitiveTemplate::system_template`].
+const ALL_LEVELS_SET_ID: &str = "all";
 
 /// Narrow/extend `factory_configs` (a level-having primitive's factory-
 /// seeded ladder — whatever fill/colour/group that type's own constructor

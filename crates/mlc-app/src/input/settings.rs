@@ -1939,7 +1939,24 @@ impl ChartApp {
                 })
                 .unwrap_or(false);
             if let Some(bid) = active_bid_prim {
-                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, "fill", &PropertyValue::Boolean(!current));
+                let mut guard = self.core.drawings_mut();
+                guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, "fill", &PropertyValue::Boolean(!current));
+                // Writes through to EVERY level, rather than only flipping the
+                // master gate above it (owner direction, 2026-08-09): this
+                // control reads as "the fill of all layers", so it must turn
+                // them all on and all off, not sit on top of per-level flags
+                // that stay whatever they were and silently decide what comes
+                // back when the master is re-enabled. The per-level chip in
+                // the ladder still overrides one row afterwards.
+                if let Some(mut configs) = guard.primitives(bid).iter()
+                    .find(|p| p.data().id == prim_id)
+                    .and_then(|p| p.level_configs())
+                {
+                    for cfg in configs.iter_mut() {
+                        cfg.fill_enabled = !current;
+                    }
+                    guard.set_level_configs(bid, prim_id, configs);
+                }
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
