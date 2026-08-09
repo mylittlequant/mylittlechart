@@ -292,7 +292,7 @@ pub fn draw(
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     draw_ladder(
         ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, &fallback_color, fallback_width,
-        &configs, &sorted, &query,
+        &configs, &sorted, &query, prim,
     );
     *row_y += BLOCK_GAP;
 
@@ -336,7 +336,7 @@ pub fn draw_search(
     }
     draw_ladder(
         ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, &fallback_color, fallback_width,
-        &configs, &sorted, &query,
+        &configs, &sorted, &query, prim,
     );
     true
 }
@@ -687,6 +687,7 @@ fn draw_ladder(
     configs: &[FibLevelConfig],
     sorted_composition: &[f64],
     query: &str,
+    prim: &dyn Primitive,
 ) {
     if sorted_composition.is_empty() {
         ctx.set_font("12px sans-serif");
@@ -753,7 +754,7 @@ fn draw_ladder(
         result.content_items.push((format!("level_v{key}_visible"), check_rect));
 
         let value_rect = WidgetRect::new(col2_x, y + 2.0, 52.0, ROW_H - 4.0);
-        draw_level_value_field(ctx, toolbar_theme, widget_theme, state, result, value_rect, &key, level);
+        draw_level_value_field(ctx, toolbar_theme, widget_theme, state, result, value_rect, &key, level, prim);
 
         let bar_rect = WidgetRect::new(col3_x, y + (ROW_H - BAR_H) / 2.0, col3_w, BAR_H);
         draw_level_bar(ctx, bar_rect, this_color, next_color.as_deref(), cfg.visible);
@@ -810,7 +811,7 @@ fn draw_ladder(
         *row_y += ROW_H;
 
         if selected {
-            let next_label = sorted_composition.get(row_idx + 1).map(|n| format!("{n:.3}"));
+            let next_label = sorted_composition.get(row_idx + 1).map(|n| prim.level_value_label(*n));
             draw_inspector(
                 ctx, toolbar_theme, widget_theme, state, result, x0, x1, *row_y, &key, cfg,
                 fallback_color, fallback_width, next_label,
@@ -847,10 +848,11 @@ fn draw_level_value_field(
     rect: WidgetRect,
     key: &str,
     level: f64,
+    prim: &dyn Primitive,
 ) {
     let field_id = format!("level_v{key}_value");
     let is_editing = state.active_field_id.as_deref() == Some(field_id.as_str());
-    let label = format!("{level:.3}");
+    let label = prim.level_value_label(level);
     let ar = &state.active_render;
     let (display, cursor, sel_start, sel_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
         (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))

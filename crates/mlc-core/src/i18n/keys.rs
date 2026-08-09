@@ -366,10 +366,26 @@ pub enum ConfigKey {
     // Was a bare hardcoded "Brush Size" literal on `Highlighter` only; moved
     // into this table 2026-08-09 alongside giving `Brush` the same control.
     BrushSize                     = 156,
+
+    // Position's own trailing Appearance group (2026-08-09 modal-surface
+    // pass): a read-only computed Risk/Target/R:R block —
+    // `PropertyCategory::AppearanceStats` — below the editable rows on
+    // `long_position`/`short_position`. `GroupResults` headers that group
+    // the same way `GroupLine`/`Fill` head the Line/Fill groups above it.
+    GroupResults                  = 157,
+    PositionRiskLabel             = 158,
+    PositionTargetLabel           = 159,
+    PositionRiskRewardLabel       = 160,
+
+    // Table's own derived Cells tab (2026-08-09 modal-surface pass) — a
+    // live editable grid replacing the flat "Cell [r,c]" list the generic
+    // Labels-tab renderer used to show for `cell_{row}_{col}` properties
+    // (removed — see `Table::text_properties`'s own doc).
+    TabCells                      = 161,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 157;
+    pub const COUNT: usize = 162;
 
     /// Get translation for this key
     #[inline]

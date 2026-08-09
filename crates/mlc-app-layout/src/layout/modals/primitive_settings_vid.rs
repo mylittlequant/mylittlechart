@@ -144,13 +144,17 @@ const BASE_STROKE_H: f64 = 3.0 * ROW_H;
 struct GroupHeights {
     line: f64,
     fill: f64,
+    /// Position's trailing read-only Risk/Target/R:R group (2026-08-09) —
+    /// `PropertyCategory::AppearanceStats`. Zero for every other primitive
+    /// today (nothing else declares into that category).
+    stats: f64,
 }
 
 impl GroupHeights {
     fn total(&self) -> f64 {
         let mut h = 0.0;
         let mut any = false;
-        for g in [self.line, self.fill] {
+        for g in [self.line, self.fill, self.stats] {
             if g > 0.0 {
                 if any {
                     h += GROUP_GAP;
@@ -182,7 +186,14 @@ fn group_heights(prim: &dyn Primitive) -> GroupHeights {
         0.0
     };
 
-    GroupHeights { line, fill }
+    let stats_props = properties_in(&all, PropertyCategory::AppearanceStats);
+    let stats = if !stats_props.is_empty() {
+        GROUP_HEADER_H + stats_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
+    } else {
+        0.0
+    };
+
+    GroupHeights { line, fill, stats }
 }
 
 /// Whether this primitive has anything at all for the Appearance tab: the
@@ -246,7 +257,17 @@ fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
         0.0
     };
 
-    GroupHeights { line, fill }
+    let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
+        .into_iter()
+        .filter(|(p, _)| matches(query, &[p.name.as_str()]))
+        .collect();
+    let stats = if !stats_props.is_empty() {
+        GROUP_HEADER_H + stats_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
+    } else {
+        0.0
+    };
+
+    GroupHeights { line, fill, stats }
 }
 
 /// Draws the Appearance tab's own rows. Returns `true` if at least one interactive
@@ -328,6 +349,32 @@ pub fn draw(
         draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::Fill.get(lang), None);
         *row_y += GROUP_HEADER_H;
         for (prop, kind) in &fill_props {
+            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
+            *row_y += ROW_H;
+        }
+        if *row_y == group_top + GROUP_HEADER_H {
+            *row_y = group_top;
+        } else {
+            *row_y += GROUP_PAD_BOTTOM;
+            any_drawn = true;
+        }
+    }
+
+    // ---- Results (read-only computed stats, e.g. Position's own
+    // Risk/Target/R:R — `PropertyCategory::AppearanceStats`) — always the
+    // LAST group, own header, below the editable Line/Fill rows above. ----
+    let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
+        .into_iter()
+        .filter(|(p, _)| matches(&query, &[p.name.as_str()]))
+        .collect();
+    if !stats_props.is_empty() {
+        if any_drawn {
+            *row_y += GROUP_GAP;
+        }
+        let group_top = *row_y;
+        draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::GroupResults.get(lang), None);
+        *row_y += GROUP_HEADER_H;
+        for (prop, kind) in &stats_props {
             draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
             *row_y += ROW_H;
         }

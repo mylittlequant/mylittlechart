@@ -19,6 +19,7 @@ use super::super::types::{Segment, hit_test_strokes};
 
 // Use same levels — and the same ring-visibility filter — as GannSquare
 use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE, ring_level_visible};
+use super::gann_box::{gann_fraction_label, parse_gann_fraction_label};
 
 /// Create default level configs for Gann Square Fixed
 pub fn default_gann_square_fixed_configs() -> Vec<FibLevelConfig> {
@@ -482,12 +483,7 @@ impl Primitive for GannSquareFixed {
             ctx.stroke();
 
             if self.show_labels {
-                let pct = ratio * 100.0;
-                let label = if (pct - pct.round()).abs() < 0.01 {
-                    format!("{}%", pct.round() as i32)
-                } else {
-                    format!("{:.1}%", pct)
-                };
+                let label = gann_fraction_label(ratio);
                 let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
                 ctx.set_font(&self.label_style.font_string());
                 ctx.set_text_baseline(crate::render::TextBaseline::Middle);
@@ -560,6 +556,14 @@ impl Primitive for GannSquareFixed {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_value_label(&self, level: f64) -> String {
+        gann_fraction_label(level)
+    }
+
+    fn parse_level_value(&self, text: &str) -> Option<f64> {
+        parse_gann_fraction_label(text)
     }
 
     fn to_json(&self) -> String {

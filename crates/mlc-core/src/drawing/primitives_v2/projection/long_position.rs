@@ -404,6 +404,14 @@ impl Primitive for LongPosition {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Risk/reward, recomputed fresh every call (this method runs once
+        // per frame — see `PropertyCategory::AppearanceStats`'s own doc) so
+        // the three read-only rows below always match the live entry/stop/
+        // target points, the same numbers `render`'s own on-chart label
+        // shows via the identical formulas.
+        let risk_per_unit = (self.entry_price - self.stop_loss).abs();
+        let reward_per_unit = (self.take_profit - self.entry_price).abs();
+
         let mut props = vec![
             ConfigProperty::show_pnl(self.show_pnl)
                 .with_category(PropertyCategory::AppearanceLine)
@@ -429,6 +437,9 @@ impl Primitive for LongPosition {
             ConfigProperty::show_live_label(self.show_live_label)
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(17),
+            ConfigProperty::position_risk_stat(&fmt_price(risk_per_unit)).with_order(90),
+            ConfigProperty::position_target_stat(&fmt_price(reward_per_unit)).with_order(91),
+            ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props

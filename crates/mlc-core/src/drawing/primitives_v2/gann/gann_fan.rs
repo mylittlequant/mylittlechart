@@ -46,6 +46,25 @@ pub fn gann_angle_label(ratio: f64) -> String {
     }
 }
 
+/// Parse a Gann angle back into its slope ratio — the inverse of
+/// [`gann_angle_label`]. Accepts both the `"NxM"` notation that function
+/// produces (`"2x1"` -> `2.0`, `"1x4"` -> `0.25`, case-insensitive on the
+/// separator) AND a bare number typed directly (`"2"` -> `2.0`), since a
+/// user editing the settings-modal value field can always retype it from
+/// scratch ignoring the notation shown.
+pub fn parse_gann_angle_label(text: &str) -> Option<f64> {
+    let t = text.trim();
+    if let Some((a, b)) = t.split_once(['x', 'X']) {
+        let a: f64 = a.trim().parse().ok()?;
+        let b: f64 = b.trim().parse().ok()?;
+        if b == 0.0 {
+            return None;
+        }
+        return Some(a / b);
+    }
+    t.parse::<f64>().ok()
+}
+
 /// Create default level configs for Gann Fan
 pub fn default_gann_fan_configs() -> Vec<FibLevelConfig> {
     let mut sorted: Vec<f64> = ALL_GANN_ANGLES.to_vec();
@@ -533,6 +552,14 @@ impl Primitive for GannFan {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_value_label(&self, level: f64) -> String {
+        gann_angle_label(level)
+    }
+
+    fn parse_level_value(&self, text: &str) -> Option<f64> {
+        parse_gann_angle_label(text)
     }
 
     fn to_json(&self) -> String {

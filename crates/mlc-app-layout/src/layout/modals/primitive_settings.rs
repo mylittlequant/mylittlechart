@@ -40,7 +40,7 @@ use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, t_settings};
 
 use super::{
-    primitive_settings_labels, primitive_settings_levels,
+    primitive_settings_cells, primitive_settings_labels, primitive_settings_levels,
     primitive_settings_placement, primitive_settings_vid,
 };
 
@@ -77,6 +77,7 @@ fn available_tabs(prim: &dyn Primitive) -> Vec<PrimitiveSettingsTab> {
             PrimitiveSettingsTab::Levels => prim.level_configs().is_some(),
             PrimitiveSettingsTab::Appearance => primitive_settings_vid::has_content(prim),
             PrimitiveSettingsTab::Labels => primitive_settings_labels::has_content(prim),
+            PrimitiveSettingsTab::Cells => primitive_settings_cells::has_content(prim),
             PrimitiveSettingsTab::Placement => true,
         })
         .collect()
@@ -211,6 +212,7 @@ fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &Pri
         PrimitiveSettingsTab::Levels => primitive_settings_levels::search_content_height(prim, state),
         PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height_for_query(prim, state),
     }
 }
@@ -282,6 +284,9 @@ fn draw_search_results(
             }
             PrimitiveSettingsTab::Labels => {
                 primitive_settings_labels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+            }
+            PrimitiveSettingsTab::Cells => {
+                primitive_settings_cells::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
             }
             PrimitiveSettingsTab::Placement => {
                 primitive_settings_placement::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
@@ -402,6 +407,7 @@ pub fn render_primitive_settings_modal(
             PrimitiveSettingsTab::Levels => primitive_settings_levels::content_height(prim, state),
             PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height(prim),
             PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
+            PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height(prim),
             PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
         }
     } else {
@@ -523,6 +529,9 @@ pub fn render_primitive_settings_modal(
             }
             PrimitiveSettingsTab::Labels => {
                 primitive_settings_labels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
+            }
+            PrimitiveSettingsTab::Cells => {
+                primitive_settings_cells::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
             }
             PrimitiveSettingsTab::Placement => {
                 primitive_settings_placement::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);

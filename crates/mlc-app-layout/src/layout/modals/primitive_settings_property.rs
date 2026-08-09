@@ -23,11 +23,11 @@
 //! the universal base-stroke row, the raw-`TextBlock` content/style/position
 //! block) — those stay bespoke in the tab that owns them, documented there.
 
-use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyType};
+use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyType, PropertyValue};
 use mlc_core::drawing::primitives_v2::{Primitive, PropertyKind};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::current_language;
-use mlc_core::render::RenderContext;
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
 use crate::ui::modal_settings::PrimitiveSettingsState;
@@ -103,6 +103,12 @@ fn field_id(kind: PropertyKind, prop_id: &str) -> String {
 /// the same `ROW_H` every other row in these tabs uses, since every
 /// `PropertyType` this module knows how to draw renders as one row.
 ///
+/// A `readonly` property (`ConfigProperty::readonly`, e.g. Position's
+/// computed Risk/Target/R:R — `PropertyCategory::AppearanceStats`) short-
+/// circuits every `PropertyType` arm below: it always renders as a plain
+/// caption + value row, muted text, no control, nothing pushed into
+/// `result.content_items` — there is nothing here to click or drag.
+///
 /// `PropertyType::FibLevels`/`Coordinate`/`TimeframeVisibility` are not
 /// produced by any `style_properties()`/`text_properties()` implementation
 /// today (verified against the whole crate) — this draws nothing for them
@@ -126,6 +132,11 @@ pub(crate) fn draw_property_row(
 ) {
     let lang = current_language();
     let fid = field_id(kind, &prop.id);
+
+    if prop.readonly {
+        draw_readonly_row(ctx, toolbar_theme, x0, x1, label_col, y, &prop.name, &readonly_value_text(&prop.value));
+        return;
+    }
 
     match &prop.prop_type {
         PropertyType::Color => {
@@ -214,6 +225,50 @@ pub(crate) fn draw_property_row(
             result.content_items.push((fid, rect));
         }
         PropertyType::FibLevels | PropertyType::Coordinate | PropertyType::TimeframeVisibility => {}
+    }
+}
+
+/// A `readonly` property's own row shape: the caption in the label column
+/// (same [`draw_label`] every other row uses), the value right-aligned
+/// against `x1` in the muted text colour — no control, nothing pushed into
+/// `result.content_items` (see [`draw_property_row`]'s own doc for why:
+/// there is nothing here to click, hover or drag).
+fn draw_readonly_row(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    y: f64,
+    label: &str,
+    value_text: &str,
+) {
+    draw_label(ctx, toolbar_theme, x0, label_col, y, label);
+    ctx.set_font("11.5px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(value_text, x1, y + ROW_H / 2.0);
+    // Restore left alignment — every other row in this modal assumes it,
+    // the same discipline `primitive_settings_levels::draw_ramps_row`
+    // documents for its own `Center` alignment.
+    ctx.set_text_align(TextAlign::Left);
+}
+
+/// Render any [`PropertyValue`] as plain text for a `readonly` row —
+/// generic over every variant, not just the `String` shape
+/// `ConfigProperty::text`-based readonly properties (Position's Risk/
+/// Target/R:R, today's only declarers) actually use, so a future readonly
+/// `Number`/`Boolean`/`Color` property still shows something instead of an
+/// empty row.
+fn readonly_value_text(value: &PropertyValue) -> String {
+    match value {
+        PropertyValue::String(s) | PropertyValue::Color(s) | PropertyValue::LineStyle(s) => s.clone(),
+        PropertyValue::Number(n) => format!("{n}"),
+        PropertyValue::Integer(i) => i.to_string(),
+        PropertyValue::Boolean(b) => b.to_string(),
+        PropertyValue::Coordinate { bar, price } => format!("{bar:.1} / {price:.2}"),
+        PropertyValue::FibLevels(_) | PropertyValue::TimeframeVisibility(_) => String::new(),
     }
 }
 

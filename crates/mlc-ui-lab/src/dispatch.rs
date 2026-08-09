@@ -201,7 +201,7 @@ pub fn commit_active_field(
             }
         }
     } else if let Some(key) = field_id.strip_prefix("level_v").and_then(|s| s.strip_suffix("_value")) {
-        if let (Ok(old_level), Ok(new_level)) = (key.parse::<f64>(), text.trim().parse::<f64>()) {
+        if let (Ok(old_level), Some(new_level)) = (key.parse::<f64>(), prim.parse_level_value(&text)) {
             if let Some(mut configs) = prim.level_configs() {
                 rename_level(&mut configs, state, old_level, new_level);
                 prim.set_level_configs(configs);
@@ -213,6 +213,13 @@ pub fn commit_active_field(
             apply_tf_bound(&mut tf, &field_id, val);
             prim.data_mut().timeframe_visibility = Some(tf);
         }
+    } else if field_id.starts_with("cell_") {
+        // Cells tab: `cell_{row}_{col}` — straight into `Table::
+        // apply_text_property`'s own `"cell_"` match arm (unchanged by the
+        // Cells-tab pass, see `mlc-app-layout`'s `primitive_settings_cells`
+        // module doc) — always a plain string, no declared `PropertyType`
+        // to consult (cell content is a bespoke collection now).
+        prim.apply_text_property(&field_id, &PropertyValue::String(text.clone()));
     } else if let Some(field) = EditableField::from_id(&field_id) {
         field.commit(&text, prim, state);
     }
@@ -895,7 +902,13 @@ pub fn apply_approved_design_click(
     // delete,style,value} ----
     if let Some(intent) = parse_levels_click(item_id) {
         match &intent {
-            LevelsIntent::StartValueEditing { seed, .. } => start_editing_raw(item_id, seed, state, coord),
+            // `level_value_label` (not the intent's own plain-numeric
+            // `seed`) — a Gann-family primitive seeds the field with its
+            // own notation (`"2x1"`), not the raw stored ratio.
+            LevelsIntent::StartValueEditing { level, .. } => {
+                let seed = prim.level_value_label(*level);
+                start_editing_raw(item_id, &seed, state, coord);
+            }
             LevelsIntent::StartAddEditing => start_editing_raw(item_id, "", state, coord),
             _ => {
                 if let Some(mut configs) = prim.level_configs() {
@@ -905,6 +918,39 @@ pub fn apply_approved_design_click(
             }
         }
         return true;
+    }
+
+    // ---- Cells tab: cells_{row,col}_{dec,inc} / cell_{row}_{col} — see
+    // `mlc-app-layout`'s `primitive_settings_cells` module doc. Resize
+    // actions dispatch through the SAME `"rows_count"`/`"cols_count"` ids
+    // the Labels tab's own number sliders already use
+    // (`Table::apply_text_property`); a cell click starts inline editing,
+    // mirroring the Levels tab's own `level_v{key}_value` path above. ----
+    if matches!(item_id, "cells_row_dec" | "cells_row_inc" | "cells_col_dec" | "cells_col_inc") {
+        if let Some(rows) = prim.table_rows() {
+            let n_rows = rows.len().max(1);
+            let n_cols = rows.first().map(Vec::len).unwrap_or(1).max(1);
+            let (prop_id, new_value) = match item_id {
+                "cells_row_dec" => ("rows_count", n_rows.saturating_sub(1).max(1)),
+                "cells_row_inc" => ("rows_count", n_rows + 1),
+                "cells_col_dec" => ("cols_count", n_cols.saturating_sub(1).max(1)),
+                _ => ("cols_count", n_cols + 1),
+            };
+            prim.apply_text_property(prop_id, &PropertyValue::Number(new_value as f64));
+        }
+        return true;
+    }
+    if let Some(rest) = item_id.strip_prefix("cell_") {
+        if let Some((row_str, col_str)) = rest.split_once('_') {
+            if let (Ok(row), Ok(col)) = (row_str.parse::<usize>(), col_str.parse::<usize>()) {
+                let current = prim
+                    .table_rows()
+                    .and_then(|rows| rows.get(row).and_then(|r| r.get(col).cloned()))
+                    .unwrap_or_default();
+                start_editing_raw(item_id, &current, state, coord);
+                return true;
+            }
+        }
     }
 
     let _ = ctx; // reserved: nothing here opens a colour picker directly —

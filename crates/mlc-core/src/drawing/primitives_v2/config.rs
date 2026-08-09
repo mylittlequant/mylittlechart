@@ -940,6 +940,18 @@ pub enum PropertyCategory {
     AppearanceLine,
     /// Appearance tab — fill on/off + opacity.
     AppearanceFill,
+    /// Appearance tab — its own trailing group of computed, non-editable
+    /// results (e.g. a Position's Risk/Target/R:R): every property declared
+    /// here MUST also carry `readonly: true` (`ConfigProperty::readonly()`)
+    /// — the generic renderer (`mlc-app-layout`'s
+    /// `primitive_settings_property::draw_property_row`) reads that flag,
+    /// not this category, to decide whether a row is a plain value instead
+    /// of a control; this category only decides WHERE the row lands (its
+    /// own group, after Line/Fill, headed separately —
+    /// `primitive_settings_vid`'s own `draw`/`group_heights`). Order these
+    /// properties LAST within the primitive's own declaration (high
+    /// `order`) so they always read as results below the editable rows.
+    AppearanceStats,
     /// Labels tab — content/position/font/style/pills and every other
     /// text-adjacent control (font size, colour, background, border,
     /// alignment). Its own tab since the 4-tab cutover (2026-08-08) — it
@@ -1338,6 +1350,33 @@ impl ConfigProperty {
     /// Create "Target Zone Color" color property with i18n (long/short position)
     pub fn target_zone_color(value: &str) -> Self {
         Self::color("target_color", ConfigKey::TargetZoneColor.get(current_language()), value)
+    }
+
+    /// Create the Position "Risk" read-only computed stat row (long/short
+    /// position) — its own trailing Appearance group, see
+    /// `PropertyCategory::AppearanceStats`. `value` is pre-formatted by the
+    /// caller (`fmt_price`), the same number already shown on the
+    /// primitive's own on-chart label.
+    pub fn position_risk_stat(value: &str) -> Self {
+        Self::text("stat_risk", ConfigKey::PositionRiskLabel.get(current_language()), value)
+            .with_category(PropertyCategory::AppearanceStats)
+            .readonly()
+    }
+
+    /// Create the Position "Target" read-only computed stat row — the
+    /// reward distance (entry to take-profit), matching `position_risk_stat`.
+    pub fn position_target_stat(value: &str) -> Self {
+        Self::text("stat_target", ConfigKey::PositionTargetLabel.get(current_language()), value)
+            .with_category(PropertyCategory::AppearanceStats)
+            .readonly()
+    }
+
+    /// Create the Position "R:R" read-only computed stat row — the
+    /// risk/reward ratio, matching `position_risk_stat`.
+    pub fn position_risk_reward_stat(value: &str) -> Self {
+        Self::text("stat_risk_reward", ConfigKey::PositionRiskRewardLabel.get(current_language()), value)
+            .with_category(PropertyCategory::AppearanceStats)
+            .readonly()
     }
 
     /// Create "Show Price Diff" boolean property with i18n (measurement rulers).

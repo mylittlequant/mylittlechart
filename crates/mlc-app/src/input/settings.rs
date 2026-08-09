@@ -1541,17 +1541,48 @@ impl ChartApp {
                 self.autosave_snapshot();
             }
         } else if let Some(key) = field.strip_prefix("level_v").and_then(|s| s.strip_suffix("_value")) {
-            if let (Ok(old_level), Ok(new_level)) = (key.parse::<f64>(), text.trim().parse::<f64>()) {
+            if let Ok(old_level) = key.parse::<f64>() {
                 if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
-                    let mut guard = self.core.drawings_mut();
-                    if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
-                        mlc_app_layout::layout::modals::primitive_settings_intent::rename_level(&mut configs, &mut self.panel_app.primitive_settings_state, old_level, new_level);
-                        guard.set_level_configs(bid, prim_id, configs);
+                    // Read-only lookup first (own scope, dropped before the
+                    // `drawings_mut()` write below — same guard-lifetime
+                    // discipline as `text_content`'s own comment above):
+                    // a Gann-family primitive parses its own notation
+                    // (`"2x1"`), not a bare float, via `parse_level_value`.
+                    let new_level = {
+                        let guard = self.core.drawings();
+                        guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.parse_level_value(&text))
+                    };
+                    if let Some(new_level) = new_level {
+                        let mut guard = self.core.drawings_mut();
+                        if let Some(mut configs) = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs()) {
+                            mlc_app_layout::layout::modals::primitive_settings_intent::rename_level(&mut configs, &mut self.panel_app.primitive_settings_state, old_level, new_level);
+                            guard.set_level_configs(bid, prim_id, configs);
+                        }
+                        drop(guard);
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
                     }
                 }
-                self.sync_drawing_back_to_group();
-                self.autosave_snapshot();
             }
+        } else if field.starts_with("cell_") {
+            // Cells tab: `cell_{row}_{col}` — commits straight through the
+            // SAME generic `PropertyKind::Text` dispatch `text_prop:*`
+            // fields use above, landing on `Table::apply_text_property`'s
+            // own `"cell_"` match arm (unchanged by the Cells-tab pass —
+            // see its own doc). Always a plain string: unlike `text_prop:*`
+            // there is no declared `PropertyType` to consult here (cell
+            // content is a bespoke collection now, not a declared
+            // property — `primitive_settings_cells`'s own module doc).
+            use mlc_core::drawing::primitives_v2::config::PropertyValue;
+            if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
+                self.core.drawings_mut().apply_property(
+                    bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, &field,
+                    &PropertyValue::String(text.clone()),
+                );
+            }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
+            eprintln!("[ChartApp] prim_settings {} auto-committed: {}", field, text);
         } else if field.starts_with("coord_") && field.ends_with("_price") {
             if let Ok(price) = text.trim().parse::<f64>() {
                 if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -2019,6 +2050,62 @@ impl ChartApp {
             return;
         }
 
+        // ── Cells tab: cells_{row,col}_{dec,inc} — resize the grid by one.
+        // Wired to the SAME `"rows_count"`/`"cols_count"` write path the
+        // Labels tab's own number sliders already use
+        // (`Table::apply_text_property`) — no second source of truth for
+        // the grid's own dimensions (`primitive_settings_cells`'s own
+        // module doc).
+        if matches!(item_id, "cells_row_dec" | "cells_row_inc" | "cells_col_dec" | "cells_col_inc") {
+            if let Some(bid) = active_bid_prim {
+                let current: Option<(usize, usize)> = {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| p.table_rows())
+                        .map(|rows| (rows.len(), rows.first().map(Vec::len).unwrap_or(1)))
+                };
+                if let Some((n_rows, n_cols)) = current {
+                    let (prop_id, new_value) = match item_id {
+                        "cells_row_dec" => ("rows_count", n_rows.saturating_sub(1).max(1)),
+                        "cells_row_inc" => ("rows_count", n_rows + 1),
+                        "cells_col_dec" => ("cols_count", n_cols.saturating_sub(1).max(1)),
+                        _ => ("cols_count", n_cols + 1),
+                    };
+                    self.core.drawings_mut().apply_property(
+                        bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id,
+                        &PropertyValue::Number(new_value as f64),
+                    );
+                    self.sync_drawing_back_to_group();
+                    self.autosave_snapshot();
+                    eprintln!("[ChartApp] prim_settings {} -> {}={}", item_id, prop_id, new_value);
+                }
+            }
+            return;
+        }
+
+        // ── Cells tab: cell_{row}_{col} — start inline text editing,
+        // mirroring the Levels tab's own `level_v{key}_value` editing path
+        // (`primitive_settings_levels::draw_level_value_field`).
+        if let Some(rest) = item_id.strip_prefix("cell_") {
+            if let Some((row_str, col_str)) = rest.split_once('_') {
+                if let (Ok(row), Ok(col)) = (row_str.parse::<usize>(), col_str.parse::<usize>()) {
+                    let current_val: String = active_bid_prim
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            guard.primitives(bid).iter()
+                                .find(|p| p.data().id == prim_id)
+                                .and_then(|p| p.table_rows())
+                                .and_then(|rows| rows.get(row)?.get(col).cloned())
+                        })
+                        .unwrap_or_default();
+                    self.start_prim_field_editing(item_id, &current_val, true);
+                    eprintln!("[ChartApp] prim_settings {} editing started", item_id);
+                    return;
+                }
+            }
+        }
+
         // ── Text bold toggle ──────────────────────────────────────────────────
         if item_id == "text_bold" {
             let data_opt = active_bid_prim
@@ -2117,8 +2204,20 @@ impl ChartApp {
         if let Some(intent) = mlc_app_layout::layout::modals::primitive_settings_intent::parse_levels_click(item_id) {
             use mlc_app_layout::layout::modals::primitive_settings_intent::LevelsIntent;
             match &intent {
-                LevelsIntent::StartValueEditing { seed, .. } => {
-                    self.start_prim_field_editing(item_id, seed, true);
+                LevelsIntent::StartValueEditing { level, seed } => {
+                    // `level_value_label` (not the intent's own plain-numeric
+                    // `seed`) — a Gann-family primitive seeds the field with
+                    // its own notation (`"2x1"`), not the raw stored ratio.
+                    // Falls back to the plain-numeric `seed` if the live
+                    // primitive can't be found (defensive — should not
+                    // happen while its own modal is open).
+                    let label = active_bid_prim
+                        .and_then(|bid| {
+                            let guard = self.core.drawings();
+                            guard.primitives(bid).iter().find(|p| p.data().id == prim_id).map(|p| p.level_value_label(*level))
+                        })
+                        .unwrap_or_else(|| seed.clone());
+                    self.start_prim_field_editing(item_id, &label, true);
                 }
                 LevelsIntent::StartAddEditing => {
                     self.start_prim_field_editing(item_id, "", false);

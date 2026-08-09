@@ -32,6 +32,32 @@ pub const ALL_GANN_BOX_LEVELS: &[f64] = &[
 /// Main levels visible by default (quarters + center)
 pub const MAIN_GANN_BOX_VISIBLE: &[f64] = &[0.25, 0.5, 0.75];
 
+/// Get label for a Gann Box fraction level (0.0..=1.0 of the box) — the
+/// same percentage formatting `render()` draws next to each grid line.
+/// Shared with `gann_square`/`gann_square_fixed`, whose ring levels use the
+/// identical 0..1-fraction storage and the identical on-chart notation.
+pub fn gann_fraction_label(level: f64) -> String {
+    let pct = level * 100.0;
+    if (pct - pct.round()).abs() < 0.01 {
+        format!("{}%", pct.round() as i32)
+    } else {
+        format!("{:.1}%", pct)
+    }
+}
+
+/// Parse a Gann Box/Square fraction level back from its own percentage
+/// label — the inverse of [`gann_fraction_label`]. Accepts both the
+/// `"NN%"` notation that function produces and a bare number typed
+/// directly (`"50"` and `"50%"` both mean the same `0.5` fraction — the
+/// field always shows a percentage, so a bare retype reads the same way,
+/// not as the raw `0..1` fraction the ladder stores).
+pub fn parse_gann_fraction_label(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let t = t.strip_suffix('%').unwrap_or(t).trim();
+    let pct: f64 = t.parse().ok()?;
+    Some(pct / 100.0)
+}
+
 /// Create default level configs for Gann Box
 pub fn default_gann_box_configs() -> Vec<FibLevelConfig> {
     let mut sorted: Vec<f64> = ALL_GANN_BOX_LEVELS.to_vec();
@@ -455,12 +481,7 @@ impl Primitive for GannBox {
 
                 // Fraction label at the vertical/horizontal line intersection
                 if self.show_labels {
-                    let pct = level * 100.0;
-                    let label = if (pct - pct.round()).abs() < 0.01 {
-                        format!("{}%", pct.round() as i32)
-                    } else {
-                        format!("{:.1}%", pct)
-                    };
+                    let label = gann_fraction_label(level);
                     let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
                     ctx.set_font(&self.label_style.font_string());
                     ctx.set_text_baseline(crate::render::TextBaseline::Middle);
@@ -529,6 +550,14 @@ impl Primitive for GannBox {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_value_label(&self, level: f64) -> String {
+        gann_fraction_label(level)
+    }
+
+    fn parse_level_value(&self, text: &str) -> Option<f64> {
+        parse_gann_fraction_label(text)
     }
 
     fn to_json(&self) -> String {

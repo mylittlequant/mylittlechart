@@ -1,7 +1,7 @@
 //! Table primitive - data table annotation
 
 use serde::{Deserialize, Serialize};
-use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, i18n::{ConfigKey, current_language}};
+use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor,
@@ -182,47 +182,31 @@ impl Primitive for Table {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
-    fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
-        let mut props = Vec::new();
-        let lang = current_language();
+    fn table_rows(&self) -> Option<Vec<Vec<String>>> {
+        Some(self.rows.clone())
+    }
 
-        props.push(
+    fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
+        // Cell CONTENT is deliberately not declared here any more
+        // (2026-08-09 Cells-tab pass) — it is a bespoke collection now, read
+        // through `table_rows()` and edited on its own Cells tab
+        // (`mlc-app-layout`'s `primitive_settings_cells`), the same way the
+        // level ladder's own values never go through `style_properties()`.
+        // `rows_count`/`cols_count` stay declared, ordinary `LabelsText`
+        // number rows — the Cells tab's own +/-row/column actions dispatch
+        // through the SAME `"rows_count"`/`"cols_count"` ids below rather
+        // than a second write path, so both surfaces can resize the grid.
+        Some(vec![
             ConfigProperty::rows_count(self.rows.len() as f64)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0)
-        );
-        props.push(
+                .with_order(0),
             ConfigProperty::columns_count(self.columns as f64)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1)
-        );
-        props.push(
+                .with_order(1),
             ConfigProperty::show_header(self.show_header)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2)
-        );
-
-        let header_text = ConfigKey::Header.get(lang);
-        let cell_text = ConfigKey::Cell.get(lang);
-        for (row_idx, row) in self.rows.iter().enumerate() {
-            for (col_idx, cell_value) in row.iter().enumerate() {
-                if col_idx < self.columns as usize {
-                    let id = format!("cell_{}_{}", row_idx, col_idx);
-                    let label = if row_idx == 0 && self.show_header {
-                        format!("{} {}", header_text, col_idx + 1)
-                    } else {
-                        format!("{} [{},{}]", cell_text, row_idx + 1, col_idx + 1)
-                    };
-                    props.push(
-                        ConfigProperty::text(&id, &label, cell_value)
-                            .with_category(PropertyCategory::LabelsText)
-                            .with_order(3 + (row_idx * self.columns as usize + col_idx) as i32)
-                    );
-                }
-            }
-        }
-
-        Some(props)
+                .with_order(2),
+        ])
     }
 
     fn apply_text_property(&mut self, id: &str, value: &PropertyValue) -> bool {

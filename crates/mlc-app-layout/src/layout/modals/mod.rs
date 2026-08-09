@@ -35,6 +35,7 @@ pub mod primitive_settings;
 pub mod primitive_settings_vid;
 pub mod primitive_settings_labels;
 pub mod primitive_settings_levels;
+pub mod primitive_settings_cells;
 pub mod primitive_settings_placement;
 pub mod primitive_settings_palettes;
 pub mod primitive_settings_intent;

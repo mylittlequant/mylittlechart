@@ -46,7 +46,7 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 157] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 162] = [
     /* 0  Labels            */ [ "Labels",                     "Подписи",                                "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "процент",                                "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -231,6 +231,16 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 157] = [
     // Freehand brush/highlighter stroke thickness (2026-08-09 — previously
     // a bare hardcoded "Brush Size" literal on `Highlighter` only).
     /* 156 BrushSize         */ [ "Brush Size",               "Размер кисти",            "Tamaño de pincel",             "Pinselgröße",                    "Taille du pinceau",                  "Tamanho do pincel",     "画笔大小",     "ブラシサイズ", "브러시 크기", "حجم الفرشاة",       "Dimensione pennello",   "Fırça Boyutu",           "Rozmiar pędzla",        "Розмір пензля",      "ब्रश आकार"           ],
+
+    // Position's read-only computed Risk/Target/R:R group (2026-08-09
+    // modal-surface pass) — `PropertyCategory::AppearanceStats`.
+    /* 157 GroupResults      */ [ "Results",                  "Результаты",              "Resultados",                   "Ergebnisse",                     "Résultats",                           "Resultados",             "结果",         "結果",         "결과",         "النتائج",           "Risultati",              "Sonuçlar",                "Wyniki",                 "Результати",          "परिणाम"              ],
+    /* 158 PositionRiskLabel */ [ "Risk",                     "Риск",                    "Riesgo",                       "Risiko",                         "Risque",                              "Risco",                  "风险",         "リスク",       "리스크",       "المخاطرة",          "Rischio",                "Risk",                    "Ryzyko",                 "Ризик",               "जोखिम"               ],
+    /* 159 PositionTargetLabel*/[ "Target",                   "Цель",                    "Objetivo",                     "Ziel",                           "Objectif",                            "Alvo",                   "目标",         "目標",         "목표",         "الهدف",             "Obiettivo",              "Hedef",                   "Cel",                    "Ціль",                "लक्ष्य"              ],
+    /* 160 PositionRiskRewardLabel */ [ "R:R",                "R:R",                     "R:R",                          "R:R",                            "R:R",                                 "R:R",                    "R:R",          "R:R",          "R:R",          "R:R",               "R:R",                    "R:R",                     "R:R",                    "R:R",                 "R:R"                ],
+
+    // Table's own derived Cells tab (2026-08-09 modal-surface pass).
+    /* 161 TabCells          */ [ "Cells",                    "Ячейки",                  "Celdas",                       "Zellen",                         "Cellules",                            "Células",                "单元格",       "セル",         "셀",           "الخلايا",           "Celle",                  "Hücreler",                "Komórki",                "Клітинки",            "सेल"                 ],
 ];
 
 // =============================================================================

@@ -629,6 +629,66 @@ pub trait Primitive: Send + Sync {
     }
 
     // =========================================================================
+    // Table Cell Grid (for the Table annotation's own bespoke Cells tab)
+    // =========================================================================
+
+    /// The Table primitive's own cell grid — `rows[r][c]` is the raw stored
+    /// text for that cell. `None` for every primitive without one (every
+    /// type but `Table` today). A bespoke, non-`ConfigProperty` collection —
+    /// the exact same shape [`level_configs`](Self::level_configs) is for
+    /// the level ladder (see `PropertyCategory`'s own doc on why a bespoke
+    /// collection is never a declared property): read by the settings
+    /// modal's own Cells tab (`mlc-app-layout`'s
+    /// `primitive_settings_cells`), never by `style_properties()`/
+    /// `text_properties()`.
+    ///
+    /// Cell WRITES do not get a matching `set_table_rows` — `Table` already
+    /// has a real mutation path for them (`apply_text_property`'s own
+    /// `"cell_{row}_{col}"`/`"rows_count"`/`"cols_count"` ids, dispatched
+    /// generically through `PropertyKind::Text` exactly like every other
+    /// text-family property) — adding a second one would be the "second
+    /// source of truth" the Cells tab is explicitly built to avoid.
+    fn table_rows(&self) -> Option<Vec<Vec<String>>> {
+        None
+    }
+
+    /// Format a level ladder row's raw stored value (`FibLevelConfig::level`,
+    /// a plain `f64`) for display in the settings modal's own value field —
+    /// the seam a level-having primitive uses to show what its number
+    /// actually MEANS, without touching the shared ladder UI
+    /// (`mlc-app-layout`'s `primitive_settings_levels`) or the row's own
+    /// identity key (`primitive_settings_levels::vkey`, always the raw
+    /// value, 3-decimal — an identity, never a display string, so it never
+    /// routes through this).
+    ///
+    /// Default: the same 3-decimal formatting the ladder always used
+    /// (`format!("{level:.3}")`) — every primitive that does not override
+    /// this renders exactly as before. Override alongside
+    /// [`parse_level_value`](Self::parse_level_value) for a primitive whose
+    /// raw storage does not read naturally as a bare number — e.g. a Gann
+    /// Fan angle (`2.0` stored, `"2x1"` shown, see
+    /// `gann::gann_fan::gann_angle_label`) or a Gann Box/Square ring
+    /// fraction (`0.5` stored, `"50%"` shown, matching that type's own
+    /// on-chart label).
+    fn level_value_label(&self, level: f64) -> String {
+        format!("{level:.3}")
+    }
+
+    /// Parse a user-typed level ladder value field back into the raw stored
+    /// value — the inverse of
+    /// [`level_value_label`](Self::level_value_label). `None` rejects the
+    /// edit (the field's own commit path leaves the row unchanged).
+    ///
+    /// Default: a plain float parse (`"1.618"` -> `Some(1.618)`). An
+    /// override MUST still accept a bare number typed directly (a user
+    /// retyping the field from scratch, ignoring the notation shown) in
+    /// addition to whatever notation [`level_value_label`](Self::level_value_label)
+    /// itself produces.
+    fn parse_level_value(&self, text: &str) -> Option<f64> {
+        text.trim().parse().ok()
+    }
+
+    // =========================================================================
     // Serialization
     // =========================================================================
 

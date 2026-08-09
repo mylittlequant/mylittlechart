@@ -16,6 +16,7 @@ use super::super::{
     config::{FibLevelConfig, LabelStyle},
 };
 use super::super::types::{Segment, hit_test_strokes};
+use super::gann_box::{gann_fraction_label, parse_gann_fraction_label};
 
 /// All Gann Square ring levels (0.0 = center, 1.0 = outer edge)
 /// These represent concentric squares from center outward
@@ -429,12 +430,7 @@ impl Primitive for GannSquare {
             // shared center rather than converging on one point, so each
             // ring's own top edge is already a collision-free anchor.
             if self.show_labels {
-                let pct = ratio * 100.0;
-                let label = if (pct - pct.round()).abs() < 0.01 {
-                    format!("{}%", pct.round() as i32)
-                } else {
-                    format!("{:.1}%", pct)
-                };
+                let label = gann_fraction_label(ratio);
                 let label_color = self.label_style.color.as_deref().unwrap_or(stroke_color);
                 ctx.set_font(&self.label_style.font_string());
                 ctx.set_text_baseline(crate::render::TextBaseline::Middle);
@@ -513,6 +509,14 @@ impl Primitive for GannSquare {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_value_label(&self, level: f64) -> String {
+        gann_fraction_label(level)
+    }
+
+    fn parse_level_value(&self, text: &str) -> Option<f64> {
+        parse_gann_fraction_label(text)
     }
 
     fn to_json(&self) -> String {

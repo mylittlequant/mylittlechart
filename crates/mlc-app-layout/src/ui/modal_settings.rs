@@ -293,15 +293,17 @@ pub struct SliderDragState {
 /// (`mlc_core::drawing::primitives_v2::config::PropertyCategory`), not a
 /// fixed set every primitive shows: `Levels` (the level ladder), `Appearance`
 /// (line/fill), `Labels` (content/font/style/position — split out of
-/// `Appearance` in the 4-tab cutover, 2026-08-08), `Placement` (points +
-/// timeframe visibility). [`all`](Self::all) lists every tab in STRIP
-/// ORDER — the order this enum declares them in, fixed regardless of which
-/// order a primitive happens to declare its own properties. Which of these
-/// actually appear for a given primitive is `available_tabs`'s job
+/// `Appearance` in the 4-tab cutover, 2026-08-08), `Cells` (Table's own
+/// editable cell grid, 2026-08-09 — the one primitive that has it), `Placement`
+/// (points + timeframe visibility). [`all`](Self::all) lists every tab in
+/// STRIP ORDER — the order this enum declares them in, fixed regardless of
+/// which order a primitive happens to declare its own properties. Which of
+/// these actually appear for a given primitive is `available_tabs`'s job
 /// (`crate::layout::modals::primitive_settings`), not this type's: a
-/// primitive with no level ladder never has `Levels`, and `Placement` is
-/// unconditional (the points table and timeframe chips are bespoke
-/// collections every primitive has, not declared properties — see
+/// primitive with no level ladder never has `Levels`, no primitive but
+/// `Table` has `Cells` (`Primitive::table_rows().is_some()`), and
+/// `Placement` is unconditional (the points table and timeframe chips are
+/// bespoke collections every primitive has, not declared properties — see
 /// `PropertyCategory`'s own doc).
 ///
 /// Replaces the earlier five-tab set (Style/Text/Coordinates/Levels/
@@ -314,6 +316,7 @@ pub enum PrimitiveSettingsTab {
     #[default]
     Appearance,
     Labels,
+    Cells,
     Placement,
 }
 
@@ -324,6 +327,7 @@ impl PrimitiveSettingsTab {
             Self::Levels => "levels",
             Self::Appearance => "appearance",
             Self::Labels => "labels",
+            Self::Cells => "cells",
             Self::Placement => "placement",
         }
     }
@@ -336,6 +340,7 @@ impl PrimitiveSettingsTab {
             Self::Levels => ConfigKey::Levels.get(lang),
             Self::Appearance => ConfigKey::TabAppearance.get(lang),
             Self::Labels => ConfigKey::Labels.get(lang),
+            Self::Cells => ConfigKey::TabCells.get(lang),
             Self::Placement => ConfigKey::TabPlacement.get(lang),
         }
     }
@@ -345,7 +350,7 @@ impl PrimitiveSettingsTab {
     /// filters this down to the ones a given primitive actually has
     /// anything for; this is never itself the per-primitive tab set.
     pub fn all() -> &'static [PrimitiveSettingsTab] {
-        &[Self::Levels, Self::Appearance, Self::Labels, Self::Placement]
+        &[Self::Levels, Self::Appearance, Self::Labels, Self::Cells, Self::Placement]
     }
 }
 
