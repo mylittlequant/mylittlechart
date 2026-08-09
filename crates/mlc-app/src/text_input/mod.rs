@@ -70,7 +70,7 @@ pub const CHART_SETTINGS_TEMPLATE_NAME: &str = "chart_tmpl_name";
 
 /// Sub-field edit input in the Primitive Settings modal.
 /// One WidgetId covers ALL inline sub-fields (stroke_width, text_content, level_N_value,
-/// coord_N_price, coord_N_bar, tf_N_min/max, style_prop:*, text_prop:*).
+/// coord_N_price, coord_N_bar, tf_N_min/max, style_prop:*, text_prop:*, level_prop:*).
 /// The discriminant (which sub-field) lives in `PrimitiveSettingsState.active_field_id`.
 pub const PRIMITIVE_SETTINGS_FIELD: &str = "prim_settings_field";
 

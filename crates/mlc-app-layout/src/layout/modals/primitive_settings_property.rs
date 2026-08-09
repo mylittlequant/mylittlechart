@@ -41,25 +41,32 @@ use super::primitive_settings_vid::{
 };
 
 /// One declared property plus which generically-dispatchable family it came
-/// from (`Primitive::style_properties()` vs `text_properties()`) — the
-/// family decides the `style_prop:`/`text_prop:` id prefix `apply_property`
-/// (both hosts: `mlc-app`'s `input/settings.rs`, `mlc-ui-lab`'s
-/// `dispatch.rs`) already dispatches generically on for ANY id.
-/// `level_properties()` is intentionally not folded in here — every
-/// override of it today (Pitchfork's `level_mode`) is read directly by
-/// `primitive_settings_levels` for its own bespoke top section, not through
-/// this generic path.
+/// from (`Primitive::style_properties()` vs `text_properties()` vs
+/// `level_properties()`) — the family decides the `style_prop:`/`text_prop:`/
+/// `level_prop:` id prefix `apply_property` (both hosts: `mlc-app`'s
+/// `input/settings.rs`, `mlc-ui-lab`'s `dispatch.rs`) already dispatches
+/// generically on for ANY id.
 pub(crate) type DeclaredProperty = (ConfigProperty, PropertyKind);
 
-/// Every property a primitive declares across both generically-dispatchable
-/// families, in declaration order (NOT yet grouped or sorted — callers pick
-/// their own categories out via [`properties_in`]).
+/// Every property a primitive declares across all three generically-
+/// dispatchable families, in declaration order (NOT yet grouped or sorted —
+/// callers pick their own categories out via [`properties_in`]).
+///
+/// `level_properties()` was folded in 2026-08-09 — it used to be excluded
+/// with a doc claiming `primitive_settings_levels` read it directly for a
+/// bespoke top section; that was never true (verified by reading all of
+/// `primitive_settings_levels.rs`), so every override of it (Pitchfork's
+/// `level_mode`) was declared but unreachable from the UI. `PropertyKind`
+/// already had the third `Level` variant and `DrawingManager::apply_property`
+/// already dispatched it to `apply_level_property` — only this fold-in and
+/// the `level_prop:` prefix in [`field_id`] were missing.
 pub(crate) fn declared_properties(prim: &dyn Primitive) -> Vec<DeclaredProperty> {
     let mut all: Vec<DeclaredProperty> =
         prim.style_properties().into_iter().map(|p| (p, PropertyKind::Style)).collect();
     if let Some(text_props) = prim.text_properties() {
         all.extend(text_props.into_iter().map(|p| (p, PropertyKind::Text)));
     }
+    all.extend(prim.level_properties().into_iter().map(|p| (p, PropertyKind::Level)));
     all
 }
 
@@ -86,7 +93,8 @@ fn field_id(kind: PropertyKind, prop_id: &str) -> String {
     }
     match kind {
         PropertyKind::Text => format!("text_prop:{prop_id}"),
-        PropertyKind::Style | PropertyKind::Level => format!("style_prop:{prop_id}"),
+        PropertyKind::Style => format!("style_prop:{prop_id}"),
+        PropertyKind::Level => format!("level_prop:{prop_id}"),
     }
 }
 

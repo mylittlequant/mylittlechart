@@ -195,6 +195,17 @@ pub fn draw(
     show_tf || show_points
 }
 
+/// This primitive's own point labels — `Primitive::point_labels()` first
+/// (state-dependent notation, e.g. an Elliott wave's `degree`-driven names,
+/// via `wave_labels()` on each real elliott type), falling back to the
+/// static type-id-keyed catalogue (`mlc_core::drawing::get_point_labels`)
+/// for every primitive whose labels are constant for its type id. The one
+/// place both real call sites in this module resolve labels through, so
+/// they can never drift apart.
+fn resolved_point_labels(prim: &dyn Primitive, count: usize) -> Vec<String> {
+    prim.point_labels().unwrap_or_else(|| mlc_core::drawing::get_point_labels(prim.type_id(), count))
+}
+
 /// Whether the "Точки" group has anything a live settings-search query
 /// matches — its own header title or any point's own label.
 fn group_points_matches(prim: &dyn Primitive, query: &str) -> bool {
@@ -203,7 +214,7 @@ fn group_points_matches(prim: &dyn Primitive, query: &str) -> bool {
         return true;
     }
     let points = prim.points();
-    let labels = mlc_core::drawing::get_point_labels(prim.type_id(), points.len());
+    let labels = resolved_point_labels(prim, points.len());
     labels.iter().any(|l| super::primitive_settings::search_matches(query, &[l.as_str()]))
 }
 
@@ -243,7 +254,7 @@ fn draw_points_group(
     draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::GroupPoints.get(lang), Some(&points.len().to_string()));
     *row_y += GROUP_HEADER_H;
 
-    let point_labels = mlc_core::drawing::get_point_labels(prim.type_id(), points.len());
+    let point_labels = resolved_point_labels(prim, points.len());
     let point_prefix = ConfigKey::PointLabel.get(lang);
     let name_w = 60.0;
     let field_w = ((x1 - x0 - name_w - 16.0) / 2.0).max(70.0);

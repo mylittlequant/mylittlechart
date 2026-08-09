@@ -46,7 +46,7 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 151] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 157] = [
     /* 0  Labels            */ [ "Labels",                     "Подписи",                                "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "процент",                                "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -218,6 +218,19 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 151] = [
     /* 148 ColorModeMono     */ [ "Mono",                     "Моно",                    "Mono",                         "Mono",                           "Mono",                               "Mono",                   "单色",         "モノ",         "모노",         "أحادي",             "Mono",                   "Mono",                  "Mono",                   "Моно",               "मोनो"               ],
     /* 149 ColorModePalette  */ [ "Palette",                  "Палитра",                 "Paleta",                       "Palette",                        "Palette",                            "Paleta",                 "调色板",       "パレット",     "팔레트",       "لوحة الألوان",       "Tavolozza",              "Palet",                  "Paleta",                 "Палітра",            "पैलेट"              ],
     /* 150 LabelColorInherit*/ [ "Inherit Line Color",       "Наследовать цвет линии",  "Heredar color de línea",       "Linienfarbe erben",              "Hériter couleur de ligne",           "Herdar cor da linha",    "继承线条颜色", "線の色を継承", "선 색상 상속", "وراثة لون الخط",     "Eredita colore linea",   "Çizgi Rengini Devral",   "Dziedzicz kolor linii",  "Успадкувати колір лінії","रेखा रंग विरासत में लें" ],
+
+    // Elliott Correction's own `CorrectionType` select (2026-08-09
+    // modal-surface-inventory audit) — a real field with zero
+    // `ConfigProperty` representation until this pass.
+    /* 151 CorrectionType    */ [ "Correction Type",          "Тип коррекции",           "Tipo de corrección",           "Korrekturtyp",                   "Type de correction",                 "Tipo de correção",      "修正类型",     "修正タイプ",   "조정 유형",    "نوع التصحيح",       "Tipo di correzione",     "Düzeltme Türü",          "Typ korekty",            "Тип корекції",       "सुधार प्रकार"        ],
+    /* 152 CorrectionZigzag  */ [ "Zigzag",                   "Зигзаг",                  "Zigzag",                       "Zickzack",                       "Zigzag",                             "Ziguezague",             "之字形",       "ジグザグ",     "지그재그",     "متعرج",             "Zigzag",                 "Zikzak",                 "Zygzak",                 "Зигзаг",             "ज़िगज़ैग"           ],
+    /* 153 CorrectionFlat    */ [ "Flat",                     "Плоская",                 "Plana",                        "Flach",                          "Plate",                              "Plana",                  "平台形",       "フラット",     "플랫",         "مسطح",              "Piatta",                 "Düz",                    "Płaska",                 "Плоска",             "फ्लैट"               ],
+    /* 154 CorrectionExpanded*/ [ "Expanded",                 "Расширенная",             "Expandida",                    "Erweitert",                      "Étendue",                            "Expandida",              "扩张形",       "拡大型",       "확장형",       "موسّع",              "Espansa",                "Genişletilmiş",          "Rozszerzona",            "Розширена",          "विस्तारित"           ],
+    /* 155 CorrectionRunning */ [ "Running",                  "Бегущая",                 "Corrida",                      "Laufend",                        "Courante",                           "Corrida",                "运行形",       "ランニング型", "러닝형",       "جارٍ",              "In corsa",               "Koşan",                  "Biegnąca",               "Біжуча",             "रनिंग"               ],
+
+    // Freehand brush/highlighter stroke thickness (2026-08-09 — previously
+    // a bare hardcoded "Brush Size" literal on `Highlighter` only).
+    /* 156 BrushSize         */ [ "Brush Size",               "Размер кисти",            "Tamaño de pincel",             "Pinselgröße",                    "Taille du pinceau",                  "Tamanho do pincel",     "画笔大小",     "ブラシサイズ", "브러시 크기", "حجم الفرشاة",       "Dimensione pennello",   "Fırça Boyutu",           "Rozmiar pędzla",        "Розмір пензля",      "ब्रश आकार"           ],
 ];
 
 // =============================================================================
@@ -1190,6 +1203,19 @@ pub(super) static HEAD_SHOULDERS_KEY_TABLE: [[&str; N_LANG]; 5] = [
 ];
 
 // =============================================================================
+// PositionPointKey table  (2 named points × N_LANG) — long_position /
+// short_position's Placement tab (see `PositionPointKey`'s own doc for why
+// there are only two rows, not three).
+//
+//  Col:  0=En              1=Ru              2..14=""
+// =============================================================================
+
+pub(super) static POSITION_POINT_KEY_TABLE: [[&str; N_LANG]; 2] = [
+    /* 0 Entry  */ [ "Entry",  "Вход", "Entrada",   "Einstieg", "Entrée",   "Entrada", "入场", "エントリー", "진입", "الدخول", "Ingresso",  "Giriş", "Wejście", "Вхід", "प्रवेश" ],
+    /* 1 Target */ [ "Target", "Цель", "Objetivo",  "Ziel",     "Objectif", "Alvo",    "目标", "目標",       "목표", "الهدف",  "Obiettivo", "Hedef", "Cel",     "Ціль", "लक्ष्य" ],
+];
+
+// =============================================================================
 // Completeness invariant (executable documentation)
 // =============================================================================
 //
@@ -1242,5 +1268,6 @@ mod completeness {
         assert_full("TOOLBAR_MENU_KEY_TABLE", &TOOLBAR_MENU_KEY_TABLE);
         assert_full("CITY_KEY_TABLE", &CITY_KEY_TABLE);
         assert_full("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
+        assert_full("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
     }
 }

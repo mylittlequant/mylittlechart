@@ -6190,6 +6190,24 @@ impl ChartApp {
                                             }
                                         }
                                     }
+                                } else if let Some(prop_id_owned) = field_id.strip_prefix("level_prop:").map(|s| s.to_string()) {
+                                    if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                                        if let Some(bid) = active_bid_sl {
+                                            let new_value_opt = {
+                                                let dreg = self.core.drawings();
+                                                let prims = dreg.primitives(bid);
+                                                prims.iter().find(|p| p.data().id == prim_id).and_then(|prim| {
+                                                    let level_props = prim.level_properties();
+                                                    level_props.iter().find(|p| p.id == prop_id_owned.as_str())
+                                                        .and_then(|prop| prop.value.as_number())
+                                                        .map(|current| (current + delta).clamp(min_val, max_val))
+                                                })
+                                            };
+                                            if let Some(new_value) = new_value_opt {
+                                                self.apply_slider_value(&field_id, new_value);
+                                            }
+                                        }
+                                    }
                                 } else if field_id.starts_with("tf_") && field_id.ends_with("_slider") {
                                     if let Some(tf_idx) = field_id.strip_prefix("tf_")
                                         .and_then(|s| s.strip_suffix("_slider"))

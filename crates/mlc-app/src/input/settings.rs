@@ -1645,6 +1645,18 @@ impl ChartApp {
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             eprintln!("[ChartApp] prim_settings style_prop '{}' auto-committed: {}", prop_id, text);
+        } else if let Some(prop_id) = field.strip_prefix("level_prop:") {
+            use mlc_core::drawing::primitives_v2::config::PropertyValue;
+            if let Ok(val) = text.trim().parse::<f64>() {
+                if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
+                    if let Some(bid) = active_bid_prim {
+                        self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &PropertyValue::Number(val));
+                    }
+                }
+            }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
+            eprintln!("[ChartApp] prim_settings level_prop '{}' auto-committed: {}", prop_id, text);
         } else if let Some(tmpl_id) = field.strip_prefix("template_name:") {
             // Template menu rename-in-place commit (item 4, 2026-08-08
             // review) — an empty name is silently rejected, same as the
@@ -1819,6 +1831,17 @@ impl ChartApp {
                     self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                 }
                 eprintln!("[ChartApp] prim_settings text_prop '{}' selected: {}", prop_id, val);
+                return;
+            }
+
+            if let Some(prop_id) = fid.strip_prefix("level_prop:") {
+                let new_val = PropertyValue::String(val.to_string());
+                if let Some(bid) = active_bid_prim {
+                    self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] prim_settings level_prop '{}' selected: {}", prop_id, val);
                 return;
             }
 
@@ -2273,6 +2296,81 @@ impl ChartApp {
                 }
             } else {
                 eprintln!("[ChartApp] prim_settings style_prop '{}' not found", prop_id);
+            }
+            return;
+        }
+
+        // ── Level properties: level_prop:{id} ─────────────────────────────────
+        // The `PropertyKind::Level` twin of the `style_prop:` block above —
+        // Pitchfork's `level_mode` (Select) is the first real user of this
+        // path (declared via `Primitive::level_properties()`, previously
+        // folded into the modal's rendered rows but never into the click
+        // dispatch, so it drew but did nothing).
+        if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
+            let prop_info: Option<(PropertyType, PropertyValue)> = active_bid_prim
+                .and_then(|bid| {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .find(|p| p.data().id == prim_id)
+                        .and_then(|p| {
+                            let level_props = p.level_properties();
+                            level_props.iter().find(|prop| prop.id == prop_id)
+                                .map(|prop| (prop.prop_type.clone(), prop.value.clone()))
+                        })
+                });
+
+            if let Some((prop_type, prop_value)) = prop_info {
+                match prop_type {
+                    PropertyType::Boolean => {
+                        let current = prop_value.as_bool().unwrap_or(false);
+                        let new_val = PropertyValue::Boolean(!current);
+                        if let Some(bid) = active_bid_prim {
+                            self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
+                        }
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
+                        eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
+                    }
+                    PropertyType::Select { ref options } => {
+                        let current = prop_value.as_string().unwrap_or_default().to_string();
+                        let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
+                        let next_idx = (current_idx + 1) % options.len().max(1);
+                        if let Some(next_opt) = options.get(next_idx) {
+                            let new_val = PropertyValue::String(next_opt.value.clone());
+                            let next_value = next_opt.value.clone();
+                            if let Some(bid) = active_bid_prim {
+                                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
+                            }
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
+                            eprintln!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
+                        }
+                    }
+                    PropertyType::Color => {
+                        let current_color = prop_value.as_color().unwrap_or("#ffffff");
+                        let widget_id_str = format!("prim_settings:item:{}", item_id);
+                        let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
+                        let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                        self.panel_app.primitive_settings_state.open_color_picker_smart(
+                            item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
+                        );
+                        eprintln!("[ChartApp] prim_settings level_prop '{}' color picker opened", prop_id);
+                    }
+                    PropertyType::Number { .. } => {
+                        let current_val = match prop_value {
+                            PropertyValue::Number(f) => format!("{}", f),
+                            PropertyValue::Integer(i) => format!("{}", i),
+                            _ => String::new(),
+                        };
+                        self.start_prim_field_editing(item_id, &current_val, true);
+                        eprintln!("[ChartApp] prim_settings level_prop '{}' number editing started", prop_id);
+                    }
+                    _ => {
+                        eprintln!("[ChartApp] prim_settings level_prop '{}' unsupported type", prop_id);
+                    }
+                }
+            } else {
+                eprintln!("[ChartApp] prim_settings level_prop '{}' not found", prop_id);
             }
             return;
         }

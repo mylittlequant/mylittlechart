@@ -424,10 +424,10 @@ impl Primitive for ShortPosition {
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(14),
             ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::AppearanceLine)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(15),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::AppearanceLine)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(16),
             ConfigProperty::show_live_label(self.show_live_label)
                 .with_category(PropertyCategory::AppearanceLine)

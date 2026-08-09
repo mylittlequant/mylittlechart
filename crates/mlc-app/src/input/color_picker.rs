@@ -664,6 +664,17 @@ impl ChartApp {
                 } else {
                     None
                 };
+                // Level colour swatch, `PropertyKind::Level` twin of
+                // `style_prop_change` above — no `level_properties()`
+                // override declares a `Color` property today, but a future
+                // one that does must not silently drop the picked colour.
+                let level_prop_change = if field.starts_with("level_prop:") {
+                    let prop_id = field["level_prop:".len()..].to_string();
+                    let value = mlc_core::drawing::primitives_v2::config::PropertyValue::Color(color.to_string());
+                    Some((prop_id, value))
+                } else {
+                    None
+                };
                 // Level colour swatch: `level_v{key}_color` (the level's own
                 // line) / `level_v{key}_fill_color` (its band, from the row
                 // inspector). `{key}` is the level's VALUE, not a row index
@@ -706,6 +717,9 @@ impl ChartApp {
                 let mut guard = self.core.drawings_mut();
                 if let Some((prop_id, value)) = style_prop_change {
                     guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, &prop_id, &value);
+                }
+                if let Some((prop_id, value)) = level_prop_change {
+                    guard.apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, &prop_id, &value);
                 }
                 if let Some((level, is_fill)) = level_color_change {
                     let configs = guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| p.level_configs());

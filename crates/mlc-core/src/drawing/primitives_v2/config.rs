@@ -1402,6 +1402,24 @@ impl ConfigProperty {
         )
     }
 
+    /// Create "Correction Type" select property with i18n (Elliott
+    /// Correction's `CorrectionType` — Zigzag/Flat/Expanded/Running).
+    /// 2026-08-09: previously a real field with zero declared representation.
+    pub fn correction_type(value: &str) -> Self {
+        let lang = current_language();
+        Self::select(
+            "correction_type",
+            ConfigKey::CorrectionType.get(lang),
+            value,
+            vec![
+                SelectOption::new("zigzag", ConfigKey::CorrectionZigzag.get(lang)),
+                SelectOption::new("flat", ConfigKey::CorrectionFlat.get(lang)),
+                SelectOption::new("expanded", ConfigKey::CorrectionExpanded.get(lang)),
+                SelectOption::new("running", ConfigKey::CorrectionRunning.get(lang)),
+            ],
+        )
+    }
+
     /// Create "Font Size" number property with i18n
     pub fn font_size(value: f64) -> Self {
         Self::number("font_size", ConfigKey::FontSize.get(current_language()), value, Some(8.0), Some(72.0))

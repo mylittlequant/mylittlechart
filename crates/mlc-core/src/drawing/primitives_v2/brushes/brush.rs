@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext,
+    RenderContext, LineStyle,
+    config::{ConfigProperty, PropertyValue, PropertyCategory},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,8 +71,22 @@ impl Primitive for Brush {
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
+        // Round cap/join deliberately kept regardless of `data.style` (2026-08-09
+        // brush-defect pass) — a hand-drawn freehand squiggle reads as a pen
+        // stroke only with rounded corners at every curve segment join; a
+        // butt/miter join here would show sharp spikes at the quadratic-bezier
+        // segment boundaries below, which no freehand tool anywhere draws.
+        // `Highlighter` (the other `FreehandDrag` primitive) makes the same
+        // choice for the same reason.
         ctx.set_line_cap("round");
         ctx.set_line_join("round");
+        match self.data.style {
+            LineStyle::Solid => ctx.set_line_dash(&[]),
+            LineStyle::Dashed => ctx.set_line_dash(&[8.0, 4.0]),
+            LineStyle::Dotted => ctx.set_line_dash(&[2.0, 2.0]),
+            LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
+            LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
+        }
 
         // Convert to screen coordinates
         let screen_pts: Vec<(f64, f64)> = self.points.iter()
@@ -109,6 +125,31 @@ impl Primitive for Brush {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    /// `brush_size` existed as a real struct field with no way to reach it
+    /// from the settings modal (2026-08-09 modal-surface-inventory audit —
+    /// it only ever drove `hit_test`'s tolerance, drifting silently from
+    /// `data.width` the moment the base-stroke row's own width control was
+    /// used). Mirrors `Highlighter::style_properties`'s identical fix for
+    /// the same field, same bounds shape.
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        vec![
+            ConfigProperty::number("brush_size", ConfigKey::BrushSize.get(current_language()), self.brush_size, Some(1.0), Some(20.0))
+                .with_category(PropertyCategory::AppearanceLine)
+                .with_order(20),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "brush_size" {
+            if let Some(v) = value.as_number() {
+                self.brush_size = v.max(1.0);
+                self.data.width = self.brush_size;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {

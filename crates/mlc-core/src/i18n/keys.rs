@@ -25,6 +25,7 @@ use super::tables::{
     TOOLBAR_MENU_KEY_TABLE,
     CITY_KEY_TABLE,
     HEAD_SHOULDERS_KEY_TABLE,
+    POSITION_POINT_KEY_TABLE,
 };
 
 // =============================================================================
@@ -346,10 +347,29 @@ pub enum ConfigKey {
     // colour"; this checkbox is the only UI path back to `None` once a
     // colour has been chosen — see `LabelStyle::apply_property`'s own doc.
     LabelColorInherit             = 150,
+
+    // Elliott Correction's own `CorrectionType` (Zigzag/Flat/Expanded/
+    // Running) — a real field with zero `ConfigProperty` representation
+    // until 2026-08-09 (modal-surface-inventory audit). Own keys rather
+    // than reusing `Expanded`/`Direction*` above: those already belong to
+    // an unrelated UI context (bubble/callout expand-toggle, signpost
+    // direction) and a shared key would let an edit to one silently retext
+    // the other.
+    CorrectionType                = 151,
+    CorrectionZigzag              = 152,
+    CorrectionFlat                = 153,
+    CorrectionExpanded            = 154,
+    CorrectionRunning             = 155,
+
+    // Freehand brush/highlighter stroke thickness (`brush_size` — distinct
+    // from the base `stroke_width` row: it also drives hit-test tolerance).
+    // Was a bare hardcoded "Brush Size" literal on `Highlighter` only; moved
+    // into this table 2026-08-09 alongside giving `Brush` the same control.
+    BrushSize                     = 156,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 151;
+    pub const COUNT: usize = 157;
 
     /// Get translation for this key
     #[inline]
@@ -2257,6 +2277,46 @@ impl uzor::i18n::Translate for HeadShouldersKey {
     }
 }
 
+// =============================================================================
+// Position (Long/Short) Point Keys
+// =============================================================================
+
+/// Named point labels for the `long_position`/`short_position` drawing
+/// primitives' Placement tab (`drawing::get_point_labels`). Only two —
+/// `points()` for both types returns exactly `[(ts_ms, entry_price),
+/// (end_ts_ms, take_profit)]` (2026-08-09 audit: `stop_loss` is a real field
+/// but is not part of the points array either type exposes, driven instead
+/// by its own `ControlPointType::Point2` drag handle and the
+/// `stop_zone_color` style property — there is no third "Stop" row to name
+/// here).
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `POSITION_POINT_KEY_TABLE`, and also the point order both primitives
+/// return from `points()` (entry, then target).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum PositionPointKey {
+    Entry  = 0,
+    Target = 1,
+}
+
+impl PositionPointKey {
+    pub const COUNT: usize = 2;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&POSITION_POINT_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for PositionPointKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&POSITION_POINT_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2289,5 +2349,13 @@ mod tests {
     fn test_head_shoulders_keys() {
         assert_eq!(HeadShouldersKey::Head.get(Language::En), "Head");
         assert_eq!(HeadShouldersKey::Head.get(Language::Ru), "Голова");
+    }
+
+    #[test]
+    fn test_position_point_keys() {
+        assert_eq!(PositionPointKey::Entry.get(Language::En), "Entry");
+        assert_eq!(PositionPointKey::Entry.get(Language::Ru), "Вход");
+        assert_eq!(PositionPointKey::Target.get(Language::En), "Target");
+        assert_eq!(PositionPointKey::Target.get(Language::Ru), "Цель");
     }
 }

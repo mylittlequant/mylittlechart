@@ -281,6 +281,14 @@ fn current_color_for_field(field: &str, prim: &dyn Primitive) -> String {
             .and_then(|p| p.value.as_color().map(str::to_string))
             .unwrap_or_else(|| prim.data().color.stroke.clone());
     }
+    if let Some(prop_id) = field.strip_prefix("level_prop:") {
+        return prim
+            .level_properties()
+            .into_iter()
+            .find(|p| p.id == prop_id)
+            .and_then(|p| p.value.as_color().map(str::to_string))
+            .unwrap_or_else(|| prim.data().color.stroke.clone());
+    }
     if let Some(rest) = field.strip_prefix("level_v") {
         // `_fill_color`/`_fill` checked BEFORE the plain `_color` suffix:
         // `"..._fill_color".strip_suffix("_color")` also succeeds (it just
@@ -368,6 +376,8 @@ fn apply_color_to_target(field: &str, color: &str, prim: &mut dyn Primitive) {
         prim.apply_style_property(prop_id, &PropertyValue::Color(color.to_string()));
     } else if let Some(prop_id) = field.strip_prefix("text_prop:") {
         prim.apply_text_property(prop_id, &PropertyValue::Color(color.to_string()));
+    } else if let Some(prop_id) = field.strip_prefix("level_prop:") {
+        prim.apply_level_property(prop_id, &PropertyValue::Color(color.to_string()));
     } else if let Some(rest) = field.strip_prefix("level_v") {
         // Same fill-suffix-first ordering as `current_color_for_field` —
         // see its own comment for why.
@@ -453,6 +463,7 @@ fn apply_prop_primary_click(kind: &str, prop_id: &str, state: &mut PrimitiveSett
     let prop = match kind {
         "style" => prim.style_properties().into_iter().find(|p| p.id == prop_id),
         "text" => prim.text_properties().into_iter().flatten().find(|p| p.id == prop_id),
+        "level" => prim.level_properties().into_iter().find(|p| p.id == prop_id),
         _ => None,
     };
     let Some(prop) = prop else { return false };
@@ -687,6 +698,9 @@ pub fn apply_primitive_settings_click(
         if let Some(prop_id) = fid.strip_prefix("text_prop:") {
             return apply_prop_value("text", prop_id, &PropertyValue::String(val.to_string()), prim);
         }
+        if let Some(prop_id) = fid.strip_prefix("level_prop:") {
+            return apply_prop_value("level", prop_id, &PropertyValue::String(val.to_string()), prim);
+        }
         return false;
     }
 
@@ -701,6 +715,10 @@ pub fn apply_primitive_settings_click(
 
     if let Some(prop_id) = item_id.strip_prefix("text_prop:") {
         return apply_prop_primary_click("text", prop_id, state, prim, ctx);
+    }
+
+    if let Some(prop_id) = item_id.strip_prefix("level_prop:") {
+        return apply_prop_primary_click("level", prop_id, state, prim, ctx);
     }
 
     // `level_v{key}_fill` (bare) is NOT reachable here any more: it is now
@@ -1044,6 +1062,10 @@ fn apply_slider_value(field_id: &str, value: f64, prim: &mut dyn Primitive, stat
     }
     if let Some(prop_id) = field_id.strip_prefix("style_prop:") {
         prim.apply_style_property(prop_id, &PropertyValue::Number(value));
+        return;
+    }
+    if let Some(prop_id) = field_id.strip_prefix("level_prop:") {
+        prim.apply_level_property(prop_id, &PropertyValue::Number(value));
         return;
     }
     if let Some(key) = field_id.strip_prefix("level_v").and_then(|s| s.strip_suffix("_width")) {

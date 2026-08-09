@@ -18,6 +18,7 @@ impl ChartApp {
     /// - `stroke_width`         — primitive stroke width
     /// - `style_prop:*`         — primitive numeric style properties
     /// - `text_prop:*`          — primitive numeric text properties
+    /// - `level_prop:*`         — primitive numeric level properties
     pub(crate) fn apply_slider_value(&mut self, field_id: &str, value: f64) {
 
         // Appearance / style params (glass opacity, blur radius)
@@ -114,6 +115,18 @@ impl ChartApp {
             if let Some(bid) = active_bid {
                 self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
             }
+            self.autosave_snapshot();
+            return;
+        }
+
+        if let Some(prop_id) = field_id.strip_prefix("level_prop:") {
+            use mlc_core::drawing::primitives_v2::config::PropertyValue;
+            let new_val = PropertyValue::Number(value);
+            let active_bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+            if let Some(bid) = active_bid {
+                self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Level, prop_id, &new_val);
+            }
+            self.sync_drawing_back_to_group();
             self.autosave_snapshot();
             return;
         }

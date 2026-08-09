@@ -833,11 +833,20 @@ impl Primitive for Pitchfork {
         }
     }
 
+    /// Folded into the generic declared set by
+    /// `mlc-app-layout`'s `primitive_settings_property::declared_properties`
+    /// (2026-08-09) — `level_mode`/`extend`/`show_labels` now render on the
+    /// Levels tab's base group and dispatch through the `level_prop:{id}`
+    /// path, the `PropertyKind::Level` twin of `style_prop:`/`text_prop:`.
+    /// `extend` (not `extend_lines`) on purpose: `apply_level_property`
+    /// below matches id `"extend"`, and every sibling pitchfork type
+    /// (`schiff`/`modified_schiff`/`inside_pitchfork`) uses the same
+    /// `ConfigProperty::extend()` id for their own equivalent toggle.
     fn level_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::level_mode(self.level_mode.as_str())
                 .with_category(PropertyCategory::LevelsBase).with_order(0),
-            ConfigProperty::extend_lines(self.extend)
+            ConfigProperty::extend(self.extend)
                 .with_category(PropertyCategory::LevelsBase)
                 .with_order(1),
             ConfigProperty::show_labels(self.show_labels)
@@ -871,13 +880,17 @@ impl Primitive for Pitchfork {
         false
     }
 
+    /// `show_labels`/`extend` deliberately NOT declared here any more
+    /// (2026-08-09) — they now live exclusively on the Levels tab via
+    /// `level_properties()` above (`PropertyCategory::LevelsBase`). Keeping
+    /// them here too would have put two controls for the same field on two
+    /// different tabs; the Appearance-tab copy was also silently broken
+    /// (its `"extend_lines"` id had no matching `apply_style_property` arm).
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
-            ConfigProperty::show_labels(self.show_labels).with_order(10),
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
-            ConfigProperty::extend_lines(self.extend).with_order(20),
         ]
     }
 

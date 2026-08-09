@@ -126,6 +126,19 @@ pub struct PrimitiveTemplate {
     #[serde(default)]
     pub custom_text_properties: Vec<(String, PropertyValue)>,
 
+    /// Per-type LEVEL properties (`Primitive::level_properties`) — the third
+    /// declared family, e.g. a pitchfork's `level_mode` / `extend` /
+    /// `show_labels`. Captured and restored exactly like the two above.
+    ///
+    /// Added 2026-08-09, when `level_properties()` was folded into the
+    /// modal's generic declared set: before that these controls were
+    /// unreachable in the UI, so nothing missed them here either. The moment
+    /// they became reachable, a template that did not carry them would have
+    /// silently dropped a type's own settings on every save — which is the
+    /// one thing a template must never do.
+    #[serde(default)]
+    pub custom_level_properties: Vec<(String, PropertyValue)>,
+
     // ---- Timeframe visibility ----------------------------------------------
     /// Which timeframes this primitive shows on — [`PrimitiveData::timeframe_visibility`]
     /// verbatim. `None` means "all timeframes" (the primitive's own default,
@@ -190,6 +203,7 @@ impl PrimitiveTemplate {
             level_configs: Vec::new(),
             custom_style_properties: Vec::new(),
             custom_text_properties: Vec::new(),
+            custom_level_properties: Vec::new(),
             timeframe_visibility: None,
             builtin: false,
             fill_master: None,
@@ -238,6 +252,7 @@ impl PrimitiveTemplate {
             level_configs: Vec::new(),
             custom_style_properties: Vec::new(),
             custom_text_properties: Vec::new(),
+            custom_level_properties: Vec::new(),
             // Timeframe visibility IS a flat `PrimitiveData` field, unlike
             // the three above — captured here, not in `from_primitive`.
             timeframe_visibility: data.timeframe_visibility.clone(),
@@ -278,6 +293,12 @@ impl PrimitiveTemplate {
                 .map(|p| (p.id, p.value))
                 .collect();
         }
+        tmpl.custom_level_properties = prim
+            .level_properties()
+            .into_iter()
+            .filter(|p| !p.readonly)
+            .map(|p| (p.id, p.value))
+            .collect();
         tmpl.fill_master = prim.fill_master();
         tmpl
     }
@@ -476,6 +497,9 @@ impl PrimitiveTemplate {
         for (id, value) in &self.custom_text_properties {
             prim.apply_text_property(id, value);
         }
+        for (id, value) in &self.custom_level_properties {
+            prim.apply_level_property(id, value);
+        }
         // The band fill master, which no declared property covers — see the
         // `fill_master` field's own doc. `"fill_opacity"`'s setter takes a
         // PERCENT, `Primitive::fill_master` reports a 0.0..=1.0 fraction.
@@ -606,6 +630,19 @@ impl PrimitiveTemplate {
             if !text_props_match {
                 return false;
             }
+        }
+        // The third declared family — see `custom_level_properties`. Compared
+        // the same way, and for the same reason: a control the modal can
+        // reach is a control whose drift must be visible.
+        let level_props_match = prim.level_properties().iter().all(|p| {
+            self.custom_level_properties
+                .iter()
+                .find(|(id, _)| id == &p.id)
+                .map(|(_, value)| value)
+                == Some(&p.value)
+        });
+        if !level_props_match {
+            return false;
         }
         true
     }

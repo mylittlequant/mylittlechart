@@ -78,9 +78,12 @@ const GLOBAL_TOGGLE_GAP: f64 = 8.0;
 const GLOBAL_PERCENT_W: f64 = 34.0;
 
 /// The Levels/Base group's own rows: whatever the primitive declares into
-/// `PropertyCategory::LevelsBase` (`style_properties()`, sorted by their own
-/// `order`) if it declares anything — `FibRetracement` is the one type that
-/// does today, see its own doc — or, for every OTHER level-having
+/// `PropertyCategory::LevelsBase` (`style_properties()` and/or
+/// `level_properties()`, sorted by their own `order`) if it declares
+/// anything — `FibRetracement` (via `style_properties()`) and `Pitchfork`
+/// (via `level_properties()`: `level_mode`/`extend`/`show_labels`, folded in
+/// 2026-08-09 — see `primitive_settings_property::declared_properties`'s own
+/// doc) are the two types that do today — or, for every OTHER level-having
 /// primitive, the universal fallback: the SAME three base `PrimitiveData`
 /// fields (colour/width/line style) every level falls back to, which this
 /// tab already drew unconditionally before any primitive declared them.

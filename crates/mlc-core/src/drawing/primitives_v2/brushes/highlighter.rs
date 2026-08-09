@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, apply_opacity};
+use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -113,7 +114,7 @@ impl Primitive for Highlighter {
             ConfigProperty::fill_opacity(self.opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(20),
-            ConfigProperty::number("brush_size", "Brush Size", self.brush_size, Some(4.0), Some(60.0))
+            ConfigProperty::number("brush_size", ConfigKey::BrushSize.get(current_language()), self.brush_size, Some(4.0), Some(60.0))
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(21),
         ]

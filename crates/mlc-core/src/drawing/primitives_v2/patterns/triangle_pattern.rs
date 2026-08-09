@@ -218,10 +218,10 @@ impl Primitive for TrianglePattern {
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(12),
             ConfigProperty::label_font_size(self.label_style.font_size)
-                .with_category(PropertyCategory::AppearanceLine)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(13),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
-                .with_category(PropertyCategory::AppearanceLine)
+                .with_category(PropertyCategory::LabelsText)
                 .with_order(14),
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)

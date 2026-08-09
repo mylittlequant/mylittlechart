@@ -399,7 +399,7 @@ impl Primitive for FibSpiral {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::ConfigProperty;
+        use super::super::config::{ConfigProperty, PropertyCategory};
         let mut props = vec![
             ConfigProperty::levels(self.show_percentages).with_order(10),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(11),
@@ -408,8 +408,8 @@ impl Primitive for FibSpiral {
             ConfigProperty::clockwise(self.clockwise).with_order(21),
             ConfigProperty::flip_horizontal(self.flip_horizontal).with_order(22),
             ConfigProperty::flip_vertical(self.flip_vertical).with_order(23),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_order(41),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
         props

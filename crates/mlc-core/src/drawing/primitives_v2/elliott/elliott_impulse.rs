@@ -60,6 +60,9 @@ impl Primitive for ElliottImpulse {
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
     fn set_points(&mut self, pts: &[(i64, f64)]) { for (i, &p) in pts.iter().take(6).enumerate() { self.points[i] = p; } }
+    fn point_labels(&self) -> Option<Vec<String>> {
+        Some(self.wave_labels().iter().map(|s| s.to_string()).collect())
+    }
     fn translate(&mut self, td: i64, pd: f64) { for p in &mut self.points { p.0 += td; p.1 += pd; } }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
@@ -170,8 +173,8 @@ impl Primitive for ElliottImpulse {
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
             ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(12),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::AppearanceLine).with_order(13),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::AppearanceLine).with_order(14),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(13),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(14),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props

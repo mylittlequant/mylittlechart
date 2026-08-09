@@ -275,6 +275,19 @@ pub trait Primitive: Send + Sync {
     /// Set coordinate points.  `points[n].0` is Unix timestamp in **milliseconds**.
     fn set_points(&mut self, points: &[(i64, f64)]);
 
+    /// Per-instance point labels for the Placement tab's points table, when
+    /// they depend on primitive STATE rather than just the type id (e.g. an
+    /// Elliott wave's notation depends on its own `degree` field — the
+    /// static `drawing::get_point_labels(type_id, count)` catalogue used for
+    /// every other named-point type (harmonics, head & shoulders, ...) can
+    /// only key off `type_id`, so it cannot express that). `None` means
+    /// "consult the static catalogue instead" — the default for every
+    /// primitive whose labels are constant for its type id. Length need not
+    /// match `points().len()`; the caller takes/pads as needed.
+    fn point_labels(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// Translate the primitive by a timestamp delta (ms) and a price delta.
     fn translate(&mut self, ts_delta_ms: i64, price_delta: f64);
 

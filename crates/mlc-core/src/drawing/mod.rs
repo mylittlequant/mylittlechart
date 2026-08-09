@@ -222,7 +222,8 @@ pub use primitives_v2::signals::{
     SystemSignal, SignalType, SignalPrimitive, StrategySignalConfig,
 };
 
-/// Get point labels for multi-point drawing primitives.
+/// Get point labels for multi-point drawing primitives, keyed by `type_id`
+/// alone.
 ///
 /// Returns appropriate labels based on the primitive type:
 /// - XABCD patterns: `["X", "A", "B", "C", "D"]`
@@ -230,13 +231,27 @@ pub use primitives_v2::signals::{
 /// - Head and shoulders: named shoulder/head/neckline labels
 ///   (`i18n::HeadShouldersKey`, real per-language trading terminology)
 /// - Three drives: `["1", "2", "3", "4", "5", "6"]`
-/// - Elliott waves: numeric `["1", "2", "3", ...]`
+/// - Triangle pattern: `["A", "B", "C"]`
+/// - Long/short position: `["Entry", "Target"]` (`i18n::PositionPointKey`) —
+///   only two; see that key's own doc for why there is no third "Stop" row
 /// - Default: empty strings — every primitive without a named-point
 ///   scheme falls through to the caller's own localized "Point N:"
 ///   fallback (`primitive_settings.rs`, `ConfigKey::PointLabel`)
 ///   instead of carrying a label here. This used to return a hardcoded,
 ///   un-numbered Russian "Точка" for every point of every unmatched
 ///   primitive type (i.e. almost all of them) regardless of language.
+///
+/// Elliott wave types are deliberately NOT matched here (2026-08-09) — their
+/// notation depends on the primitive's own `degree` field (`WaveDegree`),
+/// which this type_id-only function has no access to. Every real elliott
+/// type overrides `Primitive::point_labels()` instead (delegating to its own
+/// `wave_labels()`, which already reads `self.degree`); both real call sites
+/// (`primitive_settings_placement.rs`) try `prim.point_labels()` first and
+/// only fall back to this function when it returns `None`. An elliott-
+/// prefixed type that does NOT override `point_labels()` — none exists
+/// today — falls through to the generic empty-label default below, same as
+/// any other primitive with no named-point scheme; it used to get a flat,
+/// meaningless `"1","2","3"...` here, which was worse than an honest blank.
 pub fn get_point_labels(primitive_type: &str, count: usize) -> Vec<String> {
     match primitive_type {
         "xabcd_pattern" | "cypher_pattern" => {
@@ -282,8 +297,14 @@ pub fn get_point_labels(primitive_type: &str, count: usize) -> Vec<String> {
                 .map(String::from)
                 .collect()
         }
-        s if s.starts_with("elliott") => {
-            (1..=count).map(|i| i.to_string()).collect()
+        "long_position" | "short_position" => {
+            use crate::i18n::{PositionPointKey, current_language};
+            let lang = current_language();
+            [PositionPointKey::Entry, PositionPointKey::Target]
+                .into_iter()
+                .take(count)
+                .map(|k| k.get(lang).to_string())
+                .collect()
         }
         _ => {
             // Empty label per point — the caller (primitive_settings.rs)

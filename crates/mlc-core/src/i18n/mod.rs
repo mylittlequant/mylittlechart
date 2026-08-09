@@ -80,6 +80,7 @@ pub use keys::{
     ToolbarMenuKey,
     CityKey,
     HeadShouldersKey,
+    PositionPointKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
