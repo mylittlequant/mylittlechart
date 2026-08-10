@@ -60,8 +60,8 @@ const ROW_H: f64 = 26.0;
 const GROUP_HEADER_H: f64 = 22.0;
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const GROUP_GAP: f64 = 9.0;
-const PILL_ROW_H: f64 = 24.0;
-const RANGE_ROW_H: f64 = 24.0;
+pub const PILL_ROW_H: f64 = 24.0;
+pub const RANGE_ROW_H: f64 = 24.0;
 
 /// The six numeric timeframe classes, in the mock's own order. `ranges` is
 /// boolean-only, listed separately below.
@@ -321,7 +321,7 @@ fn draw_points_group(
     *row_y += GROUP_PAD_BOTTOM;
 }
 
-fn draw_number_field(
+pub fn draw_number_field(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     widget_theme: &WidgetTheme,
@@ -374,7 +374,7 @@ fn draw_time_field(
     draw_number_field(ctx, toolbar_theme, widget_theme, state, result, rect, field_id, committed);
 }
 
-fn draw_pill(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, y: f64, label: &str, on: bool) -> WidgetRect {
+pub fn draw_pill(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, y: f64, label: &str, on: bool) -> WidgetRect {
     ctx.set_font("11.5px sans-serif");
     let w = ctx.measure_text(label) + 20.0;
     let rect = WidgetRect::new(x, y, w, PILL_ROW_H);

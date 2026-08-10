@@ -821,7 +821,7 @@ fn draw_ladder(
     }
 }
 
-fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, toolbar_theme: &ToolbarTheme, off_bg: &str) {
+pub fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, toolbar_theme: &ToolbarTheme, off_bg: &str) {
     ctx.set_fill_color(if checked { &toolbar_theme.item_bg_active } else { off_bg });
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -839,7 +839,7 @@ fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, t
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_level_value_field(
+pub fn draw_level_value_field(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     widget_theme: &WidgetTheme,
@@ -876,7 +876,7 @@ fn draw_level_value_field(
     result.content_items.push((field_id, rect));
 }
 
-fn draw_level_bar(ctx: &mut dyn RenderContext, rect: WidgetRect, this_color: &str, next_color: Option<&str>, visible: bool) {
+pub fn draw_level_bar(ctx: &mut dyn RenderContext, rect: WidgetRect, this_color: &str, next_color: Option<&str>, visible: bool) {
     let band_alpha = if visible { 0.16 } else { 0.05 };
     let a = mlc_core::apply_opacity(this_color, band_alpha);
     ctx.begin_path();
@@ -1050,7 +1050,7 @@ fn draw_inspector(
     }
 }
 
-fn draw_style_segment(ctx: &mut dyn RenderContext, rect: WidgetRect, style_id: &str, selected: bool, toolbar_theme: &ToolbarTheme, off_bg: &str) {
+pub fn draw_style_segment(ctx: &mut dyn RenderContext, rect: WidgetRect, style_id: &str, selected: bool, toolbar_theme: &ToolbarTheme, off_bg: &str) {
     ctx.set_fill_color(if selected { &toolbar_theme.item_bg_active } else { off_bg });
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     ctx.set_stroke_color(&toolbar_theme.separator);

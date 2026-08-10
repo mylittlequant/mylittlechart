@@ -66,7 +66,7 @@ use uzor::types::Rect as WidgetRect;
 
 use super::primitive_settings_property::{declared_properties, draw_property_row, properties_in, DeclaredProperty};
 
-pub(crate) const ROW_H: f64 = 26.0;
+pub const ROW_H: f64 = 26.0;
 const GROUP_HEADER_H: f64 = 22.0;
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const GROUP_GAP: f64 = 9.0;
@@ -103,7 +103,7 @@ const LABEL_CONTROL_GAP: f64 = 8.0;
 /// unusually short caption set (nothing declared, base row only) nor an
 /// unusually long one can push a checkbox off the edge of a narrow modal or
 /// eat most of a wide one.
-pub(crate) fn compute_label_col(ctx: &mut dyn RenderContext, prim: &dyn Primitive) -> f64 {
+pub fn compute_label_col(ctx: &mut dyn RenderContext, prim: &dyn Primitive) -> f64 {
     let lang = current_language();
     ctx.set_font("12px sans-serif");
 
@@ -447,7 +447,7 @@ fn draw_base_stroke_rows(
 // the same widgets too).
 // =============================================================================
 
-pub(crate) fn line_style_display_name(style: LineStyle, lang: mlc_core::i18n::Language) -> &'static str {
+pub fn line_style_display_name(style: LineStyle, lang: mlc_core::i18n::Language) -> &'static str {
     match style {
         LineStyle::Solid => StyleKey::Solid.get(lang),
         LineStyle::Dashed => StyleKey::Dashed.get(lang),
@@ -457,7 +457,7 @@ pub(crate) fn line_style_display_name(style: LineStyle, lang: mlc_core::i18n::La
     }
 }
 
-fn draw_group_header(
+pub fn draw_group_header(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     x0: f64,
@@ -485,12 +485,22 @@ fn draw_group_header(
     }
 }
 
+// The row builders below (`draw_label`/`draw_bool_row`/`draw_slider_row`/
+// `draw_value_dropdown`/`draw_split_value_control`/`draw_toggle_segment`,
+// plus `ROW_H`/`SplitValueKind`/`line_style_display_name`) are `pub`, not
+// `pub(crate)`, since 2026-08-10: `mlc-ui-lab` draws the APPROVED but
+// not-yet-implemented archetype modals with them. A design prototype that
+// hand-rolls its own checkbox is a prototype of a different product — the
+// whole point of hosting the lab against this crate is that a row in the
+// lab is the same pixels as a row in the app. Nothing about their
+// behaviour changed; only who may call them.
+
 /// Draws `text` left-aligned in the row's label column, clipped to
 /// `label_col` minus [`LABEL_CONTROL_GAP`] so it can never run into the
 /// control that starts at `x + label_col` — see [`compute_label_col`]'s own
 /// doc for how that width is chosen (row-spacing fix, 2026-08-08; per-
 /// primitive measured column, 2026-08-09).
-pub(crate) fn draw_label(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, label_col: f64, y: f64, text: &str) {
+pub fn draw_label(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f64, label_col: f64, y: f64, text: &str) {
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);
     ctx.set_text_align(TextAlign::Left);
@@ -503,7 +513,7 @@ pub(crate) fn draw_label(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarThe
     ctx.restore();
 }
 
-pub(crate) fn draw_bool_row(
+pub fn draw_bool_row(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     result: &mut PrimitiveSettingsResult,
@@ -533,7 +543,7 @@ pub(crate) fn draw_bool_row(
     result.content_items.push((field_id.to_string(), rect));
 }
 
-pub(crate) fn draw_toggle_segment(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, rect: WidgetRect, label: &str, on: bool) {
+pub fn draw_toggle_segment(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, rect: WidgetRect, label: &str, on: bool) {
     ctx.set_fill_color(if on { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     ctx.set_stroke_color(&toolbar_theme.separator);
@@ -558,7 +568,7 @@ pub(crate) fn draw_toggle_segment(ctx: &mut dyn RenderContext, toolbar_theme: &T
 /// restore): a single button split into two hit regions — passed to
 /// [`draw_split_value_control`] so it knows which dropdown content to
 /// anchor when this row's own menu is open.
-pub(crate) enum SplitValueKind {
+pub enum SplitValueKind {
     /// A line-style row — carries the current style so the dropdown (if
     /// opened) can draw the fixed 5-variant catalogue as graphic previews.
     LineStyle(LineStyle),
@@ -596,7 +606,7 @@ pub(crate) enum SplitValueKind {
 /// `Option<String>`, so opening a different row's menu always REPLACES the
 /// previous value — the one-open-at-a-time guarantee lives there, not here.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_split_value_control(
+pub fn draw_split_value_control(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     state: &PrimitiveSettingsState,
@@ -677,7 +687,7 @@ const LINE_STYLE_CATALOGUE: [LineStyle; 5] =
 /// is not hand-drawn here: the generic hover-highlight loop further down in
 /// the outer pass already covers every `content_items` entry this pushes,
 /// the same as `draw_add_chip_dropdown`'s own rows.
-pub(crate) fn draw_value_dropdown(
+pub fn draw_value_dropdown(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     result: &mut PrimitiveSettingsResult,
@@ -785,7 +795,7 @@ fn draw_dot_run(ctx: &mut dyn RenderContext, x0: f64, x1: f64, y: f64, gap: f64)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_slider_row(
+pub fn draw_slider_row(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
     widget_theme: &WidgetTheme,
