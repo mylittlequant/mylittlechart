@@ -88,10 +88,13 @@ pub enum Archetype {
     Brush,
     /// A user-picked icon/glyph/image annotation (flag, emoji, image).
     Icon,
-    /// No archetype named by the approved design yet — the primitive's
-    /// Subject tab keeps the pre-cutover "Вид"/Appearance wording (see
-    /// [`Primitive::subject_tab_label`]'s default for this variant).
-    Generic,
+    /// A bare line: trend line, ray, extended line, horizontal/vertical
+    /// line and ray, cross line, info line, trend angle, and the arrow
+    /// (a line with heads). Its subject IS the line — owner sign-off
+    /// 2026-08-11, which also retired the catch-all "Вид" tab: a tab named
+    /// after a property rather than after its subject was the one thing
+    /// left over from the pre-archetype modal.
+    Line,
 }
 
 /// How many clicks required to create this primitive
@@ -332,7 +335,12 @@ pub trait Primitive: Send + Sync {
             PrimitiveKind::Annotation => Archetype::Text,
             PrimitiveKind::Measurement => Archetype::Measurement,
             PrimitiveKind::Trading => Archetype::Position,
-            PrimitiveKind::Line | PrimitiveKind::Signal => Archetype::Generic,
+            PrimitiveKind::Line => Archetype::Line,
+            // A signal marker (triangle up/down, sign) is a glyph dropped on
+            // the chart with a fill and a stroke — the same subject a flag or
+            // an emoji has, so it reads "Значок", not a fourteenth archetype
+            // of its own.
+            PrimitiveKind::Signal => Archetype::Icon,
         }
     }
 
@@ -362,7 +370,7 @@ pub trait Primitive: Send + Sync {
             Archetype::Regression => t_concept(ConceptKey::DeviationsTabLabel),
             Archetype::Brush => t_concept(ConceptKey::StrokeGroupTitle),
             Archetype::Icon => t_concept(ConceptKey::IconTabLabel),
-            Archetype::Generic => t_config(ConfigKey::TabAppearance),
+            Archetype::Line => t_concept(ConceptKey::LineSubject),
         }
     }
 

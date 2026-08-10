@@ -70,7 +70,7 @@ impl Primitive for ArrowLine {
     // sample this type at all, so this stays `Generic` (the pre-cutover
     // "Вид"/Appearance wording) rather than the majority
     // `Annotation`->`Text` default, which would misname it as text-first.
-    fn archetype(&self) -> Archetype { Archetype::Generic }
+    fn archetype(&self) -> Archetype { Archetype::Line }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }

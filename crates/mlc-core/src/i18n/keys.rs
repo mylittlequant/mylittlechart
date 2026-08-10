@@ -2813,10 +2813,13 @@ pub enum ConceptKey {
     // not called "Levels" — added here rather than reused from elsewhere
     // since neither `ConfigKey` nor the rest of `ConceptKey` names it.
     Rings = 274,
+    /// Subject-tab label for the line family (trend line, ray, extended
+    /// line, horizontal/vertical line, info line, trend angle, arrow).
+    LineSubject = 275,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 275;
+    pub const COUNT: usize = 276;
 
     /// Get translation for this key.
     #[inline]

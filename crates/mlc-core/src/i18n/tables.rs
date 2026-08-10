@@ -1283,7 +1283,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 275] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 276] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1559,6 +1559,7 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 275] = [
     /* 272 TemplateNameGroupTitle           */ [ "Template name", "Название шаблона", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 273 MakeDefaultTemplate              */ [ "Make default template", "Сделать шаблоном по умолчанию", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 274 Rings                            */ [ "Rings", "Кольца", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 275 LineSubject */ [ "Line", "Линия", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
