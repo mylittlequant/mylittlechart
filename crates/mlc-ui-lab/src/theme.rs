@@ -76,6 +76,15 @@ pub fn preset_widget_id(preset: &str) -> String {
 /// Widget id for the "reopen primitive settings" button.
 pub const REOPEN_WIDGET_ID: &str = "lab:reopen_primitive_settings";
 
+/// Widget id for the dev bar's "Design compare" toggle — the four-sector
+/// primitive-settings design-comparison grid (`crate::variants`),
+/// relocated here off the app-shell "Modals" button in wave 3 (that
+/// button now opens `crate::shell::launcher_menu` — see
+/// `crate::shell::MODALS_TOGGLE_ID`'s own doc for why). Lives in the dev
+/// bar rather than the shell because it toggles a lab-only debugging
+/// surface, not app chrome.
+pub const DESIGN_COMPARE_WIDGET_ID: &str = "lab:design_compare";
+
 /// Z-order the lab bar's own layer is pushed at.
 ///
 /// Bug fix (owner report, 2026-08-07): the bar's buttons used to register on
@@ -120,6 +129,7 @@ pub fn draw_lab_bar(
     screen_w: f64,
     theme_manager: &ThemeManager,
     any_sector_closed: bool,
+    show_variants: bool,
 ) {
     use mlc_core::render::{TextAlign, TextBaseline};
     use uzor::input::Sense;
@@ -169,4 +179,17 @@ pub fn draw_lab_bar(
     if any_sector_closed {
         coord.register_on_layer(REOPEN_WIDGET_ID, reopen_rect, Sense::CLICK, &layer);
     }
+
+    // Relocated off the app-shell "Modals" button in wave 3 — see
+    // `DESIGN_COMPARE_WIDGET_ID`'s own doc for why it lives here now.
+    let dc_label = mlc_core::i18n::t_shell(mlc_core::i18n::ShellKey::DesignCompareToggle);
+    let dc_w = ctx.measure_text(dc_label) + 16.0;
+    let dc_rect = Rect { x: reopen_rect.x - dc_w - 6.0, y: 8.0, width: dc_w, height: BAR_HEIGHT - 16.0 };
+    ctx.set_fill_color(if show_variants { &tt.item_bg_active } else { &tt.button_bg });
+    ctx.fill_rounded_rect(dc_rect.x, dc_rect.y, dc_rect.width, dc_rect.height, 4.0);
+    ctx.set_fill_color(if show_variants { &tt.item_text_active } else { &tt.item_text });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(dc_label, dc_rect.x + dc_rect.width / 2.0, dc_rect.y + dc_rect.height / 2.0);
+    coord.register_on_layer(DESIGN_COMPARE_WIDGET_ID, dc_rect, Sense::CLICK, &layer);
 }

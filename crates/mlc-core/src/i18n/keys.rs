@@ -26,6 +26,7 @@ use super::tables::{
     CITY_KEY_TABLE,
     HEAD_SHOULDERS_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
+    SHELL_KEY_TABLE,
 };
 
 // =============================================================================
@@ -2330,6 +2331,99 @@ impl uzor::i18n::Translate for PositionPointKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&POSITION_POINT_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Chart Shell Keys
+// =============================================================================
+
+/// UI strings for the chart shell frame (toolbars, panels) that are not tied
+/// to a specific tool, tab, or property — the bottom toolbar's
+/// selected-object label when nothing is selected, the raw-lab stub shell's
+/// own "no data" watermark, its "Modals" launcher button, the launcher
+/// menu's own two section headers, the sixteen application-modal entries it
+/// lists (wave 3, 2026-08-10 — `mlc-ui-lab`'s own launcher menu labels; the
+/// modal SURFACES themselves reuse whatever i18n key they already carry
+/// internally, this is only the one-line label the launcher's own list row
+/// shows), and the lab dev-bar's own "Design compare" toggle (relocated off
+/// the app-shell "Modals" button in the same wave — see
+/// `mlc-ui-lab::theme::draw_lab_bar`'s doc for why).
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `SHELL_KEY_TABLE`. Only En/Ru are filled (owner scope, 2026-08-10,
+/// `mlc-ui-lab` stub-shell waves 1-3); the remaining 13 columns are empty
+/// and fall back to En at runtime — an intentional, pre-existing pattern
+/// (see `tables.rs`'s own module doc), not a shortcut. Deliberately NOT
+/// part of `tables.rs`'s `every_chart_table_is_fully_translated` test for
+/// that reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ShellKey {
+    /// Bottom toolbar's selected-object label when nothing is selected.
+    NothingSelected = 0,
+    /// Chart-pane watermark shown by the UI lab's stub shell (no data
+    /// plane, no chart engine — this text says so explicitly).
+    SimulatorWatermark = 1,
+    /// Top toolbar's "Modals" button — opens the launcher menu (wave 3).
+    ModalsButton = 2,
+    /// Launcher menu section header over the 14 Object Tree primitive types.
+    LauncherObjectModals = 3,
+    /// Launcher menu section header over the 16 application-level modals.
+    LauncherAppModals = 4,
+    /// Launcher menu row label + `chart_settings` modal.
+    AppModalChartSettings = 5,
+    /// Launcher menu row label + `indicator_settings` modal.
+    AppModalIndicatorSettings = 6,
+    /// Launcher menu row label + `watchlist_modal`.
+    AppModalWatchlist = 7,
+    /// Launcher menu row label + `alert_settings` modal.
+    AppModalAlerts = 8,
+    /// Launcher menu row label + `user_settings` modal.
+    AppModalUserSettings = 9,
+    /// Launcher menu row label + `tags_tabs_modal`.
+    AppModalTagsTabs = 10,
+    /// Launcher menu row label + `trading_container_modal`.
+    AppModalTradingContainer = 11,
+    /// Launcher menu row label + `search_overlay`.
+    AppModalSearch = 12,
+    /// Launcher menu row label + `template_name_modal`.
+    AppModalTemplateName = 13,
+    /// Launcher menu row label + `preset_name_input`.
+    AppModalPresetName = 14,
+    /// Launcher menu row label + `chart_browser`.
+    AppModalChartBrowser = 15,
+    /// Launcher menu row label + `compare_settings`.
+    AppModalCompareSettings = 16,
+    /// Launcher menu row label + `context_menu`.
+    AppModalContextMenu = 17,
+    /// Launcher menu row label + `clock_popup`.
+    AppModalClock = 18,
+    /// Launcher menu row label + `panel_settings_popup`.
+    AppModalPanelSettings = 19,
+    /// Launcher menu row label + `indicator_overlay`.
+    AppModalIndicatorOverlay = 20,
+    /// Lab dev-bar button that toggles the four-sector primitive-settings
+    /// design-comparison grid (`crate::variants`) — relocated here off the
+    /// app-shell "Modals" button in wave 3, since that button now opens the
+    /// launcher menu instead.
+    DesignCompareToggle = 21,
+}
+
+impl ShellKey {
+    pub const COUNT: usize = 22;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&SHELL_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ShellKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&SHELL_KEY_TABLE[self as usize], lang_index)
     }
 }
 

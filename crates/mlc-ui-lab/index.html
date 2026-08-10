@@ -40,9 +40,25 @@
       pkg/mlc_ui_lab_bg.wasm  (binary)
   -->
   <script type="module">
-    import init from './pkg/mlc_ui_lab.js';
+    import init, {
+      lab_modals, lab_open_type, lab_open_app, lab_close, lab_snapshot, lab_metrics,
+    } from './pkg/mlc_ui_lab.js';
     await init();
     // The #[wasm_bindgen(start)] fn runs automatically inside init().
+
+    // Agent control plane — mirrors sim/sim.js's own `window.__SIM` (see
+    // that file's own doc). Each `lab_*` export returns a JSON string (no
+    // serde in the Rust crate); this wrapper is the one place that parses
+    // it back into a plain object, so every `window.__LAB` method reads
+    // exactly like `__SIM`'s. See README.md for the full call reference.
+    window.__LAB = {
+      modals: () => JSON.parse(lab_modals()),
+      open_type: (typeId, tab) => JSON.parse(lab_open_type(typeId, tab ?? undefined)),
+      open_app: (modalId) => JSON.parse(lab_open_app(modalId)),
+      close: () => JSON.parse(lab_close()),
+      snapshot: () => JSON.parse(lab_snapshot()),
+      metrics: () => JSON.parse(lab_metrics()),
+    };
   </script>
 </body>
 </html>

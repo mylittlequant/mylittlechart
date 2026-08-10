@@ -81,6 +81,7 @@ pub use keys::{
     CityKey,
     HeadShouldersKey,
     PositionPointKey,
+    ShellKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -212,6 +213,12 @@ pub fn t_trading(key: TradingKey) -> &'static str {
 /// Translate a toolbar menu key using current global language
 #[inline]
 pub fn t_toolbar_menu(key: ToolbarMenuKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a chart-shell frame key using current global language
+#[inline]
+pub fn t_shell(key: ShellKey) -> &'static str {
     key.get(current_language())
 }
 

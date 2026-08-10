@@ -1226,6 +1226,40 @@ pub(super) static POSITION_POINT_KEY_TABLE: [[&str; N_LANG]; 2] = [
 ];
 
 // =============================================================================
+// ShellKey table  (22 variants × N_LANG)
+// =============================================================================
+//
+// Owner scope, 2026-08-10 (mlc-ui-lab stub-shell waves 1-3): only En/Ru
+// filled. Col:  0=En  1=Ru  2..14="" stub -> fallback to En at runtime. NOT
+// part of `every_chart_table_is_fully_translated` below by design — see
+// ShellKey's own doc in keys.rs.
+
+pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 22] = [
+    /* 0  NothingSelected            */ [ "Nothing selected", "Ничего не выбрано", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 1  SimulatorWatermark         */ [ "NO DATA — THIS IS A UI SIMULATOR", "ДАННЫХ НЕТ — ЭТО СИМУЛЯТОР UI", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 2  ModalsButton               */ [ "Modals", "Модалки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 3  LauncherObjectModals       */ [ "Object modals", "Модалки объектов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 4  LauncherAppModals          */ [ "Application modals", "Модалки приложения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 5  AppModalChartSettings      */ [ "Chart settings", "Настройки графика", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 6  AppModalIndicatorSettings  */ [ "Indicator settings", "Настройки индикатора", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 7  AppModalWatchlist          */ [ "Watchlist", "Список наблюдения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 8  AppModalAlerts             */ [ "Alerts", "Алерты", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 9  AppModalUserSettings       */ [ "App settings", "Настройки приложения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 10 AppModalTagsTabs           */ [ "Tags & tabs", "Вкладки и метки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 11 AppModalTradingContainer   */ [ "Trading container", "Торговый контейнер", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 12 AppModalSearch             */ [ "Symbol search", "Поиск инструмента", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 13 AppModalTemplateName       */ [ "Save template", "Сохранить шаблон", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 14 AppModalPresetName         */ [ "Preset name", "Имя пресета", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 15 AppModalChartBrowser       */ [ "Chart browser", "Обозреватель графиков", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 16 AppModalCompareSettings    */ [ "Compare settings", "Настройки сравнения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 17 AppModalContextMenu        */ [ "Context menu", "Контекстное меню", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 18 AppModalClock              */ [ "Clock", "Часы", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 19 AppModalPanelSettings      */ [ "Panel settings", "Настройки панели", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 20 AppModalIndicatorOverlay   */ [ "Indicator overlay", "Оверлей индикаторов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 21 DesignCompareToggle        */ [ "Design compare", "Сравнение дизайна", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+];
+
+// =============================================================================
 // Completeness invariant (executable documentation)
 // =============================================================================
 //
