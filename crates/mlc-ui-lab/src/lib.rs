@@ -157,7 +157,7 @@ impl Sector {
     fn new(primitive_id: u64) -> Self {
         let mut state = PrimitiveSettingsState::new();
         state.open(primitive_id);
-        state.active_tab = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::Levels;
+        state.active_tab = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::Subject;
         Self { state, drag_geometry: dispatch::DragGeometry::default() }
     }
 }
@@ -1601,7 +1601,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                     for sector in &mut lab.sectors {
                         if !sector.state.is_open() {
                             sector.state.open(pid);
-                            sector.state.active_tab = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::Levels;
+                            sector.state.active_tab = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::Subject;
                         }
                     }
                 }
@@ -2157,19 +2157,12 @@ pub fn lab_metrics() -> String {
 /// calls are the exact functions the real modal calls too.
 #[cfg(target_arch = "wasm32")]
 fn resolved_tabs(prim: &dyn Primitive) -> Vec<mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab> {
-    use mlc_app_layout::layout::modals::{primitive_settings_cells, primitive_settings_labels, primitive_settings_vid};
-    use mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab;
-    PrimitiveSettingsTab::all()
-        .iter()
-        .copied()
-        .filter(|tab| match tab {
-            PrimitiveSettingsTab::Levels => prim.level_configs().is_some(),
-            PrimitiveSettingsTab::Appearance => primitive_settings_vid::has_content(prim),
-            PrimitiveSettingsTab::Labels => primitive_settings_labels::has_content(prim),
-            PrimitiveSettingsTab::Cells => primitive_settings_cells::has_content(prim),
-            PrimitiveSettingsTab::Placement => true,
-        })
-        .collect()
+    // The REAL decision, not a copy of it. This used to re-implement the
+    // filter and the copy went stale the moment the app collapsed
+    // Levels+Appearance into one Subject tab (2026-08-11, W1) — an
+    // instrument that answers from its own reimplementation measures
+    // itself. `available_tabs` is `pub` for exactly this caller.
+    mlc_app_layout::layout::modals::primitive_settings::available_tabs(prim)
 }
 
 /// Textual summary of a `PropertyType` — includes the full option list for
@@ -2277,13 +2270,22 @@ fn dump_one_type(registry: &PrimitiveRegistry, type_id: &str) -> String {
     };
     let level_properties: Vec<String> = prim.level_properties().iter().map(config_property_json).collect();
 
-    let tabs: Vec<String> = resolved_tabs(prim.as_ref()).iter().map(|t| json_str(t.id())).collect();
+    let resolved = resolved_tabs(prim.as_ref());
+    let tabs: Vec<String> = resolved.iter().map(|t| json_str(t.id())).collect();
+    // Every tab id paired with the label the strip actually paints. The id
+    // of the first tab is "subject" for every type by construction — the
+    // whole point of the archetype pass is that its NAME differs per type
+    // (Angles / Waves / Ratios / Trade / Cells), so a dump reporting only
+    // ids cannot tell whether that landed.
+    let tab_labels: Vec<String> = resolved.iter().map(|t| json_str(t.label(prim.as_ref()))).collect();
+    let archetype = format!("{:?}", prim.archetype());
 
     format!(
         concat!(
             "{{\"type_id\":{},\"display_name\":{},\"kind\":{},\"supports_text\":{},",
             "\"points_count\":{},\"point_labels\":[{}],\"has_levels\":{},\"levels\":[{}],",
-            "\"style_properties\":[{}],\"text_properties\":{},\"level_properties\":[{}],\"tabs\":[{}]}}",
+            "\"style_properties\":[{}],\"text_properties\":{},\"level_properties\":[{}],\"tabs\":[{}],",
+            "\"tab_labels\":[{}],\"archetype\":{}}}",
         ),
         json_str(prim.type_id()),
         json_str(prim.display_name()),
@@ -2297,6 +2299,8 @@ fn dump_one_type(registry: &PrimitiveRegistry, type_id: &str) -> String {
         text_properties_json,
         level_properties.join(","),
         tabs.join(","),
+        tab_labels.join(","),
+        json_str(&archetype),
     )
 }
 
@@ -2324,9 +2328,14 @@ pub fn lab_dump_types() -> String {
     let Ok(registry) = PrimitiveRegistry::global().read() else {
         return "[]".to_string();
     };
-    let rows: Vec<String> = shell::object_tree::spawnable_types()
-        .iter()
-        .map(|type_id| dump_one_type(&registry, type_id))
-        .collect();
+    // EVERY registered type, not the Object Tree's own roster. The tree
+    // shows the 14 approved archetypes; this dump is the instrument that
+    // measures the OTHER 107 against them — pointing it at the tree made it
+    // agree with itself and report nothing. Sorted by `type_id` so two dumps
+    // taken at different times are diffable (`PrimitiveRegistry::all()`
+    // iterates a `HashMap`).
+    let mut ids: Vec<&'static str> = registry.all().map(|m| m.type_id).collect();
+    ids.sort_unstable();
+    let rows: Vec<String> = ids.iter().map(|type_id| dump_one_type(&registry, type_id)).collect();
     format!("[{}]", rows.join(","))
 }

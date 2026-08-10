@@ -77,7 +77,7 @@ use super::{
 /// lives here, once, so the strip built for the header and the content
 /// pane drawn below it can never disagree about which tabs exist. Never
 /// empty: `Placement` always passes its own filter.
-fn available_tabs(prim: &dyn Primitive) -> Vec<PrimitiveSettingsTab> {
+pub fn available_tabs(prim: &dyn Primitive) -> Vec<PrimitiveSettingsTab> {
     PrimitiveSettingsTab::all()
         .iter()
         .copied()
