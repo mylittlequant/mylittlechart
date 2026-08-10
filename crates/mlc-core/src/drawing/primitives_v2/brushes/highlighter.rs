@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, apply_opacity};
 use crate::i18n::{ConfigKey, current_language};
 use super::super::{
-    Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
+    Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext,
     config::{ConfigProperty, PropertyValue, PropertyCategory},
@@ -33,6 +33,9 @@ impl Primitive for Highlighter {
     fn type_id(&self) -> &'static str { "highlighter" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Annotation }
+    // A freehand stroke, not a textual annotation — `Brush` archetype, not
+    // the majority `Annotation`->`Text` default.
+    fn archetype(&self) -> Archetype { Archetype::Brush }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::FreehandDrag }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }

@@ -1,21 +1,29 @@
 //! Primitive settings modal renderer.
 //!
-//! The tab strip is DERIVED, not fixed: up to four tabs — Levels (the level
-//! ladder) / Appearance (line/fill) / Labels (content/font/style/position)
-//! / Placement (points + timeframe visibility) — in that fixed order,
-//! filtered per primitive by [`available_tabs`] to only the ones that type
-//! actually has anything for (a primitive with no level ladder never shows
-//! Levels; one that declares nothing label-related and overrides
-//! `Primitive::text_properties()` never shows Labels — see
-//! `mlc_core::drawing::primitives_v2::config::PropertyCategory`'s own doc).
-//! Placement is unconditional. Replaces the original five-tab set
-//! (Style/Text/Coordinates/Levels/Visibility, retired 2026-08-08) and that
-//! set's own three-tab successor (Вид/Уровни/Размещение, same day, Labels
-//! not yet split out of Вид) — ported from the `mlc-ui-lab` "approved
-//! design" prototype (owner direction, 2026-08-07, after live review) —
-//! hard cutover each time, no compatibility variants kept alongside these.
+//! The tab strip is DERIVED, not fixed: up to four tabs — Subject (the
+//! primitive's own first tab — the level ladder for a `Archetype::Ladder`
+//! primitive, `primitive_settings_levels`, or the former Levels/Appearance
+//! pair's line/fill content for every other one, `primitive_settings_vid`;
+//! named via `Primitive::subject_tab_label()`) / Labels (content/font/
+//! style/position) / Cells (Table's own editable cell grid) / Placement
+//! (points + timeframe visibility) — in that fixed order, filtered per
+//! primitive by [`available_tabs`] to only the ones that type actually has
+//! anything for (Subject is unconditional; one that declares nothing
+//! label-related and overrides `Primitive::text_properties()` never shows
+//! Labels — see `mlc_core::drawing::primitives_v2::config::PropertyCategory`'s
+//! own doc). Placement is unconditional too. Replaces the original
+//! five-tab set (Style/Text/Coordinates/Levels/Visibility, retired
+//! 2026-08-08), that set's own three-tab successor (Вид/Уровни/
+//! Размещение, same day), and the four-tab Levels/Appearance/Labels/
+//! Placement set that followed it (Cells folded in 2026-08-09; Levels and
+//! Appearance merged into Subject here, W1 of the archetype-modals
+//! rollout — `mlc-ui-lab`'s approved design,
+//! `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`) — hard
+//! cutover every time, no compatibility variants kept alongside these.
 //! Each tab's own row-drawing lives in its own sibling module
-//! (`primitive_settings_vid`/`_labels`/`_levels`/`_placement`); this file
+//! (`primitive_settings_vid`/`_labels`/`_levels`/`_placement`); the Subject
+//! tab's own vid-then-ladder merge for a `Archetype::Ladder` primitive
+//! lives in [`draw_subject`]/[`subject_content_height`] below — this file
 //! owns the modal shell (header/tabs/scroll/footer/resize), the strip's own
 //! per-primitive membership ([`available_tabs`]) and the colour-picker
 //! popup.
@@ -36,7 +44,7 @@ use crate::ui::widgets::{
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::widgets::SETTINGS_BUTTON_RADIUS;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use mlc_core::drawing::primitives_v2::Primitive;
+use mlc_core::drawing::primitives_v2::{Archetype, Primitive};
 use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, t_settings};
 
 use super::{
@@ -51,17 +59,17 @@ use super::{
 
 /// The tabs `prim` actually has anything for, in the enum's own fixed strip
 /// order (`PrimitiveSettingsTab::all()`) — never the order `prim` happened
-/// to declare its own properties in. `Levels` appears only when the
-/// primitive has a level ladder (the ladder itself forces it — a bespoke
-/// collection, not a declared property, per `PropertyCategory`'s own doc);
-/// `Appearance`/`Labels` appear only when that tab body's own `has_content`
-/// says there is something to draw (a declared property in the matching
-/// category, or — for `Appearance` — the bespoke base-stroke row a
-/// level-less primitive always has, or — for `Labels` — the bespoke
-/// content/style/position block a primitive without custom
-/// `text_properties()` always has); `Placement` is unconditional — the
-/// points table and timeframe chips are bespoke collections every
-/// primitive has, not declared properties.
+/// to declare its own properties in. `Subject` is unconditional — every
+/// primitive has one: a level ladder (`Archetype::Ladder`, a bespoke
+/// collection, not a declared property, per `PropertyCategory`'s own doc)
+/// or, for every other primitive, at minimum the bespoke base-stroke row
+/// (`primitive_settings_vid`'s own doc); `Labels` appears only when that
+/// tab body's own `has_content` says there is something to draw (a
+/// declared property in the matching category, or the bespoke content/
+/// style/position block a primitive without custom `text_properties()`
+/// always has); `Placement` is unconditional — the points table and
+/// timeframe chips are bespoke collections every primitive has, not
+/// declared properties.
 ///
 /// Each tab body (`primitive_settings_vid`/`_labels`/`_levels`/
 /// `_placement`) owns its OWN internal grouping, but none of them decides
@@ -74,13 +82,142 @@ fn available_tabs(prim: &dyn Primitive) -> Vec<PrimitiveSettingsTab> {
         .iter()
         .copied()
         .filter(|tab| match tab {
-            PrimitiveSettingsTab::Levels => prim.level_configs().is_some(),
-            PrimitiveSettingsTab::Appearance => primitive_settings_vid::has_content(prim),
+            PrimitiveSettingsTab::Subject => true,
             PrimitiveSettingsTab::Labels => primitive_settings_labels::has_content(prim),
-            PrimitiveSettingsTab::Cells => primitive_settings_cells::has_content(prim),
+            // A table's SUBJECT is its cells — the approved design gives it
+            // exactly two tabs, Ячейки and Размещение. Leaving the generic
+            // Cells tab in as well produced two adjacent tabs with the same
+            // name, each holding half of one subject.
+            PrimitiveSettingsTab::Cells => {
+                prim.archetype() != Archetype::Table && primitive_settings_cells::has_content(prim)
+            }
             PrimitiveSettingsTab::Placement => true,
         })
         .collect()
+}
+
+// =============================================================================
+// Subject tab — the merged former Levels/Appearance pair (W1 of the
+// archetype-modals rollout,
+// `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`).
+// =============================================================================
+
+/// Gap between the Subject tab's own extra Line/Fill/Stats properties
+/// (`primitive_settings_vid`) and the ladder body below them, for a
+/// `Archetype::Ladder` primitive that has any of the former. Matches
+/// `primitive_settings_levels`'s own `BLOCK_GAP`, so this reads as the same
+/// block gap every other section boundary inside a tab already uses.
+const SUBJECT_VID_LADDER_GAP: f64 = 10.0;
+
+/// Body height for the Subject tab. A `Archetype::Ladder` primitive (every
+/// Fibonacci/Gann tool, every pitchfork — equivalent to
+/// `level_configs().is_some()`) gets its former Appearance content
+/// (`primitive_settings_vid::content_height`) ABOVE its former Levels
+/// content (`primitive_settings_levels::content_height`); the base-stroke
+/// row never counts twice — `primitive_settings_vid` already skips it for
+/// a level-having primitive (see `primitive_settings_levels::
+/// draw_top_section`'s own doc for why that split exists). Every other
+/// primitive's Subject tab is exactly its former Appearance content,
+/// unchanged. Shared by `content_height`, [`draw_subject`],
+/// [`subject_content_height_for_query`] and `draw_search_results` so none
+/// of the four can drift apart on which primitives merge and where the gap
+/// goes.
+fn subject_content_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+    let vid_h = primitive_settings_vid::content_height(prim);
+    match prim.archetype() {
+        Archetype::Ladder => {
+            let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
+            vid_h + gap + primitive_settings_levels::content_height(prim, state)
+        }
+        // A table's grid IS its subject — same merge the ladder gets, for
+        // the same reason (see `available_tabs`'s own Cells arm).
+        Archetype::Table => {
+            let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
+            vid_h + gap + primitive_settings_cells::content_height(prim)
+        }
+        _ => vid_h,
+    }
+}
+
+/// Query-aware counterpart of [`subject_content_height`] — see that
+/// function's own doc for the merge rule; this only swaps each half for its
+/// own query-aware height (`primitive_settings_vid::content_height_for_query`/
+/// `primitive_settings_levels::search_content_height`).
+fn subject_content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+    let vid_h = primitive_settings_vid::content_height_for_query(prim, state);
+    match prim.archetype() {
+        Archetype::Ladder => {
+            let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
+            vid_h + gap + primitive_settings_levels::search_content_height(prim, state)
+        }
+        Archetype::Table => {
+            let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
+            vid_h + gap + primitive_settings_cells::content_height_for_query(prim, state)
+        }
+        _ => vid_h,
+    }
+}
+
+/// Draws the Subject tab's single-tab (non-search) body — see
+/// [`subject_content_height`]'s own doc for the merge rule this mirrors.
+/// `footer_top` is forwarded to `primitive_settings_levels::draw` verbatim
+/// (its own "+ добавить уровень" dropdown flip-up decision).
+#[allow(clippy::too_many_arguments)]
+fn draw_subject(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    row_y: &mut f64,
+    prim: &dyn Primitive,
+    footer_top: f64,
+) {
+    let drew_vid = primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+    match prim.archetype() {
+        Archetype::Ladder => {
+            if drew_vid {
+                *row_y += SUBJECT_VID_LADDER_GAP;
+            }
+            primitive_settings_levels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim, footer_top);
+        }
+        Archetype::Table => {
+            if drew_vid {
+                *row_y += SUBJECT_VID_LADDER_GAP;
+            }
+            primitive_settings_cells::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+        }
+        _ => {}
+    }
+}
+
+/// Draws the Subject tab's own contribution to the cross-tab search result
+/// view — see [`subject_content_height`]'s own doc for the merge rule this
+/// mirrors, and `draw_search_results`'s own doc for why this reuses
+/// `primitive_settings_levels::draw_search` rather than `::draw`.
+#[allow(clippy::too_many_arguments)]
+fn draw_subject_search(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    row_y: &mut f64,
+    prim: &dyn Primitive,
+) {
+    let drew_vid = primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+    if prim.archetype() == Archetype::Ladder {
+        if drew_vid {
+            *row_y += SUBJECT_VID_LADDER_GAP;
+        }
+        primitive_settings_levels::draw_search(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
+    }
 }
 
 /// `state.active_tab` if it names one of `available`, otherwise the first
@@ -209,8 +346,7 @@ pub(crate) fn search_matches(query: &str, texts: &[&str]) -> bool {
 /// tabs contribute or how much space they need.
 fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
     match tab {
-        PrimitiveSettingsTab::Levels => primitive_settings_levels::search_content_height(prim, state),
-        PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Subject => subject_content_height_for_query(prim, state),
         PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height_for_query(prim, state),
@@ -242,18 +378,16 @@ fn search_results_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -
 /// becomes a single list of every matching setting from all AVAILABLE tabs
 /// ([`available_tabs`]), in tab order, each introduced by a header naming
 /// that tab — nothing else is drawn (no palette cards / global
-/// fill-opacity row / add-level row on Levels, no group on
-/// Appearance/Labels/Placement whose every row was filtered out; see each
-/// tab's own `content_height_for_query`/`search_content_height` doc
-/// comment). Reuses each tab's own row drawing verbatim
-/// (`primitive_settings_vid::draw`, `primitive_settings_labels::draw`,
-/// `primitive_settings_levels::draw_search`,
+/// fill-opacity row / add-level row on a `Archetype::Ladder` primitive's
+/// Subject tab, no group on Subject/Labels/Placement whose every row was
+/// filtered out; see each tab's own `content_height_for_query`/
+/// `search_content_height` doc comment). Reuses each tab's own row drawing
+/// verbatim ([`draw_subject_search`], `primitive_settings_labels::draw`,
 /// `primitive_settings_placement::draw`) — the per-row `search_matches`
 /// gates inside them are the SAME ones the single-tab view already used,
 /// not a second matching rule. Rows land in `result.content_items` under
 /// their own real ids exactly as they would in their own tab, so a control
 /// found through search is fully functional where it is found.
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn draw_search_results(
     ctx: &mut dyn RenderContext,
@@ -273,14 +407,11 @@ fn draw_search_results(
             continue;
         }
         if any { *row_y += SEARCH_TAB_GAP; }
-        draw_search_tab_header(ctx, toolbar_theme, x0, x1, *row_y, tab.label());
+        draw_search_tab_header(ctx, toolbar_theme, x0, x1, *row_y, tab.label(prim));
         *row_y += SEARCH_TAB_HEADER_H;
         match tab {
-            PrimitiveSettingsTab::Levels => {
-                primitive_settings_levels::draw_search(ctx, toolbar_theme, widget_theme, state, result, x0, x1, row_y, prim);
-            }
-            PrimitiveSettingsTab::Appearance => {
-                primitive_settings_vid::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+            PrimitiveSettingsTab::Subject => {
+                draw_subject_search(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
             }
             PrimitiveSettingsTab::Labels => {
                 primitive_settings_labels::draw(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
@@ -388,7 +519,7 @@ pub fn render_primitive_settings_modal(
     let available_tab_list = available_tabs(prim);
     let resolved_tab = resolve_active_tab(state, &available_tab_list);
 
-    let tab_items: Vec<ModalTab<'_>> = available_tab_list.iter().map(|t| ModalTab::new(t.id(), t.label())).collect();
+    let tab_items: Vec<ModalTab<'_>> = available_tab_list.iter().map(|t| ModalTab::new(t.id(), t.label(prim))).collect();
     let active_tab_idx = available_tab_list.iter().position(|t| *t == resolved_tab).unwrap_or(0);
 
     // Cross-tab settings search (item 8, 2026-08-08 follow-up): a non-empty
@@ -404,8 +535,7 @@ pub fn render_primitive_settings_modal(
     // the true overflow instead of silently discarding it.
     let content_height = if query.is_empty() {
         match resolved_tab {
-            PrimitiveSettingsTab::Levels => primitive_settings_levels::content_height(prim, state),
-            PrimitiveSettingsTab::Appearance => primitive_settings_vid::content_height(prim),
+            PrimitiveSettingsTab::Subject => subject_content_height(prim, state),
             PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
             PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height(prim),
             PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
@@ -521,11 +651,8 @@ pub fn render_primitive_settings_modal(
 
     if query.is_empty() {
         match resolved_tab {
-            PrimitiveSettingsTab::Levels => {
-                primitive_settings_levels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim, shell.content.bottom());
-            }
-            PrimitiveSettingsTab::Appearance => {
-                primitive_settings_vid::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);
+            PrimitiveSettingsTab::Subject => {
+                draw_subject(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim, shell.content.bottom());
             }
             PrimitiveSettingsTab::Labels => {
                 primitive_settings_labels::draw(ctx, toolbar_theme, &widget_theme, state, &mut result, content_left, content_right, label_col, &mut row_y, prim);

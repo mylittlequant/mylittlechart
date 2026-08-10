@@ -2802,10 +2802,21 @@ pub enum ConceptKey {
     StopRequired = 271,
     TemplateNameGroupTitle = 272,
     MakeDefaultTemplate = 273,
+
+    // Ring/circle Fibonacci tools (Fib Circles / Fib Arcs) — not sampled by
+    // the approved design's 14 representative types (`spec.rs` only
+    // samples fib_retracement/gann_fan/pitchfork from the Ladder
+    // archetype), but named as a hard requirement by the archetype-modals
+    // rollout plan (W1,
+    // `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`): a
+    // ring/circle fib is `Ladder`-archetype (it has a level ladder) but is
+    // not called "Levels" — added here rather than reused from elsewhere
+    // since neither `ConfigKey` nor the rest of `ConceptKey` names it.
+    Rings = 274,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 274;
+    pub const COUNT: usize = 275;
 
     /// Get translation for this key.
     #[inline]

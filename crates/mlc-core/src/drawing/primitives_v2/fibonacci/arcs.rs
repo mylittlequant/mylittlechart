@@ -144,6 +144,12 @@ impl Primitive for FibArcs {
         PrimitiveKind::Fibonacci
     }
 
+    // `Ladder`-archetype, but a ring/circle fib calls its ladder
+    // "Кольца"/Rings, not the archetype's own default "Уровни"/Levels.
+    fn subject_tab_label(&self) -> &'static str {
+        crate::i18n::t_concept(crate::i18n::ConceptKey::Rings)
+    }
+
     fn click_behavior(&self) -> ClickBehavior {
         ClickBehavior::TwoPoint
     }

@@ -206,6 +206,13 @@ impl Primitive for GannFan {
         PrimitiveKind::Gann
     }
 
+    // `Ladder`-archetype (via the default `level_configs().is_some()`
+    // check), but every Gann tool calls its ladder "Углы"/Angles, not the
+    // archetype's own default "Уровни"/Levels.
+    fn subject_tab_label(&self) -> &'static str {
+        crate::i18n::t_concept(crate::i18n::ConceptKey::Angles)
+    }
+
     fn click_behavior(&self) -> ClickBehavior {
         ClickBehavior::TwoPoint
     }

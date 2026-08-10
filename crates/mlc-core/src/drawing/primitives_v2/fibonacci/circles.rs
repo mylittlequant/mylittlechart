@@ -94,6 +94,11 @@ impl Primitive for FibCircles {
     fn type_id(&self) -> &'static str { "fib_circles" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Fibonacci }
+    // `Ladder`-archetype, but a ring/circle fib calls its ladder
+    // "Кольца"/Rings, not the archetype's own default "Уровни"/Levels.
+    fn subject_tab_label(&self) -> &'static str {
+        crate::i18n::t_concept(crate::i18n::ConceptKey::Rings)
+    }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }

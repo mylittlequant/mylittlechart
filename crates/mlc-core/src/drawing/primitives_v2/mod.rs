@@ -285,7 +285,7 @@ pub mod signals;
 
 // Re-export core types
 pub use traits::{
-    Primitive, PrimitiveData, PrimitiveKind, ClickBehavior,
+    Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior,
     HitTestResult, ControlPointInfo, SyncMode, StyleReference,
     draw_control_points,
     PrimitiveExt,  // Extension trait with is_locked, set_locked, is_visible, set_visible

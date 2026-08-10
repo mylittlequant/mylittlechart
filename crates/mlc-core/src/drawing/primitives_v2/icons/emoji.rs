@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
-    Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
+    Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
     RenderContext, CONTROL_POINT_RADIUS,
     render_primitive_text, TextAlign,
@@ -1026,6 +1026,9 @@ impl Primitive for Emoji {
     fn type_id(&self) -> &'static str { "emoji" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Annotation }
+    // A user-picked icon marker, not a textual annotation — `Icon`
+    // archetype, not the majority `Annotation`->`Text` default.
+    fn archetype(&self) -> Archetype { Archetype::Icon }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }

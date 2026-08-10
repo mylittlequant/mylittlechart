@@ -38,6 +38,62 @@ pub enum PrimitiveKind {
     Signal,
 }
 
+/// The shared TAB SHAPE a primitive's settings-modal Subject tab uses — one
+/// of the 12 archetypes the approved design settled on
+/// (`mlc-ui-lab::concept::spec`, signed off 2026-08-11 — see
+/// `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`), plus
+/// `Generic` for a primitive the design does not (yet) name an archetype
+/// for. An archetype names a shared SHAPE, never a replacement for a
+/// type's own content — that plan's own "rule that outranks every wave":
+/// Gann keeps its own angle labels, Elliott its own degrees, a position
+/// its own computed R:R, all under the same archetype word.
+///
+/// Drives [`Primitive::subject_tab_label`]'s default and (indirectly, via
+/// [`Primitive::archetype`]'s own default) which primitives merge their
+/// former Levels/Appearance tabs into a ladder-shaped Subject tab versus a
+/// plain one — `mlc-app-layout`'s `primitive_settings` module is the one
+/// place that reads `archetype() == Archetype::Ladder` to pick the render
+/// path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Archetype {
+    /// A level ladder: every Fibonacci tool, every Gann tool, every
+    /// pitchfork. Equivalent to `level_configs().is_some()` — see
+    /// [`Primitive::archetype`]'s default.
+    Ladder,
+    /// The Elliott wave family.
+    Wave,
+    /// Harmonic/geometric chart patterns (XABCD, ABCD, Cypher, Head &
+    /// Shoulders, Triangle, Three Drives).
+    Pattern,
+    /// A trade position (long/short) and the other `Trading`-kind
+    /// projection tools.
+    Position,
+    /// A measuring tool — price/date range, cycles, volume profile/VWAP.
+    Measurement,
+    /// A text annotation whose own content IS the subject (Text, Note,
+    /// Callout, Comment, Price Label/Note, Signpost, Anchored Text).
+    Text,
+    /// The Table primitive's own editable cell grid.
+    Table,
+    /// A plain geometric shape (rectangle, ellipse, triangle, arc,
+    /// polyline, curve, path, ...).
+    Shape,
+    /// A channel (parallel channel, disjoint channel, flat top/bottom) —
+    /// distinct from a pitchfork, which is `Ladder`-shaped despite sharing
+    /// `PrimitiveKind::Channel`.
+    Channel,
+    /// The regression trend channel's own sigma-band tool.
+    Regression,
+    /// Freehand brush/highlighter strokes.
+    Brush,
+    /// A user-picked icon/glyph/image annotation (flag, emoji, image).
+    Icon,
+    /// No archetype named by the approved design yet — the primitive's
+    /// Subject tab keeps the pre-cutover "Вид"/Appearance wording (see
+    /// [`Primitive::subject_tab_label`]'s default for this variant).
+    Generic,
+}
+
 /// How many clicks required to create this primitive
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClickBehavior {
@@ -249,6 +305,66 @@ pub trait Primitive: Send + Sync {
 
     /// Get the category for toolbar organization
     fn kind(&self) -> PrimitiveKind;
+
+    /// The archetype this primitive's settings-modal Subject tab belongs
+    /// to — see [`Archetype`]'s own doc.
+    ///
+    /// Default: a level ladder (`level_configs().is_some()`) is always
+    /// `Archetype::Ladder` regardless of `kind()` — the pitchfork family
+    /// declares `PrimitiveKind::Channel` via `kind()` but IS ladder-shaped,
+    /// exactly like `available_tabs`'s own pre-existing Levels-tab gate
+    /// (`mlc-app-layout`) already treats it. Every other primitive falls
+    /// back to its `kind()`'s own honest majority mapping — `Line`/`Signal`
+    /// have no obvious archetype among the 12 named ones and default to
+    /// `Generic`. Overridden per type where `kind()` alone cannot tell two
+    /// different subjects apart (e.g. Elliott wave types declare
+    /// `PrimitiveKind::Pattern`, shared with harmonic patterns, but are
+    /// `Wave`-shaped, not `Pattern`-shaped).
+    fn archetype(&self) -> Archetype {
+        if self.level_configs().is_some() {
+            return Archetype::Ladder;
+        }
+        match self.kind() {
+            PrimitiveKind::Channel => Archetype::Channel,
+            PrimitiveKind::Shape => Archetype::Shape,
+            PrimitiveKind::Fibonacci | PrimitiveKind::Gann => Archetype::Ladder,
+            PrimitiveKind::Pattern => Archetype::Pattern,
+            PrimitiveKind::Annotation => Archetype::Text,
+            PrimitiveKind::Measurement => Archetype::Measurement,
+            PrimitiveKind::Trading => Archetype::Position,
+            PrimitiveKind::Line | PrimitiveKind::Signal => Archetype::Generic,
+        }
+    }
+
+    /// The Subject tab's own localized label — the FIRST tab in the
+    /// settings-modal strip once `Levels`/`Appearance` collapse into one
+    /// (`mlc-app-layout`'s `primitive_settings` module, W1 of the
+    /// archetype-modals rollout,
+    /// `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`).
+    ///
+    /// Default: [`Archetype`]'s own canonical word. Overridden per type
+    /// where the SAME archetype still needs a different subject word —
+    /// every Gann tool and the two ring/circle Fibonacci tools are
+    /// `Ladder`-archetype (they have a level ladder) but are not called
+    /// "Levels" in the approved design.
+    fn subject_tab_label(&self) -> &'static str {
+        use crate::i18n::{t_concept, t_config, t_settings, ConceptKey, ConfigKey, SettingsKey};
+        match self.archetype() {
+            Archetype::Ladder => t_config(ConfigKey::Levels),
+            Archetype::Wave => t_concept(ConceptKey::WavesTabLabel),
+            Archetype::Pattern => t_concept(ConceptKey::RatiosTabLabel),
+            Archetype::Position => t_concept(ConceptKey::TradeTabLabel),
+            Archetype::Measurement => t_concept(ConceptKey::WhatToShowTabLabel),
+            Archetype::Text => t_settings(SettingsKey::Text),
+            Archetype::Table => t_config(ConfigKey::TabCells),
+            Archetype::Shape => t_concept(ConceptKey::ShapeSubject),
+            Archetype::Channel => t_concept(ConceptKey::ChannelSubject),
+            Archetype::Regression => t_concept(ConceptKey::DeviationsTabLabel),
+            Archetype::Brush => t_concept(ConceptKey::StrokeGroupTitle),
+            Archetype::Icon => t_concept(ConceptKey::IconTabLabel),
+            Archetype::Generic => t_config(ConfigKey::TabAppearance),
+        }
+    }
 
     /// How many clicks to create this primitive
     fn click_behavior(&self) -> ClickBehavior;

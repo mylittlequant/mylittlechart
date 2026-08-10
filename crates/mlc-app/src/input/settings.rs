@@ -1359,10 +1359,9 @@ impl ChartApp {
                 self.panel_app.primitive_settings_state.open_value_dropdown = None;
                 let tab_id = &rest["tab:".len()..];
                 let tab = match tab_id {
-                    "levels"     => Some(PrimitiveSettingsTab::Levels),
-                    "appearance" => Some(PrimitiveSettingsTab::Appearance),
-                    "labels"     => Some(PrimitiveSettingsTab::Labels),
-                    "placement"  => Some(PrimitiveSettingsTab::Placement),
+                    "subject"   => Some(PrimitiveSettingsTab::Subject),
+                    "labels"    => Some(PrimitiveSettingsTab::Labels),
+                    "placement" => Some(PrimitiveSettingsTab::Placement),
                     _ => None,
                 };
                 if let Some(t) = tab {

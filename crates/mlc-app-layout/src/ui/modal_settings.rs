@@ -291,30 +291,37 @@ pub struct SliderDragState {
 /// Tab in the primitive settings modal — the vocabulary a primitive type
 /// declares its settings surface INTO
 /// (`mlc_core::drawing::primitives_v2::config::PropertyCategory`), not a
-/// fixed set every primitive shows: `Levels` (the level ladder), `Appearance`
-/// (line/fill), `Labels` (content/font/style/position — split out of
-/// `Appearance` in the 4-tab cutover, 2026-08-08), `Cells` (Table's own
-/// editable cell grid, 2026-08-09 — the one primitive that has it), `Placement`
+/// fixed set every primitive shows: `Subject` (the primitive's own FIRST
+/// tab — the level ladder for a `Ladder`-archetype primitive, or the
+/// former `Levels`/`Appearance` pair's line/fill content for every other
+/// one, named via `Primitive::subject_tab_label()` — see
+/// `crate::layout::modals::primitive_settings`'s own doc for the merge),
+/// `Labels` (content/font/style/position), `Cells` (Table's own editable
+/// cell grid, 2026-08-09 — the one primitive that has it), `Placement`
 /// (points + timeframe visibility). [`all`](Self::all) lists every tab in
 /// STRIP ORDER — the order this enum declares them in, fixed regardless of
 /// which order a primitive happens to declare its own properties. Which of
 /// these actually appear for a given primitive is `available_tabs`'s job
-/// (`crate::layout::modals::primitive_settings`), not this type's: a
-/// primitive with no level ladder never has `Levels`, no primitive but
-/// `Table` has `Cells` (`Primitive::table_rows().is_some()`), and
-/// `Placement` is unconditional (the points table and timeframe chips are
-/// bespoke collections every primitive has, not declared properties — see
-/// `PropertyCategory`'s own doc).
+/// (`crate::layout::modals::primitive_settings`), not this type's: `Subject`
+/// is unconditional (every primitive has one — a ladder, or a base-stroke
+/// row), no primitive but `Table` has `Cells`
+/// (`Primitive::table_rows().is_some()`), and `Placement` is unconditional
+/// (the points table and timeframe chips are bespoke collections every
+/// primitive has, not declared properties — see `PropertyCategory`'s own
+/// doc).
 ///
 /// Replaces the earlier five-tab set (Style/Text/Coordinates/Levels/
-/// Visibility, retired 2026-08-08) and that set's own three-tab successor
-/// (Вид/Уровни/Размещение, same day) — hard cutover both times, no
-/// compatibility variants kept alongside these.
+/// Visibility, retired 2026-08-08), that set's own three-tab successor
+/// (Вид/Уровни/Размещение, same day), and the four-tab
+/// Levels/Appearance/Labels/Placement set that followed it (Cells folded
+/// in 2026-08-09; Levels and Appearance merged into `Subject` here, W1 of
+/// the archetype-modals rollout,
+/// `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`) — hard
+/// cutover every time, no compatibility variants kept alongside these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PrimitiveSettingsTab {
-    Levels,
     #[default]
-    Appearance,
+    Subject,
     Labels,
     Cells,
     Placement,
@@ -324,21 +331,24 @@ impl PrimitiveSettingsTab {
     /// Get tab ID string
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Levels => "levels",
-            Self::Appearance => "appearance",
+            Self::Subject => "subject",
             Self::Labels => "labels",
             Self::Cells => "cells",
             Self::Placement => "placement",
         }
     }
 
-    /// Get tab display label (localized via current language)
-    pub fn label(&self) -> &'static str {
+    /// Get tab display label (localized via current language). `Subject`
+    /// needs the live primitive — its own `Primitive::subject_tab_label()`
+    /// — since the same tab position carries a different word per
+    /// primitive (a ladder's own "Уровни", a wave's own "Волны", ...);
+    /// every other tab's word is fixed regardless of which primitive is
+    /// open.
+    pub fn label(&self, prim: &dyn mlc_core::drawing::primitives_v2::Primitive) -> &'static str {
         use mlc_core::i18n::{ConfigKey, current_language};
         let lang = current_language();
         match self {
-            Self::Levels => ConfigKey::Levels.get(lang),
-            Self::Appearance => ConfigKey::TabAppearance.get(lang),
+            Self::Subject => prim.subject_tab_label(),
             Self::Labels => ConfigKey::Labels.get(lang),
             Self::Cells => ConfigKey::TabCells.get(lang),
             Self::Placement => ConfigKey::TabPlacement.get(lang),
@@ -350,7 +360,7 @@ impl PrimitiveSettingsTab {
     /// filters this down to the ones a given primitive actually has
     /// anything for; this is never itself the per-primitive tab set.
     pub fn all() -> &'static [PrimitiveSettingsTab] {
-        &[Self::Levels, Self::Appearance, Self::Labels, Self::Cells, Self::Placement]
+        &[Self::Subject, Self::Labels, Self::Cells, Self::Placement]
     }
 }
 
@@ -550,12 +560,13 @@ impl PrimitiveSettingsState {
     pub fn open(&mut self, primitive_id: u64) {
         self.is_open = true;
         self.primitive_id = Some(primitive_id);
-        // The render call resolves the real per-primitive tab set
-        // (`available_tabs`) and falls back off THIS value the instant it
-        // is not among them — see that function's own doc. `Appearance` is
-        // just a reasonable starting guess, not a claim that this
-        // primitive has one.
-        self.active_tab = PrimitiveSettingsTab::Appearance;
+        // `Subject` is unconditional — every primitive has one
+        // (`available_tabs`'s own doc) — so this is always a real tab for
+        // whatever primitive is being opened, unlike the render call's own
+        // `resolve_active_tab` fallback (`primitive_settings.rs`), which
+        // exists for the OTHER tabs this value might carry over from a
+        // previously open, differently-shaped primitive.
+        self.active_tab = PrimitiveSettingsTab::Subject;
         self.scroll.reset();
         self.levels_excluded.clear();
         self.level_overridden.clear();

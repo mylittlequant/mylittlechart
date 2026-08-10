@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{ConfigKey, current_language};
 use super::super::{
-    Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
+    Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE, point_to_line_distance,
     LineStyle, RenderContext, crisp,
     render_primitive_text_rotated, TextAlign, LineTextParams, normalize_text_rotation,
@@ -65,6 +65,12 @@ impl Primitive for ArrowLine {
     fn type_id(&self) -> &'static str { "arrow_line" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Annotation }
+    // A directional line with an optional label, not a textual annotation
+    // whose OWN content is the subject — the approved design does not
+    // sample this type at all, so this stays `Generic` (the pre-cutover
+    // "Вид"/Appearance wording) rather than the majority
+    // `Annotation`->`Text` default, which would misname it as text-first.
+    fn archetype(&self) -> Archetype { Archetype::Generic }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
-    Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
+    Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
@@ -55,6 +55,10 @@ impl Primitive for ElliottImpulse {
     fn type_id(&self) -> &'static str { "elliott_impulse" }
     fn display_name(&self) -> &str { &self.data.display_name }
     fn kind(&self) -> PrimitiveKind { PrimitiveKind::Pattern }
+    // Elliott is `PrimitiveKind::Pattern`, shared with the harmonic
+    // patterns — but is `Wave`-shaped, not `Pattern`-shaped, so the default
+    // `Primitive::archetype` (kind-derived) is wrong here.
+    fn archetype(&self) -> Archetype { Archetype::Wave }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(6) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
