@@ -589,8 +589,35 @@ pub fn start() -> Result<(), JsValue> {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     web_sys::console::log_1(&"[mlc-ui-lab] booting".into());
 
+    apply_browser_language();
+
     let lab = LabState::new()?;
     run_render_loop(lab)
+}
+
+/// Adopt the browser's own UI language, once, at boot.
+///
+/// Without this the lab renders every `mlc_core::i18n` string in English —
+/// the process default — no matter what the browser is set to, which is
+/// exactly how a lab full of correctly-translated keys still reads as a
+/// mix: everything resolved through i18n comes out English while anything
+/// still hardcoded comes out in whatever language it was written in. The
+/// real app sets the language from the user's own profile
+/// (`mlc-app-shell-vello`'s own `set_language` call); the lab has no
+/// profile, so the browser is the only stated preference there is.
+///
+/// `navigator.language` is a BCP-47 tag (`"ru-RU"`, `"en"`, `"pt-BR"`);
+/// `Language::from_code` wants the bare ISO-639-1 prefix. A tag naming a
+/// language this app does not carry leaves the default (English) in place.
+/// `lab_set_language` overrides it at runtime.
+#[cfg(target_arch = "wasm32")]
+fn apply_browser_language() {
+    let Some(win) = web_sys::window() else { return };
+    let tag = win.navigator().language().unwrap_or_default();
+    let code = tag.split(['-', '_']).next().unwrap_or("").to_lowercase();
+    if let Some(lang) = mlc_core::i18n::Language::from_code(&code) {
+        mlc_core::i18n::set_language(lang);
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1898,6 +1925,23 @@ pub fn lab_open_app(modal_id: &str) -> String {
         format!("{{\"ok\":true,\"id\":{}}}", json_str(modal_id))
     })
     .unwrap_or_else(|| LAB_NOT_READY.to_string())
+}
+
+/// Switch the UI language at runtime, by ISO-639-1 code (`"en"`, `"ru"`,
+/// …). The lab adopts the browser's own language at boot
+/// (`apply_browser_language`); this is how the same surface gets checked
+/// in the other language without relaunching a browser with a different
+/// locale — which is the only way a missing translation shows itself.
+/// Reports the language actually in force, so an unsupported code is
+/// visible as "nothing changed" rather than silently ignored.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn lab_set_language(code: &str) -> String {
+    if let Some(lang) = mlc_core::i18n::Language::from_code(&code.to_lowercase()) {
+        mlc_core::i18n::set_language(lang);
+    }
+    let now = mlc_core::i18n::current_language();
+    format!("{{\"ok\":true,\"lang\":{},\"requested\":{}}}", json_str(now.code()), json_str(code))
 }
 
 /// Close whichever lab-owned overlay is topmost — same priority order as

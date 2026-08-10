@@ -10,7 +10,7 @@
 //! the CONCEPT modal (`crate::concept::render::render_concept_modal`) for
 //! that archetype, the same surface the Object Tree's own row gear opens.
 //! A NEW third section, "Production modals (current code)"
-//! ([`PRODUCTION_SECTION_LABEL`]), lists the SAME 14 types flat (no
+//! ([`production_section_label`]), lists the SAME 14 types flat (no
 //! per-kind grouping — this section exists purely for side-by-side
 //! comparison, not for browsing) and opens the PRODUCTION,
 //! live-`Primitive`-backed modal (`mlc_app_layout::layout::modals::
@@ -118,15 +118,12 @@ fn kind_label(kind: PrimitiveKind) -> &'static str {
 const MENU_Z: u32 = 90;
 
 /// Header for the production-comparison section (2026-08-10, concept
-/// wiring) — a plain English literal, not `mlc_core::i18n`: no `ShellKey`
-/// exists for "production"/"current code" wording, and adding one is out
-/// of scope (`mlc-core` is off limits for this task — see the launching
-/// brief). Falls back to this crate's own existing convention for text
-/// with no i18n key: the object-row label fallback a few lines down
-/// already reads a raw literal (the type id) when `tree_objects` has no
-/// matching primitive, rather than inventing a translation key for a
-/// state that should not normally occur.
-const PRODUCTION_SECTION_LABEL: &str = "Production modals (current code)";
+/// wiring): `ShellKey::LauncherProductionModals`, like every other label
+/// in this menu. It was a bare English literal for one afternoon because
+/// the key did not exist yet; the key exists now.
+fn production_section_label() -> &'static str {
+    t_shell(ShellKey::LauncherProductionModals)
+}
 
 const ROW_H: f64 = 24.0;
 const HEADER_H: f64 = 20.0;
@@ -214,7 +211,7 @@ pub fn draw(
     // this section is for reaching a specific type's PRODUCTION modal by
     // name, not for browsing), opening the live-`Primitive`-backed modal
     // instead of the concept one — see this module's own doc.
-    row_y = draw_section_header(ctx, x, row_y, PRODUCTION_SECTION_LABEL, rt);
+    row_y = draw_section_header(ctx, x, row_y, production_section_label(), rt);
     for type_id in spawnable_types() {
         let label = tree_objects
             .iter()

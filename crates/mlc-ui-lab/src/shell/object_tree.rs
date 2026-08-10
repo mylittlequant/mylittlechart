@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 
 use mlc_core::drawing::primitives_v2::Primitive;
-use mlc_core::i18n::{t_toolbar, ToolbarTooltipKey};
+use mlc_core::i18n::{t_primitive_name, t_toolbar, PrimitiveNameKey, ToolbarTooltipKey};
 use mlc_app_layout::ui::scroll_widget::{ScrollableContainer, ScrollState};
 use mlc_app_layout::ui::widgets::types::WidgetTheme;
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
@@ -51,6 +51,15 @@ pub(crate) fn spawnable_types() -> &'static [&'static str] {
 /// drift apart.
 fn spec_display_name(type_id: &'static str) -> &'static str {
     crate::concept::spec::types().iter().find(|t| t.id == type_id).map(|t| t.name).unwrap_or(type_id)
+}
+
+/// A row's own display label, following the UI language like every other
+/// name in the app: [`PrimitiveNameKey::from_type_id`] first (the same
+/// mapping `mlc_core::i18n::localize_primitive_name` uses), falling back to
+/// the spec's own English `name` ([`spec_display_name`]) only for a
+/// type_id that has no `PrimitiveNameKey` entry.
+pub(crate) fn row_display_name(type_id: &'static str) -> &'static str {
+    PrimitiveNameKey::from_type_id(type_id).map(t_primitive_name).unwrap_or_else(|| spec_display_name(type_id))
 }
 
 /// One row's five action buttons: `(action id, icon name)`, left-to-right —
@@ -234,7 +243,7 @@ fn draw_rows(
         ctx.begin_path();
         ctx.rect(name_x, y, name_w, row_h);
         ctx.clip();
-        ctx.fill_text(spec_display_name(prim.type_id()), name_x, y + row_h / 2.0);
+        ctx.fill_text(row_display_name(prim.type_id()), name_x, y + row_h / 2.0);
         ctx.restore();
 
         let mut ax = actions_x0;

@@ -61,6 +61,7 @@
 //!   real widget this row mirrors (`draw_timeframes_group`) has no such
 //!   caption either.
 
+use mlc_app_layout::layout::modals::primitive_settings_levels::draw_checkbox;
 use mlc_app_layout::layout::modals::primitive_settings_vid::{
     draw_bool_row, draw_group_header, draw_label, draw_split_value_control, draw_toggle_segment, SplitValueKind, ROW_H,
 };
@@ -491,12 +492,38 @@ fn draw_chk3_row(
     let n = items.len().max(1);
     let slab = ((x1 - x0) / n as f64).max(60.0);
     let current = state.chk3(key, items);
+    let box_size = 16.0;
+    let box_gap = 8.0;
     for (i, (label, _)) in items.iter().enumerate() {
         let sx0 = x0 + slab * i as f64;
         let checked = current.get(i).copied().unwrap_or(false);
-        let item_label_col = (slab - 24.0).max(30.0);
         let field_id = format!("{key}::chk3:{i}");
-        draw_bool_row(ctx, toolbar_theme, result, sx0, item_label_col, y, label, checked, &field_id);
+
+        // Box FIRST, then its own caption — not `draw_bool_row`'s
+        // caption-then-box order. That order is right for a full-width row
+        // (one caption in the shared label column, its control in the
+        // control column), but three of them side by side read as
+        // caption-A box-B caption-B box-C: every box sits next to the
+        // caption it does NOT belong to.
+        let box_rect = WidgetRect::new(sx0, y + (ROW_H - box_size) / 2.0, box_size, box_size);
+        draw_checkbox(ctx, box_rect, checked, toolbar_theme, &toolbar_theme.background);
+
+        let text_x = box_rect.right() + box_gap;
+        let text_w = (sx0 + slab - text_x - box_gap).max(0.0);
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.save();
+        ctx.begin_path();
+        ctx.rect(text_x, y, text_w, ROW_H);
+        ctx.clip();
+        ctx.fill_text(label, text_x, y + ROW_H / 2.0);
+        ctx.restore();
+
+        // The whole slab is the hit target, so the caption toggles its own
+        // box the way it does in every other checkbox row in the app.
+        result.content_items.push((field_id, WidgetRect::new(sx0, y, slab, ROW_H)));
     }
 }
 

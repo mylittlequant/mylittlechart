@@ -42,6 +42,7 @@
   <script type="module">
     import init, {
       lab_modals, lab_open_type, lab_open_app, lab_tab, lab_close, lab_snapshot, lab_metrics, lab_dump_types,
+      lab_set_language,
     } from './pkg/mlc_ui_lab.js';
     await init();
     // The #[wasm_bindgen(start)] fn runs automatically inside init().
@@ -64,6 +65,9 @@
       // counterpart to `open_type`'s own `tab` argument.
       tab: (tabId) => JSON.parse(lab_tab(tabId)),
       close: () => JSON.parse(lab_close()),
+      // Flip the UI language without relaunching a differently-localed
+      // browser — the only way to see a key that has no translation.
+      lang: (code) => JSON.parse(lab_set_language(code)),
       snapshot: () => JSON.parse(lab_snapshot()),
       metrics: () => JSON.parse(lab_metrics()),
       // Declaration dumper (wave 5) — one row per registered primitive

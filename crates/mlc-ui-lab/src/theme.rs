@@ -167,7 +167,11 @@ pub fn draw_lab_bar(
         x += label_w + 6.0;
     }
 
-    let reopen_label = if any_sector_closed { "Reopen closed sectors" } else { "All sectors open" };
+    let reopen_label = mlc_core::i18n::t_shell(if any_sector_closed {
+        mlc_core::i18n::ShellKey::LabReopenSectors
+    } else {
+        mlc_core::i18n::ShellKey::LabAllSectorsOpen
+    });
     let reopen_w = ctx.measure_text(reopen_label) + 16.0;
     let reopen_rect = Rect { x: screen_w - reopen_w - 8.0, y: 8.0, width: reopen_w, height: BAR_HEIGHT - 16.0 };
     ctx.set_fill_color(if any_sector_closed { &tt.accent } else { &tt.button_bg });

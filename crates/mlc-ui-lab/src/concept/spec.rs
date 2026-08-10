@@ -29,6 +29,17 @@
 //!   translation is "Продлить", not "Продление". The key match (English
 //!   "Extend", same UI concept) is unambiguous, so this file calls the
 //!   real key; the word that actually renders will be "Продлить".
+//! - **Two more deliberate key reuses**, found during the i18n pass
+//!   (2026-08-11): `types()`'s `elliott_impulse` entry calls
+//!   `PrimitiveNameKey::ElliottImpulse`, whose real En/Ru wording is
+//!   "Elliott Impulse Wave" / "Импульс Эллиотта" — a trailing "Wave" the
+//!   concept's own English label "Elliott Impulse" drops; and
+//!   `price_date_range` calls `PrimitiveNameKey::PriceDateRange`, whose
+//!   real wording uses a slash ("Price/Date Range" / "Диапазон цена/дата")
+//!   where the concept's own English label uses an ampersand ("Price &
+//!   Date Range"). Same unambiguous key match as `Extend` above (identical
+//!   UI concept, no other candidate key) — reused rather than duplicated
+//!   into a new `ConceptKey`.
 //! - **The "Точки" placement table's fake demo prices/times**
 //!   (`fmtPrice`/`fmtTime` in `registry.js`) are ported as
 //!   [`fmt_price`]/[`fmt_time`], reproducing the same arithmetic. One
@@ -44,11 +55,25 @@
 //!   [`Tone::Neutral`], distinct from a `Row::Stat` with no `cls` key at
 //!   all (that one carries `tone: None`, since a stat row is never wrapped
 //!   in a cell shape to begin with).
+//! - **User-visible strings are localized** through `mlc_core::i18n` — each
+//!   row/group/tab label below calls the matching key from the app's
+//!   existing vocabulary (`ConfigKey`, `SettingsKey`, `MenuKey`, `StyleKey`,
+//!   `ToolbarMenuKey`, `ToolbarTooltipKey`, `ModalKey`, `ShellKey`,
+//!   `WizardKey`, `ClockKey`, `UserSettingsKey`, `LabelPositionKey`,
+//!   `PositionPointKey`, `PrimitiveNameKey`) or, where none already fits,
+//!   this design's own `ConceptKey`. Left as bare literals: internal ids
+//!   (`type_id`s, tab ids, icon names), proper nouns and technical tokens
+//!   (`Gartley`, `Close`, `EMA`, `BINANCE`, `BTCUSDT`, point letters,
+//!   segment names, notation samples), and numeric/timestamp captions.
 
 use std::sync::OnceLock;
 
 use mlc_core::i18n::{
-    t_config, t_menu, t_settings, t_style, t_toolbar_menu, ConfigKey, MenuKey, SettingsKey, StyleKey, ToolbarMenuKey,
+    t, t_concept, t_config, t_indicator, t_label_pos, t_menu, t_modal, t_primitive_name,
+    t_settings, t_shell, t_style, t_toolbar, t_toolbar_menu, t_user_settings, t_wave, t_wizard,
+    ClockKey, ConceptKey, ConfigKey, IndicatorKey, LabelPositionKey, MenuKey, ModalKey,
+    PositionPointKey, PrimitiveNameKey, SettingsKey, ShellKey, StyleKey, ToolbarMenuKey,
+    ToolbarTooltipKey, UserSettingsKey, WaveDegreeKey, WizardKey,
 };
 
 // ─── Data shape ─────────────────────────────────────────────────────────────
@@ -362,6 +387,24 @@ fn fmt_time(i: usize) -> String {
     format!("1{day_digit}.08 0{hour}:00")
 }
 
+/// The Elliott wave-degree ladder note (`wave_tabs`'s own "Subminuette ·
+/// Minuette · … · Supercycle" list) — built from [`WaveDegreeKey`] rather
+/// than carried as a literal, so it follows the UI language like every
+/// other degree name in the app.
+fn wave_degree_note() -> String {
+    format!(
+        "{} · {} · {} · {} · {} · {} · {} · {}",
+        t_wave(WaveDegreeKey::Subminuette),
+        t_wave(WaveDegreeKey::Minuette),
+        t_wave(WaveDegreeKey::Minute),
+        t_wave(WaveDegreeKey::Minor),
+        t_wave(WaveDegreeKey::Intermediate),
+        t_wave(WaveDegreeKey::Primary),
+        t_wave(WaveDegreeKey::Cycle),
+        t_wave(WaveDegreeKey::Supercycle),
+    )
+}
+
 // ─── Shared groups/tabs ──────────────────────────────────────────────────────
 // Mirrors registry.js's own TF / BEHAVIOUR / points / placement / labelRows
 // / PLATE / LINE / FILL / EXTEND helpers.
@@ -370,23 +413,27 @@ fn fmt_time(i: usize) -> String {
 /// control the app actually ships, not chips.
 fn tf_group() -> ConceptGroup {
     group(
-        "Виден на таймфреймах",
+        t_config(ConfigKey::GroupVisibleOnTimeframes),
         vec![
-            chk("Диапазоны", true),
-            range("Секунды", 0, 100, "1с–30с"),
-            range("Минуты", 0, 100, "1м–45м"),
-            range("Часы", 0, 100, "1Ч–12Ч"),
-            range("Дни", 0, 100, "1Д–3Д"),
-            range("Недели", 0, 100, "1Н"),
-            range("Месяцы", 0, 100, "1М"),
+            chk(t_settings(SettingsKey::TfRanges), true),
+            range(t_settings(SettingsKey::TfSeconds), 0, 100, t_concept(ConceptKey::SecondsRangeCap)),
+            range(t_settings(SettingsKey::TfMinutes), 0, 100, t_concept(ConceptKey::MinutesRangeCap)),
+            range(t_settings(SettingsKey::TfHours), 0, 100, t_concept(ConceptKey::HoursRangeCap)),
+            range(t_settings(SettingsKey::TfDays), 0, 100, t_concept(ConceptKey::DaysRangeCap)),
+            range(t_settings(SettingsKey::TfWeeks), 0, 100, t_concept(ConceptKey::WeeksRangeCap)),
+            range(t_settings(SettingsKey::TfMonths), 0, 100, t_concept(ConceptKey::MonthsRangeCap)),
         ],
     )
 }
 
 fn behaviour_group() -> ConceptGroup {
     group(
-        "Поведение",
-        vec![chk(t_menu(MenuKey::Lock), false), chk("Скрыть", false), chk("На всех графиках символа", false)],
+        t_concept(ConceptKey::BehaviourGroupTitle),
+        vec![
+            chk(t_menu(MenuKey::Lock), false),
+            chk(t_menu(MenuKey::ShowHide), false),
+            chk(t_concept(ConceptKey::SyncAllChartsOfSymbol), false),
+        ],
     )
 }
 
@@ -400,36 +447,37 @@ fn points_group(names: &[&str], note_text: Option<&str>) -> ConceptGroup {
             vec![txt(name), txt(&price), txt(&time)]
         })
         .collect();
-    let mut rows = vec![table(&["Точка", "Цена", "Время"], table_rows)];
+    let mut rows =
+        vec![table(&[t_config(ConfigKey::PointLabel), t_modal(ModalKey::AlertPrice), t_concept(ConceptKey::TimeGroupTitle)], table_rows)];
     if let Some(text) = note_text {
         rows.push(note(text));
     }
-    group_hint("Точки", &names.len().to_string(), rows)
+    group_hint(t_config(ConfigKey::GroupPoints), &names.len().to_string(), rows)
 }
 
 fn placement_tab(names: &[&str], note_text: Option<&str>) -> ConceptTab {
-    tab("placement", "Размещение", vec![tf_group(), points_group(names, note_text), behaviour_group()])
+    tab("placement", t_config(ConfigKey::TabPlacement), vec![tf_group(), points_group(names, note_text), behaviour_group()])
 }
 
 fn label_rows(what: &str) -> Vec<Row> {
     vec![
         chk(t_settings(SettingsKey::Show), true),
-        chk("Наследовать цвет линии", true),
-        color_dim("Цвет подписи", ThemeColor::Accent),
-        num("Размер", "12"),
-        chk("Жирный", false),
+        chk(t_config(ConfigKey::LabelColorInherit), true),
+        color_dim(t_concept(ConceptKey::LabelColor), ThemeColor::Accent),
+        num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+        chk(t_config(ConfigKey::Bold), false),
         note(what),
     ]
 }
 
 fn plate_group() -> ConceptGroup {
     group(
-        "Плашка",
+        t_concept(ConceptKey::Plate),
         vec![
-            chk("Плашка под подписью", true),
-            color("Цвет плашки", ThemeColor::ModalBg),
-            num("Скругление", "3"),
-            num("Отступы", "4"),
+            chk(t_concept(ConceptKey::PlateBehindLabel), true),
+            color(t_concept(ConceptKey::PlateColor), ThemeColor::ModalBg),
+            num(t_concept(ConceptKey::PlateRounding), "3"),
+            num(t_concept(ConceptKey::PlatePadding), "4"),
         ],
     )
 }
@@ -440,7 +488,7 @@ fn line_group(title: Option<&str>) -> ConceptGroup {
         title,
         vec![
             color(t_settings(SettingsKey::Color), ThemeColor::Accent),
-            slider("Толщина", 24, "1.0"),
+            slider(t_config(ConfigKey::WidthLabel), 24, "1.0"),
             dd(t_config(ConfigKey::Style), t_style(StyleKey::Solid)),
         ],
     )
@@ -450,12 +498,19 @@ fn fill_group(title: Option<&str>, on: bool) -> ConceptGroup {
     let title = title.unwrap_or_else(|| t_config(ConfigKey::Fill));
     group(
         title,
-        vec![chk("Заливать", on), color(t_settings(SettingsKey::Color), ThemeColor::Accent), slider("Прозрачность", 10, "10%")],
+        vec![
+            chk(t_concept(ConceptKey::FillToggle), on),
+            color(t_settings(SettingsKey::Color), ThemeColor::Accent),
+            slider(t_config(ConfigKey::FillOpacity), 10, "10%"),
+        ],
     )
 }
 
 fn extend_group() -> ConceptGroup {
-    group(t_config(ConfigKey::Extend), vec![chk("Влево", false), chk("Вправо", false)])
+    group(
+        t_config(ConfigKey::Extend),
+        vec![chk(t_concept(ConceptKey::ExtendLeftShort), false), chk(t_concept(ConceptKey::ExtendRightShort), false)],
+    )
 }
 
 // ─── Archetypes ──────────────────────────────────────────────────────────────
@@ -469,26 +524,36 @@ fn ladder_tabs(subject: &'static str, values: &[f64], unit: LadderUnit) -> Vec<C
             subject,
             vec![
                 group(
-                    "Общее",
+                    t_concept(ConceptKey::LadderGeneralGroupTitle),
                     vec![
-                        mode("", &["Моно", "Палитра"], 1),
-                        slider("Толщина", 24, "1.0"),
-                        dd("Стиль", "Сплошная"),
-                        chk3(["Продлить влево", "Продлить вправо", "Трендовая линия"], [false, false, true]),
+                        mode("", &[t_config(ConfigKey::PaletteMono), t_config(ConfigKey::ColorModePalette)], 1),
+                        slider(t_config(ConfigKey::WidthLabel), 24, "1.0"),
+                        dd(t_concept(ConceptKey::TypeDropdownLabel), t_style(StyleKey::Solid)),
+                        chk3(
+                            [
+                                t_settings(SettingsKey::ExtendLeft),
+                                t_settings(SettingsKey::ExtendRight),
+                                t_toolbar(ToolbarTooltipKey::TrendLine),
+                            ],
+                            [false, false, true],
+                        ),
                     ],
                 ),
-                group("Палитры", vec![ramps()]),
-                group("Заливка", vec![fillmaster("Заливка до следующего уровня", 10, "10%", true)]),
+                group(t_concept(ConceptKey::LadderPalettesGroupTitle), vec![ramps()]),
+                group(
+                    t_config(ConfigKey::Fill),
+                    vec![fillmaster(t_concept(ConceptKey::FillToNextLevel), 10, "10%", true)],
+                ),
                 group_hint(subject, &values.len().to_string(), vec![ladder(values, unit)]),
             ],
         ),
         tab(
             "labels",
-            "Подписи",
+            t_config(ConfigKey::Labels),
             vec![
                 group(
-                    "Подписи уровней",
-                    label_rows("Подпись берёт цвет своего уровня, пока включено наследование."),
+                    t_concept(ConceptKey::LevelLabelsGroupTitle),
+                    label_rows(t_concept(ConceptKey::NoteLabelInheritsLevelColor)),
                 ),
                 plate_group(),
             ],
@@ -498,44 +563,47 @@ fn ladder_tabs(subject: &'static str, values: &[f64], unit: LadderUnit) -> Vec<C
 }
 
 fn wave_tabs() -> Vec<ConceptTab> {
-    let mut wave_label_rows = label_rows("Имена берутся из степени волны.");
-    wave_label_rows.push(chk("Показывать степень", false));
+    let mut wave_label_rows = label_rows(t_concept(ConceptKey::NoteWaveNamesFromDegree));
+    wave_label_rows.push(chk(t_concept(ConceptKey::ShowDegree), false));
+
+    let degree_note = wave_degree_note();
 
     vec![
         tab(
             "waves",
-            "Волны",
+            t_concept(ConceptKey::WavesTabLabel),
             vec![
                 line_group(None),
                 group(
-                    "Степень",
-                    vec![
-                        dd("Степень волны", "Minor"),
-                        note("Subminuette · Minuette · Minute · Minor · Intermediate · Primary · Cycle · Supercycle"),
-                    ],
+                    t_concept(ConceptKey::Degree),
+                    vec![dd(t_config(ConfigKey::WaveDegree), t_wave(WaveDegreeKey::Minor)), note(&degree_note)],
                 ),
                 group(
-                    "Нотация",
+                    t_concept(ConceptKey::Notation),
                     vec![
                         pills(None, &["1 2 3 4 5", "I II III IV V", "① ② ③ ④ ⑤"], 0),
-                        note("Для коррекции — A B C, для комбинаций — W X Y (Z)."),
+                        note(t_concept(ConceptKey::NoteWaveNotationCorrectionCombination)),
                     ],
                 ),
-                group_hint("Тип коррекции", "только у коррекции", vec![dd("Тип", "Зигзаг")]),
-                fill_group(Some("Заливка между волнами"), false),
+                group_hint(
+                    t_config(ConfigKey::CorrectionType),
+                    t_concept(ConceptKey::CorrectionOnlyHint),
+                    vec![dd(t_concept(ConceptKey::TypeDropdownLabel), t_config(ConfigKey::CorrectionZigzag))],
+                ),
+                fill_group(Some(t_concept(ConceptKey::FillBetweenWaves)), false),
             ],
         ),
         tab(
             "labels",
-            "Подписи",
+            t_config(ConfigKey::Labels),
             vec![
-                group("Подписи волн", wave_label_rows),
+                group(t_concept(ConceptKey::WaveLabelsGroupTitle), wave_label_rows),
                 plate_group(),
                 group_hint(
-                    "Свои подписи",
-                    "переопределение",
+                    t_concept(ConceptKey::CustomLabelsGroupTitle),
+                    t_concept(ConceptKey::OverrideHint),
                     vec![table(
-                        &["Волна", "Подпись"],
+                        &[t_concept(ConceptKey::WaveColumnHeader), t_concept(ConceptKey::LabelColumnHeader)],
                         vec![
                             vec![txt("0"), txt("0")],
                             vec![txt("1"), txt("1")],
@@ -556,15 +624,26 @@ fn pattern_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "ratios",
-            "Пропорции",
+            t_concept(ConceptKey::RatiosTabLabel),
             vec![
-                group("Подтип", vec![dd("Паттерн", "Gartley"), note("Gartley · Bat · Butterfly · Crab · Shark · Свой")]),
-                line_group(Some("Линии")),
-                fill_group(Some("Тело паттерна"), true),
                 group(
-                    "Целевые отношения",
+                    t_concept(ConceptKey::Subtype),
+                    vec![
+                        dd(t_concept(ConceptKey::PatternDropdownLabel), "Gartley"),
+                        note(t_concept(ConceptKey::NotePatternSubtypesList)),
+                    ],
+                ),
+                line_group(Some(t_toolbar_menu(ToolbarMenuKey::HeaderLines))),
+                fill_group(Some(t_concept(ConceptKey::PatternBody)), true),
+                group(
+                    t_concept(ConceptKey::TargetRatiosGroupTitle),
                     vec![table(
-                        &["Отрезок", "Цель", "Факт", "Допуск"],
+                        &[
+                            t_concept(ConceptKey::SegmentColumnHeader),
+                            t_config(ConfigKey::PositionTargetLabel),
+                            t_concept(ConceptKey::ActualColumnHeader),
+                            t_concept(ConceptKey::ToleranceColumnHeader),
+                        ],
                         vec![
                             vec![txt("XA→AB"), txt("0.618"), toned("0.621", Tone::Good), txt("3%")],
                             vec![txt("AB→BC"), txt("0.382"), toned("0.394", Tone::Good), txt("5%")],
@@ -574,27 +653,27 @@ fn pattern_tabs() -> Vec<ConceptTab> {
                     )],
                 ),
                 group(
-                    "Оценка",
+                    t_concept(ConceptKey::ScoringGroupTitle),
                     vec![
-                        color("Цвет попадания", ThemeColor::Success),
-                        color("Цвет промаха", ThemeColor::Danger),
-                        chk("Красить линии по попаданию", false),
+                        color(t_concept(ConceptKey::HitColor), ThemeColor::Success),
+                        color(t_concept(ConceptKey::MissColor), ThemeColor::Danger),
+                        chk(t_concept(ConceptKey::ColorLinesByHit), false),
                     ],
                 ),
             ],
         ),
         tab(
             "labels",
-            "Подписи",
+            t_config(ConfigKey::Labels),
             vec![
-                group("Подписи точек", label_rows("Имена точек — X A B C D.")),
+                group(t_concept(ConceptKey::PointLabelsGroupTitle), label_rows(t_concept(ConceptKey::NotePatternPointNames))),
                 group(
-                    "Значения на графике",
+                    t_concept(ConceptKey::OnChartValuesGroupTitle),
                     vec![
-                        chk("Показывать отношения", true),
-                        chk("Показывать длину отрезков", false),
-                        num("Знаков после запятой", "3"),
-                        dd("Сторона от отрезка", "Снаружи"),
+                        chk(t_concept(ConceptKey::ShowRatiosValues), true),
+                        chk(t_concept(ConceptKey::ShowSegmentLength), false),
+                        num(t_concept(ConceptKey::DecimalPlaces), "3"),
+                        dd(t_concept(ConceptKey::SideOfSegment), t_label_pos(LabelPositionKey::Outside)),
                     ],
                 ),
                 plate_group(),
@@ -608,74 +687,78 @@ fn position_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "trade",
-            "Сделка",
+            t_concept(ConceptKey::TradeTabLabel),
             vec![
                 group(
-                    "Объём",
+                    t_toolbar_menu(ToolbarMenuKey::HeaderVolume),
                     vec![
-                        num("Количество", "1.00"),
-                        num("Размер счёта", "10000"),
-                        num("Риск на сделку, %", "1.0"),
-                        chk("Считать объём от риска", false),
+                        num(t_config(ConfigKey::Quantity), "1.00"),
+                        num(t_concept(ConceptKey::AccountSize), "10000"),
+                        num(t_concept(ConceptKey::RiskPerTradePct), "1.0"),
+                        chk(t_concept(ConceptKey::CalcSizeFromRisk), false),
                     ],
                 ),
                 group(
-                    "Зоны",
+                    t_concept(ConceptKey::ZonesGroupTitle),
                     vec![
-                        color("Зона стопа", ThemeColor::Danger),
-                        color("Зона цели", ThemeColor::Success),
-                        slider("Прозрачность", 18, "18%"),
+                        color(t_concept(ConceptKey::StopZone), ThemeColor::Danger),
+                        color(t_concept(ConceptKey::TargetZone), ThemeColor::Success),
+                        slider(t_config(ConfigKey::FillOpacity), 18, "18%"),
                     ],
                 ),
                 group(
-                    "Линии",
+                    t_toolbar_menu(ToolbarMenuKey::HeaderLines),
                     vec![
-                        color("Вход", ThemeColor::Accent),
-                        color("Стоп", ThemeColor::Danger),
-                        color("Цель", ThemeColor::Success),
-                        dd("Стиль", "Сплошная"),
+                        color(t(PositionPointKey::Entry), ThemeColor::Accent),
+                        color(t_concept(ConceptKey::StopPointLabel), ThemeColor::Danger),
+                        color(t_config(ConfigKey::PositionTargetLabel), ThemeColor::Success),
+                        dd(t_config(ConfigKey::Style), t_style(StyleKey::Solid)),
                     ],
                 ),
                 group(
-                    "Отображение",
+                    t_concept(ConceptKey::DisplayGroupTitle),
                     vec![
-                        pills(None, &["Валюта", "Тики", "Проценты"], 0),
-                        chk("Показывать P&L", true),
-                        chk("Показывать объём", true),
+                        pills(
+                            None,
+                            &[t_concept(ConceptKey::Currency), t_settings(SettingsKey::TfTicks), t_concept(ConceptKey::PercentUnit)],
+                            0,
+                        ),
+                        chk(t_concept(ConceptKey::ShowPnlToggle), true),
+                        chk(t_concept(ConceptKey::ShowVolumeToggle), true),
                     ],
                 ),
                 group_hint(
-                    "Результат",
-                    "считается",
+                    t_concept(ConceptKey::ResultGroupTitle),
+                    t_concept(ConceptKey::CalculatedHintSingular),
                     vec![
-                        stat("Риск", "−437.59", Some(Tone::Bad)),
-                        stat("Цель", "+875.19", Some(Tone::Good)),
+                        stat(t_config(ConfigKey::PositionRiskLabel), "−437.59", Some(Tone::Bad)),
+                        stat(t_config(ConfigKey::PositionTargetLabel), "+875.19", Some(Tone::Good)),
                         hr(),
-                        stat("Отношение", "1 : 2.00", None),
-                        note("Не редактируется — считается от точек входа, стопа и цели."),
+                        stat(t_concept(ConceptKey::RiskRewardRatio), "1 : 2.00", None),
+                        note(t_concept(ConceptKey::NotePositionResultReadOnly)),
                     ],
                 ),
             ],
         ),
         tab(
             "labels",
-            "Подписи",
+            t_config(ConfigKey::Labels),
             vec![
-                group("Подписи", label_rows("Подписи входа, стопа и цели.")),
+                group(t_config(ConfigKey::Labels), label_rows(t_concept(ConceptKey::NotePositionLabelsWhat))),
                 group(
-                    "Что писать",
+                    t_concept(ConceptKey::WhatToWriteGroupTitle),
                     vec![
-                        chk("Имя точки", true),
-                        chk("Цену", true),
-                        chk("Расстояние в %", true),
-                        chk("Сумму риска и цели", false),
-                        num("Знаков после запятой", "2"),
+                        chk(t_concept(ConceptKey::WritePointName), true),
+                        chk(t_concept(ConceptKey::WritePrice), true),
+                        chk(t_concept(ConceptKey::WriteDistancePct), true),
+                        chk(t_concept(ConceptKey::WriteRiskTargetSum), false),
+                        num(t_concept(ConceptKey::DecimalPlaces), "2"),
                     ],
                 ),
                 plate_group(),
             ],
         ),
-        placement_tab(&["Вход", "Стоп", "Цель"], None),
+        placement_tab(&[t(PositionPointKey::Entry), t_concept(ConceptKey::StopPointLabel), t_config(ConfigKey::PositionTargetLabel)], None),
     ]
 }
 
@@ -683,63 +766,75 @@ fn measure_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "show",
-            "Что показывать",
+            t_concept(ConceptKey::WhatToShowTabLabel),
             vec![
                 group(
-                    "Величины",
+                    t_concept(ConceptKey::ValuesGroupTitle),
                     vec![
-                        chk("Изменение цены", true),
-                        chk("Проценты", true),
-                        chk("Число баров", true),
-                        chk("Время", false),
-                        chk("Объём за диапазон", false),
-                        chk("Средняя цена", false),
-                        chk("Угол наклона", false),
+                        chk(t_concept(ConceptKey::PriceChange), true),
+                        chk(t_concept(ConceptKey::PercentUnit), true),
+                        chk(t_concept(ConceptKey::BarCount), true),
+                        chk(t_concept(ConceptKey::TimeGroupTitle), false),
+                        chk(t_concept(ConceptKey::VolumeOverRange), false),
+                        chk(t_concept(ConceptKey::AveragePrice), false),
+                        chk(t_concept(ConceptKey::SlopeAngle), false),
                     ],
                 ),
                 group(
-                    "Формат",
+                    t_concept(ConceptKey::FormatGroupTitle),
                     vec![
-                        num("Знаков после запятой", "2"),
-                        chk("Разделитель разрядов", true),
-                        dd("Единица объёма", "Авто (K / M)"),
+                        num(t_concept(ConceptKey::DecimalPlaces), "2"),
+                        chk(t_concept(ConceptKey::ThousandsSeparator), true),
+                        dd(t_concept(ConceptKey::VolumeUnit), t_concept(ConceptKey::AutoKmUnit)),
                     ],
                 ),
                 group(
-                    "Линия и стрелка",
-                    vec![color("Цвет", ThemeColor::Accent), slider("Толщина", 24, "1.0"), chk("Стрелка на конце", true)],
+                    t_concept(ConceptKey::LineAndArrowGroupTitle),
+                    vec![
+                        color(t_settings(SettingsKey::Color), ThemeColor::Accent),
+                        slider(t_config(ConfigKey::WidthLabel), 24, "1.0"),
+                        chk(t_concept(ConceptKey::ArrowheadAtEnd), true),
+                    ],
                 ),
                 group(
-                    "Область",
+                    t_toolbar_menu(ToolbarMenuKey::Area),
                     vec![
-                        chk("Заливать", true),
-                        slider("Прозрачность", 15, "15%"),
-                        chk("Красить по знаку", true),
-                        color("Рост", ThemeColor::Success),
-                        color("Падение", ThemeColor::Danger),
+                        chk(t_concept(ConceptKey::FillToggle), true),
+                        slider(t_config(ConfigKey::FillOpacity), 15, "15%"),
+                        chk(t_concept(ConceptKey::ColorBySign), true),
+                        color(t_concept(ConceptKey::MeasureUp), ThemeColor::Success),
+                        color(t_concept(ConceptKey::MeasureDown), ThemeColor::Danger),
                     ],
                 ),
             ],
         ),
         tab(
             "labels",
-            "Подписи",
+            t_config(ConfigKey::Labels),
             vec![
                 group(
-                    "Текст",
-                    vec![num("Размер", "12"), color("Цвет", ThemeColor::TextPrimary), chk("Наследовать цвет линии", false)],
+                    t_settings(SettingsKey::Text),
+                    vec![
+                        num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+                        color(t_settings(SettingsKey::Color), ThemeColor::TextPrimary),
+                        chk(t_config(ConfigKey::LabelColorInherit), false),
+                    ],
                 ),
                 group(
-                    "Плашка",
+                    t_concept(ConceptKey::Plate),
                     vec![
-                        pills(None, &["Сверху", "В центре", "Снизу"], 1),
-                        chk("Фон плашки", true),
-                        color("Цвет фона", ThemeColor::ModalBg),
+                        pills(
+                            None,
+                            &[t_config(ConfigKey::AlignTop), t_concept(ConceptKey::PlateVerticalMiddle), t_config(ConfigKey::AlignBottom)],
+                            1,
+                        ),
+                        chk(t_concept(ConceptKey::PlateBackground), true),
+                        color(t_concept(ConceptKey::BackgroundColor), ThemeColor::ModalBg),
                     ],
                 ),
             ],
         ),
-        placement_tab(&["Начало", "Конец"], None),
+        placement_tab(&[t_concept(ConceptKey::PointStart), t_concept(ConceptKey::PointEnd)], None),
     ]
 }
 
@@ -747,65 +842,89 @@ fn text_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "text",
-            "Текст",
+            t_settings(SettingsKey::Text),
             vec![
                 group(
-                    "Содержимое",
+                    t_concept(ConceptKey::ContentGroupTitle),
                     vec![
-                        area("Пробой уровня, ждём ретест"),
-                        note("Подстановки: {цена} {время} {символ} {таймфрейм}"),
+                        area(t_concept(ConceptKey::NoteCalloutDemoText)),
+                        note(t_concept(ConceptKey::NoteCalloutPlaceholders)),
                     ],
                 ),
                 group(
-                    "Шрифт",
+                    t_concept(ConceptKey::FontGroupTitle),
                     vec![
-                        dd("Гарнитура", "Inter"),
-                        num("Размер", "13"),
-                        pills(Some("Начертание"), &["Ж", "К", "Ч"], 0),
-                        color("Цвет", ThemeColor::TextPrimary),
+                        dd(t_concept(ConceptKey::Typeface), "Inter"),
+                        num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "13"),
+                        pills(
+                            Some(t_config(ConfigKey::TextStyleLabel)),
+                            &[t_config(ConfigKey::BoldAbbrev), t_config(ConfigKey::ItalicAbbrev), t_concept(ConceptKey::StrikethroughAbbrev)],
+                            0,
+                        ),
+                        color(t_settings(SettingsKey::Color), ThemeColor::TextPrimary),
                     ],
                 ),
                 group(
-                    "Раскладка",
+                    t_concept(ConceptKey::LayoutGroupTitle),
                     vec![
-                        pills(None, &["По левому", "По центру", "По правому"], 0),
-                        chk("Перенос по словам", true),
-                        chk("Ширина по содержимому", true),
-                        num("Максимальная ширина", "240"),
+                        pills(
+                            None,
+                            &[
+                                t_concept(ConceptKey::AlignLeftShort),
+                                t_config(ConfigKey::AlignCenter),
+                                t_concept(ConceptKey::AlignRightShort),
+                            ],
+                            0,
+                        ),
+                        chk(t_concept(ConceptKey::WordWrap), true),
+                        chk(t_concept(ConceptKey::WidthFitsContent), true),
+                        num(t_concept(ConceptKey::MaxWidth), "240"),
                     ],
                 ),
                 group(
-                    "Плашка",
+                    t_concept(ConceptKey::Plate),
                     vec![
-                        chk("Рамка", true),
-                        color("Цвет рамки", ThemeColor::Accent),
-                        chk("Фон", true),
-                        color("Цвет фона", ThemeColor::ModalBg),
-                        num("Скругление", "4"),
-                        num("Отступы", "6"),
-                        chk("Тень", false),
+                        chk(t_concept(ConceptKey::Border), true),
+                        color(t_concept(ConceptKey::CalloutBorderColor), ThemeColor::Accent),
+                        chk(t_concept(ConceptKey::Background), true),
+                        color(t_concept(ConceptKey::BackgroundColor), ThemeColor::ModalBg),
+                        num(t_concept(ConceptKey::PlateRounding), "4"),
+                        num(t_concept(ConceptKey::PlatePadding), "6"),
+                        chk(t_concept(ConceptKey::Shadow), false),
                     ],
                 ),
                 group_hint(
-                    "Указатель",
-                    "выноска, ценовая заметка",
-                    vec![chk("Хвостик к точке", true), dd("Наконечник", "Стрелка")],
+                    t_primitive_name(PrimitiveNameKey::Signpost),
+                    t_concept(ConceptKey::CalloutHint),
+                    vec![chk(t_concept(ConceptKey::TailToPoint), true), dd(t_concept(ConceptKey::Tip), t_concept(ConceptKey::ArrowTipOption))],
                 ),
             ],
         ),
         tab(
             "placement",
-            "Размещение",
+            t_config(ConfigKey::TabPlacement),
             vec![
                 group(
-                    "Якорь",
+                    t_concept(ConceptKey::Anchor),
                     vec![
-                        pills(None, &["К цене и бару", "К бару", "К экрану"], 0),
-                        pills(None, &["Сверху", "Справа", "Снизу", "Слева"], 1),
+                        pills(
+                            None,
+                            &[
+                                t_concept(ConceptKey::AnchorToPriceAndBar),
+                                t_concept(ConceptKey::AnchorToBar),
+                                t_concept(ConceptKey::AnchorToScreen),
+                            ],
+                            0,
+                        ),
+                        pills(
+                            None,
+                            &[t_config(ConfigKey::AlignTop), t_config(ConfigKey::AlignRight), t_config(ConfigKey::AlignBottom), t_config(ConfigKey::AlignLeft)],
+                            1,
+                        ),
                     ],
                 ),
                 tf_group(),
-                points_group(&["Якорь", "Плашка"], None),
+                points_group(&[t_concept(ConceptKey::Anchor), t_concept(ConceptKey::Plate)], None),
                 behaviour_group(),
             ],
         ),
@@ -816,62 +935,74 @@ fn table_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "cells",
-            "Ячейки",
+            t_config(ConfigKey::TabCells),
             vec![
-                group("Размер", vec![stepper("Строк", 4), stepper("Колонок", 3)]),
+                group(
+                    t_user_settings(UserSettingsKey::ControlPointSizeLabel),
+                    vec![stepper(t_concept(ConceptKey::RowsCount), 4), stepper(t_concept(ConceptKey::ColumnsCount), 3)],
+                ),
                 group_hint(
-                    "Содержимое",
+                    t_concept(ConceptKey::ContentGroupTitle),
                     "4 × 3",
                     vec![cells(
                         3,
                         vec![
-                            vec!["Уровень", "Цена", "Комментарий"],
-                            vec!["Сопротивление", "65 400", "дневной максимум"],
-                            vec!["Вход", "65 100", "по ретесту"],
-                            vec!["Стоп", "64 660", "под лоем"],
+                            vec![t_concept(ConceptKey::LevelColumnHeader), t_modal(ModalKey::AlertPrice), t_config(ConfigKey::Comment)],
+                            vec![t_concept(ConceptKey::DemoResistance), "65 400", t_concept(ConceptKey::DemoDailyHigh)],
+                            vec![t(PositionPointKey::Entry), "65 100", t_concept(ConceptKey::DemoOnRetest)],
+                            vec![t_concept(ConceptKey::StopPointLabel), "64 660", t_concept(ConceptKey::DemoBelowLow)],
                         ],
                     )],
                 ),
                 group(
-                    "Колонки",
+                    t_concept(ConceptKey::ColumnsGroupTitle),
                     vec![table(
-                        &["Колонка", "Выравнивание", "Ширина"],
+                        &[t_concept(ConceptKey::ColumnColumnHeader), t_config(ConfigKey::PositionLabel), t_config(ConfigKey::BubbleWidth)],
                         vec![
-                            vec![txt("1"), txt("По левому"), txt("авто")],
-                            vec![txt("2"), txt("По правому"), txt("70")],
-                            vec![txt("3"), txt("По левому"), txt("авто")],
+                            vec![txt("1"), txt(t_concept(ConceptKey::AlignLeftShort)), txt(t_concept(ConceptKey::AutoWidthValue))],
+                            vec![txt("2"), txt(t_concept(ConceptKey::AlignRightShort)), txt("70")],
+                            vec![txt("3"), txt(t_concept(ConceptKey::AlignLeftShort)), txt(t_concept(ConceptKey::AutoWidthValue))],
                         ],
                     )],
                 ),
                 group(
-                    "Сетка и шапка",
+                    t_concept(ConceptKey::GridAndHeaderGroupTitle),
                     vec![
-                        chk("Показывать линии", true),
-                        color("Цвет линий", ThemeColor::BorderLight),
-                        chk("Первая строка — шапка", true),
-                        chk("Чередовать строки", false),
+                        chk(t_config(ConfigKey::ShowLines), true),
+                        color(t_concept(ConceptKey::LineColor), ThemeColor::BorderLight),
+                        chk(t_concept(ConceptKey::FirstRowIsHeader), true),
+                        chk(t_concept(ConceptKey::AlternateRows), false),
                     ],
                 ),
                 group(
-                    "Текст и фон",
+                    t_concept(ConceptKey::TextAndBackgroundGroupTitle),
                     vec![
-                        num("Размер", "12"),
-                        color("Цвет текста", ThemeColor::TextPrimary),
-                        color("Фон таблицы", ThemeColor::ToolbarBg),
-                        slider("Прозрачность", 90, "90%"),
+                        num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+                        color(t_config(ConfigKey::TextColor), ThemeColor::TextPrimary),
+                        color(t_concept(ConceptKey::TableBackground), ThemeColor::ToolbarBg),
+                        slider(t_config(ConfigKey::FillOpacity), 90, "90%"),
                     ],
                 ),
             ],
         ),
         tab(
             "placement",
-            "Размещение",
+            t_config(ConfigKey::TabPlacement),
             vec![
                 group(
-                    "Якорь",
+                    t_concept(ConceptKey::Anchor),
                     vec![
-                        pills(None, &["К цене и бару", "К экрану"], 1),
-                        pills(None, &["Слева сверху", "Справа сверху", "Слева снизу", "Справа снизу"], 1),
+                        pills(None, &[t_concept(ConceptKey::AnchorToPriceAndBar), t_concept(ConceptKey::AnchorToScreen)], 1),
+                        pills(
+                            None,
+                            &[
+                                t_concept(ConceptKey::AnchorTopLeft),
+                                t_concept(ConceptKey::AnchorTopRight),
+                                t_concept(ConceptKey::AnchorBottomLeft),
+                                t_concept(ConceptKey::AnchorBottomRight),
+                            ],
+                            1,
+                        ),
                     ],
                 ),
                 tf_group(),
@@ -882,20 +1013,21 @@ fn table_tabs() -> Vec<ConceptTab> {
 }
 
 fn shape_tabs(subject: &'static str, extra: Vec<ConceptGroup>) -> Vec<ConceptTab> {
-    let mut groups = vec![line_group(Some("Контур"))];
+    let mut groups = vec![line_group(Some(t_concept(ConceptKey::Outline)))];
     groups.extend(extra);
-    groups.push(fill_group(Some("Заливка"), true));
+    groups.push(fill_group(Some(t_config(ConfigKey::Fill)), true));
     groups.push(extend_group());
     groups.push(group(
-        "Текст на фигуре",
-        vec![chk("Показывать", false), num("Размер", "12"), dd("Положение", "По центру")],
+        t_concept(ConceptKey::TextOnShape),
+        vec![
+            chk(t_settings(SettingsKey::Show), false),
+            num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+            dd(t_config(ConfigKey::LabelPosition), t_config(ConfigKey::AlignCenter)),
+        ],
     ));
     vec![
         tab("shape", subject, groups),
-        placement_tab(
-            &["1", "2"],
-            Some("У полилинии список растёт по числу точек — та же таблица со своей прокруткой."),
-        ),
+        placement_tab(&["1", "2"], Some(t_concept(ConceptKey::NoteShapePolylinePointsList))),
     ]
 }
 
@@ -903,41 +1035,52 @@ fn regression_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "sigma",
-            "Отклонения",
+            t_concept(ConceptKey::DeviationsTabLabel),
             vec![
-                group("Расчёт", vec![dd("Источник", "Close"), dd("Период", "По точкам"), num("Число баров", "120")]),
                 group(
-                    "Сигмы",
+                    t_concept(ConceptKey::CalculationGroupTitle),
+                    vec![
+                        dd(t_modal(ModalKey::AlertSource), "Close"),
+                        dd(t_concept(ConceptKey::Period), t_concept(ConceptKey::ByPoints)),
+                        num(t_concept(ConceptKey::BarCount), "120"),
+                    ],
+                ),
+                group(
+                    t_concept(ConceptKey::SigmasGroupTitle),
                     vec![
                         table(
-                            &["", "Множитель", "Цвет", "Заливка"],
+                            &["", t_concept(ConceptKey::Multiplier), t_settings(SettingsKey::Color), t_config(ConfigKey::Fill)],
                             vec![
                                 vec![txt("±1σ"), txt("1.0"), swatch(ThemeColor::Accent), check(true)],
                                 vec![txt("±2σ"), txt("2.0"), swatch(ThemeColor::Warning), check(true)],
                                 vec![txt("±3σ"), txt("3.0"), swatch(ThemeColor::Danger), check(false)],
                             ],
                         ),
-                        slider("Прозрачность заливки", 10, "10%"),
+                        slider(t_concept(ConceptKey::FillOpacityLong), 10, "10%"),
                     ],
                 ),
                 group(
-                    "Базовая линия",
-                    vec![chk("Показывать", true), color("Цвет", ThemeColor::Accent), slider("Толщина", 30, "1.5")],
+                    t_toolbar_menu(ToolbarMenuKey::Baseline),
+                    vec![
+                        chk(t_settings(SettingsKey::Show), true),
+                        color(t_settings(SettingsKey::Color), ThemeColor::Accent),
+                        slider(t_config(ConfigKey::WidthLabel), 30, "1.5"),
+                    ],
                 ),
                 extend_group(),
                 group_hint(
-                    "Показатели",
-                    "считаются",
+                    t_concept(ConceptKey::MetricsGroupTitle),
+                    t_concept(ConceptKey::CalculatedHintPlural),
                     vec![
-                        chk("Показывать наклон", false),
-                        chk("Показывать R²", true),
-                        stat("Наклон", "+18.4 / бар", None),
+                        chk(t_concept(ConceptKey::ShowSlope), false),
+                        chk(t_concept(ConceptKey::ShowRSquared), true),
+                        stat(t_concept(ConceptKey::Slope), t_concept(ConceptKey::DemoSlopeValue), None),
                         stat("R²", "0.87", None),
                     ],
                 ),
             ],
         ),
-        placement_tab(&["Начало", "Конец"], None),
+        placement_tab(&[t_concept(ConceptKey::PointStart), t_concept(ConceptKey::PointEnd)], None),
     ]
 }
 
@@ -945,32 +1088,32 @@ fn brush_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "stroke",
-            "Мазок",
+            t_concept(ConceptKey::StrokeGroupTitle),
             vec![
                 group(
-                    "Мазок",
+                    t_concept(ConceptKey::StrokeGroupTitle),
                     vec![
-                        color("Цвет", ThemeColor::Accent),
-                        slider("Размер", 35, "3.0"),
-                        slider("Прозрачность", 100, "100%"),
-                        dd("Стиль линии", "Сплошная"),
+                        color(t_settings(SettingsKey::Color), ThemeColor::Accent),
+                        slider(t_user_settings(UserSettingsKey::ControlPointSizeLabel), 35, "3.0"),
+                        slider(t_config(ConfigKey::FillOpacity), 100, "100%"),
+                        dd(t_settings(SettingsKey::LineStyle), t_style(StyleKey::Solid)),
                     ],
                 ),
                 group(
-                    "Форма",
+                    t_user_settings(UserSettingsKey::ControlPointShapeLabel),
                     vec![
-                        chk("Сглаживание", true),
-                        slider("Сила сглаживания", 50, "50%"),
-                        chk("Скруглять концы", true),
-                        chk("Замыкать контур", false),
+                        chk(t_config(ConfigKey::Smooth), true),
+                        slider(t_concept(ConceptKey::SmoothingStrength), 50, "50%"),
+                        chk(t_concept(ConceptKey::RoundEndCaps), true),
+                        chk(t_concept(ConceptKey::CloseOutline), false),
                     ],
                 ),
-                fill_group(Some("Заливка у замкнутого контура"), false),
+                fill_group(Some(t_concept(ConceptKey::FillClosedOutline)), false),
             ],
         ),
         placement_tab(
-            &["Начало", "Конец"],
-            Some("У кисти точки не правятся поштучно — показываются рамка мазка и число точек."),
+            &[t_concept(ConceptKey::PointStart), t_concept(ConceptKey::PointEnd)],
+            Some(t_concept(ConceptKey::NoteBrushPointsNotEditable)),
         ),
     ]
 }
@@ -979,31 +1122,35 @@ fn icon_tabs() -> Vec<ConceptTab> {
     vec![
         tab(
             "icon",
-            "Значок",
+            t_concept(ConceptKey::IconTabLabel),
             vec![
                 group(
-                    "Символ",
+                    t_settings(SettingsKey::CompareInfoSymbol),
                     vec![icons(
                         &["▲", "▼", "⚑", "★", "●", "◆", "✕", "✓", "❗", "❓", "💡", "🔒", "📌", "🔔", "👁", "💬"],
                         0,
                     )],
                 ),
                 group(
-                    "Отрисовка",
-                    vec![color("Цвет", ThemeColor::Success), slider("Размер", 40, "18"), chk("Обводка", false)],
+                    t_concept(ConceptKey::Rendering),
+                    vec![
+                        color(t_settings(SettingsKey::Color), ThemeColor::Success),
+                        slider(t_user_settings(UserSettingsKey::ControlPointSizeLabel), 40, "18"),
+                        chk(t_concept(ConceptKey::IconOutlineToggle), false),
+                    ],
                 ),
                 group(
-                    "Подпись рядом",
+                    t_concept(ConceptKey::LabelNextToIcon),
                     vec![
-                        chk("Показывать", true),
-                        dd("Текст", "Вход по тренду"),
-                        num("Размер", "12"),
-                        dd("Сторона", "Справа"),
+                        chk(t_settings(SettingsKey::Show), true),
+                        dd(t_settings(SettingsKey::Text), t_concept(ConceptKey::DemoTrendEntryLabel)),
+                        num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+                        dd(t_concept(ConceptKey::Side), t_config(ConfigKey::AlignRight)),
                     ],
                 ),
             ],
         ),
-        placement_tab(&["Точка"], None),
+        placement_tab(&[t_config(ConfigKey::PointLabel)], None),
     ]
 }
 
@@ -1022,40 +1169,52 @@ pub fn types() -> &'static [ConceptType] {
         vec![
             ConceptType {
                 id: "fib_retracement",
-                name: "Fib Retracement",
-                tabs: ladder_tabs("Уровни", &FIB_LEVELS, LadderUnit::Ratio),
+                name: t_primitive_name(PrimitiveNameKey::FibRetracement),
+                tabs: ladder_tabs(t_config(ConfigKey::Levels), &FIB_LEVELS, LadderUnit::Ratio),
             },
-            ConceptType { id: "gann_fan", name: "Gann Fan", tabs: ladder_tabs("Углы", &GANN_ANGLES, LadderUnit::Gann) },
+            ConceptType {
+                id: "gann_fan",
+                name: t_primitive_name(PrimitiveNameKey::GannFan),
+                tabs: ladder_tabs(t_concept(ConceptKey::Angles), &GANN_ANGLES, LadderUnit::Gann),
+            },
             ConceptType {
                 id: "pitchfork",
-                name: "Pitchfork",
-                tabs: ladder_tabs("Уровни", &PITCHFORK_LEVELS, LadderUnit::Ratio),
+                name: t_primitive_name(PrimitiveNameKey::Pitchfork),
+                tabs: ladder_tabs(t_config(ConfigKey::Levels), &PITCHFORK_LEVELS, LadderUnit::Ratio),
             },
-            ConceptType { id: "elliott_impulse", name: "Elliott Impulse", tabs: wave_tabs() },
-            ConceptType { id: "xabcd_pattern", name: "XABCD Pattern", tabs: pattern_tabs() },
-            ConceptType { id: "long_position", name: "Long Position", tabs: position_tabs() },
-            ConceptType { id: "price_date_range", name: "Price & Date Range", tabs: measure_tabs() },
-            ConceptType { id: "callout", name: "Callout", tabs: text_tabs() },
-            ConceptType { id: "table", name: "Table", tabs: table_tabs() },
-            ConceptType { id: "rectangle", name: "Rectangle", tabs: shape_tabs("Фигура", Vec::new()) },
+            ConceptType { id: "elliott_impulse", name: t_primitive_name(PrimitiveNameKey::ElliottImpulse), tabs: wave_tabs() },
+            ConceptType { id: "xabcd_pattern", name: t_primitive_name(PrimitiveNameKey::XabcdPattern), tabs: pattern_tabs() },
+            ConceptType { id: "long_position", name: t_primitive_name(PrimitiveNameKey::LongPosition), tabs: position_tabs() },
+            ConceptType {
+                id: "price_date_range",
+                name: t_primitive_name(PrimitiveNameKey::PriceDateRange),
+                tabs: measure_tabs(),
+            },
+            ConceptType { id: "callout", name: t_primitive_name(PrimitiveNameKey::Callout), tabs: text_tabs() },
+            ConceptType { id: "table", name: t_primitive_name(PrimitiveNameKey::Table), tabs: table_tabs() },
+            ConceptType {
+                id: "rectangle",
+                name: t_primitive_name(PrimitiveNameKey::Rectangle),
+                tabs: shape_tabs(t_concept(ConceptKey::ShapeSubject), Vec::new()),
+            },
             ConceptType {
                 id: "parallel_channel",
-                name: "Parallel Channel",
+                name: t_primitive_name(PrimitiveNameKey::ParallelChannel),
                 tabs: shape_tabs(
-                    "Канал",
+                    t_concept(ConceptKey::ChannelSubject),
                     vec![group(
-                        "Средняя линия",
+                        t_concept(ConceptKey::MiddleLine),
                         vec![
-                            chk("Показывать", true),
-                            color("Цвет", ThemeColor::TextMuted),
-                            dd("Стиль", "Пунктир"),
+                            chk(t_settings(SettingsKey::Show), true),
+                            color(t_settings(SettingsKey::Color), ThemeColor::TextMuted),
+                            dd(t_config(ConfigKey::Style), t_concept(ConceptKey::DashedShort)),
                         ],
                     )],
                 ),
             },
-            ConceptType { id: "regression_trend", name: "Regression Trend", tabs: regression_tabs() },
-            ConceptType { id: "brush", name: "Brush", tabs: brush_tabs() },
-            ConceptType { id: "flag", name: "Flag", tabs: icon_tabs() },
+            ConceptType { id: "regression_trend", name: t_primitive_name(PrimitiveNameKey::RegressionTrend), tabs: regression_tabs() },
+            ConceptType { id: "brush", name: t_primitive_name(PrimitiveNameKey::Brush), tabs: brush_tabs() },
+            ConceptType { id: "flag", name: t_primitive_name(PrimitiveNameKey::Flag), tabs: icon_tabs() },
         ]
     })
 }
@@ -1068,7 +1227,7 @@ pub fn app_modals() -> &'static [ConceptModal] {
         vec![
             ConceptModal {
                 id: "chart_settings",
-                name: "Настройки графика",
+                name: t_shell(ShellKey::AppModalChartSettings),
                 icon: "settings",
                 rail: true,
                 width: 620.0,
@@ -1076,92 +1235,124 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab_icon(
                         "instrument",
-                        "Инструмент",
+                        t_concept(ConceptKey::Instrument),
                         "candlestick",
                         vec![
                             group(
-                                "Свечи",
+                                t_toolbar_menu(ToolbarMenuKey::Candles),
                                 vec![
-                                    color("Тело роста", ThemeColor::Success),
-                                    color("Тело падения", ThemeColor::Danger),
-                                    chk("Полые свечи", false),
-                                    chk("Фитили", true),
-                                    color("Цвет фитиля", ThemeColor::TextMuted),
+                                    color(t_concept(ConceptKey::UpBody), ThemeColor::Success),
+                                    color(t_concept(ConceptKey::DownBody), ThemeColor::Danger),
+                                    chk(t_toolbar_menu(ToolbarMenuKey::HollowCandles), false),
+                                    chk(t_concept(ConceptKey::Wicks), true),
+                                    color(t_concept(ConceptKey::WickColor), ThemeColor::TextMuted),
                                 ],
                             ),
-                            group("Границы", vec![chk("Показывать", true), slider("Толщина", 20, "1.0")]),
                             group(
-                                "Прочее",
+                                t_settings(SettingsKey::Borders),
+                                vec![chk(t_settings(SettingsKey::Show), true), slider(t_config(ConfigKey::WidthLabel), 20, "1.0")],
+                            ),
+                            group(
+                                t_concept(ConceptKey::Other),
                                 vec![
-                                    chk("Последняя цена", true),
-                                    chk("Предыдущее закрытие", false),
-                                    chk("Высокая и низкая", false),
+                                    chk(t_concept(ConceptKey::LastPrice), true),
+                                    chk(t_concept(ConceptKey::PreviousClose), false),
+                                    chk(t_concept(ConceptKey::HighAndLow), false),
                                 ],
                             ),
                         ],
                     ),
                     tab_icon(
                         "status",
-                        "Статус-строка",
+                        t_concept(ConceptKey::StatusLineTabLabel),
                         "legend",
                         vec![
                             group(
-                                "Показывать",
+                                t_settings(SettingsKey::Show),
                                 vec![
-                                    chk("Тикер", true),
-                                    chk("Значения OHLC", true),
-                                    chk("Изменение", true),
-                                    chk("Объём", true),
-                                    chk("Индикаторы", true),
+                                    chk(t_concept(ConceptKey::Ticker), true),
+                                    chk(t_concept(ConceptKey::OhlcValues), true),
+                                    chk(t_concept(ConceptKey::Change), true),
+                                    chk(t_toolbar_menu(ToolbarMenuKey::HeaderVolume), true),
+                                    chk(t_toolbar(ToolbarTooltipKey::Indicators), true),
                                 ],
                             ),
                             group(
-                                "Оформление",
-                                vec![num("Размер", "12"), dd("Положение", "Слева сверху"), slider("Прозрачность фона", 60, "60%")],
+                                t_settings(SettingsKey::TabAppearance),
+                                vec![
+                                    num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "12"),
+                                    dd(t_config(ConfigKey::LabelPosition), t_concept(ConceptKey::AnchorTopLeft)),
+                                    slider(t_concept(ConceptKey::BackgroundOpacity), 60, "60%"),
+                                ],
                             ),
                         ],
                     ),
                     tab_icon(
                         "scales",
-                        "Шкалы и линии",
+                        t_settings(SettingsKey::TabScalesLines),
                         "grid",
                         vec![
                             group(
-                                "Сетка",
+                                t_toolbar_menu(ToolbarMenuKey::SubGrid),
                                 vec![
-                                    chk("Вертикальные", true),
-                                    chk("Горизонтальные", true),
-                                    color("Цвет", ThemeColor::BorderLight),
-                                    dd("Стиль", "Сплошная"),
+                                    chk(t_concept(ConceptKey::Vertical), true),
+                                    chk(t_concept(ConceptKey::Horizontal), true),
+                                    color(t_settings(SettingsKey::Color), ThemeColor::BorderLight),
+                                    dd(t_config(ConfigKey::Style), t_style(StyleKey::Solid)),
                                 ],
                             ),
                             group(
-                                "Ценовая шкала",
-                                vec![dd("Режим", "Авто"), num("Ширина", "70"), chk("Проценты", false), chk("Обратная", false)],
+                                t_settings(SettingsKey::PriceScalePosition),
+                                vec![
+                                    dd(t_settings(SettingsKey::CrosshairMode), t_settings(SettingsKey::PrecisionAuto)),
+                                    num(t_config(ConfigKey::BubbleWidth), "70"),
+                                    chk(t_concept(ConceptKey::PercentUnit), false),
+                                    chk(t_concept(ConceptKey::InvertedScale), false),
+                                ],
                             ),
                             group(
-                                "Временная шкала",
-                                vec![chk("Показывать секунды", false), chk("Показывать дату", true), num("Высота", "30")],
+                                t_settings(SettingsKey::TimeScalePosition),
+                                vec![
+                                    chk(t_concept(ConceptKey::ShowSeconds), false),
+                                    chk(t_concept(ConceptKey::ShowDate), true),
+                                    num(t_config(ConfigKey::BubbleHeight), "30"),
+                                ],
                             ),
-                            group("Перекрестье", vec![color("Цвет", ThemeColor::TextMuted), dd("Стиль", "Пунктир")]),
+                            group(
+                                t_concept(ConceptKey::Crosshair),
+                                vec![
+                                    color(t_settings(SettingsKey::Color), ThemeColor::TextMuted),
+                                    dd(t_config(ConfigKey::Style), t_concept(ConceptKey::DashedShort)),
+                                ],
+                            ),
                         ],
                     ),
                     tab_icon(
                         "look",
-                        "Оформление",
+                        t_settings(SettingsKey::TabAppearance),
                         "palette",
                         vec![
-                            group("Фон", vec![pills(None, &["Сплошной", "Градиент"], 0), color("Цвет", ThemeColor::ToolbarBg)]),
                             group(
-                                "Водяной знак",
-                                vec![chk("Показывать", true), slider("Прозрачность", 20, "20%"), num("Размер", "52")],
+                                t_concept(ConceptKey::Background),
+                                vec![
+                                    pills(None, &[t_concept(ConceptKey::SolidBackground), t_concept(ConceptKey::Gradient)], 0),
+                                    color(t_settings(SettingsKey::Color), ThemeColor::ToolbarBg),
+                                ],
                             ),
                             group(
-                                "Поля",
+                                t_toolbar_menu(ToolbarMenuKey::SubWatermark),
                                 vec![
-                                    slider("Сверху", 10, "10%"),
-                                    slider("Снизу", 8, "8%"),
-                                    num("Отступ справа, баров", "10"),
+                                    chk(t_settings(SettingsKey::Show), true),
+                                    slider(t_config(ConfigKey::FillOpacity), 20, "20%"),
+                                    num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "52"),
+                                ],
+                            ),
+                            group(
+                                t_concept(ConceptKey::Margins),
+                                vec![
+                                    slider(t_config(ConfigKey::AlignTop), 10, "10%"),
+                                    slider(t_config(ConfigKey::AlignBottom), 8, "8%"),
+                                    num(t_concept(ConceptKey::RightMarginBars), "10"),
                                 ],
                             ),
                         ],
@@ -1170,7 +1361,7 @@ pub fn app_modals() -> &'static [ConceptModal] {
             },
             ConceptModal {
                 id: "indicator_settings",
-                name: "Настройки индикатора",
+                name: t_shell(ShellKey::AppModalIndicatorSettings),
                 icon: "indicators",
                 rail: false,
                 width: 520.0,
@@ -1178,60 +1369,81 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab(
                         "inputs",
-                        "Параметры",
+                        t_indicator(IndicatorKey::TabInputs),
                         vec![
                             group(
-                                "Вход",
+                                t(PositionPointKey::Entry),
                                 vec![
-                                    dd("Источник", "Close"),
-                                    num("Период", "14"),
-                                    dd("Сглаживание", "EMA"),
-                                    num("Период сглаживания", "9"),
+                                    dd(t_modal(ModalKey::AlertSource), "Close"),
+                                    num(t_concept(ConceptKey::Period), "14"),
+                                    dd(t_config(ConfigKey::Smooth), "EMA"),
+                                    num(t_concept(ConceptKey::SmoothingPeriod), "9"),
                                 ],
                             ),
                             group(
-                                "Уровни",
-                                vec![chk("Верхний", true), num("Значение", "70"), chk("Нижний", true), num("Значение", "30")],
+                                t_config(ConfigKey::Levels),
+                                vec![
+                                    chk(t_concept(ConceptKey::Upper), true),
+                                    num(t_concept(ConceptKey::Value), "70"),
+                                    chk(t_concept(ConceptKey::Lower), true),
+                                    num(t_concept(ConceptKey::Value), "30"),
+                                ],
                             ),
                         ],
                     ),
                     tab(
                         "style",
-                        "Стиль",
+                        t_config(ConfigKey::Style),
                         vec![
                             group(
-                                "Линии",
-                                vec![color("Основная", ThemeColor::Accent), slider("Толщина", 24, "1.0"), dd("Стиль", "Сплошная")],
+                                t_toolbar_menu(ToolbarMenuKey::HeaderLines),
+                                vec![
+                                    color(t_concept(ConceptKey::MainLine), ThemeColor::Accent),
+                                    slider(t_config(ConfigKey::WidthLabel), 24, "1.0"),
+                                    dd(t_config(ConfigKey::Style), t_style(StyleKey::Solid)),
+                                ],
                             ),
-                            group("Заливка", vec![chk("Между уровнями", true), slider("Прозрачность", 12, "12%")]),
-                            group("Точность", vec![dd("Знаков", "По умолчанию")]),
+                            group(
+                                t_config(ConfigKey::Fill),
+                                vec![chk(t_concept(ConceptKey::BetweenLevels), true), slider(t_config(ConfigKey::FillOpacity), 12, "12%")],
+                            ),
+                            group(
+                                t_settings(SettingsKey::Precision),
+                                vec![dd(t_concept(ConceptKey::Digits), t_concept(ConceptKey::DefaultValue))],
+                            ),
                         ],
                     ),
                     tab(
                         "signals",
-                        "Сигналы",
+                        t_toolbar(ToolbarTooltipKey::Signals),
                         vec![
                             group(
-                                "Условия",
+                                t_concept(ConceptKey::ConditionsPlural),
                                 vec![
-                                    chk("Пересечение вверх", true),
-                                    chk("Пересечение вниз", true),
-                                    chk("Выход из зоны", false),
+                                    chk(t_concept(ConceptKey::CrossesUp), true),
+                                    chk(t_concept(ConceptKey::CrossesDown), true),
+                                    chk(t_concept(ConceptKey::ExitsZone), false),
                                 ],
                             ),
-                            group("Отметки", vec![dd("Форма", "Треугольник"), num("Размер", "10")]),
+                            group(
+                                t_concept(ConceptKey::Markers),
+                                vec![
+                                    dd(t_user_settings(UserSettingsKey::ControlPointShapeLabel), t_primitive_name(PrimitiveNameKey::Triangle)),
+                                    num(t_user_settings(UserSettingsKey::ControlPointSizeLabel), "10"),
+                                ],
+                            ),
                         ],
                     ),
                     tab(
                         "visibility",
-                        "Видимость",
+                        t_config(ConfigKey::Visibility),
                         vec![group(
-                            "Виден на таймфреймах",
+                            t_config(ConfigKey::GroupVisibleOnTimeframes),
                             vec![
-                                chk("Диапазоны", true),
-                                range("Минуты", 0, 100, "1м–45м"),
-                                range("Часы", 0, 100, "1Ч–12Ч"),
-                                range("Дни", 0, 100, "1Д–3Д"),
+                                chk(t_settings(SettingsKey::TfRanges), true),
+                                range(t_settings(SettingsKey::TfMinutes), 0, 100, t_concept(ConceptKey::MinutesRangeCap)),
+                                range(t_settings(SettingsKey::TfHours), 0, 100, t_concept(ConceptKey::HoursRangeCap)),
+                                range(t_settings(SettingsKey::TfDays), 0, 100, t_concept(ConceptKey::DaysRangeCap)),
                             ],
                         )],
                     ),
@@ -1239,7 +1451,7 @@ pub fn app_modals() -> &'static [ConceptModal] {
             },
             ConceptModal {
                 id: "watchlist",
-                name: "Список наблюдения",
+                name: t_shell(ShellKey::AppModalWatchlist),
                 icon: "watchlist",
                 rail: false,
                 width: 520.0,
@@ -1247,11 +1459,11 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab(
                         "overview",
-                        "Обзор",
+                        t_modal(ModalKey::WatchlistOverview),
                         vec![group(
-                            "Инструменты",
+                            t_concept(ConceptKey::Instruments),
                             vec![table(
-                                &["Символ", "Цена", "Изм."],
+                                &[t_settings(SettingsKey::CompareInfoSymbol), t_modal(ModalKey::AlertPrice), t_concept(ConceptKey::ChangeAbbrev)],
                                 vec![
                                     vec![txt("BTCUSDT"), txt("65 100.00"), toned("+1.24%", Tone::Good)],
                                     vec![txt("ETHUSDT"), txt("3 420.55"), toned("−0.42%", Tone::Bad)],
@@ -1262,25 +1474,33 @@ pub fn app_modals() -> &'static [ConceptModal] {
                     ),
                     tab(
                         "groups",
-                        "Группы",
+                        t_modal(ModalKey::WatchlistGroups),
                         vec![group(
-                            "Группы",
-                            vec![pills(None, &["Крипта", "Форекс", "Акции США"], 0), chk("Синхронизировать с графиком", true)],
+                            t_modal(ModalKey::WatchlistGroups),
+                            vec![
+                                pills(None, &[t_concept(ConceptKey::Crypto), t_concept(ConceptKey::Forex), t_concept(ConceptKey::UsStocks)], 0),
+                                chk(t_concept(ConceptKey::SyncWithChart), true),
+                            ],
                         )],
                     ),
                     tab(
                         "settings",
-                        "Настройки",
+                        t_menu(MenuKey::OpenSettings),
                         vec![group(
-                            "Колонки",
-                            vec![chk("Цена", true), chk("Изменение", true), chk("Объём", false), chk("Спред", false)],
+                            t_concept(ConceptKey::ColumnsGroupTitle),
+                            vec![
+                                chk(t_modal(ModalKey::AlertPrice), true),
+                                chk(t_concept(ConceptKey::Change), true),
+                                chk(t_toolbar_menu(ToolbarMenuKey::HeaderVolume), false),
+                                chk(t_concept(ConceptKey::Spread), false),
+                            ],
                         )],
                     ),
                 ],
             },
             ConceptModal {
                 id: "alerts",
-                name: "Алерты",
+                name: t_shell(ShellKey::AppModalAlerts),
                 icon: "alert",
                 rail: false,
                 width: 520.0,
@@ -1288,41 +1508,48 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab(
                         "settings",
-                        "Настройки",
+                        t_menu(MenuKey::OpenSettings),
                         vec![
                             group(
-                                "Условие",
-                                vec![dd("Тип", "Пересечение цены"), num("Значение", "65 400"), dd("Направление", "Вверх")],
+                                t_modal(ModalKey::AlertCondition),
+                                vec![
+                                    dd(t_concept(ConceptKey::TypeDropdownLabel), t_concept(ConceptKey::PriceCross)),
+                                    num(t_concept(ConceptKey::Value), "65 400"),
+                                    dd(t_config(ConfigKey::Direction), t_concept(ConceptKey::Up)),
+                                ],
                             ),
-                            group("Срок", vec![chk("Однократный", true), dd("Истекает", "Через сутки")]),
+                            group(
+                                t_concept(ConceptKey::Expiry),
+                                vec![chk(t_concept(ConceptKey::OneTime), true), dd(t_concept(ConceptKey::Expires), t_concept(ConceptKey::After24h))],
+                            ),
                         ],
                     ),
                     tab(
                         "notify",
-                        "Уведомления",
+                        t_modal(ModalKey::AlertTabNotifications),
                         vec![
                             group(
-                                "Каналы",
+                                t_toolbar_menu(ToolbarMenuKey::HeaderChannels),
                                 vec![
-                                    chk("Звук", true),
-                                    chk("Всплывающее окно", true),
-                                    chk("Телеграм", false),
-                                    chk("Вебхук", false),
+                                    chk(t_concept(ConceptKey::Sound), true),
+                                    chk(t_concept(ConceptKey::Popup), true),
+                                    chk(t_concept(ConceptKey::Telegram), false),
+                                    chk(t_concept(ConceptKey::Webhook), false),
                                 ],
                             ),
-                            group("Сообщение", vec![area("{символ} пробил {значение} на {таймфрейм}")]),
+                            group(t_modal(ModalKey::AlertMessage), vec![area(t_concept(ConceptKey::NoteAlertMessageTemplate))]),
                         ],
                     ),
                     tab(
                         "list",
-                        "Список",
+                        t_concept(ConceptKey::List),
                         vec![group(
-                            "Активные",
+                            t_concept(ConceptKey::Active),
                             vec![table(
-                                &["Символ", "Условие", "Статус"],
+                                &[t_settings(SettingsKey::CompareInfoSymbol), t_modal(ModalKey::AlertCondition), t_concept(ConceptKey::Status)],
                                 vec![
-                                    vec![txt("BTCUSDT"), txt("> 65 400"), toned("ждёт", Tone::Neutral)],
-                                    vec![txt("ETHUSDT"), txt("< 3 300"), toned("сработал", Tone::Good)],
+                                    vec![txt("BTCUSDT"), txt("> 65 400"), toned(t_concept(ConceptKey::AlertStatusWaiting), Tone::Neutral)],
+                                    vec![txt("ETHUSDT"), txt("< 3 300"), toned(t_concept(ConceptKey::AlertStatusTriggered), Tone::Good)],
                                 ],
                             )],
                         )],
@@ -1331,7 +1558,7 @@ pub fn app_modals() -> &'static [ConceptModal] {
             },
             ConceptModal {
                 id: "user_settings",
-                name: "Настройки приложения",
+                name: t_shell(ShellKey::AppModalUserSettings),
                 icon: "user",
                 rail: false,
                 width: 520.0,
@@ -1339,34 +1566,38 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab(
                         "general",
-                        "Общие",
+                        t_concept(ConceptKey::GeneralTabLabel),
                         vec![
                             group(
-                                "Интерфейс",
+                                t_concept(ConceptKey::Interface),
                                 vec![
-                                    dd("Язык", "Русский"),
-                                    pills(Some("Тема"), &["Тёмная", "Светлая"], 0),
-                                    chk("Компактный режим", false),
+                                    dd(t_concept(ConceptKey::Language), t_concept(ConceptKey::RussianLanguageName)),
+                                    pills(
+                                        Some(t_wizard(WizardKey::Theme)),
+                                        &[t_settings(SettingsKey::ThemeDark), t_settings(SettingsKey::ThemeLight)],
+                                        0,
+                                    ),
+                                    chk(t_concept(ConceptKey::CompactMode), false),
                                 ],
                             ),
-                            group("Время", vec![dd("Часовой пояс", "UTC+0"), chk("24-часовой формат", true)]),
+                            group(t_concept(ConceptKey::TimeGroupTitle), vec![dd(t(ClockKey::Timezone), "UTC+0"), chk(t(ClockKey::Use24h), true)]),
                         ],
                     ),
                     tab(
                         "perf",
-                        "Производительность",
+                        t_concept(ConceptKey::Performance),
                         vec![
                             group(
-                                "Отрисовка",
+                                t_concept(ConceptKey::Rendering),
                                 vec![
-                                    dd("Частота кадров", "Авто"),
-                                    chk("Сглаживание", true),
-                                    chk("Показывать счётчик кадров", false),
+                                    dd(t_concept(ConceptKey::FrameRate), t_settings(SettingsKey::PrecisionAuto)),
+                                    chk(t_config(ConfigKey::Smooth), true),
+                                    chk(t_concept(ConceptKey::ShowFrameCounter), false),
                                 ],
                             ),
                             group(
-                                "Данные",
-                                vec![num("Глубина истории, баров", "5000"), chk("Кешировать на диск", true)],
+                                t_concept(ConceptKey::Data),
+                                vec![num(t_concept(ConceptKey::HistoryDepthBars), "5000"), chk(t_concept(ConceptKey::CacheToDisk), true)],
                             ),
                         ],
                     ),
@@ -1374,7 +1605,7 @@ pub fn app_modals() -> &'static [ConceptModal] {
             },
             ConceptModal {
                 id: "tags_tabs",
-                name: "Вкладки и метки",
+                name: t_shell(ShellKey::AppModalTagsTabs),
                 icon: "layers",
                 rail: false,
                 width: 520.0,
@@ -1382,34 +1613,48 @@ pub fn app_modals() -> &'static [ConceptModal] {
                 tabs: vec![
                     tab(
                         "tabs",
-                        "Вкладки",
+                        t_concept(ConceptKey::TabsLabel),
                         vec![group(
-                            "Вкладки графиков",
+                            t_concept(ConceptKey::ChartTabs),
                             vec![table(
-                                &["Имя", "Символ", "ТФ"],
+                                &[t_concept(ConceptKey::Name), t_settings(SettingsKey::CompareInfoSymbol), t_concept(ConceptKey::TfAbbrev)],
                                 vec![
                                     vec![txt("Untitled 1"), txt("BTCUSDT"), txt("1H")],
-                                    vec![txt("Скальп"), txt("ETHUSDT"), txt("5м")],
+                                    vec![txt(t_concept(ConceptKey::DemoChartTabScalp)), txt("ETHUSDT"), txt(t_concept(ConceptKey::DemoTimeframe5m))],
                                 ],
                             )],
                         )],
                     ),
                     tab(
                         "tags",
-                        "Метки",
+                        t_concept(ConceptKey::Tags),
                         vec![
                             group(
-                                "Метки",
-                                vec![pills(None, &["Идея", "Работа", "Архив"], 0), color("Цвет метки", ThemeColor::Accent)],
+                                t_concept(ConceptKey::Tags),
+                                vec![
+                                    pills(
+                                        None,
+                                        &[t_concept(ConceptKey::TagIdea), t_concept(ConceptKey::TagWork), t_concept(ConceptKey::TagArchive)],
+                                        0,
+                                    ),
+                                    color(t_concept(ConceptKey::TagColor), ThemeColor::Accent),
+                                ],
                             ),
-                            group("Группы синхронизации", vec![pills(None, &["Нет", "Красная", "Синяя"], 1)]),
+                            group(
+                                t_concept(ConceptKey::SyncGroups),
+                                vec![pills(
+                                    None,
+                                    &[t_settings(SettingsKey::ScalePosHidden), t_concept(ConceptKey::TagColorRed), t_concept(ConceptKey::TagColorBlue)],
+                                    1,
+                                )],
+                            ),
                         ],
                     ),
                 ],
             },
             ConceptModal {
                 id: "trading",
-                name: "Торговый контейнер",
+                name: t_shell(ShellKey::AppModalTradingContainer),
                 icon: "trading",
                 rail: false,
                 width: 520.0,
@@ -1419,36 +1664,49 @@ pub fn app_modals() -> &'static [ConceptModal] {
                         "map",
                         "MAP",
                         vec![group(
-                            "Панели",
-                            vec![pills(None, &["DOM", "Лента", "L2", "Позиции"], 0), chk("Показывать заголовки", true)],
+                            t_concept(ConceptKey::Panels),
+                            vec![
+                                pills(None, &["DOM", t_concept(ConceptKey::Tape), "L2", t_toolbar_menu(ToolbarMenuKey::HeaderPositions)], 0),
+                                chk(t_concept(ConceptKey::ShowHeaders), true),
+                            ],
                         )],
                     ),
                     tab(
                         "setup",
                         "SETUP",
                         vec![
-                            group("Счёт", vec![dd("Биржа", "BINANCE"), dd("Тип", "Spot"), num("Плечо", "1")]),
-                            group("Риск", vec![num("Риск на сделку, %", "1.0"), chk("Стоп обязателен", true)]),
+                            group(
+                                t_concept(ConceptKey::Account),
+                                vec![
+                                    dd(t_concept(ConceptKey::Exchange), "BINANCE"),
+                                    dd(t_concept(ConceptKey::TypeDropdownLabel), "Spot"),
+                                    num(t_concept(ConceptKey::Leverage), "1"),
+                                ],
+                            ),
+                            group(
+                                t_config(ConfigKey::PositionRiskLabel),
+                                vec![num(t_concept(ConceptKey::RiskPerTradePct), "1.0"), chk(t_concept(ConceptKey::StopRequired), true)],
+                            ),
                         ],
                     ),
                 ],
             },
             ConceptModal {
                 id: "search",
-                name: "Поиск инструмента",
+                name: t_shell(ShellKey::AppModalSearch),
                 icon: "search",
                 rail: false,
                 width: 520.0,
                 height: 420.0,
                 tabs: vec![tab(
                     "symbols",
-                    "Инструменты",
+                    t_concept(ConceptKey::Instruments),
                     vec![
-                        group("Поиск", vec![area("BTC")]),
+                        group(t_toolbar(ToolbarTooltipKey::Search), vec![area("BTC")]),
                         group(
-                            "Результаты",
+                            t_config(ConfigKey::GroupResults),
                             vec![table(
-                                &["Символ", "Биржа", "Тип"],
+                                &[t_settings(SettingsKey::CompareInfoSymbol), t_concept(ConceptKey::Exchange), t_concept(ConceptKey::TypeDropdownLabel)],
                                 vec![
                                     vec![txt("BTCUSDT"), txt("BINANCE"), txt("spot")],
                                     vec![txt("BTCUSDT.P"), txt("BINANCE"), txt("perp")],
@@ -1461,17 +1719,17 @@ pub fn app_modals() -> &'static [ConceptModal] {
             },
             ConceptModal {
                 id: "template_name",
-                name: "Сохранить шаблон",
+                name: t_shell(ShellKey::AppModalTemplateName),
                 icon: "bookmark",
                 rail: false,
                 width: 380.0,
                 height: 220.0,
                 tabs: vec![tab(
                     "name",
-                    "Имя",
+                    t_concept(ConceptKey::Name),
                     vec![group(
-                        "Название шаблона",
-                        vec![area("Мой шаблон"), chk("Сделать шаблоном по умолчанию", false)],
+                        t_concept(ConceptKey::TemplateNameGroupTitle),
+                        vec![area(t_settings(SettingsKey::DefaultTemplateNamePrefix)), chk(t_concept(ConceptKey::MakeDefaultTemplate), false)],
                     )],
                 )],
             },

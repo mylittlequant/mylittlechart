@@ -205,9 +205,14 @@ pub fn draw_shell(
 
     // Selected object's display name — drives the bottom toolbar's label
     // and the chart pane's schematic placeholder (tasks 5/ this wave).
+    // Through the SAME translated name the tree row uses
+    // (`object_tree::row_display_name`), not `Primitive::display_name()`:
+    // that one is the type's own English name, so a Russian UI showed
+    // "Веер Ганна" in the tree and "Gann Fan" in the status bar for the
+    // same object.
     let selected_name: Option<&str> = tree_selected
         .and_then(|id| tree_objects.iter().find(|p| p.data().id == id))
-        .map(|p| p.display_name());
+        .map(|p| object_tree::row_display_name(p.type_id()));
 
     top_bar::draw(ctx, coord, &layer, rt, (0.0, origin_y, width, top_h), modals_active);
     left_rail::draw(ctx, coord, &layer, rt, (0.0, middle_y, left_w, middle_h), state.active_tool);
