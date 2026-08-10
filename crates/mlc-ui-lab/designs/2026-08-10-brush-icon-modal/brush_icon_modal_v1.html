@@ -1,0 +1,140 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Модалка кистей и значков — концепт v1</title>
+<style>
+:root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+*{box-sizing:border-box}
+body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:24px}
+h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 4px;letter-spacing:.05em;text-transform:uppercase}
+.sub{color:var(--mut);font-size:12px;margin:0 0 20px;max-width:940px}
+.rail{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.col{width:404px}
+.cap{font-size:12px;color:var(--mut);margin-bottom:7px}
+.cap b{color:var(--tx);font-size:12.5px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mh{padding:10px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.mh span{color:var(--mut);font-weight:400}
+.tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px}
+.tabs span{padding:7px 12px;font-size:11.5px;color:var(--mut)}
+.tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+.body{padding:11px 13px;min-height:290px}
+.foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line);gap:8px}
+.btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 12px;font-size:11.5px;white-space:nowrap}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+.srch{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 9px;font-size:11.5px;color:#5d626e}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+.row .lab{color:var(--tx);font-size:12px}
+.sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:70px}
+.sl b{position:absolute;top:0;bottom:0;left:0;background:var(--acc);border-radius:2px}
+.sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.num{width:56px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center;color:var(--tx)}
+.sel{width:150px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+.chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative;flex:0 0 auto}
+.chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+.chk.off{background:transparent;border:1px solid var(--mut)}.chk.off::after{content:""}
+.sw{width:38px;height:16px;border-radius:3px;border:1px solid rgba(255,255,255,.15)}
+.grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+.grp>h5{margin:0;padding:6px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.grp>h5 em{font-style:normal;color:#5d626e;font-size:10px;text-transform:none;letter-spacing:0}
+.grp>div{padding:5px 9px 8px;max-height:260px;overflow:auto}
+.inline{display:flex;gap:6px;flex-wrap:wrap;padding:3px 0}
+.pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+.pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.icons{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;padding:3px 0}
+.icons div{background:var(--bg);border:1px solid var(--line);border-radius:3px;text-align:center;padding:5px 0;font-size:15px}
+.icons div.on{border-color:var(--acc);background:rgba(41,98,255,.16)}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:left;color:var(--mut);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:3px 4px;border-bottom:1px solid var(--line)}
+td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
+td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;color:var(--tx);font-size:11.5px}
+td.k{color:var(--acc);font-weight:600;width:52px}
+.note{color:#5d626e;font-size:11px;padding:3px 0 0}
+</style>
+
+<h1>Модалка кистей и значков — концепт v1</h1>
+<p class="sub">Кисть, маркер, флаг, знак, стрелки вверх и вниз. Своей коллекции нет — вкладки две. У кисти в Виде мазок, у значка — выбор символа и подпись.</p>
+
+<div class="rail">
+
+  <div class="col">
+    <div class="cap"><b>Вид</b> — кисть</div>
+    <div class="modal">
+      <div class="mh">Кисть <span>✕</span></div>
+      <div class="tabs"><span class="on">Вид</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Мазок</h5><div>
+          <div class="row"><span class="lab">Цвет</span><div class="sw" style="background:#2962ff"></div></div>
+          <div class="row"><span class="lab">Размер</span><div class="sl"><b style="width:35%"></b><i style="left:35%"></i></div><div class="num">3.0</div></div>
+          <div class="row"><span class="lab">Прозрачность</span><div class="sl"><b style="width:100%"></b><i style="left:100%"></i></div><div class="num">100%</div></div>
+          <div class="row"><span class="lab">Стиль линии</span><div class="sel">Сплошная <span>▾</span></div></div>
+        </div></div>
+        <div class="grp"><h5>Форма</h5><div>
+          <div class="row"><span class="lab">Сглаживание</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Сила сглаживания</span><div class="sl"><b style="width:50%"></b><i style="left:50%"></i></div><div class="num">50%</div></div>
+          <div class="row"><span class="lab">Скруглять концы</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Замыкать контур</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Заливка <em>у замкнутого контура</em></h5><div>
+          <div class="row"><span class="lab">Заливать</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">Прозрачность</span><div class="sl"><b style="width:12%"></b><i style="left:12%"></i></div><div class="num">12%</div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Вид</b> — значок</div>
+    <div class="modal">
+      <div class="mh">Значок <span>✕</span></div>
+      <div class="tabs"><span class="on">Вид</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Символ</h5><div>
+          <div class="icons">
+            <div class="on">▲</div><div>▼</div><div>⚑</div><div>★</div><div>●</div><div>◆</div><div>✕</div><div>✓</div>
+            <div>❗</div><div>❓</div><div>💡</div><div>🔒</div><div>📌</div><div>🔔</div><div>👁</div><div>💬</div>
+          </div>
+          <div class="note">Набор значков общий для флага, знака и стрелок — тип задаёт только заводской выбор.</div>
+        </div></div>
+        <div class="grp"><h5>Отрисовка</h5><div>
+          <div class="row"><span class="lab">Цвет</span><div class="sw" style="background:#26a69a"></div></div>
+          <div class="row"><span class="lab">Размер</span><div class="sl"><b style="width:40%"></b><i style="left:40%"></i></div><div class="num">18</div></div>
+          <div class="row"><span class="lab">Обводка</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Подпись рядом</h5><div>
+          <div class="row"><span class="lab">Показывать</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Текст</span><div class="sel">Вход по тренду <span>▾</span></div></div>
+          <div class="row"><span class="lab">Размер</span><div class="num">12</div></div>
+          <div class="row"><span class="lab">Сторона</span><div class="sel">Справа <span>▾</span></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Размещение</b> — общий для обоих</div>
+    <div class="modal">
+      <div class="mh">Кисть <span>✕</span></div>
+      <div class="tabs"><span>Вид</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Точки <em>кисть: 128, значок: 1</em></h5><div>
+          <table>
+            <tr><th>Точка</th><th>Цена</th><th>Время</th></tr>
+            <tr><td class="k">Начало</td><td><input value="64 880.00"></td><td><input value="09.08 22:00"></td></tr>
+            <tr><td class="k">Конец</td><td><input value="65 320.00"></td><td><input value="10.08 07:00"></td></tr>
+          </table>
+          <div class="note">У кисти точки не редактируются поштучно — показываются рамка мазка и число точек.</div>
+        </div></div>
+        <div class="grp"><h5>Виден на таймфреймах</h5><div>
+          <div class="inline"><span class="pill on">1м</span><span class="pill on">5м</span><span class="pill on">15м</span><span class="pill on">1Ч</span><span class="pill on">4Ч</span><span class="pill on">1Д</span><span class="pill on">1Н</span></div>
+        </div></div>
+        <div class="grp"><h5>Поведение</h5><div>
+          <div class="row"><span class="lab">Заблокировать</span><div class="chk off"></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+</div>

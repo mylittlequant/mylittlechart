@@ -4,6 +4,19 @@ One folder per `YYYY-MM-DD-<modal-type>`. It holds the **concept** artifacts for
 that design: the lab's Rust tab bodies as they looked when the owner approved
 them, and the HTML renders they were prototyped from.
 
+## Pipeline (owner rule, 2026-08-10)
+
+Every MLC design decision walks the same three stages, and nothing skips a stage:
+
+1. **Concept** — HTML in this archive, one file per modal, all of its tabs inside.
+   Shown to the owner, approved or sent back.
+2. **Interactive prototype** — Rust in `mlc-ui-lab/src`, rebuilt to wasm, so the
+   owner can click it. Approved or sent back.
+3. **Implementation** — rewritten (not copied) into the real crates.
+
+A new take on an approved design is a **new version file next to the old one**
+(`*_v2.html`), never an edit of the previous one and never a deletion.
+
 **Nothing here is compiled.** These files sit outside `src/` on purpose — the
 lab must never carry a second live implementation of a modal it can host for
 real. They are the reference you re-port from and diff against.

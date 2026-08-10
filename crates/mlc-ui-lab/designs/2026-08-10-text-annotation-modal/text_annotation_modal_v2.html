@@ -1,0 +1,144 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Модалка текстовых аннотаций — концепт v2</title>
+<style>
+:root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+*{box-sizing:border-box}
+body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:24px}
+h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 4px;letter-spacing:.05em;text-transform:uppercase}
+.sub{color:var(--mut);font-size:12px;margin:0 0 20px;max-width:940px}
+.rail{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.col{width:404px}
+.cap{font-size:12px;color:var(--mut);margin-bottom:7px}
+.cap b{color:var(--tx);font-size:12.5px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mh{padding:10px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.mh span{color:var(--mut);font-weight:400}
+.tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px}
+.tabs span{padding:7px 12px;font-size:11.5px;color:var(--mut)}
+.tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+.body{padding:11px 13px;min-height:360px}
+.foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line);gap:8px}
+.btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 12px;font-size:11.5px;white-space:nowrap}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+.srch{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 9px;font-size:11.5px;color:#5d626e}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+.row .lab{color:var(--tx);font-size:12px;min-width:120px}
+.sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:70px}
+.sl b{position:absolute;top:0;bottom:0;left:0;background:var(--acc);border-radius:2px}
+.sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.rng{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:90px}
+.rng b{position:absolute;top:0;bottom:0;background:var(--acc);border-radius:2px}
+.rng i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.rr{width:78px;text-align:right;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+.num{width:56px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center;color:var(--tx)}
+.sel{width:150px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+.chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative;flex:0 0 auto}
+.chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+.chk.off{background:transparent;border:1px solid var(--mut)}.chk.off::after{content:""}
+.sw{width:38px;height:16px;border-radius:3px;border:1px solid rgba(255,255,255,.15)}
+.grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+.grp>h5{margin:0;padding:6px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.grp>h5 em{font-style:normal;color:#5d626e;font-size:10px;text-transform:none;letter-spacing:0}
+.grp>div{padding:5px 9px 8px;max-height:250px;overflow:auto}
+.inline{display:flex;gap:6px;flex-wrap:wrap;padding:3px 0}
+.pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+.pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.ta{width:100%;height:60px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:5px 7px;color:var(--tx);font-size:11.5px;resize:none}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:left;color:var(--mut);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:3px 4px;border-bottom:1px solid var(--line)}
+td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
+td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;color:var(--tx);font-size:11.5px}
+td.k{color:var(--acc);font-weight:600;width:52px}
+.note{color:#5d626e;font-size:11px;padding:3px 0 0}
+.bi{display:flex;gap:5px}
+.bi span{width:24px;height:22px;border:1px solid var(--line);border-radius:3px;text-align:center;line-height:20px;font-size:11.5px;color:var(--mut)}
+.bi span.on{border-color:var(--acc);color:#fff;background:rgba(41,98,255,.2)}
+</style>
+
+<h1>Модалка текстовых аннотаций — концепт v2</h1>
+<p class="sub">Правки к v1: у текстовой аннотации предмет — сам ТЕКСТ, поэтому рамка, фон и указатель живут там же, а отдельной вкладки подписей нет: подписывать здесь нечего, объект сам и есть подпись. Две вкладки. Таймфреймы бегунками, поведение внизу Размещения.</p>
+
+<div class="rail">
+
+  <div class="col">
+    <div class="cap"><b>Текст</b> — сущность: содержимое, шрифт, плашка</div>
+    <div class="modal">
+      <div class="mh">Выноска <span>✕</span></div>
+      <div class="tabs"><span class="on">Текст</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Содержимое</h5><div>
+          <textarea class="ta">Пробой уровня, ждём ретест</textarea>
+          <div class="note">Подстановки: {цена} {время} {символ} {таймфрейм}.</div>
+        </div></div>
+        <div class="grp"><h5>Шрифт</h5><div>
+          <div class="row"><span class="lab">Гарнитура</span><div class="sel">Inter <span>▾</span></div></div>
+          <div class="row"><span class="lab">Размер</span><div class="num">13</div></div>
+          <div class="row"><span class="lab">Начертание</span><div class="bi"><span class="on">Ж</span><span>К</span><span>Ч</span></div></div>
+          <div class="row"><span class="lab">Цвет</span><div class="sw" style="background:#d1d4dc"></div></div>
+        </div></div>
+        <div class="grp"><h5>Раскладка</h5><div>
+          <div class="inline"><span class="pill on">По левому</span><span class="pill">По центру</span><span class="pill">По правому</span></div>
+          <div class="row"><span class="lab">Перенос по словам</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Ширина по содержимому</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Максимальная ширина</span><div class="num">240</div></div>
+          <div class="row"><span class="lab">Межстрочный</span><div class="num">1.3</div></div>
+        </div></div>
+        <div class="grp"><h5>Плашка</h5><div>
+          <div class="row"><span class="lab">Рамка</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Цвет рамки</span><div class="sw" style="background:#2962ff"></div></div>
+          <div class="row"><span class="lab">Фон</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Цвет фона</span><div class="sw" style="background:#1e222d"></div></div>
+          <div class="row"><span class="lab">Прозрачность</span><div class="sl"><b style="width:80%"></b><i style="left:80%"></i></div><div class="num">80%</div></div>
+          <div class="row"><span class="lab">Скругление</span><div class="num">4</div></div>
+          <div class="row"><span class="lab">Отступы</span><div class="num">6</div></div>
+          <div class="row"><span class="lab">Тень</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Указатель <em>выноска, ценовая заметка</em></h5><div>
+          <div class="row"><span class="lab">Хвостик к точке</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Толщина</span><div class="num">1</div></div>
+          <div class="row"><span class="lab">Наконечник</span><div class="sel">Стрелка <span>▾</span></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Размещение</b> — якорь, точки, таймфреймы, поведение</div>
+    <div class="modal">
+      <div class="mh">Выноска <span>✕</span></div>
+      <div class="tabs"><span>Текст</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Якорь</h5><div>
+          <div class="inline"><span class="pill on">К цене и бару</span><span class="pill">К бару</span><span class="pill">К экрану</span></div>
+          <div class="inline"><span class="pill">Сверху</span><span class="pill on">Справа</span><span class="pill">Снизу</span><span class="pill">Слева</span></div>
+          <div class="note">К экрану — плашка не уезжает при прокрутке графика.</div>
+        </div></div>
+        <div class="grp"><h5>Виден на таймфреймах</h5><div>
+          <div class="row"><span class="lab">Диапазоны</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Секунды</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1с–30с</div></div>
+          <div class="row"><span class="lab">Минуты</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1м–45м</div></div>
+          <div class="row"><span class="lab">Часы</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1Ч–12Ч</div></div>
+          <div class="row"><span class="lab">Дни</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1Д–3Д</div></div>
+          <div class="row"><span class="lab">Недели</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1Н</div></div>
+          <div class="row"><span class="lab">Месяцы</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1М</div></div>
+        </div></div>
+        <div class="grp"><h5>Точки</h5><div>
+          <table>
+            <tr><th>Точка</th><th>Цена</th><th>Время</th></tr>
+            <tr><td class="k">Якорь</td><td><input value="65 100.00"></td><td><input value="10.08 06:00"></td></tr>
+            <tr><td class="k">Плашка</td><td><input value="65 480.00"></td><td><input value="10.08 12:00"></td></tr>
+          </table>
+        </div></div>
+        <div class="grp"><h5>Поведение</h5><div>
+          <div class="row"><span class="lab">Заблокировать</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">Скрыть</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">На всех графиках символа</span><div class="chk off"></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+</div>

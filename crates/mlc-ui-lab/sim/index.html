@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mlc sim — UI lab (JS)</title>
+<!-- tokens.css and icons.js are GENERATED from the Rust sources by
+     sim/tools/export-tokens.mjs. tokens.css must load first: everything in
+     app.css is a var() off it. icons.js carries the app's OWN svg icons. -->
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div id="shell">
+
+  <!-- top toolbar ------------------------------------------------------- -->
+  <div class="tb" id="top">
+    <div class="btn" data-act="symbol" data-icon="search">BTCUSDT · BINANCE · S</div>
+    <div class="sep"></div>
+    <div class="btn" data-act="tf" data-icon="clock">1H</div>
+    <div class="sep"></div>
+    <div class="btn icon" data-act="charttype" data-icon="candlestick" title="Тип графика"></div>
+    <div class="btn icon" data-act="indicators" data-icon="indicators" title="Индикаторы"></div>
+    <div class="btn icon" data-act="chart_settings" data-icon="settings" title="Настройки графика"></div>
+    <div class="sep"></div>
+    <div class="btn icon" data-act="undo" data-icon="undo" title="Отменить"></div>
+    <div class="btn icon" data-act="redo" data-icon="redo" title="Повторить"></div>
+    <div class="sep"></div>
+    <div class="btn icon" data-act="layout" data-icon="layout_single" title="Раскладка"></div>
+    <div class="btn icon" data-act="template_name" data-icon="bookmark" title="Шаблон"></div>
+    <div class="btn icon" data-act="snapshot" data-icon="screenshot" title="Снимок"></div>
+    <div style="flex:1"></div>
+    <div class="btn" id="launcher" data-icon="grid">Модалки</div>
+  </div>
+
+  <!-- left drawing rail --------------------------------------------------- -->
+  <div class="tb" id="left">
+    <div class="rail-btn on" data-tool="cursor" data-icon="crosshair" title="Курсор"></div>
+    <div class="rail-btn" data-tool="trend_line" data-icon="trend_line" title="Линии"></div>
+    <div class="rail-btn" data-tool="fib_retracement" data-icon="fib_retracement" title="Фибоначчи"></div>
+    <div class="rail-btn" data-tool="gann_fan" data-icon="gann_fan" title="Ганн"></div>
+    <div class="rail-btn" data-tool="pitchfork" data-icon="pitchfork" title="Вилы"></div>
+    <div class="rail-btn" data-tool="elliott_impulse" data-icon="elliott_impulse" title="Волны"></div>
+    <div class="rail-btn" data-tool="xabcd_pattern" data-icon="xabcd_pattern" title="Паттерны"></div>
+    <div class="rail-btn" data-tool="long_position" data-icon="long_position" title="Позиция"></div>
+    <div class="rail-btn" data-tool="price_date_range" data-icon="price_date_range" title="Измерители"></div>
+    <div class="rail-btn" data-tool="rectangle" data-icon="rectangle" title="Фигуры"></div>
+    <div class="rail-btn" data-tool="parallel_channel" data-icon="parallel_channel" title="Каналы"></div>
+    <div class="rail-btn" data-tool="regression_trend" data-icon="regression_trend" title="Регрессия"></div>
+    <div class="rail-btn" data-tool="callout" data-icon="callout" title="Текст"></div>
+    <div class="rail-btn" data-tool="table" data-icon="table" title="Таблица"></div>
+    <div class="rail-btn" data-tool="brush" data-icon="brush" title="Кисть"></div>
+    <div class="rail-btn" data-tool="flag" data-icon="flag" title="Значки"></div>
+    <div class="rail-btn" data-tool="magnet" data-icon="magnet" title="Магнит"></div>
+    <div class="rail-btn" data-tool="lock" data-icon="lock" title="Замок"></div>
+    <div class="rail-btn" data-tool="eye" data-icon="eye" title="Скрыть"></div>
+    <div class="rail-btn" data-tool="trash" data-icon="delete" title="Удалить"></div>
+  </div>
+
+  <!-- chart pane ---------------------------------------------------------- -->
+  <div id="chart">
+    <div id="pane">
+      <div id="legend">BTCUSDT · 1H · BINANCE · S</div>
+      <div id="watermark">данных нет — это симулятор UI</div>
+      <div id="objects"></div>
+
+      <!-- sim-only control plane: there is no chart, so objects are spawned here -->
+      <div id="spawner">
+        <h4>Спавнер объектов</h4>
+        <select id="spawn-type"></select>
+        <div style="height:8px"></div>
+        <div class="btn on" id="spawn-btn" style="width:100%">Создать объект</div>
+        <div class="hint">Объект падает в Object Tree справа. Модалка открывается шестерёнкой на строке — тем же маршрутом, что в приложении. Модалки приложения — кнопкой «Модалки» сверху.</div>
+      </div>
+    </div>
+    <div id="pscale"></div>
+    <div id="tscale"></div>
+    <div id="corner"></div>
+  </div>
+
+  <!-- right sidebar: object tree ------------------------------------------ -->
+  <div id="side">
+    <div class="side-head"><span class="ico" data-icon="object_tree"></span> Object Tree <span class="x" id="side-close" data-icon="close"></span></div>
+    <div class="tree-group">BTCUSDT:BINANCE:S</div>
+    <div id="tree"></div>
+  </div>
+
+  <!-- right icon rail ------------------------------------------------------ -->
+  <div class="tb" id="right">
+    <div class="rail-btn" data-panel="watchlist" data-icon="watchlist" title="Список"></div>
+    <div class="rail-btn" data-panel="alerts" data-icon="alert" title="Алерты"></div>
+    <div class="rail-btn on" data-panel="objects" data-icon="object_tree" title="Object Tree"></div>
+    <div class="rail-btn" data-panel="data" data-icon="signal" title="Данные"></div>
+    <div class="rail-btn" data-panel="perf" data-icon="gauge" title="Метрики"></div>
+    <div class="rail-btn" data-panel="bot" data-icon="bot" title="Агент"></div>
+    <div class="rail-btn" data-panel="trading" data-icon="trading" title="Торговля"></div>
+    <div class="rail-btn" data-panel="dom" data-icon="slot_dom" title="DOM"></div>
+    <div class="rail-btn" data-panel="tape" data-icon="slot_tape" title="Лента"></div>
+    <div class="rail-btn" data-panel="l2" data-icon="slot_l2" title="L2"></div>
+    <div class="rail-btn" data-panel="big" data-icon="slot_big_trades" title="Крупные сделки"></div>
+    <div class="rail-btn" data-panel="liq" data-icon="slot_liq" title="Ликвидации"></div>
+    <div class="rail-btn" data-panel="scr" data-icon="screener" title="Скринер"></div>
+  </div>
+
+  <!-- bottom toolbar: selected-object strip -------------------------------- -->
+  <div class="tb" id="bot">
+    <div class="btn" id="sel-name">Ничего не выбрано</div>
+    <div class="btn icon" data-act="settings" data-icon="settings" title="Настройки объекта"></div>
+    <div class="btn icon" data-act="fill" data-icon="color_fill" title="Заливка"></div>
+    <div class="btn icon" data-act="textcolor" data-icon="text_color" title="Цвет текста"></div>
+    <div class="btn" data-act="width" data-icon="line_width_2">▾</div>
+    <div class="btn" data-act="style" data-icon="line_solid">▾</div>
+    <div class="btn icon" data-act="alert" data-icon="alert" title="Алерт"></div>
+    <div class="btn icon" data-act="lock" data-icon="unlock" title="Блокировать"></div>
+    <div class="btn icon" data-act="del" data-icon="delete" title="Удалить"></div>
+    <div style="flex:1"></div>
+    <div class="btn icon" data-act="expand" data-icon="expand" title="Развернуть"></div>
+    <div class="btn" id="clock">[UTC+0] 00:00:00</div>
+  </div>
+
+</div>
+
+<div id="backdrop"></div>
+<div id="tmplmenu"></div>
+<div id="menu"></div>
+
+<script src="icons.js"></script>
+<script src="registry.js"></script>
+<script src="sim.js"></script>
+</body>
+</html>

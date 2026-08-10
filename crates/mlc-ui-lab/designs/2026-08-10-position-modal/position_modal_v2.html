@@ -1,0 +1,171 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Модалка сделки — концепт v2</title>
+<style>
+:root{--bg:#131722;--panel:#1e222d;--panel2:#252932;--line:#2a2e39;--tx:#d1d4dc;--mut:#787b86;--acc:#2962ff}
+*{box-sizing:border-box}
+body{background:#0d1017;color:var(--tx);font:13px/1.45 -apple-system,Segoe UI,system-ui,sans-serif;margin:0;padding:24px}
+h1{font-size:14px;font-weight:600;color:var(--mut);margin:0 0 4px;letter-spacing:.05em;text-transform:uppercase}
+.sub{color:var(--mut);font-size:12px;margin:0 0 20px;max-width:940px}
+.rail{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.col{width:404px}
+.cap{font-size:12px;color:var(--mut);margin-bottom:7px}
+.cap b{color:var(--tx);font-size:12.5px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mh{padding:10px 13px;font-weight:600;font-size:12.5px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.mh span{color:var(--mut);font-weight:400}
+.tabs{display:flex;border-bottom:1px solid var(--line);padding:0 5px}
+.tabs span{padding:7px 12px;font-size:11.5px;color:var(--mut)}
+.tabs span.on{color:#fff;background:var(--acc);border-radius:4px 4px 0 0}
+.body{padding:11px 13px;min-height:340px}
+.foot{display:flex;justify-content:space-between;padding:9px 12px;border-top:1px solid var(--line);gap:8px}
+.btn{background:transparent;border:1px solid var(--line);color:var(--tx);border-radius:4px;padding:5px 12px;font-size:11.5px;white-space:nowrap}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff}
+.srch{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:5px 9px;font-size:11.5px;color:#5d626e}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+.row .lab{color:var(--tx);font-size:12px;min-width:120px}
+.sl{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:70px}
+.sl b{position:absolute;top:0;bottom:0;left:0;background:var(--acc);border-radius:2px}
+.sl i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.rng{flex:1;height:3px;background:var(--line);border-radius:2px;position:relative;min-width:90px}
+.rng b{position:absolute;top:0;bottom:0;background:var(--acc);border-radius:2px}
+.rng i{position:absolute;top:-4px;width:11px;height:11px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.rr{width:78px;text-align:right;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+.num{width:70px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 5px;font-size:11.5px;text-align:center;color:var(--tx)}
+.sel{width:150px;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:3px 7px;font-size:11.5px;display:flex;justify-content:space-between}
+.chk{width:15px;height:15px;border-radius:3px;background:var(--acc);position:relative;flex:0 0 auto}
+.chk::after{content:"✓";position:absolute;inset:0;color:#fff;font-size:11px;text-align:center;line-height:15px}
+.chk.off{background:transparent;border:1px solid var(--mut)}.chk.off::after{content:""}
+.sw{width:38px;height:16px;border-radius:3px;border:1px solid rgba(255,255,255,.15)}
+.grp{border:1px solid var(--line);border-radius:5px;margin-bottom:9px;overflow:hidden}
+.grp>h5{margin:0;padding:6px 9px;background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--mut);letter-spacing:.05em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.grp>h5 em{font-style:normal;color:#5d626e;font-size:10px;text-transform:none;letter-spacing:0}
+.grp>div{padding:5px 9px 8px;max-height:250px;overflow:auto}
+.inline{display:flex;gap:6px;flex-wrap:wrap;padding:3px 0}
+.pill{border:1px solid var(--line);border-radius:12px;padding:2px 10px;font-size:11.5px;color:var(--mut)}
+.pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:left;color:var(--mut);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding:3px 4px;border-bottom:1px solid var(--line)}
+td{padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.04)}
+td input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:3px;padding:2px 4px;color:var(--tx);font-size:11.5px}
+td.k{color:var(--acc);font-weight:600;width:52px}
+.stat{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+.stat b{font-variant-numeric:tabular-nums}
+.good{color:#26a69a}.bad{color:#f23645}
+.hr{height:1px;background:var(--line);margin:7px 0}
+.note{color:#5d626e;font-size:11px;padding:3px 0 0}
+</style>
+
+<h1>Модалка сделки — концепт v2</h1>
+<p class="sub">Правки к v1: «Вид» растворён в СДЕЛКЕ — зоны и линии это части самой сделки, а не отдельный слой. Подписи своей вкладкой. Таймфреймы бегунками, поведение внизу Размещения.</p>
+
+<div class="rail">
+
+  <div class="col">
+    <div class="cap"><b>Сделка</b> — сущность: объём, зоны, линии, результат</div>
+    <div class="modal">
+      <div class="mh">Длинная позиция <span>✕</span></div>
+      <div class="tabs"><span class="on">Сделка</span><span>Подписи</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Объём</h5><div>
+          <div class="row"><span class="lab">Количество</span><div class="num">1.00</div></div>
+          <div class="row"><span class="lab">Размер счёта</span><div class="num">10 000</div></div>
+          <div class="row"><span class="lab">Риск на сделку, %</span><div class="num">1.0</div></div>
+          <div class="row"><span class="lab">Считать объём от риска</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Зоны</h5><div>
+          <div class="row"><span class="lab">Зона стопа</span><div class="sw" style="background:#f23645"></div><div class="sl" style="max-width:90px"><b style="width:18%"></b><i style="left:18%"></i></div><div class="num">18%</div></div>
+          <div class="row"><span class="lab">Зона цели</span><div class="sw" style="background:#26a69a"></div><div class="sl" style="max-width:90px"><b style="width:18%"></b><i style="left:18%"></i></div><div class="num">18%</div></div>
+        </div></div>
+        <div class="grp"><h5>Линии</h5><div>
+          <div class="row"><span class="lab">Вход</span><div class="sw" style="background:#2962ff"></div><div class="num">1.0</div></div>
+          <div class="row"><span class="lab">Стоп</span><div class="sw" style="background:#f23645"></div><div class="num">1.0</div></div>
+          <div class="row"><span class="lab">Цель</span><div class="sw" style="background:#26a69a"></div><div class="num">1.0</div></div>
+          <div class="row"><span class="lab">Стиль</span><div class="sel">Сплошная <span>▾</span></div></div>
+        </div></div>
+        <div class="grp"><h5>Отображение</h5><div>
+          <div class="inline"><span class="pill on">Валюта</span><span class="pill">Тики</span><span class="pill">Проценты</span></div>
+          <div class="row"><span class="lab">Показывать P&amp;L</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Показывать объём</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Расстояние в барах</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Результат <em>считается</em></h5><div>
+          <div class="stat"><span>Риск</span><b class="bad">−437.59</b></div>
+          <div class="stat"><span>Цель</span><b class="good">+875.19</b></div>
+          <div class="hr"></div>
+          <div class="stat"><span>Отношение</span><b>1 : 2.00</b></div>
+          <div class="note">Не редактируется — считается от точек входа, стопа и цели.</div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Подписи</b> — что написано на зонах и линиях</div>
+    <div class="modal">
+      <div class="mh">Длинная позиция <span>✕</span></div>
+      <div class="tabs"><span>Сделка</span><span class="on">Подписи</span><span>Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Подписи</h5><div>
+          <div class="row"><span class="lab">Показывать</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Наследовать цвет линии</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Цвет</span><div class="sw" style="background:#d1d4dc;opacity:.35"></div></div>
+          <div class="row"><span class="lab">Размер</span><div class="num">12</div></div>
+          <div class="row"><span class="lab">Жирный</span><div class="chk off"></div></div>
+        </div></div>
+        <div class="grp"><h5>Что писать</h5><div>
+          <div class="row"><span class="lab">Имя точки</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Цену</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Расстояние в %</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Сумму риска и цели</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">Знаков после запятой</span><div class="num">2</div></div>
+        </div></div>
+        <div class="grp"><h5>Плашка</h5><div>
+          <div class="row"><span class="lab">Плашка под подписью</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Цвет плашки</span><div class="sw" style="background:#1e222d"></div></div>
+          <div class="row"><span class="lab">Сторона</span><div class="sel">Слева <span>▾</span></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cap"><b>Размещение</b> — точки, срок, таймфреймы, поведение</div>
+    <div class="modal">
+      <div class="mh">Длинная позиция <span>✕</span></div>
+      <div class="tabs"><span>Сделка</span><span>Подписи</span><span class="on">Размещение</span></div>
+      <div class="body">
+        <div class="grp"><h5>Виден на таймфреймах</h5><div>
+          <div class="row"><span class="lab">Диапазоны</span><div class="chk"></div></div>
+          <div class="row"><span class="lab">Секунды</span><div class="rng"><b style="left:0%;right:100%"></b><i style="left:0%"></i><i style="left:0%"></i></div><div class="rr">выкл</div></div>
+          <div class="row"><span class="lab">Минуты</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1м–45м</div></div>
+          <div class="row"><span class="lab">Часы</span><div class="rng"><b style="left:0%;right:0%"></b><i style="left:0%"></i><i style="left:100%"></i></div><div class="rr">1Ч–12Ч</div></div>
+          <div class="row"><span class="lab">Дни</span><div class="rng"><b style="left:0%;right:50%"></b><i style="left:0%"></i><i style="left:50%"></i></div><div class="rr">1Д</div></div>
+          <div class="row"><span class="lab">Недели</span><div class="rng"><b style="left:0%;right:100%"></b><i style="left:0%"></i><i style="left:0%"></i></div><div class="rr">выкл</div></div>
+          <div class="row"><span class="lab">Месяцы</span><div class="rng"><b style="left:0%;right:100%"></b><i style="left:0%"></i><i style="left:0%"></i></div><div class="rr">выкл</div></div>
+        </div></div>
+        <div class="grp"><h5>Точки сделки</h5><div>
+          <table>
+            <tr><th>Точка</th><th>Цена</th><th>Расстояние</th></tr>
+            <tr><td class="k">Вход</td><td><input value="65 100.00"></td><td>—</td></tr>
+            <tr><td class="k">Стоп</td><td><input value="64 662.41"></td><td class="bad">−0.67%</td></tr>
+            <tr><td class="k">Цель</td><td><input value="65 975.19"></td><td class="good">+1.34%</td></tr>
+          </table>
+        </div></div>
+        <div class="grp"><h5>Срок</h5><div>
+          <div class="row"><span class="lab">С</span><div class="sel">09.08 12:00 <span>▾</span></div></div>
+          <div class="row"><span class="lab">По</span><div class="sel">11.08 12:00 <span>▾</span></div></div>
+        </div></div>
+        <div class="grp"><h5>Поведение</h5><div>
+          <div class="row"><span class="lab">Заблокировать</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">Скрыть</span><div class="chk off"></div></div>
+          <div class="row"><span class="lab">На всех графиках символа</span><div class="chk off"></div></div>
+        </div></div>
+      </div>
+      <div class="foot"><button class="btn">Шаблоны</button><div class="srch">поиск настройки…</div><button class="btn p">OK</button></div>
+    </div>
+  </div>
+
+</div>
