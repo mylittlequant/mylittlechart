@@ -82,6 +82,7 @@ pub use keys::{
     HeadShouldersKey,
     PositionPointKey,
     ShellKey,
+    ConceptKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -219,6 +220,12 @@ pub fn t_toolbar_menu(key: ToolbarMenuKey) -> &'static str {
 /// Translate a chart-shell frame key using current global language
 #[inline]
 pub fn t_shell(key: ShellKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate an archetype-modal design-concept key using current global language
+#[inline]
+pub fn t_concept(key: ConceptKey) -> &'static str {
     key.get(current_language())
 }
 

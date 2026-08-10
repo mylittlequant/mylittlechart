@@ -27,6 +27,7 @@ use super::tables::{
     HEAD_SHOULDERS_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
     SHELL_KEY_TABLE,
+    CONCEPT_KEY_TABLE,
 };
 
 // =============================================================================
@@ -2437,10 +2438,18 @@ pub enum ShellKey {
     CategoryTrading = 30,
     /// Launcher menu sub-header over `PrimitiveKind::Signal` rows.
     CategorySignal = 31,
+    /// Launcher menu section header over the rows that open the PRODUCTION
+    /// primitive-settings modal (the current code) rather than the approved
+    /// concept — the two sit side by side in the lab on purpose.
+    LauncherProductionModals = 32,
+    /// Lab dev-bar button: every design-comparison sector is open.
+    LabAllSectorsOpen = 33,
+    /// Lab dev-bar button: at least one sector was closed, click to restore.
+    LabReopenSectors = 34,
 }
 
 impl ShellKey {
-    pub const COUNT: usize = 32;
+    pub const COUNT: usize = 35;
 
     /// Get translation for this key.
     #[inline]
@@ -2453,6 +2462,362 @@ impl uzor::i18n::Translate for ShellKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&SHELL_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Concept Modal Keys (approved archetype-modal design — mlc-ui-lab::concept::spec)
+// =============================================================================
+
+/// UI strings for the approved archetype-modal design concept
+/// (`mlc-ui-lab::concept::spec` — a Rust transcription of `sim/registry.js`,
+/// the approved 2026-08-10 modal concepts). Covers every row/group/tab label,
+/// hint, and demo value across the 14 object-bound archetypes (ladder / wave /
+/// pattern / position / measure / text / table / shape / regression / brush /
+/// icon) and the 9 application-level modals, that isn't already covered by an
+/// existing key elsewhere in this module (`ConfigKey`, `SettingsKey`,
+/// `MenuKey`, `StyleKey`, `ToolbarMenuKey`, `PositionPointKey`, `ShellKey`, …
+/// — `spec.rs`'s own literals reuse those directly where the exact wording
+/// already matches).
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `CONCEPT_KEY_TABLE`. Only En/Ru are filled (owner scope, 2026-08-11,
+/// following `ShellKey`'s own convention — see its doc above); the remaining
+/// 13 columns are empty and fall back to En at runtime. Deliberately NOT part
+/// of `tables.rs`'s `every_chart_table_is_fully_translated` test, for the
+/// same reason as `ShellKey`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ConceptKey {
+    // Timeframes — `tf_group()`'s own range-slider captions (six numeric
+    // visibility classes, the control the app actually ships).
+    SecondsRangeCap = 0,
+    MinutesRangeCap = 1,
+    HoursRangeCap = 2,
+    DaysRangeCap = 3,
+    WeeksRangeCap = 4,
+    MonthsRangeCap = 5,
+
+    // Placement / behaviour — `placement_tab()`'s own shared tf/points/
+    // behaviour groups, reused by every archetype's own Placement tab.
+    BehaviourGroupTitle = 6,
+    SyncAllChartsOfSymbol = 7,
+    PointStart = 8,
+    PointEnd = 9,
+    Anchor = 10,
+    AnchorToPriceAndBar = 11,
+    AnchorToBar = 12,
+    AnchorToScreen = 13,
+
+    // Shared groups — `fill_group()`/`extend_group()`'s own short row
+    // labels, and the `Тип` dropdown label reused by both the wave
+    // correction-type dropdown and the trading-container account-type
+    // dropdown.
+    FillToggle = 14,
+    ExtendLeftShort = 15,
+    ExtendRightShort = 16,
+    TypeDropdownLabel = 17,
+
+    // Labels / plate — `label_rows()`/`plate_group()`, shared by every
+    // archetype's own Labels tab.
+    LabelColor = 18,
+    Plate = 19,
+    PlateBehindLabel = 20,
+    PlateColor = 21,
+    PlateRounding = 22,
+    PlatePadding = 23,
+
+    // Ladder — `ladder_tabs()` (Fib retracement / Gann fan / Pitchfork).
+    LadderGeneralGroupTitle = 24,
+    LadderPalettesGroupTitle = 25,
+    FillToNextLevel = 26,
+    LevelLabelsGroupTitle = 27,
+    NoteLabelInheritsLevelColor = 28,
+    Angles = 29,
+
+    // Waves — `wave_tabs()` (Elliott impulse / correction).
+    WavesTabLabel = 30,
+    NoteWaveNamesFromDegree = 31,
+    ShowDegree = 32,
+    Degree = 33,
+    Notation = 34,
+    NoteWaveNotationCorrectionCombination = 35,
+    CorrectionOnlyHint = 36,
+    FillBetweenWaves = 37,
+    WaveLabelsGroupTitle = 38,
+    CustomLabelsGroupTitle = 39,
+    OverrideHint = 40,
+    WaveColumnHeader = 41,
+    LabelColumnHeader = 42,
+
+    // Patterns — `pattern_tabs()` (XABCD harmonic pattern).
+    RatiosTabLabel = 43,
+    Subtype = 44,
+    PatternDropdownLabel = 45,
+    NotePatternSubtypesList = 46,
+    PatternBody = 47,
+    TargetRatiosGroupTitle = 48,
+    SegmentColumnHeader = 49,
+    ActualColumnHeader = 50,
+    ToleranceColumnHeader = 51,
+    ScoringGroupTitle = 52,
+    HitColor = 53,
+    MissColor = 54,
+    ColorLinesByHit = 55,
+    PointLabelsGroupTitle = 56,
+    NotePatternPointNames = 57,
+    OnChartValuesGroupTitle = 58,
+    ShowRatiosValues = 59,
+    ShowSegmentLength = 60,
+    DecimalPlaces = 61,
+    SideOfSegment = 62,
+
+    // Position — `position_tabs()` (long/short position).
+    TradeTabLabel = 63,
+    AccountSize = 64,
+    RiskPerTradePct = 65,
+    CalcSizeFromRisk = 66,
+    ZonesGroupTitle = 67,
+    StopZone = 68,
+    TargetZone = 69,
+    StopPointLabel = 70,
+    DisplayGroupTitle = 71,
+    Currency = 72,
+    PercentUnit = 73,
+    ShowPnlToggle = 74,
+    ShowVolumeToggle = 75,
+    ResultGroupTitle = 76,
+    CalculatedHintSingular = 77,
+    RiskRewardRatio = 78,
+    NotePositionResultReadOnly = 79,
+    NotePositionLabelsWhat = 80,
+    WhatToWriteGroupTitle = 81,
+    WritePointName = 82,
+    WritePrice = 83,
+    WriteDistancePct = 84,
+    WriteRiskTargetSum = 85,
+
+    // Measurement — `measure_tabs()` (price/date range).
+    WhatToShowTabLabel = 86,
+    ValuesGroupTitle = 87,
+    PriceChange = 88,
+    BarCount = 89,
+    VolumeOverRange = 90,
+    AveragePrice = 91,
+    SlopeAngle = 92,
+    FormatGroupTitle = 93,
+    ThousandsSeparator = 94,
+    VolumeUnit = 95,
+    AutoKmUnit = 96,
+    LineAndArrowGroupTitle = 97,
+    ArrowheadAtEnd = 98,
+    ColorBySign = 99,
+    MeasureUp = 100,
+    MeasureDown = 101,
+    PlateVerticalMiddle = 102,
+    PlateBackground = 103,
+    BackgroundColor = 104,
+
+    // Text — `text_tabs()` (callout).
+    ContentGroupTitle = 105,
+    NoteCalloutDemoText = 106,
+    NoteCalloutPlaceholders = 107,
+    FontGroupTitle = 108,
+    Typeface = 109,
+    StrikethroughAbbrev = 110,
+    LayoutGroupTitle = 111,
+    AlignLeftShort = 112,
+    AlignRightShort = 113,
+    WordWrap = 114,
+    WidthFitsContent = 115,
+    MaxWidth = 116,
+    Border = 117,
+    CalloutBorderColor = 118,
+    Background = 119,
+    Shadow = 120,
+    CalloutHint = 121,
+    TailToPoint = 122,
+    Tip = 123,
+    ArrowTipOption = 124,
+
+    // Table — `table_tabs()` (Table archetype's own editable cell grid).
+    RowsCount = 125,
+    ColumnsCount = 126,
+    LevelColumnHeader = 127,
+    DemoResistance = 128,
+    DemoDailyHigh = 129,
+    DemoOnRetest = 130,
+    DemoBelowLow = 131,
+    ColumnsGroupTitle = 132,
+    ColumnColumnHeader = 133,
+    AutoWidthValue = 134,
+    GridAndHeaderGroupTitle = 135,
+    LineColor = 136,
+    FirstRowIsHeader = 137,
+    AlternateRows = 138,
+    TextAndBackgroundGroupTitle = 139,
+    TableBackground = 140,
+    AnchorTopLeft = 141,
+    AnchorTopRight = 142,
+    AnchorBottomLeft = 143,
+    AnchorBottomRight = 144,
+
+    // Shape — `shape_tabs()` (rectangle / parallel channel).
+    Outline = 145,
+    TextOnShape = 146,
+    NoteShapePolylinePointsList = 147,
+    ShapeSubject = 148,
+    ChannelSubject = 149,
+    MiddleLine = 150,
+    DashedShort = 151,
+
+    // Regression — `regression_tabs()` (regression trend).
+    DeviationsTabLabel = 152,
+    CalculationGroupTitle = 153,
+    Period = 154,
+    ByPoints = 155,
+    SigmasGroupTitle = 156,
+    Multiplier = 157,
+    FillOpacityLong = 158,
+    MetricsGroupTitle = 159,
+    CalculatedHintPlural = 160,
+    ShowSlope = 161,
+    ShowRSquared = 162,
+    Slope = 163,
+    DemoSlopeValue = 164,
+
+    // Brush — `brush_tabs()`.
+    StrokeGroupTitle = 165,
+    SmoothingStrength = 166,
+    RoundEndCaps = 167,
+    CloseOutline = 168,
+    FillClosedOutline = 169,
+    NoteBrushPointsNotEditable = 170,
+
+    // Icon — `icon_tabs()` (flag).
+    IconTabLabel = 171,
+    Rendering = 172,
+    IconOutlineToggle = 173,
+    LabelNextToIcon = 174,
+    DemoTrendEntryLabel = 175,
+    Side = 176,
+
+    // Application modals — `app_modals()` (the 9 application-level modals:
+    // chart_settings, indicator_settings, watchlist, alerts, user_settings,
+    // tags_tabs, trading, search, template_name).
+    Instrument = 177,
+    UpBody = 178,
+    DownBody = 179,
+    Wicks = 180,
+    WickColor = 181,
+    Other = 182,
+    LastPrice = 183,
+    PreviousClose = 184,
+    HighAndLow = 185,
+    StatusLineTabLabel = 186,
+    Ticker = 187,
+    OhlcValues = 188,
+    Change = 189,
+    BackgroundOpacity = 190,
+    Vertical = 191,
+    Horizontal = 192,
+    InvertedScale = 193,
+    ShowSeconds = 194,
+    ShowDate = 195,
+    Crosshair = 196,
+    SolidBackground = 197,
+    Gradient = 198,
+    Margins = 199,
+    RightMarginBars = 200,
+    SmoothingPeriod = 201,
+    Upper = 202,
+    Value = 203,
+    Lower = 204,
+    MainLine = 205,
+    BetweenLevels = 206,
+    Digits = 207,
+    DefaultValue = 208,
+    ConditionsPlural = 209,
+    CrossesUp = 210,
+    CrossesDown = 211,
+    ExitsZone = 212,
+    Markers = 213,
+    Instruments = 214,
+    ChangeAbbrev = 215,
+    Crypto = 216,
+    Forex = 217,
+    UsStocks = 218,
+    SyncWithChart = 219,
+    Spread = 220,
+    PriceCross = 221,
+    Up = 222,
+    Expiry = 223,
+    OneTime = 224,
+    Expires = 225,
+    After24h = 226,
+    Sound = 227,
+    Popup = 228,
+    Telegram = 229,
+    Webhook = 230,
+    NoteAlertMessageTemplate = 231,
+    List = 232,
+    Active = 233,
+    Status = 234,
+    AlertStatusWaiting = 235,
+    AlertStatusTriggered = 236,
+    GeneralTabLabel = 237,
+    Interface = 238,
+    Language = 239,
+    RussianLanguageName = 240,
+    CompactMode = 241,
+    TimeGroupTitle = 242,
+    Performance = 243,
+    FrameRate = 244,
+    ShowFrameCounter = 245,
+    Data = 246,
+    HistoryDepthBars = 247,
+    CacheToDisk = 248,
+    TabsLabel = 249,
+    ChartTabs = 250,
+    Name = 251,
+    TfAbbrev = 252,
+    DemoChartTabScalp = 253,
+    DemoTimeframe5m = 254,
+    DemoChartTabUntitled = 255,
+    DemoChartTabTimeframe1h = 256,
+    Tags = 257,
+    TagIdea = 258,
+    TagWork = 259,
+    TagArchive = 260,
+    TagColor = 261,
+    SyncGroups = 262,
+    TagColorRed = 263,
+    TagColorBlue = 264,
+    Panels = 265,
+    Tape = 266,
+    ShowHeaders = 267,
+    Account = 268,
+    Exchange = 269,
+    Leverage = 270,
+    StopRequired = 271,
+    TemplateNameGroupTitle = 272,
+    MakeDefaultTemplate = 273,
+}
+
+impl ConceptKey {
+    pub const COUNT: usize = 274;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CONCEPT_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ConceptKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CONCEPT_KEY_TABLE[self as usize], lang_index)
     }
 }
 
