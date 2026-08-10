@@ -49,7 +49,7 @@
 //! }
 //! ```
 
-use mlc_core::render::{RenderContext, TextBaseline};
+use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::ui::widgets::input::{draw_input, draw_input_cursor, InputConfig, InputType, InputResult};
 use uzor::types::Rect as WidgetRect;
@@ -433,7 +433,15 @@ pub fn render_single_slider<'a>(
     // Draw label (centered on center_y using Middle baseline) — always at
     // `rect.x`, even with a fixed `label_column`: only the track/handle/
     // input positions move when one is set.
+    //
+    // The alignment is set explicitly, not inherited: this widget used to
+    // draw its label with whatever `TextAlign` the previous draw left on
+    // the context, so a caller that came straight from a centred group
+    // header got a label centred on `rect.x` — half of it painted off the
+    // left edge of the modal. Every caller in the app happened to set Left
+    // just before, which is why it never showed until one did not.
     ctx.set_fill_color(&theme.text_normal);
+    ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, x, center_y);
     x = x_start_track;
