@@ -18,6 +18,8 @@ mod app_modals;
 #[cfg(target_arch = "wasm32")]
 mod approved_design;
 #[cfg(target_arch = "wasm32")]
+pub mod concept;
+#[cfg(target_arch = "wasm32")]
 mod dispatch;
 #[cfg(target_arch = "wasm32")]
 mod render_context;
@@ -45,6 +47,9 @@ use render_context::LabRenderContext;
 
 #[cfg(target_arch = "wasm32")]
 use app_modals::{AppModalKind, AppModalsState};
+
+#[cfg(target_arch = "wasm32")]
+use concept::state::ConceptModalState;
 
 #[cfg(target_arch = "wasm32")]
 use mlc_app_layout::layout::modals::primitive_settings::{
@@ -157,6 +162,26 @@ impl Sector {
     }
 }
 
+/// Concept-modal viewport geometry captured from the most recently
+/// rendered frame — pane-LOCAL (the concept modal draws under the same
+/// `ctx.translate(pane_rect.x, pane_rect.y)` the tree/app modal families
+/// use, see their own render call sites' doc). `content_rect` is the
+/// scroll viewport the wheel routing (`PlatformEvent::Scroll`, below)
+/// hit-tests the pointer against; `total_content_height`/`viewport_height`
+/// feed `ScrollState::handle_wheel` the same pair `dispatch::DragGeometry`
+/// carries for the production modal. `modal_rect` is the outer frame, read
+/// by the agent control plane (`lab_metrics`). Drag/resize are NOT wired
+/// for the concept modal (out of this pass's scope — see the crate's own
+/// report), so nothing here ever feeds `dispatch::on_drag_*`.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, Default)]
+struct ConceptModalGeo {
+    modal_rect: uzor::types::Rect,
+    content_rect: uzor::types::Rect,
+    total_content_height: f64,
+    viewport_height: f64,
+}
+
 /// One Fib Retracement primitive (the richest registered type —
 /// Style/Text/Coordinates/Levels/Visibility, see
 /// `PrimitiveRegistry::global()` at `mlc-core/src/drawing/primitives_v2/registry.rs:64`),
@@ -199,13 +224,14 @@ struct LabState {
     focused_sector: Option<usize>,
 
     // ─── Object Tree (wave 2) ───────────────────────────────────────────
-    /// Object Tree's own primitives — one of each of the 14 raw-lab
-    /// primitive types the left rail can spawn (`shell::object_tree::
-    /// SPAWNABLE_TYPES`), the tree's own spawn/delete surface thereafter
-    /// (`spawn_tree_object`/`delete_tree_object`). Separate from
-    /// `primitives` above (wave 1's own single Fib Retracement, still
-    /// driving the four-sector design-comparison grid) — Object Tree rows
-    /// operate on this list exclusively.
+    /// Object Tree's own primitives — one of each registered primitive
+    /// type (`shell::object_tree::spawnable_types()`, ~121 as of this
+    /// writing, wave 5 — was the curated 14 left-rail types), the tree's
+    /// own spawn/delete surface thereafter (`spawn_tree_object`/
+    /// `delete_tree_object`). Separate from `primitives` above (wave 1's
+    /// own single Fib Retracement, still driving the four-sector
+    /// design-comparison grid) — Object Tree rows operate on this list
+    /// exclusively.
     tree_objects: Vec<Box<dyn Primitive>>,
     /// Selected Object Tree row — a `tree_objects` primitive id, or
     /// `None`. Drives the bottom toolbar's name label and the chart
@@ -248,6 +274,20 @@ struct LabState {
     /// it gates a whole separate surface this lab hosts, not a piece of
     /// shell chrome.
     launcher_open: bool,
+
+    // ─── Concept modal (approved-design surface, 2026-08-10) ───────────
+    /// State for the approved-design concept modal
+    /// (`concept::render::render_concept_modal`) — the 14 object
+    /// archetypes' and 9 application modals' own open/tab/row-value/scroll
+    /// bookkeeping (`concept::spec`). Mutually exclusive with `tree_modal`
+    /// (the production primitive-settings modal) and `app_modals` (the
+    /// production application-modal family) — opening one closes the
+    /// other two, the same one-modal-family-at-a-time contract
+    /// `open_tree_modal`/`open_app_modal` already keep between themselves.
+    concept_modal: ConceptModalState,
+    /// This frame's concept-modal geometry, captured after each render —
+    /// see [`ConceptModalGeo`]'s own doc.
+    concept_modal_geo: ConceptModalGeo,
 
     // ─── Agent control plane (wave 4) ──────────────────────────────────
     /// This frame's chart pane rect (`pane_rect` in `render_one_frame`),
@@ -329,20 +369,26 @@ impl LabState {
         // REGION_ID`) — pure clicks, no text field of its own.
         coordinator.push_scoped_region(shell::launcher_menu::REGION_ID, Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 });
 
-        // One of every type the left rail can spawn — mirrors `sim.js`'s
-        // own `spawnAll()`: the Object Tree starts populated, not empty
-        // (see that function's own doc for why). No points supplied (this
-        // lab has no data plane); every registered factory for these 14
-        // types defaults sensibly on an empty slice (verified against
-        // `PrimitiveRegistry`'s own `hydration`/`hit_test_safety_net` test
-        // modules, which construct every registered type including these).
+        // The concept modal's own region (2026-08-10, `concept::REGION_ID`)
+        // — pure clicks, no text field of its own (every concept-modal row
+        // this task wires is a toggle/segment/stepper, never free text).
+        coordinator.push_scoped_region(concept::REGION_ID, Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 });
+
+        // One of every REGISTERED type (wave 5, 2026-08-10 — was the
+        // curated 14 left-rail types) — mirrors `sim.js`'s own
+        // `spawnAll()`: the Object Tree starts populated, not empty (see
+        // that function's own doc for why). No points supplied (this lab
+        // has no data plane); every registered factory defaults sensibly
+        // on an empty slice (verified against `PrimitiveRegistry`'s own
+        // `hydration`/`hit_test_safety_net` test modules, which construct
+        // every registered type this same way).
         let mut tree_objects: Vec<Box<dyn Primitive>> = Vec::new();
         let mut next_tree_id = 1u64;
         {
             let registry = PrimitiveRegistry::global()
                 .read()
                 .map_err(|_| JsValue::from_str("primitive registry lock poisoned"))?;
-            for type_id in shell::object_tree::SPAWNABLE_TYPES {
+            for type_id in shell::object_tree::spawnable_types() {
                 let mut prim = registry
                     .create(type_id, &[], None)
                     .ok_or_else(|| JsValue::from_str(&format!("{type_id} not registered")))?;
@@ -376,6 +422,8 @@ impl LabState {
             tree_modal_focused: false,
             app_modals: AppModalsState::new(),
             launcher_open: false,
+            concept_modal: ConceptModalState::new(),
+            concept_modal_geo: ConceptModalGeo::default(),
             last_pane_rect: uzor::types::Rect::default(),
         })
     }
@@ -431,6 +479,7 @@ fn delete_tree_object(lab: &mut LabState, id: u64) {
 #[cfg(target_arch = "wasm32")]
 fn open_tree_modal(lab: &mut LabState, id: u64) {
     lab.app_modals.close();
+    lab.concept_modal.close();
     lab.tree_selected = Some(id);
     lab.tree_modal.active_field_id = None;
     lab.tree_modal_focused = false;
@@ -444,14 +493,54 @@ fn open_tree_modal(lab: &mut LabState, id: u64) {
 fn open_app_modal(lab: &mut LabState, kind: AppModalKind) {
     lab.tree_modal.close();
     lab.tree_modal_focused = false;
+    lab.concept_modal.close();
     let Some(coord) = lab.coordinator.scoped_region_coordinator_mut(app_modals::REGION_ID) else { return };
     lab.app_modals.open_kind(kind, coord);
 }
 
+/// Open the concept-design modal (`concept::render::render_concept_modal`)
+/// for `type_id` — the CONCEPT counterpart to [`open_tree_modal`], for the
+/// approved-design surface instead of the live-`Primitive` one. Closes the
+/// production tree modal and any open application modal first (only one
+/// modal family open at a time, mirroring `open_tree_modal`/
+/// `open_app_modal`'s own contract), and selects the Object Tree's own
+/// matching row so the bottom bar and chart-pane placeholder stay in sync
+/// with whichever archetype's concept modal is open. A no-op if `type_id`
+/// does not name one of `concept::spec::types()`'s own 14 entries.
+#[cfg(target_arch = "wasm32")]
+fn open_concept_type_modal(lab: &mut LabState, type_id: &str) -> bool {
+    let Some(concept_type) = concept::spec::types().iter().find(|t| t.id == type_id) else { return false };
+    lab.tree_modal.close();
+    lab.tree_modal_focused = false;
+    lab.app_modals.close();
+    lab.tree_selected = lab.tree_objects.iter().find(|p| p.type_id() == type_id).map(|p| p.data().id);
+    lab.concept_modal.open_type(concept_type);
+    true
+}
+
+/// Open the concept-design modal for one of the 9 application-level
+/// archetypes (`concept::spec::app_modals()`) — the same surface
+/// [`open_concept_type_modal`] opens for an object type, keyed by
+/// `ConceptModal::id` instead. Not reachable from the shell UI in this
+/// pass (no toolbar button routes here — see the crate's own report); only
+/// the agent control plane (`lab_open_type`) calls this today.
+#[cfg(target_arch = "wasm32")]
+fn open_concept_app_modal(lab: &mut LabState, modal_id: &str) -> bool {
+    let Some(modal_spec) = concept::spec::app_modals().iter().find(|m| m.id == modal_id) else { return false };
+    lab.tree_modal.close();
+    lab.tree_modal_focused = false;
+    lab.app_modals.close();
+    lab.concept_modal.open_modal(modal_spec);
+    true
+}
+
 /// Select an existing Object Tree entry of `type_id` and open its
-/// settings, or — if the owner deleted its only instance — spawn a fresh
-/// one first. Backs the launcher menu's own "Object modals" section (see
-/// `shell::launcher_menu`'s own module doc for why select-first).
+/// PRODUCTION settings modal (the live-`Primitive`-backed
+/// `render_primitive_settings_modal`), or — if the owner deleted its only
+/// instance — spawn a fresh one first. Backs the launcher menu's own
+/// "Production modals (current code)" section (see
+/// `shell::launcher_menu`'s own module doc for why select-first). The
+/// CONCEPT counterpart is [`open_concept_type_modal`].
 #[cfg(target_arch = "wasm32")]
 fn open_object_modal_for_type(lab: &mut LabState, type_id: &str) {
     let existing = lab.tree_objects.iter().find(|p| p.type_id() == type_id).map(|p| p.data().id);
@@ -613,6 +702,11 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
     // has this frame's rect.
     lab.coordinator.push_scoped_region("objtree_modal", modal_pane_rect);
     lab.coordinator.push_scoped_region(app_modals::REGION_ID, modal_pane_rect);
+    // The concept modal's own region — same pane-narrowing reasoning as
+    // `objtree_modal`/`app_modal` above (see this frame-setup block's own
+    // top-of-function doc); the concept modal draws inside the same
+    // `pane_rect` those two do.
+    lab.coordinator.push_scoped_region(concept::REGION_ID, modal_pane_rect);
     // The launcher menu is NOT narrowed — it is a top-toolbar dropdown
     // meant to draw over everything below it, including the sidebar (see
     // `shell::launcher_menu`'s own module doc), so it keeps the full-screen
@@ -665,6 +759,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                 if matches!(key, KeyCode::Escape)
                     && (lab.launcher_open
                         || lab.app_modals.is_open()
+                        || lab.concept_modal.is_open()
                         || (lab.tree_modal.is_open() && !lab.tree_modal_focused)) =>
             {
                 // Esc closes the topmost lab-owned overlay — the launcher
@@ -687,6 +782,8 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                     lab.launcher_open = false;
                 } else if lab.app_modals.is_open() {
                     lab.app_modals.close();
+                } else if lab.concept_modal.is_open() {
+                    lab.concept_modal.close();
                 } else {
                     lab.tree_modal.close();
                     lab.tree_modal_focused = false;
@@ -771,6 +868,46 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                         if let Some(wid) = child.process_drag_start(lx, ly) {
                             dispatch::on_drag_start(wid.as_str(), lx, ly, tree_modal, tree_modal_drag);
                             lab.tree_active_drag = true;
+                        }
+                    }
+                }
+            }
+            // The wheel over the Object Tree list. Routed here, off the live
+            // pointer position and the sidebar's own rect, rather than through
+            // a hit-tested SCROLL zone: `InputState::scroll_delta` is set by
+            // the event processor and never cleared, so a zone-driven read
+            // would keep scrolling on frames with no wheel at all.
+            PlatformEvent::Scroll { dy, .. } => {
+                let sidebar_open = lab.shell_state.active_right_panel == Some("object_tree");
+                let inside = sidebar_open
+                    && lab.input_state.pointer.pos.is_some_and(|(px, py)| {
+                        let x0 = modal_pane_rect.x + modal_pane_rect.width;
+                        px >= x0
+                            && px < x0 + mlc_core::types::RIGHT_SIDEBAR_WIDTH
+                            && py >= modal_pane_rect.y
+                            && py < modal_pane_rect.y + modal_pane_rect.height
+                    });
+                if inside {
+                    // uzor-window-web already flips the browser delta
+                    // (`dy: -wheel.delta_y()`), and `handle_wheel` ADDS its
+                    // argument to the offset — so passing `dy` straight through
+                    // scrolls the list the wrong way. Flip it back here.
+                    let geo = lab.shell_state.tree_list;
+                    lab.shell_state.tree_scroll.handle_wheel(-*dy, geo.content_height, geo.viewport_height);
+                } else if lab.concept_modal.is_open() {
+                    // Same routing as the Object Tree above (pointer
+                    // position, not a `Sense::SCROLL` response), narrowed
+                    // to the concept modal's own pane-local viewport rect
+                    // — see `ConceptModalGeo`'s own doc for why this reads
+                    // pane-local coordinates. Same sign flip: the delta
+                    // arrives already negated by `uzor-window-web`.
+                    if let Some((px, py)) = lab.input_state.pointer.pos {
+                        let geo = lab.concept_modal_geo;
+                        let (lx, ly) = (px - modal_pane_rect.x, py - modal_pane_rect.y);
+                        let r = geo.content_rect;
+                        let inside_modal = lx >= r.x && lx < r.x + r.width && ly >= r.y && ly < r.y + r.height;
+                        if inside_modal {
+                            lab.concept_modal.scroll.handle_wheel(-*dy, geo.total_content_height, geo.viewport_height);
                         }
                     }
                 }
@@ -988,6 +1125,38 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                 total_content_height: result.total_content_height,
                 viewport_height: result.viewport_height,
                 color_opacity_slider_rect,
+            };
+        }
+    }
+
+    // The approved-design concept modal (2026-08-10) — the SAME pane-local
+    // translate treatment as the tree modal above (see that block's own
+    // top-of-function doc), against its own `concept::REGION_ID` region.
+    // Mutually exclusive with the tree modal and every application modal
+    // (`open_concept_type_modal`/`open_tree_modal`/`open_app_modal` all
+    // close the other two families on open), so this never draws at the
+    // same time as either.
+    if lab.concept_modal.is_open() {
+        let LabState { coordinator, concept_modal, concept_modal_geo, .. } = &mut *lab;
+        if let Some(coord) = coordinator.scoped_region_coordinator_mut(concept::REGION_ID) {
+            ctx.save();
+            ctx.translate(pane_rect.x, pane_rect.y);
+            let result = concept::render::render_concept_modal(
+                &mut ctx,
+                pane_rect.width,
+                pane_rect.height,
+                16.0,
+                concept_modal,
+                &frame_theme,
+                &toolbar_theme,
+                coord,
+            );
+            ctx.restore();
+            *concept_modal_geo = ConceptModalGeo {
+                modal_rect: result.modal_rect,
+                content_rect: result.content_rect,
+                total_content_height: result.total_content_height,
+                viewport_height: result.viewport_height,
             };
         }
     }
@@ -1219,7 +1388,15 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                 if let Some((action, pid_str)) = rest.split_once(':') {
                     if let Ok(pid) = pid_str.parse::<u64>() {
                         match action {
-                            "gear" => open_tree_modal(lab, pid),
+                            // The gear opens the CONCEPT modal (2026-08-10)
+                            // — the production modal moved to the
+                            // launcher's own "Production modals" section
+                            // (`shell::launcher_menu`).
+                            "gear" => {
+                                if let Some(type_id) = lab.tree_objects.iter().find(|p| p.data().id == pid).map(|p| p.type_id()) {
+                                    open_concept_type_modal(lab, type_id);
+                                }
+                            }
                             "del" => delete_tree_object(lab, pid),
                             // unlock/eye/alert: registered for parity with
                             // `sim.js`'s own row actions, which likewise
@@ -1233,8 +1410,14 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
         }
         if id == "shell:bottom:settings" {
             if resp.clicked {
-                if let Some(pid) = lab.tree_selected {
-                    open_tree_modal(lab, pid);
+                // Same redirect as the row gear above: the bottom
+                // toolbar's own settings icon is "the gear" too.
+                let type_id = lab
+                    .tree_selected
+                    .and_then(|pid| lab.tree_objects.iter().find(|p| p.data().id == pid))
+                    .map(|p| p.type_id());
+                if let Some(type_id) = type_id {
+                    open_concept_type_modal(lab, type_id);
                 }
             }
             continue;
@@ -1250,7 +1433,7 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
         if let Some(tool) = id.strip_prefix("shell:left:tool:") {
             if resp.clicked {
                 shell::apply_shell_response(id, &mut lab.shell_state);
-                if shell::object_tree::SPAWNABLE_TYPES.contains(&tool) {
+                if shell::object_tree::spawnable_types().contains(&tool) {
                     spawn_tree_object(lab, tool);
                 }
             }
@@ -1319,6 +1502,29 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
             continue;
         }
 
+        if let Some(rest_id) = id.strip_prefix("concept_modal_region:") {
+            if resp.clicked {
+                if rest_id == "concept_modal:close" || rest_id == "concept_modal:ok" {
+                    lab.concept_modal.close();
+                } else if let Some(tab_id) = rest_id.strip_prefix("concept_modal:tab:") {
+                    if let Some(target) = lab.concept_modal.open {
+                        if let Some(tabs) = concept::render::tabs_for(target) {
+                            if let Some(tab) = tabs.iter().find(|t| t.id == tab_id) {
+                                lab.concept_modal.set_active_tab(target.id(), tab.id);
+                            }
+                        }
+                    }
+                } else if let Some(item_id) = rest_id.strip_prefix("concept_modal:item:") {
+                    if let Some(target) = lab.concept_modal.open {
+                        if let Some(tabs) = concept::render::tabs_for(target) {
+                            concept::click::apply_click(tabs, item_id, &mut lab.concept_modal);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
         if let Some(preset) = id.strip_prefix("lab:theme:") {
             if resp.clicked {
                 lab.theme_manager.set_preset(preset);
@@ -1336,6 +1542,13 @@ fn render_one_frame(state: &Rc<RefCell<LabState>>) -> Result<(), JsValue> {
                 if rest_id == "bg" {
                     lab.launcher_open = false;
                 } else if let Some(type_id) = rest_id.strip_prefix("object:") {
+                    // Concept section (2026-08-10) — see
+                    // `shell::launcher_menu`'s own doc for why this now
+                    // opens the DESIGN modal, and where the production one
+                    // moved to.
+                    lab.launcher_open = false;
+                    open_concept_type_modal(lab, type_id);
+                } else if let Some(type_id) = rest_id.strip_prefix("object_prod:") {
                     lab.launcher_open = false;
                     open_object_modal_for_type(lab, type_id);
                 } else if let Some(kind_id) = rest_id.strip_prefix("app:") {
@@ -1564,41 +1777,101 @@ fn json_opt_u64(v: Option<u64>) -> String {
 #[cfg(target_arch = "wasm32")]
 const LAB_NOT_READY: &str = "{\"ok\":false,\"error\":\"lab not ready\"}";
 
-/// `{ objects: [type_id, ...], application: [modal_id, ...] }` — every id
-/// [`lab_open_type`] / [`lab_open_app`] accept. Equivalent to `__SIM.
-/// modals()`.
+/// `{ objects: [type_id, ...], application: [modal_id, ...],
+/// concept_application: [modal_id, ...] }`.
+///
+/// `objects` is the 14 approved-design archetypes
+/// (`shell::object_tree::spawnable_types()`, itself sourced from
+/// `concept::spec::types()` since 2026-08-10) — every id [`lab_open_type`]
+/// opens as the CONCEPT modal (`concept::render::render_concept_modal`).
+/// `application` is unchanged — the 16 legacy `AppModalKind` ids
+/// [`lab_open_app`] opens. `concept_application` is the 9 approved-design
+/// APPLICATION archetypes (`concept::spec::app_modals()`) — also openable
+/// through [`lab_open_type`] (it tries the 14 object types first, then
+/// falls back to these 9), kept as a separate field rather than folded
+/// into `application` because the two id spaces partly collide (e.g.
+/// `"trading"` here vs `"trading_container"` there) and `application`'s
+/// own ids must keep working with [`lab_open_app`] unchanged. Equivalent
+/// to `__SIM.modals()`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn lab_modals() -> String {
-    let objects: Vec<String> = shell::object_tree::SPAWNABLE_TYPES.iter().map(|t| json_str(t)).collect();
+    let objects: Vec<String> = shell::object_tree::spawnable_types().iter().map(|t| json_str(t)).collect();
     let application: Vec<String> = AppModalKind::ALL.iter().map(|k| json_str(k.id())).collect();
-    format!("{{\"objects\":[{}],\"application\":[{}]}}", objects.join(","), application.join(","))
+    let concept_application: Vec<String> = concept::spec::app_modals().iter().map(|m| json_str(m.id)).collect();
+    format!(
+        "{{\"objects\":[{}],\"application\":[{}],\"concept_application\":[{}]}}",
+        objects.join(","),
+        application.join(","),
+        concept_application.join(","),
+    )
 }
 
-/// Select the Object Tree's existing instance of `type_id` (spawning one
-/// first if the owner deleted it) and open its settings modal, optionally
-/// switching straight to `tab` (a [`mlc_app_layout::ui::modal_settings::
-/// PrimitiveSettingsTab`] id: `"levels"`/`"appearance"`/`"labels"`/
-/// `"cells"`/`"placement"`). Equivalent to `__SIM.openType`.
+/// Open the CONCEPT modal (`concept::render::render_concept_modal`) for
+/// `id` — tried first against the 14 object archetypes
+/// (`concept::spec::types()`), then against the 9 application archetypes
+/// (`concept::spec::app_modals()`), optionally switching straight to `tab`
+/// (one of that target's own tab ids — `concept::spec::ConceptTab::id`,
+/// e.g. `"levels"`/`"labels"`/`"placement"`; the exact set varies per
+/// target, see [`lab_modals`]'s own doc for where to read a target's
+/// declared tabs — [`lab_snapshot`] reports them once open).
+///
+/// **2026-08-10, concept wiring**: this used to open the PRODUCTION
+/// primitive-settings modal (`open_object_modal_for_type`) — that path is
+/// still reachable through the shell's own launcher "Production modals"
+/// section, just not through this control-plane entry point any more (the
+/// function NAME is unchanged, per the launching brief: "extend, do not
+/// rename"). `"id"` in the response is now the STRING target id
+/// (`type_id`/`modal_id`), not a numeric primitive id — the concept
+/// surface has no live `Primitive` behind it to number. Equivalent to
+/// `__LAB.open_type(id, tab)`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn lab_open_type(type_id: &str, tab: Option<String>) -> String {
     with_lab(|lab| {
-        if !shell::object_tree::SPAWNABLE_TYPES.contains(&type_id) {
+        let opened = open_concept_type_modal(lab, type_id) || open_concept_app_modal(lab, type_id);
+        if !opened {
             return format!("{{\"ok\":false,\"error\":\"unknown type_id\",\"type_id\":{}}}", json_str(type_id));
         }
-        open_object_modal_for_type(lab, type_id);
+        let Some(target) = lab.concept_modal.open else {
+            return format!("{{\"ok\":false,\"error\":\"failed to open\",\"type_id\":{}}}", json_str(type_id));
+        };
+        let tabs = concept::render::tabs_for(target).unwrap_or(&[]);
         if let Some(tab_id) = tab.as_deref() {
-            if let Some(t) = mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab::all().iter().find(|t| t.id() == tab_id) {
-                lab.tree_modal.active_tab = *t;
+            if let Some(t) = tabs.iter().find(|t| t.id == tab_id) {
+                lab.concept_modal.set_active_tab(target.id(), t.id);
             }
         }
         format!(
             "{{\"ok\":true,\"id\":{},\"type_id\":{},\"tab\":{}}}",
-            json_opt_u64(lab.tree_modal.primitive_id),
+            json_str(target.id()),
             json_str(type_id),
-            json_str(lab.tree_modal.active_tab.id()),
+            json_str(lab.concept_modal.active_tab_id(target.id(), tabs)),
         )
+    })
+    .unwrap_or_else(|| LAB_NOT_READY.to_string())
+}
+
+/// Switch the currently-open CONCEPT modal's active tab to `tab_id` — the
+/// LIVE counterpart to [`lab_open_type`]'s own `tab` parameter (which only
+/// applies at open time). Reports `ok:false` if no concept modal is open
+/// or `tab_id` does not name one of its own declared tabs. Equivalent to
+/// `__LAB.tab(id)`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn lab_tab(tab_id: &str) -> String {
+    with_lab(|lab| {
+        let Some(target) = lab.concept_modal.open else {
+            return "{\"ok\":false,\"error\":\"no concept modal open\"}".to_string();
+        };
+        let Some(tabs) = concept::render::tabs_for(target) else {
+            return format!("{{\"ok\":false,\"error\":\"unknown target\",\"id\":{}}}", json_str(target.id()));
+        };
+        let Some(tab) = tabs.iter().find(|t| t.id == tab_id) else {
+            return format!("{{\"ok\":false,\"error\":\"unknown tab_id\",\"tab_id\":{}}}", json_str(tab_id));
+        };
+        lab.concept_modal.set_active_tab(target.id(), tab.id);
+        format!("{{\"ok\":true,\"id\":{},\"tab\":{}}}", json_str(target.id()), json_str(tab.id))
     })
     .unwrap_or_else(|| LAB_NOT_READY.to_string())
 }
@@ -1629,8 +1902,8 @@ pub fn lab_open_app(modal_id: &str) -> String {
 
 /// Close whichever lab-owned overlay is topmost — same priority order as
 /// the Esc key handler in `render_one_frame` (launcher, then an
-/// application modal, then the Object Tree's own gear modal). Equivalent
-/// to `__SIM.close`.
+/// application modal, then the concept modal, then the Object Tree's own
+/// production gear modal). Equivalent to `__SIM.close`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn lab_close() -> String {
@@ -1641,6 +1914,9 @@ pub fn lab_close() -> String {
         } else if lab.app_modals.is_open() {
             lab.app_modals.close();
             "app"
+        } else if lab.concept_modal.is_open() {
+            lab.concept_modal.close();
+            "concept"
         } else if lab.tree_modal.is_open() {
             lab.tree_modal.close();
             lab.tree_modal_focused = false;
@@ -1675,7 +1951,16 @@ pub fn lab_snapshot() -> String {
             })
             .collect();
 
-        let modal = if lab.tree_modal.is_open() {
+        let modal = if let Some(target) = lab.concept_modal.open {
+            let tabs = concept::render::tabs_for(target).unwrap_or(&[]);
+            let tab_ids: Vec<String> = tabs.iter().map(|t| json_str(t.id)).collect();
+            format!(
+                "{{\"family\":\"concept\",\"id\":{},\"tab\":{},\"tabs\":[{}]}}",
+                json_str(target.id()),
+                json_str(lab.concept_modal.active_tab_id(target.id(), tabs)),
+                tab_ids.join(","),
+            )
+        } else if lab.tree_modal.is_open() {
             let type_id = lab
                 .tree_modal
                 .primitive_id
@@ -1766,7 +2051,12 @@ pub fn lab_metrics() -> String {
             )
         };
 
-        let modal = if lab.tree_modal.is_open() {
+        let modal = if lab.concept_modal.is_open() {
+            format!(
+                "{{\"family\":\"concept\",\"rect\":{},\"header_h\":null,\"tab_bar_h\":null,\"tab_rail_w\":null,\"footer_h\":null}}",
+                rect_json(lab.concept_modal_geo.modal_rect),
+            )
+        } else if lab.tree_modal.is_open() {
             match lab.tree_modal_drag.modal_rect {
                 Some(r) => format!(
                     "{{\"family\":\"tree\",\"rect\":{},\"header_h\":null,\"tab_bar_h\":null,\"tab_rail_w\":null,\"footer_h\":null}}",
@@ -1793,4 +2083,206 @@ pub fn lab_metrics() -> String {
         format!("{{\"rails\":{},\"modal\":{}}}", rails, modal)
     })
     .unwrap_or_else(|| LAB_NOT_READY.to_string())
+}
+
+// ─── Type declaration dumper (wave 5, `lab_dump_types`) ────────────────────
+//
+// One JSON row per registered primitive type (`shell::object_tree::
+// spawnable_types()`'s own order — every registered type_id, alphabetically,
+// see that function's own doc for why that is the one deterministic order
+// available), built from a freshly-constructed instance of each
+// (`registry.create(type_id, &[], None)`) reporting exactly what that
+// instance declares about itself, nothing invented on top. The wasm-callable
+// equivalent of `mlc-core`'s own native `registry::catalogue_dump::
+// dump_catalogue` test (icon-resolution audit precedent, 2026-08-07) — see
+// [`lab_dump_types`]'s own doc for the exact schema.
+
+/// Which tabs the real primitive-settings modal
+/// (`mlc-app-layout::layout::modals::primitive_settings::
+/// render_primitive_settings_modal`) would show for `prim` — duplicates
+/// that crate's own PRIVATE `available_tabs` filter (`layout/modals/
+/// primitive_settings.rs`) arm-for-arm, built entirely from its own
+/// already-`pub` building blocks (`primitive_settings_{vid,labels,cells}::
+/// has_content`, `Primitive::level_configs`) rather than widening that
+/// crate's own visibility for this one dump function. Chosen over exporting
+/// a new `pub fn` from `mlc-app-layout` because every piece this needs was
+/// ALREADY public — `available_tabs` itself is the only private link in the
+/// chain, and it is a ten-line filter, not logic this crate would otherwise
+/// have had to invent. Kept from drifting by construction: `PrimitiveSettingsTab::all()`
+/// is the same fixed enum both sides iterate, and the three `has_content`
+/// calls are the exact functions the real modal calls too.
+#[cfg(target_arch = "wasm32")]
+fn resolved_tabs(prim: &dyn Primitive) -> Vec<mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab> {
+    use mlc_app_layout::layout::modals::{primitive_settings_cells, primitive_settings_labels, primitive_settings_vid};
+    use mlc_app_layout::ui::modal_settings::PrimitiveSettingsTab;
+    PrimitiveSettingsTab::all()
+        .iter()
+        .copied()
+        .filter(|tab| match tab {
+            PrimitiveSettingsTab::Levels => prim.level_configs().is_some(),
+            PrimitiveSettingsTab::Appearance => primitive_settings_vid::has_content(prim),
+            PrimitiveSettingsTab::Labels => primitive_settings_labels::has_content(prim),
+            PrimitiveSettingsTab::Cells => primitive_settings_cells::has_content(prim),
+            PrimitiveSettingsTab::Placement => true,
+        })
+        .collect()
+}
+
+/// Textual summary of a `PropertyType` — includes the full option list for
+/// `Select` and the numeric bounds for `Number`/`Integer`/`Text`, not just
+/// the variant name (what the audit this feeds actually needs).
+#[cfg(target_arch = "wasm32")]
+fn property_type_label(pt: &mlc_core::drawing::primitives_v2::config::PropertyType) -> String {
+    use mlc_core::drawing::primitives_v2::config::PropertyType;
+    fn opt<T: std::fmt::Display>(v: Option<T>) -> String {
+        v.map(|x| x.to_string()).unwrap_or_else(|| "none".to_string())
+    }
+    match pt {
+        PropertyType::Color => "color".to_string(),
+        PropertyType::Number { min, max, step } => {
+            format!("number(min={},max={},step={})", opt(*min), opt(*max), opt(*step))
+        }
+        PropertyType::Integer { min, max } => format!("integer(min={},max={})", opt(*min), opt(*max)),
+        PropertyType::Boolean => "boolean".to_string(),
+        PropertyType::Select { options } => {
+            let opts: Vec<String> = options.iter().map(|o| format!("{}:{}", o.value, o.label)).collect();
+            format!("select({})", opts.join("|"))
+        }
+        PropertyType::LineStyle => "line_style".to_string(),
+        PropertyType::Text { multiline, max_length } => {
+            format!("text(multiline={},max_length={})", multiline, opt(*max_length))
+        }
+        PropertyType::FibLevels => "fib_levels".to_string(),
+        PropertyType::Coordinate => "coordinate".to_string(),
+        PropertyType::TimeframeVisibility => "timeframe_visibility".to_string(),
+    }
+}
+
+/// Textual value of a `PropertyValue` — the current value read straight off
+/// the fresh instance, not re-derived.
+#[cfg(target_arch = "wasm32")]
+fn property_value_label(v: &mlc_core::drawing::primitives_v2::config::PropertyValue) -> String {
+    use mlc_core::drawing::primitives_v2::config::PropertyValue;
+    match v {
+        PropertyValue::Color(s) | PropertyValue::String(s) | PropertyValue::LineStyle(s) => s.clone(),
+        PropertyValue::Number(n) => n.to_string(),
+        PropertyValue::Integer(n) => n.to_string(),
+        PropertyValue::Boolean(b) => b.to_string(),
+        PropertyValue::FibLevels(levels) => format!("{} levels", levels.len()),
+        PropertyValue::Coordinate { bar, price } => format!("bar={bar},price={price}"),
+        PropertyValue::TimeframeVisibility(cfg) => format!("{cfg:?}"),
+    }
+}
+
+/// One `ConfigProperty` as `{id, name, prop_type, value, category, order,
+/// readonly}` — every field the task's own audit asked for, nothing more.
+#[cfg(target_arch = "wasm32")]
+fn config_property_json(p: &mlc_core::drawing::primitives_v2::config::ConfigProperty) -> String {
+    format!(
+        "{{\"id\":{},\"name\":{},\"prop_type\":{},\"value\":{},\"category\":{},\"order\":{},\"readonly\":{}}}",
+        json_str(&p.id),
+        json_str(&p.name),
+        json_str(&property_type_label(&p.prop_type)),
+        json_str(&property_value_label(&p.value)),
+        json_str(&format!("{:?}", p.category)),
+        p.order,
+        p.readonly,
+    )
+}
+
+/// One row of [`lab_dump_types`]'s own array — a freshly-constructed
+/// `type_id` instance, reporting exactly what it declares about itself.
+#[cfg(target_arch = "wasm32")]
+fn dump_one_type(registry: &PrimitiveRegistry, type_id: &str) -> String {
+    let Some(prim) = registry.create(type_id, &[], None) else {
+        return format!("{{\"type_id\":{},\"error\":{}}}", json_str(type_id), json_str("factory returned None"));
+    };
+    // `supports_text` has no `Primitive` trait accessor — it lives only on
+    // the registry's own `PrimitiveMetadata`, alongside `type_id`/
+    // `display_name`/`kind` (which this reads off the INSTANCE instead,
+    // via `prim.type_id()`/`prim.display_name()`/`prim.kind()` — the same
+    // three that can legitimately differ from static metadata for a
+    // primitive whose behaviour depends on its own state).
+    let supports_text = registry.get(type_id).map(|m| m.supports_text).unwrap_or(false);
+
+    let points = prim.points();
+    let point_labels = prim
+        .point_labels()
+        .unwrap_or_else(|| mlc_core::drawing::get_point_labels(prim.type_id(), points.len()));
+    let point_labels_json: Vec<String> = point_labels.iter().map(|s| json_str(s)).collect();
+
+    let level_configs = prim.level_configs();
+    let has_levels = level_configs.is_some();
+    let levels_json: Vec<String> = level_configs
+        .unwrap_or_default()
+        .iter()
+        .map(|lvl| {
+            format!(
+                "{{\"value\":{},\"visible\":{},\"label\":{}}}",
+                lvl.level,
+                lvl.visible,
+                json_str(&prim.level_value_label(lvl.level)),
+            )
+        })
+        .collect();
+
+    let style_properties: Vec<String> = prim.style_properties().iter().map(config_property_json).collect();
+    let text_properties_json = match prim.text_properties() {
+        Some(list) => format!("[{}]", list.iter().map(config_property_json).collect::<Vec<_>>().join(",")),
+        None => "null".to_string(),
+    };
+    let level_properties: Vec<String> = prim.level_properties().iter().map(config_property_json).collect();
+
+    let tabs: Vec<String> = resolved_tabs(prim.as_ref()).iter().map(|t| json_str(t.id())).collect();
+
+    format!(
+        concat!(
+            "{{\"type_id\":{},\"display_name\":{},\"kind\":{},\"supports_text\":{},",
+            "\"points_count\":{},\"point_labels\":[{}],\"has_levels\":{},\"levels\":[{}],",
+            "\"style_properties\":[{}],\"text_properties\":{},\"level_properties\":[{}],\"tabs\":[{}]}}",
+        ),
+        json_str(prim.type_id()),
+        json_str(prim.display_name()),
+        json_str(&format!("{:?}", prim.kind())),
+        supports_text,
+        points.len(),
+        point_labels_json.join(","),
+        has_levels,
+        levels_json.join(","),
+        style_properties.join(","),
+        text_properties_json,
+        level_properties.join(","),
+        tabs.join(","),
+    )
+}
+
+/// One JSON object per registered primitive type (`shell::object_tree::
+/// spawnable_types()`'s own order): `type_id`, `display_name`, `kind`,
+/// `supports_text`, `points_count`, `point_labels` (resolved the SAME way
+/// the Placement tab does — `Primitive::point_labels()` first, falling back
+/// to `mlc_core::drawing::get_point_labels`), `has_levels` +
+/// `levels: [{value, visible, label}]` (via `Primitive::level_configs`/
+/// `level_value_label`), `style_properties`/`text_properties`
+/// (nullable)/`level_properties` (each a `ConfigProperty` array —
+/// `{id, name, prop_type, value, category, order, readonly}`), and `tabs`
+/// (the tab strip [`resolved_tabs`] says the real settings modal would show
+/// for this type). A type whose factory returns `None` (should not happen —
+/// every id here came from the registry itself) reports `{type_id, error}`
+/// instead of panicking.
+///
+/// The machine half of a primitive audit — mirrors `mlc-core`'s own native
+/// `registry::catalogue_dump::dump_catalogue` test (icon-resolution audit
+/// precedent, 2026-08-07), as the wasm-callable, JSON-string equivalent for
+/// this lab's own agent control plane.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn lab_dump_types() -> String {
+    let Ok(registry) = PrimitiveRegistry::global().read() else {
+        return "[]".to_string();
+    };
+    let rows: Vec<String> = shell::object_tree::spawnable_types()
+        .iter()
+        .map(|type_id| dump_one_type(&registry, type_id))
+        .collect();
+    format!("[{}]", rows.join(","))
 }

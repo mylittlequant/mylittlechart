@@ -15,6 +15,20 @@
 (function () {
   'use strict';
 
+  // ---- strings ---------------------------------------------------------
+  // A label the app already has goes through the app's own table (`i18n.js`,
+  // generated from `mlc-core/src/i18n`), so the sim never spells a word the
+  // app has already spelled. A label the app does NOT have yet is concept
+  // vocabulary — it stays authored here and becomes a real key when the
+  // archetype reaches `mlc-core`. `fb` is what the concept says; passing it
+  // is deliberate, not a fallback for a typo.
+  const I18N = window.SIM_I18N || {};
+  let lang = 'ru';
+  function t(table, key, fb) {
+    const row = (I18N[table] || {})[key];
+    return (row && (row[lang] || row.en)) || fb || key;
+  }
+
   // ---- shared groups ---------------------------------------------------
 
   // Timeframe visibility: six numeric classes with range sliders, the control
@@ -35,7 +49,7 @@
   const BEHAVIOUR = {
     title: 'Поведение',
     rows: [
-      { k: 'chk', lab: 'Заблокировать' },
+      { k: 'chk', lab: t('MENU_KEY', 'Lock', 'Заблокировать') },
       { k: 'chk', lab: 'Скрыть' },
       { k: 'chk', lab: 'На всех графиках символа' },
     ],
@@ -54,7 +68,7 @@
   function fmtTime(i) { return `1${i % 2 ? 0 : 1}.08 0${(i % 8) + 1}:00`; }
 
   const labelRows = (what) => [
-    { k: 'chk', lab: 'Показывать', on: true },
+    { k: 'chk', lab: t('SETTINGS_KEY', 'Show', 'Показывать'), on: true },
     { k: 'chk', lab: 'Наследовать цвет линии', on: true },
     { k: 'color', lab: 'Цвет подписи', v: 'var(--mlc-colors-accent)', dim: true },
     { k: 'num', lab: 'Размер', v: 12 },
@@ -73,25 +87,25 @@
   };
 
   const LINE = (title) => ({
-    title: title || 'Линия',
+    title: title || t('TOOLBAR_MENU_KEY', 'Line', 'Линия'),
     rows: [
-      { k: 'color', lab: 'Цвет', v: 'var(--mlc-colors-accent)' },
+      { k: 'color', lab: t('SETTINGS_KEY', 'Color', 'Цвет'), v: 'var(--mlc-colors-accent)' },
       { k: 'slider', lab: 'Толщина', pct: 24, v: '1.0' },
-      { k: 'dd', lab: 'Стиль', v: 'Сплошная' },
+      { k: 'dd', lab: t('CONFIG_KEY', 'Style', 'Стиль'), v: t('STYLE_KEY', 'Solid', 'Сплошная') },
     ],
   });
 
   const FILL = (title, on) => ({
-    title: title || 'Заливка',
+    title: title || t('CONFIG_KEY', 'Fill', 'Заливка'),
     rows: [
       { k: 'chk', lab: 'Заливать', on: !!on },
-      { k: 'color', lab: 'Цвет', v: 'var(--mlc-colors-accent)' },
+      { k: 'color', lab: t('SETTINGS_KEY', 'Color', 'Цвет'), v: 'var(--mlc-colors-accent)' },
       { k: 'slider', lab: 'Прозрачность', pct: 10, v: '10%' },
     ],
   });
 
   const EXTEND = {
-    title: 'Продление',
+    title: t('CONFIG_KEY', 'Extend', 'Продление'),
     rows: [{ k: 'chk', lab: 'Влево' }, { k: 'chk', lab: 'Вправо' }],
   };
 
@@ -462,5 +476,5 @@
     },
   ];
 
-  window.SIM_REGISTRY = { TYPES, APP_MODALS, templatesFor };
+  window.SIM_REGISTRY = { TYPES, APP_MODALS, templatesFor, t };
 })();

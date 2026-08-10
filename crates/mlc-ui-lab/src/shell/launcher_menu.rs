@@ -1,8 +1,25 @@
-//! The "Modals" launcher — a two-section dropdown listing every connected
-//! modal (wave 3). Mirrors `sim/sim.js`'s own `#launcher` click handler:
-//! same two sections ("Object modals" over the 14 Object Tree primitive
-//! types, "Application modals" over the 16 `crate::app_modals::AppModalKind`
-//! entries), same "click a row = act on it" behaviour.
+//! The "Modals" launcher — a three-section dropdown listing every
+//! connected modal. Mirrors `sim/sim.js`'s own `#launcher` click handler
+//! (wave 3), later widened to the full ~121-type registry (wave 5,
+//! 2026-08-10) and then narrowed BACK to the 14 approved-design
+//! archetypes the same day (concept wiring — `super::object_tree::
+//! spawnable_types()` is itself now sourced from `crate::concept::spec::
+//! types()`, see that function's own doc): "Object modals" lists exactly
+//! those 14, grouped into one sub-section per `PrimitiveKind` with its own
+//! header ([`grouped_object_types`]/[`kind_label`]) — clicking a row opens
+//! the CONCEPT modal (`crate::concept::render::render_concept_modal`) for
+//! that archetype, the same surface the Object Tree's own row gear opens.
+//! A NEW third section, "Production modals (current code)"
+//! ([`PRODUCTION_SECTION_LABEL`]), lists the SAME 14 types flat (no
+//! per-kind grouping — this section exists purely for side-by-side
+//! comparison, not for browsing) and opens the PRODUCTION,
+//! live-`Primitive`-backed modal (`mlc_app_layout::layout::modals::
+//! primitive_settings::render_primitive_settings_modal`, via
+//! `crate::open_object_modal_for_type` — unchanged) instead. "Application
+//! modals" is unchanged — the 16 `crate::app_modals::AppModalKind`
+//! entries, one flat list (there is no per-kind grouping to derive it
+//! from — application modals are not registry-driven primitive types).
+//! Same "click a row = act on it" behaviour throughout.
 //!
 //! Own state (`crate::LabState::launcher_open`, a plain bool — there is
 //! nothing else to remember, the menu has no scroll or search of its own),
@@ -10,16 +27,25 @@
 //! `crate::lib`, same convention as `objtree_modal` / `app_modals::
 //! REGION_ID`), own response prefix (`"launcher_menu:"`).
 //!
-//! Object-modal rows read their label straight off the Object Tree's own
-//! primitives (`tree_objects`, `Primitive::display_name`) rather than a
-//! second, hand-maintained name table — the 14 canonical types
-//! (`super::object_tree::SPAWNABLE_TYPES`) drive the ROW ORDER, one lookup
-//! into `tree_objects` supplies the row LABEL. A type missing from
-//! `tree_objects` (the owner deleted its only instance) falls back to its
-//! raw type id as the label — still correct, just less pretty — and its
-//! click spawns a fresh one rather than failing silently.
+//! Both object-modal sections read their row label straight off the
+//! Object Tree's own primitives (`tree_objects`, `Primitive::display_name`)
+//! rather than a second, hand-maintained name table — `super::object_tree::
+//! spawnable_types()` drives the ROW ORDER, one lookup into `tree_objects`
+//! supplies the row LABEL. A type missing from `tree_objects` (the owner
+//! deleted its only instance) falls back to its raw type id as the label —
+//! still correct, just less pretty. Clicking the concept-section row does
+//! NOT spawn a missing instance (the concept modal needs no live
+//! `Primitive` at all); clicking the production-section row does, exactly
+//! as it always has.
+//!
+//! No scrolling: at 14 + 14 + 16 rows plus per-kind headers the menu still
+//! comfortably fits the viewport (it did not, briefly, during the ~121-row
+//! wave 5 window — that pressure is gone now that "Object modals" is back
+//! to 14). `draw`'s own `y` clamp only repositions the menu's TOP, it does
+//! not shrink it, so this would need revisiting if either section grows
+//! again.
 
-use mlc_core::drawing::primitives_v2::Primitive;
+use mlc_core::drawing::primitives_v2::{Primitive, PrimitiveKind, PrimitiveRegistry};
 use mlc_core::i18n::{t_shell, ShellKey};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::theme::RuntimeTheme;
@@ -28,10 +54,61 @@ use uzor::types::Rect;
 
 use crate::app_modals::AppModalKind;
 
-use super::object_tree::SPAWNABLE_TYPES;
+use super::object_tree::spawnable_types;
 
 /// Scoped-region id this feature's state draws into.
 pub const REGION_ID: &str = "launcher_menu";
+
+/// Every kind that has at least one registered member, in `PrimitiveKind`'s
+/// own declaration order (`Line, Channel, Shape, Fibonacci, Gann, Pattern,
+/// Annotation, Measurement, Trading, Signal`) — a kind with zero members
+/// today is simply absent, never an empty header. Rebuilt from
+/// `PrimitiveRegistry::global()` metadata on every call rather than cached:
+/// this only runs while the menu is open (menu-open-time cost, not a
+/// per-frame one).
+fn grouped_object_types() -> Vec<(PrimitiveKind, Vec<&'static str>)> {
+    const KIND_ORDER: [PrimitiveKind; 10] = [
+        PrimitiveKind::Line,
+        PrimitiveKind::Channel,
+        PrimitiveKind::Shape,
+        PrimitiveKind::Fibonacci,
+        PrimitiveKind::Gann,
+        PrimitiveKind::Pattern,
+        PrimitiveKind::Annotation,
+        PrimitiveKind::Measurement,
+        PrimitiveKind::Trading,
+        PrimitiveKind::Signal,
+    ];
+    let Ok(registry) = PrimitiveRegistry::global().read() else { return Vec::new() };
+    KIND_ORDER
+        .into_iter()
+        .filter_map(|kind| {
+            let ids: Vec<&'static str> = spawnable_types()
+                .iter()
+                .copied()
+                .filter(|id| registry.get(id).map(|m| m.kind) == Some(kind))
+                .collect();
+            if ids.is_empty() { None } else { Some((kind, ids)) }
+        })
+        .collect()
+}
+
+/// User-facing section-header label for one `PrimitiveKind` — via
+/// `mlc_core::i18n`, never hardcoded.
+fn kind_label(kind: PrimitiveKind) -> &'static str {
+    t_shell(match kind {
+        PrimitiveKind::Line => ShellKey::CategoryLine,
+        PrimitiveKind::Channel => ShellKey::CategoryChannel,
+        PrimitiveKind::Shape => ShellKey::CategoryShape,
+        PrimitiveKind::Fibonacci => ShellKey::CategoryFibonacci,
+        PrimitiveKind::Gann => ShellKey::CategoryGann,
+        PrimitiveKind::Pattern => ShellKey::CategoryPattern,
+        PrimitiveKind::Annotation => ShellKey::CategoryAnnotation,
+        PrimitiveKind::Measurement => ShellKey::CategoryMeasurement,
+        PrimitiveKind::Trading => ShellKey::CategoryTrading,
+        PrimitiveKind::Signal => ShellKey::CategorySignal,
+    })
+}
 
 /// Z-order above every modal layer this crate or `mlc-app-layout` can push
 /// (colour pickers included, the highest at z=6 inside `mlc-app-layout`'s
@@ -40,8 +117,23 @@ pub const REGION_ID: &str = "launcher_menu";
 /// already-open modal but never fights the dev bar's own theme buttons.
 const MENU_Z: u32 = 90;
 
+/// Header for the production-comparison section (2026-08-10, concept
+/// wiring) — a plain English literal, not `mlc_core::i18n`: no `ShellKey`
+/// exists for "production"/"current code" wording, and adding one is out
+/// of scope (`mlc-core` is off limits for this task — see the launching
+/// brief). Falls back to this crate's own existing convention for text
+/// with no i18n key: the object-row label fallback a few lines down
+/// already reads a raw literal (the type id) when `tree_objects` has no
+/// matching primitive, rather than inventing a translation key for a
+/// state that should not normally occur.
+const PRODUCTION_SECTION_LABEL: &str = "Production modals (current code)";
+
 const ROW_H: f64 = 24.0;
 const HEADER_H: f64 = 20.0;
+/// Per-`PrimitiveKind` sub-header height under "Object modals" (wave 5) —
+/// shorter than [`HEADER_H`] so it reads as nested under the top-level
+/// header rather than a sibling section.
+const SUBHEADER_H: f64 = 18.0;
 const MENU_W: f64 = 260.0;
 const PAD: f64 = 6.0;
 const ICON_SIZE: f64 = 14.0;
@@ -53,11 +145,17 @@ const ICON_SIZE: f64 = 14.0;
 ///
 /// `coord` is the caller's OWN [`REGION_ID`] child coordinator — every id
 /// registered here is UNPREFIXED (`"bg"` / `"object:{type_id}"` /
-/// `"app:{kind_id}"`); the scoped-region mechanism itself prepends
-/// `"{REGION_ID}:"` when the parent coordinator flattens this region's
-/// responses (same convention `objtree_modal`'s own child coordinator
-/// uses — see `crate::lib`'s own doc on that pattern). Prefixing it AGAIN
-/// here would double it.
+/// `"object_prod:{type_id}"` / `"app:{kind_id}"`); the scoped-region
+/// mechanism itself prepends `"{REGION_ID}:"` when the parent coordinator
+/// flattens this region's responses (same convention `objtree_modal`'s own
+/// child coordinator uses — see `crate::lib`'s own doc on that pattern).
+/// Prefixing it AGAIN here would double it.
+///
+/// `"object:{type_id}"` (the concept section) and `"object_prod:{type_id}"`
+/// (the production section) are two DISTINCT id namespaces for the SAME 14
+/// type ids — `crate::lib`'s own response loop routes the two to
+/// `crate::open_concept_type_modal`/`crate::open_object_modal_for_type`
+/// respectively.
 pub fn draw(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -72,8 +170,12 @@ pub fn draw(
 
     coord.register_on_layer("bg", Rect::new(0.0, 0.0, screen_w, screen_h), Sense::CLICK, &layer);
 
-    let rows = SPAWNABLE_TYPES.len() + AppModalKind::ALL.len();
-    let menu_h = HEADER_H * 2.0 + rows as f64 * ROW_H + PAD * 2.0;
+    let object_groups = grouped_object_types();
+    let object_rows: usize = object_groups.iter().map(|(_, ids)| ids.len()).sum();
+    let production_rows = spawnable_types().len();
+    let rows = object_rows + AppModalKind::ALL.len() + production_rows;
+    let menu_h =
+        HEADER_H * 3.0 + object_groups.len() as f64 * SUBHEADER_H + rows as f64 * ROW_H + PAD * 2.0;
     let (ax, ay) = anchor;
     let x = (ax - MENU_W).max(4.0).min(screen_w - MENU_W - 4.0);
     let y = ay.min(screen_h - menu_h - 4.0).max(4.0);
@@ -88,19 +190,38 @@ pub fn draw(
     let mut row_y = y + PAD;
     row_y = draw_section_header(ctx, x, row_y, t_shell(ShellKey::LauncherObjectModals), rt);
 
-    for type_id in SPAWNABLE_TYPES {
-        let label = tree_objects
-            .iter()
-            .find(|p| p.type_id() == *type_id)
-            .map(|p| p.display_name().to_string())
-            .unwrap_or_else(|| (*type_id).to_string());
-        draw_row(ctx, coord, &layer, rt, x, row_y, type_id, &label, &format!("object:{type_id}"));
-        row_y += ROW_H;
+    for (kind, type_ids) in &object_groups {
+        row_y = draw_kind_header(ctx, x, row_y, kind_label(*kind), rt);
+        for type_id in type_ids {
+            let label = tree_objects
+                .iter()
+                .find(|p| p.type_id() == *type_id)
+                .map(|p| p.display_name().to_string())
+                .unwrap_or_else(|| (*type_id).to_string());
+            draw_row(ctx, coord, &layer, rt, x, row_y, type_id, &label, &format!("object:{type_id}"));
+            row_y += ROW_H;
+        }
     }
 
     row_y = draw_section_header(ctx, x, row_y, t_shell(ShellKey::LauncherAppModals), rt);
     for kind in AppModalKind::ALL {
         draw_row(ctx, coord, &layer, rt, x, row_y, kind.icon(), kind.label(), &format!("app:{}", kind.id()));
+        row_y += ROW_H;
+    }
+
+    // Production comparison section (2026-08-10, concept wiring) — the
+    // SAME 14 types as "Object modals" above, flat (no per-kind grouping:
+    // this section is for reaching a specific type's PRODUCTION modal by
+    // name, not for browsing), opening the live-`Primitive`-backed modal
+    // instead of the concept one — see this module's own doc.
+    row_y = draw_section_header(ctx, x, row_y, PRODUCTION_SECTION_LABEL, rt);
+    for type_id in spawnable_types() {
+        let label = tree_objects
+            .iter()
+            .find(|p| p.type_id() == *type_id)
+            .map(|p| p.display_name().to_string())
+            .unwrap_or_else(|| (*type_id).to_string());
+        draw_row(ctx, coord, &layer, rt, x, row_y, type_id, &label, &format!("object_prod:{type_id}"));
         row_y += ROW_H;
     }
 
@@ -114,6 +235,19 @@ fn draw_section_header(ctx: &mut dyn RenderContext, x: f64, y: f64, label: &str,
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, x + PAD + 4.0, y + HEADER_H / 2.0);
     y + HEADER_H
+}
+
+/// Nested sub-header for one `PrimitiveKind` group under "Object modals"
+/// (wave 5) — same role as [`draw_section_header`], indented and slightly
+/// smaller so it reads as a child of the section it sits under rather than
+/// a sibling of it.
+fn draw_kind_header(ctx: &mut dyn RenderContext, x: f64, y: f64, label: &str, rt: &RuntimeTheme) -> f64 {
+    ctx.set_font("10px sans-serif");
+    ctx.set_fill_color(&rt.colors.text_secondary);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, x + PAD + 14.0, y + SUBHEADER_H / 2.0);
+    y + SUBHEADER_H
 }
 
 #[allow(clippy::too_many_arguments)]

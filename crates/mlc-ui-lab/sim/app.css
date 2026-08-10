@@ -26,7 +26,10 @@ html, body {
 #shell {
   display: grid;
   height: 100vh;
-  grid-template-rows: var(--mlc-layout-top-toolbar-height) 1fr var(--mlc-layout-bottom-toolbar-height);
+  /* `1fr` is `minmax(auto, 1fr)`: without `min-height: 0` on the row's items a
+     tall child (the object list) stretches the row past the viewport instead of
+     scrolling inside it — which is exactly why the tree would not scroll. */
+  grid-template-rows: var(--mlc-layout-top-toolbar-height) minmax(0, 1fr) var(--mlc-layout-bottom-toolbar-height);
   grid-template-columns: var(--mlc-layout-left-toolbar-width) 1fr auto var(--mlc-layout-right-toolbar-width);
   grid-template-areas:
     "top   top   top   top"
@@ -121,6 +124,7 @@ html, body {
 
 #chart {
   grid-area: chart;
+  min-height: 0;
   position: relative;
   background: var(--mlc-chart-background, var(--mlc-colors-toolbar-bg));
   display: grid;
@@ -234,6 +238,8 @@ select, input[type="text"] {
   border-left: 1px solid var(--mlc-colors-toolbar-divider);
   display: none;
   flex-direction: column;
+  min-height: 0; /* let the list scroll instead of stretching the grid row */
+  overflow: hidden;
 }
 #side.open { display: flex; }
 
@@ -253,6 +259,24 @@ select, input[type="text"] {
   font-size: var(--mlc-fonts-size-small);
   color: var(--mlc-colors-text-muted);
   letter-spacing: .04em;
+}
+
+/* 121 registered types do not fit a viewport — the list scrolls, and the kind
+   headers scroll with it. */
+#tree { flex: 1; min-height: 0; overflow-y: auto; }
+#tree::-webkit-scrollbar { width: var(--mlc-ps-scrollbar-width); }
+#tree::-webkit-scrollbar-thumb { background: var(--mlc-widget-bg-normal); border-radius: 4px; }
+
+.tree-kind {
+  padding: 10px 10px 3px; /* NO-TOKEN */
+  font-size: var(--mlc-fonts-size-small);
+  font-weight: var(--mlc-fonts-weight-medium);
+  color: var(--mlc-colors-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  position: sticky;
+  top: 0;
+  background: var(--mlc-colors-toolbar-bg);
 }
 
 .tree-row {

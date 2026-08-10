@@ -148,40 +148,53 @@ nothing a modal draws ever lands under the sidebar to begin with.
 
 ## Agent control plane (`window.__LAB`)
 
-Mirrors `sim/sim.js`'s own `window.__SIM` (see that file's own doc): six
+Mirrors `sim/sim.js`'s own `window.__SIM` (see that file's own doc):
 functions, callable from a CDP eval, that drive and inspect the lab without
 a mouse. No HTTP endpoint, no socket — everything round-trips through the
 wasm module already loaded in the page.
 
-`src/lib.rs` exports six `#[wasm_bindgen]` free functions
-(`lab_modals`/`lab_open_type`/`lab_open_app`/`lab_close`/`lab_snapshot`/
-`lab_metrics`), each returning a JSON-formatted `String` (this crate has no
-serde dependency — the field set is small and hand-escaped). `index.html`'s
-own bootstrap `<script type="module">` imports them by name and assembles
-`window.__LAB` around them, parsing each JSON string back into a plain
-object:
+`src/lib.rs` exports `#[wasm_bindgen]` free functions
+(`lab_modals`/`lab_open_type`/`lab_tab`/`lab_open_app`/`lab_close`/
+`lab_snapshot`/`lab_metrics`/`lab_dump_types`), each returning a
+JSON-formatted `String` (this crate has no serde dependency — the field
+set is small and hand-escaped). `index.html`'s own bootstrap
+`<script type="module">` imports them by name and assembles `window.__LAB`
+around them, parsing each JSON string back into a plain object:
 
 ```js
 window.__LAB.modals()
-// → { objects: ["fib_retracement", "gann_fan", ...],
-//     application: ["chart_settings", "indicator_settings", ...] }
+// → { objects: ["fib_retracement", "gann_fan", ...],       // 14, spec order
+//     application: ["chart_settings", "indicator_settings", ...],  // 16, legacy
+//     concept_application: ["chart_settings", "indicator_settings", ...] }  // 9
 
 window.__LAB.open_type("gann_fan", "levels")
-// selects (spawning if needed) the Object Tree's gann_fan instance, opens
-// its settings modal, switches to the "levels" tab
-// → { ok: true, id: 3, type_id: "gann_fan", tab: "levels" }
+// opens the CONCEPT modal (approved-design surface,
+// `concept::render::render_concept_modal`) for gann_fan, switches to its
+// "levels" tab. Tried first against the 14 object archetypes, then the 9
+// application archetypes — the SAME call opens either.
+// → { ok: true, id: "gann_fan", type_id: "gann_fan", tab: "levels" }
+// The production, live-`Primitive`-backed modal this call used to open is
+// still reachable in the UI (the shell's own launcher "Production modals"
+// section), just not through this control-plane entry point any more.
+
+window.__LAB.tab("labels")
+// switches the ALREADY-OPEN concept modal's active tab — the live
+// counterpart to open_type's own tab argument.
+// → { ok: true, id: "gann_fan", tab: "labels" }
 
 window.__LAB.open_app("chart_settings")
+// unchanged — opens the legacy, 16-entry AppModalKind application modal.
 // → { ok: true, id: "chart_settings" }
 
 window.__LAB.close()
-// closes whichever overlay is topmost (launcher > app modal > tree modal)
-// → { ok: true, closed: "app" }
+// closes whichever overlay is topmost
+// (launcher > app modal > concept modal > tree modal)
+// → { ok: true, closed: "concept" }
 
 window.__LAB.snapshot()
 // → { objects: [{id, type_id, display_name, selected}, ...],
 //     selected: <id>|null, sidebar_open: bool, launcher_open: bool,
-//     modal: null | { family: "tree"|"app", id, tab, tabs: [...] } }
+//     modal: null | { family: "concept"|"tree"|"app", id, tab, tabs: [...] } }
 
 window.__LAB.metrics()
 // → { rails: { top_toolbar_height, left_toolbar_width,
@@ -194,13 +207,14 @@ window.__LAB.metrics()
 `metrics()`'s `rails` block is the same `mlc_core::types` layout constants
 `sim.js`'s own `--mlc-layout-*` CSS custom properties trace to — the
 numeric cross-check between the two labs. `modal.rect` is this frame's REAL
-measured frame rect for whichever modal is open (the tree family's own
+measured frame rect for whichever modal is open (the concept family's own
+`ConceptModalGeo::modal_rect`, the tree family's own
 `PrimitiveSettingsResult::modal_rect`, or an app modal's own
 `*Result::modal_rect`-shaped field — `app_modals::AppModalsState::
 last_rect`'s own doc has the per-kind field-name list). `header_h`/
 `tab_bar_h`/`tab_rail_w`/`footer_h` are the shared
 `mlc_app_layout::ui::widgets` shell constants every "app"-family modal
-inherits from `ModalShellSpec`; they read `null` for the "tree" family,
-whose modal is a bespoke shell that does not use them (its own
-measured header height is not tracked as of this wave — only its
+inherits from `ModalShellSpec`; they read `null` for the "concept" and
+"tree" families, whose modals are a bespoke shell that does not use them
+(their own measured header height is not tracked as of this wave — only
 `rect`/position is).

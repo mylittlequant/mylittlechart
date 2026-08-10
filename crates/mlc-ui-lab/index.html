@@ -41,7 +41,7 @@
   -->
   <script type="module">
     import init, {
-      lab_modals, lab_open_type, lab_open_app, lab_close, lab_snapshot, lab_metrics,
+      lab_modals, lab_open_type, lab_open_app, lab_tab, lab_close, lab_snapshot, lab_metrics, lab_dump_types,
     } from './pkg/mlc_ui_lab.js';
     await init();
     // The #[wasm_bindgen(start)] fn runs automatically inside init().
@@ -53,11 +53,23 @@
     // exactly like `__SIM`'s. See README.md for the full call reference.
     window.__LAB = {
       modals: () => JSON.parse(lab_modals()),
+      // Opens the CONCEPT modal (2026-08-10) — tried against the 14
+      // object archetypes first, then the 9 application archetypes (see
+      // `lab_modals`'s own Rust doc). The production primitive-settings
+      // modal moved to the shell's own launcher "Production modals"
+      // section — still reachable in the UI, just not through this call.
       open_type: (typeId, tab) => JSON.parse(lab_open_type(typeId, tab ?? undefined)),
       open_app: (modalId) => JSON.parse(lab_open_app(modalId)),
+      // Switches the ALREADY-OPEN concept modal's active tab — the live
+      // counterpart to `open_type`'s own `tab` argument.
+      tab: (tabId) => JSON.parse(lab_tab(tabId)),
       close: () => JSON.parse(lab_close()),
       snapshot: () => JSON.parse(lab_snapshot()),
       metrics: () => JSON.parse(lab_metrics()),
+      // Declaration dumper (wave 5) — one row per registered primitive
+      // type, built from a fresh instance of each. See `lab_dump_types`'s
+      // own Rust doc for the exact schema.
+      dump_types: () => JSON.parse(lab_dump_types()),
     };
   </script>
 </body>

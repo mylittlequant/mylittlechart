@@ -1226,15 +1226,15 @@ pub(super) static POSITION_POINT_KEY_TABLE: [[&str; N_LANG]; 2] = [
 ];
 
 // =============================================================================
-// ShellKey table  (22 variants × N_LANG)
+// ShellKey table  (32 variants × N_LANG)
 // =============================================================================
 //
-// Owner scope, 2026-08-10 (mlc-ui-lab stub-shell waves 1-3): only En/Ru
+// Owner scope, 2026-08-10 (mlc-ui-lab stub-shell waves 1-5): only En/Ru
 // filled. Col:  0=En  1=Ru  2..14="" stub -> fallback to En at runtime. NOT
 // part of `every_chart_table_is_fully_translated` below by design — see
 // ShellKey's own doc in keys.rs.
 
-pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 22] = [
+pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 32] = [
     /* 0  NothingSelected            */ [ "Nothing selected", "Ничего не выбрано", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1  SimulatorWatermark         */ [ "NO DATA — THIS IS A UI SIMULATOR", "ДАННЫХ НЕТ — ЭТО СИМУЛЯТОР UI", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2  ModalsButton               */ [ "Modals", "Модалки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1257,6 +1257,16 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 22] = [
     /* 19 AppModalPanelSettings      */ [ "Panel settings", "Настройки панели", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 20 AppModalIndicatorOverlay   */ [ "Indicator overlay", "Оверлей индикаторов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 21 DesignCompareToggle        */ [ "Design compare", "Сравнение дизайна", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 22 CategoryLine               */ [ "Lines", "Линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 23 CategoryChannel            */ [ "Channels", "Каналы", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 24 CategoryShape              */ [ "Shapes", "Фигуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 25 CategoryFibonacci          */ [ "Fibonacci", "Фибоначчи", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 26 CategoryGann               */ [ "Gann", "Ганн", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 27 CategoryPattern            */ [ "Patterns", "Паттерны", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 28 CategoryAnnotation         */ [ "Annotations", "Аннотации", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 29 CategoryMeasurement        */ [ "Measurement", "Измерения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 30 CategoryTrading            */ [ "Trading", "Трейдинг", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 31 CategorySignal             */ [ "Signals", "Сигналы", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

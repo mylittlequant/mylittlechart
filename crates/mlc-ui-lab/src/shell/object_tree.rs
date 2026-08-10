@@ -3,8 +3,12 @@
 //! the five row actions (unlock / eye / alert / gear / close). Mirrors
 //! `sim/index.html`'s `#side`/`#tree` panel.
 
+use std::sync::OnceLock;
+
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::i18n::{t_toolbar, ToolbarTooltipKey};
+use mlc_app_layout::ui::scroll_widget::{ScrollableContainer, ScrollState};
+use mlc_app_layout::ui::widgets::types::WidgetTheme;
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::theme::RuntimeTheme;
 use mlc_core::types::TOP_TOOLBAR_HEIGHT;
@@ -13,28 +17,41 @@ use uzor::types::Rect;
 
 use super::{icon_btn, ShellRect, GAP, STUB_INSTRUMENT_KEY};
 
-/// Primitive type ids this lab's left rail can spawn, in rail order — also
-/// the Object Tree's own startup roster (`crate::LabState::new` creates one
-/// of each, mirroring `sim.js`'s own `spawnAll()`). Real ids read off
-/// `PrimitiveRegistry::global()`'s own `metadata().type_id` for each type
-/// (verified, not invented — every one of these matches
-/// `left_rail::TOOLS`'s own spelling exactly).
-pub(crate) const SPAWNABLE_TYPES: &[&str] = &[
-    "fib_retracement",
-    "gann_fan",
-    "pitchfork",
-    "elliott_impulse",
-    "xabcd_pattern",
-    "long_position",
-    "price_date_range",
-    "callout",
-    "table",
-    "rectangle",
-    "parallel_channel",
-    "regression_trend",
-    "brush",
-    "flag",
-];
+/// The 14 approved-design object archetypes
+/// (`crate::concept::spec::types()`), in the spec's own order — the Object
+/// Tree's own startup roster (`crate::LabState::new` creates one of each,
+/// mirroring `sim.js`'s own `spawnAll()`), the launcher menu's own "Object
+/// modals" section (`shell::launcher_menu`), and the agent control plane's
+/// `objects` list (`crate::lab_modals`/`crate::lab_open_type`).
+///
+/// Read from `concept::spec::types()` at first call and cached — that data
+/// is itself a fixed, process-lifetime `OnceLock`, so re-deriving this
+/// mapping every frame would only repeat work, never see something new.
+///
+/// **2026-08-10, concept wiring**: narrowed from the full registered-type
+/// universe (~121 types, every `PrimitiveRegistry` entry) back to the 14
+/// APPROVED archetypes, so the Object Tree, the launcher menu and the
+/// agent control plane all show exactly what `crate::concept::render`'s
+/// concept modal can actually open — nothing wider. This happens to
+/// restore the pre-wave-5 relationship with `left_rail::TOOLS` (the two
+/// are hand-kept in sync at 14 entries again), but that is a side effect,
+/// not the reason: the source of truth is `spec.rs`, not the left rail.
+pub(crate) fn spawnable_types() -> &'static [&'static str] {
+    static TYPES: OnceLock<Vec<&'static str>> = OnceLock::new();
+    TYPES.get_or_init(|| crate::concept::spec::types().iter().map(|t| t.id).collect())
+}
+
+/// A row's own display label — the approved design's `name`
+/// (`crate::concept::spec::ConceptType::name`), NOT the live `Primitive`'s
+/// own `display_name()` (task requirement: the Object Tree row shows the
+/// DESIGN's name, not whatever the registered factory happened to title
+/// it). Falls back to the raw `type_id` on the never-expected case a
+/// spawnable type has no spec entry — [`spawnable_types`] is itself
+/// sourced from `spec::types()`, so this only matters if the two ever
+/// drift apart.
+fn spec_display_name(type_id: &'static str) -> &'static str {
+    crate::concept::spec::types().iter().find(|t| t.id == type_id).map(|t| t.name).unwrap_or(type_id)
+}
 
 /// One row's five action buttons: `(action id, icon name)`, left-to-right —
 /// mirrors `sim.js`'s own `renderTree()` action list exactly
@@ -50,6 +67,17 @@ const ROW_ACTIONS: [(&str, &str); 5] = [
     ("del", "close"),
 ];
 
+/// The list's viewport and content heights, as measured by the last
+/// [`draw`]. `ScrollState::handle_wheel` needs both to clamp, and the wheel
+/// response is handled outside the draw — this is how the two meet, the same
+/// way the settings modal passes its own geometry out to its dispatcher.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ListGeometry {
+    pub content_height: f64,
+    pub viewport_height: f64,
+}
+
+/// Draws the panel and reports the list geometry the wheel handler needs.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw(
     ctx: &mut dyn RenderContext,
@@ -59,7 +87,8 @@ pub(super) fn draw(
     rect: ShellRect,
     objects: &[Box<dyn Primitive>],
     selected: Option<u64>,
-) {
+    scroll: &mut ScrollState,
+) -> ListGeometry {
     let (rx, ry, rw, rh) = rect;
 
     ctx.set_fill_color(&rt.colors.toolbar_bg);
@@ -109,7 +138,33 @@ pub(super) fn draw(
     // Object list — one row per `objects` entry, in creation order (matches
     // `sim.js`'s own `state.objects` array order: newest spawns append).
     let list_top = ry + header_h + rt.sizing.button_height as f64;
-    draw_rows(ctx, coord, layer, rt, rx, list_top, rw, objects, selected);
+    let viewport_h = (ry + rh - list_top).max(0.0);
+    let row_h = rt.sizing.button_height as f64;
+    let content_h = objects.len() as f64 * row_h;
+    scroll.clamp(content_h, viewport_h);
+
+    // The wheel zone covers the whole list viewport. It is registered BEFORE
+    // the rows so a row's own CLICK zone still wins the pointer — same
+    // registration-order rule the rows already rely on for their actions.
+    coord.register_on_layer(
+        "shell:objtree:viewport".to_string(),
+        Rect::new(rx, list_top, rw, viewport_h),
+        Sense::SCROLL,
+        layer,
+    );
+
+    // The app's own scroll container: it owns the clip, the content offset and
+    // the scrollbar. Hand-drawing a track here would be a second scrollbar in
+    // the same crate that already has one.
+    let viewport = Rect::new(rx, list_top, rw, viewport_h);
+    let container = ScrollableContainer::new(viewport, scroll, None);
+    let content_top = container.content_y();
+    container.begin(ctx);
+    draw_rows(ctx, coord, layer, rt, rx, content_top, rw, objects, selected, (list_top, viewport_h));
+    let widget_theme = WidgetTheme::default();
+    container.end(ctx, content_h, &widget_theme);
+
+    ListGeometry { content_height: content_h, viewport_height: viewport_h }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -123,7 +178,10 @@ fn draw_rows(
     rw: f64,
     objects: &[Box<dyn Primitive>],
     selected: Option<u64>,
+    viewport: (f64, f64),
 ) {
+    let (view_top, view_h) = viewport;
+    let view_bottom = view_top + view_h;
     let row_h = rt.sizing.button_height as f64;
     let action_size = rt.sizing.icon_size as f64;
     let chip_size = rt.sizing.icon_size as f64;
@@ -135,6 +193,12 @@ fn draw_rows(
 
     let mut y = top_y;
     for prim in objects {
+        // A row scrolled out of the viewport is neither drawn nor registered:
+        // registering it would leave a clickable ghost under the toolbars.
+        if y + row_h <= view_top || y >= view_bottom {
+            y += row_h;
+            continue;
+        }
         let id = prim.data().id;
         let is_selected = selected == Some(id);
 
@@ -170,7 +234,7 @@ fn draw_rows(
         ctx.begin_path();
         ctx.rect(name_x, y, name_w, row_h);
         ctx.clip();
-        ctx.fill_text(prim.display_name(), name_x, y + row_h / 2.0);
+        ctx.fill_text(spec_display_name(prim.type_id()), name_x, y + row_h / 2.0);
         ctx.restore();
 
         let mut ax = actions_x0;

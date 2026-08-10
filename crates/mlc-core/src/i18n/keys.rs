@@ -2342,8 +2342,11 @@ impl uzor::i18n::Translate for PositionPointKey {
 /// to a specific tool, tab, or property — the bottom toolbar's
 /// selected-object label when nothing is selected, the raw-lab stub shell's
 /// own "no data" watermark, its "Modals" launcher button, the launcher
-/// menu's own two section headers, the sixteen application-modal entries it
-/// lists (wave 3, 2026-08-10 — `mlc-ui-lab`'s own launcher menu labels; the
+/// menu's own two top-level section headers plus one sub-header per
+/// `PrimitiveKind` under "Object modals" (wave 5, 2026-08-10 — the object
+/// list grew from the curated 14 left-rail types to every registered
+/// type, grouped by kind), the sixteen application-modal entries it lists
+/// (wave 3, 2026-08-10 — `mlc-ui-lab`'s own launcher menu labels; the
 /// modal SURFACES themselves reuse whatever i18n key they already carry
 /// internally, this is only the one-line label the launcher's own list row
 /// shows), and the lab dev-bar's own "Design compare" toggle (relocated off
@@ -2352,7 +2355,7 @@ impl uzor::i18n::Translate for PositionPointKey {
 ///
 /// Variant order is **frozen** — discriminant == row index in
 /// `SHELL_KEY_TABLE`. Only En/Ru are filled (owner scope, 2026-08-10,
-/// `mlc-ui-lab` stub-shell waves 1-3); the remaining 13 columns are empty
+/// `mlc-ui-lab` stub-shell waves 1-5); the remaining 13 columns are empty
 /// and fall back to En at runtime — an intentional, pre-existing pattern
 /// (see `tables.rs`'s own module doc), not a shortcut. Deliberately NOT
 /// part of `tables.rs`'s `every_chart_table_is_fully_translated` test for
@@ -2367,7 +2370,9 @@ pub enum ShellKey {
     SimulatorWatermark = 1,
     /// Top toolbar's "Modals" button — opens the launcher menu (wave 3).
     ModalsButton = 2,
-    /// Launcher menu section header over the 14 Object Tree primitive types.
+    /// Launcher menu top-level section header over every registered
+    /// primitive type (grouped into `CategoryLine..CategorySignal`
+    /// sub-headers below it, wave 5).
     LauncherObjectModals = 3,
     /// Launcher menu section header over the 16 application-level modals.
     LauncherAppModals = 4,
@@ -2408,10 +2413,34 @@ pub enum ShellKey {
     /// app-shell "Modals" button in wave 3, since that button now opens the
     /// launcher menu instead.
     DesignCompareToggle = 21,
+    /// Launcher menu sub-header over `PrimitiveKind::Line` rows (wave 5,
+    /// 2026-08-10 — the "Object modals" section grew from the curated 14
+    /// left-rail types to every registered type, grouped by
+    /// `mlc_core::PrimitiveKind`; see `mlc-ui-lab`'s own
+    /// `shell::launcher_menu::kind_label`).
+    CategoryLine = 22,
+    /// Launcher menu sub-header over `PrimitiveKind::Channel` rows.
+    CategoryChannel = 23,
+    /// Launcher menu sub-header over `PrimitiveKind::Shape` rows.
+    CategoryShape = 24,
+    /// Launcher menu sub-header over `PrimitiveKind::Fibonacci` rows.
+    CategoryFibonacci = 25,
+    /// Launcher menu sub-header over `PrimitiveKind::Gann` rows.
+    CategoryGann = 26,
+    /// Launcher menu sub-header over `PrimitiveKind::Pattern` rows.
+    CategoryPattern = 27,
+    /// Launcher menu sub-header over `PrimitiveKind::Annotation` rows.
+    CategoryAnnotation = 28,
+    /// Launcher menu sub-header over `PrimitiveKind::Measurement` rows.
+    CategoryMeasurement = 29,
+    /// Launcher menu sub-header over `PrimitiveKind::Trading` rows.
+    CategoryTrading = 30,
+    /// Launcher menu sub-header over `PrimitiveKind::Signal` rows.
+    CategorySignal = 31,
 }
 
 impl ShellKey {
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 32;
 
     /// Get translation for this key.
     #[inline]

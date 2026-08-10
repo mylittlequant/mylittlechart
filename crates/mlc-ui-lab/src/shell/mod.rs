@@ -29,6 +29,7 @@ mod pane;
 mod right_rail;
 mod top_bar;
 
+use mlc_app_layout::ui::scroll_widget::ScrollState;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::render::RenderContext;
 use mlc_core::state::icons::icon_svg;
@@ -102,13 +103,26 @@ pub struct ShellState {
     /// rail button reads as selected. The Object Tree side panel is visible
     /// exactly when this is `Some("object_tree")`.
     pub active_right_panel: Option<&'static str>,
+    /// Object Tree list scroll — the app's own `ScrollState`, the same type
+    /// the settings modal's list uses, so wheel feel and clamping are one
+    /// implementation rather than two. [`object_tree::draw`] clamps it against
+    /// the live content/viewport heights and reports them back for the wheel
+    /// handler.
+    pub tree_scroll: ScrollState,
+    /// Last measured list geometry, for the wheel response.
+    pub tree_list: object_tree::ListGeometry,
 }
 
 impl Default for ShellState {
     fn default() -> Self {
         // Matches `sim/index.html`'s own initial state: the crosshair tool
         // and the Object Tree panel both carry the `.on` class from load.
-        Self { active_tool: "crosshair", active_right_panel: Some("object_tree") }
+        Self {
+            active_tool: "crosshair",
+            active_right_panel: Some("object_tree"),
+            tree_scroll: ScrollState::default(),
+            tree_list: object_tree::ListGeometry::default(),
+        }
     }
 }
 
@@ -160,7 +174,7 @@ pub fn chart_pane_rect(origin_y: f64, width: f64, height: f64, sidebar_open: boo
 pub fn draw_shell(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
-    state: &ShellState,
+    state: &mut ShellState,
     tree_objects: &[Box<dyn Primitive>],
     tree_selected: Option<u64>,
     rt: &RuntimeTheme,
@@ -199,10 +213,10 @@ pub fn draw_shell(
     left_rail::draw(ctx, coord, &layer, rt, (0.0, middle_y, left_w, middle_h), state.active_tool);
     pane::draw(ctx, rt, (left_w, middle_y, chart_w, middle_h), selected_name);
     if sidebar_open {
-        object_tree::draw(
+        state.tree_list = object_tree::draw(
             ctx, coord, &layer, rt,
             (left_w + chart_w, middle_y, sidebar_w, middle_h),
-            tree_objects, tree_selected,
+            tree_objects, tree_selected, &mut state.tree_scroll,
         );
     }
     right_rail::draw(
@@ -247,15 +261,33 @@ pub fn apply_shell_response(id: &str, state: &mut ShellState) -> bool {
 /// Resolve and paint one icon at `(x, y, size, size)`. Special-cases the
 /// agent mascot exactly like `mlc-app-layout::ui::toolbar_core::render_icon`
 /// does (`draw_svg_multicolor`, no flat `color` — the mascot carries its own
-/// palette) so the "bot" right-rail panel button matches the real app.
+/// palette) so the "bot" right-rail panel button matches the real app. Falls
+/// back to [`draw_icon_placeholder`] for any `name` `icon_svg` cannot
+/// resolve (2026-08-10, wave 5 — with the Object Tree and launcher menu now
+/// listing every registered primitive type, not the curated 14, a row can
+/// no longer assume its own type_id always resolves an icon).
 fn draw_icon(ctx: &mut dyn RenderContext, name: &str, x: f64, y: f64, size: f64, color: &str) {
     if name == "bot" {
         draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, x, y, size, size);
         return;
     }
-    if let Some(svg) = icon_svg(name) {
-        draw_svg_icon(ctx, svg, x, y, size, size, color);
+    match icon_svg(name) {
+        Some(svg) => draw_svg_icon(ctx, svg, x, y, size, size, color),
+        None => draw_icon_placeholder(ctx, x, y, size, color),
     }
+}
+
+/// Neutral placeholder for a `name` `icon_svg` cannot resolve — a small
+/// centred dot, so a menu/tree row for a type with no dedicated glyph still
+/// reads as "a row with an icon slot", not a silent blank. One fallback
+/// shared by every unresolved name — never a per-type guess at what the
+/// glyph should have been.
+fn draw_icon_placeholder(ctx: &mut dyn RenderContext, x: f64, y: f64, size: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    let r = (size * 0.18).max(1.5);
+    ctx.arc(x + size / 2.0, y + size / 2.0, r, 0.0, std::f64::consts::TAU);
+    ctx.fill();
 }
 
 /// Draw one square icon-only button (rail buttons, icon-only toolbar

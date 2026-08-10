@@ -9,10 +9,10 @@
 //! 15 independent `is_open` flags — matching the wave's own constraint
 //! ("одновременно открыта одна модалка").
 //!
-//! No data, no primitives beyond the Object Tree's own 14 — every list
-//! these modals draw (watchlist rows, chart-browser presets, trading
-//! container panels, ...) is a small honest fixture built at the bottom of
-//! this file, not a stand-in for a real data plane.
+//! No data, no primitives beyond the Object Tree's own registered set —
+//! every list these modals draw (watchlist rows, chart-browser presets,
+//! trading container panels, ...) is a small honest fixture built at the
+//! bottom of this file, not a stand-in for a real data plane.
 //!
 //! Dispatch depth is deliberately shallow: close (✕ / OK / Create),
 //! Escape, and tab-strip switching are wired for every modal that has

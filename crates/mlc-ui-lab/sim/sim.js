@@ -14,6 +14,12 @@
 (function () {
   'use strict';
 
+  // The type list and every modal's content come from `registry.js` — the
+  // APPROVED CONCEPTS (`designs/2026-08-10-*/…_v2.html`) transcribed into
+  // data. That is what this lab is for: clicking the agreed design before it
+  // is built. What the primitives declare TODAY lives in `types.json` and is
+  // the gap list, not the content — generating the pages from it once already
+  // replaced five agreed groups with one checkbox.
   const { TYPES, APP_MODALS, templatesFor } = window.SIM_REGISTRY;
   const ICONS = window.SIM_ICONS || {};
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -355,7 +361,7 @@
           row.appendChild(el('div', 'del', '✕'));
           wrap.appendChild(row);
         });
-        wrap.appendChild(el('div', 'add-row', '＋ добавить уровень'));
+        wrap.appendChild(el('div', 'add-row', '＋ ' + window.SIM_REGISTRY.t('CONFIG_KEY', 'AddLevel', 'добавить уровень')));
         return wrap;
       }
 
@@ -438,19 +444,16 @@
     }
   }
 
+  /** A ladder value printed the way its own type writes it: a Gann ray is 2x1, a fib level 0.618. */
+  function fmtLevel(v, unit) {
+    if (unit === 'gann') return v >= 1 ? `${Math.round(v)}x1` : `1x${Math.round(1 / v)}`;
+    return v.toFixed(3);
+  }
+
   function checkbox(on) {
     const c = el('div', 'chk' + (on ? ' on' : ''), '✓');
     c.onclick = (e) => { e.stopPropagation(); c.classList.toggle('on'); };
     return c;
-  }
-
-  function fmtLevel(v, unit) {
-    if (unit === 'gann') {
-      // The ladder asks the TYPE how to write a value — a Gann ray is 2x1, not 2.000.
-      if (v >= 1) return `${Math.round(v)}x1`;
-      return `1x${Math.round(1 / v)}`;
-    }
-    return v.toFixed(3);
   }
 
   // ---- template menu ----------------------------------------------------
@@ -631,6 +634,10 @@
   // can look at anything; the point of the sim is that every modal is one click
   // away. `?empty=1` starts blank if you want the spawner path instead.
   function spawnAll() {
+    // One object per ARCHETYPE, in the catalogue's own order — not one per
+    // registered type. Thirty-six emoji rows and nine identical line types
+    // answer no design question; these fourteen are the ten archetypes plus
+    // the variants that differ inside one (ladder ×3, shape vs channel).
     TYPES.forEach((t) => spawn(t.id));
     state.selected = state.objects[0] ? state.objects[0].id : null;
     render();
