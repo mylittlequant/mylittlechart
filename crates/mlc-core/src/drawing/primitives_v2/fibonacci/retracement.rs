@@ -772,7 +772,7 @@ impl Primitive for FibRetracement {
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::{ConfigProperty, PropertyCategory};
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         let mut props = vec![
             // Levels/Base — the stroke every level falls back to when it
             // has no colour/width/line-style of its own (`render`, above:
@@ -784,13 +784,17 @@ impl Primitive for FibRetracement {
             // `input/settings.rs`), so declaring them here only makes the
             // Levels tab's base row a real, generic, declared control
             // instead of an assumption the modal hardcoded; it does not
-            // change how a click on them is applied.
+            // change how a click on them is applied. `PropertyGroup::General`
+            // (W2) — the approved design's own ladder "General" group
+            // (`ladder_tabs()`'s `LadderGeneralGroupTitle`) — covers this
+            // row and the extend/trend-line trio below it, the whole of
+            // what this tab drew before named groups existed.
             ConfigProperty::color("stroke_color", SettingsKey::Color.get(current_language()), &self.data.color.stroke)
-                .with_category(PropertyCategory::LevelsBase).with_order(0),
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
             ConfigProperty::number("stroke_width", ConfigKey::WidthLabel.get(current_language()), self.data.width, Some(1.0), Some(10.0))
-                .with_category(PropertyCategory::LevelsBase).with_order(1),
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::line_style("line_style", ConfigKey::Style.get(current_language()), self.data.style.as_str())
-                .with_category(PropertyCategory::LevelsBase).with_order(2),
+                .with_category(PropertyCategory::LevelsBase).with_order(2).in_group(PropertyGroup::General),
 
             // Levels/Base — how far the level lines reach, and whether the
             // dashed connector between point 1 and point 2 draws. Moved
@@ -808,29 +812,36 @@ impl Primitive for FibRetracement {
             // Appearance tab at all — nothing keys off this type's id to
             // hide it; it falls out of what this method does and does not
             // declare.
-            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::LevelsBase).with_order(10),
-            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::LevelsBase).with_order(11),
-            ConfigProperty::show_trend_line(self.show_trend_line).with_category(PropertyCategory::LevelsBase).with_order(12),
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::LevelsBase).with_order(10).in_group(PropertyGroup::General),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::LevelsBase).with_order(11).in_group(PropertyGroup::General),
+            ConfigProperty::show_trend_line(self.show_trend_line).with_category(PropertyCategory::LevelsBase).with_order(12).in_group(PropertyGroup::General),
 
             // Labels — pills + label position (the ladder's own per-level
             // styling stays on the Levels tab; these are the primitive-wide
             // label toggles). Its own tab since the 4-tab cutover
             // (2026-08-08) — previously shared the Appearance tab under
-            // `AppearanceLabels`.
-            ConfigProperty::show_prices(self.show_prices).with_category(PropertyCategory::LabelsText).with_order(10),
-            ConfigProperty::show_levels(self.show_percentages).with_category(PropertyCategory::LabelsText).with_order(11),
-            ConfigProperty::show_as_percent(self.show_as_percent).with_category(PropertyCategory::LabelsText).with_order(12),
-            ConfigProperty::label_position(&self.label_position).with_category(PropertyCategory::LabelsText).with_order(13),
+            // `AppearanceLabels`. Left UNGROUPED (W2): this primitive's own
+            // quirks, with no row in the approved design's ladder Labels tab
+            // to address them into (`LevelLabelsGroupTitle` is font/colour/
+            // inherit/bold only) — see the archetype-modals plan's own rule
+            // that a type's quirk keeps its place even where the archetype
+            // has no slot for it yet.
+            ConfigProperty::show_prices(self.show_prices).with_category(PropertyCategory::LabelsText).in_group(PropertyGroup::LevelLabels).with_order(10),
+            ConfigProperty::show_levels(self.show_percentages).with_category(PropertyCategory::LabelsText).in_group(PropertyGroup::LevelLabels).with_order(11),
+            ConfigProperty::show_as_percent(self.show_as_percent).with_category(PropertyCategory::LabelsText).in_group(PropertyGroup::LevelLabels).with_order(12),
+            ConfigProperty::label_position(&self.label_position).with_category(PropertyCategory::LabelsText).in_group(PropertyGroup::LevelLabels).with_order(13),
 
             // `show_fill`/`fill_opacity` deliberately NOT declared here —
             // see this impl's own doc above `apply_style_property` for why.
 
             // Labels — label font/colour + the shared
             // bold/offset/background/border block below.
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
+            // `PropertyGroup::LevelLabels` (W2) — the approved design's own
+            // `LevelLabelsGroupTitle`.
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 50, PropertyGroup::LevelLabels));
         props
     }
 

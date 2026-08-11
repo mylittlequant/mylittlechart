@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
-    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
+    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
 };
 
 fn default_true() -> bool { true }
@@ -174,13 +174,24 @@ impl Primitive for ElliottImpulse {
             .collect();
 
         let mut props = vec![
+            // `show_labels`/`show_lines` stay ungrouped (W2): the approved
+            // wave archetype's own Line group (`line_group(None)`) is just
+            // colour/width/style — the bespoke base-stroke row this
+            // primitive already falls back to (no `LevelsBase` ladder) — so
+            // these two toggles keep rendering in that same default run,
+            // exactly as before named groups existed.
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(12),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(13),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(14),
+            // `PropertyGroup::Degree` (W2) — the approved design's own
+            // `wave_tabs()` "Degree" group, pulled out of the default Line
+            // run into its own header.
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(12).in_group(PropertyGroup::Degree),
+            // `PropertyGroup::WaveLabels` (W2) — the approved design's own
+            // `WaveLabelsGroupTitle`.
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(13).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(14).in_group(PropertyGroup::WaveLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
     }
 

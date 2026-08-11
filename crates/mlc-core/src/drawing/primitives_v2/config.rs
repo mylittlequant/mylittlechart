@@ -17,7 +17,10 @@
 //! - Constraints (min/max, options, etc.)
 
 use serde::{Deserialize, Serialize};
-use crate::i18n::{Language, WaveDegreeKey, ConfigKey, LabelPositionKey, current_language};
+use crate::i18n::{
+    Language, WaveDegreeKey, ConfigKey, LabelPositionKey, current_language,
+    ConceptKey, PrimitiveNameKey, SettingsKey, ToolbarMenuKey, UserSettingsKey,
+};
 
 // =============================================================================
 // Elliott Wave Degree and Notation
@@ -399,6 +402,38 @@ impl LabelStyle {
             ConfigProperty::number("label_border_width", ConfigKey::LabelBorderWidth.get(current_language()), self.border_width, Some(0.5), Some(6.0))
                 .with_category(PropertyCategory::LabelsText).with_order(order_start + 9),
         ]
+    }
+
+    /// Same rows as [`Self::style_properties`], with the W2 group model
+    /// applied (`docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+    /// the colour-inherit/bold/offset trio joins `label_group` — each
+    /// archetype's own "level/point/wave/… label" group, chosen by the
+    /// caller (`LevelLabels` for the ladder archetypes, `WaveLabels` for
+    /// Elliott waves, `PointLabels` for harmonic patterns, `PositionLabels`
+    /// for long/short positions, `TextGroup` for measurement rulers) — and
+    /// the background/rounding/padding quartet joins `PropertyGroup::Plate`,
+    /// the SAME group title every archetype's own Labels-tab background
+    /// section uses in the approved design (`ConceptKey::Plate`). The
+    /// trailing border trio is left ungrouped: the approved design carries
+    /// no border row in ANY Plate group for the callers below, so there is
+    /// no group title to give it yet (W3/W4).
+    pub fn style_properties_grouped(&self, fallback_color: &str, order_start: i32, label_group: PropertyGroup) -> Vec<ConfigProperty> {
+        let mut props = self.style_properties(fallback_color, order_start);
+        for p in &mut props {
+            match p.id.as_str() {
+                "label_color_inherit" | "label_bold" | "label_offset" => p.group = Some(label_group),
+                // The border rows belong to the plate they outline, not to a
+                // headerless run above it — the approved design draws one
+                // "Плашка" group holding background, colour, radius, padding
+                // and the border that frames them.
+                "label_background" | "label_background_color" | "label_padding" | "label_radius"
+                | "label_border" | "label_border_color" | "label_border_width" => {
+                    p.group = Some(PropertyGroup::Plate);
+                }
+                _ => {}
+            }
+        }
+        props
     }
 
     /// Apply a property produced by `style_properties()`. Returns `true` if
@@ -967,6 +1002,282 @@ pub enum PropertyCategory {
     PlacementTimeframes,
 }
 
+/// A named sub-section WITHIN one [`PropertyCategory`]'s own bucket — the
+/// approved design's own named groups (ОБЩЕЕ / ПАЛИТРЫ / ЗАЛИВКА / СТЕПЕНЬ /
+/// НОТАЦИЯ / ЦЕЛЕВЫЕ ОТНОШЕНИЯ / ЗОНЫ / ЛИНИИ / ОТОБРАЖЕНИЕ / РЕЗУЛЬТАТ /
+/// ВЕЛИЧИНЫ / ФОРМАТ / …, `mlc-ui-lab`'s `concept::spec::ConceptGroup.title`)
+/// given a typed address a declared [`ConfigProperty`] can carry
+/// (`ConfigProperty::group`, `ConfigProperty::in_group`). `PropertyCategory`
+/// still decides which TAB a property renders on and, by itself, is the
+/// property's DEFAULT group — `group: None` renders exactly as before this
+/// type existed (the category's own existing unnamed/base block, under
+/// whatever fixed header — or lack of one — that category already drew:
+/// `AppearanceLine`'s "LINE", `AppearanceFill`'s "FILL",
+/// `AppearanceStats`'s "RESULTS", no header at all for `LabelsText`/
+/// `LevelsBase`). A `group: Some(_)` property is pulled OUT of that default
+/// run into its own named run, with its own header
+/// (`primitive_settings_vid::draw_group_header`), positioned after the
+/// default run — see `mlc-app-layout`'s
+/// `primitive_settings_property::group_runs` for the exact bucketing rule
+/// this enables.
+///
+/// One variant per named group the 14 object-bound archetypes' own tabs use
+/// in the approved design (`mlc-ui-lab`'s `concept::spec::{ladder_tabs,
+/// wave_tabs, pattern_tabs, position_tabs, measure_tabs, text_tabs,
+/// table_tabs, shape_tabs, regression_tabs, brush_tabs, icon_tabs}` — never
+/// `app_modals`, which are not `Primitive`-bound and have no `ConfigProperty`
+/// to carry a group at all). A handful of the design's own named groups are
+/// deliberately NOT here: `tf_group`/`points_group`/`behaviour_group`'s
+/// titles (the Placement tab's timeframe-visibility group, points table and
+/// lock/hide/sync group) are bespoke collections no primitive has ever
+/// declared a `PropertyCategory::Placement*` property into (verified against
+/// the whole crate) and structurally never will — the points table and
+/// timeframe chips are not `ConfigProperty`-shaped, so there is no row that
+/// could ever carry one of these as a `group`; and four groups whose ENTIRE
+/// row list in the design is a composite, non-scalar row this crate has no
+/// `ConfigProperty`/`PropertyType` shape for at all — `LadderPalettesGroupTitle`
+/// (`Row::Ramps`, no fields), `TargetRatiosGroupTitle`/`ColumnsGroupTitle`
+/// (Table archetype's own column list)/`CustomLabelsGroupTitle` (each 100%
+/// `Row::Table`) and the icon picker's own group (100% `Row::Icons`) — adding
+/// a variant for a group no possible property could ever be tagged with
+/// would be inventing vocabulary with no path to use, not giving an existing
+/// row an address.
+///
+/// A variant no primitive declares into today draws nothing at all (see
+/// `group_runs`'s own doc) — most variants below are exactly that today;
+/// W3 is what declares the properties that populate them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PropertyGroup {
+    // ---- Shared across several archetypes ------------------------------
+    /// `label_rows()`/`plate_group()`'s own "Plate" group — the label/text
+    /// background plate (behind-label toggle, plate colour, rounding,
+    /// padding), shared by every archetype whose Labels tab uses
+    /// `plate_group()` (ladder/wave/pattern/position) and by Callout's own
+    /// differently-shaped but same-titled border/background group.
+    Plate,
+    /// `line_group(None)`'s own default title — Wave's "Line" group
+    /// (`ToolbarMenuKey::Line`), distinct from [`Self::HeaderLines`] and
+    /// [`Self::Outline`], which reuse the SAME helper with a different
+    /// title argument.
+    Line,
+    /// `line_group(Some(HeaderLines))` / the position "trade" tab's own
+    /// literal `HeaderLines` group — Pattern's and Position's own "Lines"
+    /// group (`ToolbarMenuKey::HeaderLines`).
+    HeaderLines,
+    /// `line_group(Some(Outline))` — Shape's (rectangle/parallel channel)
+    /// own "Outline" group (`ConceptKey::Outline`).
+    Outline,
+    /// `extend_group()` — Shape's and Regression's own Extend-left/right
+    /// pair (`ConfigKey::Extend`).
+    Extend,
+
+    // ---- Ladder (fib_retracement / gann_fan / pitchfork) ----------------
+    /// `ladder_tabs()`'s own "levels" subject-tab base group — colour mode,
+    /// base stroke, extend/trend-line (`ConceptKey::LadderGeneralGroupTitle`).
+    General,
+    /// `ladder_tabs()`'s own "labels" tab group for the per-level label
+    /// styling (`ConceptKey::LevelLabelsGroupTitle`).
+    LevelLabels,
+
+    // ---- Wave (elliott_impulse) ------------------------------------------
+    /// `wave_tabs()`'s own wave-degree dropdown group (`ConceptKey::Degree`).
+    Degree,
+    /// `wave_tabs()`'s own notation-pills group (`ConceptKey::Notation`).
+    Notation,
+    /// `wave_tabs()`'s own correction-type dropdown group — hinted
+    /// "correction only" in the design (`ConfigKey::CorrectionType`).
+    CorrectionType,
+    /// `fill_group(Some(FillBetweenWaves))` — Wave's own fill group
+    /// (`ConceptKey::FillBetweenWaves`).
+    FillBetweenWaves,
+    /// `wave_tabs()`'s own "labels" tab group for wave-name label styling
+    /// (`ConceptKey::WaveLabelsGroupTitle`).
+    WaveLabels,
+
+    // ---- Pattern (xabcd_pattern) ------------------------------------------
+    /// `pattern_tabs()`'s own harmonic-pattern subtype dropdown
+    /// (`ConceptKey::Subtype`).
+    Subtype,
+    /// `fill_group(Some(PatternBody))` — Pattern's own fill group
+    /// (`ConceptKey::PatternBody`).
+    PatternBody,
+    /// `pattern_tabs()`'s own hit/miss scoring colours
+    /// (`ConceptKey::ScoringGroupTitle`).
+    Scoring,
+    /// `pattern_tabs()`'s own "labels" tab group for point-name label
+    /// styling (`ConceptKey::PointLabelsGroupTitle`).
+    PointLabels,
+    /// `pattern_tabs()`'s own "labels" tab group for on-chart ratio/segment
+    /// value display (`ConceptKey::OnChartValuesGroupTitle`).
+    OnChartValues,
+
+    // ---- Position (long_position) -----------------------------------------
+    /// `position_tabs()`'s own quantity/account-size/risk group
+    /// (`ToolbarMenuKey::HeaderVolume`).
+    Volume,
+    /// `position_tabs()`'s own stop/target zone colours
+    /// (`ConceptKey::ZonesGroupTitle`).
+    Zones,
+    /// `position_tabs()`'s own currency/ticks/percent display group
+    /// (`ConceptKey::DisplayGroupTitle`).
+    Display,
+    /// `position_tabs()`'s own trailing read-only Risk/Target/R:R group
+    /// (`ConceptKey::ResultGroupTitle` — singular, distinct wording from the
+    /// pre-existing default `PropertyCategory::AppearanceStats` header,
+    /// `ConfigKey::GroupResults`, which is plural).
+    Result,
+    /// `position_tabs()`'s own "labels" tab group — reuses the SAME key as
+    /// the tab itself (`ConfigKey::Labels`), exactly as the design does.
+    PositionLabels,
+    /// `position_tabs()`'s own "what to write on the label" group
+    /// (`ConceptKey::WhatToWriteGroupTitle`).
+    WhatToWrite,
+
+    // ---- Measurement (price_date_range) ------------------------------------
+    /// `measure_tabs()`'s own value-toggle group (`ConceptKey::ValuesGroupTitle`).
+    Values,
+    /// `measure_tabs()`'s own number-format group (`ConceptKey::FormatGroupTitle`).
+    Format,
+    /// `measure_tabs()`'s own line/arrow group (`ConceptKey::LineAndArrowGroupTitle`).
+    LineAndArrow,
+    /// `measure_tabs()`'s own shaded-area group (`ToolbarMenuKey::Area`).
+    Area,
+    /// `measure_tabs()`'s own "labels" tab text group (`SettingsKey::Text`).
+    TextGroup,
+
+    // ---- Text (callout) ------------------------------------------------------
+    /// `text_tabs()`'s own free-text content group (also Table's own cell-
+    /// grid content group, same key — `ConceptKey::ContentGroupTitle`).
+    Content,
+    /// `text_tabs()`'s own typeface/size/weight/colour group
+    /// (`ConceptKey::FontGroupTitle`).
+    Font,
+    /// `text_tabs()`'s own alignment/wrap/width group
+    /// (`ConceptKey::LayoutGroupTitle`).
+    Layout,
+    /// `text_tabs()`'s own signpost-tail hint group — titled with the
+    /// Signpost primitive's own name, as the design does
+    /// (`PrimitiveNameKey::Signpost`).
+    SignpostHint,
+
+    // ---- Table --------------------------------------------------------------
+    /// `table_tabs()`'s own row/column-count group — titled with the same
+    /// key the design reuses for it (`UserSettingsKey::ControlPointSizeLabel`).
+    RowsColumns,
+    /// `table_tabs()`'s own grid-line/header-row group
+    /// (`ConceptKey::GridAndHeaderGroupTitle`).
+    GridAndHeader,
+    /// `table_tabs()`'s own cell text/background group
+    /// (`ConceptKey::TextAndBackgroundGroupTitle`).
+    TextAndBackground,
+
+    // ---- Shape (rectangle / parallel_channel) --------------------------------
+    /// `shape_tabs()`'s own channel-specific middle-line group, Parallel
+    /// Channel only (`ConceptKey::MiddleLine`).
+    MiddleLine,
+    /// `shape_tabs()`'s own on-shape text group (`ConceptKey::TextOnShape`).
+    TextOnShape,
+
+    // ---- Regression (regression_trend) ---------------------------------------
+    /// `regression_tabs()`'s own source/period group
+    /// (`ConceptKey::CalculationGroupTitle`).
+    Calculation,
+    /// `regression_tabs()`'s own sigma-band table + opacity group
+    /// (`ConceptKey::SigmasGroupTitle`).
+    Sigmas,
+    /// `regression_tabs()`'s own baseline group (`ToolbarMenuKey::Baseline`).
+    Baseline,
+    /// `regression_tabs()`'s own trailing computed slope/R² group
+    /// (`ConceptKey::MetricsGroupTitle`).
+    Metrics,
+
+    // ---- Brush ----------------------------------------------------------------
+    /// `brush_tabs()`'s own stroke colour/width/opacity/style group — reuses
+    /// the tab's own title (`ConceptKey::StrokeGroupTitle`).
+    Stroke,
+    /// `brush_tabs()`'s own smoothing/cap/close group
+    /// (`UserSettingsKey::ControlPointShapeLabel`).
+    PointShape,
+    /// `fill_group(Some(FillClosedOutline))` — Brush's own fill group
+    /// (`ConceptKey::FillClosedOutline`).
+    FillClosedOutline,
+
+    // ---- Icon (flag) ------------------------------------------------------------
+    /// `icon_tabs()`'s own colour/size/outline group (`ConceptKey::Rendering`).
+    Rendering,
+    /// `icon_tabs()`'s own show/text/size/side group for the label next to
+    /// the icon (`ConceptKey::LabelNextToIcon`).
+    LabelNextToIcon,
+}
+
+impl PropertyGroup {
+    /// This group's own header text, resolved through the SAME key the
+    /// approved design (`mlc-ui-lab`'s `concept::spec`) calls for it — see
+    /// each variant's own doc for which key and why.
+    pub fn label(&self) -> &'static str {
+        let lang = current_language();
+        match self {
+            PropertyGroup::Plate => ConceptKey::Plate.get(lang),
+            PropertyGroup::Line => ToolbarMenuKey::Line.get(lang),
+            PropertyGroup::HeaderLines => ToolbarMenuKey::HeaderLines.get(lang),
+            PropertyGroup::Outline => ConceptKey::Outline.get(lang),
+            PropertyGroup::Extend => ConfigKey::Extend.get(lang),
+
+            PropertyGroup::General => ConceptKey::LadderGeneralGroupTitle.get(lang),
+            PropertyGroup::LevelLabels => ConceptKey::LevelLabelsGroupTitle.get(lang),
+
+            PropertyGroup::Degree => ConceptKey::Degree.get(lang),
+            PropertyGroup::Notation => ConceptKey::Notation.get(lang),
+            PropertyGroup::CorrectionType => ConfigKey::CorrectionType.get(lang),
+            PropertyGroup::FillBetweenWaves => ConceptKey::FillBetweenWaves.get(lang),
+            PropertyGroup::WaveLabels => ConceptKey::WaveLabelsGroupTitle.get(lang),
+
+            PropertyGroup::Subtype => ConceptKey::Subtype.get(lang),
+            PropertyGroup::PatternBody => ConceptKey::PatternBody.get(lang),
+            PropertyGroup::Scoring => ConceptKey::ScoringGroupTitle.get(lang),
+            PropertyGroup::PointLabels => ConceptKey::PointLabelsGroupTitle.get(lang),
+            PropertyGroup::OnChartValues => ConceptKey::OnChartValuesGroupTitle.get(lang),
+
+            PropertyGroup::Volume => ToolbarMenuKey::HeaderVolume.get(lang),
+            PropertyGroup::Zones => ConceptKey::ZonesGroupTitle.get(lang),
+            PropertyGroup::Display => ConceptKey::DisplayGroupTitle.get(lang),
+            PropertyGroup::Result => ConceptKey::ResultGroupTitle.get(lang),
+            PropertyGroup::PositionLabels => ConfigKey::Labels.get(lang),
+            PropertyGroup::WhatToWrite => ConceptKey::WhatToWriteGroupTitle.get(lang),
+
+            PropertyGroup::Values => ConceptKey::ValuesGroupTitle.get(lang),
+            PropertyGroup::Format => ConceptKey::FormatGroupTitle.get(lang),
+            PropertyGroup::LineAndArrow => ConceptKey::LineAndArrowGroupTitle.get(lang),
+            PropertyGroup::Area => ToolbarMenuKey::Area.get(lang),
+            PropertyGroup::TextGroup => SettingsKey::Text.get(lang),
+
+            PropertyGroup::Content => ConceptKey::ContentGroupTitle.get(lang),
+            PropertyGroup::Font => ConceptKey::FontGroupTitle.get(lang),
+            PropertyGroup::Layout => ConceptKey::LayoutGroupTitle.get(lang),
+            PropertyGroup::SignpostHint => PrimitiveNameKey::Signpost.get(lang),
+
+            PropertyGroup::RowsColumns => UserSettingsKey::ControlPointSizeLabel.get(lang),
+            PropertyGroup::GridAndHeader => ConceptKey::GridAndHeaderGroupTitle.get(lang),
+            PropertyGroup::TextAndBackground => ConceptKey::TextAndBackgroundGroupTitle.get(lang),
+
+            PropertyGroup::MiddleLine => ConceptKey::MiddleLine.get(lang),
+            PropertyGroup::TextOnShape => ConceptKey::TextOnShape.get(lang),
+
+            PropertyGroup::Calculation => ConceptKey::CalculationGroupTitle.get(lang),
+            PropertyGroup::Sigmas => ConceptKey::SigmasGroupTitle.get(lang),
+            PropertyGroup::Baseline => ToolbarMenuKey::Baseline.get(lang),
+            PropertyGroup::Metrics => ConceptKey::MetricsGroupTitle.get(lang),
+
+            PropertyGroup::Stroke => ConceptKey::StrokeGroupTitle.get(lang),
+            PropertyGroup::PointShape => UserSettingsKey::ControlPointShapeLabel.get(lang),
+            PropertyGroup::FillClosedOutline => ConceptKey::FillClosedOutline.get(lang),
+
+            PropertyGroup::Rendering => ConceptKey::Rendering.get(lang),
+            PropertyGroup::LabelNextToIcon => ConceptKey::LabelNextToIcon.get(lang),
+        }
+    }
+}
+
 /// A single configurable property
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigProperty {
@@ -986,6 +1297,12 @@ pub struct ConfigProperty {
     pub readonly: bool,
     /// Help text / tooltip
     pub tooltip: Option<String>,
+    /// Named sub-group WITHIN `category`'s own tab — see [`PropertyGroup`]'s
+    /// own doc. `None` (the default — `#[serde(default)]` so drawings
+    /// persisted before this field existed still load) renders exactly as
+    /// before this field existed: the category's own default run.
+    #[serde(default)]
+    pub group: Option<PropertyGroup>,
 }
 
 impl ConfigProperty {
@@ -1000,6 +1317,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1014,6 +1332,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1028,6 +1347,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1042,6 +1362,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1056,6 +1377,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1070,6 +1392,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1084,6 +1407,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1098,6 +1422,7 @@ impl ConfigProperty {
             order: 0,
             readonly: false,
             tooltip: None,
+            group: None,
         }
     }
 
@@ -1122,6 +1447,13 @@ impl ConfigProperty {
     /// Set readonly
     pub fn readonly(mut self) -> Self {
         self.readonly = true;
+        self
+    }
+
+    /// Set the named sub-group this property belongs to within its own
+    /// `category` — see [`PropertyGroup`]'s own doc.
+    pub fn in_group(mut self, group: PropertyGroup) -> Self {
+        self.group = Some(group);
         self
     }
 

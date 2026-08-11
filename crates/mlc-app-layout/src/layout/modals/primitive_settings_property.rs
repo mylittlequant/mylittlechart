@@ -23,7 +23,7 @@
 //! the universal base-stroke row, the raw-`TextBlock` content/style/position
 //! block) — those stay bespoke in the tab that owns them, documented there.
 
-use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyType, PropertyValue};
+use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType, PropertyValue};
 use mlc_core::drawing::primitives_v2::{Primitive, PropertyKind};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::current_language;
@@ -78,6 +78,57 @@ pub(crate) fn properties_in(all: &[DeclaredProperty], category: PropertyCategory
     let mut found: Vec<&DeclaredProperty> = all.iter().filter(|(p, _)| p.category == category).collect();
     found.sort_by_key(|(p, _)| p.order);
     found
+}
+
+/// Buckets one category's own already-`order`-sorted rows
+/// (`properties_in`'s output, typically filtered by a live search query
+/// first) by their declared [`PropertyGroup`] — the W2 group model
+/// (`mlc_core`'s `PropertyGroup` doc,
+/// `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`). The
+/// `None` bucket — the category's own DEFAULT run, whatever header (or lack
+/// of one) that category already drew before `group` existed — is always
+/// FIRST, even when empty, so a caller can always match on it without an
+/// `Option` dance; every other value follows, in the order its first row
+/// appears among `props` — the convention every migrated declaration
+/// follows: a property meant to stay in the default run keeps a LOWER
+/// `order` than the ones pulled into a named group, so "first row declares
+/// the order" and "default run first" agree in practice.
+pub(crate) fn group_runs<'a>(props: &[&'a DeclaredProperty]) -> Vec<(Option<PropertyGroup>, Vec<&'a DeclaredProperty>)> {
+    bucket_by_group(props, |dp| dp.0.group).into_iter().map(|(g, rows)| (g, rows.into_iter().copied().collect())).collect()
+}
+
+/// The generic bucketing [`group_runs`] wraps for `&DeclaredProperty` pairs
+/// — shared with `primitive_settings_levels`'s own `BaseGroupRows::Declared`
+/// (`Vec<ConfigProperty>`, not a `DeclaredProperty` pair), which calls this
+/// directly rather than through a second copy of the same loop. `group_of`
+/// extracts whichever item's own declared `PropertyGroup`; the `None`
+/// bucket is always first, even when empty, same contract as `group_runs`.
+pub(crate) fn bucket_by_group<'a, T>(
+    items: &'a [T],
+    group_of: impl Fn(&T) -> Option<PropertyGroup>,
+) -> Vec<(Option<PropertyGroup>, Vec<&'a T>)> {
+    let mut order: Vec<Option<PropertyGroup>> = vec![None];
+    let mut buckets: std::collections::HashMap<Option<PropertyGroup>, Vec<&'a T>> = std::collections::HashMap::new();
+    buckets.insert(None, Vec::new());
+    for item in items {
+        let g = group_of(item);
+        if g.is_some() && !buckets.contains_key(&g) {
+            order.push(g);
+        }
+        buckets.entry(g).or_default().push(item);
+    }
+    order.into_iter().map(|g| { let rows = buckets.remove(&g).unwrap_or_default(); (g, rows) }).collect()
+}
+
+/// A declared property's own effective header text for cross-tab settings
+/// search: its named [`PropertyGroup`]'s label when it has one, otherwise
+/// `default_header` (whatever fixed caption the category's own default run
+/// shows, or would show if it drew a header at all). Every tab body's own
+/// search-match filter uses this instead of always matching against
+/// `default_header`, so a query naming a row's ACTUAL on-screen header
+/// (named group or default) finds it — never the wrong one.
+pub(crate) fn effective_header(prop: &ConfigProperty, default_header: &'static str) -> &'static str {
+    prop.group.map(|g| g.label()).unwrap_or(default_header)
 }
 
 /// The `content_items` field id a declared property's control registers

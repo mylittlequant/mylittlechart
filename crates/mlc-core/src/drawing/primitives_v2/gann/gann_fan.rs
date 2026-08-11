@@ -578,13 +578,24 @@ impl Primitive for GannFan {
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::{ConfigProperty, PropertyCategory};
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        // `show_labels` stays ungrouped (W2): it renders on the Subject tab
+        // (`AppearanceLine`, no level-ladder base row declared for this
+        // type), while the approved ladder archetype's own "General" group
+        // lives on the SAME tab but is addressed via `PropertyCategory::
+        // LevelsBase` — a category this type declares nothing into. Giving
+        // it a group here would tag it with a header that lands in the
+        // wrong section (see `mlc-app-layout`'s `primitive_settings_vid`
+        // doc on why `AppearanceLine` and `LevelsBase` are two different
+        // render locations even on the same tab).
         let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
+            // `PropertyGroup::LevelLabels` (W2) — the approved design's own
+            // `LevelLabelsGroupTitle` (ladder archetype's Labels tab).
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 50, PropertyGroup::LevelLabels));
         props
     }
 

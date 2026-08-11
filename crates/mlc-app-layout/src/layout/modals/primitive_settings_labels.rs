@@ -36,11 +36,57 @@ use mlc_core::i18n::{current_language, ConfigKey};
 use mlc_core::render::RenderContext;
 use uzor::types::Rect as WidgetRect;
 
-use super::primitive_settings_property::{declared_properties, draw_property_row, properties_in, DeclaredProperty};
-use super::primitive_settings_vid::{draw_label, draw_toggle_segment, ROW_H};
+use super::primitive_settings_property::{
+    declared_properties, draw_property_row, effective_header, group_runs, properties_in, DeclaredProperty,
+};
+use super::primitive_settings_vid::{draw_group_header, draw_label, draw_toggle_segment, ROW_H};
 
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const ALIGN_H: f64 = 72.0;
+/// Mirrors `primitive_settings_vid::GROUP_HEADER_H` — this tab has no
+/// header of its own for the DEFAULT run (unchanged, see [`has_named_group`]
+/// and this module's own doc), only a named [`mlc_core::drawing::primitives_v2::config::PropertyGroup`]
+/// run draws one, at the same height every other tab's own group header
+/// uses.
+const GROUP_HEADER_H: f64 = 22.0;
+/// Mirrors `primitive_settings_vid::GROUP_GAP` — spacing between two
+/// consecutive runs on this tab, used only once a primitive actually
+/// declares more than one (a primitive with zero named groups, today's
+/// status quo for most types, draws byte-identical to before this constant
+/// existed: see [`has_named_group`]).
+const GROUP_GAP: f64 = 9.0;
+
+/// Whether `props` uses the W2 group model at all — `false` for every
+/// primitive that has not migrated any `LabelsText` property into a named
+/// [`mlc_core::drawing::primitives_v2::config::PropertyGroup`] yet, which is
+/// what keeps this tab's height/spacing byte-identical to before named
+/// groups existed for those types (no header, no extra gap before the
+/// bespoke text block).
+fn has_named_group(props: &[&DeclaredProperty]) -> bool {
+    props.iter().any(|(p, _)| p.group.is_some())
+}
+
+/// Height for this tab's own declared-property runs (W2 group model): the
+/// default (`group: None`) run keeps this tab's own pre-existing
+/// convention — no header — every named `PropertyGroup` gets its own
+/// `GROUP_HEADER_H` run, `GROUP_GAP`-separated from its neighbours. Mirrors
+/// `draw`'s own shape.
+fn labels_group_height(props: &[&DeclaredProperty]) -> f64 {
+    let mut h = 0.0;
+    let mut any = false;
+    for (group, rows) in group_runs(props) {
+        if rows.is_empty() {
+            continue;
+        }
+        if any {
+            h += GROUP_GAP;
+        }
+        let header_h = if group.is_none() { 0.0 } else { GROUP_HEADER_H };
+        h += header_h + rows.len() as f64 * ROW_H;
+        any = true;
+    }
+    h
+}
 
 /// Height of the bespoke text block (content + bold/italic + position
 /// grid), drawn only when `text_properties()` is `None` — see this
@@ -65,7 +111,14 @@ pub fn content_height(prim: &dyn Primitive) -> f64 {
     let all = declared_properties(prim);
     let labels_props = properties_in(&all, PropertyCategory::LabelsText);
     let has_custom_text = prim.text_properties().is_some();
-    let inner = labels_props.len() as f64 * ROW_H + if has_custom_text { 0.0 } else { TEXT_BLOCK_H };
+    let props_h = labels_group_height(&labels_props);
+    let text_block_h = if has_custom_text { 0.0 } else { TEXT_BLOCK_H };
+    // The extra gap before the bespoke text block only exists once this
+    // primitive actually uses a named group — see `has_named_group`'s own
+    // doc: zero named groups reproduces the pre-W2 shape exactly (rows then
+    // block, no gap).
+    let gap = if props_h > 0.0 && text_block_h > 0.0 && has_named_group(&labels_props) { GROUP_GAP } else { 0.0 };
+    let inner = props_h + gap + text_block_h;
     if inner > 0.0 { inner + GROUP_PAD_BOTTOM } else { 0.0 }
 }
 
@@ -89,12 +142,15 @@ fn query_height(prim: &dyn Primitive, query: &str) -> f64 {
     let labels_header = ConfigKey::Labels.get(lang);
     let labels_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::LabelsText)
         .into_iter()
-        .filter(|(p, _)| matches(query, &[labels_header, p.name.as_str()]))
+        .filter(|(p, _)| matches(query, &[effective_header(p, labels_header), p.name.as_str()]))
         .collect();
     let has_custom_text = prim.text_properties().is_some();
     let text_block_matches = !has_custom_text
         && matches(query, &[labels_header, ConfigKey::Content.get(lang), ConfigKey::TextStyleLabel.get(lang), ConfigKey::PositionLabel.get(lang)]);
-    let inner = labels_props.len() as f64 * ROW_H + if text_block_matches { TEXT_BLOCK_H } else { 0.0 };
+    let props_h = labels_group_height(&labels_props);
+    let text_block_h = if text_block_matches { TEXT_BLOCK_H } else { 0.0 };
+    let gap = if props_h > 0.0 && text_block_h > 0.0 && has_named_group(&labels_props) { GROUP_GAP } else { 0.0 };
+    let inner = props_h + gap + text_block_h;
     if inner > 0.0 { inner + GROUP_PAD_BOTTOM } else { 0.0 }
 }
 
@@ -125,19 +181,39 @@ pub fn draw(
     let labels_header = ConfigKey::Labels.get(lang);
     let labels_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::LabelsText)
         .into_iter()
-        .filter(|(p, _)| matches(&query, &[labels_header, p.name.as_str()]))
+        .filter(|(p, _)| matches(&query, &[effective_header(p, labels_header), p.name.as_str()]))
         .collect();
     let has_custom_text = prim.text_properties().is_some();
     let draw_text_block = !has_custom_text
         && matches(&query, &[labels_header, ConfigKey::Content.get(lang), ConfigKey::TextStyleLabel.get(lang), ConfigKey::PositionLabel.get(lang)]);
+    let named_group_in_use = has_named_group(&labels_props);
 
     if !labels_props.is_empty() || draw_text_block {
-        for (prop, kind) in &labels_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-            *row_y += ROW_H;
+        let mut any_drawn = false;
+        for (group, rows) in group_runs(&labels_props) {
+            if rows.is_empty() {
+                continue;
+            }
+            if any_drawn {
+                *row_y += GROUP_GAP;
+            }
+            // The default run keeps this tab's own pre-existing
+            // convention — no header at all; only a named group draws one.
+            if let Some(g) = group {
+                draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, g.label(), None);
+                *row_y += GROUP_HEADER_H;
+            }
+            for (prop, kind) in &rows {
+                draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
+                *row_y += ROW_H;
+            }
+            any_drawn = true;
         }
 
         if draw_text_block {
+            if any_drawn && named_group_in_use {
+                *row_y += GROUP_GAP;
+            }
             draw_text_block_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
         }
 

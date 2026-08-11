@@ -57,14 +57,16 @@ use crate::layout::render_frame::{PrimitiveSettingsResult, ValueDropdownAnchor, 
 use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
-use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyType};
+use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyGroup, PropertyType};
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, StyleKey};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
-use super::primitive_settings_property::{declared_properties, draw_property_row, properties_in, DeclaredProperty};
+use super::primitive_settings_property::{
+    declared_properties, draw_property_row, effective_header, group_runs, properties_in, DeclaredProperty,
+};
 
 pub const ROW_H: f64 = 26.0;
 const GROUP_HEADER_H: f64 = 22.0;
@@ -167,31 +169,70 @@ impl GroupHeights {
     }
 }
 
+/// Height for the LINE group's own already-filtered/`order`-sorted rows,
+/// honouring a declared `PropertyGroup` sub-split (W2, `mlc_core`'s
+/// `PropertyGroup` doc): the default (`group: None`) run keeps the bespoke
+/// base-stroke row (`draw_base_stroke`, present whenever `!has_levels`) and
+/// this category's own fixed header (suppressed for a level-having
+/// primitive, exactly as before this split existed); every other declared
+/// `PropertyGroup` gets its own `GROUP_HEADER_H` run, unconditionally
+/// headered, `GROUP_GAP`-separated from its neighbours. Shared by
+/// `group_heights`/`query_heights` (via their own filtered `line_props`)
+/// and mirrored row-for-row by `draw`'s own LINE section.
+fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_base_stroke: bool) -> f64 {
+    let mut h = 0.0;
+    let mut any = false;
+    for (group, rows) in group_runs(line_props) {
+        let is_default = group.is_none();
+        let base_h = if is_default && !has_levels && draw_base_stroke { BASE_STROKE_H } else { 0.0 };
+        let inner = base_h + rows.len() as f64 * ROW_H;
+        if inner <= 0.0 {
+            continue;
+        }
+        let header_h = if is_default { if has_levels { 0.0 } else { GROUP_HEADER_H } } else { GROUP_HEADER_H };
+        if any {
+            h += GROUP_GAP;
+        }
+        h += header_h + inner + GROUP_PAD_BOTTOM;
+        any = true;
+    }
+    h
+}
+
+/// Height for a category whose own default run is UNCONDITIONALLY headered
+/// when non-empty and carries no bespoke row (`AppearanceFill`,
+/// `AppearanceStats`) — every [`PropertyGroup`] run (including the default
+/// one) shares the exact same shape, `GROUP_GAP`-separated. Shared by
+/// `group_heights`/`query_heights` and mirrored by `draw`'s own FILL/RESULTS
+/// sections.
+fn headered_group_height(props: &[&DeclaredProperty]) -> f64 {
+    let mut h = 0.0;
+    let mut any = false;
+    for (_, rows) in group_runs(props) {
+        if rows.is_empty() {
+            continue;
+        }
+        if any {
+            h += GROUP_GAP;
+        }
+        h += GROUP_HEADER_H + rows.len() as f64 * ROW_H + GROUP_PAD_BOTTOM;
+        any = true;
+    }
+    h
+}
+
 fn group_heights(prim: &dyn Primitive) -> GroupHeights {
     let has_levels = prim.level_configs().is_some();
     let all = declared_properties(prim);
 
     let line_props = properties_in(&all, PropertyCategory::AppearanceLine);
-    let line_inner = (if has_levels { 0.0 } else { BASE_STROKE_H }) + line_props.len() as f64 * ROW_H;
-    let line = if line_inner > 0.0 {
-        (if has_levels { 0.0 } else { GROUP_HEADER_H }) + line_inner + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let line = line_group_height(&line_props, has_levels, true);
 
     let fill_props = properties_in(&all, PropertyCategory::AppearanceFill);
-    let fill = if !fill_props.is_empty() {
-        GROUP_HEADER_H + fill_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let fill = headered_group_height(&fill_props);
 
     let stats_props = properties_in(&all, PropertyCategory::AppearanceStats);
-    let stats = if !stats_props.is_empty() {
-        GROUP_HEADER_H + stats_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let stats = headered_group_height(&stats_props);
 
     GroupHeights { line, fill, stats }
 }
@@ -238,34 +279,23 @@ fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
     let base_stroke_matches = matches(query, &[group_line, SettingsKey::Color.get(lang), ConfigKey::WidthLabel.get(lang), ConfigKey::Style.get(lang)]);
     let line_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceLine)
         .into_iter()
-        .filter(|(p, _)| matches(query, &[group_line, p.name.as_str()]))
+        .filter(|(p, _)| matches(query, &[effective_header(p, group_line), p.name.as_str()]))
         .collect();
-    let line_inner = (if has_levels || !base_stroke_matches { 0.0 } else { BASE_STROKE_H }) + line_props.len() as f64 * ROW_H;
-    let line = if line_inner > 0.0 {
-        (if has_levels { 0.0 } else { GROUP_HEADER_H }) + line_inner + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let line = line_group_height(&line_props, has_levels, base_stroke_matches);
 
+    let group_fill = ConfigKey::Fill.get(lang);
     let fill_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceFill)
         .into_iter()
-        .filter(|(p, _)| matches(query, &[p.name.as_str()]))
+        .filter(|(p, _)| matches(query, &[effective_header(p, group_fill), p.name.as_str()]))
         .collect();
-    let fill = if !fill_props.is_empty() {
-        GROUP_HEADER_H + fill_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let fill = headered_group_height(&fill_props);
 
+    let group_results = ConfigKey::GroupResults.get(lang);
     let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
         .into_iter()
-        .filter(|(p, _)| matches(query, &[p.name.as_str()]))
+        .filter(|(p, _)| matches(query, &[effective_header(p, group_results), p.name.as_str()]))
         .collect();
-    let stats = if !stats_props.is_empty() {
-        GROUP_HEADER_H + stats_props.len() as f64 * ROW_H + GROUP_PAD_BOTTOM
-    } else {
-        0.0
-    };
+    let stats = headered_group_height(&stats_props);
 
     GroupHeights { line, fill, stats }
 }
@@ -298,94 +328,140 @@ pub fn draw(
     let mut any_drawn = false;
 
     // ---- Line ----
+    // Headerless for a level-capable primitive's own DEFAULT run (2026-08-08
+    // appearance-surface consolidation): the base stroke row lives on the
+    // Levels tab instead, so the only rows that can land in the default run
+    // here are declared AppearanceLine properties (extend/trend line/…) —
+    // the "LINE" caption above them would now be captioning unrelated
+    // toggles with nothing to introduce, so it is skipped. A NAMED
+    // `PropertyGroup` run (W2) is never skipped this way — see
+    // `line_group_height`'s own doc.
     let group_line = ConfigKey::GroupLine.get(lang);
     let draw_base_stroke = !has_levels
         && matches(&query, &[group_line, SettingsKey::Color.get(lang), ConfigKey::WidthLabel.get(lang), ConfigKey::Style.get(lang)]);
     let line_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceLine)
         .into_iter()
-        .filter(|(p, _)| matches(&query, &[group_line, p.name.as_str()]))
+        .filter(|(p, _)| matches(&query, &[effective_header(p, group_line), p.name.as_str()]))
         .collect();
-
-    if draw_base_stroke || !line_props.is_empty() {
-        let group_top = *row_y;
-        // Headerless for a level-capable primitive (2026-08-08
-        // appearance-surface consolidation): the base stroke row lives on
-        // the Levels tab instead, so the only rows that can land here are
-        // declared AppearanceLine properties (extend/trend line/…) — the
-        // "LINE" caption above them would now be captioning unrelated
-        // toggles with nothing to introduce, so it is skipped.
-        let header_h = if has_levels { 0.0 } else { GROUP_HEADER_H };
-        if !has_levels {
-            draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, group_line, None);
-        }
-        *row_y += header_h;
-
-        if draw_base_stroke {
-            draw_base_stroke_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
-        }
-        for (prop, kind) in &line_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-            *row_y += ROW_H;
-        }
-
-        if *row_y == group_top + header_h {
-            *row_y = group_top;
-        } else {
-            *row_y += GROUP_PAD_BOTTOM;
-            any_drawn = true;
-        }
+    for (group, rows) in group_runs(&line_props) {
+        draw_line_run(
+            ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, &mut any_drawn,
+            prim, group, &rows, has_levels, draw_base_stroke, group_line,
+        );
     }
 
     // ---- Fill ----
+    let group_fill = ConfigKey::Fill.get(lang);
     let fill_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceFill)
         .into_iter()
-        .filter(|(p, _)| matches(&query, &[p.name.as_str()]))
+        .filter(|(p, _)| matches(&query, &[effective_header(p, group_fill), p.name.as_str()]))
         .collect();
-    if !fill_props.is_empty() {
-        if any_drawn {
-            *row_y += GROUP_GAP;
-        }
-        let group_top = *row_y;
-        draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::Fill.get(lang), None);
-        *row_y += GROUP_HEADER_H;
-        for (prop, kind) in &fill_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-            *row_y += ROW_H;
-        }
-        if *row_y == group_top + GROUP_HEADER_H {
-            *row_y = group_top;
-        } else {
-            *row_y += GROUP_PAD_BOTTOM;
-            any_drawn = true;
-        }
+    for (group, rows) in group_runs(&fill_props) {
+        draw_headered_run(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, &mut any_drawn, group, &rows, group_fill);
     }
 
     // ---- Results (read-only computed stats, e.g. Position's own
     // Risk/Target/R:R — `PropertyCategory::AppearanceStats`) — always the
-    // LAST group, own header, below the editable Line/Fill rows above. ----
+    // LAST group(s), below the editable Line/Fill rows above. ----
+    let group_results = ConfigKey::GroupResults.get(lang);
     let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
         .into_iter()
-        .filter(|(p, _)| matches(&query, &[p.name.as_str()]))
+        .filter(|(p, _)| matches(&query, &[effective_header(p, group_results), p.name.as_str()]))
         .collect();
-    if !stats_props.is_empty() {
-        if any_drawn {
-            *row_y += GROUP_GAP;
-        }
-        let group_top = *row_y;
-        draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConfigKey::GroupResults.get(lang), None);
-        *row_y += GROUP_HEADER_H;
-        for (prop, kind) in &stats_props {
-            draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-            *row_y += ROW_H;
-        }
-        if *row_y == group_top + GROUP_HEADER_H {
-            *row_y = group_top;
-        } else {
-            *row_y += GROUP_PAD_BOTTOM;
-        }
+    for (group, rows) in group_runs(&stats_props) {
+        draw_headered_run(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, &mut any_drawn, group, &rows, group_results);
     }
 
     result.content_items.len() > items_before
+}
+
+/// Draws one LINE-category run — the default (`group: None`) run keeps the
+/// bespoke base-stroke row and this category's own conditionally-suppressed
+/// header; every named [`PropertyGroup`] run is unconditionally headered.
+/// Mirrors [`line_group_height`]'s own shape row for row. Does nothing (not
+/// even the `GROUP_GAP`) when this run has nothing to draw.
+#[allow(clippy::too_many_arguments)]
+fn draw_line_run(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    row_y: &mut f64,
+    any_drawn: &mut bool,
+    prim: &dyn Primitive,
+    group: Option<PropertyGroup>,
+    rows: &[&DeclaredProperty],
+    has_levels: bool,
+    draw_base_stroke: bool,
+    group_line: &str,
+) {
+    let is_default = group.is_none();
+    let will_draw_base = is_default && !has_levels && draw_base_stroke;
+    if !will_draw_base && rows.is_empty() {
+        return;
+    }
+    if *any_drawn {
+        *row_y += GROUP_GAP;
+    }
+    // `will_draw_base || !rows.is_empty()` is guaranteed by the early return
+    // above — this run always paints at least one row from here on, so
+    // unlike a category's own top-level `if` (before this split existed)
+    // there is no "reserved a header, drew nothing" case left to unwind.
+    let show_header = !is_default || !has_levels;
+    if show_header {
+        let title = group.map(|g| g.label()).unwrap_or(group_line);
+        draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, title, None);
+        *row_y += GROUP_HEADER_H;
+    }
+    if will_draw_base {
+        draw_base_stroke_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
+    }
+    for (prop, kind) in rows {
+        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
+        *row_y += ROW_H;
+    }
+    *row_y += GROUP_PAD_BOTTOM;
+    *any_drawn = true;
+}
+
+/// Draws one always-headered run — shared by the FILL and RESULTS sections
+/// (no bespoke row, unlike LINE). Mirrors [`headered_group_height`]'s own
+/// shape. Does nothing when `rows` is empty.
+#[allow(clippy::too_many_arguments)]
+fn draw_headered_run(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    row_y: &mut f64,
+    any_drawn: &mut bool,
+    group: Option<PropertyGroup>,
+    rows: &[&DeclaredProperty],
+    default_title: &str,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    if *any_drawn {
+        *row_y += GROUP_GAP;
+    }
+    let title = group.map(|g| g.label()).unwrap_or(default_title);
+    draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, title, None);
+    *row_y += GROUP_HEADER_H;
+    for (prop, kind) in rows {
+        draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
+        *row_y += ROW_H;
+    }
+    *row_y += GROUP_PAD_BOTTOM;
+    *any_drawn = true;
 }
 
 // =============================================================================

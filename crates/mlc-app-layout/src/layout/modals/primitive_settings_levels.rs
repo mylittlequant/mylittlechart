@@ -29,10 +29,10 @@
 use crate::layout::render_frame::{PrimitiveSettingsResult, SliderTrackInfo};
 use crate::layout::modals::primitive_settings_intent::is_palette_mode;
 use crate::layout::modals::primitive_settings_palettes::PALETTES;
-use crate::layout::modals::primitive_settings_property::{declared_properties, draw_property_row, properties_in};
+use crate::layout::modals::primitive_settings_property::{bucket_by_group, declared_properties, draw_property_row, properties_in};
 use crate::layout::modals::primitive_settings_vid::{
-    draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment, line_style_display_name,
-    SplitValueKind,
+    draw_group_header, draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment,
+    line_style_display_name, SplitValueKind,
 };
 use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
@@ -66,6 +66,12 @@ const ADD_CHIP_ROW_H: f64 = 22.0;
 /// (`draw_add_chip_dropdown`) read the identical list.
 const ADD_CHIP_VALUES: [&str; 3] = ["1.272", "1.618", "2.618"];
 const BLOCK_GAP: f64 = 10.0;
+/// Mirrors `primitive_settings_vid::GROUP_HEADER_H` — the Levels/Base
+/// group's own default (`group: None`) run stays headerless, exactly as
+/// before the W2 group model existed; only a named `PropertyGroup` run
+/// (e.g. `PropertyGroup::General`) draws one, at the same height every
+/// other tab's own group header uses.
+const GROUP_HEADER_H: f64 = 22.0;
 const INSPECTOR_ROW_H: f64 = 22.0;
 const INSPECTOR_H: f64 = INSPECTOR_ROW_H * 5.0 + 20.0;
 /// Gap between the top row's percent readout and its on/off toggle chip,
@@ -121,42 +127,68 @@ const EXTEND_TRIO: [&str; 3] = ["extend_left", "extend_right", "show_trend_line"
 
 /// Whether `props[i..i+3]` is exactly the [`EXTEND_TRIO`] set (any order —
 /// declaration order is `order`-sorted 10/11/12 today, so in practice
-/// already left-to-right).
-fn is_extend_trio_start(props: &[ConfigProperty], i: usize) -> bool {
+/// already left-to-right). Takes a reference slice — what one
+/// [`bucket_by_group`] run's own rows carry (the primitive's declared list
+/// split by its own declared `PropertyGroup`, W2), rather than the whole
+/// `BaseGroupRows::Declared` vec at once.
+fn is_extend_trio_start_refs(props: &[&ConfigProperty], i: usize) -> bool {
     let Some(slice) = props.get(i..i + 3) else { return false };
     EXTEND_TRIO.iter().all(|id| slice.iter().any(|p| p.id == *id))
 }
 
-/// Visual row count for a [`BaseGroupRows`] — what `draw_top_section`
-/// actually paints, given `is_palette`: the base colour row is skipped
-/// entirely in Палитра mode (item 1 — every level's colour comes from the
-/// ramp there, so a base-colour control has nothing to control), and the
-/// [`EXTEND_TRIO`] collapses from three rows to one (item 4). Shared by
-/// `top_section_h` and `draw_top_section` so the two can never drift apart,
-/// the same discipline every other height/draw pair in this module already
-/// follows.
-fn base_group_visual_rows(rows: &BaseGroupRows, is_palette: bool) -> usize {
+/// Visual row count for one already-bucketed Levels/Base run's own rows —
+/// what `draw_top_section` actually paints for it, given `is_palette`: the
+/// base colour row is skipped entirely in Палитра mode (item 1 — every
+/// level's colour comes from the ramp there, so a base-colour control has
+/// nothing to control), and the [`EXTEND_TRIO`] collapses from three rows to
+/// one (item 4) — never reaching across a run boundary, since a merge only
+/// ever looks within the slice it is handed. Shared by
+/// [`base_group_content_height`] and `draw_top_section` so the two can never
+/// drift apart, the same discipline every other height/draw pair in this
+/// module already follows.
+fn declared_run_visual_rows(props: &[&ConfigProperty], is_palette: bool) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < props.len() {
+        if is_palette && props[i].id == "stroke_color" {
+            i += 1;
+            continue;
+        }
+        if is_extend_trio_start_refs(props, i) {
+            n += 1;
+            i += 3;
+            continue;
+        }
+        n += 1;
+        i += 1;
+    }
+    n
+}
+
+/// Visual CONTENT height for a [`BaseGroupRows`] (the Mono/Palette toggle
+/// row itself is accounted separately by [`top_section_h`]) — `Declared`
+/// buckets its own rows by declared [`PropertyGroup`] (W2 group model,
+/// `bucket_by_group`): the default (`group: None`) run stays headerless,
+/// exactly as this tab always rendered before named groups existed; a named
+/// run (e.g. `PropertyGroup::General`, the ladder archetypes' own base
+/// group) gets its own `GROUP_HEADER_H` above it. `Fallback` is unaffected —
+/// it declares nothing to group.
+fn base_group_content_height(rows: &BaseGroupRows, is_palette: bool) -> f64 {
     match rows {
         BaseGroupRows::Declared(props) => {
-            let mut n = 0;
-            let mut i = 0;
-            while i < props.len() {
-                if is_palette && props[i].id == "stroke_color" {
-                    i += 1;
+            let mut h = 0.0;
+            for (group, run) in bucket_by_group(props, |p| p.group) {
+                let n = declared_run_visual_rows(&run, is_palette);
+                if n == 0 {
                     continue;
                 }
-                if is_extend_trio_start(props, i) {
-                    n += 1;
-                    i += 3;
-                    continue;
-                }
-                n += 1;
-                i += 1;
+                let header_h = if group.is_some() { GROUP_HEADER_H } else { 0.0 };
+                h += header_h + n as f64 * ROW_H;
             }
-            n
+            h
         }
         // colour (skipped in Палитра), width, line style.
-        BaseGroupRows::Fallback => if is_palette { 2 } else { 3 },
+        BaseGroupRows::Fallback => (if is_palette { 2 } else { 3 }) as f64 * ROW_H,
     }
 }
 
@@ -167,11 +199,11 @@ fn base_group_visual_rows(rows: &BaseGroupRows, is_palette: bool) -> usize {
 /// why), plus one `BLOCK_GAP` before whatever section follows (the four
 /// palette cards in Palette mode, or straight to the global fill row in
 /// Mono mode — see `draw`). `is_palette` must be the SAME value the caller
-/// passes to `draw_top_section` — see `base_group_visual_rows`'s own doc
-/// for why the row count depends on it.
+/// passes to `draw_top_section` — see [`base_group_content_height`]'s own
+/// doc for why the content height depends on it.
 fn top_section_h(prim: &dyn Primitive, is_palette: bool) -> f64 {
     let rows = base_group_rows(prim);
-    (1 + base_group_visual_rows(&rows, is_palette)) as f64 * ROW_H + BLOCK_GAP
+    ROW_H + base_group_content_height(&rows, is_palette) + BLOCK_GAP
 }
 
 const EPS: f64 = 1e-9;
@@ -398,26 +430,41 @@ fn draw_top_section(
     // fallback path since it is byte-for-byte what already shipped).
     match base_group_rows(prim) {
         BaseGroupRows::Declared(props) => {
-            let mut i = 0;
-            while i < props.len() {
-                // Base colour swatch — not drawn at all in Палитра mode
-                // (item 1): every level's own colour comes from the ramp
-                // there, so this control has nothing left to control.
-                if is_palette && props[i].id == "stroke_color" {
-                    i += 1;
+            // Bucketed by declared `PropertyGroup` (W2 group model): the
+            // default (`group: None`) run draws exactly as this tab always
+            // did — no header — a named run (e.g. `PropertyGroup::General`)
+            // gets its own header first. The Extend-trio merge and the
+            // Палитра base-colour skip apply WITHIN each run's own slice,
+            // never across a run boundary.
+            for (group, run) in bucket_by_group(&props, |p| p.group) {
+                if declared_run_visual_rows(&run, is_palette) == 0 {
                     continue;
                 }
-                // Extend Left / Extend Right / Trend Line — one combined
-                // row instead of three stacked ones (item 4).
-                if is_extend_trio_start(&props, i) {
-                    draw_extend_trio_row(ctx, toolbar_theme, result, x0, x1, y, [&props[i], &props[i + 1], &props[i + 2]]);
+                if let Some(g) = group {
+                    draw_group_header(ctx, toolbar_theme, x0, x1, y, g.label(), None);
+                    y += GROUP_HEADER_H;
+                }
+                let mut i = 0;
+                while i < run.len() {
+                    // Base colour swatch — not drawn at all in Палитра mode
+                    // (item 1): every level's own colour comes from the ramp
+                    // there, so this control has nothing left to control.
+                    if is_palette && run[i].id == "stroke_color" {
+                        i += 1;
+                        continue;
+                    }
+                    // Extend Left / Extend Right / Trend Line — one combined
+                    // row instead of three stacked ones (item 4).
+                    if is_extend_trio_start_refs(&run, i) {
+                        draw_extend_trio_row(ctx, toolbar_theme, result, x0, x1, y, [run[i], run[i + 1], run[i + 2]]);
+                        y += ROW_H;
+                        i += 3;
+                        continue;
+                    }
+                    draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, mlc_core::drawing::primitives_v2::PropertyKind::Style, run[i]);
                     y += ROW_H;
-                    i += 3;
-                    continue;
+                    i += 1;
                 }
-                draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, y, mlc_core::drawing::primitives_v2::PropertyKind::Style, &props[i]);
-                y += ROW_H;
-                i += 1;
             }
         }
         BaseGroupRows::Fallback => {

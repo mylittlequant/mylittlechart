@@ -9,7 +9,7 @@ use super::super::{
     BOX_ANNOTATION_FILL_OPACITY, default_box_annotation_fill_opacity,
     PLATE_FILL_OPACITY,
 };
-use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory};
+use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Table {
@@ -271,28 +271,42 @@ impl Primitive for Table {
     }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // `header_color`/`header_text_color` stay ungrouped (W2): the
+        // approved table archetype's own `GridAndHeaderGroupTitle` group
+        // covers grid lines / first-row-is-header / alternate rows, not a
+        // header COLOUR row — no slot to address these two into yet (W3).
         vec![
             ConfigProperty::header_color(&self.header_color)
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10),
+            // `PropertyGroup::GridAndHeader` (W2) — the approved design's
+            // own `GridAndHeaderGroupTitle`.
             ConfigProperty::grid_color(&self.grid_color)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(11),
+                .with_order(11).in_group(PropertyGroup::GridAndHeader),
+            // `PropertyGroup::TextAndBackground` (W2) — the approved
+            // design's own `TextAndBackgroundGroupTitle`. Spans two
+            // category blocks on this tab (`AppearanceLine` here,
+            // `AppearanceFill` below for `fill`/`fill_opacity`) — see
+            // `LongPosition::style_properties`'s own `Zones` comment for
+            // why the SAME group tag on rows in two different category
+            // blocks is the closest this crate's per-category layout gets
+            // to the approved design's single merged group.
             ConfigProperty::text_color(&self.text_color)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(12),
+                .with_order(12).in_group(PropertyGroup::TextAndBackground),
             ConfigProperty::header_text_color(&self.header_text_color)
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(13),
             ConfigProperty::font_size(self.font_size)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(14),
+                .with_order(14).in_group(PropertyGroup::TextAndBackground),
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(15),
+                .with_order(15).in_group(PropertyGroup::TextAndBackground),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(16),
+                .with_order(16).in_group(PropertyGroup::TextAndBackground),
         ]
     }
 

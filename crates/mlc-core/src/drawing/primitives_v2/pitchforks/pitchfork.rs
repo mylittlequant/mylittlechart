@@ -15,7 +15,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     level_ramp_color, level_rank,
-    config::{FibLevelConfig, ConfigProperty, PropertyValue, PropertyCategory},
+    config::{FibLevelConfig, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 use super::super::types::point_to_ray_distance;
 
@@ -843,15 +843,19 @@ impl Primitive for Pitchfork {
     /// (`schiff`/`modified_schiff`/`inside_pitchfork`) uses the same
     /// `ConfigProperty::extend()` id for their own equivalent toggle.
     fn level_properties(&self) -> Vec<ConfigProperty> {
+        // `PropertyGroup::General` (W2) — the approved ladder archetype's
+        // own "General" group (`ladder_tabs()`'s `LadderGeneralGroupTitle`):
+        // every one of this type's declared `LevelsBase` rows, the whole of
+        // what this tab draws for Pitchfork.
         vec![
             ConfigProperty::level_mode(self.level_mode.as_str())
-                .with_category(PropertyCategory::LevelsBase).with_order(0),
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
             ConfigProperty::extend(self.extend)
                 .with_category(PropertyCategory::LevelsBase)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::show_labels(self.show_labels)
                 .with_category(PropertyCategory::LevelsBase)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::General),
         ]
     }
 

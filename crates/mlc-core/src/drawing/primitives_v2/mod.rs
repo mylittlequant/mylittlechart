@@ -317,7 +317,7 @@ pub use crate::render::{
     render_primitive_text, render_primitive_text_rotated, measure_primitive_text, render_text_with_background,
 };
 pub use config::{
-    ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory,
+    ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory, PropertyGroup,
     FibLevelConfig, TimeframeVisibilityConfig,
     SelectOption, WaveDegree, LabelStyle,
 };
