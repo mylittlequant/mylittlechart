@@ -206,8 +206,23 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
             if *to_palette {
                 apply_palette(configs, state, state.palette);
             } else {
+                // Clear BOTH colours the palette wrote. Clearing only
+                // `color` left every band still painted in the palette's own
+                // per-level colour — the renderer reads `fill_color` first
+                // and only falls back to `color` — so one Палитра→Моно cycle
+                // produced mono LINES over palette BANDS, permanently, with
+                // no control anywhere that could undo it.
+                //
+                // A level the user painted by hand is left alone, exactly as
+                // `apply_palette` leaves it alone: `is_level_overridden`
+                // means that row's own style was edited deliberately, and a
+                // global mode switch is not the place to discard it.
                 for cfg in configs.iter_mut() {
+                    if state.is_level_excluded(cfg.level) || state.is_level_overridden(cfg.level) {
+                        continue;
+                    }
                     cfg.color = None;
+                    cfg.fill_color = None;
                 }
             }
         }
