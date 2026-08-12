@@ -2196,8 +2196,9 @@ impl ChartApp {
         }
 
         // ── Levels tab: levels_row_select / levels_add_chip / levels_add_value
-        // / levels_color_mode:{mono,palette} / level_v{key}_{visible,fill,
-        // delete,style,value} — NOT levels_global_fill_toggle/
+        // / levels_line_mode:{mono,palette} / levels_fill_mode:{inherit,
+        // palette} / level_v{key}_{visible,fill,delete,style,value} — NOT
+        // levels_global_fill_toggle/
         // levels_global_opacity, both handled by their own dedicated blocks
         // above (they reach a scalar primitive field, not level_configs) ──
         if let Some(intent) = mlc_app_layout::layout::modals::primitive_settings_intent::parse_levels_click(item_id) {

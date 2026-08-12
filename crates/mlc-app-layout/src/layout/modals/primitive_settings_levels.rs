@@ -27,7 +27,7 @@
 //! `mlc-app/src/input/settings.rs` for the app-owned persistence half.
 
 use crate::layout::render_frame::{PrimitiveSettingsResult, SliderTrackInfo};
-use crate::layout::modals::primitive_settings_intent::is_palette_mode;
+use crate::layout::modals::primitive_settings_intent::{is_fill_palette_mode, is_line_palette_mode};
 use crate::layout::modals::primitive_settings_palettes::PALETTES;
 use crate::layout::modals::primitive_settings_property::{bucket_by_group, declared_properties, draw_property_row, properties_in};
 use crate::layout::modals::primitive_settings_vid::{
@@ -42,7 +42,7 @@ use crate::ui::widgets::{
 };
 use mlc_core::drawing::primitives_v2::config::{ConfigProperty, FibLevelConfig, PropertyCategory};
 use mlc_core::drawing::primitives_v2::Primitive;
-use mlc_core::i18n::{current_language, ConfigKey, SettingsKey};
+use mlc_core::i18n::{current_language, ConceptKey, ConfigKey, SettingsKey};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
@@ -137,20 +137,24 @@ fn is_extend_trio_start_refs(props: &[&ConfigProperty], i: usize) -> bool {
 }
 
 /// Visual row count for one already-bucketed Levels/Base run's own rows —
-/// what `draw_top_section` actually paints for it, given `is_palette`: the
-/// base colour row is skipped entirely in Палитра mode (item 1 — every
-/// level's colour comes from the ramp there, so a base-colour control has
-/// nothing to control), and the [`EXTEND_TRIO`] collapses from three rows to
-/// one (item 4) — never reaching across a run boundary, since a merge only
-/// ever looks within the slice it is handed. Shared by
+/// what `draw_top_section` actually paints for it, given `is_line_palette`
+/// (the "Линии" axis only — the base colour row is this level-having
+/// primitive's own LINE colour, so only that axis's mode decides whether it
+/// still has anything to control; the independent "Заливка" axis never
+/// affects this row count, see [`top_section_h`]'s own doc): the base
+/// colour row is skipped entirely once lines are on Палитра (item 1 — every
+/// level's own line colour comes from the ramp there, so a base-colour
+/// control has nothing left to control), and the [`EXTEND_TRIO`] collapses
+/// from three rows to one (item 4) — never reaching across a run boundary,
+/// since a merge only ever looks within the slice it is handed. Shared by
 /// [`base_group_content_height`] and `draw_top_section` so the two can never
 /// drift apart, the same discipline every other height/draw pair in this
 /// module already follows.
-fn declared_run_visual_rows(props: &[&ConfigProperty], is_palette: bool) -> usize {
+fn declared_run_visual_rows(props: &[&ConfigProperty], is_line_palette: bool) -> usize {
     let mut n = 0;
     let mut i = 0;
     while i < props.len() {
-        if is_palette && props[i].id == "stroke_color" {
+        if is_line_palette && props[i].id == "stroke_color" {
             i += 1;
             continue;
         }
@@ -165,20 +169,22 @@ fn declared_run_visual_rows(props: &[&ConfigProperty], is_palette: bool) -> usiz
     n
 }
 
-/// Visual CONTENT height for a [`BaseGroupRows`] (the Mono/Palette toggle
-/// row itself is accounted separately by [`top_section_h`]) — `Declared`
-/// buckets its own rows by declared [`PropertyGroup`] (W2 group model,
-/// `bucket_by_group`): the default (`group: None`) run stays headerless,
-/// exactly as this tab always rendered before named groups existed; a named
-/// run (e.g. `PropertyGroup::General`, the ladder archetypes' own base
-/// group) gets its own `GROUP_HEADER_H` above it. `Fallback` is unaffected —
-/// it declares nothing to group.
-fn base_group_content_height(rows: &BaseGroupRows, is_palette: bool) -> f64 {
+/// Visual CONTENT height for a [`BaseGroupRows`] (the two axis-mode toggle
+/// rows themselves are accounted separately by [`top_section_h`]) —
+/// `Declared` buckets its own rows by declared [`PropertyGroup`] (W2 group
+/// model, `bucket_by_group`): the default (`group: None`) run stays
+/// headerless, exactly as this tab always rendered before named groups
+/// existed; a named run (e.g. `PropertyGroup::General`, the ladder
+/// archetypes' own base group) gets its own `GROUP_HEADER_H` above it.
+/// `Fallback` is unaffected — it declares nothing to group. `is_line_palette`
+/// is the "Линии" axis only — see [`declared_run_visual_rows`]'s own doc for
+/// why the "Заливка" axis never reaches this function.
+fn base_group_content_height(rows: &BaseGroupRows, is_line_palette: bool) -> f64 {
     match rows {
         BaseGroupRows::Declared(props) => {
             let mut h = 0.0;
             for (group, run) in bucket_by_group(props, |p| p.group) {
-                let n = declared_run_visual_rows(&run, is_palette);
+                let n = declared_run_visual_rows(&run, is_line_palette);
                 if n == 0 {
                     continue;
                 }
@@ -187,23 +193,29 @@ fn base_group_content_height(rows: &BaseGroupRows, is_palette: bool) -> f64 {
             }
             h
         }
-        // colour (skipped in Палитра), width, line style.
-        BaseGroupRows::Fallback => (if is_palette { 2 } else { 3 }) as f64 * ROW_H,
+        // colour (skipped once lines are on Палитра), width, line style.
+        BaseGroupRows::Fallback => (if is_line_palette { 2 } else { 3 }) as f64 * ROW_H,
     }
 }
 
-/// Height of the top section (2026-08-08 appearance-surface consolidation):
-/// the Mono/Palette colour-mode segment, then the Levels/Base group (see
-/// [`BaseGroupRows`]) — moved out of the Appearance tab for a level-capable
-/// primitive (`crate::layout::modals::primitive_settings_vid`'s own doc on
-/// why), plus one `BLOCK_GAP` before whatever section follows (the four
-/// palette cards in Palette mode, or straight to the global fill row in
-/// Mono mode — see `draw`). `is_palette` must be the SAME value the caller
-/// passes to `draw_top_section` — see [`base_group_content_height`]'s own
-/// doc for why the content height depends on it.
-fn top_section_h(prim: &dyn Primitive, is_palette: bool) -> f64 {
+/// Height of the top section (2026-08-13 axis split of the 2026-08-08
+/// appearance-surface consolidation): the "Линии" (Моно/Палитра) row, then
+/// the "Заливка" (как линии/Палитра) row — two independent segmented
+/// controls now, not one combined control, see
+/// `primitive_settings_intent::LevelsIntent::{SetLineColorMode,
+/// SetFillColorMode}` — then the Levels/Base group (see [`BaseGroupRows`]),
+/// moved out of the Appearance tab for a level-capable primitive
+/// (`crate::layout::modals::primitive_settings_vid`'s own doc on why), plus
+/// one `BLOCK_GAP` before whatever section follows (the four palette cards
+/// whenever either axis is on Палитра, or straight to the global fill row
+/// otherwise — see `draw`). `is_line_palette` must be the SAME value the
+/// caller passes to `draw_top_section` — see [`base_group_content_height`]'s
+/// own doc for why the content height depends on it (only the "Линии" axis
+/// does; the "Заливка" axis's own row is a fixed `ROW_H` in every mode, so
+/// it needs no separate parameter here).
+fn top_section_h(prim: &dyn Primitive, is_line_palette: bool) -> f64 {
     let rows = base_group_rows(prim);
-    ROW_H + base_group_content_height(&rows, is_palette) + BLOCK_GAP
+    ROW_H * 2.0 + base_group_content_height(&rows, is_line_palette) + BLOCK_GAP
 }
 
 const EPS: f64 = 1e-9;
@@ -237,22 +249,26 @@ pub fn composition(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> Vec<
 /// row just stops advancing `row_y` during the draw pass instead of
 /// shrinking the reserved scroll range.
 ///
-/// The four palette cards are reserved space ONLY in Палитра mode
-/// (`is_palette_mode`) — real, not a query filter: switching to Моно hides
-/// them in `draw` too, so a reserved-but-unpainted gap never shows up.
+/// The four palette cards are reserved space whenever EITHER the "Линии" or
+/// the "Заливка" axis reads as Палитра (`is_line_palette_mode` /
+/// `is_fill_palette_mode`, 2026-08-13 axis split of the old single
+/// `is_palette_mode`) — real, not a query filter: switching both axes off
+/// Палитра hides them in `draw` too, so a reserved-but-unpainted gap never
+/// shows up.
 pub fn content_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
     let configs = prim.level_configs().unwrap_or_default();
-    let is_palette = is_palette_mode(&configs, state);
+    let is_line_palette = is_line_palette_mode(&configs, state);
+    let is_fill_palette = is_fill_palette_mode(&configs, state);
     let n = composition(prim, state).len();
     let inspector_h = if state.selected_level.is_some() { INSPECTOR_H } else { 0.0 };
     let ladder_h = (n as f64 * ROW_H + inspector_h).max(ROW_H);
-    let ramps_h = if is_palette { RAMP_CARD_H + BLOCK_GAP } else { 0.0 };
+    let ramps_h = if is_line_palette || is_fill_palette { RAMP_CARD_H + BLOCK_GAP } else { 0.0 };
     // The global fill row only exists for a primitive that actually has a
     // fill master (`Primitive::fill_master`) — a level-having primitive
     // with no fill concept at all (e.g. Pitchfork) used to reserve this row
     // anyway and draw a checkbox/slider that did nothing.
     let global_fill_h = if prim.fill_master().is_some() { GLOBAL_ROW_H + BLOCK_GAP } else { 0.0 };
-    top_section_h(prim, is_palette) + ramps_h + global_fill_h + ladder_h + BLOCK_GAP + ADD_ROW_H
+    top_section_h(prim, is_line_palette) + ramps_h + global_fill_h + ladder_h + BLOCK_GAP + ADD_ROW_H
 }
 
 /// Body height for [`draw_search`] — the cross-tab settings-search result
@@ -298,17 +314,23 @@ pub fn draw(
     let fallback_color = prim.data().color.stroke.clone();
     let fallback_width = prim.data().width;
     let query = super::primitive_settings::search_query(state);
-    let is_palette = is_palette_mode(&configs, state);
+    let is_line_palette = is_line_palette_mode(&configs, state);
+    let is_fill_palette = is_fill_palette_mode(&configs, state);
 
-    draw_top_section(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, prim, is_palette);
-    *row_y += top_section_h(prim, is_palette);
+    draw_top_section(
+        ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, prim, is_line_palette,
+        is_fill_palette,
+    );
+    *row_y += top_section_h(prim, is_line_palette);
 
-    // Палитра mode only — see `is_palette_mode`'s own doc. Switching to
-    // Моно (`primitive_settings_intent::LevelsIntent::SetColorMode`) both
-    // clears every level's own colour AND, via this same derived read,
-    // hides the cards on the very next frame — no separate "close the
-    // palette section" step to keep in sync.
-    if is_palette {
+    // Shown whenever EITHER axis reads as Палитра — see
+    // `is_line_palette_mode`/`is_fill_palette_mode`'s own docs. Switching
+    // an axis off Палитра (`primitive_settings_intent::LevelsIntent::
+    // {SetLineColorMode,SetFillColorMode}`) both clears that axis's own
+    // colour field AND, via this same derived read, hides the cards on the
+    // very next frame once BOTH axes are off Палитра — no separate "close
+    // the palette section" step to keep in sync.
+    if is_line_palette || is_fill_palette {
         draw_ramps_row(ctx, toolbar_theme, result, x0, x1, *row_y, state);
         *row_y += RAMP_CARD_H + BLOCK_GAP;
     }
@@ -374,11 +396,17 @@ pub fn draw_search(
 }
 
 // =============================================================================
-// Top section — colour mode (Моно/Палитра) + base colour/width/style
-// (2026-08-08 appearance-surface consolidation). This is the ladder's own
-// base: for a level-capable primitive it replaced Вид's LINE group
-// entirely (`crate::layout::modals::primitive_settings_vid`'s own doc), so
-// every row here reuses the SAME widget ids that group used —
+// Top section — the "Линии" (Моно/Палитра) and "Заливка" (как линии/Палитра)
+// colour-mode axes (2026-08-13 split of the 2026-08-08 appearance-surface
+// consolidation's single combined control — see
+// `primitive_settings_intent::LevelsIntent::{SetLineColorMode,
+// SetFillColorMode}` for why: one level's own LINE colour (`cfg.color`) and
+// BAND colour (`cfg.fill_color`) are independent fields, so a single toggle
+// could never reach mono lines + palette fills), then base colour/width/
+// style. This is the ladder's own base: for a level-capable primitive it
+// replaced Вид's LINE group entirely
+// (`crate::layout::modals::primitive_settings_vid`'s own doc), so every row
+// here reuses the SAME widget ids that group used —
 // `stroke_color`/`stroke_width`/`line_style` — no new dispatch wiring on
 // either host (`mlc-app`'s `input/settings.rs`/`sliders.rs`,
 // `mlc-ui-lab`'s `dispatch.rs`) was needed for them.
@@ -396,31 +424,55 @@ fn draw_top_section(
     label_col: f64,
     row_y: f64,
     prim: &dyn Primitive,
-    is_palette: bool,
+    is_line_palette: bool,
+    is_fill_palette: bool,
 ) {
     let lang = current_language();
     let mut y = row_y;
 
-    // Row 1: Моно / Палитра — derived from the composition, never stored
-    // (`is_palette_mode`'s own doc, computed once by the caller and passed
-    // in as `is_palette` so this row and the base-colour skip below can
-    // never disagree). No leading text label: the two segment labels
-    // already say what they do, and a third "colour mode" caption next to
-    // the "Base colour" row's own "Color" label two rows down would read as
-    // the same word twice for two different things.
+    // Row 1: "Линии" axis — Моно / Палитра — derived from the composition,
+    // never stored (`is_line_palette_mode`'s own doc, computed once by the
+    // caller and passed in as `is_line_palette` so this row and the
+    // base-colour skip below can never disagree). Leading axis label (this
+    // row and Row 2 below need one now that there are two independent
+    // controls to tell apart — the OLD single combined control never
+    // needed one, since its two segment labels already said what it did).
+    let lines_axis_label = ConceptKey::LinesAxisLabel.get(lang);
+    draw_label(ctx, toolbar_theme, x0, label_col, y, lines_axis_label);
     let mono_label = ConfigKey::ColorModeMono.get(lang);
     let palette_label = ConfigKey::ColorModePalette.get(lang);
     ctx.set_font("11px sans-serif");
-    let seg_w = (ctx.measure_text(mono_label).max(ctx.measure_text(palette_label)) + 16.0).max(56.0);
-    let mono_rect = WidgetRect::new(x0, y + 2.0, seg_w, ROW_H - 4.0);
-    let palette_rect = WidgetRect::new(mono_rect.right() + 4.0, y + 2.0, seg_w, ROW_H - 4.0);
-    draw_toggle_segment(ctx, toolbar_theme, mono_rect, mono_label, !is_palette);
-    draw_toggle_segment(ctx, toolbar_theme, palette_rect, palette_label, is_palette);
-    result.content_items.push(("levels_color_mode:mono".to_string(), mono_rect));
-    result.content_items.push(("levels_color_mode:palette".to_string(), palette_rect));
+    let line_seg_w = (ctx.measure_text(mono_label).max(ctx.measure_text(palette_label)) + 16.0).max(56.0);
+    let line_control_x = x0 + label_col;
+    let mono_rect = WidgetRect::new(line_control_x, y + 2.0, line_seg_w, ROW_H - 4.0);
+    let palette_rect = WidgetRect::new(mono_rect.right() + 4.0, y + 2.0, line_seg_w, ROW_H - 4.0);
+    draw_toggle_segment(ctx, toolbar_theme, mono_rect, mono_label, !is_line_palette);
+    draw_toggle_segment(ctx, toolbar_theme, palette_rect, palette_label, is_line_palette);
+    result.content_items.push(("levels_line_mode:mono".to_string(), mono_rect));
+    result.content_items.push(("levels_line_mode:palette".to_string(), palette_rect));
     y += ROW_H;
 
-    // Rows 2..N: the Levels/Base group — see [`BaseGroupRows`]. A primitive
+    // Row 2: "Заливка" axis — как линии (inherit the line's own colour,
+    // `cfg.fill_color: None`) / Палитра — independent of Row 1's own mode,
+    // see `is_fill_palette_mode`'s own doc. Axis label reuses
+    // `ConfigKey::Fill` ("Заливка") — the same word the Fill group header
+    // elsewhere in this modal already uses for this concept, so this row
+    // does not invent a second caption for it.
+    let fill_axis_label = ConfigKey::Fill.get(lang);
+    draw_label(ctx, toolbar_theme, x0, label_col, y, fill_axis_label);
+    let inherit_label = ConceptKey::FillInheritLine.get(lang);
+    ctx.set_font("11px sans-serif");
+    let fill_seg_w = (ctx.measure_text(inherit_label).max(ctx.measure_text(palette_label)) + 16.0).max(56.0);
+    let fill_control_x = x0 + label_col;
+    let inherit_rect = WidgetRect::new(fill_control_x, y + 2.0, fill_seg_w, ROW_H - 4.0);
+    let fill_palette_rect = WidgetRect::new(inherit_rect.right() + 4.0, y + 2.0, fill_seg_w, ROW_H - 4.0);
+    draw_toggle_segment(ctx, toolbar_theme, inherit_rect, inherit_label, !is_fill_palette);
+    draw_toggle_segment(ctx, toolbar_theme, fill_palette_rect, palette_label, is_fill_palette);
+    result.content_items.push(("levels_fill_mode:inherit".to_string(), inherit_rect));
+    result.content_items.push(("levels_fill_mode:palette".to_string(), fill_palette_rect));
+    y += ROW_H;
+
+    // Rows 3..N: the Levels/Base group — see [`BaseGroupRows`]. A primitive
     // that declares its own (`FibRetracement` today) renders generically
     // from `PropertyType`; every other level-having primitive falls back to
     // the same three bespoke `PrimitiveData`-driven rows this tab always
@@ -437,7 +489,7 @@ fn draw_top_section(
             // Палитра base-colour skip apply WITHIN each run's own slice,
             // never across a run boundary.
             for (group, run) in bucket_by_group(&props, |p| p.group) {
-                if declared_run_visual_rows(&run, is_palette) == 0 {
+                if declared_run_visual_rows(&run, is_line_palette) == 0 {
                     continue;
                 }
                 if let Some(g) = group {
@@ -446,10 +498,11 @@ fn draw_top_section(
                 }
                 let mut i = 0;
                 while i < run.len() {
-                    // Base colour swatch — not drawn at all in Палитра mode
-                    // (item 1): every level's own colour comes from the ramp
-                    // there, so this control has nothing left to control.
-                    if is_palette && run[i].id == "stroke_color" {
+                    // Base colour swatch — not drawn at all once the
+                    // "Линии" axis is on Палитра (item 1): every level's
+                    // own line colour comes from the ramp there, so this
+                    // control has nothing left to control.
+                    if is_line_palette && run[i].id == "stroke_color" {
                         i += 1;
                         continue;
                     }
@@ -470,11 +523,12 @@ fn draw_top_section(
         BaseGroupRows::Fallback => {
             // Row: base colour — writes `prim.data().color.stroke` under
             // the SAME `"stroke_color"` id the Appearance tab's own swatch
-            // used. Meaningful only in Моно mode, where every level draws
-            // in it directly — not drawn at all in Палитра mode (item 1):
-            // every level's own colour comes from the ramp there, so this
-            // control has nothing left to control.
-            if !is_palette {
+            // used. Meaningful only while the "Линии" axis is Моно, where
+            // every level draws in it directly — not drawn at all once that
+            // axis is on Палитра (item 1): every level's own line colour
+            // comes from the ramp there, so this control has nothing left
+            // to control.
+            if !is_line_palette {
                 let color_label = SettingsKey::Color.get(lang);
                 draw_label(ctx, toolbar_theme, x0, label_col, y, color_label);
                 let swatch_w = (x1 - (x0 + label_col)).clamp(40.0, 60.0);

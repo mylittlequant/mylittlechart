@@ -60,7 +60,7 @@ use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
 use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyGroup, PropertyType};
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::LineStyle;
-use mlc_core::i18n::{current_language, ConfigKey, SettingsKey, StyleKey};
+use mlc_core::i18n::{current_language, ConceptKey, ConfigKey, SettingsKey, StyleKey};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
@@ -125,6 +125,13 @@ pub fn compute_label_col(ctx: &mut dyn RenderContext, prim: &dyn Primitive) -> f
     captions.push(SettingsKey::Color.get(lang).to_string());
     captions.push(format!("{}:", ConfigKey::WidthLabel.get(lang)));
     captions.push(ConfigKey::Style.get(lang).to_string());
+
+    // Bespoke Levels-tab top-section axis rows (2026-08-13 axis split —
+    // `primitive_settings_levels::draw_top_section`'s own doc): "Линии" and
+    // "Заливка" are each a real leading row label now, drawn with
+    // `draw_label`/`label_col` exactly like every row above.
+    captions.push(ConceptKey::LinesAxisLabel.get(lang).to_string());
+    captions.push(ConfigKey::Fill.get(lang).to_string());
 
     // Bespoke text-content block (`primitive_settings_labels::draw_text_block_rows`).
     captions.push(ConfigKey::Content.get(lang).to_string());

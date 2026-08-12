@@ -2816,10 +2816,23 @@ pub enum ConceptKey {
     /// Subject-tab label for the line family (trend line, ray, extended
     /// line, horizontal/vertical line, info line, trend angle, arrow).
     LineSubject = 275,
+
+    // Levels tab top section (2026-08-13 axis split): the leading axis
+    // label for the "Линии" segmented control (Моно/Палитра — those two
+    // segment words are `ConfigKey::ColorModeMono`/`ColorModePalette`,
+    // already in that table; this key is the row's own caption, which the
+    // old single combined control never needed — see
+    // `primitive_settings_levels::draw_top_section`'s own doc).
+    LinesAxisLabel = 276,
+    /// The "Заливка" axis's own non-Палитра segment word ("как линии" —
+    /// inherit the line's own colour, `cfg.fill_color: None`). The axis's
+    /// leading row label reuses `ConfigKey::Fill` ("Заливка") — no new key
+    /// needed for that half.
+    FillInheritLine = 277,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 276;
+    pub const COUNT: usize = 278;
 
     /// Get translation for this key.
     #[inline]

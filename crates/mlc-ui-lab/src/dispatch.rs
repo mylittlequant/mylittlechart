@@ -898,8 +898,8 @@ pub fn apply_approved_design_click(
     }
 
     // ---- Уровни: levels_row_select / levels_add_chip / levels_add_value /
-    // levels_color_mode:{mono,palette} / level_v{key}_{visible,fill_toggle,
-    // delete,style,value} ----
+    // levels_line_mode:{mono,palette} / levels_fill_mode:{inherit,palette} /
+    // level_v{key}_{visible,fill_toggle,delete,style,value} ----
     if let Some(intent) = parse_levels_click(item_id) {
         match &intent {
             // `level_value_label` (not the intent's own plain-numeric

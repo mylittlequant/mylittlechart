@@ -526,7 +526,23 @@ fn ladder_tabs(subject: &'static str, values: &[f64], unit: LadderUnit) -> Vec<C
                 group(
                     t_concept(ConceptKey::LadderGeneralGroupTitle),
                     vec![
-                        mode("", &[t_config(ConfigKey::PaletteMono), t_config(ConfigKey::ColorModePalette)], 1),
+                        // Two independent axes (2026-08-13 split of the old
+                        // single combined Моно/Палитра control — see
+                        // `mlc_app_layout::layout::modals::
+                        // primitive_settings_levels::draw_top_section`'s own
+                        // doc): "Линии" writes/clears a level's own line
+                        // colour, "Заливка" writes/clears its band colour,
+                        // independently.
+                        mode(
+                            t_concept(ConceptKey::LinesAxisLabel),
+                            &[t_config(ConfigKey::ColorModeMono), t_config(ConfigKey::ColorModePalette)],
+                            1,
+                        ),
+                        mode(
+                            t_config(ConfigKey::Fill),
+                            &[t_concept(ConceptKey::FillInheritLine), t_config(ConfigKey::ColorModePalette)],
+                            1,
+                        ),
                         slider(t_config(ConfigKey::WidthLabel), 24, "1.0"),
                         dd(t_concept(ConceptKey::TypeDropdownLabel), t_style(StyleKey::Solid)),
                         chk3(

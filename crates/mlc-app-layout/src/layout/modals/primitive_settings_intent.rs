@@ -116,20 +116,37 @@ pub enum LevelsIntent {
     StartValueEditing { level: f64, seed: String },
     /// `levels_add_value` — start editing the "+ добавить уровень" field.
     StartAddEditing,
-    /// `levels_palette:{i}` — recolour every non-overridden level in the
-    /// composition from one of the four palette ramps.
+    /// `levels_palette:{i}` — recolour whichever axis/axes are currently in
+    /// Палитра (see [`is_line_palette_mode`]/[`is_fill_palette_mode`]) from
+    /// one of the four palette ramps. An axis sitting in Моно/"как линии"
+    /// is left untouched — clicking a card while only the fill axis is on
+    /// Палитра recolours bands and leaves the lines exactly alone.
     ApplyPalette(usize),
-    /// `levels_color_mode:{mono,palette}` — the Levels tab's top-section
-    /// Моно/Палитра segmented control (2026-08-08 appearance-surface
-    /// consolidation). `true` = switching INTO Палитра: apply the
-    /// currently selected palette's ramp to the composition (same effect
-    /// as [`ApplyPalette`] with `state.palette`). `false` = switching INTO
-    /// Моно: clear every level's own colour so the base colour (Вид's old
-    /// `stroke_color`, now this tab's own "Base colour" row) is what every
-    /// row draws in. The mode itself is never stored — see
-    /// [`is_palette_mode`], the same derivation the draw pass reads to
-    /// decide which segment shows as active.
-    SetColorMode(bool),
+    /// `levels_line_mode:{mono,palette}` — the Levels tab's top-section
+    /// "Линии" segmented control (2026-08-13 axis split of the old combined
+    /// Моно/Палитра control): the LINE half. `true` = switching INTO
+    /// Палитра: recolour every non-overridden level's own LINE colour
+    /// (`cfg.color`) from the currently selected palette's ramp (same
+    /// effect as [`ApplyPalette`] with `state.palette`, line half only).
+    /// `false` = switching INTO Моно: clear every level's own `cfg.color`
+    /// so the base colour (this tab's own "Base colour" row) is what every
+    /// row's line draws in. Never touches `cfg.fill_color` — see
+    /// [`SetFillColorMode`] for that independent axis. The mode itself is
+    /// never stored — see [`is_line_palette_mode`], the same derivation the
+    /// draw pass reads to decide which segment shows as active.
+    SetLineColorMode(bool),
+    /// `levels_fill_mode:{inherit,palette}` — the Levels tab's top-section
+    /// "Заливка" segmented control (2026-08-13 axis split): the FILL half.
+    /// `true` = switching INTO Палитра: recolour every non-overridden
+    /// level's own BAND colour (`cfg.fill_color`) from the currently
+    /// selected palette's ramp. `false` = switching INTO "как линии"
+    /// (inherit): clear every level's own `cfg.fill_color` — `None` already
+    /// means "take this level's own line colour" (the renderer falls back
+    /// `fill_color` \u{2192} `color` \u{2192} base stroke), so there is
+    /// nothing else to write for that state, no new field. Never touches
+    /// `cfg.color` — see [`SetLineColorMode`] for that independent axis.
+    /// Derived the same way, via [`is_fill_palette_mode`].
+    SetFillColorMode(bool),
 }
 
 /// Parse one of the Levels tab's own ids.
@@ -146,10 +163,17 @@ pub fn parse_levels_click(item_id: &str) -> Option<LevelsIntent> {
     if let Some(idx_str) = item_id.strip_prefix("levels_palette:") {
         return idx_str.parse::<usize>().ok().map(LevelsIntent::ApplyPalette);
     }
-    if let Some(mode) = item_id.strip_prefix("levels_color_mode:") {
+    if let Some(mode) = item_id.strip_prefix("levels_line_mode:") {
         return match mode {
-            "mono" => Some(LevelsIntent::SetColorMode(false)),
-            "palette" => Some(LevelsIntent::SetColorMode(true)),
+            "mono" => Some(LevelsIntent::SetLineColorMode(false)),
+            "palette" => Some(LevelsIntent::SetLineColorMode(true)),
+            _ => None,
+        };
+    }
+    if let Some(mode) = item_id.strip_prefix("levels_fill_mode:") {
+        return match mode {
+            "inherit" => Some(LevelsIntent::SetFillColorMode(false)),
+            "palette" => Some(LevelsIntent::SetFillColorMode(true)),
             _ => None,
         };
     }
@@ -200,28 +224,50 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
         LevelsIntent::StartValueEditing { .. } | LevelsIntent::StartAddEditing => {}
         LevelsIntent::ApplyPalette(idx) => {
             state.palette = *idx;
-            apply_palette(configs, state, *idx);
+            // Read BOTH axes' current mode from `configs` BEFORE either
+            // write below runs — the same data `apply_palette_lines`/
+            // `apply_palette_fill` are about to mutate — so a card click
+            // while only one axis is on Палитра recolours that axis alone
+            // (see the intent's own doc).
+            let recolor_lines = is_line_palette_mode(configs, state);
+            let recolor_fill = is_fill_palette_mode(configs, state);
+            if recolor_lines {
+                apply_palette_lines(configs, state, *idx);
+            }
+            if recolor_fill {
+                apply_palette_fill(configs, state, *idx);
+            }
         }
-        LevelsIntent::SetColorMode(to_palette) => {
+        LevelsIntent::SetLineColorMode(to_palette) => {
             if *to_palette {
-                apply_palette(configs, state, state.palette);
+                apply_palette_lines(configs, state, state.palette);
             } else {
-                // Clear BOTH colours the palette wrote. Clearing only
-                // `color` left every band still painted in the palette's own
-                // per-level colour — the renderer reads `fill_color` first
-                // and only falls back to `color` — so one Палитра→Моно cycle
-                // produced mono LINES over palette BANDS, permanently, with
-                // no control anywhere that could undo it.
-                //
                 // A level the user painted by hand is left alone, exactly as
-                // `apply_palette` leaves it alone: `is_level_overridden`
+                // `apply_palette_lines` leaves it alone: `is_level_overridden`
                 // means that row's own style was edited deliberately, and a
-                // global mode switch is not the place to discard it.
+                // global mode switch is not the place to discard it. Clears
+                // ONLY `color` — `fill_color` is the other axis's own field,
+                // see `SetFillColorMode`.
                 for cfg in configs.iter_mut() {
                     if state.is_level_excluded(cfg.level) || state.is_level_overridden(cfg.level) {
                         continue;
                     }
                     cfg.color = None;
+                }
+            }
+        }
+        LevelsIntent::SetFillColorMode(to_palette) => {
+            if *to_palette {
+                apply_palette_fill(configs, state, state.palette);
+            } else {
+                // Clears ONLY `fill_color` — `None` already means "как
+                // линии" (take this level's own line colour), so there is
+                // nothing else to write. Same overridden/excluded guards as
+                // `SetLineColorMode`.
+                for cfg in configs.iter_mut() {
+                    if state.is_level_excluded(cfg.level) || state.is_level_overridden(cfg.level) {
+                        continue;
+                    }
                     cfg.fill_color = None;
                 }
             }
@@ -245,11 +291,35 @@ pub fn current_level_set(configs: &[FibLevelConfig], state: &PrimitiveSettingsSt
     LevelSet::PRESETS.into_iter().find(|s| matches_preset(&composition, *s)).unwrap_or(LevelSet::Custom)
 }
 
-/// Recolour every non-overridden level in the (non-excluded) composition
-/// from `palette_idx`'s five stops, ranked by ascending level value.
+/// Recolour every non-overridden level's own LINE colour (`cfg.color`) in
+/// the (non-excluded) composition from `palette_idx`'s five stops, ranked
+/// by ascending level value — the "Линии" axis's own half of what a single
+/// combined `apply_palette` used to do to both fields at once (2026-08-13
+/// axis split; see [`apply_palette_fill`] for the "Заливка" axis's half).
 /// Palette changes never touch which levels exist — per the spec's "набор
 /// и палитра — разные оси".
-pub fn apply_palette(configs: &mut [FibLevelConfig], state: &PrimitiveSettingsState, palette_idx: usize) {
+pub fn apply_palette_lines(configs: &mut [FibLevelConfig], state: &PrimitiveSettingsState, palette_idx: usize) {
+    apply_palette_axis(configs, state, palette_idx, |cfg, color| cfg.color = Some(color));
+}
+
+/// Recolour every non-overridden level's own BAND colour (`cfg.fill_color`)
+/// in the (non-excluded) composition — the "Заливка" axis's own half; see
+/// [`apply_palette_lines`] for the "Линии" axis's half and for why the two
+/// write different fields.
+pub fn apply_palette_fill(configs: &mut [FibLevelConfig], state: &PrimitiveSettingsState, palette_idx: usize) {
+    apply_palette_axis(configs, state, palette_idx, |cfg, color| cfg.fill_color = Some(color));
+}
+
+/// Shared ramp-ranking walk both axis-scoped palette writers use — `write`
+/// is which single field ([`apply_palette_lines`]'s `cfg.color` or
+/// [`apply_palette_fill`]'s `cfg.fill_color`) this call is scoped to; the
+/// OTHER field on every `FibLevelConfig` is left completely untouched.
+fn apply_palette_axis(
+    configs: &mut [FibLevelConfig],
+    state: &PrimitiveSettingsState,
+    palette_idx: usize,
+    write: impl Fn(&mut FibLevelConfig, String),
+) {
     let palette = &PALETTES[palette_idx.min(PALETTES.len().saturating_sub(1))];
     let mut sorted_vals: Vec<f64> =
         configs.iter().map(|c| c.level).filter(|level| !state.is_level_excluded(*level)).collect();
@@ -262,23 +332,35 @@ pub fn apply_palette(configs: &mut [FibLevelConfig], state: &PrimitiveSettingsSt
         }
         let t = rank as f64 / denom;
         let color = crate::layout::modals::primitive_settings_palettes::palette_color_at(&palette.colors, t);
-        cfg.color = Some(color.clone());
-        cfg.fill_color = Some(color);
+        write(cfg, color);
     }
 }
 
-/// Whether the Levels tab's top-section colour-mode control currently reads
-/// as Палитра (`true`) or Моно (`false`) — DERIVED, never stored (2026-08-08
-/// appearance-surface consolidation): Палитра exactly when any level in the
-/// (non-excluded) composition has its own colour set. The draw pass
-/// (`primitive_settings_levels`) reads this same function to decide which
-/// segment shows as active, so the control can never show a mode the
-/// underlying data does not actually match.
-pub fn is_palette_mode(configs: &[FibLevelConfig], state: &PrimitiveSettingsState) -> bool {
+/// Whether the Levels tab's "Линии" axis (2026-08-13 axis split of the old
+/// combined Моно/Палитра control) currently reads as Палитра (`true`) or
+/// Моно (`false`) — DERIVED, never stored: Палитра exactly when any level
+/// in the (non-excluded) composition has its own LINE colour set
+/// (`cfg.color.is_some()`). The draw pass (`primitive_settings_levels`)
+/// reads this same function to decide which segment shows as active, so
+/// the control can never show a mode the underlying data does not actually
+/// match. See [`is_fill_palette_mode`] for the independent "Заливка" axis.
+pub fn is_line_palette_mode(configs: &[FibLevelConfig], state: &PrimitiveSettingsState) -> bool {
     configs
         .iter()
         .filter(|c| !state.is_level_excluded(c.level))
         .any(|c| c.color.is_some())
+}
+
+/// Whether the Levels tab's "Заливка" axis currently reads as Палитра —
+/// same derivation as [`is_line_palette_mode`], keyed on
+/// `cfg.fill_color.is_some()` instead. `fill_color: None` is "как линии"
+/// (inherit the line's own colour) — never a stored inherit flag, see
+/// `LevelsIntent::SetFillColorMode`'s own doc.
+pub fn is_fill_palette_mode(configs: &[FibLevelConfig], state: &PrimitiveSettingsState) -> bool {
+    configs
+        .iter()
+        .filter(|c| !state.is_level_excluded(c.level))
+        .any(|c| c.fill_color.is_some())
 }
 
 /// Write `width` into every level's own `cfg.width` in the (non-excluded)
@@ -293,7 +375,7 @@ pub fn is_palette_mode(configs: &[FibLevelConfig], state: &PrimitiveSettingsStat
 /// same reason the global fill toggle/opacity row also bypasses
 /// `LevelsIntent` and calls `apply_style_property` directly.
 ///
-/// Unlike [`apply_palette`], this does not consult
+/// Unlike [`apply_palette_lines`]/[`apply_palette_fill`], this does not consult
 /// `state.is_level_overridden` (that flag tracks a level's own per-row
 /// STYLE edit specifically, a narrower, unrelated axis) — the global
 /// control always overwrites every level currently shown; a per-row width

@@ -114,8 +114,9 @@ pub fn default_level_configs() -> Vec<FibLevelConfig> {
     // rainbow ladder and — worse — made it a half-rainbow the moment a
     // preset added values the 7-entry seed never had, since those got their
     // colours from a ramp run over a different length. Per-level hues are
-    // what the Levels tab's Палитра MODE applies on demand (`apply_palette`);
-    // a base look ships without one (owner direction, 2026-08-09).
+    // what the Levels tab's Палитра MODE applies on demand
+    // (`apply_palette_lines`/`apply_palette_fill`); a base look ships
+    // without one (owner direction, 2026-08-09).
     MAIN_LEVELS.iter().map(|&level| {
         let mut config = FibLevelConfig::new(level);
         config.visible = true;
