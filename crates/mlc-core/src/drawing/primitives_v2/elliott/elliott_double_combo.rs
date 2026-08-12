@@ -9,6 +9,7 @@ use super::super::{
     render_primitive_text, draw_label_plate,
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
+use super::count::{WaveLink, WaveSlot};
 
 fn default_true() -> bool { true }
 
@@ -25,6 +26,12 @@ pub struct ElliottDoubleCombo {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
+    /// Link to the parent Elliott wave this primitive is nested inside, if
+    /// any — see [`super::count::WaveLink`]. `None` (the default) for a
+    /// standalone combination, exactly as every double combo behaved
+    /// before this field existed.
+    #[serde(default)]
+    pub link: Option<WaveLink>,
 }
 
 impl ElliottDoubleCombo {
@@ -42,6 +49,7 @@ impl ElliottDoubleCombo {
             degree: WaveDegree::Intermediate,
             label_style: LabelStyle::default(),
             show_lines: true,
+            link: None,
         }
     }
 
@@ -60,6 +68,11 @@ impl Primitive for ElliottDoubleCombo {
     // `Primitive::archetype` (kind-derived) is wrong here.
     fn archetype(&self) -> Archetype { Archetype::Wave }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(7) }
+    fn wave_link(&self) -> Option<WaveLink> { self.link }
+    fn wave_degree(&self) -> Option<WaveDegree> { Some(self.degree) }
+    fn wave_slots(&self) -> &'static [WaveSlot] {
+        &[WaveSlot::ComboW, WaveSlot::ComboX, WaveSlot::ComboY]
+    }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }

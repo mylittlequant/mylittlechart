@@ -10,7 +10,8 @@ use super::types::{
     Segment, control_point_style, hit_test_strokes, HIT_TOLERANCE,
 };
 use crate::render::{RenderContext, crisp};
-use super::config::TimeframeVisibilityConfig;
+use super::config::{TimeframeVisibilityConfig, WaveDegree};
+use super::elliott::count::{WaveLink, WaveSlot};
 
 /// Category of primitive for toolbar organization
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -810,6 +811,37 @@ pub trait Primitive: Send + Sync {
     /// itself produces.
     fn parse_level_value(&self, text: &str) -> Option<f64> {
         text.trim().parse().ok()
+    }
+
+    // =========================================================================
+    // Elliott Wave Markup Tree (E1 — read-only surface, see `elliott::count`)
+    // =========================================================================
+
+    /// This primitive's own link upward to the parent Elliott wave it is
+    /// nested inside, if any — lets a host walk the markup tree without
+    /// downcasting to each concrete Elliott type. `None` for every
+    /// primitive outside the Elliott family, and for an Elliott wave that
+    /// is not nested under another one.
+    fn wave_link(&self) -> Option<WaveLink> {
+        None
+    }
+
+    /// The [`WaveDegree`] this primitive currently carries, if it is an
+    /// Elliott wave — its own stored `degree` field, exactly as today. A
+    /// linked child's degree is set by the CALLER at construction time (via
+    /// `elliott::count::child_seed`), never resolved here — a primitive
+    /// cannot see its own parent. `None` for every primitive outside the
+    /// Elliott family.
+    fn wave_degree(&self) -> Option<WaveDegree> {
+        None
+    }
+
+    /// Which slots this primitive's own points can seed a child into — the
+    /// five impulse waves, the three corrective waves, the five triangle
+    /// waves, or a combination's own W/X/Y(/XX/Z) slots. Empty for every
+    /// primitive outside the Elliott family.
+    fn wave_slots(&self) -> &'static [WaveSlot] {
+        &[]
     }
 
     // =========================================================================

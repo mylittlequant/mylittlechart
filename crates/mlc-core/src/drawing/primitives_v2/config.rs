@@ -242,6 +242,57 @@ impl WaveDegree {
             _ => None,
         }
     }
+
+    /// One step FINER (smaller) along the 15-degree ladder, e.g. `Primary`
+    /// -> `Intermediate`. Saturates at [`WaveDegree::Miniscule`], the finest
+    /// degree — never wraps and never panics.
+    ///
+    /// Used by the Elliott markup tree (`elliott::count::child_seed`) to
+    /// compute the degree a NESTED child wave must carry: one step finer
+    /// than its parent's own degree, per [`Self::all`]'s canonical
+    /// coarsest-to-finest ordering.
+    pub fn finer(&self) -> WaveDegree {
+        let all = Self::all();
+        let idx = all.iter().position(|d| d == self).unwrap_or(0);
+        all[(idx + 1).min(all.len() - 1)]
+    }
+
+    /// One step COARSER (larger) along the 15-degree ladder, e.g.
+    /// `Intermediate` -> `Primary`. Saturates at
+    /// [`WaveDegree::Supermillennium`], the coarsest degree — never wraps
+    /// and never panics.
+    pub fn coarser(&self) -> WaveDegree {
+        let all = Self::all();
+        let idx = all.iter().position(|d| d == self).unwrap_or(0);
+        all[idx.saturating_sub(1)]
+    }
+}
+
+#[cfg(test)]
+mod wave_degree_tests {
+    use super::*;
+
+    #[test]
+    fn finer_steps_toward_miniscule() {
+        assert_eq!(WaveDegree::Primary.finer(), WaveDegree::Intermediate);
+        assert_eq!(WaveDegree::Intermediate.finer(), WaveDegree::Minor);
+    }
+
+    #[test]
+    fn finer_saturates_at_miniscule() {
+        assert_eq!(WaveDegree::Miniscule.finer(), WaveDegree::Miniscule);
+    }
+
+    #[test]
+    fn coarser_steps_toward_supermillennium() {
+        assert_eq!(WaveDegree::Intermediate.coarser(), WaveDegree::Primary);
+        assert_eq!(WaveDegree::Primary.coarser(), WaveDegree::Cycle);
+    }
+
+    #[test]
+    fn coarser_saturates_at_supermillennium() {
+        assert_eq!(WaveDegree::Supermillennium.coarser(), WaveDegree::Supermillennium);
+    }
 }
 
 // =============================================================================
