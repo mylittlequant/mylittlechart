@@ -109,11 +109,13 @@ use mlc_app_layout::layout::ExtendedLayoutHitTester;
 use mlc_app_layout::panel_app::ChartPanelLayout;
 use mlc_app_layout::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
-    build_primitive_context_menu,
+    build_primitive_context_menu, build_wave_menu, build_successor_menu,
 };
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
 use mlc_core::drawing::primitives_v2::elliott::WaveLink;
+use mlc_core::drawing::primitives_v2::{HitTestResult, Primitive};
+use mlc_core::state::GestureTrigger;
 use uzor::WidgetId;
 
 /// Convert chart-app's `KeyPress` to the uzor `KeyPress` understood by `TextFieldStore`.
@@ -583,6 +585,155 @@ impl ChartApp {
             || self.dom_modal.is_open
     }
 
+    /// Ask the wave-gesture question for `(x, y)`: does it land on an
+    /// Elliott primitive's own wave segment or terminal point, and — if so
+    /// — does `trigger` open a menu for it under the active
+    /// [`mlc_core::state::GestureBindings`]? The ONE entry point both
+    /// `on_double_click` and `on_right_click`'s primitive arm call BEFORE
+    /// their own generic behaviour, returning early on `true` — see each
+    /// call site's own comment for why it runs where it does relative to
+    /// what was already there. Neither call site matches on `trigger`
+    /// itself: that indirection is `GestureBindings`'s whole reason for
+    /// existing (owner ask 2026-08-13 — "вопрос только на что это вешать
+    /// на даблклик или на ПКМ хз, дискуссионно" — see that module's own
+    /// doc).
+    ///
+    /// Resolves the primitive under the cursor through the SAME
+    /// `DrawingManager::hit_test`/`hit_test_in_pane` entry points every
+    /// ordinary click/right-click already calls (main chart first, then
+    /// sub-panes — the same two steps `ChartPanelGrid::handle_right_click`
+    /// and `handle_canvas_click` both already run) — never a second
+    /// geometry search. Returns `false` immediately when nothing is hit,
+    /// the hit is not an Elliott primitive (`wave_degree()` is `None`), or
+    /// the primitive is individually locked (`PrimitiveData::locked` —
+    /// distinct from the bubble-wide drawing-session lock `hit_test`/
+    /// `hit_test_in_pane` already refuse through before ever returning a
+    /// `prim_id`).
+    ///
+    /// The target — a wave segment vs. the structure's own terminal point
+    /// — is decided with the SAME per-primitive `hit_test` (control points
+    /// first, at the drag path's own hit radius —
+    /// `Primitive::control_point_hit_test`'s default, which every
+    /// concrete `hit_test` override still goes through) and `wave_at`
+    /// (body + label + ratio-rib search) every other consumer of those two
+    /// methods already uses; this never invents a third geometry test.
+    pub(crate) fn try_wave_gesture(&mut self, x: f64, y: f64, trigger: GestureTrigger) -> bool {
+        use mlc_core::state::{ChartGesture, GestureTarget};
+
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else {
+            return false;
+        };
+
+        let _fallback;
+        let extended = match self.active_frame_layout.as_ref() {
+            Some(e) => e,
+            None => { _fallback = self.build_extended_layout(); &_fallback }
+        };
+        let bars: Vec<mlc_core::Bar> = self.bars_for_bubble(bid);
+        let chart_rect = extended.main_chart.chart;
+        let local_x = x - chart_rect.x;
+        let local_y = y - chart_rect.y;
+
+        // Stage 1: main chart — the same `hit_test` call
+        // `ChartPanelGrid::handle_right_click`'s own step 1 and
+        // `handle_canvas_click`'s own main-chart branch use.
+        let mut resolved: Option<(u64, f64, f64, mlc_core::Viewport, mlc_core::PriceScale, Option<u64>)> = None;
+        if local_x >= 0.0 && local_x <= chart_rect.width && local_y >= 0.0 && local_y <= chart_rect.height {
+            if let Some(window) = self.panel_app.panel_grid.active_container() {
+                let mut corrected_vp = window.viewport().clone();
+                corrected_vp.chart_width = chart_rect.width;
+                corrected_vp.chart_height = chart_rect.height;
+                let price_scale = window.price_scale().clone();
+                if let Some(prim_id) = self.core.drawings().hit_test(bid, local_x, local_y, &bars, &corrected_vp, &price_scale) {
+                    resolved = Some((prim_id, local_x, local_y, corrected_vp, price_scale, None));
+                }
+            }
+        }
+
+        // Stage 2: sub-panes — the same `hit_test_in_pane` call
+        // `handle_right_click`'s own step 2 uses.
+        if resolved.is_none() {
+            for pane_layout in extended.sub_panes.iter() {
+                let content = pane_layout.content;
+                let plx = x - content.x;
+                let ply = y - content.y;
+                if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                    continue;
+                }
+                let instance_id = pane_layout.instance_id;
+                let Some(window) = self.panel_app.panel_grid.active_container() else { continue };
+                let (price_min, price_max) = window.sub_pane_y_state.get(&instance_id)
+                    .map(|s| (s.price_min, s.price_max))
+                    .unwrap_or((0.0, 100.0));
+                let sub_price_scale = mlc_core::PriceScale::new(price_min, price_max);
+                let mut sub_viewport = window.viewport().clone();
+                sub_viewport.chart_height = content.height;
+                if let Some(prim_id) = self.core.drawings().hit_test_in_pane(bid, plx, ply, instance_id, &bars, &sub_viewport, &sub_price_scale) {
+                    resolved = Some((prim_id, plx, ply, sub_viewport, sub_price_scale, Some(instance_id)));
+                    break;
+                }
+            }
+        }
+
+        let Some((prim_id, hx, hy, hit_vp, hit_ps, hit_pane)) = resolved else { return false; };
+
+        // A plain find over the bubble's own primitive list, cloned out so
+        // the read lock is not held across the selection write below — the
+        // same `Box<dyn Primitive>: Clone` every undo/redo snapshot path
+        // already relies on.
+        let prim: Box<dyn Primitive> = {
+            let guard = self.core.drawings();
+            match guard.primitives(bid).iter().find(|p| p.data().id == prim_id) {
+                Some(p) => p.clone(),
+                None => return false,
+            }
+        };
+
+        if prim.wave_degree().is_none() || prim.data().locked {
+            return false;
+        }
+
+        let terminal_hit = matches!(
+            prim.hit_test(hx, hy, &bars, &hit_vp, &hit_ps),
+            HitTestResult::ControlPoint(cp) if Some(cp) == prim.terminal_control_point(&bars, &hit_vp, &hit_ps)
+        );
+        let target_and_slot = if terminal_hit {
+            Some((GestureTarget::TerminalPoint, None))
+        } else {
+            prim.wave_at(hx, hy, &bars, &hit_vp, &hit_ps).map(|slot| (GestureTarget::WaveSegment, Some(slot)))
+        };
+        let Some((target, wave_slot)) = target_and_slot else { return false; };
+        let Some(gesture) = self.gesture_bindings.gesture_for(trigger, target) else { return false; };
+
+        // Select so the inline toolbar and the settings modal agree with
+        // what the menu is about — mirrors `on_right_click`'s own
+        // select-then-open sequence for the generic primitive menu.
+        self.blur_agent_focus_for_primitive_select();
+        self.core.drawings_mut().set_current_pane(bid, hit_pane);
+        self.core.drawings_mut().select(bid, prim_id);
+
+        let Some(cfg) = self.core.drawings().selected_config(bid) else { return false; };
+        let items = match (gesture, wave_slot) {
+            (ChartGesture::WaveMenu, Some(slot)) => {
+                let child_id = self.core.drawings().wave_child_id(bid, prim_id, slot);
+                build_wave_menu(&cfg, slot, child_id)
+            }
+            (ChartGesture::SuccessorMenu, _) => build_successor_menu(&cfg),
+            // `GestureBindings::gesture_for` only ever maps
+            // `GestureTarget::WaveSegment` to `ChartGesture::WaveMenu`, and
+            // the `WaveSegment` branch above always carries a slot — this
+            // arm cannot be reached in practice. Fail closed rather than
+            // build a menu with no subject.
+            (ChartGesture::WaveMenu, None) => return false,
+        };
+
+        let w = self.width as f64;
+        let h = self.height as f64;
+        self.panel_app.context_menu_state.open_smart(x, y, ContextMenuTarget::Primitive(prim_id), items, w, h);
+        eprintln!("[ChartApp] wave gesture menu opened for primitive #{}", prim_id);
+        true
+    }
+
     /// Handle a right-click at screen coordinates `(x, y)`.
     ///
     /// Opens a context menu: primitive menu if clicking on a primitive,
@@ -711,6 +862,18 @@ impl ChartApp {
 
         match hit {
             crate::panel_grid::ChartRightClickHit::Primitive { prim_id } => {
+                // Wave-gesture second control surface (owner ask
+                // 2026-08-13): when `GestureBindings::wave_menu`/
+                // `successor_menu` is bound to RightClick, a right-click on
+                // an Elliott wave's own segment or terminal point opens its
+                // own popup instead of the generic primitive menu below.
+                // Bound to DoubleClick by default, so this is a no-op today
+                // — flipping the binding is the only thing that changes
+                // that, never this call site.
+                if self.try_wave_gesture(x, y, GestureTrigger::RightClick) {
+                    return;
+                }
+
                 // Right-clicked on a primitive — look up info via primitive_list.
                 let (display_name, is_locked, is_visible) = active_bid_rc
                     .and_then(|bid| {
@@ -806,6 +969,17 @@ impl ChartApp {
                 &rect,
                 mlc_core::engine::input::ChartInputAction::DoubleClick { x, y },
             );
+            return;
+        }
+
+        // Wave-gesture second control surface (owner ask 2026-08-13): a
+        // double-click on an Elliott wave's own segment or terminal point
+        // opens its own popup. Runs BEFORE the generic drawing
+        // double-click behaviour further down (which only finishes an
+        // in-progress multipoint drawing — meaningless for an
+        // already-placed primitive, so the two never compete for the same
+        // click).
+        if self.try_wave_gesture(x, y, GestureTrigger::DoubleClick) {
             return;
         }
 

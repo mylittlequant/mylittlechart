@@ -5931,6 +5931,20 @@ impl ChartApp {
                 return;
             }
             if let Some(action) = rest.strip_prefix("item:") {
+                // A disabled row (e.g. the wave-gesture menus' own header
+                // row naming what the menu is about — `build_wave_menu`/
+                // `build_successor_menu`, `mlc-app-layout`) is still
+                // registered as a hit zone (`render_context_menu` registers
+                // every non-separator item so hover styling has something
+                // to key off), so disabled-ness has to be checked HERE —
+                // dispatch is the only place that can refuse the click.
+                let enabled = self.panel_app.context_menu_state.items.iter()
+                    .find(|item| item.action == action)
+                    .map(|item| item.enabled)
+                    .unwrap_or(true);
+                if !enabled {
+                    return;
+                }
                 eprintln!("[ChartApp] Context menu action: {}", action);
                 self.on_context_menu_action(action);
                 return;

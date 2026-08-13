@@ -520,6 +520,27 @@ impl DrawingManager {
         b.primitives.iter().find(|p| p.data().id == prim_id)
     }
 
+    /// The id of the child primitive currently nested into `slot` of
+    /// `parent_id`, if any — the wave-gesture menu's own "does this slot
+    /// already hold a subdivision" read (E5, `ChartApp::try_wave_gesture` /
+    /// `mlc-app-layout`'s `build_wave_menu`), asked BEFORE the primitive
+    /// necessarily has a settings modal open, so it cannot reuse a modal's
+    /// own cached state. Resolves through each primitive's own
+    /// `wave_link()` — a plain linear scan, the same relation
+    /// `restitch_wave_joints`'s own child-slot walk already reads, not a
+    /// second index: a parent has at most a handful of slots, so this
+    /// costs nothing and can never go stale the way a cached slot->child
+    /// map could. `None` when the slot is empty, `parent_id` does not
+    /// exist, or (should never happen — `create_wave_child`'s own choke
+    /// point never links two children into the same slot) more than one
+    /// primitive claims it, in which case the first match wins.
+    pub(crate) fn wave_child_id(&self, bubbles: &BubbleStore, bid: BubbleId, parent_id: u64, slot: WaveSlot) -> Option<u64> {
+        let b = bubbles.bubble(bid)?;
+        b.primitives.iter()
+            .find(|p| p.wave_link() == Some(WaveLink { parent_id, slot }))
+            .map(|p| p.data().id)
+    }
+
     pub(crate) fn selected_config(&self, bubbles: &BubbleStore, bid: BubbleId) -> Option<SelectedPrimitiveConfig> {
         let prim = self.selected_primitive(bubbles, bid)?;
         let data = prim.data();

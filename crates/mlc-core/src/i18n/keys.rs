@@ -2890,10 +2890,23 @@ pub enum ConceptKey {
     // reuse the existing `Rule*` keys above, e.g. `RuleWave2BeyondOrigin`).
     RuleChainAlternationBroken = 306,
     RuleChainDegreeMismatch = 307,
+
+    // ---- Wave-gesture menu labels (2026-08-13) — the second control
+    // surface's own two popups (`mlc_core::state::gestures`,
+    // `mlc-app-layout::ui::context_menu::{build_wave_menu,
+    // build_successor_menu}`): a double-click (or right-click, once the
+    // owner picks) on a wave segment or a structure's own terminal point.
+    // `WaveKind*`/`WaveBackLabel` above are reused verbatim for the rows
+    // these two popups share with the inline E2/E3 pickers; these three
+    // are the ones unique to the popup's own child-management rows and
+    // its promote row.
+    SelectSubdivisionLabel = 308,
+    RemoveSubdivisionLabel = 309,
+    PromoteChainLabel = 310,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 308;
+    pub const COUNT: usize = 311;
 
     /// Get translation for this key.
     #[inline]

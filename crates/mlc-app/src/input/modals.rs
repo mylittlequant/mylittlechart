@@ -414,23 +414,7 @@ impl ChartApp {
                 // E2's next opening regardless of which wave control the
                 // user acted on last.
                 let type_id = action.strip_prefix("inline:wave_next_option:").unwrap_or_default();
-                let new_id = active_bid_inline
-                    .and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prim_id, type_id));
-                match new_id {
-                    Some(new_id) => {
-                        let cmd = active_bid_inline.and_then(|bid| self.build_create_primitive_command(bid, new_id));
-                        if let Some(cmd) = cmd {
-                            self.push_undo_command(cmd);
-                            eprintln!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
-                        }
-                        self.sync_drawing_back_to_group();
-                        self.autosave_snapshot();
-                        eprintln!("[ChartApp] inline: created wave successor #{} ({}) after #{}", new_id, type_id, prim_id);
-                    }
-                    None => {
-                        eprintln!("[ChartApp] inline: create_wave_successor returned None for type '{}' after #{}", type_id, prim_id);
-                    }
-                }
+                self.create_wave_successor_and_record(active_bid_inline, prim_id, type_id);
                 self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
@@ -445,25 +429,7 @@ impl ChartApp {
             // whether this button even renders).
             "inline:wave_up" => {
                 if let Some(bid) = active_bid_inline {
-                    let result = self.core.drawings_mut().promote_wave_chain(bid, prim_id);
-                    match result {
-                        Some((parent_id, members)) => {
-                            let cmd = self.core.drawings().get_snapshot(bid, parent_id).map(|parent_snapshot| {
-                                mlc_core::Command::PromoteWaveChain { parent_id, parent_snapshot, members }
-                            });
-                            if let Some(cmd) = cmd {
-                                self.push_undo_command(cmd);
-                                eprintln!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
-                            }
-                            self.core.drawings_mut().select(bid, parent_id);
-                            self.sync_drawing_back_to_group();
-                            self.autosave_snapshot();
-                            eprintln!("[ChartApp] inline: promoted chain into #{}", parent_id);
-                        }
-                        None => {
-                            eprintln!("[ChartApp] inline: promote_wave_chain returned None for #{}", prim_id);
-                        }
-                    }
+                    self.promote_wave_chain_and_record(bid, prim_id);
                 }
             }
 
@@ -501,6 +467,64 @@ impl ChartApp {
             }
             None => {
                 eprintln!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
+            }
+        }
+    }
+
+    /// Create an Elliott successor of `type_id` continuing `prev_id` at its
+    /// own degree, and record it for undo — the shared tail both the
+    /// inline E3 dropdown's `"inline:wave_next_option:"` handler and the
+    /// wave-gesture menu's `"wave_menu:successor:"` action take. Mirrors
+    /// [`create_wave_child_and_record`] bit-for-bit, EXCEPT the primitive
+    /// it creates continues `prev_id` (`follows`) instead of nesting inside
+    /// it (`link`) — see `create_wave_successor`'s own doc for why that is
+    /// a different call, not the same one with a different argument.
+    fn create_wave_successor_and_record(&mut self, bid: Option<BubbleId>, prev_id: u64, type_id: &str) {
+        let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prev_id, type_id));
+        match new_id {
+            Some(new_id) => {
+                let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
+                if let Some(cmd) = cmd {
+                    self.push_undo_command(cmd);
+                    eprintln!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] created wave successor #{} ({}) after #{}", new_id, type_id, prev_id);
+            }
+            None => {
+                eprintln!("[ChartApp] create_wave_successor returned None for type '{}' after #{}", type_id, prev_id);
+            }
+        }
+    }
+
+    /// Collapse `prim_id`'s own `follows`-linked same-degree chain into one
+    /// coarser structure, and record it for undo (E4) — the shared tail
+    /// both the inline toolbar's `"inline:wave_up"` button and the
+    /// wave-gesture successor menu's `"wave_menu:promote"` action take.
+    /// `promote_wave_chain` resolves the chain's own head from `prim_id`
+    /// internally (`selected_config`'s own `can_promote` already ran the
+    /// identical check to decide whether either control even renders), and
+    /// selects the new parent on success so the caller's own UI (inline
+    /// toolbar / settings modal) immediately reflects what is now selected.
+    fn promote_wave_chain_and_record(&mut self, bid: BubbleId, prim_id: u64) {
+        let result = self.core.drawings_mut().promote_wave_chain(bid, prim_id);
+        match result {
+            Some((parent_id, members)) => {
+                let cmd = self.core.drawings().get_snapshot(bid, parent_id).map(|parent_snapshot| {
+                    mlc_core::Command::PromoteWaveChain { parent_id, parent_snapshot, members }
+                });
+                if let Some(cmd) = cmd {
+                    self.push_undo_command(cmd);
+                    eprintln!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
+                }
+                self.core.drawings_mut().select(bid, parent_id);
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] promoted chain into #{}", parent_id);
+            }
+            None => {
+                eprintln!("[ChartApp] promote_wave_chain returned None for #{}", prim_id);
             }
         }
     }
@@ -2370,6 +2394,62 @@ impl ChartApp {
                         }
                         eprintln!("[ChartApp] Sent primitive #{} to back", prim_id);
                     }
+
+                    // ── Wave-gesture menu actions (E5, second control
+                    // surface — `ChartApp::try_wave_gesture` /
+                    // `mlc-app-layout`'s `build_wave_menu`/
+                    // `build_successor_menu`). `prim_id` here is already
+                    // the structure the gesture selected — the wave
+                    // menu's own slot/kind and the successor menu's own
+                    // child id ride in the action string instead, so
+                    // nothing has to re-hit-test the click.
+                    _ if action.starts_with("wave_menu:subdivide:") => {
+                        let rest = action.strip_prefix("wave_menu:subdivide:").unwrap_or_default();
+                        match rest.split_once(':') {
+                            Some((slot_id, kind_id)) => {
+                                self.create_wave_child_and_record(active_bid_ctx, prim_id, slot_id, kind_id);
+                            }
+                            None => {
+                                eprintln!("[ChartApp] wave menu: malformed subdivide action '{}'", action);
+                            }
+                        }
+                    }
+                    _ if action.starts_with("wave_menu:successor:") => {
+                        let type_id = action.strip_prefix("wave_menu:successor:").unwrap_or_default();
+                        self.create_wave_successor_and_record(active_bid_ctx, prim_id, type_id);
+                    }
+                    "wave_menu:promote" => {
+                        if let Some(bid) = active_bid_ctx {
+                            self.promote_wave_chain_and_record(bid, prim_id);
+                        }
+                    }
+                    _ if action.starts_with("wave_menu:select_child:") => {
+                        let child_id = action.strip_prefix("wave_menu:select_child:").and_then(|s| s.parse::<u64>().ok());
+                        match (active_bid_ctx, child_id) {
+                            (Some(bid), Some(child_id)) => {
+                                self.blur_agent_focus_for_primitive_select();
+                                self.core.drawings_mut().select(bid, child_id);
+                                self.sync_drawing_back_to_group();
+                                self.autosave_snapshot();
+                                eprintln!("[ChartApp] wave menu: selected subdivision #{}", child_id);
+                            }
+                            _ => {
+                                eprintln!("[ChartApp] wave menu: malformed select_child action '{}'", action);
+                            }
+                        }
+                    }
+                    _ if action.starts_with("wave_menu:delete_child:") => {
+                        let child_id = action.strip_prefix("wave_menu:delete_child:").and_then(|s| s.parse::<u64>().ok());
+                        match (active_bid_ctx, child_id) {
+                            (Some(bid), Some(child_id)) => {
+                                self.delete_primitive_with_undo(bid, child_id);
+                            }
+                            _ => {
+                                eprintln!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
+                            }
+                        }
+                    }
+
                     _ => {
                         eprintln!("[ChartApp] Unhandled primitive context action: {}", action);
                     }

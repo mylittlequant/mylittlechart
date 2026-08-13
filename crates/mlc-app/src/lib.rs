@@ -504,6 +504,14 @@ pub struct ChartApp {
     /// Currently hovered context menu item id (for hover highlight rendering).
     pub(crate) hovered_context_menu_item_id: Option<String>,
 
+    /// Which physical gesture (double-click vs. right-click) opens the
+    /// wave-gesture popups (`ChartApp::try_wave_gesture`) — a settings
+    /// field, not a hardcoded match, so the owner's still-open question
+    /// ("на даталклик или на ПКМ, дискуссионно", 2026-08-13) is a one-field
+    /// flip later rather than a code change. See
+    /// `mlc_core::state::gestures`'s own module doc.
+    pub(crate) gesture_bindings: mlc_core::state::GestureBindings,
+
     /// Mouse position from the last `on_mouse_move` call
     pub(crate) last_mouse_pos: (f64, f64),
 
@@ -3022,6 +3030,7 @@ impl ChartApp {
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
+            gesture_bindings: mlc_core::state::GestureBindings::default(),
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
@@ -3440,6 +3449,7 @@ impl ChartApp {
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
+            gesture_bindings: mlc_core::state::GestureBindings::default(),
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
@@ -4017,6 +4027,7 @@ impl ChartApp {
             search_modal_result: None,
             context_menu_result: None,
             hovered_context_menu_item_id: None,
+            gesture_bindings: mlc_core::state::GestureBindings::default(),
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,

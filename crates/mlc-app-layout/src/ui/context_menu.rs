@@ -4,6 +4,8 @@
 //! such as primitives, indicators, and the chart background.
 
 use mlc_core::LeafId;
+use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
+use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 
 // =============================================================================
 // Context Menu Target
@@ -267,4 +269,104 @@ pub fn build_primitive_context_menu(
         ContextMenuItemState::separator(),
         ContextMenuItemState::danger_with_icon("delete", "delete", MenuKey::Delete.get(lang)),
     ]
+}
+
+// =============================================================================
+// Wave-gesture menus (E5, second control surface — owner ask 2026-08-13)
+// =============================================================================
+//
+// `ChartApp::try_wave_gesture` opens one of these two popups instead of the
+// generic primitive menu above, on a hit against an Elliott primitive's own
+// wave segment or terminal point (`mlc_core::state::gestures`'s own doc has
+// the full "trigger deliberately not hardcoded" rationale). Both are built
+// from `SelectedPrimitiveConfig` alone — the same E2/E3 read the inline
+// config toolbar already uses (`selected_config`) — never a second source
+// of truth for which kinds/successors are legal.
+
+/// Action id for the wave menu's own disabled header row — see
+/// [`build_wave_menu`]. Never dispatched: `on_context_menu_action` only
+/// ever sees an ENABLED item's action id (the click dispatcher refuses a
+/// disabled item before it reaches the handler), so this string exists only
+/// to give the row a stable, harmless id.
+const WAVE_MENU_LABEL_ACTION: &str = "wave_menu:label";
+
+/// Build the "subdivide this wave" popup (`ChartGesture::WaveMenu`) for the
+/// wave `slot` the gesture resolved to on the already-selected primitive.
+///
+/// `child_id` is the caller's answer to "does `slot` already hold a
+/// subdivision" — `mlc-backend`'s `Drawings::wave_child_id`. `None` renders
+/// only the kind-picker rows (mirrors the
+/// inline E2 dropdown's own step-1/step-2 rows, one flat list here since a
+/// popup has no dropdown-within-dropdown step); `Some` additionally offers
+/// to select or remove the existing child, since offering a SECOND
+/// subdivision into an already-occupied slot would silently orphan the
+/// first one.
+///
+/// Action ids: `"wave_menu:subdivide:{slot_id}:{kind_id}"`,
+/// `"wave_menu:select_child:{child_id}"`,
+/// `"wave_menu:delete_child:{child_id}"` — `on_context_menu_action`
+/// (`mlc-app`) parses these back; see that function's own doc for why the
+/// parent's own id is never embedded (it is already the context menu's
+/// `ContextMenuTarget::Primitive` id).
+pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: Option<u64>) -> Vec<ContextMenuItemState> {
+    use mlc_core::i18n::{t_concept, ConceptKey};
+
+    let slot_id = slot.id();
+    let mut items = Vec::new();
+
+    let wave_label = cfg.wave_slots.iter()
+        .find(|(id, _)| id == slot_id)
+        .map(|(_, label)| label.as_str())
+        .unwrap_or(slot_id);
+    items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, wave_label).set_enabled(false));
+
+    if let Some((_, kinds)) = cfg.wave_slot_kinds.iter().find(|(id, _)| id == slot_id) {
+        for (kind_id, key) in kinds {
+            items.push(ContextMenuItemState::action(
+                format!("wave_menu:subdivide:{slot_id}:{kind_id}"),
+                t_concept(*key),
+            ));
+        }
+    }
+
+    if let Some(child_id) = child_id {
+        items.push(ContextMenuItemState::separator());
+        items.push(ContextMenuItemState::action(
+            format!("wave_menu:select_child:{child_id}"),
+            t_concept(ConceptKey::SelectSubdivisionLabel),
+        ));
+        items.push(ContextMenuItemState::danger(
+            format!("wave_menu:delete_child:{child_id}"),
+            t_concept(ConceptKey::RemoveSubdivisionLabel),
+        ));
+    }
+
+    items
+}
+
+/// Build the "what continues this structure" popup
+/// (`ChartGesture::SuccessorMenu`) for the already-selected primitive.
+///
+/// Action ids: `"wave_menu:successor:{type_id}"`, `"wave_menu:promote"` —
+/// mirrors the inline E3 dropdown's own rows plus the E4 promote button,
+/// one flat list instead of a dropdown-plus-separate-button.
+pub fn build_successor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuItemState> {
+    use mlc_core::i18n::{t_concept, ConceptKey};
+
+    let mut items = Vec::new();
+    items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, cfg.name.clone()).set_enabled(false));
+
+    for (type_id, display_name) in &cfg.successor_kinds {
+        items.push(ContextMenuItemState::action(
+            format!("wave_menu:successor:{type_id}"),
+            display_name.clone(),
+        ));
+    }
+
+    if cfg.can_promote {
+        items.push(ContextMenuItemState::separator());
+        items.push(ContextMenuItemState::action("wave_menu:promote", t_concept(ConceptKey::PromoteChainLabel)));
+    }
+
+    items
 }

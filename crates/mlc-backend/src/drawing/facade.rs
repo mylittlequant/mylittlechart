@@ -265,6 +265,11 @@ impl<'a> Drawings<'a> {
         self.mgr.selected_config(&self.bubbles, bid)
     }
 
+    /// See `DrawingManager::wave_child_id`.
+    pub fn wave_child_id(&self, bid: BubbleId, parent_id: u64, slot: WaveSlot) -> Option<u64> {
+        self.mgr.wave_child_id(&self.bubbles, bid, parent_id, slot)
+    }
+
     pub fn selected_control_points(&self, bid: BubbleId, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> Vec<ControlPoint> {
         self.mgr.selected_control_points(&self.bubbles, bid, bars, viewport, price_scale)
     }
