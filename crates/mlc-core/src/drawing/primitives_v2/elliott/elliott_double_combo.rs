@@ -164,6 +164,15 @@ impl Primitive for ElliottDoubleCombo {
     fn wave_follows(&self) -> Option<u64> { self.follows }
     fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
     fn realized_point_count(&self) -> usize { self.realized_len() }
+    /// Write side of `realized_point_count` — the in-progress preview
+    /// declares how many pivots the user has actually placed (see
+    /// `Primitive::set_realized_point_count`'s own doc). Unlike
+    /// `grow_realized`, this may LOWER the count: the preview rebuilds a
+    /// fresh primitive on every cursor move, so it states the truth
+    /// rather than accumulating it.
+    fn set_realized_point_count(&mut self, n: usize) {
+        self.realized_points = Some(n.min(self.points.len()));
+    }
     fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
     fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn subdivided_slots(&self) -> &[WaveSlot] { &self.subdivided_slots }

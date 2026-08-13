@@ -1277,6 +1277,13 @@ impl DrawingManager {
         if let Some(variant) = &session.tool_variant {
             Self::apply_variant_to_primitive(&mut prim, variant);
         }
+        // Only the pivots the user has actually placed are real — everything
+        // above `min_points` was just padded with the cursor above. Without
+        // this the preview claims a full structure and labels the point being
+        // placed with the LAST wave's label: the owner drew a fresh impulse
+        // and its first click showed "(5)" (report 2026-08-14). Placed points
+        // plus the one under the cursor.
+        prim.set_realized_point_count(points.len() + 1);
 
         let cloned = prim.clone_box();
         *session.preview_cache.lock().expect("preview_cache mutex poisoned") = Some(PreviewCache {

@@ -894,6 +894,24 @@ pub trait Primitive: Send + Sync {
         self.points().len()
     }
 
+    /// Declare how many of [`points`](Self::points) are real — the write
+    /// side of [`realized_point_count`](Self::realized_point_count), and the
+    /// ONLY way to LOWER it (each Elliott type's own `grow_realized` raises
+    /// it and deliberately never lowers it).
+    ///
+    /// Exists for the in-progress preview: while a multi-point structure is
+    /// being clicked out, `DrawingManager::create_preview` pads the point
+    /// array up to the type's full pivot count by repeating the cursor, so
+    /// without
+    /// this the primitive claims every pivot is placed and draws the LAST
+    /// wave's label on the point the user is still placing — the owner's
+    /// report of 2026-08-14: a fresh impulse showed "(5)" while wave 1 was
+    /// being drawn.
+    ///
+    /// No-op by default: a primitive with no partial-construction concept
+    /// has nothing to declare.
+    fn set_realized_point_count(&mut self, _n: usize) {}
+
     /// This primitive's own drawn Elliott CORRECTION subtype, as the same
     /// fixed token `ElliottCorrection::apply_style_property`'s own
     /// `"correction_type"` id already reads and writes (`"zigzag"` /
