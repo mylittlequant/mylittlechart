@@ -938,6 +938,49 @@ pub trait Primitive: Send + Sync {
     fn set_context_violations(&mut self, _v: Vec<Violation>) {}
 
     // =========================================================================
+    // Elliott Subdivision Overlay (owner report 2026-08-13: "я делаю клик
+    // спавню подволну внутри волны, и она вместо того чтобы ЗАМЕНЯТЬ собой
+    // отрезок, просто накладывается сверху, и я могу его выдрать; если
+    // делать наследование, то он именно прилипает, а тут накладывается —
+    // он должен именно что становиться частью" — a spawned child must
+    // REPLACE the leg of its parent it nests inside, not draw on top of it.
+    // This cache is the DRAWING half of the fix; welding the child's own
+    // endpoints onto the parent's own pivots (so it stays attached once
+    // moved) is the backend half and lands separately in `mlc-backend` —
+    // see `elliott::count::slot_span`'s own doc for the write path that
+    // backend half uses.
+    // =========================================================================
+
+    /// Which of this primitive's own [`WaveSlot`]s currently carry a child
+    /// subdivision nested into them — the slots whose own leg `render` must
+    /// no longer draw (the subdivision draws that stretch of the count now)
+    /// and whose own leg `hit_test` must no longer answer for (an invisible
+    /// leg that still swallows clicks is the same defect turned inside
+    /// out). The wave's own pivot points, its label, and its ratio ribs are
+    /// UNAFFECTED — they belong to the parent's own count, not to the leg a
+    /// subdivision replaces, so they keep drawing (and stay clickable, and
+    /// still carry a violation mark) exactly as before.
+    ///
+    /// A primitive cannot see its own children on its own (`elliott::
+    /// count`'s own module doc), so this is not COMPUTED here — it is a
+    /// CACHE the collection's own owner fills, exactly like
+    /// [`context_violations`](Self::context_violations) is filled. Pure
+    /// render cache — never persisted, never read from or written to JSON.
+    ///
+    /// Default: empty — exactly how every primitive outside the Elliott
+    /// family behaves (they never call
+    /// [`set_subdivided_slots`](Self::set_subdivided_slots)), and how an
+    /// Elliott primitive behaves before its owner has ever filled this.
+    fn subdivided_slots(&self) -> &[WaveSlot] {
+        &[]
+    }
+
+    /// Replace [`subdivided_slots`](Self::subdivided_slots) — see that
+    /// method's own doc for who calls this and when. No-op default,
+    /// matching every primitive outside the Elliott family.
+    fn set_subdivided_slots(&mut self, _slots: Vec<WaveSlot>) {}
+
+    // =========================================================================
     // Elliott Wave-At-Point Resolution (E3 — owner ask 2026-08-13: a
     // double-click on a wave opens "subdivide this wave into…", a
     // double-click on the structure's own last point opens "what continues

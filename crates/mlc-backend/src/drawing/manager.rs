@@ -24,7 +24,8 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    chain_violations, child_kinds, child_seed, kind_label, split_kind_id, successor_kinds, successor_seed,
+    chain_violations, child_kinds, child_seed, kind_label, slot_span, split_kind_id, successor_kinds,
+    successor_seed,
     promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
@@ -2082,6 +2083,36 @@ impl DrawingManager {
         for (i, violations) in updates {
             b.primitives[i].set_context_violations(violations);
         }
+
+        // Which of each structure's own waves are subdivided. The render side
+        // reads this to stop drawing the leg a subdivision replaced — a
+        // subdivision IS that wave, so the parent's straight line under it is
+        // the "накладывается сверху" the owner reported. Same cache shape and
+        // same refresh points as the violations above; a structure whose
+        // subdivision was just deleted is written an empty list rather than
+        // being left holding a stale one.
+        let subdivided: Vec<(usize, Vec<WaveSlot>)> = {
+            let ids: Vec<(usize, u64)> = b
+                .primitives
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.wave_degree().is_some())
+                .map(|(i, p)| (i, p.data().id))
+                .collect();
+            ids.into_iter()
+                .map(|(i, id)| {
+                    let slots = b
+                        .primitives
+                        .iter()
+                        .filter_map(|p| p.wave_link().filter(|l| l.parent_id == id).map(|l| l.slot))
+                        .collect();
+                    (i, slots)
+                })
+                .collect()
+        };
+        for (i, slots) in subdivided {
+            b.primitives[i].set_subdivided_slots(slots);
+        }
     }
 
     // =========================================================================
@@ -2106,42 +2137,108 @@ impl DrawingManager {
     /// translated whole, because moving a member must not silently move
     /// structures the user never touched.
     ///
-    /// Subdivisions ride along the same way: every child of `moved_id` is
-    /// re-anchored onto the slot span it occupies (`elliott::count::
-    /// child_seed`, the same function that placed it), keeping its own shape
-    /// by proportional rescale rather than being rebuilt as a straight line.
+    /// Subdivisions are welded in BOTH directions, which is the second half
+    /// of the same report (2026-08-13, screenshot of stray impulses beside
+    /// the count): "я спавню подволну внутри волны, и она вместо того чтобы
+    /// ЗАМЕНЯТЬ собой отрезок, просто накладывается сверху, и я могу его
+    /// выдрать... он должен именно что становиться частью". A subdivision IS
+    /// the wave it subdivides, so its two endpoints are the parent's own
+    /// pivots and not copies of them:
     ///
-    /// NOT covered, deliberately, and stated rather than left to be
-    /// discovered: dragging a CHILD's own endpoint does not move the parent's
-    /// pivot under it. That pivot is shared by two of the parent's waves, so
-    /// writing it back is a change to the parent's own count — a decision,
-    /// not a repair. `count::slot_span` is `pub(super)` today, which is the
-    /// same statement in code.
+    /// - the parent moves → every child is re-anchored onto the slot span it
+    ///   occupies (`elliott::count::child_seed`, the function that placed
+    ///   it), keeping the shape it was drawn with by proportional rescale
+    ///   rather than being rebuilt as a straight line;
+    /// - the child moves → its first/last are written straight into the
+    ///   parent's own point array at that slot's span
+    ///   (`elliott::count::slot_span`), so the child cannot be torn off the
+    ///   count. The parent's pivot is shared with the NEIGHBOURING wave, so
+    ///   moving it moves that wave's end too — that is not a side effect, it
+    ///   is what a pivot is — and the parent's other subdivisions and its own
+    ///   chain joints are re-stitched right after.
+    ///
+    /// Exactly one level of propagation runs in each direction from the
+    /// primitive the hand moved: child → parent → (parent's chain neighbours
+    /// and parent's other children). It is deliberately not a fixpoint —
+    /// every write here is a straight assignment, so a second pass would
+    /// change nothing, and a bounded walk cannot loop on a malformed
+    /// link/follows cycle in a hand-edited file.
     fn restitch_wave_joints(b: &mut crate::bubble::DataBubble, moved_id: u64) {
         let Some(moved_idx) = Self::find_index_by_id(b, moved_id) else { return };
-        let (first, last, follows, is_wave) = {
+        let (first, last, link, is_wave) = {
             let p = b.primitives[moved_idx].as_ref();
             let pts = p.points();
-            (pts.first().copied(), pts.last().copied(), p.wave_follows(), p.wave_degree().is_some())
+            (pts.first().copied(), pts.last().copied(), p.wave_link(), p.wave_degree().is_some())
         };
         if !is_wave {
             return;
         }
         let (Some(first), Some(last)) = (first, last) else { return };
 
-        // The predecessor ends where this structure now begins.
+        Self::restitch_neighbours(b, moved_id, None);
+
+        // Weld upward: the wave this structure subdivides now ends where this
+        // structure ends.
+        let Some(link) = link else { return };
+        let Some(parent_idx) = Self::find_index_by_id(b, link.parent_id) else { return };
+        if parent_idx == moved_idx {
+            return;
+        }
+        let span = {
+            let parent = b.primitives[parent_idx].as_ref();
+            slot_span(parent.type_id(), link.slot)
+        };
+        let Some((start_idx, end_idx)) = span else { return };
+        let mut parent_points = b.primitives[parent_idx].points();
+        if end_idx >= parent_points.len() {
+            return;
+        }
+        if parent_points[start_idx] == first && parent_points[end_idx] == last {
+            return;
+        }
+        parent_points[start_idx] = first;
+        parent_points[end_idx] = last;
+        b.primitives[parent_idx].set_points(&parent_points);
+        // The parent's own joints moved with it — its chain neighbours and
+        // its OTHER subdivisions follow. `moved_id` is excluded: it is the
+        // one the hand is holding, and re-anchoring it here would fight the
+        // drag it just caused.
+        Self::restitch_neighbours(b, link.parent_id, Some(moved_id));
+    }
+
+    /// The joints AROUND `id`: its chain predecessor's last point and its
+    /// successors' first points snap to `id`'s own ends, and every
+    /// subdivision of `id` — except `skip_child`, see
+    /// [`Self::restitch_wave_joints`]' own doc — is re-anchored onto the wave
+    /// it subdivides.
+    fn restitch_neighbours(
+        b: &mut crate::bubble::DataBubble,
+        id: u64,
+        skip_child: Option<u64>,
+    ) {
+        let Some(idx) = Self::find_index_by_id(b, id) else { return };
+        let (first, last, follows) = {
+            let p = b.primitives[idx].as_ref();
+            let pts = p.points();
+            (pts.first().copied(), pts.last().copied(), p.wave_follows())
+        };
+        let (Some(first), Some(last)) = (first, last) else { return };
+
+        // The predecessor ends where this structure begins.
         if let Some(prev_id) = follows {
             if let Some(i) = Self::find_index_by_id(b, prev_id) {
-                Self::set_endpoint(b.primitives[i].as_mut(), false, first);
+                if i != idx {
+                    Self::set_endpoint(b.primitives[i].as_mut(), false, first);
+                }
             }
         }
 
-        // Every successor begins where this structure now ends.
+        // Every successor begins where this structure ends.
         let successor_idxs: Vec<usize> = b
             .primitives
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.wave_follows() == Some(moved_id))
+            .filter(|(i, p)| *i != idx && p.wave_follows() == Some(id))
             .map(|(i, _)| i)
             .collect();
         for i in successor_idxs {
@@ -2154,11 +2251,14 @@ impl DrawingManager {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
-                p.wave_link().filter(|l| l.parent_id == moved_id).map(|l| (i, l.slot))
+                if i == idx || Some(p.data().id) == skip_child {
+                    return None;
+                }
+                p.wave_link().filter(|l| l.parent_id == id).map(|l| (i, l.slot))
             })
             .collect();
         for (i, slot) in child_slots {
-            let seed = child_seed(b.primitives[moved_idx].as_ref(), slot);
+            let seed = child_seed(b.primitives[idx].as_ref(), slot);
             if let Some(seed) = seed {
                 Self::rescale_between(b.primitives[i].as_mut(), seed.start, seed.end);
             }

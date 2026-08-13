@@ -217,6 +217,52 @@ pub(crate) fn estimate_text_width(text: &str, font_size: f64) -> f64 {
     text.chars().count() as f64 * font_size * 0.56
 }
 
+/// Stroke every contiguous run of `segments` (each `(i, i + 1)` — a single
+/// leg, in point-index order) as one polyline — `elliott::count::
+/// visible_leg_segments`'s own render-side counterpart (owner report
+/// 2026-08-13: a spawned subdivision must REPLACE the leg of its parent it
+/// nests inside, not draw on top of it, so that leg's own render segment is
+/// missing from `segments` and this must not bridge the gap with a
+/// straight line of its own). `segments` need not cover every index — this
+/// starts a fresh subpath whenever the next segment does not continue
+/// directly from the last point drawn, so a subdivided primitive's own
+/// leftover legs render as separate strokes either side of the gap. For an
+/// UN-subdivided primitive `segments` is one unbroken run end to end, so
+/// this draws EXACTLY the single polyline every Elliott type's own `render`
+/// drew before subdivision skipping existed — byte-for-byte the same path.
+///
+/// `ctx` must already have its stroke colour/width/dash set by the caller
+/// (matches every other draw helper in this module). An index in
+/// `segments` past `screen`'s own bounds is skipped rather than panicking —
+/// defensive only, every real caller's `segments` indices are already
+/// bounds-checked by construction (`elliott::count::slot_span`'s own
+/// lookup never returns an index past a type's fixed point count).
+pub(crate) fn stroke_leg_segments(
+    ctx: &mut dyn RenderContext,
+    screen: &[(f64, f64)],
+    segments: &[(usize, usize)],
+    dpr: f64,
+) {
+    let mut iter = segments.iter().peekable();
+    while let Some(&(a, b)) = iter.next() {
+        let (Some(&(ax, ay)), Some(&(bx, by))) = (screen.get(a), screen.get(b)) else { continue };
+        ctx.begin_path();
+        ctx.move_to(crisp(ax, dpr), crisp(ay, dpr));
+        ctx.line_to(crisp(bx, dpr), crisp(by, dpr));
+        let mut last = b;
+        while let Some(&&(next_a, next_b)) = iter.peek() {
+            if next_a != last {
+                break;
+            }
+            iter.next();
+            let Some(&(nx, ny)) = screen.get(next_b) else { break };
+            ctx.line_to(crisp(nx, dpr), crisp(ny, dpr));
+            last = next_b;
+        }
+        ctx.stroke();
+    }
+}
+
 /// The vertical push applied to wave label `i`'s own anchor point before
 /// drawing it — UP when this pivot sits above (smaller screen `y`) the one
 /// before it, DOWN otherwise, so a label never sits on top of the wave line

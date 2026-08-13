@@ -713,7 +713,7 @@ impl ChartApp {
         self.core.drawings_mut().select(bid, prim_id);
 
         let Some(cfg) = self.core.drawings().selected_config(bid) else { return false; };
-        let items = match (gesture, wave_slot) {
+        let mut items = match (gesture, wave_slot) {
             (ChartGesture::WaveMenu, Some(slot)) => {
                 let child_id = self.core.drawings().wave_child_id(bid, prim_id, slot);
                 build_wave_menu(&cfg, slot, child_id)
@@ -726,6 +726,21 @@ impl ChartApp {
             // build a menu with no subject.
             (ChartGesture::WaveMenu, None) => return false,
         };
+
+        // Right-click does not TAKE the primitive's own menu away from the
+        // user — owner, 2026-08-13: "ПКМ перехватывается основным ПКМ, но для
+        // эллиота можно просто скрестить эллиот-дропдаун и обычный ПКМ, и
+        // эллиот поставит блоком сверху". So when the gesture is bound to the
+        // right button the wave block goes ON TOP of the ordinary primitive
+        // menu, and everything that menu offers (settings, clone, lock,
+        // visibility, delete) is still one click away. Double-click has no
+        // such menu to preserve and stays the wave block alone.
+        if trigger == GestureTrigger::RightClick {
+            let data = prim.data();
+            let display_name = localize_primitive_name(prim.type_id(), prim.display_name());
+            items.push(ContextMenuItemState::separator());
+            items.extend(build_primitive_context_menu(&display_name, data.locked, data.visible));
+        }
 
         let w = self.width as f64;
         let h = self.height as f64;

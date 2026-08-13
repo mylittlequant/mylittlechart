@@ -296,11 +296,23 @@ pub fn child_seed(parent: &dyn Primitive, slot: WaveSlot) -> Option<ChildSeed> {
 /// The `(start_index, end_index)` pair into a parent's own `points()` that
 /// `slot` spans, keyed by the parent's `type_id()`. The point layout is
 /// fixed per Elliott type (see each type's own `points` field doc); this is
-/// a pure lookup table, not a downcast. `pub(super)` (rather than private)
-/// so `elliott::guard`'s render-side marking and every `elliott_*.rs`'s own
-/// `render` can look up which segment/label index a [`WaveSlot`] violation
-/// lands on, without a second copy of this table.
-pub(super) fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)> {
+/// a pure lookup table, not a downcast.
+///
+/// `pub` (owner report 2026-08-13, this crate's own `traits.rs` "Elliott
+/// Subdivision Overlay" section): the collection's own owner
+/// (`DrawingManager`, `mlc-backend`) must be able to write a MOVED child's
+/// own endpoints back INTO the parent's own point array at exactly this
+/// span — the write that makes a spawned subdivision genuinely PART of the
+/// structure instead of an overlay drawn on top of it (the owner's own
+/// words: "он должен именно что становиться частью", not just look
+/// attached). This function still only NAMES the two indices; it adds no
+/// write helper of its own — a primitive still never resolves its own
+/// parent, the caller does that (same contract [`child_seed`]'s own doc
+/// already states for the read side). Within this crate, `elliott::guard`'s
+/// render-side marking and every `elliott_*.rs`'s own `render`/`hit_test`
+/// still read it for the same reason as before: which segment/label index a
+/// [`WaveSlot`] lands on, without a second copy of this table.
+pub fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)> {
     use WaveSlot::*;
     match type_id {
         // ElliottImpulse: 6 points — start(0), wave1..5(1..=5). Each wave
@@ -351,6 +363,40 @@ pub(super) fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)>
         },
         _ => None,
     }
+}
+
+// =========================================================================
+// Subdivision overlay skip (owner report 2026-08-13, this module's own doc
+// on `WaveLink`: a spawned child must REPLACE the leg of its parent it
+// nests inside, not overlay it — see `Primitive::subdivided_slots`'s own
+// doc in `traits.rs` for the render-side cache these two functions serve).
+// =========================================================================
+
+/// Whether the leg from point index `i` to `i + 1` on a primitive of
+/// `type_id` falls entirely inside one of `subdivided`'s own slot spans —
+/// the shared predicate a subdivision's `render` skip and its matching
+/// `hit_test` skip both read. Reuses [`slot_span`], never a second span
+/// table — a combination's own multi-leg component slot (e.g. `ComboW`
+/// spanning two legs) covers every leg inside its span, not just the one
+/// ending the span.
+pub(super) fn segment_is_subdivided(type_id: &str, i: usize, subdivided: &[WaveSlot]) -> bool {
+    subdivided.iter().any(|&slot| slot_span(type_id, slot).is_some_and(|(a, b)| a <= i && i + 1 <= b))
+}
+
+/// Every consecutive leg `(i, i + 1)` within the REALIZED point prefix that
+/// a primitive of `type_id` still draws as its OWN line — every leg
+/// [`segment_is_subdivided`] does NOT cover. The single place `render`
+/// decides which legs remain its own to stroke, shared with this crate's
+/// own tests (see each `elliott_*.rs`'s own `subdivided_*_excludes_*`
+/// test) so "what render draws" and "what a test asserts render draws" can
+/// never drift apart. Empty once `realized < 2` — the same "nothing to
+/// draw yet" case the pre-subdivision render loop's own `realized >= 2`
+/// guard used to gate explicitly.
+pub(super) fn visible_leg_segments(type_id: &str, realized: usize, subdivided: &[WaveSlot]) -> Vec<(usize, usize)> {
+    (0..realized.saturating_sub(1))
+        .filter(|&i| !segment_is_subdivided(type_id, i, subdivided))
+        .map(|i| (i, i + 1))
+        .collect()
 }
 
 // =========================================================================

@@ -6,10 +6,10 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
-    render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset,
+    render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset, stroke_leg_segments,
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
-use super::count::{WaveLink, WaveSlot, slot_span};
+use super::count::{WaveLink, WaveSlot, slot_span, segment_is_subdivided, visible_leg_segments};
 use super::{guard, ratio, wave_hit};
 
 fn default_true() -> bool { true }
@@ -108,6 +108,15 @@ pub struct ElliottCorrection {
     /// disk.
     #[serde(skip)]
     pub context_violations: Vec<guard::Violation>,
+    /// The slots currently occupied by a child subdivision nested inside
+    /// THIS correction — see
+    /// [`super::super::Primitive::subdivided_slots`]'s own doc. Cache only,
+    /// filled by the collection's own owner exactly like
+    /// [`context_violations`](Self::context_violations) — skipped on
+    /// (de)serialization so it never becomes a second source of truth on
+    /// disk.
+    #[serde(skip)]
+    pub subdivided_slots: Vec<WaveSlot>,
 }
 
 impl ElliottCorrection {
@@ -134,6 +143,7 @@ impl ElliottCorrection {
             ratio_rib_style: LineStyle::Dotted,
             realized_points: None,
             context_violations: Vec::new(),
+            subdivided_slots: Vec::new(),
         }
     }
 
@@ -182,6 +192,8 @@ impl Primitive for ElliottCorrection {
     fn correction_subtype(&self) -> Option<&'static str> { Some(self.correction_type.as_str()) }
     fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
     fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
+    fn subdivided_slots(&self) -> &[WaveSlot] { &self.subdivided_slots }
+    fn set_subdivided_slots(&mut self, v: Vec<WaveSlot>) { self.subdivided_slots = v; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -212,6 +224,11 @@ impl Primitive for ElliottCorrection {
             if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
         for i in 0..3 {
+            // A leg a child subdivision now nests inside is no longer
+            // drawn (see `render`, below) — an invisible leg that still
+            // swallows clicks is the same "drawn but not clickable" defect
+            // turned inside out.
+            if segment_is_subdivided(self.type_id(), i, &self.subdivided_slots) { continue; }
             if ratio::point_to_line_dist(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
         }
         // Ratio ribs are secondary edges of the shape, live only while
@@ -282,13 +299,16 @@ impl Primitive for ElliottCorrection {
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
 
-        if self.show_lines && realized >= 2 {
-            ctx.begin_path();
-            ctx.move_to(crisp(screen[0].0, dpr), crisp(screen[0].1, dpr));
-            for &(sx, sy) in &screen[1..realized] {
-                ctx.line_to(crisp(sx, dpr), crisp(sy, dpr));
-            }
-            ctx.stroke();
+        if self.show_lines {
+            // A slot in `subdivided_slots` no longer draws its own leg here
+            // — the child subdivision nested into it draws that stretch of
+            // the count now (owner report 2026-08-13: a subdivision must
+            // REPLACE the leg, not overlay it). `visible_leg_segments`
+            // returns one unbroken run when nothing is subdivided, so this
+            // draws byte-for-byte the same path as before subdivision
+            // skipping existed for a plain (non-subdivided) correction.
+            let segments = visible_leg_segments(self.type_id(), realized, &self.subdivided_slots);
+            stroke_leg_segments(ctx, &screen, &segments, dpr);
         }
 
         ctx.set_line_dash(&[]);
@@ -297,6 +317,12 @@ impl Primitive for ElliottCorrection {
             ctx.set_stroke_color(guard::VIOLATION_COLOR);
             ctx.set_stroke_width(self.data.width);
             for v in &violations {
+                // A subdivided wave's own leg is not drawn above — its
+                // violation is still marked on its LABEL plate below, but
+                // there is no leg left here to recolor.
+                if self.subdivided_slots.contains(&v.wave) {
+                    continue;
+                }
                 if let Some((a, b)) = slot_span(self.type_id(), v.wave) {
                     if b < realized {
                         ctx.begin_path();
@@ -432,5 +458,28 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod subdivision_overlay_tests {
+    use super::*;
+
+    /// Deliverable 2/3 (owner report 2026-08-13): once wave B carries a
+    /// child subdivision, the segment list `render` would stroke excludes
+    /// wave B's own span `(1, 2)` and still includes wave A and wave C.
+    #[test]
+    fn subdivided_wave_b_excludes_its_own_span_from_render_segments() {
+        let points: [(i64, f64); 4] = [(0, 100.0), (1_000, 90.0), (2_000, 95.0), (3_000, 85.0)];
+        let mut correction = ElliottCorrection::new(points, "#FF5722");
+        correction.set_subdivided_slots(vec![WaveSlot::CorrectionB]);
+
+        let segments =
+            visible_leg_segments(correction.type_id(), correction.realized_point_count(), correction.subdivided_slots());
+        assert_eq!(
+            segments,
+            vec![(0, 1), (2, 3)],
+            "wave B's own span (1, 2) is replaced by its child, wave A and wave C are unaffected"
+        );
     }
 }
