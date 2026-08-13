@@ -33,6 +33,39 @@
 //! that function's own doc, and the "Chain guard" section below, for why a
 //! chain's hard rules are the SAME family rules run against the chain's own
 //! promoted pivot sequence rather than a third rule set.
+//!
+//! Owner report 2026-08-14: a plain downward impulse with wave 4 drawn to
+//! END BELOW wave 3 (continuing in the trend direction instead of retracing
+//! against it) rendered with nothing flagged — none of the three rules above
+//! cover DIRECTION at all. Two more checks close that gap, plus one guideline
+//! deliberately left unimplemented:
+//! - [`impulse_violations`] gained `"wave3_exceeds_wave1"` — a motive wave
+//!   must progress (`mli::ewa::rules::beyond`), unconditionally, so it lives
+//!   with the other self-only impulse rules.
+//! - [`violations_in`] gained `"wave2_retraces_wave1"`/
+//!   `"wave4_retraces_wave3"` — a corrective wave must retrace AGAINST the
+//!   direction its own preceding motive wave established
+//!   (`mli::ewa::rules::progresses`), the exact rule the owner's report
+//!   names. This one is deliberately NOT in [`impulse_violations`]: a wave 2
+//!   or wave 4 whose own subdivision is a RUNNING variant (running flat/
+//!   triangle/zigzag) legitimately fails to retrace, and only the
+//!   context-aware pass can see that subdivision at all — see
+//!   [`violations_in`]'s own doc, further down, for why the rule lives ONLY
+//!   there rather than being reported self-only and retracted by context.
+//! - Wave 5 exceeding wave 3 (the OTHER motive-progression rule the owner's
+//!   report describes) is NOT implemented: a failing wave 5 is a real
+//!   Elliott shape (`EwaPatternKind::TruncatedImpulse`, whose own catalogue
+//!   rule is literally `"wave5_fails_to_exceed_wave3"`), but `ElliottImpulse`
+//!   carries no field naming a structure as truncated, and inventing one
+//!   only for this check is out of scope here. Reporting it unconditionally
+//!   would flag every legitimate truncated fifth as broken; skipping it
+//!   entirely is the same "incomplete/ambiguous is not wrong" contract this
+//!   module already applies to a structure still being drawn (see this
+//!   module's own doc above).
+//!
+//! Every new predicate call here reads `mli::ewa::rules::{beyond,
+//! progresses}` exactly as this module's own opening paragraph promises —
+//! no second copy of either comparison.
 
 use mli::ewa::grammar;
 use mli::ewa::rules as ewa_rules;
@@ -122,6 +155,30 @@ fn impulse_violations(points: &[(i64, f64)], realized: usize) -> Vec<Violation> 
                     rule_id: "wave4_no_wave1_overlap",
                     wave: WaveSlot::Impulse4,
                     message: ConceptKey::RuleWave4OverlapsWave1,
+                });
+            }
+        }
+    }
+
+    // wave3_exceeds_wave1 — a motive wave must progress: wave 3 must end
+    // beyond wave 1's own end, continuing in the direction wave 1 itself
+    // established (owner report 2026-08-14, "A motive wave must progress").
+    // `beyond(origin, reference, test)` with origin/reference = wave 1's own
+    // start/end and test = wave 3's own end is exactly the same "does test
+    // progress past reference, relative to origin" predicate
+    // `correction_violations` already reuses for its own C-vs-A-end check —
+    // no new comparison. Unconditional (unlike the retracement rule in
+    // `violations_in`, further down) — no Elliott shape lets wave 3 fail to
+    // make new trend-direction ground past wave 1, so this is a plain
+    // self-only check, live every frame like every other rule in this
+    // function.
+    if realized >= 4 {
+        if let (Some(p0), Some(p1), Some(p3)) = (price(points, 0), price(points, 1), price(points, 3)) {
+            if !ewa_rules::beyond(p0, p1, p3) {
+                out.push(Violation {
+                    rule_id: "wave3_exceeds_wave1",
+                    wave: WaveSlot::Impulse3,
+                    message: ConceptKey::RuleWave3NotExceedingWave1,
                 });
             }
         }
@@ -337,6 +394,26 @@ fn triangle_violations(points: &[(i64, f64)], realized: usize) -> Vec<Violation>
 /// Reads every primitive (including `prim` itself) only through the
 /// [`Primitive`] trait — never downcasts, matching every other function in
 /// this module and in `elliott::count`.
+///
+/// Contract note (owner report 2026-08-14, the `"wave2_retraces_wave1"`/
+/// `"wave4_retraces_wave3"` checks below): this function's own contract
+/// stated just above — ONLY extra violations, nothing here duplicates OR
+/// REVOKES a self-only one — is why the retracement rule is reported ONLY
+/// here rather than unconditionally in [`impulse_violations`] and retracted
+/// by this pass once a running subdivision is seen. Retraction would need
+/// every one of the five Elliott types' own `render` to change its
+/// `guard::violations(self)` + `self.context_violations()` merge from a
+/// plain concatenation into something that reconciles the two lists —
+/// this module chose to keep that merge untouched and this function
+/// strictly additive, and pays for it with one real cost: unlike a
+/// self-only rule, `"wave2_retraces_wave1"`/`"wave4_retraces_wave3"` do not
+/// update live while the analyst drags a wave 2 or wave 4 pivot around —
+/// this pass only recomputes once per gesture
+/// (`DrawingManager::refresh_wave_guards`'s own doc), not once per frame
+/// the way [`impulse_violations`] does. Accepted because mid-drag, before
+/// any subdivision has even been chosen, this rule cannot yet know whether
+/// a running variant is coming either — the exception it needs to honor
+/// literally does not exist until a child primitive does.
 pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Violation> {
     let mut out = Vec::new();
     let prim_id = prim.data().id;
@@ -401,6 +478,43 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                             wave: WaveSlot::Impulse4,
                             message: ConceptKey::RuleWave4OverlapsWave1,
                         });
+                    }
+                }
+            }
+        }
+
+        // wave2_retraces_wave1 / wave4_retraces_wave3 — a corrective wave
+        // must move AGAINST the trend direction the impulse's own wave 1
+        // established (owner report 2026-08-14: "видно, что 4 волна ниже,
+        // чем 3, но ведь так не может быть по правилам"). Direction is
+        // derived once from wave 1's own leg (points 0->1), exactly as
+        // `correction_violations` derives its own B/C direction from wave
+        // A's leg; `ewa_rules::progresses` is the SAME predicate that
+        // function already reads there, not a new comparison. See this
+        // function's own doc, above, for why this rule is reported ONLY
+        // here — gated on [`running_subdivision`] — rather than
+        // unconditionally in [`impulse_violations`].
+        if realized >= 3 {
+            if let (Some(p0), Some(p1)) = (price(&points, 0), price(&points, 1)) {
+                let direction = EwaSegmentDirection::from_delta(p1 - p0);
+                if let Some(p2) = price(&points, 2) {
+                    if ewa_rules::progresses(direction, p1, p2) && !running_subdivision(&children, WaveSlot::Impulse2) {
+                        out.push(Violation {
+                            rule_id: "wave2_retraces_wave1",
+                            wave: WaveSlot::Impulse2,
+                            message: ConceptKey::RuleWave2NotRetracingWave1,
+                        });
+                    }
+                }
+                if realized >= 5 {
+                    if let (Some(p3), Some(p4)) = (price(&points, 3), price(&points, 4)) {
+                        if ewa_rules::progresses(direction, p3, p4) && !running_subdivision(&children, WaveSlot::Impulse4) {
+                            out.push(Violation {
+                                rule_id: "wave4_retraces_wave3",
+                                wave: WaveSlot::Impulse4,
+                                message: ConceptKey::RuleWave4NotRetracingWave3,
+                            });
+                        }
                     }
                 }
             }
@@ -670,6 +784,26 @@ fn find_child<'a>(children: &[(&'a dyn Primitive, WaveSlot)], slot: WaveSlot) ->
     None
 }
 
+/// Whether `slot`'s own child (if any) among `children` is a RUNNING
+/// variant — `EwaPatternKind::RunningFlat`/`RunningTriangle`/
+/// `RunningZigzag`, the catalogue's own definition of "legitimately ends in
+/// the trend direction instead of retracing against it" (a running flat's
+/// own catalogue rule is literally named `"c_fails_to_exceed_a_end"` — see
+/// `mli::ewa::primitives::EWA_PRIMITIVES`'s own `RunningFlat`/
+/// `RunningTriangle` entries — and `RunningZigzag` reuses the same rule
+/// under `zigzag_core`). Reads the child's own kind through [`child_pattern`]
+/// (`count::kind_id_of` + `count::kind_pattern`), never a string match on
+/// the chart-side type id — the exact vocabulary the owner ask for this
+/// check named (see [`violations_in`]'s own doc, 2026-08-14 note). `false`
+/// when `slot` has no child, or the child's own kind cannot be named at all
+/// — an absent or unrecognized subdivision earns no exception; it must
+/// actually BE a running structure to open one.
+fn running_subdivision(children: &[(&dyn Primitive, WaveSlot)], slot: WaveSlot) -> bool {
+    find_child(children, slot).and_then(child_pattern).is_some_and(|kind| {
+        matches!(kind, EwaPatternKind::RunningFlat | EwaPatternKind::RunningTriangle | EwaPatternKind::RunningZigzag)
+    })
+}
+
 /// Whether ANY of `child`'s own realized pivots crosses `origin` relative to
 /// `reference` (`mli::ewa::rules::beyond_origin`) — the DEEP form of the
 /// same predicate `impulse_violations`'s own shallow wave-2/wave-4 checks
@@ -679,4 +813,81 @@ fn any_child_pivot_beyond_origin(origin: f64, reference: f64, child: &dyn Primit
     let points = child.points();
     let realized = child.realized_point_count();
     points.iter().take(realized).any(|&(_, p)| ewa_rules::beyond_origin(origin, reference, p))
+}
+
+#[cfg(test)]
+mod retracement_tests {
+    use super::*;
+    use crate::drawing::primitives_v2::elliott::{CorrectionType, ElliottCorrection, ElliottImpulse, WaveLink};
+
+    /// The owner's own report (2026-08-14): a plain downward impulse — point
+    /// 0 ~65600, wave 1 end ~64800, wave 2 end ~65200, wave 3 end ~63800,
+    /// wave 4 end ~63600, wave 5 end ~63000 (wave 3/5 nudged off the
+    /// screenshot's own rounded values so `wave3_exceeds_wave1` and
+    /// `wave3_not_shortest` stay clean and this fixture isolates exactly the
+    /// violation the owner is asking about — wave 4 ends BELOW wave 3,
+    /// continuing the downtrend instead of retracing against it).
+    fn owner_report_impulse() -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [
+            (0, 65_600.0),
+            (1_000, 64_800.0),
+            (2_000, 65_200.0),
+            (3_000, 63_800.0),
+            (4_000, 63_600.0),
+            (5_000, 63_000.0),
+        ];
+        let mut impulse = ElliottImpulse::new(points, "#2196F3");
+        impulse.data.id = 1;
+        impulse
+    }
+
+    #[test]
+    fn owner_report_impulse_flags_wave4_retraces_wave3() {
+        let impulse = owner_report_impulse();
+
+        // Self-only pass never sees this rule (see `violations_in`'s own
+        // doc) — the impulse's OTHER self-only rules (`wave3_exceeds_wave1`,
+        // `wave3_not_shortest`, `wave2_not_beyond_wave1_origin`,
+        // `wave4_no_wave1_overlap`) all stay clean on these numbers.
+        assert!(violations(&impulse).is_empty(), "self-only pass reports nothing for this fixture");
+
+        let found = violations_in(&impulse, &[]);
+        assert_eq!(found.len(), 1, "exactly the wave-4 retracement violation, nothing else: {found:?}");
+        assert_eq!(found[0].rule_id, "wave4_retraces_wave3");
+        assert!(matches!(found[0].wave, WaveSlot::Impulse4));
+    }
+
+    #[test]
+    fn running_flat_in_wave4_clears_the_retracement_violation() {
+        let impulse = owner_report_impulse();
+
+        let mut running_child = ElliottCorrection::new(
+            [(3_000, 63_800.0), (3_300, 63_700.0), (3_600, 63_750.0), (4_000, 63_600.0)],
+            "#FF5722",
+        );
+        running_child.correction_type = CorrectionType::Running;
+        running_child.set_wave_link(Some(WaveLink { parent_id: impulse.data.id, slot: WaveSlot::Impulse4 }));
+
+        let others: Vec<&dyn Primitive> = vec![&running_child];
+        let found = violations_in(&impulse, &others);
+        assert!(
+            !found.iter().any(|v| v.rule_id == "wave4_retraces_wave3"),
+            "a running-flat subdivision in wave 4 legitimately fails to retrace, so this rule must not fire: {found:?}"
+        );
+    }
+
+    #[test]
+    fn compliant_impulse_reports_nothing() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0),
+            (1_000, 110.0),
+            (2_000, 104.0),
+            (3_000, 130.0),
+            (4_000, 120.0),
+            (5_000, 140.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        assert!(violations(&impulse).is_empty());
+        assert!(violations_in(&impulse, &[]).is_empty());
+    }
 }

@@ -2903,10 +2903,22 @@ pub enum ConceptKey {
     SelectSubdivisionLabel = 308,
     RemoveSubdivisionLabel = 309,
     PromoteChainLabel = 310,
+
+    // ---- Elliott motive/retracement guard messages (2026-08-14, owner
+    // report: an impulse's wave 4 drawn to CONTINUE past wave 3 in the
+    // trend direction instead of retracing against it, and nothing
+    // flagged it — "видно, что 4 волна ниже, чем 3, но ведь так не
+    // может быть по правилам, почему она тут не подсвечивается как
+    // ошибочная?"). See `elliott::guard::impulse_violations`'s own
+    // `"wave3_exceeds_wave1"` check and `elliott::guard::violations_in`'s
+    // own `"wave2_retraces_wave1"`/`"wave4_retraces_wave3"` checks.
+    RuleWave2NotRetracingWave1 = 311,
+    RuleWave4NotRetracingWave3 = 312,
+    RuleWave3NotExceedingWave1 = 313,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 311;
+    pub const COUNT: usize = 314;
 
     /// Get translation for this key.
     #[inline]
