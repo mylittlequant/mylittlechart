@@ -478,6 +478,113 @@ pub fn successor_kinds(prev: &dyn Primitive) -> &'static [&'static str] {
     }
 }
 
+// =========================================================================
+// Promotion — collapsing a same-degree chain into the degree above
+// =========================================================================
+
+/// What a chain of `follows`-linked same-degree structures collapses into
+/// one degree coarser — the shape [`promote_chain_shape`] computes and a
+/// caller (`DrawingManager::promote_wave_chain`) builds a real primitive
+/// from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PromotedShape {
+    /// The parent's own registry type id — always `"elliott_impulse"` (a
+    /// chain opening with a motive structure) or `"elliott_correction"` (a
+    /// chain opening with a corrective one). Never one of the other three
+    /// corrective types: a promoted parent's OWN subdivisions may be any
+    /// corrective type (that is what `follows` already allows), but the
+    /// parent shape itself is always the plain three-slot correction —
+    /// there is no such thing as "a triangle two degrees up".
+    pub type_id: &'static str,
+    /// The parent's degree — the chain's own shared degree, one step
+    /// coarser (see [`WaveDegree::coarser`]).
+    pub degree: WaveDegree,
+    /// Which of the parent's own slots each chain member (in the same
+    /// order) is mapped onto — a PREFIX of the parent type's full slot
+    /// list, one entry per chain member. Shorter than the parent's own
+    /// slot count whenever the chain does not yet cover every wave (e.g.
+    /// only wave 1 and wave 2 of a coarser impulse have been drawn so
+    /// far).
+    pub slots: Vec<WaveSlot>,
+    /// The parent's own anchor points: the first chain member's first
+    /// point, then every chain member's own last point, in chain order.
+    /// One entry longer than `slots` (an N-slot span has N+1 boundary
+    /// points).
+    pub points: Vec<(i64, f64)>,
+}
+
+/// Compute the coarser structure a `follows`-linked chain collapses into,
+/// or `None` when the chain does not qualify — never a guess.
+///
+/// `chain` must already be in succession order (chain\[0\] is the chain's
+/// own head); this function only VERIFIES contiguity, it does not sort or
+/// search for it. Refuses (`None`) when:
+/// - `chain` is empty;
+/// - the chain does not all share one [`WaveDegree`];
+/// - any member already carries a [`WaveLink`] — it is already someone
+///   else's subdivision, and a promoted parent must not adopt a primitive
+///   that is already nested under a different parent;
+/// - the chain is not `follows`-contiguous (member `i`'s own
+///   [`Primitive::wave_follows`] must equal member `i-1`'s own id);
+/// - the chain is longer than the parent type's own slot count (5 for an
+///   impulse-opened chain, 3 for a corrective-opened one);
+/// - the chain breaks the classic motive/corrective alternation (only
+///   `"elliott_impulse"` is motive — the same rule
+///   [`successor_kinds`] itself already enforces at chain-BUILD time; this
+///   is the defensive re-check for a chain assembled some other way).
+///
+/// Never downcasts to a concrete Elliott type — reads every chain member
+/// only through the [`Primitive`] trait, matching [`child_seed`]/
+/// [`successor_seed`]'s own contract.
+pub fn promote_chain_shape(chain: &[&dyn Primitive]) -> Option<PromotedShape> {
+    let head = *chain.first()?;
+    let degree = head.wave_degree()?;
+    if chain.iter().any(|p| p.wave_degree() != Some(degree)) {
+        return None;
+    }
+    if chain.iter().any(|p| p.wave_link().is_some()) {
+        return None;
+    }
+    for pair in chain.windows(2) {
+        let prev_id = pair[0].data().id;
+        if pair[1].wave_follows() != Some(prev_id) {
+            return None;
+        }
+    }
+
+    let starts_motive = head.type_id() == "elliott_impulse";
+    const IMPULSE_SLOTS: [WaveSlot; 5] =
+        [WaveSlot::Impulse1, WaveSlot::Impulse2, WaveSlot::Impulse3, WaveSlot::Impulse4, WaveSlot::Impulse5];
+    const CORRECTION_SLOTS: [WaveSlot; 3] = [WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC];
+    let (parent_type, parent_slots): (&'static str, &[WaveSlot]) = if starts_motive {
+        ("elliott_impulse", &IMPULSE_SLOTS)
+    } else {
+        ("elliott_correction", &CORRECTION_SLOTS)
+    };
+    if chain.len() > parent_slots.len() {
+        return None;
+    }
+    for (i, p) in chain.iter().enumerate() {
+        let expect_motive = if i % 2 == 0 { starts_motive } else { !starts_motive };
+        if (p.type_id() == "elliott_impulse") != expect_motive {
+            return None;
+        }
+    }
+
+    let mut points = Vec::with_capacity(chain.len() + 1);
+    points.push(*head.points().first()?);
+    for p in chain {
+        points.push(*p.points().last()?);
+    }
+
+    Some(PromotedShape {
+        type_id: parent_type,
+        degree: degree.coarser(),
+        slots: parent_slots[..chain.len()].to_vec(),
+        points,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,5 +750,77 @@ mod tests {
         use crate::drawing::primitives_v2::TrendLine;
         let line = TrendLine::new(0, 100.0, 1_000, 110.0, "#2196F3");
         assert!(successor_kinds(&line).is_empty());
+    }
+
+    fn chain_impulse_then_correction() -> (ElliottImpulse, ElliottCorrection) {
+        let impulse_points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let mut impulse = ElliottImpulse::new(impulse_points, "#2196F3");
+        impulse.data.id = 1;
+
+        let correction_points: [(i64, f64); 4] = [
+            (5_000, 140.0), (6_000, 135.0), (7_000, 138.0), (8_000, 132.0),
+        ];
+        let mut correction = ElliottCorrection::new(correction_points, "#FF5722");
+        correction.data.id = 2;
+        correction.follows = Some(1);
+
+        (impulse, correction)
+    }
+
+    #[test]
+    fn promote_chain_shape_two_member_chain_maps_to_impulse_slots_1_and_2() {
+        let (impulse, correction) = chain_impulse_then_correction();
+        let chain: Vec<&dyn Primitive> = vec![&impulse, &correction];
+        let shape = promote_chain_shape(&chain).expect("impulse+correction chain promotes");
+        assert_eq!(shape.type_id, "elliott_impulse");
+        assert_eq!(shape.degree, WaveDegree::Intermediate.coarser());
+        assert_eq!(shape.slots, vec![WaveSlot::Impulse1, WaveSlot::Impulse2]);
+        assert_eq!(shape.points, vec![(0, 100.0), (5_000, 140.0), (8_000, 132.0)], "start of the first member, then each member's own last point");
+    }
+
+    #[test]
+    fn promote_chain_shape_refuses_mixed_degree() {
+        let (impulse, mut correction) = chain_impulse_then_correction();
+        correction.degree = WaveDegree::Minor;
+        let chain: Vec<&dyn Primitive> = vec![&impulse, &correction];
+        assert!(promote_chain_shape(&chain).is_none());
+    }
+
+    #[test]
+    fn promote_chain_shape_refuses_a_member_already_linked_elsewhere() {
+        let (impulse, mut correction) = chain_impulse_then_correction();
+        correction.link = Some(WaveLink { parent_id: 999, slot: WaveSlot::CorrectionA });
+        let chain: Vec<&dyn Primitive> = vec![&impulse, &correction];
+        assert!(promote_chain_shape(&chain).is_none(), "a member already nested under another parent must not be adopted");
+    }
+
+    #[test]
+    fn promote_chain_shape_refuses_a_non_contiguous_chain() {
+        let (impulse, mut correction) = chain_impulse_then_correction();
+        correction.follows = Some(42); // does not point back at the impulse's own id (1)
+        let chain: Vec<&dyn Primitive> = vec![&impulse, &correction];
+        assert!(promote_chain_shape(&chain).is_none());
+    }
+
+    #[test]
+    fn promote_chain_shape_corrective_opened_chain_maps_to_correction_slots() {
+        let correction_points: [(i64, f64); 4] = [(0, 100.0), (1_000, 90.0), (2_000, 95.0), (3_000, 85.0)];
+        let mut correction = ElliottCorrection::new(correction_points, "#FF5722");
+        correction.data.id = 10;
+
+        let impulse_points: [(i64, f64); 6] = [
+            (3_000, 85.0), (4_000, 95.0), (5_000, 90.0), (6_000, 105.0), (7_000, 98.0), (8_000, 115.0),
+        ];
+        let mut impulse = ElliottImpulse::new(impulse_points, "#2196F3");
+        impulse.data.id = 11;
+        impulse.follows = Some(10);
+
+        let chain: Vec<&dyn Primitive> = vec![&correction, &impulse];
+        let shape = promote_chain_shape(&chain).expect("correction+impulse chain promotes");
+        assert_eq!(shape.type_id, "elliott_correction");
+        assert_eq!(shape.slots, vec![WaveSlot::CorrectionA, WaveSlot::CorrectionB]);
+        assert_eq!(shape.points, vec![(0, 100.0), (3_000, 85.0), (8_000, 115.0)]);
     }
 }

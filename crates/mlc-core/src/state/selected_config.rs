@@ -34,4 +34,12 @@ pub struct SelectedPrimitiveConfig {
     /// this codebase; `display_name` is that type's own registered
     /// `PrimitiveMetadata::display_name` — never a second name table.
     pub successor_kinds: Vec<(String, String)>,
+    /// Whether the selected primitive's own `follows`-linked chain
+    /// currently promotes into one coarser structure (E4 — see
+    /// `drawing::primitives_v2::elliott::count::promote_chain_shape`).
+    /// `false` for every primitive outside the Elliott family, and for an
+    /// Elliott wave whose chain does not (yet) qualify — mixed degree, a
+    /// member already nested under another parent, a chain longer than the
+    /// parent type's own slot count, or broken alternation.
+    pub can_promote: bool,
 }

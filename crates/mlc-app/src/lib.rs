@@ -1501,7 +1501,11 @@ pub struct SymbolQuickEdit {
 /// on top of the last.
 #[derive(Debug, Clone)]
 pub(crate) struct PrimitiveClipboard {
-    pub type_id: String,
+    /// Full serialized state of the copied primitive — restored through
+    /// `PrimitiveRegistry::from_json` on paste so type-specific fields
+    /// outside `PrimitiveData` (an Elliott wave's own degree/link/follows)
+    /// survive the round trip, not just the ones `data` below carries.
+    pub snapshot: mlc_core::drawing::PrimitiveSnapshot,
     pub points: Vec<(i64, f64)>,
     pub data: mlc_core::drawing::PrimitiveData,
     pub paste_count: u32,
@@ -11666,22 +11670,12 @@ impl ChartApp {
                         .unwrap_or(0);
 
                     if new_count > prev_count {
-                        let snapshot = active_bid_fm
-                            .and_then(|bid| {
-                                let guard = self.core.drawings();
-                                let prim_id = guard.last_index(bid)?;
-                                let type_id = guard.get_type_id(bid, prim_id)?;
-                                let points = guard.get_points(bid, prim_id)?;
-                                let data = guard.get_data(bid, prim_id)?;
-                                Some((prim_id, type_id, points, data))
-                            });
-                        if let Some((prim_id, type_id, points, data)) = snapshot {
-                            self.push_undo_command(Command::CreatePrimitive {
-                                prim_id,
-                                type_id,
-                                points,
-                                data,
-                            });
+                        let cmd = active_bid_fm.and_then(|bid| {
+                            let prim_id = self.core.drawings().last_index(bid)?;
+                            self.build_create_primitive_command(bid, prim_id)
+                        });
+                        if let Some(cmd) = cmd {
+                            self.push_undo_command(cmd);
                             self.autosave_snapshot();
                         }
                     }
@@ -11705,22 +11699,12 @@ impl ChartApp {
                         .unwrap_or(0);
 
                     if new_count > prev_count {
-                        let snapshot = active_bid_dc
-                            .and_then(|bid| {
-                                let guard = self.core.drawings();
-                                let prim_id = guard.last_index(bid)?;
-                                let type_id = guard.get_type_id(bid, prim_id)?;
-                                let points = guard.get_points(bid, prim_id)?;
-                                let data = guard.get_data(bid, prim_id)?;
-                                Some((prim_id, type_id, points, data))
-                            });
-                        if let Some((prim_id, type_id, points, data)) = snapshot {
-                            self.push_undo_command(Command::CreatePrimitive {
-                                prim_id,
-                                type_id,
-                                points,
-                                data,
-                            });
+                        let cmd = active_bid_dc.and_then(|bid| {
+                            let prim_id = self.core.drawings().last_index(bid)?;
+                            self.build_create_primitive_command(bid, prim_id)
+                        });
+                        if let Some(cmd) = cmd {
+                            self.push_undo_command(cmd);
                             self.autosave_snapshot();
                         }
                     }

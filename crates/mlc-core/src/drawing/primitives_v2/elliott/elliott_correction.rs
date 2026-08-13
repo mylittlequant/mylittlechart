@@ -88,6 +88,7 @@ impl Primitive for ElliottCorrection {
     fn archetype(&self) -> Archetype { Archetype::Wave }
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::MultiPointFixed(4) }
     fn wave_link(&self) -> Option<WaveLink> { self.link }
+    fn set_wave_link(&mut self, link: Option<WaveLink>) { self.link = link; }
     fn wave_degree(&self) -> Option<WaveDegree> { Some(self.degree) }
     fn wave_slots(&self) -> &'static [WaveSlot] {
         &[WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC]

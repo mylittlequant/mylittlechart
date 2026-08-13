@@ -441,6 +441,7 @@ impl ToolbarSection {
     /// verbatim as the dropdown row's own id; the caller (`panel_app.rs`)
     /// is the one that knows it must already be prefixed
     /// `"inline:wave_option:"` / `"inline:wave_next_option:"` respectively.
+    #[allow(clippy::too_many_arguments)]
     pub fn inline_config(
         name: &str,
         color: &str,
@@ -451,6 +452,7 @@ impl ToolbarSection {
         locked: bool,
         wave_slots: &[(String, String)],
         successor_kinds: &[(String, String)],
+        can_promote: bool,
     ) -> Self {
         let mut items = vec![
             // Primitive name
@@ -505,6 +507,18 @@ impl ToolbarSection {
         if !successor_kinds.is_empty() {
             items.push(ToolbarItem::Separator);
             items.push(ToolbarItem::icon_button("inline:wave_next", IconId::new("chevron_right")));
+        }
+
+        // Promote-chain button (E4) — collapses the selected primitive's own
+        // `follows`-linked same-degree chain into one coarser structure. A
+        // single button, not a dropdown (there is nothing to choose, unlike
+        // E2/E3's own row lists) — `can_promote` is the exact same
+        // `promote_chain_shape` check the click itself runs
+        // (`DrawingManager::selected_config`/`promote_wave_chain`), so this
+        // button is never shown offering a click that would refuse.
+        if can_promote {
+            items.push(ToolbarItem::Separator);
+            items.push(ToolbarItem::icon_button("inline:wave_up", IconId::new("chevron_up")));
         }
 
         // Separator space

@@ -2034,15 +2034,13 @@ impl ChartPanelGrid {
 /// Data returned by [`ChartPanelGrid::complete_freehand`] so the caller can
 /// push an undo record without needing access to `ChartPanelGrid` internals.
 pub struct FreehandCompleteResult {
-    /// Stable id of the newly completed primitive.  Needed to build
-    /// `Command::CreatePrimitive`.
+    /// Stable id of the newly completed primitive. The caller re-fetches a
+    /// full snapshot through the facade (`ChartApp::
+    /// build_create_primitive_command`) rather than this struct carrying
+    /// `type_id`/`points`/`data` itself — a `PrimitiveData`-only capture
+    /// here would lose whatever type-specific state the concrete primitive
+    /// carries outside it.
     pub prim_id: u64,
-    /// Primitive type identifier.
-    pub type_id: String,
-    /// Coordinate points of the primitive (ts_ms, price).
-    pub points: Vec<(i64, f64)>,
-    /// Full primitive data (id, color, style, etc.).
-    pub data: mlc_core::drawing::PrimitiveData,
 }
 
 impl ChartPanelGrid {
@@ -2155,10 +2153,7 @@ impl ChartPanelGrid {
         active_dm.complete_freehand();
 
         let prim_id = active_dm.last_index()?;
-        let type_id = active_dm.get_type_id(prim_id)?;
-        let points = active_dm.get_points(prim_id)?;
-        let data = active_dm.get_data(prim_id)?;
-        Some(FreehandCompleteResult { prim_id, type_id, points, data })
+        Some(FreehandCompleteResult { prim_id })
     }
 
     /// Update sub-pane overlay visibility + button hover for cursor at (screen_x, screen_y).

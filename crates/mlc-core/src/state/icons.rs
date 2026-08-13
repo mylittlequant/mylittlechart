@@ -2539,7 +2539,15 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "user" => Some(ICON_USER),
         "log_in" | "login" => Some(ICON_LOG_IN),
         "log_out" | "logout" => Some(ICON_LOG_OUT),
+        // The chevrons resolve by name. Only `chevron_left` and `chevron_down` did until
+        // 2026-08-13: right and up existed as consts and as `Icon`
+        // variants but had no arm here, so any caller that names an icon by
+        // STRING — every `IconId::new("…")` in a toolbar — got `None` and
+        // drew an empty button. Two of the Elliott inline controls shipped
+        // blank for exactly that reason.
         "chevron_left" | "chevronleft" => Some(ICON_CHEVRON_LEFT),
+        "chevron_right" | "chevronright" => Some(ICON_CHEVRON_RIGHT),
+        "chevron_up" | "chevronup" => Some(ICON_CHEVRON_UP),
         "refresh" | "refresh_cw" | "refreshcw" => Some(ICON_REFRESH),
         "shield" => Some(ICON_SHIELD),
         "shield_check" | "shieldcheck" => Some(ICON_SHIELD_CHECK),

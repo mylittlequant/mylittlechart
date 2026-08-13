@@ -11,5 +11,5 @@
 mod manager;
 mod facade;
 
-pub use manager::{DragType, DrawingManager, DrawingState, PrimitiveListItem};
+pub use manager::{DeletedPrimitives, DragType, DrawingManager, DrawingState, PrimitiveListItem};
 pub use facade::{BubbleDrawingView, Drawings, DrawingsMut, SwapSymbolResult};

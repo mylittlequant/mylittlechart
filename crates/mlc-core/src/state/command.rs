@@ -19,9 +19,13 @@
 //!
 //! Commands work with primitive ids (as used by DrawingManager):
 //! - `SetPrimitiveVisibility` / `SetPrimitiveLock` - by stable id
-//! - `CreatePrimitive` - stores type_id, points, data for recreation
-//! - `DeletePrimitive` - stores full primitive snapshot for undo
+//! - `CreatePrimitive` / `DeletePrimitive` - each other's inverse, both
+//!   carrying a full `PrimitiveSnapshot` (never a `PrimitiveData` subset —
+//!   see each variant's own doc for why) plus every primitive a cascading
+//!   delete also removed
 //! - `MovePrimitive` - stores before/after points
+//! - `PromoteWaveChain` / `DemoteWaveChain` - collapse/restore a
+//!   `follows`-linked Elliott chain into the degree above (E4)
 //!
 //! The pre-`ChartContainer` object-ID-based command family (`ObjectInfo`,
 //! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
@@ -32,7 +36,8 @@
 //! constructors anywhere in the workspace outside test placeholders.
 
 use serde::{Serialize, Deserialize};
-use crate::drawing::PrimitiveData;
+use crate::drawing::{PrimitiveData, PrimitiveSnapshot};
+use crate::drawing::primitives_v2::elliott::WaveSlot;
 use crate::chart::{CompareSeries, CompareSeriesStyle};
 use crate::alert::AlertItem;
 
@@ -120,39 +125,56 @@ pub enum Command {
         previous: bool,
     },
 
-    /// Delete primitive by stable id (delegates to `DrawingsMut::delete`)
+    /// Delete primitive by stable id (delegates to `DrawingsMut::delete`).
+    ///
+    /// Carries the WHOLE primitive, not a `PrimitiveData` subset — a
+    /// snapshot of its own serialized form (`PrimitiveSnapshot`), so undo
+    /// restores every field the concrete type carries, including the ones
+    /// outside `PrimitiveData` entirely (an Elliott wave's own
+    /// `degree`/`link`/`follows` — see `drawing::primitives_v2::elliott::
+    /// count`'s own module doc). `points` travels separately, not parsed
+    /// out of `snapshot.json`, because `Command::primitive_identity` must
+    /// hand back a borrowed slice for cold-load id matching.
+    ///
+    /// `cascaded` snapshots every OTHER primitive `DrawingManager::delete`'s
+    /// own subdivision cascade also removed (e.g. Elliott children nested
+    /// under `prim_id`), captured BEFORE the cascade ran — empty for a
+    /// primitive with no children. Undo (`inverse` -> `CreatePrimitive`)
+    /// restores the primary primitive AND every cascaded one together, so a
+    /// single Ctrl+Z brings back the whole subtree, not just the primitive
+    /// the user clicked delete on.
     DeletePrimitive {
         prim_id: u64,
-        /// Type ID for recreation via registry
-        type_id: String,
-        /// Coordinate points
         points: Vec<(i64, f64)>,
-        /// Full primitive data (id, color, style, etc.)
-        data: PrimitiveData,
+        snapshot: PrimitiveSnapshot,
+        cascaded: Vec<PrimitiveSnapshot>,
     },
 
-    /// Delete all primitives
+    /// Delete all primitives.
     DeleteAllPrimitives {
-        /// All primitives before deletion (for undo) - stores full data for recreation
-        primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
+        /// Every primitive before deletion (for undo) — full snapshots, not
+        /// a `PrimitiveData` subset (see `DeletePrimitive`'s own doc for
+        /// why).
+        primitives: Vec<PrimitiveSnapshot>,
     },
 
     /// Restore all primitives (inverse of DeleteAllPrimitives - used for undo)
     RestoreAllPrimitives {
-        /// All primitives to restore - stores full data for recreation
-        primitives: Vec<(String, Vec<(i64, f64)>, PrimitiveData)>, // (type_id, points, data)
+        /// Every primitive to restore — full snapshots (see
+        /// `DeletePrimitive`'s own doc).
+        primitives: Vec<PrimitiveSnapshot>,
     },
 
-    /// Create primitive (for undo of delete, or recording creation)
+    /// Create primitive (for undo of delete, or recording creation). See
+    /// `DeletePrimitive`'s own doc — same snapshot shape, same
+    /// `cascaded` meaning (populated when this is the `inverse()` of a
+    /// cascading `DeletePrimitive`; empty for an ordinary creation).
     CreatePrimitive {
         /// Stable id of the primitive being created/restored.
         prim_id: u64,
-        /// Type ID for recreation via registry
-        type_id: String,
-        /// Coordinate points
         points: Vec<(i64, f64)>,
-        /// Full primitive data (id, color, style, etc.)
-        data: PrimitiveData,
+        snapshot: PrimitiveSnapshot,
+        cascaded: Vec<PrimitiveSnapshot>,
     },
 
     /// Move/reshape primitive (stores points before and after)
@@ -183,6 +205,37 @@ pub enum Command {
         previous_json: String,
         /// Full JSON after modification
         new_json: String,
+    },
+
+    /// Collapse a `follows`-linked same-degree chain into one coarser
+    /// structure (E4 — see `drawing::primitives_v2::elliott::count::
+    /// promote_chain_shape`, `DrawingManager::promote_wave_chain`).
+    ///
+    /// `parent_snapshot` is the newly built parent's own full serialized
+    /// state (its id is `parent_id`, also embedded in the snapshot's own
+    /// JSON). `members` is every chain member's id paired with the slot it
+    /// was stamped into — redo re-stamps `WaveLink { parent_id, slot }` on
+    /// each; undo (`inverse` -> `DemoteWaveChain`) clears it back to `None`
+    /// on each and removes the parent. The chain members THEMSELVES are
+    /// never snapshotted here — they already existed before promotion and
+    /// are untouched by it beyond gaining/losing their own `link`.
+    PromoteWaveChain {
+        parent_id: u64,
+        parent_snapshot: PrimitiveSnapshot,
+        members: Vec<(u64, WaveSlot)>,
+    },
+
+    /// Inverse of [`Command::PromoteWaveChain`] — same fields, opposite
+    /// application: clear `link` back to `None` on every member, then
+    /// remove the parent (safe to do in that order only — a member still
+    /// pointing at the parent would otherwise fall into the parent's own
+    /// subdivision-cascade delete, which is exactly the DESTRUCTIVE
+    /// behaviour a demote must not have: the chain members pre-date the
+    /// promotion and must survive it being undone).
+    DemoteWaveChain {
+        parent_id: u64,
+        parent_snapshot: PrimitiveSnapshot,
+        members: Vec<(u64, WaveSlot)>,
     },
 
     // =========================================================================
@@ -308,13 +361,13 @@ impl Command {
                 }
             }
 
-            Command::DeletePrimitive { prim_id, type_id, points, data } => {
+            Command::DeletePrimitive { prim_id, points, snapshot, cascaded } => {
                 // Inverse of delete is create - recreate the primitive
                 Command::CreatePrimitive {
                     prim_id: *prim_id,
-                    type_id: type_id.clone(),
                     points: points.clone(),
-                    data: data.clone(),
+                    snapshot: snapshot.clone(),
+                    cascaded: cascaded.clone(),
                 }
             }
 
@@ -332,13 +385,29 @@ impl Command {
                 }
             }
 
-            Command::CreatePrimitive { prim_id, type_id, points, data } => {
+            Command::CreatePrimitive { prim_id, points, snapshot, cascaded } => {
                 // Inverse of create is delete
                 Command::DeletePrimitive {
                     prim_id: *prim_id,
-                    type_id: type_id.clone(),
                     points: points.clone(),
-                    data: data.clone(),
+                    snapshot: snapshot.clone(),
+                    cascaded: cascaded.clone(),
+                }
+            }
+
+            Command::PromoteWaveChain { parent_id, parent_snapshot, members } => {
+                Command::DemoteWaveChain {
+                    parent_id: *parent_id,
+                    parent_snapshot: parent_snapshot.clone(),
+                    members: members.clone(),
+                }
+            }
+
+            Command::DemoteWaveChain { parent_id, parent_snapshot, members } => {
+                Command::PromoteWaveChain {
+                    parent_id: *parent_id,
+                    parent_snapshot: parent_snapshot.clone(),
+                    members: members.clone(),
                 }
             }
 
@@ -449,6 +518,12 @@ impl Command {
     }
 
     /// The primitive this command acts on, when it acts on one.
+    ///
+    /// `PromoteWaveChain`/`DemoteWaveChain` act on MULTIPLE primitives (a
+    /// parent plus every chain member) and are deliberately excluded here,
+    /// same as `DeleteAllPrimitives`/`RestoreAllPrimitives` — the
+    /// single-id remap machinery below (`set_prim_id`/`primitive_identity`)
+    /// only ever covers a command with exactly one primitive of its own.
     pub fn prim_id(&self) -> Option<u64> {
         match self {
             Command::SetPrimitiveVisibility { prim_id, .. }
@@ -468,17 +543,30 @@ impl Command {
     /// a restored history refers to ids that no longer exist. Rewriting is
     /// what keeps it usable — without it undo silently matches nothing and
     /// redo re-creates a second copy of a drawing that is already there.
+    ///
+    /// `DeletePrimitive`/`CreatePrimitive` patch their own `snapshot`'s
+    /// embedded id too (`PrimitiveSnapshot::with_id`) — the id lives twice
+    /// now (the command's own `prim_id` field, for cheap lookup, and inside
+    /// the serialized snapshot, which is what actually gets deserialized on
+    /// apply), and both copies must agree or the recreated primitive would
+    /// carry the OLD id despite the command claiming the new one.
+    /// `cascaded` snapshots are left untouched — a cascade-deleted child's
+    /// own id is not what this command is "about" for remap purposes, only
+    /// the primary `prim_id` is (same scope `primitive_identity` covers).
     pub fn set_prim_id(&mut self, new_id: u64) {
         match self {
             Command::SetPrimitiveVisibility { prim_id, .. }
             | Command::SetPrimitiveLock { prim_id, .. }
             | Command::MovePrimitive { prim_id, .. }
             | Command::ModifyPrimitiveFull { prim_id, .. } => *prim_id = new_id,
-            Command::DeletePrimitive { prim_id, data, .. }
-            | Command::CreatePrimitive { prim_id, data, .. }
-            | Command::ModifyPrimitiveData { prim_id, new_data: data, .. } => {
+            Command::DeletePrimitive { prim_id, snapshot, .. }
+            | Command::CreatePrimitive { prim_id, snapshot, .. } => {
+                *snapshot = snapshot.with_id(new_id);
                 *prim_id = new_id;
-                data.id = new_id;
+            }
+            Command::ModifyPrimitiveData { prim_id, new_data, .. } => {
+                *prim_id = new_id;
+                new_data.id = new_id;
             }
             _ => {}
         }
@@ -493,9 +581,9 @@ impl Command {
     /// a restored history is matched against the live drawings by.
     pub fn primitive_identity(&self) -> Option<(&str, &[(i64, f64)])> {
         match self {
-            Command::CreatePrimitive { type_id, points, .. }
-            | Command::DeletePrimitive { type_id, points, .. } => {
-                Some((type_id.as_str(), points.as_slice()))
+            Command::CreatePrimitive { snapshot, points, .. }
+            | Command::DeletePrimitive { snapshot, points, .. } => {
+                Some((snapshot.type_id.as_str(), points.as_slice()))
             }
             _ => None,
         }
@@ -518,6 +606,8 @@ impl Command {
             Command::MovePrimitive { .. } => "Move Primitive",
             Command::ModifyPrimitiveData { .. } => "Modify Primitive",
             Command::ModifyPrimitiveFull { .. } => "Modify Primitive Settings",
+            Command::PromoteWaveChain { .. } => "Promote Wave Chain",
+            Command::DemoteWaveChain { .. } => "Demote Wave Chain",
 
             // Compare commands
             Command::AddCompareSeries { .. } => "Add Compare Symbol",

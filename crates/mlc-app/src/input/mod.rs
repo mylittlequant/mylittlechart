@@ -113,6 +113,7 @@ use mlc_app_layout::ui::context_menu::{
 };
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
+use mlc_core::drawing::primitives_v2::elliott::WaveLink;
 use uzor::WidgetId;
 
 /// Convert chart-app's `KeyPress` to the uzor `KeyPress` understood by `TextFieldStore`.
@@ -4738,12 +4739,10 @@ impl ChartApp {
             // For standalone windows: record undo and propagate to color-tag peers.
             if !self.intercept_completed_primitive_to_group() {
                 // Standalone path.
-                self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                    prim_id: freehand.prim_id,
-                    type_id: freehand.type_id,
-                    points: freehand.points,
-                    data: freehand.data,
-                });
+                let cmd = active_bid_cf.and_then(|bid| self.build_create_primitive_command(bid, freehand.prim_id));
+                if let Some(cmd) = cmd {
+                    self.push_undo_command(cmd);
+                }
                 // Propagate completed freehand primitive to sync group peers.
                 if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                     self.propagate_new_primitive_to_sync_group(active_leaf);
@@ -4756,9 +4755,9 @@ impl ChartApp {
                         let prim = group.primitives.last()?;
                         Some(mlc_core::Command::CreatePrimitive {
                             prim_id: prim.data().id,
-                            type_id: prim.type_id().to_string(),
-                            points: prim.points().to_vec(),
-                            data: prim.data().clone(),
+                            points: prim.points(),
+                            snapshot: mlc_core::drawing::PrimitiveSnapshot::from_primitive(prim.as_ref()),
+                            cascaded: Vec::new(),
                         })
                     }).flatten());
                 if let Some(cmd) = group_create_cmd {
@@ -7161,19 +7160,39 @@ impl ChartApp {
         let active_bid_cmd = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         match cmd {
-            Command::CreatePrimitive { prim_id: _, type_id, points, data } => {
+            Command::CreatePrimitive { prim_id: _, points: _, snapshot, cascaded } => {
+                // Restoring through `insert_at`'s own JSON path recreates
+                // every field the concrete type carries (an Elliott wave's
+                // degree/link/follows included) — never a `PrimitiveData`
+                // subset. `cascaded` restores every OTHER primitive a
+                // cascading delete's own inverse took with it, so a single
+                // Ctrl+Z brings the whole subtree back, not just the
+                // primitive originally clicked.
                 if let Some(gid) = group_id {
-                    // Grouped: insert into the group's primitive list using the registry.
                     let mut guard = self.core.drawings_mut();
                     let insert_pos = guard.count(gid);
-                    guard.insert_at(gid, insert_pos, type_id, points, data);
+                    guard.insert_at(gid, insert_pos, &snapshot.type_id, &snapshot.json);
+                    for c in cascaded {
+                        let pos = guard.count(gid);
+                        guard.insert_at(gid, pos, &c.type_id, &c.json);
+                    }
                 } else if let Some(bid) = active_bid_cmd {
                     let mut guard = self.core.drawings_mut();
                     let insert_pos = guard.count(bid);
-                    guard.insert_at(bid, insert_pos, type_id, points, data);
+                    guard.insert_at(bid, insert_pos, &snapshot.type_id, &snapshot.json);
+                    for c in cascaded {
+                        let pos = guard.count(bid);
+                        guard.insert_at(bid, pos, &c.type_id, &c.json);
+                    }
                 }
             }
             Command::DeletePrimitive { prim_id, .. } => {
+                // `cascaded` needs no separate handling here: every
+                // primitive it names is still linked (`WaveLink::parent_id
+                // == *prim_id`) to whatever `CreatePrimitive`'s own apply
+                // just restored it under, so `DrawingManager::delete`'s own
+                // cascade removes them again exactly like the original
+                // delete did.
                 if let Some(gid) = group_id {
                     self.core.drawings_mut().delete(gid, *prim_id);
                 } else if let Some(bid) = active_bid_cmd {
@@ -7191,15 +7210,61 @@ impl ChartApp {
                 if let Some(gid) = group_id {
                     let mut guard = self.core.drawings_mut();
                     guard.delete_all(gid);
-                    for (i, (type_id, points, data)) in primitives.iter().enumerate() {
-                        guard.insert_at(gid, i, type_id, points, data);
+                    for (i, snap) in primitives.iter().enumerate() {
+                        guard.insert_at(gid, i, &snap.type_id, &snap.json);
                     }
                 } else if let Some(bid) = active_bid_cmd {
                     let mut guard = self.core.drawings_mut();
                     guard.delete_all(bid);
-                    for (i, (type_id, points, data)) in primitives.iter().enumerate() {
-                        guard.insert_at(bid, i, type_id, points, data);
+                    for (i, snap) in primitives.iter().enumerate() {
+                        guard.insert_at(bid, i, &snap.type_id, &snap.json);
                     }
+                }
+            }
+            Command::PromoteWaveChain { parent_id, parent_snapshot, members } => {
+                // Redo of a promotion, or undo of a demotion: recreate the
+                // parent from its own snapshot, then re-stamp `link` on
+                // every chain member — see `Command::DemoteWaveChain`'s own
+                // doc for why the two directions are not symmetric enough
+                // to share one apply arm (this one must NOT go through
+                // `DrawingManager::delete`).
+                if let Some(gid) = group_id {
+                    let mut guard = self.core.drawings_mut();
+                    let insert_pos = guard.count(gid);
+                    guard.insert_at(gid, insert_pos, &parent_snapshot.type_id, &parent_snapshot.json);
+                    for (member_id, slot) in members {
+                        guard.set_wave_link(gid, *member_id, Some(WaveLink { parent_id: *parent_id, slot: *slot }));
+                    }
+                } else if let Some(bid) = active_bid_cmd {
+                    let mut guard = self.core.drawings_mut();
+                    let insert_pos = guard.count(bid);
+                    guard.insert_at(bid, insert_pos, &parent_snapshot.type_id, &parent_snapshot.json);
+                    for (member_id, slot) in members {
+                        guard.set_wave_link(bid, *member_id, Some(WaveLink { parent_id: *parent_id, slot: *slot }));
+                    }
+                }
+            }
+            Command::DemoteWaveChain { parent_id, members, .. } => {
+                // Undo of a promotion, or redo of a demotion: clear `link`
+                // back to `None` on every member FIRST, then remove the
+                // parent — in that order only. The members pre-date the
+                // promotion and must survive it being undone; removing the
+                // parent while they still point at it would fall into
+                // `DrawingManager::delete`'s own subdivision cascade and
+                // destroy them, which is exactly the behaviour a demote
+                // must not have.
+                if let Some(gid) = group_id {
+                    let mut guard = self.core.drawings_mut();
+                    for (member_id, _slot) in members {
+                        guard.set_wave_link(gid, *member_id, None);
+                    }
+                    guard.delete(gid, *parent_id);
+                } else if let Some(bid) = active_bid_cmd {
+                    let mut guard = self.core.drawings_mut();
+                    for (member_id, _slot) in members {
+                        guard.set_wave_link(bid, *member_id, None);
+                    }
+                    guard.delete(bid, *parent_id);
                 }
             }
             Command::MovePrimitive { prim_id, new_points, .. } => {
@@ -7762,7 +7827,8 @@ impl ChartApp {
             Command::CreatePrimitive { .. } | Command::DeletePrimitive { .. }
             | Command::DeleteAllPrimitives { .. } | Command::RestoreAllPrimitives { .. }
             | Command::MovePrimitive { .. } | Command::ModifyPrimitiveData { .. }
-            | Command::ModifyPrimitiveFull { .. } => {
+            | Command::ModifyPrimitiveFull { .. }
+            | Command::PromoteWaveChain { .. } | Command::DemoteWaveChain { .. } => {
                 self.autosave_snapshot();
             }
             _ => {}
@@ -8125,6 +8191,8 @@ impl ChartApp {
                 | Command::SetPrimitiveLock { .. }
                 | Command::ModifyPrimitiveData { .. }
                 | Command::ModifyPrimitiveFull { .. }
+                | Command::PromoteWaveChain { .. }
+                | Command::DemoteWaveChain { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
                 | Command::ModifyIndicator { .. }

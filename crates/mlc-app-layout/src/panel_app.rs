@@ -1038,6 +1038,7 @@ pub fn chart_toolbar_render_toolbars(
                 config.locked,
                 &wave_slot_items,
                 &successor_kind_items,
+                config.can_promote,
             );
 
             let inline_tc_config = TcConfig {

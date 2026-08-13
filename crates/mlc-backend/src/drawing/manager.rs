@@ -23,7 +23,9 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
-use mlc_core::drawing::primitives_v2::elliott::{child_seed, successor_kinds, successor_seed, WaveLink, WaveSlot};
+use mlc_core::drawing::primitives_v2::elliott::{
+    child_seed, successor_kinds, successor_seed, promote_chain_shape, WaveLink, WaveSlot,
+};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
@@ -55,6 +57,26 @@ fn points_array<const N: usize>(pts: Vec<(i64, f64)>) -> [(i64, f64); N] {
         *slot = p;
     }
     arr
+}
+
+/// Pad `pts` out to exactly `n` points by repeating its own LAST point —
+/// used by `DrawingManager::promote_wave_chain` when a chain covers fewer
+/// slots than the parent type's own fixed point count (e.g. only wave 1 and
+/// wave 2 of a coarser 5-wave impulse exist so far, so `pts.len() == 3` but
+/// `ElliottImpulse` needs 6). Collapsing the not-yet-realized trailing
+/// points onto the chain's own last boundary point keeps the parent a
+/// well-formed, draggable shape rather than zero-filling them to the
+/// origin — the same degenerate-but-visible convention
+/// `ChildSeed::interpolate`'s own `n == 1` case documents. A no-op (a plain
+/// clone) when `pts.len() >= n` already.
+fn pad_points_to(pts: &[(i64, f64)], n: usize) -> Vec<(i64, f64)> {
+    let mut out = pts.to_vec();
+    if let Some(&last) = pts.last() {
+        while out.len() < n {
+            out.push(last);
+        }
+    }
+    out
 }
 
 /// Apply a `TemplateStyle` snapshot to a freshly-created primitive.
@@ -245,6 +267,49 @@ impl DrawingManager {
         b.primitives.iter().position(|p| p.data().id == prim_id)
     }
 
+    /// Walk `wave_follows` BACKWARD from `prim_id` to the chain's own head —
+    /// the member nothing else in the chain precedes. Cycle-guarded (a
+    /// malformed `follows` loop stops the walk rather than spinning
+    /// forever); returns `prim_id` itself when it has no predecessor still
+    /// present, or is not part of a chain at all.
+    fn chain_head_id(b: &crate::bubble::DataBubble, prim_id: u64) -> u64 {
+        let mut current = prim_id;
+        let mut visited: HashSet<u64> = HashSet::new();
+        while visited.insert(current) {
+            let Some(p) = b.primitives.iter().find(|p| p.data().id == current) else { break };
+            match p.wave_follows() {
+                Some(prev_id) if b.primitives.iter().any(|q| q.data().id == prev_id) => current = prev_id,
+                _ => break,
+            }
+        }
+        current
+    }
+
+    /// Walk `wave_follows` FORWARD from `first_id`, collecting every chain
+    /// member's own id in succession order (`first_id` itself first).
+    /// Cycle-guarded the same way [`Self::chain_head_id`] is. Stops at the
+    /// first id that does not resolve to a live primitive, or has no
+    /// successor.
+    fn chain_member_ids(b: &crate::bubble::DataBubble, first_id: u64) -> Vec<u64> {
+        let mut ids = Vec::new();
+        let mut current = first_id;
+        let mut visited: HashSet<u64> = HashSet::new();
+        while visited.insert(current) {
+            if Self::find_index_by_id(b, current).is_none() {
+                break;
+            }
+            ids.push(current);
+            let next = b.primitives.iter()
+                .find(|p| p.data().id != current && p.wave_follows() == Some(current))
+                .map(|p| p.data().id);
+            match next {
+                Some(next_id) => current = next_id,
+                None => break,
+            }
+        }
+        ids
+    }
+
     // =========================================================================
     // Read — session state
     // =========================================================================
@@ -431,6 +496,17 @@ impl DrawingManager {
         b.primitives.iter().find(|p| p.data().id == prim_id).map(|p| p.to_json())
     }
 
+    /// Full serialized snapshot of one primitive — the shape undo/redo
+    /// (`Command::CreatePrimitive`/`DeletePrimitive`) and clipboard paste
+    /// both restore a primitive FROM, so every field the concrete type
+    /// carries survives (an Elliott wave's `degree`/`link`/`follows`
+    /// included — see `elliott::count`'s own module doc), never just the
+    /// shared `PrimitiveData` header `get_data` alone would leave behind.
+    pub(crate) fn get_snapshot(&self, bubbles: &BubbleStore, bid: BubbleId, prim_id: u64) -> Option<PrimitiveSnapshot> {
+        let b = bubbles.bubble(bid)?;
+        b.primitives.iter().find(|p| p.data().id == prim_id).map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
+    }
+
     pub(crate) fn last_index(&self, bubbles: &BubbleStore, bid: BubbleId) -> Option<u64> {
         let b = bubbles.bubble(bid)?;
         b.primitives.last().map(|p| p.data().id)
@@ -474,6 +550,24 @@ impl DrawingManager {
                 .filter_map(|&kind_id| registry.get(kind_id).map(|meta| (kind_id.to_string(), meta.display_name.to_string())))
                 .collect()
         };
+        // E4 — promotion button. Whether the selected primitive's own
+        // `follows`-linked chain (found by walking backward to the chain's
+        // head, then forward from there — same resolution
+        // `promote_wave_chain` itself performs) currently promotes into one
+        // coarser structure. Computed here, not just left to the click
+        // handler, so the button's own visibility never lies about what a
+        // click would do.
+        let can_promote = {
+            let b = bubbles.bubble(bid);
+            b.is_some_and(|b| {
+                let head_id = Self::chain_head_id(b, prim.data().id);
+                let member_ids = Self::chain_member_ids(b, head_id);
+                let chain: Vec<&dyn Primitive> = member_ids.iter()
+                    .filter_map(|id| b.primitives.iter().find(|p| p.data().id == *id).map(|p| p.as_ref()))
+                    .collect();
+                chain.len() == member_ids.len() && promote_chain_shape(&chain).is_some()
+            })
+        };
         Some(SelectedPrimitiveConfig {
             name: prim.display_name().to_string(),
             color: data.color.stroke.clone(),
@@ -484,6 +578,7 @@ impl DrawingManager {
             supports_text,
             wave_slots,
             successor_kinds: successor_kind_items,
+            can_promote,
         })
     }
 
@@ -1576,6 +1671,60 @@ impl DrawingManager {
         self.delete(bubbles, bid, prim_id)
     }
 
+    /// [`Self::delete`], plus a full snapshot of `prim_id` AND every
+    /// primitive its own subdivision cascade also removes — captured BEFORE
+    /// any of them are gone, so an undo command built from the return value
+    /// restores the whole subtree in one step (see `Command::DeletePrimitive`'s
+    /// own doc for why the cascade must travel WITH the command instead of
+    /// vanishing silently). Same cascade/succession-cleanup behaviour as
+    /// `Self::delete` — this is that method plus the capture, not a second
+    /// deletion policy. `None` when `prim_id` does not resolve to a live
+    /// primitive.
+    pub(crate) fn delete_with_snapshot(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        prim_id: u64,
+    ) -> Option<DeletedPrimitives> {
+        let (points, snapshot, cascaded) = {
+            let b = bubbles.bubble(bid)?;
+            let idx = Self::find_index_by_id(b, prim_id)?;
+            let points = b.primitives[idx].points();
+            let snapshot = PrimitiveSnapshot::from_primitive(b.primitives[idx].as_ref());
+
+            let mut to_delete: HashSet<u64> = HashSet::new();
+            to_delete.insert(prim_id);
+            loop {
+                let mut grew = false;
+                for p in b.primitives.iter() {
+                    let id = p.data().id;
+                    if to_delete.contains(&id) {
+                        continue;
+                    }
+                    if let Some(link) = p.wave_link() {
+                        if to_delete.contains(&link.parent_id) {
+                            to_delete.insert(id);
+                            grew = true;
+                        }
+                    }
+                }
+                if !grew {
+                    break;
+                }
+            }
+            let cascaded: Vec<PrimitiveSnapshot> = b.primitives.iter()
+                .filter(|p| p.data().id != prim_id && to_delete.contains(&p.data().id))
+                .map(|p| PrimitiveSnapshot::from_primitive(p.as_ref()))
+                .collect();
+            (points, snapshot, cascaded)
+        };
+
+        if !self.delete(bubbles, bid, prim_id) {
+            return None;
+        }
+        Some(DeletedPrimitives { points, snapshot, cascaded })
+    }
+
     pub(crate) fn delete_all(&mut self, bubbles: &mut BubbleStore, bid: BubbleId) {
         if let Some(b) = bubbles.bubble_mut(bid) {
             b.primitives.clear();
@@ -1935,22 +2084,163 @@ impl DrawingManager {
         Some(self.add_external(bubbles, bid, successor))
     }
 
-    /// Insert a primitive at a specific list position, type_id + points +
-    /// full data (undo/redo recreation of a deleted primitive). The
-    /// position is preserved internally so z-order-dependent operations
+    /// Set (or clear) `prim_id`'s own [`WaveLink`] directly — the write
+    /// path chain promotion/demotion needs (`Self::promote_wave_chain` and
+    /// its undo-apply counterpart in `Command::DemoteWaveChain`), never
+    /// exposed for anything else: every OTHER caller that links a
+    /// primitive to a parent does so at construction time
+    /// (`create_wave_child`), not by mutating a live one.
+    pub(crate) fn set_wave_link(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, link: Option<WaveLink>) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        if let Some(p) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
+            p.set_wave_link(link);
+        }
+    }
+
+    /// Collapse the `follows`-linked same-degree chain `prim_id` belongs to
+    /// into ONE structure at the degree above (E4 — see `elliott::count::
+    /// promote_chain_shape`'s own doc for the mapping rule this applies).
+    /// `prim_id` may be ANY member of the chain, not just its head — this
+    /// resolves the true head first (`Self::chain_head_id`) exactly the way
+    /// `selected_config`'s own `can_promote` check does, so the button's
+    /// availability and the click's own effect can never disagree.
+    ///
+    /// Returns `None` for every reason `promote_chain_shape` itself would
+    /// refuse (mixed degree, a member already linked under another parent,
+    /// a chain longer than the parent type's own slot count, broken
+    /// alternation) or when `prim_id` does not resolve to a live primitive.
+    ///
+    /// Builds the parent through the SAME `add_external` path every other
+    /// externally-constructed primitive uses, then stamps `link` on every
+    /// chain member so the new parent's own delete cascade (`Self::delete`)
+    /// now owns them exactly like any other subdivision — promotion turns a
+    /// same-degree succession chain into a coarser structure's OWN
+    /// subdivision, the same [`WaveLink`] relation E2 wires by hand. Where
+    /// the chain is shorter than the parent type's own slot count (e.g.
+    /// only wave 1 and wave 2 of a coarser impulse exist so far), the
+    /// parent's own trailing not-yet-realized points collapse onto the
+    /// chain's own last boundary point — draggable into place afterward,
+    /// same degenerate-but-visible convention `ChildSeed::interpolate`'s
+    /// `n == 1` case already uses elsewhere in this module.
+    ///
+    /// Returns the new parent's id and every `(member_id, slot)` pair it
+    /// was stamped with, in chain order — the caller builds the undo
+    /// command from these directly, without a second query.
+    pub(crate) fn promote_wave_chain(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        prim_id: u64,
+    ) -> Option<(u64, Vec<(u64, WaveSlot)>)> {
+        let (shape, member_ids, color) = {
+            let b = bubbles.bubble(bid)?;
+            let head_id = Self::chain_head_id(b, prim_id);
+            let member_ids = Self::chain_member_ids(b, head_id);
+            let chain: Vec<&dyn Primitive> = member_ids.iter()
+                .filter_map(|id| b.primitives.iter().find(|p| p.data().id == *id).map(|p| p.as_ref()))
+                .collect();
+            if chain.len() != member_ids.len() {
+                return None;
+            }
+            let shape = promote_chain_shape(&chain)?;
+            let color = chain[0].data().color.stroke.clone();
+            (shape, member_ids, color)
+        };
+
+        let needed_points: usize = if shape.type_id == "elliott_impulse" { 6 } else { 4 };
+        let padded = pad_points_to(&shape.points, needed_points);
+
+        let parent: Box<dyn Primitive> = match shape.type_id {
+            "elliott_impulse" => {
+                let mut p = ElliottImpulse::new(points_array::<6>(padded), &color);
+                p.degree = shape.degree;
+                Box::new(p)
+            }
+            "elliott_correction" => {
+                let mut p = ElliottCorrection::new(points_array::<4>(padded), &color);
+                p.degree = shape.degree;
+                Box::new(p)
+            }
+            _ => return None,
+        };
+
+        let parent_id = self.add_external(bubbles, bid, parent);
+
+        let members: Vec<(u64, WaveSlot)> = member_ids.into_iter().zip(shape.slots.iter().copied()).collect();
+        let Some(b) = bubbles.bubble_mut(bid) else { return Some((parent_id, members)) };
+        for &(member_id, slot) in &members {
+            if let Some(p) = b.primitives.iter_mut().find(|p| p.data().id == member_id) {
+                p.set_wave_link(Some(WaveLink { parent_id, slot }));
+            }
+        }
+
+        Some((parent_id, members))
+    }
+
+    /// Insert a primitive at a specific list position, restored from its
+    /// OWN serialized snapshot (undo/redo recreation of a deleted or
+    /// newly-created primitive). Restoring through
+    /// `PrimitiveRegistry::from_json` recreates every field the concrete
+    /// type carries — including the ones outside `PrimitiveData` entirely,
+    /// like an Elliott wave's `degree`/`link`/`follows` (`elliott::count`'s
+    /// own module doc) — never just the shared header a fresh
+    /// `registry.create` + `PrimitiveData` overwrite would leave behind.
+    /// The position is preserved internally so z-order-dependent operations
     /// replay identically; it is not part of the public id-keyed contract.
+    /// `None` when `type_id` has no registered reader for `json`, or `bid`
+    /// does not resolve to a live bubble.
     pub(crate) fn insert_at(
         &mut self,
         bubbles: &mut BubbleStore,
         bid: BubbleId,
         index: usize,
         type_id: &str,
+        json: &str,
+    ) -> Option<u64> {
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        let prim = registry.from_json(type_id, json)?;
+        drop(registry);
+        let id = prim.data().id;
+        let Some(b) = bubbles.bubble_mut(bid) else { return None };
+        if index <= b.primitives.len() {
+            b.primitives.insert(index, prim);
+        } else {
+            b.primitives.push(prim);
+        }
+        Some(id)
+    }
+
+    /// Reconstruct a primitive from a CLIPBOARD snapshot (Ctrl+C/Ctrl+V),
+    /// then restamp exactly the fields a paste always overwrites — new id,
+    /// cleared origin/window, the caller-supplied pane, and the
+    /// caller's already position-shifted points — before inserting it at
+    /// `index`. Restoring through the same `PrimitiveRegistry::from_json`
+    /// path [`Self::insert_at`] uses, so a pasted Elliott wave keeps its
+    /// degree/link/follows instead of resetting to a bare type default the
+    /// way a `PrimitiveData`-only reconstruction would.
+    ///
+    /// Unlike [`Self::insert_at`], the reconstructed primitive's OWN
+    /// `PrimitiveData` (color, width, style, text, locked, visible,
+    /// timeframe visibility, style reference, …) is wholesale replaced by
+    /// `data` — a clone of the copied primitive's data with the pasted
+    /// fields already updated by the caller — matching this method's
+    /// pre-snapshot behaviour for every field `PrimitiveData` itself owns.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_pasted_at(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        index: usize,
+        type_id: &str,
+        json: &str,
         points: &[(i64, f64)],
         data: &PrimitiveData,
     ) -> Option<u64> {
         let registry = PrimitiveRegistry::global().read().unwrap();
-        let mut prim = registry.create(type_id, points, Some(&data.color.stroke))?;
+        let mut prim = registry.from_json(type_id, json)
+            .or_else(|| registry.create(type_id, points, Some(&data.color.stroke)))?;
         drop(registry);
+        prim.set_points(points);
         *prim.data_mut() = data.clone();
         let id = prim.data().id;
         let Some(b) = bubbles.bubble_mut(bid) else { return None };
@@ -2186,6 +2476,22 @@ mod park_unpark_tests {
         assert!(mgr.is_locked(window_a_bid), "window A's session must survive parking window B's preset");
         assert!(!parked_b.is_locked(window_a_bid), "extraction must not leak window A's session into window B's payload");
     }
+}
+
+/// Return value of [`DrawingManager::delete_with_snapshot`] — everything an
+/// undo command needs to restore a cascading delete in one step.
+#[derive(Clone, Debug)]
+pub struct DeletedPrimitives {
+    /// The deleted primary primitive's own points — kept separately (not
+    /// re-parsed from `snapshot.json`) so `Command::primitive_identity` can
+    /// hand back a borrowed slice for cold-load id matching.
+    pub points: Vec<(i64, f64)>,
+    /// The deleted primary primitive's own full serialized state.
+    pub snapshot: PrimitiveSnapshot,
+    /// Every OTHER primitive the same delete's own subdivision cascade also
+    /// removed (e.g. Elliott children nested under the primary primitive) —
+    /// empty when nothing cascaded.
+    pub cascaded: Vec<PrimitiveSnapshot>,
 }
 
 /// Item for primitive list (Object Tree).

@@ -826,6 +826,17 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    /// Set (or clear) [`wave_link`](Self::wave_link) without downcasting to
+    /// one of the five concrete Elliott structs — the write path chain
+    /// promotion needs from OUTSIDE the Elliott family itself
+    /// (`elliott::count::promote_chain_shape` + `DrawingManager::
+    /// promote_wave_chain`): turning a `follows`-linked same-degree chain
+    /// into subdivisions of a newly built coarser parent stamps this on
+    /// every chain member, and undoing that promotion clears it back to
+    /// `None` again. No-op for every primitive outside the Elliott family,
+    /// mirroring [`set_wave_follows`](Self::set_wave_follows)'s own default.
+    fn set_wave_link(&mut self, _link: Option<WaveLink>) {}
+
     /// The [`WaveDegree`] this primitive currently carries, if it is an
     /// Elliott wave — its own stored `degree` field, exactly as today. A
     /// linked child's degree is set by the CALLER at construction time (via

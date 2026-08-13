@@ -344,20 +344,9 @@ impl ChartApp {
                         .and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot));
                     match new_id {
                         Some(new_id) => {
-                            let snapshot = active_bid_inline.and_then(|bid| {
-                                let guard = self.core.drawings();
-                                let type_id = guard.get_type_id(bid, new_id)?;
-                                let points = guard.get_points(bid, new_id)?;
-                                let data = guard.get_data(bid, new_id)?;
-                                Some((type_id, points, data))
-                            });
-                            if let Some((type_id, points, data)) = snapshot {
-                                self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                    prim_id: new_id,
-                                    type_id,
-                                    points,
-                                    data,
-                                });
+                            let cmd = active_bid_inline.and_then(|bid| self.build_create_primitive_command(bid, new_id));
+                            if let Some(cmd) = cmd {
+                                self.push_undo_command(cmd);
                                 eprintln!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
                             }
                             self.sync_drawing_back_to_group();
@@ -388,20 +377,9 @@ impl ChartApp {
                     .and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prim_id, type_id));
                 match new_id {
                     Some(new_id) => {
-                        let snapshot = active_bid_inline.and_then(|bid| {
-                            let guard = self.core.drawings();
-                            let type_id = guard.get_type_id(bid, new_id)?;
-                            let points = guard.get_points(bid, new_id)?;
-                            let data = guard.get_data(bid, new_id)?;
-                            Some((type_id, points, data))
-                        });
-                        if let Some((snap_type_id, points, data)) = snapshot {
-                            self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                prim_id: new_id,
-                                type_id: snap_type_id,
-                                points,
-                                data,
-                            });
+                        let cmd = active_bid_inline.and_then(|bid| self.build_create_primitive_command(bid, new_id));
+                        if let Some(cmd) = cmd {
+                            self.push_undo_command(cmd);
                             eprintln!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
                         }
                         self.sync_drawing_back_to_group();
@@ -414,6 +392,37 @@ impl ChartApp {
                 }
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+            }
+
+            // ── Promote-chain button (E4) — collapse the selected
+            // primitive's own `follows`-linked same-degree chain into one
+            // coarser structure. Single action, no dropdown (unlike
+            // E2/E3): `promote_wave_chain` resolves the chain's own head
+            // from `prim_id` internally (`selected_config`'s own
+            // `can_promote` already ran the identical check to decide
+            // whether this button even renders).
+            "inline:wave_up" => {
+                if let Some(bid) = active_bid_inline {
+                    let result = self.core.drawings_mut().promote_wave_chain(bid, prim_id);
+                    match result {
+                        Some((parent_id, members)) => {
+                            let cmd = self.core.drawings().get_snapshot(bid, parent_id).map(|parent_snapshot| {
+                                mlc_core::Command::PromoteWaveChain { parent_id, parent_snapshot, members }
+                            });
+                            if let Some(cmd) = cmd {
+                                self.push_undo_command(cmd);
+                                eprintln!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
+                            }
+                            self.core.drawings_mut().select(bid, parent_id);
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
+                            eprintln!("[ChartApp] inline: promoted chain into #{}", parent_id);
+                        }
+                        None => {
+                            eprintln!("[ChartApp] inline: promote_wave_chain returned None for #{}", prim_id);
+                        }
+                    }
+                }
             }
 
             _ => {
@@ -1667,23 +1676,13 @@ impl ChartApp {
                     eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     self.intercept_completed_primitive_to_group();
                     // Record undo and propagate to color-tag peers.
-                    let create_snapshot = active_bid_tool
-                        .and_then(|bid| {
-                            let guard = self.core.drawings();
-                            let prim_id = guard.last_index(bid)?;
-                            let type_id = guard.get_type_id(bid, prim_id)?;
-                            let points = guard.get_points(bid, prim_id)?;
-                            let data = guard.get_data(bid, prim_id)?;
-                            Some((prim_id, type_id, points, data))
-                        });
-                    if let Some((prim_id, type_id, points, data)) = create_snapshot {
-                        self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                            prim_id,
-                            type_id,
-                            points,
-                            data,
-                        });
-                        eprintln!("[ChartApp] Recorded CreatePrimitive (main) {}", prim_id);
+                    let cmd = active_bid_tool.and_then(|bid| {
+                        let prim_id = self.core.drawings().last_index(bid)?;
+                        self.build_create_primitive_command(bid, prim_id)
+                    });
+                    if let Some(cmd) = cmd {
+                        eprintln!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
+                        self.push_undo_command(cmd);
                     }
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         self.propagate_new_primitive_to_sync_group(active_leaf);
@@ -1767,23 +1766,13 @@ impl ChartApp {
                     eprintln!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     self.intercept_completed_primitive_to_group();
                     // Extract snapshot then push undo command.
-                    let create_snapshot = active_bid_tool
-                        .and_then(|bid| {
-                            let guard = self.core.drawings();
-                            let prim_id = guard.last_index(bid)?;
-                            let type_id = guard.get_type_id(bid, prim_id)?;
-                            let points = guard.get_points(bid, prim_id)?;
-                            let data = guard.get_data(bid, prim_id)?;
-                            Some((prim_id, type_id, points, data))
-                        });
-                    if let Some((prim_id, type_id, points, data)) = create_snapshot {
-                        self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                            prim_id,
-                            type_id,
-                            points,
-                            data,
-                        });
-                        eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, prim_id);
+                    let cmd = active_bid_tool.and_then(|bid| {
+                        let prim_id = self.core.drawings().last_index(bid)?;
+                        self.build_create_primitive_command(bid, prim_id)
+                    });
+                    if let Some(cmd) = cmd {
+                        eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
+                        self.push_undo_command(cmd);
                     }
                     // Propagate the new primitive to sync group peers.
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -2241,21 +2230,9 @@ impl ChartApp {
                                 }
                             }
                             // Capture the NEW primitive's data for undo.
-                            let snapshot = active_bid_ctx
-                                .and_then(|bid| {
-                                    let guard = self.core.drawings();
-                                    let type_id = guard.get_type_id(bid, new_id)?;
-                                    let points = guard.get_points(bid, new_id)?;
-                                    let data = guard.get_data(bid, new_id)?;
-                                    Some((type_id, points, data))
-                                });
-                            if let Some((type_id, points, data)) = snapshot {
-                                self.push_undo_command(mlc_core::Command::CreatePrimitive {
-                                    prim_id: new_id,
-                                    type_id,
-                                    points,
-                                    data,
-                                });
+                            let cmd = active_bid_ctx.and_then(|bid| self.build_create_primitive_command(bid, new_id));
+                            if let Some(cmd) = cmd {
+                                self.push_undo_command(cmd);
                                 eprintln!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
                             }
                             self.sync_drawing_back_to_group();
@@ -2431,28 +2408,50 @@ impl ChartApp {
         Some((ts_delta_ms, price_delta))
     }
 
+    /// Build a `Command::CreatePrimitive` for `prim_id` in `bid` — the
+    /// shared shape every primitive-creation call site needs: `points`
+    /// (kept separately so `Command::primitive_identity`'s cold-load
+    /// matching never needs to parse JSON) plus a full serialized
+    /// `PrimitiveSnapshot` (`type_id` + the primitive's own `to_json()`) so
+    /// undo/redo restores EVERY field the concrete type carries, not just
+    /// the ones on `PrimitiveData` — see `elliott::count`'s own module doc
+    /// for why that distinction matters for an Elliott wave's own
+    /// degree/link/follows. `cascaded` is always empty here — only a
+    /// cascading delete's own inverse ever populates it (see
+    /// `delete_primitive_with_undo`).
+    pub(crate) fn build_create_primitive_command(&self, bid: mlc_core::BubbleId, prim_id: u64) -> Option<mlc_core::Command> {
+        let guard = self.core.drawings();
+        let points = guard.get_points(bid, prim_id)?;
+        let snapshot = guard.get_snapshot(bid, prim_id)?;
+        Some(mlc_core::Command::CreatePrimitive { prim_id, points, snapshot, cascaded: Vec::new() })
+    }
+
     /// Delete a primitive by stable id, recording undo state first — shared
     /// by the right-click "delete" action, the Delete hotkey, and the
     /// toolbar "Delete selected" dropdown item.
+    ///
+    /// `DrawingManager::delete`'s own cascade (Elliott subdivision
+    /// children nested under `prim_id`) is captured too
+    /// (`delete_with_snapshot`), so undo restores the whole subtree in one
+    /// step instead of silently losing every child a single-primitive
+    /// snapshot could never have named.
     pub(super) fn delete_primitive_with_undo(&mut self, bid: mlc_core::BubbleId, prim_id: u64) {
-        let snapshot = {
-            let guard = self.core.drawings();
-            let type_id = guard.get_type_id(bid, prim_id);
-            let points = guard.get_points(bid, prim_id);
-            let data = guard.get_data(bid, prim_id);
-            match (type_id, points, data) {
-                (Some(type_id), Some(points), Some(data)) => Some((type_id, points, data)),
-                _ => None,
+        let deleted = self.core.drawings_mut().delete_with_snapshot(bid, prim_id);
+        match deleted {
+            Some(d) => {
+                let cascaded_count = d.cascaded.len();
+                self.push_undo_command(mlc_core::Command::DeletePrimitive {
+                    prim_id,
+                    points: d.points,
+                    snapshot: d.snapshot,
+                    cascaded: d.cascaded,
+                });
+                eprintln!("[ChartApp] Recorded DeletePrimitive {} (+{} cascaded)", prim_id, cascaded_count);
+                eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
             }
-        };
-        if let Some((type_id, points, data)) = snapshot {
-            self.push_undo_command(mlc_core::Command::DeletePrimitive { prim_id, type_id, points, data });
-            eprintln!("[ChartApp] Recorded DeletePrimitive {}", prim_id);
-            self.core.drawings_mut().delete(bid, prim_id);
-            eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
-        } else {
-            self.core.drawings_mut().delete(bid, prim_id);
-            eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
+            None => {
+                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
+            }
         }
         let removed_alerts = self.core.alerts_mut().clear_for_drawing(prim_id);
         for snapshot in removed_alerts {
@@ -2467,16 +2466,11 @@ impl ChartApp {
     /// so a single Ctrl+Z restores the whole set — used by the toolbar
     /// "Delete all" dropdown item.
     pub(super) fn delete_all_primitives_with_undo(&mut self, bid: mlc_core::BubbleId) {
-        let primitives: Vec<(String, Vec<(i64, f64)>, mlc_core::drawing::PrimitiveData)> = {
+        let (ids, primitives): (Vec<u64>, Vec<mlc_core::drawing::PrimitiveSnapshot>) = {
             let guard = self.core.drawings();
             guard.primitive_list(bid).into_iter()
-                .filter_map(|item| {
-                    let type_id = guard.get_type_id(bid, item.id)?;
-                    let points = guard.get_points(bid, item.id)?;
-                    let data = guard.get_data(bid, item.id)?;
-                    Some((type_id, points, data))
-                })
-                .collect()
+                .filter_map(|item| guard.get_snapshot(bid, item.id).map(|snap| (item.id, snap)))
+                .unzip()
         };
         if primitives.is_empty() {
             return;
@@ -2484,8 +2478,8 @@ impl ChartApp {
         self.push_undo_command(mlc_core::Command::DeleteAllPrimitives { primitives: primitives.clone() });
         eprintln!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
         self.core.drawings_mut().delete_all(bid);
-        for (_, _, data) in &primitives {
-            let removed_alerts = self.core.alerts_mut().clear_for_drawing(data.id);
+        for id in &ids {
+            let removed_alerts = self.core.alerts_mut().clear_for_drawing(*id);
             for snapshot in removed_alerts {
                 self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
             }
@@ -2504,18 +2498,18 @@ impl ChartApp {
         }
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
         let Some(prim_id) = self.core.drawings().selected(bid) else { return };
-        let snapshot = {
+        let captured = {
             let guard = self.core.drawings();
-            let type_id = guard.get_type_id(bid, prim_id);
             let points = guard.get_points(bid, prim_id);
             let data = guard.get_data(bid, prim_id);
-            match (type_id, points, data) {
-                (Some(type_id), Some(points), Some(data)) => Some((type_id, points, data)),
+            let snapshot = guard.get_snapshot(bid, prim_id);
+            match (points, data, snapshot) {
+                (Some(points), Some(data), Some(snapshot)) => Some((points, data, snapshot)),
                 _ => None,
             }
         };
-        if let Some((type_id, points, data)) = snapshot {
-            self.primitive_clipboard = Some(crate::PrimitiveClipboard { type_id, points, data, paste_count: 0 });
+        if let Some((points, data, snapshot)) = captured {
+            self.primitive_clipboard = Some(crate::PrimitiveClipboard { snapshot, points, data, paste_count: 0 });
             eprintln!("[ChartApp] Copied primitive #{} to clipboard", prim_id);
         }
     }
@@ -2531,9 +2525,9 @@ impl ChartApp {
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
         let Some((ts_delta_ms, price_delta)) = self.primitive_offset_delta() else { return };
 
-        let Some((type_id, base_points, mut data, multiplier)) = self.primitive_clipboard.as_mut().map(|c| {
+        let Some((snapshot, base_points, mut data, multiplier)) = self.primitive_clipboard.as_mut().map(|c| {
             c.paste_count += 1;
-            (c.type_id.clone(), c.points.clone(), c.data.clone(), c.paste_count as f64)
+            (c.snapshot.clone(), c.points.clone(), c.data.clone(), c.paste_count as f64)
         }) else { return };
 
         let shifted_points: Vec<(i64, f64)> = base_points.iter()
@@ -2553,16 +2547,13 @@ impl ChartApp {
         data.account_type = self.core.bubbles().account_type(bid).map(String::from).unwrap_or_default();
 
         let insert_pos = self.core.drawings().count(bid);
-        if self.core.drawings_mut().insert_at(bid, insert_pos, &type_id, &shifted_points, &data).is_none() {
+        if self.core.drawings_mut().insert_pasted_at(bid, insert_pos, &snapshot.type_id, &snapshot.json, &shifted_points, &data).is_none() {
             return;
         }
         self.core.drawings_mut().select(bid, new_id);
-        self.push_undo_command(mlc_core::Command::CreatePrimitive {
-            prim_id: new_id,
-            type_id,
-            points: shifted_points,
-            data,
-        });
+        if let Some(cmd) = self.build_create_primitive_command(bid, new_id) {
+            self.push_undo_command(cmd);
+        }
         eprintln!("[ChartApp] Pasted primitive -> #{}", new_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
@@ -2631,8 +2622,8 @@ impl ChartApp {
             return;
         };
 
-        let Some((type_id, base_points, mut data)) = self.primitive_clipboard.as_ref().map(|c| {
-            (c.type_id.clone(), c.points.clone(), c.data.clone())
+        let Some((snapshot, base_points, mut data)) = self.primitive_clipboard.as_ref().map(|c| {
+            (c.snapshot.clone(), c.points.clone(), c.data.clone())
         }) else { return };
 
         if base_points.is_empty() {
@@ -2667,16 +2658,13 @@ impl ChartApp {
         data.account_type = self.core.bubbles().account_type(target_bid).map(String::from).unwrap_or_default();
 
         let insert_pos = self.core.drawings().count(target_bid);
-        if self.core.drawings_mut().insert_at(target_bid, insert_pos, &type_id, &shifted_points, &data).is_none() {
+        if self.core.drawings_mut().insert_pasted_at(target_bid, insert_pos, &snapshot.type_id, &snapshot.json, &shifted_points, &data).is_none() {
             return;
         }
         self.core.drawings_mut().select(target_bid, new_id);
-        self.push_undo_command(mlc_core::Command::CreatePrimitive {
-            prim_id: new_id,
-            type_id,
-            points: shifted_points,
-            data,
-        });
+        if let Some(cmd) = self.build_create_primitive_command(target_bid, new_id) {
+            self.push_undo_command(cmd);
+        }
         eprintln!("[ChartApp] Pasted primitive at cursor -> #{}", new_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();

@@ -14,7 +14,7 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
-use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
+use mlc_core::drawing::primitives_v2::elliott::{WaveLink, WaveSlot};
 use mlc_core::drawing::primitives_v2::{
     ControlPoint, ControlPointType, LineStyle, Primitive, PrimitiveData, SyncMode, TextAlign,
 };
@@ -25,7 +25,7 @@ use mlc_core::{Bar, PriceScale, Viewport};
 
 use crate::bubble::BubbleStore;
 
-use super::manager::{DragType, DrawingManager, DrawingState, PrimitiveListItem};
+use super::manager::{DeletedPrimitives, DragType, DrawingManager, DrawingState, PrimitiveListItem};
 
 /// Result of [`DrawingsMut::swap_symbol`]. `old_primitives` is the snapshot
 /// taken from the bubble's primitives *before* the clear — the caller
@@ -203,6 +203,10 @@ impl<'a> Drawings<'a> {
 
     pub fn get_primitive_json(&self, bid: BubbleId, prim_id: u64) -> Option<String> {
         self.mgr.get_primitive_json(&self.bubbles, bid, prim_id)
+    }
+
+    pub fn get_snapshot(&self, bid: BubbleId, prim_id: u64) -> Option<PrimitiveSnapshot> {
+        self.mgr.get_snapshot(&self.bubbles, bid, prim_id)
     }
 
     pub fn is_drawing(&self, bid: BubbleId) -> bool {
@@ -655,8 +659,36 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.create_wave_successor(&mut self.bubbles, bid, prev_id, type_id)
     }
 
-    pub fn insert_at(&mut self, bid: BubbleId, index: usize, type_id: &str, points: &[(i64, f64)], data: &PrimitiveData) -> Option<u64> {
-        self.mgr.insert_at(&mut self.bubbles, bid, index, type_id, points, data)
+    pub fn insert_at(&mut self, bid: BubbleId, index: usize, type_id: &str, json: &str) -> Option<u64> {
+        self.mgr.insert_at(&mut self.bubbles, bid, index, type_id, json)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_pasted_at(
+        &mut self,
+        bid: BubbleId,
+        index: usize,
+        type_id: &str,
+        json: &str,
+        points: &[(i64, f64)],
+        data: &PrimitiveData,
+    ) -> Option<u64> {
+        self.mgr.insert_pasted_at(&mut self.bubbles, bid, index, type_id, json, points, data)
+    }
+
+    /// See `DrawingManager::delete_with_snapshot`.
+    pub fn delete_with_snapshot(&mut self, bid: BubbleId, prim_id: u64) -> Option<DeletedPrimitives> {
+        self.mgr.delete_with_snapshot(&mut self.bubbles, bid, prim_id)
+    }
+
+    /// See `DrawingManager::set_wave_link`.
+    pub fn set_wave_link(&mut self, bid: BubbleId, prim_id: u64, link: Option<WaveLink>) {
+        self.mgr.set_wave_link(&mut self.bubbles, bid, prim_id, link)
+    }
+
+    /// See `DrawingManager::promote_wave_chain`.
+    pub fn promote_wave_chain(&mut self, bid: BubbleId, prim_id: u64) -> Option<(u64, Vec<(u64, WaveSlot)>)> {
+        self.mgr.promote_wave_chain(&mut self.bubbles, bid, prim_id)
     }
 
     pub fn replace_primitive_from_json(&mut self, bid: BubbleId, prim_id: u64, type_id: &str, json: &str) -> bool {
