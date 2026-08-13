@@ -2875,10 +2875,18 @@ pub enum ConceptKey {
     RuleComboAtMostOneZigzag = 301,
     RuleComboTriangleOnlyFinal = 302,
     RuleChainContinuityGap = 303,
+
+    // ---- Elliott context-violations modal group (2026-08-13) — the
+    // primitive settings modal's own Subject-tab "Rules" group (owner
+    // ask: the violation as text, "правило — факт", not only a
+    // recoloured segment on the chart) and the E2 two-step wave picker's
+    // own back-row caption.
+    RulesGroupTitle = 304,
+    WaveBackLabel = 305,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 304;
+    pub const COUNT: usize = 306;
 
     /// Get translation for this key.
     #[inline]

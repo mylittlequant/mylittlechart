@@ -3501,21 +3501,29 @@ impl ChartApp {
             // "inline:wave"/"inline:wave_next" are each their own trigger (not
             // a split button, unlike style/width — no separate "_menu"
             // chevron), so both are excluded here the same way
-            // "inline:style_menu"/"inline:width_menu" are.
+            // "inline:style_menu"/"inline:width_menu" are. "inline:wave_kind:"/
+            // "inline:wave_back" are the E2 picker's own SECOND-step rows
+            // (see `ChartToolbarState::pending_wave_slot`'s own doc) —
+            // without excluding them here, the first click on a kind row (or
+            // the back row) would be treated as a click-outside and close
+            // the dropdown instead of acting.
             if !item_id.starts_with("inline:style_option:")
                 && !item_id.starts_with("inline:width_option:")
                 && !item_id.starts_with("inline:wave_option:")
+                && !item_id.starts_with("inline:wave_kind:")
                 && !item_id.starts_with("inline:wave_next_option:")
                 && item_id != "inline:style_menu"
                 && item_id != "inline:width_menu"
                 && item_id != "inline:wave"
                 && item_id != "inline:wave_next"
+                && item_id != "inline:wave_back"
                 && item_id != "inline_dropdown:__bg__"
             {
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 

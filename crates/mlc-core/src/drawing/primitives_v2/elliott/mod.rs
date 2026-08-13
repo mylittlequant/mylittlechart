@@ -10,7 +10,7 @@ mod ratio;
 pub mod guard;
 
 pub use elliott_impulse::ElliottImpulse;
-pub use elliott_correction::ElliottCorrection;
+pub use elliott_correction::{ElliottCorrection, CorrectionType};
 pub use elliott_triangle::ElliottTriangle;
 pub use elliott_double_combo::ElliottDoubleCombo;
 pub use elliott_triple_combo::ElliottTripleCombo;

@@ -58,6 +58,7 @@ use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
 use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyGroup, PropertyType};
+use mlc_core::drawing::primitives_v2::elliott::guard;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::{current_language, ConceptKey, ConfigKey, SettingsKey, StyleKey};
@@ -157,13 +158,18 @@ struct GroupHeights {
     /// `PropertyCategory::AppearanceStats`. Zero for every other primitive
     /// today (nothing else declares into that category).
     stats: f64,
+    /// The trailing "Rules" group (2026-08-13) — one row per Elliott
+    /// hard-rule/context violation, see [`rules_group_height`]'s own doc.
+    /// Zero for every non-Elliott primitive and for a compliant Elliott
+    /// structure.
+    rules: f64,
 }
 
 impl GroupHeights {
     fn total(&self) -> f64 {
         let mut h = 0.0;
         let mut any = false;
-        for g in [self.line, self.fill, self.stats] {
+        for g in [self.line, self.fill, self.stats, self.rules] {
             if g > 0.0 {
                 if any {
                     h += GROUP_GAP;
@@ -241,7 +247,101 @@ fn group_heights(prim: &dyn Primitive) -> GroupHeights {
     let stats_props = properties_in(&all, PropertyCategory::AppearanceStats);
     let stats = headered_group_height(&stats_props);
 
-    GroupHeights { line, fill, stats }
+    let rules = rules_group_height(primitive_violations(prim).len());
+
+    GroupHeights { line, fill, stats, rules }
+}
+
+// =============================================================================
+// Rules — Elliott hard-rule + context violations as READABLE TEXT (owner ask
+// 2026-08-13: "правило — факт", not only a recoloured chart segment). Always
+// the LAST group in the Subject tab, present only when the primitive
+// currently has something to report.
+// =============================================================================
+
+/// Every violation `prim` currently exhibits, self-only
+/// (`guard::violations`) merged with the sibling-dependent cache
+/// (`Primitive::context_violations`, filled by `DrawingManager::
+/// refresh_wave_guards`) — the SAME merge each Elliott type's own `render`
+/// already does to recolor a broken segment, so the modal and the chart
+/// never disagree about what counts as a violation. Empty for every
+/// non-Elliott primitive and for a compliant Elliott structure.
+fn primitive_violations(prim: &dyn Primitive) -> Vec<guard::Violation> {
+    let mut v = guard::violations(prim);
+    v.extend_from_slice(prim.context_violations());
+    v
+}
+
+/// Height of the trailing Rules group for `count` violations — a header
+/// plus one row per violation, `GROUP_PAD_BOTTOM`-closed, matching every
+/// other unconditionally-headered run in this tab
+/// ([`headered_group_height`]'s own shape). Zero when `count == 0` (no
+/// header, no gap — mirrors every other empty group in this tab).
+fn rules_group_height(count: usize) -> f64 {
+    if count == 0 {
+        return 0.0;
+    }
+    GROUP_HEADER_H + count as f64 * ROW_H + GROUP_PAD_BOTTOM
+}
+
+/// Draws the trailing Rules group — see this section's own doc. Non-
+/// interactive (pushes no `result.content_items` entry): a violation is
+/// read, not clicked. Draws nothing (not even a header) when
+/// [`primitive_violations`] is empty, mirroring [`rules_group_height`]'s
+/// own zero case.
+fn draw_rules_group(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    x0: f64,
+    x1: f64,
+    row_y: &mut f64,
+    any_drawn: &mut bool,
+    prim: &dyn Primitive,
+) {
+    let violations = primitive_violations(prim);
+    if violations.is_empty() {
+        return;
+    }
+    if *any_drawn {
+        *row_y += GROUP_GAP;
+    }
+    let lang = current_language();
+    draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConceptKey::RulesGroupTitle.get(lang), None);
+    *row_y += GROUP_HEADER_H;
+    // The wave label prefix comes from `prim`'s OWN degree — `None` for a
+    // primitive outside the Elliott family (never reached here, since
+    // `violations` is always empty for one) or, defensively, for an
+    // Elliott primitive somehow missing its own degree; the prefix is
+    // simply skipped rather than printing a placeholder.
+    let degree = prim.wave_degree();
+    for violation in &violations {
+        let text = match degree {
+            Some(d) => format!("{} — {}", violation.wave.label(d), violation.message.get(lang)),
+            None => violation.message.get(lang).to_string(),
+        };
+        draw_violation_row(ctx, x0, x1, *row_y, &text);
+        *row_y += ROW_H;
+    }
+    *row_y += GROUP_PAD_BOTTOM;
+    *any_drawn = true;
+}
+
+/// One Rules-group row: `text` left-aligned, clipped to `[x0, x1]`, in the
+/// guard's own fixed warning colour (`guard::VIOLATION_COLOR`) — the SAME
+/// colour the chart itself recolors a broken segment/label with, so the
+/// modal and the chart agree visually (owner ask 2026-08-13) — never the
+/// active theme's own colours, which is why this takes no `ToolbarTheme`.
+fn draw_violation_row(ctx: &mut dyn RenderContext, x0: f64, x1: f64, y: f64, text: &str) {
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(guard::VIOLATION_COLOR);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(x0, y, (x1 - x0).max(0.0), ROW_H);
+    ctx.clip();
+    ctx.fill_text(text, x0, y + ROW_H / 2.0);
+    ctx.restore();
 }
 
 /// Whether this primitive has anything at all for the Appearance tab: the
@@ -304,7 +404,13 @@ fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
         .collect();
     let stats = headered_group_height(&stats_props);
 
-    GroupHeights { line, fill, stats }
+    // Rules is never query-filtered (see `draw_rules_group`'s own call site
+    // doc in `draw` — a violation is a live fact, not a searchable setting
+    // label), so its height is the SAME unfiltered value the empty-query
+    // early return above already uses.
+    let rules = rules_group_height(primitive_violations(prim).len());
+
+    GroupHeights { line, fill, stats, rules }
 }
 
 /// Draws the Appearance tab's own rows. Returns `true` if at least one interactive
@@ -368,8 +474,9 @@ pub fn draw(
     }
 
     // ---- Results (read-only computed stats, e.g. Position's own
-    // Risk/Target/R:R — `PropertyCategory::AppearanceStats`) — always the
-    // LAST group(s), below the editable Line/Fill rows above. ----
+    // Risk/Target/R:R — `PropertyCategory::AppearanceStats`) — the last
+    // DECLARED-property group, below the editable Line/Fill rows above.
+    // ----
     let group_results = ConfigKey::GroupResults.get(lang);
     let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
         .into_iter()
@@ -378,6 +485,12 @@ pub fn draw(
     for (group, rows) in group_runs(&stats_props) {
         draw_headered_run(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, &mut any_drawn, group, &rows, group_results);
     }
+
+    // ---- Rules — always the LAST group of all, below Results. Not
+    // filtered by `query`: a violation is a live fact about the
+    // primitive's own current shape, not a searchable setting label (see
+    // this group's own doc section above).
+    draw_rules_group(ctx, toolbar_theme, x0, x1, row_y, &mut any_drawn, prim);
 
     result.content_items.len() > items_before
 }

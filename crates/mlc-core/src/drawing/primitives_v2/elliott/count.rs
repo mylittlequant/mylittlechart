@@ -169,16 +169,24 @@ impl WaveSlot {
         })
     }
 
-    /// Whether this slot subdivides as a 5-wave MOTIVE structure (seeds an
-    /// `ElliottImpulse` child) rather than a corrective one (seeds an
-    /// `ElliottCorrection` child) — classic Elliott alternation: only
-    /// impulse waves 1, 3, 5 are motive. Impulse waves 2/4, every A/B/C
-    /// corrective leg, and every triangle/combination slot are corrective —
-    /// none of those subdivide as a 5-wave motive.
+    /// Whether this slot subdivides as a 5-wave MOTIVE structure rather
+    /// than a corrective one — classic Elliott alternation: only impulse
+    /// waves 1, 3, 5 are motive. Impulse waves 2/4, every A/B/C corrective
+    /// leg, and every triangle/combination slot are corrective — none of
+    /// those subdivide as a 5-wave motive.
     ///
-    /// Read by the caller that creates a NEW child primitive for a slot
-    /// (`elliott::count` itself never constructs a primitive, per this
-    /// module's own doc) to decide which Elliott type to build.
+    /// A pure classification predicate — NOT read by
+    /// `DrawingManager::create_wave_child` to decide which Elliott type to
+    /// build (the old heuristic this method used to back: a motive slot
+    /// always seeded an `ElliottImpulse` and everything else an
+    /// `ElliottCorrection`, which cannot express that wave 2 may be many
+    /// structures but never a triangle, or that wave 4 may be a triangle —
+    /// see this section's own "Grammar" doc below). A child's actual type
+    /// is decided by [`child_kinds`] plus the caller's own chosen kind id,
+    /// never by this single bit. Kept as the plain wave-classification
+    /// fact it always was — still the alternation [`label`](Self::label)/
+    /// [`slot_position`] themselves rest on, and exercised directly by
+    /// this module's own tests.
     pub fn is_motive(&self) -> bool {
         matches!(self, WaveSlot::Impulse1 | WaveSlot::Impulse3 | WaveSlot::Impulse5)
     }

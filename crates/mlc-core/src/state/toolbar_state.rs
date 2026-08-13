@@ -665,6 +665,18 @@ pub struct ChartToolbarState {
     /// `mlc-app-layout`'s `ToolbarSection::inline_config`'s `"inline:wave"`
     /// button). Same shape as the style/width dropdown flags above.
     pub open_inline_wave_dropdown: bool,
+    /// The slot chosen in the E2 picker's own FIRST step, while
+    /// `open_inline_wave_dropdown` is true (owner ask 2026-08-13: slot
+    /// first, then which structure goes in it). `None` shows the slot list
+    /// (`SelectedPrimitiveConfig::wave_slots`); `Some(slot_id)` shows that
+    /// slot's own legal kinds (`SelectedPrimitiveConfig::wave_slot_kinds`)
+    /// instead, preceded by an `"inline:wave_back"` row that steps back to
+    /// `None`. Cleared on every path that closes this dropdown (the
+    /// background absorber, the wave button's own toggle, selecting a
+    /// kind, selecting a successor) — a stale pending slot must never
+    /// survive into the next opening, since the primitive selected next
+    /// may not even have this slot id.
+    pub pending_wave_slot: Option<String>,
     /// Whether the inline wave-SUCCESSION picker dropdown is open (E3 — see
     /// `mlc-app-layout`'s `ToolbarSection::inline_config`'s
     /// `"inline:wave_next"` button, the SECOND wave control: "what comes
@@ -732,6 +744,7 @@ impl Default for ChartToolbarState {
             open_inline_style_dropdown: false,
             open_inline_width_dropdown: false,
             open_inline_wave_dropdown: false,
+            pending_wave_slot: None,
             open_inline_wave_next_dropdown: false,
             hovered_inline_dropdown_item: None,
             top_scroll_offset: 0.0,

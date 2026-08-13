@@ -7,6 +7,7 @@ use mlc_core::{
     ChartInputAction,
     ChartOutputAction,
     ScaleCornerButton,
+    ids::BubbleId,
     input::MouseButton,
     ScaleMode,
     localize_primitive_name,
@@ -242,11 +243,15 @@ impl ChartApp {
                 // as the style/width chevrons above. Unlike those, this
                 // button is not a split button (there is no "cycle to the
                 // next slot" main-area action), so the whole button IS the
-                // toggle trigger.
+                // toggle trigger. `pending_wave_slot` always resets to
+                // `None` here too — every (re)opening of this dropdown
+                // starts at the picker's own FIRST step (the slot list),
+                // never mid-way through a previous selection.
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_dropdown = true;
@@ -257,13 +262,17 @@ impl ChartApp {
             // ── Wave-succession button — toggle wave-succession picker
             // dropdown (E3, "what comes after this" — the second, separate
             // wave control). Same shape as "inline:wave" above, its own
-            // sibling dropdown flag.
+            // sibling dropdown flag. Also resets `pending_wave_slot` — this
+            // arm closes E2's own dropdown (part of the "close all four"
+            // reset above), and a stale pending slot must never survive
+            // into E2's next opening.
             "inline:wave_next" => {
                 let was_open = self.panel_app.toolbar_state.open_inline_wave_next_dropdown;
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_next_dropdown = true;
@@ -277,6 +286,7 @@ impl ChartApp {
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
@@ -331,47 +341,78 @@ impl ChartApp {
             }
 
             _ if action.starts_with("inline:wave_option:") => {
-                // ── Wave slot selected — create the nested Elliott child
-                // (E2). Mirrors the context menu's "clone" handler
-                // (`on_context_menu_action`): create through the facade,
-                // record `CreatePrimitive` for undo, sync back to the sync
-                // group, autosave — the same path every other
-                // programmatically-created primitive takes.
-                use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
+                // ── Wave slot selected (E2 step 1) — look up how many
+                // legal kinds this slot has (`SelectedPrimitiveConfig::
+                // wave_slot_kinds`, the same list the dropdown's own rows
+                // came from). Exactly one -> create immediately, no
+                // pointless second step. More than one -> step into the
+                // kind picker (step 2) by setting `pending_wave_slot`,
+                // leaving the dropdown open.
                 let slot_id = action.strip_prefix("inline:wave_option:").unwrap_or_default();
-                if let Some(slot) = WaveSlot::from_id(slot_id) {
-                    let new_id = active_bid_inline
-                        .and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot));
-                    match new_id {
-                        Some(new_id) => {
-                            let cmd = active_bid_inline.and_then(|bid| self.build_create_primitive_command(bid, new_id));
-                            if let Some(cmd) = cmd {
-                                self.push_undo_command(cmd);
-                                eprintln!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
-                            }
-                            self.sync_drawing_back_to_group();
-                            self.autosave_snapshot();
-                            eprintln!("[ChartApp] inline: created wave child #{} in slot {} of #{}", new_id, slot_id, prim_id);
-                        }
-                        None => {
-                            eprintln!("[ChartApp] inline: create_wave_child returned None for slot {} of #{}", slot_id, prim_id);
-                        }
+                let kinds: Vec<String> = active_bid_inline
+                    .and_then(|bid| self.core.drawings().selected_config(bid))
+                    .and_then(|cfg| cfg.wave_slot_kinds.into_iter().find(|(s, _)| s == slot_id))
+                    .map(|(_, kinds)| kinds.into_iter().map(|(kind_id, _)| kind_id).collect())
+                    .unwrap_or_default();
+                match kinds.as_slice() {
+                    [only_kind] => {
+                        self.create_wave_child_and_record(active_bid_inline, prim_id, slot_id, only_kind);
+                        self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                        self.panel_app.toolbar_state.pending_wave_slot = None;
+                        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                     }
-                } else {
-                    eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
+                    [] => {
+                        eprintln!("[ChartApp] inline: no legal kinds for slot {} of #{}", slot_id, prim_id);
+                        self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                        self.panel_app.toolbar_state.pending_wave_slot = None;
+                        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+                    }
+                    _ => {
+                        self.panel_app.toolbar_state.pending_wave_slot = Some(slot_id.to_string());
+                        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+                    }
+                }
+            }
+
+            _ if action.starts_with("inline:wave_kind:") => {
+                // ── Wave kind selected (E2 step 2) — create the nested
+                // Elliott child with exactly that kind. `rest` is
+                // `"{slot_id}:{kind_id}"` — split once, since `kind_id`
+                // itself may carry a colon-separated subtype (see
+                // `elliott::count::split_kind_id`'s own doc).
+                let rest = action.strip_prefix("inline:wave_kind:").unwrap_or_default();
+                match rest.split_once(':') {
+                    Some((slot_id, kind_id)) => {
+                        self.create_wave_child_and_record(active_bid_inline, prim_id, slot_id, kind_id);
+                    }
+                    None => {
+                        eprintln!("[ChartApp] inline: malformed wave_kind action '{}'", action);
+                    }
                 }
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.pending_wave_slot = None;
+                self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+            }
+
+            // ── Back row (E2 step 2 -> step 1) — steps back to the slot
+            // list without leaving the dropdown.
+            "inline:wave_back" => {
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
             _ if action.starts_with("inline:wave_next_option:") => {
                 // ── Wave-succession type selected — create the Elliott
-                // successor (E3). Mirrors the "inline:wave_option:" handler
-                // above bit-for-bit, EXCEPT the primitive it creates
-                // continues `prim_id` (`follows`) instead of nesting inside
-                // it (`link`) — see `create_wave_successor`'s own doc for
-                // why that is a different call, not the same one with a
-                // different argument.
+                // successor (E3). Mirrors the wave-kind handler above
+                // bit-for-bit, EXCEPT the primitive it creates continues
+                // `prim_id` (`follows`) instead of nesting inside it
+                // (`link`) — see `create_wave_successor`'s own doc for why
+                // that is a different call, not the same one with a
+                // different argument. Also clears `pending_wave_slot`
+                // defensively — E2's own dropdown flag is untouched by this
+                // arm, but a stale pending slot must never survive into
+                // E2's next opening regardless of which wave control the
+                // user acted on last.
                 let type_id = action.strip_prefix("inline:wave_next_option:").unwrap_or_default();
                 let new_id = active_bid_inline
                     .and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prim_id, type_id));
@@ -390,6 +431,7 @@ impl ChartApp {
                         eprintln!("[ChartApp] inline: create_wave_successor returned None for type '{}' after #{}", type_id, prim_id);
                     }
                 }
+                self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
@@ -427,6 +469,38 @@ impl ChartApp {
 
             _ => {
                 eprintln!("[ChartApp] inline: unhandled action '{}'", action);
+            }
+        }
+    }
+
+    /// Create an Elliott child of `kind_id` nested into `slot_id` of
+    /// `prim_id`, and record it for undo — the shared tail both
+    /// `"inline:wave_option:"`'s own one-legal-kind fast path and
+    /// `"inline:wave_kind:"`'s own step-2 selection call, so the
+    /// create-through-facade / record-`CreatePrimitive` / sync-back /
+    /// autosave sequence is written once. Mirrors the context menu's
+    /// "clone" handler (`on_context_menu_action`) — same sequence every
+    /// other programmatically-created primitive takes.
+    fn create_wave_child_and_record(&mut self, bid: Option<BubbleId>, prim_id: u64, slot_id: &str, kind_id: &str) {
+        use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
+        let Some(slot) = WaveSlot::from_id(slot_id) else {
+            eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
+            return;
+        };
+        let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot, kind_id));
+        match new_id {
+            Some(new_id) => {
+                let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
+                if let Some(cmd) = cmd {
+                    self.push_undo_command(cmd);
+                    eprintln!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
+                }
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] inline: created wave child #{} ({}) in slot {} of #{}", new_id, kind_id, slot_id, prim_id);
+            }
+            None => {
+                eprintln!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
             }
         }
     }

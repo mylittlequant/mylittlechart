@@ -24,17 +24,19 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    child_seed, successor_kinds, successor_seed, promote_chain_shape, WaveLink, WaveSlot,
+    child_kinds, child_seed, kind_label, split_kind_id, successor_kinds, successor_seed,
+    promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
 use mlc_core::drawing::primitives_v2::{
-    ClickBehavior, ControlPoint, ControlPointType, ElliottCorrection, ElliottDoubleCombo,
-    ElliottImpulse, ElliottTriangle, ElliottTripleCombo, HitTestResult, LineStyle, Primitive,
-    PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
+    ClickBehavior, ControlPoint, ControlPointType, CorrectionType, ElliottCorrection,
+    ElliottDoubleCombo, ElliottImpulse, ElliottTriangle, ElliottTripleCombo, HitTestResult,
+    LineStyle, Primitive, PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
 };
 use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
+use mlc_core::i18n::ConceptKey;
 use mlc_core::ids::BubbleId;
 use mlc_core::instrument::InstrumentAddress;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
@@ -527,17 +529,33 @@ impl DrawingManager {
             registry.supports_text(type_id)
         };
         let text_color = if supports_text { data.text.as_ref().and_then(|t| t.color.clone()) } else { None };
-        // E2 — wave-slot picker. `wave_slots()` is empty for every
-        // non-Elliott primitive; a `None` degree (also non-Elliott) maps to
-        // the same empty result via the `match` below rather than a
+        // E2 — wave-slot picker (two-step: slot, then kind). `wave_slots()`
+        // is empty for every non-Elliott primitive; a `None` degree (also
+        // non-Elliott) skips the loop below entirely rather than a
         // `.unwrap_or_default()` that would silently paper over an Elliott
-        // primitive somehow missing its own degree.
-        let wave_slots: Vec<(String, String)> = match prim.wave_degree() {
-            Some(degree) => prim.wave_slots().iter()
-                .map(|slot| (slot.id().to_string(), slot.label(degree).to_string()))
-                .collect(),
-            None => Vec::new(),
-        };
+        // primitive somehow missing its own degree. `wave_slot_kinds` is
+        // built in the SAME pass, over the SAME slot list, so the two can
+        // never disagree about which slots exist — a slot whose own
+        // `child_kinds` comes back empty (the grammar allows nothing at
+        // that position) is skipped from BOTH lists, never offered as a
+        // pick target that would lead nowhere.
+        let mut wave_slots: Vec<(String, String)> = Vec::new();
+        let mut wave_slot_kinds: Vec<(String, Vec<(String, ConceptKey)>)> = Vec::new();
+        if let Some(degree) = prim.wave_degree() {
+            for &slot in prim.wave_slots() {
+                let kinds = child_kinds(prim.as_ref(), slot);
+                if kinds.is_empty() {
+                    continue;
+                }
+                let slot_id = slot.id().to_string();
+                wave_slots.push((slot_id.clone(), slot.label(degree).to_string()));
+                let kind_pairs: Vec<(String, ConceptKey)> = kinds
+                    .iter()
+                    .filter_map(|&kind_id| kind_label(kind_id).map(|key| (kind_id.to_string(), key)))
+                    .collect();
+                wave_slot_kinds.push((slot_id, kind_pairs));
+            }
+        }
         // E3 — succession picker (the second inline control, "what comes
         // after this"). `display_name` is read off each candidate type's
         // OWN registered `PrimitiveMetadata` — the same source every other
@@ -577,6 +595,7 @@ impl DrawingManager {
             text_color,
             supports_text,
             wave_slots,
+            wave_slot_kinds,
             successor_kinds: successor_kind_items,
             can_promote,
         })
@@ -1662,6 +1681,15 @@ impl DrawingManager {
                 session.dragging = None;
                 session.drag_start = None;
             }
+            // A deleted subdivision's own violations are gone with it; a
+            // deleted predecessor can leave its former successor's
+            // `chain_continuity` check silent (the dangling `follows` was
+            // just cleared above) or a deleted child can clear its former
+            // parent's `subdivision_class` check — either way, this is a
+            // path that can change what `elliott::guard::violations_in`
+            // sees (this method's own doc), so it refreshes the cache
+            // exactly like every other mutating path in this module does.
+            self.refresh_wave_guards(bubbles, bid);
         }
         removed
     }
@@ -1923,11 +1951,66 @@ impl DrawingManager {
         }
     }
 
-    pub(crate) fn end_drag(&mut self, bid: BubbleId) {
+    /// `bubbles` is only needed for the trailing [`Self::refresh_wave_guards`]
+    /// call (a drag gesture ending is exactly the "deep pass" boundary that
+    /// method's own doc describes) — every other field this method touches
+    /// lives on `self.sessions`.
+    pub(crate) fn end_drag(&mut self, bubbles: &mut BubbleStore, bid: BubbleId) {
         if let Some(s) = self.sessions.get_mut(&bid) {
             s.dragging = None;
             s.drag_type = DragType::Move;
             s.drag_start = None;
+        }
+        self.refresh_wave_guards(bubbles, bid);
+    }
+
+    // =========================================================================
+    // Elliott context-violations refresh (E2/guard follow-up, 2026-08-13) —
+    // the DEEP pass `elliott::guard::violations_in` needs but a lone
+    // primitive's own `render` cannot run (`&self` only, no path to its
+    // siblings — see that function's own module doc).
+    // =========================================================================
+
+    /// Recompute every Elliott primitive's own SIBLING-dependent violations
+    /// for the whole bubble and cache them
+    /// (`Primitive::set_context_violations`) — two passes on purpose: the
+    /// first, immutable, computes `(index, Vec<Violation>)` for every
+    /// primitive whose `wave_degree()` is `Some` (i.e. every Elliott
+    /// primitive), passing the WHOLE bubble slice as `others` to
+    /// `elliott::guard::violations_in`; the second, mutable, writes each
+    /// result back. A mutable borrow of one primitive while the immutable
+    /// slice is still borrowed for `others` is not something one pass can
+    /// do — `violations_in` needs to see every sibling at once.
+    ///
+    /// Every Elliott primitive is written, even one that now produces an
+    /// empty vec: a fixed count that goes silent (its own violation cured)
+    /// must have its stale cache CLEARED, not left holding the last
+    /// non-empty result forever.
+    ///
+    /// A no-op when `bid` does not resolve to a live bubble. Called after
+    /// every mutation that can change what the rules see — wave child/
+    /// successor creation, chain promotion (and its demotion counterpart,
+    /// covered transitively: `Command::DemoteWaveChain`'s own apply arm in
+    /// `mlc-app` ends with `Self::delete`, which already refreshes below),
+    /// primitive deletion, drag end, and external insertion (preset/undo
+    /// restore, `Self::insert_at`) — see each of those methods' own call to
+    /// this one. Never called per frame and never from `Self::update_drag`:
+    /// the SELF-only checks (`elliott::guard::violations`) already
+    /// recompute live every frame from a primitive's own `render`; this is
+    /// the expensive whole-bubble pass, and it runs once per gesture, not
+    /// once per pixel of drag.
+    pub(crate) fn refresh_wave_guards(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        let updates: Vec<(usize, Vec<Violation>)> = {
+            let refs: Vec<&dyn Primitive> = b.primitives.iter().map(|p| p.as_ref()).collect();
+            refs.iter()
+                .enumerate()
+                .filter(|(_, p)| p.wave_degree().is_some())
+                .map(|(i, &p)| (i, violations_in(p, &refs)))
+                .collect()
+        };
+        for (i, violations) in updates {
+            b.primitives[i].set_context_violations(violations);
         }
     }
 
@@ -1951,22 +2034,35 @@ impl DrawingManager {
     }
 
     /// Create a new Elliott child primitive nested into `slot` of the
-    /// parent primitive `parent_id` (E2 — the inline config toolbar's
-    /// wave-slot picker). Returns `None` exactly when `elliott::count::
-    /// child_seed` itself would: `parent_id` is gone, `slot` does not
-    /// exist on the parent's own type, the parent is not (yet) an Elliott
-    /// wave, or the parent's stored points do not yet reach the slot's
-    /// span. `child_seed` is the ONLY source of the child's degree and
-    /// anchor points — this method never invents either.
+    /// parent primitive `parent_id`, built as `kind_id` (E2 — the inline
+    /// config toolbar's two-step wave-slot/wave-kind picker: slot first,
+    /// then which structure goes in it). Returns `None` when `parent_id`
+    /// is gone, `kind_id` is not one of `elliott::count::
+    /// child_kinds(parent, slot)` — the grammar itself is enforced HERE,
+    /// not just suggested by the picker's own row list, so a stale or
+    /// forged action id can never create an illegal subdivision, the same
+    /// fail-closed shape `create_wave_successor` below already uses for
+    /// `successor_kinds` — or when `elliott::count::child_seed` itself
+    /// would refuse: `slot` does not exist on the parent's own type, the
+    /// parent is not (yet) an Elliott wave, or the parent's stored points
+    /// do not yet reach the slot's span. `child_seed` is still the ONLY
+    /// source of the child's degree and anchor points — this method never
+    /// invents either.
     ///
-    /// Child TYPE follows the classic Elliott alternation
-    /// (`WaveSlot::is_motive`): a motive slot (impulse waves 1/3/5) seeds
-    /// an `ElliottImpulse`; every corrective slot (impulse waves 2/4, every
-    /// A/B/C leg, and every triangle/combination slot) seeds an
-    /// `ElliottCorrection`. The intermediate points between the seed's
-    /// `start`/`end` are interpolated evenly (`ChildSeed::interpolate`) so
-    /// the child renders as a visible, immediately-draggable wave rather
-    /// than a degenerate line collapsed onto its own start point.
+    /// Child TYPE is resolved from `kind_id` via `elliott::count::
+    /// split_kind_id` — NOT guessed from `WaveSlot::is_motive` (the old
+    /// heuristic this replaces: a motive slot always seeded an impulse
+    /// child and everything else a correction, which cannot express that
+    /// wave 2 may be many structures but never a triangle, that wave 4 may
+    /// be a triangle, or that a zigzag's own wave A is a five and a flat's
+    /// own wave A is a three — see `elliott::count`'s own "Grammar"
+    /// section doc). `"elliott_correction"` additionally carries the kind
+    /// id's own subtype (zigzag/flat/expanded/running) onto the new
+    /// primitive's `correction_type`. The intermediate points between the
+    /// seed's `start`/`end` are interpolated evenly
+    /// (`ChildSeed::interpolate`) so the child renders as a visible,
+    /// immediately-draggable wave rather than a degenerate line collapsed
+    /// onto its own start point.
     ///
     /// Goes through the SAME `add_external` path every other
     /// externally-constructed primitive uses — proper id allocation,
@@ -1979,29 +2075,67 @@ impl DrawingManager {
         bid: BubbleId,
         parent_id: u64,
         slot: WaveSlot,
+        kind_id: &str,
     ) -> Option<u64> {
         let (seed, color) = {
             let b = bubbles.bubble(bid)?;
             let idx = Self::find_index_by_id(b, parent_id)?;
             let parent = b.primitives[idx].as_ref();
+            // Fail-closed re-check — a stale or forged action id must not
+            // be able to create an illegal subdivision (see this method's
+            // own doc).
+            if !child_kinds(parent, slot).iter().any(|&k| k == kind_id) {
+                return None;
+            }
             let seed = child_seed(parent, slot)?;
             (seed, parent.data().color.stroke.clone())
         };
 
         let link = WaveLink { parent_id, slot };
-        let child: Box<dyn Primitive> = if slot.is_motive() {
-            let mut impulse = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
-            impulse.degree = seed.degree;
-            impulse.link = Some(link);
-            Box::new(impulse)
-        } else {
-            let mut correction = ElliottCorrection::new(points_array::<4>(seed.interpolate(4)), &color);
-            correction.degree = seed.degree;
-            correction.link = Some(link);
-            Box::new(correction)
+        let (type_id, subtype) = split_kind_id(kind_id);
+        let child: Box<dyn Primitive> = match type_id {
+            "elliott_impulse" => {
+                let mut p = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                p.link = Some(link);
+                Box::new(p)
+            }
+            "elliott_correction" => {
+                let mut p = ElliottCorrection::new(points_array::<4>(seed.interpolate(4)), &color);
+                p.degree = seed.degree;
+                p.link = Some(link);
+                p.correction_type = match subtype.unwrap_or("zigzag") {
+                    "flat" => CorrectionType::Flat,
+                    "expanded" => CorrectionType::Expanded,
+                    "running" => CorrectionType::Running,
+                    _ => CorrectionType::Zigzag,
+                };
+                Box::new(p)
+            }
+            "elliott_triangle" => {
+                let mut p = ElliottTriangle::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                p.link = Some(link);
+                Box::new(p)
+            }
+            "elliott_double_combo" => {
+                let mut p = ElliottDoubleCombo::new(points_array::<7>(seed.interpolate(7)), &color);
+                p.degree = seed.degree;
+                p.link = Some(link);
+                Box::new(p)
+            }
+            "elliott_triple_combo" => {
+                let mut p = ElliottTripleCombo::new(seed.interpolate(9), &color);
+                p.degree = seed.degree;
+                p.link = Some(link);
+                Box::new(p)
+            }
+            _ => return None,
         };
 
-        Some(self.add_external(bubbles, bid, child))
+        let new_id = self.add_external(bubbles, bid, child);
+        self.refresh_wave_guards(bubbles, bid);
+        Some(new_id)
     }
 
     /// Create a new Elliott successor primitive continuing `prev_id` at
@@ -2081,7 +2215,9 @@ impl DrawingManager {
             _ => return None,
         };
 
-        Some(self.add_external(bubbles, bid, successor))
+        let new_id = self.add_external(bubbles, bid, successor);
+        self.refresh_wave_guards(bubbles, bid);
+        Some(new_id)
     }
 
     /// Set (or clear) `prim_id`'s own [`WaveLink`] directly — the write
@@ -2090,11 +2226,19 @@ impl DrawingManager {
     /// exposed for anything else: every OTHER caller that links a
     /// primitive to a parent does so at construction time
     /// (`create_wave_child`), not by mutating a live one.
+    ///
+    /// Refreshes the guard cache (`Self::refresh_wave_guards`) on every
+    /// call — `Command::PromoteWaveChain`'s own apply arm calls this once
+    /// per chain member in a loop, so the LAST call in that loop is what
+    /// leaves the cache correct; the redundant intermediate recomputes are
+    /// cheap (this is a rare user action or an undo/redo click, never a
+    /// per-frame path).
     pub(crate) fn set_wave_link(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, link: Option<WaveLink>) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         if let Some(p) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
             p.set_wave_link(link);
         }
+        self.refresh_wave_guards(bubbles, bid);
     }
 
     /// Collapse the `follows`-linked same-degree chain `prim_id` belongs to
@@ -2184,6 +2328,7 @@ impl DrawingManager {
             }
         }
 
+        self.refresh_wave_guards(bubbles, bid);
         Some((parent_id, members))
     }
 
@@ -2199,6 +2344,15 @@ impl DrawingManager {
     /// replay identically; it is not part of the public id-keyed contract.
     /// `None` when `type_id` has no registered reader for `json`, or `bid`
     /// does not resolve to a live bubble.
+    ///
+    /// This is the one external-insertion path preset load and undo/redo
+    /// restore both go through (`Command::CreatePrimitive`/
+    /// `DeletePrimitive` undo, `Command::RestoreAllPrimitives`,
+    /// `Command::PromoteWaveChain`'s own parent recreation) — refreshes the
+    /// guard cache (`Self::refresh_wave_guards`) after every insert for
+    /// exactly that reason: a restored Elliott wave can be someone's
+    /// subdivision or predecessor again, and that is a path that can
+    /// change what `elliott::guard::violations_in` sees.
     pub(crate) fn insert_at(
         &mut self,
         bubbles: &mut BubbleStore,
@@ -2217,6 +2371,7 @@ impl DrawingManager {
         } else {
             b.primitives.push(prim);
         }
+        self.refresh_wave_guards(bubbles, bid);
         Some(id)
     }
 
@@ -2259,20 +2414,34 @@ impl DrawingManager {
         } else {
             b.primitives.push(prim);
         }
+        // Same reason [`Self::insert_at`] refreshes: a pasted Elliott
+        // primitive is restored through `from_json` and therefore arrives
+        // carrying its own `link`/`follows`, so what the guard sees changed
+        // the moment it landed in the collection.
+        self.refresh_wave_guards(bubbles, bid);
         Some(id)
     }
 
     pub(crate) fn replace_primitive_from_json(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, type_id: &str, json: &str) -> bool {
-        let Some(b) = bubbles.bubble_mut(bid) else { return false };
-        let Some(idx) = Self::find_index_by_id(b, prim_id) else { return false };
-        let registry = PrimitiveRegistry::global().read().unwrap();
-        if let Some(mut prim) = registry.from_json(type_id, json) {
-            prim.data_mut().id = prim_id;
-            b.primitives[idx] = prim;
-            true
-        } else {
-            false
+        let replaced = {
+            let Some(b) = bubbles.bubble_mut(bid) else { return false };
+            let Some(idx) = Self::find_index_by_id(b, prim_id) else { return false };
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            if let Some(mut prim) = registry.from_json(type_id, json) {
+                prim.data_mut().id = prim_id;
+                b.primitives[idx] = prim;
+                true
+            } else {
+                false
+            }
+        };
+        // A replace is how an undone point/settings change lands, so the
+        // replaced primitive's geometry — and with it every rule read off a
+        // parent or a predecessor — can differ from what the cache holds.
+        if replaced {
+            self.refresh_wave_guards(bubbles, bid);
         }
+        replaced
     }
 
     // =========================================================================
@@ -2325,6 +2494,11 @@ impl DrawingManager {
         session.dragging = None;
         session.drag_start = None;
         *session.preview_cache.lock().expect("preview_cache mutex poisoned") = None;
+
+        // The bubble's whole primitive collection was just cleared and
+        // possibly refilled from snapshots, so every cached context
+        // violation in it describes primitives that are gone.
+        self.refresh_wave_guards(bubbles, bid);
 
         SwapSymbolResult { old_primitives, restored }
     }

@@ -632,7 +632,7 @@ impl<'a> DrawingsMut<'a> {
     }
 
     pub fn end_drag(&mut self, bid: BubbleId) {
-        self.mgr.end_drag(bid)
+        self.mgr.end_drag(&mut self.bubbles, bid)
     }
 
     // ---- External insertion / undo-redo --------------------------------
@@ -642,12 +642,13 @@ impl<'a> DrawingsMut<'a> {
     }
 
     /// Create a new Elliott child primitive nested into `slot` of the
-    /// parent primitive `parent_id` (E2 wave-slot picker). See
-    /// `DrawingManager::create_wave_child` for the degree/anchor/type
-    /// rules; `None` mirrors `elliott::count::child_seed`'s own `None`
-    /// cases.
-    pub fn create_wave_child(&mut self, bid: BubbleId, parent_id: u64, slot: WaveSlot) -> Option<u64> {
-        self.mgr.create_wave_child(&mut self.bubbles, bid, parent_id, slot)
+    /// parent primitive `parent_id`, built as `kind_id` (E2 two-step
+    /// wave-slot/wave-kind picker). See `DrawingManager::create_wave_child`
+    /// for the degree/anchor/type rules; `None` mirrors `elliott::count::
+    /// child_seed`'s own `None` cases, plus a `kind_id` outside
+    /// `elliott::count::child_kinds(parent, slot)`.
+    pub fn create_wave_child(&mut self, bid: BubbleId, parent_id: u64, slot: WaveSlot, kind_id: &str) -> Option<u64> {
+        self.mgr.create_wave_child(&mut self.bubbles, bid, parent_id, slot, kind_id)
     }
 
     /// Create a new Elliott successor primitive continuing `prev_id` at its

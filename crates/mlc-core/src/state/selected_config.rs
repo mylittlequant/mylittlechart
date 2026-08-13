@@ -1,3 +1,5 @@
+use crate::i18n::ConceptKey;
+
 /// Configuration for selected primitive (for inline config toolbar)
 #[derive(Debug, Clone, Default)]
 pub struct SelectedPrimitiveConfig {
@@ -25,6 +27,20 @@ pub struct SelectedPrimitiveConfig {
     /// primitive's own degree (e.g. an Intermediate-degree impulse offers
     /// `("impulse_1", "(1)")` .. `("impulse_5", "(5)")`).
     pub wave_slots: Vec<(String, String)>,
+    /// For each slot already present in [`Self::wave_slots`], the legal
+    /// child kinds that slot may subdivide into — `(kind_id, label_key)`
+    /// pairs (E2's two-step picker: slot first, then which structure goes
+    /// in it — see `drawing::primitives_v2::elliott::count::child_kinds`).
+    /// `kind_id` is `elliott::count::split_kind_id`'s own fixed
+    /// `"type_id[:subtype]"` spelling (e.g. `"elliott_correction:flat"`);
+    /// `label_key` is a [`ConceptKey`], NOT a resolved string — this
+    /// struct is built in the backend, where the active display language
+    /// is not known (every other localized label in the drawing layer is
+    /// resolved at render time, in the layer that DOES know it). A slot
+    /// whose own `child_kinds` comes back empty never gets an entry here
+    /// — nor in `wave_slots` itself; the two lists are built in the same
+    /// pass and always name the same set of slots.
+    pub wave_slot_kinds: Vec<(String, Vec<(String, ConceptKey)>)>,
     /// `(type_id, display_name)` pairs for the Elliott types that may
     /// validly follow this primitive at its OWN degree — succession, not
     /// subdivision (see `drawing::primitives_v2::elliott::count::

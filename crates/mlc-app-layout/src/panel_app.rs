@@ -32,6 +32,7 @@ use crate::ui::toolbar_core::{
 };
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 use mlc_core::chart_type::RESOLUTION_PARAM_ITEM_PREFIX;
+use mlc_core::i18n::{current_language, ConceptKey};
 
 // Types moved to state/toolbar_state.rs (Phase X.4 back-edge removal).
 // Re-exported here so any `crate::panel_app::*` paths remain valid.
@@ -1237,6 +1238,7 @@ pub fn chart_toolbar_render_toolbars(
             &theme,
             layout.full_rect.height,
             selected_primitive.map(|c| c.wave_slots.as_slice()).unwrap_or(&[]),
+            selected_primitive.map(|c| c.wave_slot_kinds.as_slice()).unwrap_or(&[]),
             selected_primitive.map(|c| c.successor_kinds.as_slice()).unwrap_or(&[]),
         );
 
@@ -2230,11 +2232,16 @@ fn chart_toolbar_render_dropdown(
 ///
 /// `wave_slots` is the selected primitive's own `SelectedPrimitiveConfig::
 /// wave_slots` (`(slot_id, label)` pairs) — only read when the wave dropdown
-/// is the one open; empty for a non-Elliott selection, matching the
+/// is the one open AND `tb.pending_wave_slot` is `None` (the picker's own
+/// FIRST step); empty for a non-Elliott selection, matching the
 /// `"inline:wave"` button itself only existing when this is non-empty.
-/// `successor_kinds` is the same shape for `SelectedPrimitiveConfig::
-/// successor_kinds` — only read when the wave-succession dropdown is the
-/// one open, matching `"inline:wave_next"`'s own non-empty gate.
+/// `wave_slot_kinds` is `SelectedPrimitiveConfig::wave_slot_kinds` —
+/// `(slot_id, Vec<(kind_id, label_key)>)` pairs — read instead of
+/// `wave_slots` once `tb.pending_wave_slot` names a slot (the picker's own
+/// SECOND step: which structure goes in it). `successor_kinds` is the same
+/// shape as `wave_slots` for `SelectedPrimitiveConfig::successor_kinds` —
+/// only read when the wave-succession dropdown is the one open, matching
+/// `"inline:wave_next"`'s own non-empty gate.
 fn chart_toolbar_render_inline_dropdown(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -2243,6 +2250,7 @@ fn chart_toolbar_render_inline_dropdown(
     toolbar_theme: &TcToolbarTheme,
     panel_height: f64,
     wave_slots: &[(String, String)],
+    wave_slot_kinds: &[(String, Vec<(String, ConceptKey)>)],
     successor_kinds: &[(String, String)],
 ) -> Option<InlineDropdownResult> {
     // Determine which inline dropdown is open (style takes priority)
@@ -2293,14 +2301,39 @@ fn chart_toolbar_render_inline_dropdown(
                 )
             }).collect()
         } else if dropdown_id == "inline:wave" {
-            // Wave-slot picker (E2) — one row per slot the selected
-            // primitive's own points can seed a child into, labelled the
-            // way that slot prints AT THE PARENT's degree
-            // (`SelectedPrimitiveConfig::wave_slots`, sourced from
-            // `WaveSlot::label`).
-            wave_slots.iter().map(|(slot_id, label)| {
-                crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_option:{slot_id}"), label)
-            }).collect()
+            match tb.pending_wave_slot.as_deref() {
+                // Step 1 — wave-slot picker: one row per slot the selected
+                // primitive's own points can seed a child into, labelled
+                // the way that slot prints AT THE PARENT's degree
+                // (`SelectedPrimitiveConfig::wave_slots`, sourced from
+                // `WaveSlot::label`).
+                None => wave_slots.iter().map(|(slot_id, label)| {
+                    crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_option:{slot_id}"), label)
+                }).collect(),
+                // Step 2 — wave-KIND picker for the slot chosen in step 1
+                // (owner ask 2026-08-13: slot first, then which structure
+                // goes in it). A leading back row steps to `None` again
+                // without leaving the dropdown; the kind rows themselves
+                // come from `SelectedPrimitiveConfig::wave_slot_kinds`,
+                // resolved to this frame's own active language HERE (the
+                // backend struct carries a `ConceptKey`, never a resolved
+                // string — see that field's own doc).
+                Some(slot_id) => {
+                    let lang = current_language();
+                    let mut items = vec![
+                        crate::ui::dropdown::DropdownItem::item("inline:wave_back", ConceptKey::WaveBackLabel.get(lang)),
+                    ];
+                    if let Some((_, kinds)) = wave_slot_kinds.iter().find(|(s, _)| s == slot_id) {
+                        for (kind_id, label_key) in kinds {
+                            items.push(crate::ui::dropdown::DropdownItem::item(
+                                &format!("inline:wave_kind:{slot_id}:{kind_id}"),
+                                label_key.get(lang),
+                            ));
+                        }
+                    }
+                    items
+                }
+            }
         } else {
             // Wave-succession picker (E3) — one row per Elliott type valid
             // to follow the selected primitive at its own degree
