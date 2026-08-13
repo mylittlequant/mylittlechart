@@ -2357,24 +2357,26 @@ pub(crate) fn draw_main_chart_drawing_preview(
         if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
             preview_prim.render(ctx, false);
 
-            // Draw anchor points for multi-click tools (not freehand)
+            // Draw anchor points for multi-click tools (not freehand).
+            // Routed through the same `draw_control_points` choke point the
+            // selected-primitive handles use, so shape/size/corner-radius
+            // always match the configured `ControlPointStyle` — see report
+            // that caused this change, 2026-08-14 (preview anchors were
+            // hardcoded circles, disagreeing with a square-configured
+            // style). The yellow fill is kept as the one deliberate
+            // difference: it is the only visual cue that these points are
+            // "placed but not yet a finished primitive".
             let points = dm.drawing_points();
             if !points.is_empty() {
-                ctx.set_fill_color("#ffff00");
-                ctx.set_stroke_color("#000000");
-                ctx.set_stroke_width(1.0);
-
-                for (ts_ms, price) in &points {
-                    let x = state.viewport.x_for_ts(*ts_ms, state.bars);
-                    let y = state.price_scale.price_to_y(*price, chart_height);
-
-                    ctx.begin_path();
-                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                    ctx.fill();
-                    ctx.begin_path();
-                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                    ctx.stroke();
-                }
+                let screen_points: Vec<(f64, f64)> = points
+                    .iter()
+                    .map(|&(ts_ms, price)| {
+                        let x = state.viewport.x_for_ts(ts_ms, state.bars);
+                        let y = state.price_scale.price_to_y(price, chart_height);
+                        (x, y)
+                    })
+                    .collect();
+                draw_control_points(ctx, &screen_points, "#000000", "#ffff00");
             }
         }
     }
@@ -2466,23 +2468,19 @@ pub(crate) fn draw_sub_pane_drawing_preview(
         if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
             preview_prim.render(ctx, false);
 
+            // See the main-chart preview above for why this goes through
+            // `draw_control_points` instead of a hand-rolled circle.
             let points = dm.drawing_points();
             if !points.is_empty() {
-                ctx.set_fill_color("#ffff00");
-                ctx.set_stroke_color("#000000");
-                ctx.set_stroke_width(1.0);
-
-                for (ts_ms, price) in &points {
-                    let x = pane_viewport.x_for_ts(*ts_ms, state.bars);
-                    let y = pane_price_scale.price_to_y(*price, content_height);
-
-                    ctx.begin_path();
-                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                    ctx.fill();
-                    ctx.begin_path();
-                    ctx.arc(x, y, 5.0, 0.0, std::f64::consts::TAU);
-                    ctx.stroke();
-                }
+                let screen_points: Vec<(f64, f64)> = points
+                    .iter()
+                    .map(|&(ts_ms, price)| {
+                        let x = pane_viewport.x_for_ts(ts_ms, state.bars);
+                        let y = pane_price_scale.price_to_y(price, content_height);
+                        (x, y)
+                    })
+                    .collect();
+                draw_control_points(ctx, &screen_points, "#000000", "#ffff00");
             }
         }
     }

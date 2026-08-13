@@ -2325,10 +2325,17 @@ fn chart_toolbar_render_inline_dropdown(
                     ];
                     if let Some((_, kinds)) = wave_slot_kinds.iter().find(|(s, _)| s == slot_id) {
                         for (kind_id, label_key) in kinds {
+                            // Icon added 2026-08-14 (owner report — text-only
+                            // rows for a structure kind that already has a
+                            // registered toolbar icon; `elliott_icon_id` is
+                            // the SAME split-on-`:` helper the context-menu
+                            // wave popup uses for the same row shape).
                             items.push(crate::ui::dropdown::DropdownItem::item(
                                 &format!("inline:wave_kind:{slot_id}:{kind_id}"),
                                 label_key.get(lang),
-                            ));
+                            ).with_icon(crate::ui::toolbar_core::IconId::new(
+                                crate::ui::context_menu::elliott_icon_id(kind_id),
+                            )));
                         }
                     }
                     items
@@ -2341,7 +2348,14 @@ fn chart_toolbar_render_inline_dropdown(
             // `elliott::count::successor_kinds` + each candidate type's own
             // registered `display_name`).
             successor_kinds.iter().map(|(type_id, display_name)| {
+                // Icon added 2026-08-14 — see the wave-kind picker above;
+                // `type_id` here is already the bare Elliott type id (no
+                // `:subtype`), but `elliott_icon_id` is still the single
+                // source of truth for the id spelling the icon match wants.
                 crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_next_option:{type_id}"), display_name)
+                    .with_icon(crate::ui::toolbar_core::IconId::new(
+                        crate::ui::context_menu::elliott_icon_id(type_id),
+                    ))
             }).collect()
         };
 

@@ -754,11 +754,24 @@ fn fib_section() -> ToolbarSectionDef {
     ])
 }
 
+// Report 2026-08-14 (owner screenshot): the flyout listed Patterns first,
+// which buried the Elliott group the owner reaches for most. Reordered to
+// Elliott Waves -> Patterns (harmonic) -> Cycles, each group still intact
+// with its own header/separator. The quick_select's own button icon now
+// leads with `ElliottImpulse` to match the group that now heads the list.
 fn pattern_section() -> ToolbarSectionDef {
     let lang = current_language();
     ToolbarSectionDef::new(vec![
         ToolbarItemDef::quick_select("pattern_tools", vec![
+            // Elliott Waves
+            DropdownItemDef::Header { label: MK::HeaderElliottWaves.get(lang).to_string() },
+            DropdownItemDef::action("elliott_impulse", PN::ElliottImpulse.get(lang)).with_icon(ToolbarIconId::new("ElliottImpulse")),
+            DropdownItemDef::action("elliott_correction", PN::ElliottCorrection.get(lang)).with_icon(ToolbarIconId::new("ElliottCorrection")),
+            DropdownItemDef::action("elliott_triangle", PN::ElliottTriangle.get(lang)).with_icon(ToolbarIconId::new("ElliottTriangle")),
+            DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottDoubleCombo")),
+            DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottTripleCombo")),
             // Patterns
+            DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderPatterns.get(lang).to_string() },
             DropdownItemDef::action("xabcd_pattern", PN::XabcdPattern.get(lang)).with_icon(ToolbarIconId::new("XabcdPattern")),
             DropdownItemDef::action("cypher_pattern", PN::CypherPattern.get(lang)).with_icon(ToolbarIconId::new("CypherPattern")),
@@ -766,21 +779,13 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("abcd_pattern", PN::AbcdPattern.get(lang)).with_icon(ToolbarIconId::new("AbcdPattern")),
             DropdownItemDef::action("triangle_pattern", PN::TrianglePattern.get(lang)).with_icon(ToolbarIconId::new("TrianglePattern")),
             DropdownItemDef::action("three_drives", PN::ThreeDrives.get(lang)).with_icon(ToolbarIconId::new("ThreeDrives")),
-            // Elliott Waves
-            DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderElliottWaves.get(lang).to_string() },
-            DropdownItemDef::action("elliott_impulse", PN::ElliottImpulse.get(lang)).with_icon(ToolbarIconId::new("ElliottImpulse")),
-            DropdownItemDef::action("elliott_correction", PN::ElliottCorrection.get(lang)).with_icon(ToolbarIconId::new("ElliottCorrection")),
-            DropdownItemDef::action("elliott_triangle", PN::ElliottTriangle.get(lang)).with_icon(ToolbarIconId::new("ElliottTriangle")),
-            DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottDoubleCombo")),
-            DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottTripleCombo")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
             DropdownItemDef::action("cycle_lines", PN::CycleLines.get(lang)).with_icon(ToolbarIconId::new("CycleLines")),
             DropdownItemDef::action("time_cycles", PN::TimeCycles.get(lang)).with_icon(ToolbarIconId::new("TimeCycles")),
             DropdownItemDef::action("sine_wave", PN::SineWave.get(lang)).with_icon(ToolbarIconId::new("SineWave")),
-        ]).with_icon(ToolbarIconId::new("XabcdPattern"))
+        ]).with_icon(ToolbarIconId::new("ElliottImpulse"))
           .with_tooltip(t_toolbar(TK::PatternTool)),
     ])
 }

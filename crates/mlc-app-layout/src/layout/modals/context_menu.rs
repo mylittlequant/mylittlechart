@@ -80,7 +80,17 @@ pub fn render_context_menu(
         if let Some(ref icon_id) = item.icon {
             use mlc_core::engine::render::draw_svg_icon;
 
-            // Map icon ID string to Icon enum
+            // Map icon ID string to Icon enum.
+            //
+            // Elliott ids added 2026-08-14 (owner report: wave-menu rows
+            // built in `ui::context_menu::{build_conversion_block,
+            // build_wave_menu, build_successor_menu}` were text-only,
+            // although every one of these five structures already has a
+            // registered `toolbar.rs` icon). `elliott_double_combo` and
+            // `elliott_triple_combo` both resolve to the one
+            // `Icon::ElliottCombo` variant — this enum has no separate
+            // double/triple combo member (only the raw `icon_svg` string
+            // table does), same collapse `Icon::from_name` already applies.
             let icon_enum = match icon_id.as_str() {
                 "settings" => Some(Icon::Settings),
                 "copy" => Some(Icon::Copy),
@@ -91,6 +101,10 @@ pub fn render_context_menu(
                 "delete" => Some(Icon::Delete),
                 "arrow_up" => Some(Icon::ArrowUp),
                 "arrow_down" => Some(Icon::ArrowDown),
+                "elliott_impulse" => Some(Icon::ElliottImpulse),
+                "elliott_correction" => Some(Icon::ElliottCorrection),
+                "elliott_triangle" => Some(Icon::ElliottTriangle),
+                "elliott_double_combo" | "elliott_triple_combo" => Some(Icon::ElliottCombo),
                 _ => None,
             };
 

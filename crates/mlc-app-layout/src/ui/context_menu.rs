@@ -321,10 +321,34 @@ fn build_conversion_block(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuItemS
     let mut items = Vec::new();
     items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, cfg.name.clone()).set_enabled(false));
     for (kind_id, key, is_current) in &cfg.conversion_kinds {
-        let item = ContextMenuItemState::action(format!("wave_menu:convert:{kind_id}"), t_concept(*key));
+        let item = ContextMenuItemState::action_with_icon(
+            elliott_icon_id(kind_id),
+            format!("wave_menu:convert:{kind_id}"),
+            t_concept(*key),
+        );
         items.push(if *is_current { item.set_enabled(false) } else { item });
     }
     items
+}
+
+/// The Elliott icon id (`toolbar.rs`'s own `pattern_section` spelling —
+/// `"elliott_impulse"` / `"elliott_correction"` / `"elliott_triangle"` /
+/// `"elliott_double_combo"` / `"elliott_triple_combo"`, registered in
+/// `render_context_menu`'s own icon match) a "kind id" or "type id" names —
+/// drops the `:subtype` suffix a conversion/subdivide kind id may carry
+/// (see `elliott::count::split_kind_id`'s own doc), so a correction's four
+/// subtypes (zigzag / regular flat / expanded flat / running flat) all
+/// share the one `elliott_correction` icon by design, not an omission
+/// (owner report 2026-08-14: wave-menu rows were text-only although every
+/// one of these five structures already has a registered toolbar icon).
+///
+/// `pub(crate)` — also used by `panel_app.rs`'s own inline wave dropdown
+/// (`inline:wave_kind:`/`inline:wave_next_option:` rows), the second
+/// control surface reading the SAME `SelectedPrimitiveConfig` kind/type ids
+/// this popup does, so both surfaces resolve an icon the same way rather
+/// than keeping two copies of the split-on-`:` convention.
+pub(crate) fn elliott_icon_id(kind_or_type_id: &str) -> &str {
+    kind_or_type_id.split(':').next().unwrap_or(kind_or_type_id)
 }
 
 /// Build the "subdivide this wave" popup (`ChartGesture::WaveMenu`) for the
@@ -364,7 +388,8 @@ pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: 
 
     if let Some((_, kinds)) = cfg.wave_slot_kinds.iter().find(|(id, _)| id == slot_id) {
         for (kind_id, key) in kinds {
-            items.push(ContextMenuItemState::action(
+            items.push(ContextMenuItemState::action_with_icon(
+                elliott_icon_id(kind_id),
                 format!("wave_menu:subdivide:{slot_id}:{kind_id}"),
                 t_concept(*key),
             ));
@@ -405,7 +430,8 @@ pub fn build_successor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuIte
     items.push(ContextMenuItemState::separator());
 
     for (type_id, display_name) in &cfg.successor_kinds {
-        items.push(ContextMenuItemState::action(
+        items.push(ContextMenuItemState::action_with_icon(
+            elliott_icon_id(type_id),
             format!("wave_menu:successor:{type_id}"),
             display_name.clone(),
         ));
