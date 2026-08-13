@@ -347,10 +347,14 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
 
     // a) subdivision_class — a child occupying a slot whose grammar its own
     // kind does not satisfy. Catches a stale file, a hand-edited preset, or
-    // a promoted chain that ended up with the wrong shape in a slot.
+    // a promoted chain that ended up with the wrong shape in a slot. A
+    // child `count::kind_id_of` cannot even NAME (outside the five Elliott
+    // types) is treated as a violation too, not skipped — it certainly
+    // does not satisfy whatever `count::child_kinds` allows.
     for &(child, slot) in &children {
-        let child_kind = child_kind_id(child);
-        if !count::child_kinds(prim, slot).iter().any(|&k| k == child_kind) {
+        let matches = count::kind_id_of(child)
+            .is_some_and(|kind| count::child_kinds(prim, slot).iter().any(|&k| k == kind));
+        if !matches {
             out.push(Violation { rule_id: "subdivision_class", wave: slot, message: ConceptKey::RuleSubdivisionClass });
         }
     }
@@ -642,21 +646,17 @@ pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
     out
 }
 
-/// This primitive's own "kind id" — see `elliott::count`'s own doc for the
-/// `type_id[:subtype]` convention — computed from [`Primitive::type_id`]
-/// and [`Primitive::correction_subtype`], never a second copy of either.
-fn child_kind_id(prim: &dyn Primitive) -> String {
-    match prim.correction_subtype() {
-        Some(subtype) => format!("{}:{}", prim.type_id(), subtype),
-        None => prim.type_id().to_string(),
-    }
-}
-
 /// This primitive's own catalogue pattern kind — [`count::kind_pattern`]
-/// applied to [`child_kind_id`], so `d)`'s combination-grammar checks read
-/// the SAME mapping [`count::child_kinds`] itself is built from.
+/// applied to [`count::kind_id_of`], so `d)`'s combination-grammar checks
+/// read the SAME mapping [`count::child_kinds`] itself is built from.
+/// `None` for a primitive [`count::kind_id_of`] cannot name (mirrors
+/// [`count::kind_pattern`]'s own `None` contract for an unrecognized kind
+/// id). Was a private `child_kind_id` formatting the same string inline —
+/// moved to `count::kind_id_of` (owner report 2026-08-14) so the
+/// conversion picker (`count::conversion_kinds`) reads the SAME "what kind
+/// is this primitive" computation, not a second copy of it.
 fn child_pattern(prim: &dyn Primitive) -> Option<EwaPatternKind> {
-    count::kind_pattern(&child_kind_id(prim))
+    count::kind_id_of(prim).and_then(|k| count::kind_pattern(&k))
 }
 
 /// The child occupying `slot` among `children` (see [`violations_in`]'s own

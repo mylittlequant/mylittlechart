@@ -24,7 +24,8 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    chain_violations, child_kinds, child_seed, kind_label, slot_span, split_kind_id, successor_kinds,
+    chain_violations, child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
+    resample_polyline, slot_at_ordinal, slot_ordinal, slot_span, split_kind_id, successor_kinds,
     successor_seed,
     promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
 };
@@ -608,6 +609,28 @@ impl DrawingManager {
                 chain.len() == member_ids.len() && promote_chain_shape(&chain).is_some()
             })
         };
+        // Conversion picker (owner report 2026-08-14: the structure's own
+        // global type must be changeable IN PLACE, mid-count — see
+        // `elliott::count`'s own "Conversion" section). `parent`/`prev` are
+        // resolved from the SAME bubble `prim` itself was read from, so
+        // `conversion_kinds` sees exactly the slot/chain gates
+        // `DrawingManager::convert_primitive_kind` will re-check when a
+        // click actually fires — a stale entry here can only be MORE
+        // restrictive than the live re-check, never less, since both read
+        // the same live collection.
+        let own_kind = kind_id_of(prim.as_ref());
+        let parent = prim.wave_link().and_then(|link| {
+            bubbles.bubble(bid).and_then(|b| b.primitives.iter().find(|p| p.data().id == link.parent_id)).map(|p| p.as_ref())
+        });
+        let prev = prim.wave_follows().and_then(|id| {
+            bubbles.bubble(bid).and_then(|b| b.primitives.iter().find(|p| p.data().id == id)).map(|p| p.as_ref())
+        });
+        let conversion_kind_items: Vec<(String, ConceptKey, bool)> = conversion_kinds(prim.as_ref(), parent, prev)
+            .iter()
+            .filter_map(|&kind_id| {
+                kind_label(kind_id).map(|key| (kind_id.to_string(), key, own_kind.as_deref() == Some(kind_id)))
+            })
+            .collect();
         Some(SelectedPrimitiveConfig {
             name: prim.display_name().to_string(),
             color: data.color.stroke.clone(),
@@ -620,6 +643,7 @@ impl DrawingManager {
             wave_slot_kinds,
             successor_kinds: successor_kind_items,
             can_promote,
+            conversion_kinds: conversion_kind_items,
         })
     }
 
@@ -2641,6 +2665,195 @@ impl DrawingManager {
 
         self.refresh_wave_guards(bubbles, bid);
         Some((parent_id, members))
+    }
+
+    /// Change WHAT the Elliott structure `prim_id` fundamentally IS —
+    /// convert it to `kind_id` IN PLACE, mid-count (owner report
+    /// 2026-08-14: "я создал АБЦ как зигзаг, но в процессе понял, что хочу
+    /// сделать его плоскостью ... допустим я выбрал зигзаг, а в процессе
+    /// понял, что это скорее двойной зигзаг ... Они должны быть просто в
+    /// этом же дропдауне выше, как глобальный статус отрезка"). Markup is a
+    /// process; unlike [`Self::create_wave_child`]/[`Self::create_wave_successor`]
+    /// (which build a NEW primitive), this rewrites an EXISTING one without
+    /// disturbing its id, its z-order position, or the relations it sits in.
+    ///
+    /// Returns `None` — never mutates anything — when: `prim_id` is not a
+    /// live Elliott primitive; `kind_id` is not one of
+    /// `elliott::count::conversion_kinds(prim, parent, prev)` — the SAME
+    /// fail-closed re-check `create_wave_child`/`create_wave_successor`
+    /// already run for their own grammars, for the same reason: a stale or
+    /// forged action id must not be able to produce an illegal structure;
+    /// or `kind_id` names the kind `prim_id` already is (a no-op is not an
+    /// undo entry — `conversion_kinds` always lists the current kind, so
+    /// this is the one candidate this method itself refuses to act on).
+    ///
+    /// The new primitive's points are `elliott::count::resample_polyline`
+    /// applied to the OLD point array at the new type's own pivot count
+    /// (never a fresh interpolated seed the way a brand-new child/successor
+    /// gets one) — the whole point of an in-place conversion is keeping the
+    /// shape the user already drew. Every field of the old `PrimitiveData`
+    /// carries over onto the new primitive UNCHANGED — colour, width,
+    /// style, text, locked, visible, pane, symbol, style reference,
+    /// timeframe visibility, and the rest — except `type_id`/`display_name`,
+    /// which take the NEW type's own registered identity (read off a
+    /// throwaway `Type::new(..)` before it is overwritten): a conversion
+    /// changes what the structure IS, not where it sits, what it looks
+    /// like, or what it belongs to, but the type/name fields are precisely
+    /// the ones that MUST change, or the menu would keep calling a triangle
+    /// an "Elliott Correction Wave". `degree`/`link`/`follows` carry over
+    /// unchanged too — a conversion never moves a structure to a different
+    /// degree, un-nests it from its parent, or detaches it from its chain.
+    ///
+    /// The new primitive replaces the old one AT ITS OWN INDEX (never
+    /// remove-and-push) — z-order is part of what the user arranged.
+    ///
+    /// Every subdivision nested inside `prim_id` is remapped by ORDINAL,
+    /// not by name (`elliott::count::{slot_ordinal, slot_at_ordinal}` — see
+    /// their own doc for why): a child in the first wave stays in the
+    /// first wave regardless of what the parent becomes. A child whose
+    /// ordinal has no match on the new type loses its own `link` and
+    /// becomes standalone — this method never deletes a child.
+    /// `restitch_wave_joints` re-anchors every surviving child onto its
+    /// (possibly differently-spanned) slot afterward, same as every other
+    /// wave-topology-changing method in this file.
+    ///
+    /// Returns `(before, after, children)` for the caller to build a
+    /// [`mlc_core::state::Command::ConvertPrimitiveKind`] undo entry from
+    /// directly, without a second query — `before`/`after` are full
+    /// snapshots (`PrimitiveSnapshot::from_primitive`, taken immediately
+    /// before/after the replace), `children` is `(child_id, slot_before,
+    /// slot_after)` per subdivision, `slot_after` being `None` for one that
+    /// lost its link.
+    pub(crate) fn convert_primitive_kind(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        prim_id: u64,
+        kind_id: &str,
+    ) -> Option<(PrimitiveSnapshot, PrimitiveSnapshot, Vec<(u64, Option<WaveSlot>, Option<WaveSlot>)>)> {
+        // Phase 1: read-only resolution + the fail-closed grammar re-check.
+        let (before, old_points, old_data, old_degree, old_link, old_follows, old_type_id, child_before) = {
+            let b = bubbles.bubble(bid)?;
+            let idx = Self::find_index_by_id(b, prim_id)?;
+            let prim = b.primitives[idx].as_ref();
+            let own_kind = kind_id_of(prim)?;
+            if kind_id == own_kind {
+                return None;
+            }
+            let parent = prim.wave_link().and_then(|link| {
+                b.primitives.iter().find(|p| p.data().id == link.parent_id).map(|p| p.as_ref())
+            });
+            let prev = prim.wave_follows().and_then(|id| {
+                b.primitives.iter().find(|p| p.data().id == id).map(|p| p.as_ref())
+            });
+            if !conversion_kinds(prim, parent, prev).iter().any(|&k| k == kind_id) {
+                return None;
+            }
+            let degree = prim.wave_degree()?;
+            let child_before: Vec<(u64, WaveSlot)> = b.primitives.iter()
+                .filter_map(|p| p.wave_link().filter(|l| l.parent_id == prim_id).map(|l| (p.data().id, l.slot)))
+                .collect();
+            (
+                PrimitiveSnapshot::from_primitive(prim),
+                prim.points(),
+                prim.data().clone(),
+                degree,
+                prim.wave_link(),
+                prim.wave_follows(),
+                prim.type_id(),
+                child_before,
+            )
+        };
+
+        // Phase 2: build the new primitive from the resampled shape.
+        let (new_type, subtype) = split_kind_id(kind_id);
+        let needed_points: usize = match new_type {
+            "elliott_impulse" | "elliott_triangle" => 6,
+            "elliott_correction" => 4,
+            "elliott_double_combo" => 7,
+            "elliott_triple_combo" => 9,
+            _ => return None,
+        };
+        let resampled = resample_polyline(&old_points, needed_points);
+        let stroke = old_data.color.stroke.clone();
+        let mut new_prim: Box<dyn Primitive> = match new_type {
+            "elliott_impulse" => {
+                let mut p = ElliottImpulse::new(points_array::<6>(resampled), &stroke);
+                p.degree = old_degree;
+                p.link = old_link;
+                p.follows = old_follows;
+                Box::new(p)
+            }
+            "elliott_correction" => {
+                let mut p = ElliottCorrection::new(points_array::<4>(resampled), &stroke);
+                p.degree = old_degree;
+                p.link = old_link;
+                p.follows = old_follows;
+                p.correction_type = match subtype.unwrap_or("zigzag") {
+                    "flat" => CorrectionType::Flat,
+                    "expanded" => CorrectionType::Expanded,
+                    "running" => CorrectionType::Running,
+                    _ => CorrectionType::Zigzag,
+                };
+                Box::new(p)
+            }
+            "elliott_triangle" => {
+                let mut p = ElliottTriangle::new(points_array::<6>(resampled), &stroke);
+                p.degree = old_degree;
+                p.link = old_link;
+                p.follows = old_follows;
+                Box::new(p)
+            }
+            "elliott_double_combo" => {
+                let mut p = ElliottDoubleCombo::new(points_array::<7>(resampled), &stroke);
+                p.degree = old_degree;
+                p.link = old_link;
+                p.follows = old_follows;
+                Box::new(p)
+            }
+            "elliott_triple_combo" => {
+                let mut p = ElliottTripleCombo::new(resampled, &stroke);
+                p.degree = old_degree;
+                p.link = old_link;
+                p.follows = old_follows;
+                Box::new(p)
+            }
+            _ => return None,
+        };
+
+        // Identity: the NEW type's own registered `type_id`/`display_name`
+        // (read off the fresh instance before its `data` is overwritten),
+        // every OTHER field of `PrimitiveData` carried over from the OLD
+        // primitive wholesale — see this method's own doc for why the two
+        // fields are the deliberate exception.
+        let new_type_id = new_prim.data().type_id.clone();
+        let new_display_name = new_prim.data().display_name.clone();
+        *new_prim.data_mut() = old_data;
+        new_prim.data_mut().type_id = new_type_id;
+        new_prim.data_mut().display_name = new_display_name;
+
+        // Phase 3: replace at its own index, remap children by ordinal, restitch.
+        let b = bubbles.bubble_mut(bid)?;
+        let idx = Self::find_index_by_id(b, prim_id)?;
+        b.primitives[idx] = new_prim;
+        let after = PrimitiveSnapshot::from_primitive(b.primitives[idx].as_ref());
+
+        let children: Vec<(u64, Option<WaveSlot>, Option<WaveSlot>)> = child_before
+            .into_iter()
+            .map(|(child_id, slot_before)| {
+                let slot_after = slot_ordinal(old_type_id, slot_before).and_then(|ord| slot_at_ordinal(new_type, ord));
+                if let Some(cidx) = Self::find_index_by_id(b, child_id) {
+                    let link = slot_after.map(|slot| WaveLink { parent_id: prim_id, slot });
+                    b.primitives[cidx].set_wave_link(link);
+                }
+                (child_id, Some(slot_before), slot_after)
+            })
+            .collect();
+
+        Self::restitch_wave_joints(b, prim_id);
+        self.refresh_wave_guards(bubbles, bid);
+
+        Some((before, after, children))
     }
 
     /// Insert a primitive at a specific list position, restored from its

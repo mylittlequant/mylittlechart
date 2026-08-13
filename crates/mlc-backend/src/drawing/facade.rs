@@ -697,6 +697,15 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.promote_wave_chain(&mut self.bubbles, bid, prim_id)
     }
 
+    /// Convert `prim_id` to `kind_id` in place, mid-count. See
+    /// `DrawingManager::convert_primitive_kind` for the full contract;
+    /// `None` mirrors every reason it refuses (not a live Elliott
+    /// primitive, `kind_id` outside `elliott::count::conversion_kinds`, or
+    /// `kind_id` naming the kind `prim_id` already is).
+    pub fn convert_primitive_kind(&mut self, bid: BubbleId, prim_id: u64, kind_id: &str) -> Option<(PrimitiveSnapshot, PrimitiveSnapshot, Vec<(u64, Option<WaveSlot>, Option<WaveSlot>)>)> {
+        self.mgr.convert_primitive_kind(&mut self.bubbles, bid, prim_id, kind_id)
+    }
+
     pub fn replace_primitive_from_json(&mut self, bid: BubbleId, prim_id: u64, type_id: &str, json: &str) -> bool {
         self.mgr.replace_primitive_from_json(&mut self.bubbles, bid, prim_id, type_id, json)
     }

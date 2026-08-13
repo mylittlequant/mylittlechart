@@ -7478,6 +7478,34 @@ impl ChartApp {
                     guard.delete(bid, *parent_id);
                 }
             }
+            Command::ConvertPrimitiveKind { prim_id, after, children, .. } => {
+                // Redo of a conversion, or undo of ITS OWN inverse:
+                // `Command::inverse` already swapped `before`/`after` and
+                // each child triple's own before/after slot, so BOTH
+                // directions land here reading the SAME two fields —
+                // `after` is always "the state to move TO" regardless of
+                // which direction this call represents (same contract
+                // `apply_command_to_active_window`'s own doc states).
+                // Restored through `replace_primitive_from_json` +
+                // `set_wave_link` — the same paths `ModifyPrimitiveFull`/
+                // `PromoteWaveChain` already restore through, no new
+                // mechanism.
+                if let Some(gid) = group_id {
+                    let mut guard = self.core.drawings_mut();
+                    guard.replace_primitive_from_json(gid, *prim_id, &after.type_id, &after.json);
+                    for (child_id, _before, after_slot) in children {
+                        let link = after_slot.map(|slot| WaveLink { parent_id: *prim_id, slot });
+                        guard.set_wave_link(gid, *child_id, link);
+                    }
+                } else if let Some(bid) = active_bid_cmd {
+                    let mut guard = self.core.drawings_mut();
+                    guard.replace_primitive_from_json(bid, *prim_id, &after.type_id, &after.json);
+                    for (child_id, _before, after_slot) in children {
+                        let link = after_slot.map(|slot| WaveLink { parent_id: *prim_id, slot });
+                        guard.set_wave_link(bid, *child_id, link);
+                    }
+                }
+            }
             Command::MovePrimitive { prim_id, new_points, .. } => {
                 if let Some(gid) = group_id {
                     self.core.drawings_mut().set_points(gid, *prim_id, new_points);
@@ -8039,7 +8067,8 @@ impl ChartApp {
             | Command::DeleteAllPrimitives { .. } | Command::RestoreAllPrimitives { .. }
             | Command::MovePrimitive { .. } | Command::ModifyPrimitiveData { .. }
             | Command::ModifyPrimitiveFull { .. }
-            | Command::PromoteWaveChain { .. } | Command::DemoteWaveChain { .. } => {
+            | Command::PromoteWaveChain { .. } | Command::DemoteWaveChain { .. }
+            | Command::ConvertPrimitiveKind { .. } => {
                 self.autosave_snapshot();
             }
             _ => {}
@@ -8404,6 +8433,7 @@ impl ChartApp {
                 | Command::ModifyPrimitiveFull { .. }
                 | Command::PromoteWaveChain { .. }
                 | Command::DemoteWaveChain { .. }
+                | Command::ConvertPrimitiveKind { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
                 | Command::ModifyIndicator { .. }

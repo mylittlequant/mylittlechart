@@ -58,4 +58,26 @@ pub struct SelectedPrimitiveConfig {
     /// member already nested under another parent, a chain longer than the
     /// parent type's own slot count, or broken alternation.
     pub can_promote: bool,
+    /// `(kind_id, label_key, is_current)` triples for every Elliott type
+    /// the selected primitive may convert INTO right now, in-place, without
+    /// leaving the markup process — the structure's own global type, as
+    /// opposed to what nests inside one of its waves ([`Self::wave_slot_kinds`])
+    /// or what follows it ([`Self::successor_kinds`]) (owner report
+    /// 2026-08-14: "я создал АБЦ как зигзаг, но в процессе понял, что хочу
+    /// сделать его плоскостью ... не могу прямо в процессе разметки
+    /// переменить глобальное состояние отрезка"). Empty for every primitive
+    /// outside the Elliott family (see
+    /// `drawing::primitives_v2::elliott::count::conversion_kinds`, whose
+    /// output this is built from, one-to-one, via
+    /// `count::kind_label`/`count::kind_id_of` — same `kind_id`/`ConceptKey`
+    /// shape [`Self::wave_slot_kinds`] already uses, never a resolved
+    /// string, for the same reason: this struct is built in the backend,
+    /// where the active display language is not known.
+    ///
+    /// `is_current` marks the ONE entry naming what the structure already
+    /// is (`count::conversion_kinds` always includes it, even when the
+    /// surrounding grammar would otherwise refuse it) — a UI layer uses
+    /// this to disable that row rather than offering a picker option that
+    /// would be a no-op.
+    pub conversion_kinds: Vec<(String, ConceptKey, bool)>,
 }

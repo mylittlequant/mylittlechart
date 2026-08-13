@@ -400,6 +400,136 @@ pub(super) fn visible_leg_segments(type_id: &str, realized: usize, subdivided: &
 }
 
 // =========================================================================
+// Resampling — keeping the drawn shape across a pivot-count change (owner
+// report 2026-08-14, same report cited in this module's own "Conversion"
+// section further down: a correction has 4 pivots, an impulse 6, a double
+// combination 7, a triple 9 — converting between them must keep what the
+// user actually drew instead of resetting to a straight seed the way a
+// freshly-seeded child does, see [`ChildSeed::interpolate`]).
+// =========================================================================
+
+/// Resample `points` (a drawn polyline, `(timestamp_ms, price)` pairs) at
+/// `n` positions spaced EQUALLY ALONG ITS OWN ARC LENGTH, measured in a
+/// NORMALIZED space: each axis is divided by the polyline's own total span
+/// (`max - min` across every point, not just the first and last — a
+/// structure that retraces past its own start, e.g. a deep wave 2, still
+/// has that retracement count toward its own span) before any distance is
+/// measured. Timestamps and prices are different units; an un-normalized
+/// Euclidean distance would let whichever axis happens to carry the larger
+/// raw numbers dominate the parametrization regardless of the SHAPE the
+/// user actually drew — normalizing first makes a diagonal wave leg and a
+/// near-vertical spike contribute comparably to "how much of the shape"
+/// each one is, which is the whole point of resampling BY SHAPE rather
+/// than by index.
+///
+/// `points[0]` and `points.last()` come out of a normal call (`n >= 2`,
+/// `points.len() >= 2`, non-degenerate) EXACTLY equal to `points`' own
+/// first and last entries — never merely close. A converted structure's
+/// own ends are welded to a parent's own pivot (when it subdivides one) and
+/// to a chain's own joint (when it follows or is followed by another
+/// structure); a conversion that nudged them would tear the structure loose
+/// from what it is nested inside or chained to.
+///
+/// `n == points.len()` returns `points` unchanged (a plain `to_vec()`,
+/// before the resampling math ever runs) — not an incidental property of
+/// the algorithm but a deliberate short-circuit: a correction converting
+/// between its own four subtypes (zigzag/flat/expanded/running) never
+/// changes its own pivot COUNT, and every one of those conversions must
+/// leave the drawn shape byte-for-byte untouched, which the arc-length
+/// algorithm below cannot promise on its own for pivots that are not
+/// already spaced evenly along their own arc length — most drawn waves are
+/// not.
+///
+/// Degenerate inputs never panic:
+/// - `n == 0` -> empty vec, regardless of `points`.
+/// - `points.is_empty()` -> empty vec, regardless of `n` (nothing to
+///   resample FROM).
+/// - `points.len() == 1` -> `n` copies of that single point (first and last
+///   are trivially it — there is nothing else to resample).
+/// - `n == 1` (with `points.len() >= 2`) -> `vec![points[0]]` — the same
+///   "collapse to the start" contract [`ChildSeed::interpolate`]'s own
+///   `n == 1` case already uses elsewhere in this module; there is only one
+///   output point, so "first AND last" cannot both be expressed.
+/// - Zero arc length in the normalized space (every point normalizes onto
+///   the SAME position — only possible when the whole polyline collapses to
+///   one distinct `(ts, price)` pair, since both axes' own span is then
+///   zero) -> `n` copies of `points[0]`, same reasoning as the single-point
+///   case.
+pub fn resample_polyline(points: &[(i64, f64)], n: usize) -> Vec<(i64, f64)> {
+    if n == 0 || points.is_empty() {
+        return Vec::new();
+    }
+    if points.len() == 1 {
+        return vec![points[0]; n];
+    }
+    if n == points.len() {
+        return points.to_vec();
+    }
+    if n == 1 {
+        return vec![points[0]];
+    }
+
+    // Normalize each axis by the polyline's own total span (max - min
+    // across every point) so a raw Euclidean distance never lets one
+    // axis's own unit scale dominate the other's — see this function's own
+    // doc. A zero-span axis contributes 0 to every segment (it cannot
+    // contribute anything else: a zero span means every point already
+    // shares that axis's own value, so every raw delta on it is already
+    // zero too).
+    let (min_ts, max_ts) =
+        points.iter().fold((points[0].0, points[0].0), |(lo, hi), &(t, _)| (lo.min(t), hi.max(t)));
+    let (min_price, max_price) =
+        points.iter().fold((points[0].1, points[0].1), |(lo, hi), &(_, p)| (lo.min(p), hi.max(p)));
+    let ts_span = (max_ts - min_ts) as f64;
+    let price_span = max_price - min_price;
+
+    // Cumulative arc length (normalized space) up to and including each
+    // input pivot — `cum[k]` is the distance walked to reach `points[k]`.
+    let mut cum = Vec::with_capacity(points.len());
+    cum.push(0.0);
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let dt_n = if ts_span > 0.0 { (b.0 - a.0) as f64 / ts_span } else { 0.0 };
+        let dp_n = if price_span > 0.0 { (b.1 - a.1) / price_span } else { 0.0 };
+        let seg_len = (dt_n * dt_n + dp_n * dp_n).sqrt();
+        cum.push(cum[cum.len() - 1] + seg_len);
+    }
+    let total = cum[cum.len() - 1];
+
+    // Zero total arc length only happens when every point collapses onto
+    // the same normalized position, which (given the fallback above) only
+    // happens when the whole polyline is one distinct point repeated — see
+    // this function's own doc.
+    if total <= 0.0 {
+        return vec![points[0]; n];
+    }
+
+    let last_seg = points.len() - 2;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let target = total * (i as f64) / (n - 1) as f64;
+        let mut seg = 0usize;
+        while seg < last_seg && cum[seg + 1] < target {
+            seg += 1;
+        }
+        let seg_len = cum[seg + 1] - cum[seg];
+        let t = if seg_len > 0.0 { (target - cum[seg]) / seg_len } else { 0.0 };
+        let a = points[seg];
+        let b = points[seg + 1];
+        let ts = a.0 + ((b.0 - a.0) as f64 * t).round() as i64;
+        let price = a.1 + (b.1 - a.1) * t;
+        out.push((ts, price));
+    }
+    // Force the endpoints exactly, regardless of any floating-point
+    // residue the loop above accumulated — see this function's own doc for
+    // why they must never merely be close.
+    out[0] = points[0];
+    let last_idx = out.len() - 1;
+    out[last_idx] = points[points.len() - 1];
+    out
+}
+
+// =========================================================================
 // Succession — the other relation (see module doc)
 // =========================================================================
 
@@ -626,6 +756,28 @@ pub fn kind_label(kind_id: &str) -> Option<crate::i18n::ConceptKey> {
     })
 }
 
+/// This primitive's own "kind id" (see [`CHILD_KIND_CANDIDATES`]'s own doc
+/// for the `type_id[:subtype]` convention) — [`Primitive::type_id`] plus
+/// [`Primitive::correction_subtype`] when it carries one, formatted the
+/// SAME way every [`CHILD_KIND_CANDIDATES`] entry already is. `None` for a
+/// primitive outside the five Elliott types ([`Primitive::wave_degree`] is
+/// `None`) — there is no "kind" in this vocabulary for a primitive that
+/// never enters it.
+///
+/// Was a private `elliott::guard::child_kind_id` — moved here (owner report
+/// 2026-08-14, this module's own "Conversion" section below) so
+/// [`conversion_kinds`] can build a picker's "what am I right now" entry
+/// off the SAME computation `elliott::guard`'s own `subdivision_class` rule
+/// already used to name a child's kind, rather than a second copy of the
+/// format string.
+pub fn kind_id_of(prim: &dyn Primitive) -> Option<String> {
+    prim.wave_degree()?;
+    Some(match prim.correction_subtype() {
+        Some(subtype) => format!("{}:{}", prim.type_id(), subtype),
+        None => prim.type_id().to_string(),
+    })
+}
+
 /// The grammar position (`mli::ewa::grammar::EwaWavePosition`) `slot`
 /// occupies on a primitive of `type_id` — the other half of the vocabulary
 /// [`child_kinds`] needs alongside [`parent_pattern`]. Both of a combo's own
@@ -723,6 +875,93 @@ pub fn child_kinds(parent: &dyn Primitive, slot: WaveSlot) -> Vec<&'static str> 
             kind_pattern(kind_id)
                 .map(|k| grammar::matches_class(k, class) && grammar::allowed_in_position(k, position))
                 .unwrap_or(false)
+        })
+        .collect()
+}
+
+// =========================================================================
+// Conversion — what this structure may become mid-count (owner report
+// 2026-08-14: "я создал АБЦ как зигзаг, но в процессе понял, что хочу
+// сделать его плоскостью или ещё чем-то — не получается переменить весь
+// отрезок ... допустим я выбрал зигзаг, а в процессе понял, что это скорее
+// двойной зигзаг — тоже не могу прямо в процессе разметки переменить
+// глобальное состояние отрезка. Они должны быть просто в этом же дропдауне
+// выше, как глобальный статус отрезка, потом возможность переменить
+// конкретно выбранную"). Markup is a process: a structure's OWN type has
+// to be changeable IN PLACE, mid-count, not decided once at creation — this
+// is the grammar half of that ask. The point remap a pivot-count change
+// needs is [`resample_polyline`]; the "remap subdivisions across the
+// change" half is the "remapping subdivisions" section further down
+// ([`slot_ordinal`]/[`slot_at_ordinal`]); the actual conversion (building
+// the new primitive, re-stamping children) is `mlc-app`'s.
+// =========================================================================
+
+/// Every kind id `prim` may legally CONVERT INTO right now, in
+/// [`CHILD_KIND_CANDIDATES`]'s own fixed order — the same candidate set
+/// [`child_kinds`] draws from, filtered by whichever of the two structural
+/// constraints below apply, PLUS `prim`'s own current kind unconditionally
+/// (see this function's own doc, further down, for why).
+///
+/// - If `prim` occupies a slot ([`Primitive::wave_link`] is `Some`) and
+///   `parent` is given, a candidate must also pass
+///   [`child_kinds`]`(parent, link.slot)` — a subdivision may only convert
+///   into something legal in the very wave it subdivides; converting a
+///   wave-2 subdivision into a triangle must stay refused for the same
+///   reason SEEDING one there is refused.
+/// - If `prim` continues a chain ([`Primitive::wave_follows`] is `Some`)
+///   and `prev` is given, a candidate's own TYPE half (via
+///   [`split_kind_id`] — [`successor_kinds`] names whole structures, never
+///   a correction subtype) must also appear in
+///   [`successor_kinds`]`(prev)` — a chain member may only convert into
+///   something that may legally follow its own predecessor; converting an
+///   impulse's own successor into another impulse must stay refused for the
+///   same reason the motive/corrective alternation refuses it at creation.
+/// - Both constraints apply TOGETHER (a candidate must clear whichever of
+///   the two apply) when `prim` carries both relations and the caller
+///   supplied both siblings.
+/// - Neither constraint applies (every [`CHILD_KIND_CANDIDATES`] entry
+///   passes that half) when the matching relation is absent on `prim`, OR
+///   present but the caller did not supply the sibling to check it against
+///   — this function never resolves `parent`/`prev` itself, matching every
+///   other function in this module's own contract of reading a primitive
+///   only through the [`Primitive`] trait and never reaching for a
+///   collection it has no path to.
+///
+/// `prim`'s own CURRENT kind ([`kind_id_of`]`(prim)`) is always present in
+/// the result, in its own normal [`CHILD_KIND_CANDIDATES`] position — even
+/// when the two constraints above would otherwise refuse it (a chain's own
+/// alternation or a slot's own grammar can tighten AFTER a structure was
+/// drawn, e.g. a sibling changed shape first) — because the menu built from
+/// this list has to be able to say what the structure currently IS, not
+/// just what it may become. Marking that one entry as "current" (as
+/// opposed to every other entry, which is merely "available") is the
+/// CALLER's job, by comparing each returned id against
+/// [`kind_id_of`]`(prim)` itself — this function does not tag it.
+///
+/// Empty for a primitive outside the five Elliott types (mirrors
+/// [`child_kinds`]'s own contract — [`kind_id_of`] returns `None`).
+pub fn conversion_kinds(
+    prim: &dyn Primitive,
+    parent: Option<&dyn Primitive>,
+    prev: Option<&dyn Primitive>,
+) -> Vec<&'static str> {
+    let Some(own_kind) = kind_id_of(prim) else { return Vec::new() };
+
+    let slot_gate: Option<Vec<&'static str>> = match (prim.wave_link(), parent) {
+        (Some(link), Some(parent)) => Some(child_kinds(parent, link.slot)),
+        _ => None,
+    };
+    let chain_gate: Option<&'static [&'static str]> = match (prim.wave_follows(), prev) {
+        (Some(_), Some(prev)) => Some(successor_kinds(prev)),
+        _ => None,
+    };
+
+    CHILD_KIND_CANDIDATES
+        .into_iter()
+        .filter(|&kind_id| {
+            kind_id == own_kind
+                || (slot_gate.as_ref().is_none_or(|allowed| allowed.contains(&kind_id))
+                    && chain_gate.is_none_or(|allowed| allowed.contains(&split_kind_id(kind_id).0)))
         })
         .collect()
 }
@@ -958,6 +1197,80 @@ pub fn promote_chain_shape(chain: &[&dyn Primitive]) -> Option<PromotedShape> {
         slots: parent_slots[..chain.len()].to_vec(),
         points,
     })
+}
+
+// =========================================================================
+// Remapping subdivisions across a parent's own type change (owner report
+// 2026-08-14, this module's own "Conversion" section above: changing what a
+// structure IS must not silently ORPHAN what is nested inside it — a
+// subdivision survives by ORDINAL, not by name, because the names are
+// per-family (`CorrectionA`, `TriangleA`, `Impulse1` are three different
+// tokens for "the wave the analyst drew first") while the POSITION inside
+// the count is the one thing every family's own slot table agrees on.)
+// =========================================================================
+
+/// The five-slot table [`WaveSlot::TriangleA`]..[`WaveSlot::TriangleE`], in
+/// [`Primitive::wave_slots`]'s own order for `ElliottTriangle` — see
+/// [`IMPULSE_CHAIN_SLOTS`]'s own doc for why this module keeps one table
+/// per type rather than re-deriving the order from a live
+/// `Primitive::wave_slots()` call (there is no live primitive here, only a
+/// `type_id` string).
+const TRIANGLE_SLOTS: [WaveSlot; 5] =
+    [WaveSlot::TriangleA, WaveSlot::TriangleB, WaveSlot::TriangleC, WaveSlot::TriangleD, WaveSlot::TriangleE];
+
+/// The three-slot table for `ElliottDoubleCombo` — see [`TRIANGLE_SLOTS`]'s
+/// own doc.
+const DOUBLE_COMBO_SLOTS: [WaveSlot; 3] = [WaveSlot::ComboW, WaveSlot::ComboX, WaveSlot::ComboY];
+
+/// The five-slot table for `ElliottTripleCombo` — see [`TRIANGLE_SLOTS`]'s
+/// own doc.
+const TRIPLE_COMBO_SLOTS: [WaveSlot; 5] =
+    [WaveSlot::ComboW, WaveSlot::ComboX, WaveSlot::ComboY, WaveSlot::ComboXX, WaveSlot::ComboZ];
+
+/// `type_id`'s own [`Primitive::wave_slots`] order — the single lookup
+/// [`slot_ordinal`]/[`slot_at_ordinal`] share, reusing [`IMPULSE_CHAIN_SLOTS`]/
+/// [`CORRECTION_CHAIN_SLOTS`] rather than a second copy of either table.
+/// `None` for a `type_id` outside the five Elliott types.
+fn wave_slots_for_type(type_id: &str) -> Option<&'static [WaveSlot]> {
+    Some(match type_id {
+        "elliott_impulse" => &IMPULSE_CHAIN_SLOTS,
+        "elliott_correction" => &CORRECTION_CHAIN_SLOTS,
+        "elliott_triangle" => &TRIANGLE_SLOTS,
+        "elliott_double_combo" => &DOUBLE_COMBO_SLOTS,
+        "elliott_triple_combo" => &TRIPLE_COMBO_SLOTS,
+        _ => return None,
+    })
+}
+
+/// `slot`'s own position within `type_id`'s [`Primitive::wave_slots`] order
+/// (0-indexed) — e.g. `slot_ordinal("elliott_correction", WaveSlot::
+/// CorrectionA) == Some(0)`, `slot_ordinal("elliott_impulse", WaveSlot::
+/// Impulse3) == Some(2)`. `None` when `slot` does not exist on `type_id`
+/// (mirrors [`slot_span`]'s own `None` contract) or `type_id` is outside
+/// the five Elliott types.
+///
+/// Ordinal — not name — is the mapping a subdivision survives its parent's
+/// own type change by: the child in the FIRST wave stays in the first wave
+/// (`CorrectionA` -> `TriangleA` -> `Impulse1`) because that is the ONE
+/// thing every family's own slot table agrees on across a conversion — the
+/// NAMES are per-family (there is no `TriangleA` on an impulse, no
+/// `Impulse1` on a triangle), but "the wave the analyst drew first" is the
+/// same position regardless of which family the parent becomes.
+pub fn slot_ordinal(type_id: &str, slot: WaveSlot) -> Option<usize> {
+    wave_slots_for_type(type_id)?.iter().position(|&s| s == slot)
+}
+
+/// The inverse of [`slot_ordinal`]: the [`WaveSlot`] at position `ordinal`
+/// (0-indexed) in `type_id`'s own [`Primitive::wave_slots`] order. `None`
+/// when `ordinal` is past `type_id`'s own slot count (e.g. ordinal 4 on
+/// `"elliott_correction"`, which has only 3 slots) or `type_id` is outside
+/// the five Elliott types — a subdivision that was nested in a wave the new
+/// type does not carry loses its own link rather than landing somewhere it
+/// was never drawn; the caller (`mlc-app`) is expected to clear
+/// [`WaveLink`] on any child whose own `slot_before`'s ordinal maps to
+/// `None` here, never to invent a slot for it.
+pub fn slot_at_ordinal(type_id: &str, ordinal: usize) -> Option<WaveSlot> {
+    wave_slots_for_type(type_id)?.get(ordinal).copied()
 }
 
 #[cfg(test)]
@@ -1264,5 +1577,59 @@ mod tests {
         assert_eq!(shape.type_id, "elliott_correction");
         assert_eq!(shape.slots, vec![WaveSlot::CorrectionA, WaveSlot::CorrectionB]);
         assert_eq!(shape.points, vec![(0, 100.0), (3_000, 85.0), (8_000, 115.0)]);
+    }
+
+    // =====================================================================
+    // resample_polyline (owner report 2026-08-14, this module's own
+    // "Resampling" section)
+    // =====================================================================
+
+    /// A non-trivial drawn shape (an impulse-like zigzag, legs of visibly
+    /// different length/direction) — used across several tests below so a
+    /// property is checked against something more demanding than a straight
+    /// line.
+    fn sample_wave() -> [(i64, f64); 6] {
+        [(0, 100.0), (1_000, 130.0), (1_500, 115.0), (3_000, 160.0), (3_200, 150.0), (5_000, 200.0)]
+    }
+
+    #[test]
+    fn resample_same_n_returns_input_unchanged() {
+        let points = sample_wave();
+        assert_eq!(resample_polyline(&points, points.len()), points.to_vec());
+    }
+
+    #[test]
+    fn resample_preserves_endpoints_for_every_n() {
+        let points = sample_wave();
+        for n in 2..=12usize {
+            let out = resample_polyline(&points, n);
+            assert_eq!(out.len(), n);
+            assert_eq!(out[0], points[0], "first point must be exactly the input's own first point (n={n})");
+            assert_eq!(out[n - 1], points[points.len() - 1], "last point must be exactly the input's own last point (n={n})");
+        }
+    }
+
+    #[test]
+    fn resample_straight_line_evenly_spaced() {
+        let points: [(i64, f64); 2] = [(0, 0.0), (1_000, 100.0)];
+        let out = resample_polyline(&points, 5);
+        assert_eq!(out, vec![(0, 0.0), (250, 25.0), (500, 50.0), (750, 75.0), (1_000, 100.0)]);
+    }
+
+    #[test]
+    fn resample_degenerate_inputs_never_panic() {
+        // n == 0 -> empty, regardless of points.
+        assert_eq!(resample_polyline(&sample_wave(), 0), Vec::new());
+        // points.is_empty() -> empty, regardless of n.
+        assert_eq!(resample_polyline(&[], 4), Vec::new());
+        // points.len() == 1 -> n copies of the single point.
+        assert_eq!(resample_polyline(&[(5, 50.0)], 3), vec![(5, 50.0), (5, 50.0), (5, 50.0)]);
+        // n == 1 with points.len() >= 2 -> the single input point.
+        assert_eq!(resample_polyline(&sample_wave(), 1), vec![sample_wave()[0]]);
+        // Zero arc length: every point identical, `n` different from the
+        // input length so the `n == points.len()` short-circuit above does
+        // not mask this branch.
+        let flat = [(10, 20.0), (10, 20.0), (10, 20.0), (10, 20.0)];
+        assert_eq!(resample_polyline(&flat, 6), vec![(10, 20.0); 6]);
     }
 }

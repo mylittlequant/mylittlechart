@@ -26,6 +26,10 @@
 //! - `MovePrimitive` - stores before/after points
 //! - `PromoteWaveChain` / `DemoteWaveChain` - collapse/restore a
 //!   `follows`-linked Elliott chain into the degree above (E4)
+//! - `ConvertPrimitiveKind` - change an Elliott structure's own registry
+//!   type (and correction subtype) IN PLACE mid-count, remapping its own
+//!   subdivisions by ordinal rather than by name (owner report 2026-08-14,
+//!   see the variant's own doc)
 //!
 //! The pre-`ChartContainer` object-ID-based command family (`ObjectInfo`,
 //! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
@@ -238,6 +242,52 @@ pub enum Command {
         members: Vec<(u64, WaveSlot)>,
     },
 
+    /// Change WHAT an Elliott structure fundamentally IS — its own registry
+    /// `type_id` (and, for a correction, its own subtype) — while keeping
+    /// the polyline the user actually drew (owner report 2026-08-14: "я
+    /// создал АБЦ как зигзаг, но в процессе понял, что хочу сделать его
+    /// плоскостью или ещё чем-то — не получается переменить весь отрезок
+    /// ... допустим я выбрал зигзаг, а в процессе понял, что это скорее
+    /// двойной зигзаг — тоже не могу прямо в процессе разметки переменить
+    /// глобальное состояние отрезка"). [`Command::ModifyPrimitiveFull`]
+    /// cannot carry this: it holds exactly ONE `type_id`, and a conversion
+    /// is precisely the case where the type BEFORE and the type AFTER
+    /// differ.
+    ///
+    /// `before`/`after` are full serialized snapshots — same
+    /// [`PrimitiveSnapshot`] shape [`Command::DeletePrimitive`]'s own doc
+    /// explains, never a `PrimitiveData` subset — captured on either side
+    /// of the conversion: `before.type_id` is the structure's OLD registry
+    /// type, `after.type_id` is the NEW one. Both carry `prim_id`'s own
+    /// point array (already resampled to the new pivot count by
+    /// `drawing::primitives_v2::elliott::count::resample_polyline`, which
+    /// keeps the drawn shape and the structure's own welded endpoints — see
+    /// that function's own doc), so undo/redo never re-derives the shape,
+    /// only replays a snapshot exactly like every other primitive command
+    /// here does.
+    ///
+    /// `children` carries every subdivision nested inside `prim_id` at the
+    /// moment of conversion, remapped by ORDINAL — see
+    /// `drawing::primitives_v2::elliott::count::{slot_ordinal,
+    /// slot_at_ordinal}`'s own doc for why ordinal, not name, is the
+    /// mapping a child survives a parent's own type change by:
+    /// `(child_id, slot_before, slot_after)`. `slot_after` is `None` when
+    /// the child's own ordinal has no match on the new type (the child
+    /// loses its own link rather than being deleted); `slot_before` is
+    /// `None` only for the symmetric case an undo of THIS command produces
+    /// — a child that gained a slot the OLD type never had (the conversion
+    /// added waves the old shape did not carry).
+    ///
+    /// Apply logic lives in `mlc-app`, not here — this variant only carries
+    /// what undo/redo needs to reverse the edit (same division of labour
+    /// [`Command::PromoteWaveChain`]'s own doc already draws).
+    ConvertPrimitiveKind {
+        prim_id: u64,
+        before: PrimitiveSnapshot,
+        after: PrimitiveSnapshot,
+        children: Vec<(u64, Option<WaveSlot>, Option<WaveSlot>)>,
+    },
+
     // =========================================================================
     // Compare Overlay commands
     // =========================================================================
@@ -411,6 +461,15 @@ impl Command {
                 }
             }
 
+            Command::ConvertPrimitiveKind { prim_id, before, after, children } => {
+                Command::ConvertPrimitiveKind {
+                    prim_id: *prim_id,
+                    before: after.clone(),
+                    after: before.clone(),
+                    children: children.iter().map(|&(id, before_slot, after_slot)| (id, after_slot, before_slot)).collect(),
+                }
+            }
+
             Command::MovePrimitive { prim_id, previous_points, new_points } => {
                 Command::MovePrimitive {
                     prim_id: *prim_id,
@@ -519,11 +578,12 @@ impl Command {
 
     /// The primitive this command acts on, when it acts on one.
     ///
-    /// `PromoteWaveChain`/`DemoteWaveChain` act on MULTIPLE primitives (a
-    /// parent plus every chain member) and are deliberately excluded here,
-    /// same as `DeleteAllPrimitives`/`RestoreAllPrimitives` — the
-    /// single-id remap machinery below (`set_prim_id`/`primitive_identity`)
-    /// only ever covers a command with exactly one primitive of its own.
+    /// `PromoteWaveChain`/`DemoteWaveChain`/`ConvertPrimitiveKind` act on
+    /// MULTIPLE primitives (a parent/converted primitive plus every chain
+    /// member/subdivided child) and are deliberately excluded here, same as
+    /// `DeleteAllPrimitives`/`RestoreAllPrimitives` — the single-id remap
+    /// machinery below (`set_prim_id`/`primitive_identity`) only ever
+    /// covers a command with exactly one primitive of its own.
     pub fn prim_id(&self) -> Option<u64> {
         match self {
             Command::SetPrimitiveVisibility { prim_id, .. }
@@ -608,6 +668,7 @@ impl Command {
             Command::ModifyPrimitiveFull { .. } => "Modify Primitive Settings",
             Command::PromoteWaveChain { .. } => "Promote Wave Chain",
             Command::DemoteWaveChain { .. } => "Demote Wave Chain",
+            Command::ConvertPrimitiveKind { .. } => "Convert Wave Kind",
 
             // Compare commands
             Command::AddCompareSeries { .. } => "Add Compare Symbol",

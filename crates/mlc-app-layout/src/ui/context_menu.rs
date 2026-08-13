@@ -290,6 +290,43 @@ pub fn build_primitive_context_menu(
 /// to give the row a stable, harmless id.
 const WAVE_MENU_LABEL_ACTION: &str = "wave_menu:label";
 
+/// The "what this whole segment currently IS, and what it may become"
+/// header both [`build_wave_menu`] and [`build_successor_menu`] open with
+/// (owner report 2026-08-14: "не могу прямо в процессе разметки переменить
+/// глобальное состояние отрезка" — the structure's own type must be
+/// changeable in place, not just what nests inside one of its waves or what
+/// follows it). An inert row naming the structure (`cfg.name`, same
+/// disabled-row convention [`WAVE_MENU_LABEL_ACTION`] already uses), then
+/// one row per [`SelectedPrimitiveConfig::conversion_kinds`] entry —
+/// action `"wave_menu:convert:{kind_id}"`, parsed back by
+/// `on_context_menu_action` (`mlc-app`). `DrawingManager::
+/// convert_primitive_kind` re-checks the grammar itself before acting, so a
+/// stale action id is refused there, not just left off this list.
+///
+/// The row naming the structure's OWN current kind is DISABLED rather than
+/// given a marker icon. Neither icon table this crate's own context-menu
+/// renderer draws from (`layout::modals::context_menu::render_context_menu`'s
+/// own narrow string→[`crate::ui::Icon`] match, nor `mlc-core`'s own
+/// larger `state::icons` id table) carries a "this is the current
+/// selection" glyph — no checkmark, no dot, nothing in that vocabulary
+/// means "current" rather than "a category of thing". An icon id absent
+/// from the renderer's own match silently draws no icon at all, which
+/// would leave the current row looking like a broken lookup rather than a
+/// marked one; disabling it is the same fail-visible convention
+/// [`ContextMenuItemState::set_enabled`] already offers everywhere else in
+/// this file, not a new mechanism invented for this one row.
+fn build_conversion_block(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuItemState> {
+    use mlc_core::i18n::t_concept;
+
+    let mut items = Vec::new();
+    items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, cfg.name.clone()).set_enabled(false));
+    for (kind_id, key, is_current) in &cfg.conversion_kinds {
+        let item = ContextMenuItemState::action(format!("wave_menu:convert:{kind_id}"), t_concept(*key));
+        items.push(if *is_current { item.set_enabled(false) } else { item });
+    }
+    items
+}
+
 /// Build the "subdivide this wave" popup (`ChartGesture::WaveMenu`) for the
 /// wave `slot` the gesture resolved to on the already-selected primitive.
 ///
@@ -308,11 +345,16 @@ const WAVE_MENU_LABEL_ACTION: &str = "wave_menu:label";
 /// (`mlc-app`) parses these back; see that function's own doc for why the
 /// parent's own id is never embedded (it is already the context menu's
 /// `ContextMenuTarget::Primitive` id).
+///
+/// Opens with [`build_conversion_block`] (own doc has the full "what this
+/// whole segment currently IS" rationale) — the reading order is "what this
+/// whole segment is" -> "what goes in the wave you clicked".
 pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: Option<u64>) -> Vec<ContextMenuItemState> {
     use mlc_core::i18n::{t_concept, ConceptKey};
 
     let slot_id = slot.id();
-    let mut items = Vec::new();
+    let mut items = build_conversion_block(cfg);
+    items.push(ContextMenuItemState::separator());
 
     let wave_label = cfg.wave_slots.iter()
         .find(|(id, _)| id == slot_id)
@@ -350,11 +392,17 @@ pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: 
 /// Action ids: `"wave_menu:successor:{type_id}"`, `"wave_menu:promote"` —
 /// mirrors the inline E3 dropdown's own rows plus the E4 promote button,
 /// one flat list instead of a dropdown-plus-separate-button.
+///
+/// Opens with [`build_conversion_block`] (own doc has the full "what this
+/// whole segment currently IS" rationale), same as [`build_wave_menu`].
 pub fn build_successor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuItemState> {
     use mlc_core::i18n::{t_concept, ConceptKey};
 
-    let mut items = Vec::new();
-    items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, cfg.name.clone()).set_enabled(false));
+    // No second name row: the conversion block above already opens with this
+    // structure's own name, and printing it twice in one popup reads as a
+    // rendering bug rather than as two sections.
+    let mut items = build_conversion_block(cfg);
+    items.push(ContextMenuItemState::separator());
 
     for (type_id, display_name) in &cfg.successor_kinds {
         items.push(ContextMenuItemState::action(

@@ -529,6 +529,30 @@ impl ChartApp {
         }
     }
 
+    /// Convert `prim_id` to `kind_id` in place, mid-count, and record it for
+    /// undo — the wave-gesture menu's own `"wave_menu:convert:"` action
+    /// (owner report 2026-08-14: the structure's own type must be
+    /// changeable in place, not fixed at creation). Unlike
+    /// [`create_wave_child_and_record`]/[`create_wave_successor_and_record`]
+    /// (which record a `CreatePrimitive`, since they build a NEW
+    /// primitive), the facade call already returns the before/after
+    /// snapshots and the child slot remap a `Command::ConvertPrimitiveKind`
+    /// needs directly — no second query.
+    fn convert_primitive_kind_and_record(&mut self, bid: Option<BubbleId>, prim_id: u64, kind_id: &str) {
+        let result = bid.and_then(|bid| self.core.drawings_mut().convert_primitive_kind(bid, prim_id, kind_id));
+        match result {
+            Some((before, after, children)) => {
+                self.push_undo_command(mlc_core::Command::ConvertPrimitiveKind { prim_id, before, after, children });
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] converted #{} to kind '{}'", prim_id, kind_id);
+            }
+            None => {
+                eprintln!("[ChartApp] convert_primitive_kind returned None for kind '{}' on #{}", kind_id, prim_id);
+            }
+        }
+    }
+
     /// Handle clicks on widgets registered with the "wl_modal:" prefix.
     pub(super) fn handle_watchlist_modal_click(&mut self, rest: &str, x: f64, y: f64) {
         match rest {
@@ -2403,6 +2427,10 @@ impl ChartApp {
                     // menu's own slot/kind and the successor menu's own
                     // child id ride in the action string instead, so
                     // nothing has to re-hit-test the click.
+                    _ if action.starts_with("wave_menu:convert:") => {
+                        let kind_id = action.strip_prefix("wave_menu:convert:").unwrap_or_default();
+                        self.convert_primitive_kind_and_record(active_bid_ctx, prim_id, kind_id);
+                    }
                     _ if action.starts_with("wave_menu:subdivide:") => {
                         let rest = action.strip_prefix("wave_menu:subdivide:").unwrap_or_default();
                         match rest.split_once(':') {

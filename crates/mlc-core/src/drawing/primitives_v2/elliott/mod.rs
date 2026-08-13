@@ -20,5 +20,6 @@ pub use count::{
     PromotedShape, promote_chain_shape,
     CHILD_KIND_CANDIDATES, split_kind_id, parent_pattern, kind_pattern, kind_label,
     slot_position, child_kinds, slot_span,
+    kind_id_of, conversion_kinds, resample_polyline, slot_ordinal, slot_at_ordinal,
 };
 pub use guard::{ChainViolation, Violation, chain_violations, violations, violations_in};
