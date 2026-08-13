@@ -1283,7 +1283,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 306] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 308] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1590,6 +1590,8 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 306] = [
     /* 303 RuleChainContinuityGap            */ [ "This structure's own first point does not connect to its predecessor's last point", "Первая точка этой структуры не совпадает с последней точкой предшественника", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 304 RulesGroupTitle                   */ [ "Rules", "Правила", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 305 WaveBackLabel                     */ [ "‹ Back", "‹ Назад", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 306 RuleChainAlternationBroken        */ [ "This member breaks the chain's own motive/corrective alternation", "Этот элемент нарушает чередование мотив/коррекция внутри цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 307 RuleChainDegreeMismatch           */ [ "This member does not share the chain's own degree", "Этот элемент не соответствует степени цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

@@ -39,6 +39,7 @@ pub mod scroll_state;
 pub mod modal_state;
 pub mod modal_data;
 pub mod toolbar_geometry;
+pub mod gestures;
 
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
@@ -97,6 +98,10 @@ pub use scale_corner::{ScaleCornerState, ScaleCornerHitZones, ScaleCornerButton}
 
 // Sub-pane overlay hit-test rect cache
 pub use sub_pane_overlay::SubPaneOverlayResult;
+
+// Elliott wave chart-gesture bindings (which physical gesture opens which
+// wave-editing menu) — pure data, see gestures.rs's own module doc.
+pub use gestures::{ChartGesture, GestureBindings, GestureTarget, GestureTrigger};
 
 // Toolbar interaction state (pure data — no render logic)
 // Also includes chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal).

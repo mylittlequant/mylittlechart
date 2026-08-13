@@ -938,6 +938,58 @@ pub trait Primitive: Send + Sync {
     fn set_context_violations(&mut self, _v: Vec<Violation>) {}
 
     // =========================================================================
+    // Elliott Wave-At-Point Resolution (E3 — owner ask 2026-08-13: a
+    // double-click on a wave opens "subdivide this wave into…", a
+    // double-click on the structure's own last point opens "what continues
+    // this" — the app layer needs the SAME two questions
+    // `elliott::guard`/`elliott::count` already answer for rules and
+    // subdivision, just asked in screen space instead of data space).
+    // =========================================================================
+
+    /// Which [`WaveSlot`] the screen point `(screen_x, screen_y)` lands on,
+    /// if any — the single answer combining all three things a user
+    /// perceives as "this wave": its own body span, its own label plate,
+    /// and (while the primitive's own ratio ribs are showing) a ratio-rib
+    /// segment leading into it. See each Elliott type's own `wave_at`
+    /// override (built on the shared `elliott::wave_hit::wave_slot_at`) for
+    /// the exact three-way search and its nearest-wins tie-break.
+    ///
+    /// Default: `None` — exactly how every primitive outside the Elliott
+    /// family behaves (it has no [`WaveSlot`] of its own to report), and
+    /// how the Elliott family behaves before the caller wires this gesture
+    /// up.
+    fn wave_at(
+        &self,
+        _screen_x: f64,
+        _screen_y: f64,
+        _bars: &[Bar],
+        _viewport: &Viewport,
+        _price_scale: &PriceScale,
+    ) -> Option<WaveSlot> {
+        None
+    }
+
+    /// The [`ControlPointType`] identifying this primitive's own LAST
+    /// point — the pivot a successor structure would continue from. NOT a
+    /// generic default over [`control_points`](Self::control_points)'s own
+    /// last entry: that ordering is NOT a trait-wide contract (e.g.
+    /// `Rectangle::control_points` ends with its own `Move` handle, not any
+    /// point at all — see that type's own override) — so every Elliott
+    /// type overrides this directly against its own known point layout
+    /// instead of trusting an assumption `control_points` never promises.
+    ///
+    /// Default: `None` — exactly how every primitive outside the Elliott
+    /// family behaves (it has no notion of a chain "continuing" from it).
+    fn terminal_control_point(
+        &self,
+        _bars: &[Bar],
+        _viewport: &Viewport,
+        _price_scale: &PriceScale,
+    ) -> Option<ControlPointType> {
+        None
+    }
+
+    // =========================================================================
     // Serialization
     // =========================================================================
 

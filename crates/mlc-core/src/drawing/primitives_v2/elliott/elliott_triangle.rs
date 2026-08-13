@@ -6,11 +6,11 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
-    render_primitive_text, draw_label_plate,
+    render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset,
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot, slot_span};
-use super::{guard, ratio};
+use super::{guard, ratio, wave_hit};
 
 fn default_true() -> bool { true }
 fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
@@ -194,6 +194,13 @@ impl Primitive for ElliottTriangle {
         if self.show_ratios && ratio::hit_test_ratio_ribs(sx, sy, &screen, &ratio::TRIANGLE_RATIO_RIBS) {
             return HitTestResult::Body;
         }
+        // A wave label's own plate is clickable too (owner ask 2026-08-13),
+        // gated on `show_labels` exactly like the render side.
+        if self.show_labels
+            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style)
+        {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
@@ -201,6 +208,24 @@ impl Primitive for ElliottTriangle {
             let b = timestamp_ms_to_bar_f64(bars, *ts);
             ControlPoint::index(i as u8, vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
         }).collect()
+    }
+
+    fn wave_at(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Option<WaveSlot> {
+        let screen: Vec<_> = self.points.iter().map(|(ts, p)| {
+            let b = timestamp_ms_to_bar_f64(bars, *ts);
+            (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
+        }).collect();
+        let labels = self.wave_labels();
+        wave_hit::wave_slot_at(
+            sx, sy, self.type_id(), &screen, self.realized_len(), self.wave_slots(),
+            &labels, &self.label_style, self.show_labels, self.show_ratios, &ratio::TRIANGLE_RATIO_RIBS,
+        )
+    }
+
+    fn terminal_control_point(&self, _bars: &[Bar], _viewport: &Viewport, _price_scale: &PriceScale) -> Option<ControlPointType> {
+        let realized = self.realized_len();
+        if realized == 0 { return None; }
+        Some(ControlPointType::Index((realized - 1) as u8))
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
@@ -297,7 +322,7 @@ impl Primitive for ElliottTriangle {
             for (i, label) in labels.iter().enumerate() {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
-                let offset = if i > 0 && screen[i].1 < screen[i - 1].1 { -self.label_style.offset_y } else { self.label_style.offset_y };
+                let offset = wave_label_offset(&screen, i, self.label_style.offset_y);
                 let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
                 let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
                 draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);

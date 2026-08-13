@@ -8,6 +8,7 @@ pub mod elliott_triple_combo;
 pub mod count;
 mod ratio;
 pub mod guard;
+mod wave_hit;
 
 pub use elliott_impulse::ElliottImpulse;
 pub use elliott_correction::{ElliottCorrection, CorrectionType};
@@ -20,4 +21,4 @@ pub use count::{
     CHILD_KIND_CANDIDATES, split_kind_id, parent_pattern, kind_pattern, kind_label,
     slot_position, child_kinds,
 };
-pub use guard::{Violation, violations, violations_in};
+pub use guard::{ChainViolation, Violation, chain_violations, violations, violations_in};

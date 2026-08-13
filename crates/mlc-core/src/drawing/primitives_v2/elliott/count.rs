@@ -681,9 +681,139 @@ pub fn child_kinds(parent: &dyn Primitive, slot: WaveSlot) -> Vec<&'static str> 
         .collect()
 }
 
+/// Which [`WaveSlot`] the wave-LABEL drawn at point index `i` names, keyed
+/// by `type_id` — the reverse of the array each type's own `wave_labels()`
+/// builds (see each `elliott_*.rs`'s own `wave_labels` for the source this
+/// mirrors; `pub(super)` for the same reason [`slot_span`] is — both
+/// `elliott::guard` and every `elliott_*.rs`'s own `render`/`hit_test`/
+/// `wave_at` need this lookup).
+///
+/// NOT the same as `slot_span(type_id, slot).1` for the three combination
+/// "component" slots (W/Y/Z on `elliott_double_combo`/
+/// `elliott_triple_combo`): a component's own LETTER is drawn near an
+/// INTERIOR point of its own multi-leg span (W at its own start, Y/Z near
+/// an early interior subwave — see each combo type's own `wave_labels`),
+/// never at the span's own end. Every OTHER slot — every impulse/
+/// correction/triangle wave, and a combination's own single-leg CONNECTOR
+/// slots X/XX — DOES label at its own span's end, matching `slot_span`'s
+/// own `.1` exactly, but this function still names each one explicitly
+/// rather than falling back to `slot_span` for "the rest" — a silent
+/// fallback would break the moment a future combo's own connector grew a
+/// multi-leg span too.
+pub(super) fn label_slot_for_index(type_id: &str, i: usize) -> Option<WaveSlot> {
+    use WaveSlot::*;
+    match type_id {
+        "elliott_impulse" => match i {
+            1 => Some(Impulse1),
+            2 => Some(Impulse2),
+            3 => Some(Impulse3),
+            4 => Some(Impulse4),
+            5 => Some(Impulse5),
+            _ => None,
+        },
+        "elliott_correction" => match i {
+            1 => Some(CorrectionA),
+            2 => Some(CorrectionB),
+            3 => Some(CorrectionC),
+            _ => None,
+        },
+        "elliott_triangle" => match i {
+            1 => Some(TriangleA),
+            2 => Some(TriangleB),
+            3 => Some(TriangleC),
+            4 => Some(TriangleD),
+            5 => Some(TriangleE),
+            _ => None,
+        },
+        // ElliottDoubleCombo::wave_labels(): [combo[0], "", "", combo[1], combo[2], "", ""]
+        // — "W" at index 0 (its own start), "X" at index 3 (its own end,
+        // matching `slot_span`), "Y" at index 4 (an interior subwave of its
+        // own (3, 6) span).
+        "elliott_double_combo" => match i {
+            0 => Some(ComboW),
+            3 => Some(ComboX),
+            4 => Some(ComboY),
+            _ => None,
+        },
+        // ElliottTripleCombo::wave_labels(): [combo[0], "", "", combo[1], combo[2], "", combo[3], combo[4], ""]
+        // — "W" at index 0, "X" at index 3 (its own end), "Y" at index 4
+        // (interior of its own (3, 5) span), "XX" at index 6 (its own end),
+        // "Z" at index 7 (interior of its own (6, 8) span).
+        "elliott_triple_combo" => match i {
+            0 => Some(ComboW),
+            3 => Some(ComboX),
+            4 => Some(ComboY),
+            6 => Some(ComboXX),
+            7 => Some(ComboZ),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 // =========================================================================
 // Promotion — collapsing a same-degree chain into the degree above
 // =========================================================================
+
+/// The five-slot table a motive-opened chain (head is `"elliott_impulse"`)
+/// maps its own members onto, in chain order — hoisted out of
+/// [`promote_chain_shape`]'s own body (where it used to be a local `const`)
+/// so [`chain_slot_for_index`] can share the SAME table instead of a second
+/// copy of it.
+const IMPULSE_CHAIN_SLOTS: [WaveSlot; 5] =
+    [WaveSlot::Impulse1, WaveSlot::Impulse2, WaveSlot::Impulse3, WaveSlot::Impulse4, WaveSlot::Impulse5];
+
+/// The three-slot table a corrective-opened chain maps its own members onto
+/// — see [`IMPULSE_CHAIN_SLOTS`]'s own doc.
+const CORRECTION_CHAIN_SLOTS: [WaveSlot; 3] = [WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC];
+
+/// The [`WaveSlot`] chain member `i` (0-indexed) WOULD occupy in the coarser
+/// structure a `follows` chain promotes into, given whether the chain OPENS
+/// with a motive structure (`starts_motive` — `head.type_id() ==
+/// "elliott_impulse"`) — the SAME per-member slot assignment
+/// [`promote_chain_shape`] itself builds `PromotedShape::slots` from,
+/// exposed here so `elliott::guard::chain_violations`'s own chain-level
+/// rules (`"chain_degree"`/`"chain_alternation"`) can still name a slot on a
+/// chain that does not (yet, or ever) satisfy every OTHER promotion
+/// precondition [`promote_chain_shape`] checks — those two rules exist
+/// PRECISELY to catch a chain [`promote_chain_shape`] would refuse.
+///
+/// `None` past the parent type's own slot count (index 5+ for a
+/// motive-opened chain, 3+ for a corrective-opened one) — there is no slot
+/// left to name.
+pub fn chain_slot_for_index(starts_motive: bool, i: usize) -> Option<WaveSlot> {
+    if starts_motive { IMPULSE_CHAIN_SLOTS.get(i).copied() } else { CORRECTION_CHAIN_SLOTS.get(i).copied() }
+}
+
+/// The chain's own pivot sequence — the head's FIRST point, then every
+/// member's own LAST point, in chain order — EXACTLY the point array a
+/// promoted parent would carry (see [`PromotedShape::points`]'s own doc).
+/// [`promote_chain_shape`] itself calls this rather than deriving the
+/// sequence a second time, so the two can never drift apart; exposed
+/// publicly for a caller that needs the same sequence WITHOUT the full
+/// promotion — e.g. the backend drawing a chain overlay, or
+/// `elliott::guard::chain_violations`'s own family-rule path, which reads
+/// it back off [`promote_chain_shape`]'s own result rather than calling
+/// this directly (see that function's own doc for why).
+///
+/// Shorter than `chain.len() + 1` when the head's own first point or some
+/// later member's own last point is unavailable (`points()` returns an
+/// empty vec — never happens for a real Elliott primitive, whose point
+/// arrays are fixed-size or start pre-filled, but this function does not
+/// assume that and simply stops rather than panicking).
+/// [`promote_chain_shape`] itself treats that shortfall as a refusal. Empty
+/// for an empty `chain`.
+pub fn chain_pivots(chain: &[&dyn Primitive]) -> Vec<(i64, f64)> {
+    let mut points = Vec::with_capacity(chain.len() + 1);
+    let Some(head) = chain.first() else { return points };
+    let Some(&first) = head.points().first() else { return points };
+    points.push(first);
+    for p in chain {
+        let Some(&last) = p.points().last() else { break };
+        points.push(last);
+    }
+    points
+}
 
 /// What a chain of `follows`-linked same-degree structures collapses into
 /// one degree coarser — the shape [`promote_chain_shape`] computes and a
@@ -756,13 +886,10 @@ pub fn promote_chain_shape(chain: &[&dyn Primitive]) -> Option<PromotedShape> {
     }
 
     let starts_motive = head.type_id() == "elliott_impulse";
-    const IMPULSE_SLOTS: [WaveSlot; 5] =
-        [WaveSlot::Impulse1, WaveSlot::Impulse2, WaveSlot::Impulse3, WaveSlot::Impulse4, WaveSlot::Impulse5];
-    const CORRECTION_SLOTS: [WaveSlot; 3] = [WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC];
     let (parent_type, parent_slots): (&'static str, &[WaveSlot]) = if starts_motive {
-        ("elliott_impulse", &IMPULSE_SLOTS)
+        ("elliott_impulse", &IMPULSE_CHAIN_SLOTS)
     } else {
-        ("elliott_correction", &CORRECTION_SLOTS)
+        ("elliott_correction", &CORRECTION_CHAIN_SLOTS)
     };
     if chain.len() > parent_slots.len() {
         return None;
@@ -774,10 +901,9 @@ pub fn promote_chain_shape(chain: &[&dyn Primitive]) -> Option<PromotedShape> {
         }
     }
 
-    let mut points = Vec::with_capacity(chain.len() + 1);
-    points.push(*head.points().first()?);
-    for p in chain {
-        points.push(*p.points().last()?);
+    let points = chain_pivots(chain);
+    if points.len() != chain.len() + 1 {
+        return None;
     }
 
     Some(PromotedShape {

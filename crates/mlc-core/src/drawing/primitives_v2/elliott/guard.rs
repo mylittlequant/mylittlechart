@@ -27,6 +27,12 @@
 //! mark its label plate (see [`VIOLATION_COLOR`]) — the analyst is allowed
 //! to be wrong on purpose while working. Independent of `show_ratios` — a
 //! broken count is broken whether or not the ratio ribs are showing.
+//!
+//! [`chain_violations`] (owner ask 2026-08-13: "ну и правила внутри
+//! цепочек") extends this same guard to a `follows` chain's own joints — see
+//! that function's own doc, and the "Chain guard" section below, for why a
+//! chain's hard rules are the SAME family rules run against the chain's own
+//! promoted pivot sequence rather than a third rule set.
 
 use mli::ewa::grammar;
 use mli::ewa::rules as ewa_rules;
@@ -493,6 +499,141 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                             });
                         }
                     }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+// =============================================================================
+// Chain guard — the rules that live INSIDE a `follows` chain rather than
+// within one structure (owner ask 2026-08-13, "ну и правила внутри
+// цепочек" — filed the same day as this module's own opening report: the
+// owner tore a chain apart by dragging one member, and nothing flagged it).
+//
+// A `follows` chain at one degree IS the subdivision of a coarser structure
+// — `count::promote_chain_shape`'s own doc — so the chain's own hard rules
+// are the SAME family rules [`violations`] already runs above
+// (`impulse_violations`/`correction_violations`, both already written over
+// a plain `&[(i64, f64)]` slice, so nothing here re-implements either), just
+// applied to the CHAIN's own pivot sequence instead of one structure's own
+// `points()`. [`chain_violations`] never re-derives that sequence itself —
+// it reads it back off `count::promote_chain_shape(chain)`'s own result
+// (`PromotedShape::points`, which already exposed the pivot list this
+// needed — see `count::chain_pivots`'s own doc for the shared derivation),
+// so the pivot list a promoted parent would actually carry and the pivot
+// list these rules run against can never drift apart.
+// =============================================================================
+
+/// One broken hard rule found along a `follows` chain rather than within a
+/// single structure — see this section's own doc.
+#[derive(Clone, Copy, Debug)]
+pub struct ChainViolation {
+    /// The rule id — the SAME family ids [`Violation::rule_id`] already uses
+    /// for the two family rule sets re-run here against the chain's own
+    /// joints (e.g. `"wave2_not_beyond_wave1_origin"`), plus the two ids
+    /// that exist ONLY at chain level: `"chain_alternation"` and
+    /// `"chain_degree"`.
+    pub rule_id: &'static str,
+    /// Which member of the `chain` slice passed to [`chain_violations`]
+    /// (0-indexed) owns the offending wave — a caller marks THAT member's
+    /// own drawing, never the whole chain.
+    pub member_index: usize,
+    /// The promoted slot `chain[member_index]` occupies — the same
+    /// [`WaveSlot`] vocabulary a single structure's own [`Violation::wave`]
+    /// uses, via [`count::chain_slot_for_index`].
+    pub wave: WaveSlot,
+    /// The user-facing explanation, via `mlc_core::i18n`.
+    pub message: ConceptKey,
+}
+
+/// Every hard-rule violation a `follows` chain currently exhibits, checked
+/// at the chain's own joints — see this section's own doc.
+///
+/// `chain` must already be in succession order (`chain[0]` is the chain's
+/// own head) — same contract [`count::promote_chain_shape`] itself has;
+/// this function does not sort or search for it.
+///
+/// Two rules exist ONLY at chain level:
+/// - `"chain_alternation"` — a member must not share its own
+///   motive/corrective class with the member right before it (an impulse
+///   directly following another impulse, or a corrective structure
+///   directly following another corrective one). The creation path
+///   ([`count::successor_kinds`]) already enforces this when a chain is
+///   built one link at a time — this re-check catches a promoted, pasted,
+///   or hand-edited chain that ends up violating it anyway.
+/// - `"chain_degree"` — every member must carry the SAME
+///   [`Primitive::wave_degree`] as the chain's own head. A chain is by
+///   definition one degree.
+///
+/// Both chain-level rules are evaluated regardless of whether the chain
+/// otherwise promotes — they exist PRECISELY to catch a chain
+/// [`count::promote_chain_shape`] itself would refuse.
+///
+/// The family rules (the SAME ids [`violations`] runs against a single
+/// structure) additionally run whenever the chain has at least 3 members
+/// AND [`count::promote_chain_shape`] resolves it to a well-formed coarser
+/// shape — never a half-applied family rule against a chain too short,
+/// mixed-degree, non-contiguous, already nested elsewhere, or alternation-
+/// broken, because there is no well-formed promoted shape to run them
+/// against in any of those cases (the two chain-level rules above already
+/// cover the alternation/degree cases on their own).
+pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
+    let mut out = Vec::new();
+    let Some(head) = chain.first() else { return out };
+    let starts_motive = head.type_id() == "elliott_impulse";
+
+    // chain_degree — every member must carry the head's own degree.
+    if let Some(head_degree) = head.wave_degree() {
+        for (i, &p) in chain.iter().enumerate().skip(1) {
+            if p.wave_degree() != Some(head_degree) {
+                if let Some(wave) = count::chain_slot_for_index(starts_motive, i) {
+                    out.push(ChainViolation {
+                        rule_id: "chain_degree",
+                        member_index: i,
+                        wave,
+                        message: ConceptKey::RuleChainDegreeMismatch,
+                    });
+                }
+            }
+        }
+    }
+
+    // chain_alternation — no two adjacent members share a motive/corrective
+    // class.
+    for i in 1..chain.len() {
+        let prev_motive = chain[i - 1].type_id() == "elliott_impulse";
+        let this_motive = chain[i].type_id() == "elliott_impulse";
+        if prev_motive == this_motive {
+            if let Some(wave) = count::chain_slot_for_index(starts_motive, i) {
+                out.push(ChainViolation {
+                    rule_id: "chain_alternation",
+                    member_index: i,
+                    wave,
+                    message: ConceptKey::RuleChainAlternationBroken,
+                });
+            }
+        }
+    }
+
+    // The family rules — only once the chain actually resolves to a
+    // well-formed coarser shape (see this function's own doc).
+    if chain.len() >= 3 {
+        if let Some(shape) = count::promote_chain_shape(chain) {
+            let realized = shape.points.len();
+            let family = match shape.type_id {
+                "elliott_impulse" => impulse_violations(&shape.points, realized),
+                "elliott_correction" => {
+                    let subtype = head.correction_subtype().unwrap_or("zigzag");
+                    correction_violations(&shape.points, realized, subtype)
+                }
+                _ => Vec::new(),
+            };
+            for v in family {
+                if let Some(member_index) = shape.slots.iter().position(|&s| s == v.wave) {
+                    out.push(ChainViolation { rule_id: v.rule_id, member_index, wave: v.wave, message: v.message });
                 }
             }
         }

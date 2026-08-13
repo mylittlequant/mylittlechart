@@ -155,10 +155,7 @@ pub(crate) fn draw_label_plate(
         let text_width = ctx.measure_text(label);
         let padding = label_style.background_padding;
         let radius = label_style.background_radius;
-        let bg_x = x - text_width / 2.0 - padding;
-        let bg_y = y - font_size / 2.0 - padding;
-        let bg_w = text_width + padding * 2.0;
-        let bg_h = font_size + padding * 2.0;
+        let (bg_x, bg_y, bg_w, bg_h) = label_plate_rect(x, y, text_width, font_size, padding);
 
         ctx.set_fill_color(bg_color);
         ctx.begin_path();
@@ -178,6 +175,91 @@ pub(crate) fn draw_label_plate(
     }
 
     ctx.fill_text(label, x, y);
+}
+
+/// The label plate's own bounding rectangle around a piece of text centered
+/// at `(x, y)` (vertical center — matches `TextBaseline::Middle`, which
+/// [`draw_label_plate`]'s own caller always sets first) — returns
+/// `(bg_x, bg_y, bg_w, bg_h)`. The SAME padding math [`draw_label_plate`]'s
+/// own background-fill path uses, factored out here so a caller with no
+/// live `RenderContext` (every Elliott type's own `hit_test` — see
+/// [`estimate_text_width`]'s own doc for why) can test the SAME rectangle a
+/// label's own background is drawn into, never a second copy of it (owner
+/// ask 2026-08-13: "a label plate is clickable" — a drawn-but-not-clickable
+/// plate must not be able to come back once this exists).
+pub(crate) fn label_plate_rect(x: f64, y: f64, text_width: f64, font_size: f64, padding: f64) -> (f64, f64, f64, f64) {
+    let bg_x = x - text_width / 2.0 - padding;
+    let bg_y = y - font_size / 2.0 - padding;
+    let bg_w = text_width + padding * 2.0;
+    let bg_h = font_size + padding * 2.0;
+    (bg_x, bg_y, bg_w, bg_h)
+}
+
+/// A font-metrics-free estimate of a label's own rendered width, for a
+/// caller with no live `RenderContext` to call `ctx.measure_text` on. Every
+/// Elliott type's own `hit_test` is exactly that caller —
+/// `Primitive::hit_test`'s own signature hands it `(bars, viewport,
+/// price_scale)`, never `ctx` — so [`hit_test_label_plates`] cannot measure
+/// the real string the way [`draw_label_plate`] does; extending the trait's
+/// own `hit_test` signature to carry a `RenderContext` would touch every
+/// registered primitive's own override, far past this pass's scope.
+///
+/// `0.56` is a plain average glyph-width-to-font-size ratio for a typical
+/// sans-serif font at the short tokens wave labels actually carry (numbers,
+/// roman numerals, single letters, parenthesised custom overrides) — wide
+/// enough that the estimated plate tends to run slightly WIDER than the one
+/// `ctx.measure_text` would report, the safer direction for a HIT AREA: a
+/// plate estimated a little too generous still reads as "clicked the
+/// label", where one estimated too small would silently miss real clicks
+/// near the label's own edge. Never used for anything that paints a pixel —
+/// `render`'s own [`draw_label_plate`] always measures the real string.
+pub(crate) fn estimate_text_width(text: &str, font_size: f64) -> f64 {
+    text.chars().count() as f64 * font_size * 0.56
+}
+
+/// The vertical push applied to wave label `i`'s own anchor point before
+/// drawing it — UP when this pivot sits above (smaller screen `y`) the one
+/// before it, DOWN otherwise, so a label never sits on top of the wave line
+/// leading into it. Every Elliott type's own label loop computed this same
+/// branch inline before this existed; factored out so `render`'s own label
+/// placement and [`hit_test_label_plates`]'s own hit area can never drift
+/// apart.
+pub(crate) fn wave_label_offset(screen: &[(f64, f64)], i: usize, offset_y: f64) -> f64 {
+    if i > 0 && screen[i].1 < screen[i - 1].1 { -offset_y } else { offset_y }
+}
+
+/// Hit-test every REALIZED, non-empty wave label's own plate rectangle —
+/// the label-side counterpart to `elliott::ratio::hit_test_ratio_ribs`'s own
+/// rib hit test. Shares [`wave_label_offset`] (the SAME anchor placement
+/// `render`'s own label loop uses) and [`label_plate_rect`] (the SAME
+/// padding math [`draw_label_plate`]'s own background draws), fed an
+/// ESTIMATED width ([`estimate_text_width`]) instead of a real
+/// `ctx.measure_text` one — see that function's own doc for why.
+///
+/// Gated on `show_labels` by the CALLER, not here — mirrors
+/// `hit_test_ratio_ribs`'s own "caller gates on show_ratios" contract, so a
+/// hidden label is never a hit target.
+pub(crate) fn hit_test_label_plates(
+    sx: f64,
+    sy: f64,
+    screen: &[(f64, f64)],
+    labels: &[&str],
+    realized: usize,
+    label_style: &LabelStyle,
+) -> bool {
+    for (i, &(x, y)) in screen.iter().enumerate() {
+        if i >= realized || i >= labels.len() || labels[i].is_empty() {
+            continue;
+        }
+        let label_y = y + wave_label_offset(screen, i, label_style.offset_y);
+        let width = estimate_text_width(labels[i], label_style.font_size);
+        let (bg_x, bg_y, bg_w, bg_h) =
+            label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);
+        if sx >= bg_x && sx <= bg_x + bg_w && sy >= bg_y && sy <= bg_y + bg_h {
+            return true;
+        }
+    }
+    false
 }
 
 /// Pick black or white text for readability over a `#rrggbb`/`#rrggbbaa`

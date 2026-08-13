@@ -2883,10 +2883,17 @@ pub enum ConceptKey {
     // own back-row caption.
     RulesGroupTitle = 304,
     WaveBackLabel = 305,
+
+    // ---- Elliott CHAIN guard messages (2026-08-13, owner ask: "ну и
+    // правила внутри цепочек") — one per `elliott::guard::chain_violations`
+    // rule that exists ONLY at chain level (the family rules it re-runs
+    // reuse the existing `Rule*` keys above, e.g. `RuleWave2BeyondOrigin`).
+    RuleChainAlternationBroken = 306,
+    RuleChainDegreeMismatch = 307,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 306;
+    pub const COUNT: usize = 308;
 
     /// Get translation for this key.
     #[inline]

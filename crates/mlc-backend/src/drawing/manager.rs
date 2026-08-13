@@ -24,7 +24,7 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    child_kinds, child_seed, kind_label, split_kind_id, successor_kinds, successor_seed,
+    chain_violations, child_kinds, child_seed, kind_label, split_kind_id, successor_kinds, successor_seed,
     promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
@@ -1901,6 +1901,10 @@ impl DrawingManager {
                 }
             }
         }
+        // Runs on every drag STEP, not at the end: a chain that visibly tears
+        // while the hand moves and snaps back on release would read as a bug
+        // being papered over. See `restitch_wave_joints`' own doc.
+        Self::restitch_wave_joints(b, prim_id);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1949,6 +1953,8 @@ impl DrawingManager {
                 }
             }
         }
+        // Same reason as `update_drag`'s own tail — see `restitch_wave_joints`.
+        Self::restitch_wave_joints(b, prim_id);
     }
 
     /// `bubbles` is only needed for the trailing [`Self::refresh_wave_guards`]
@@ -2001,7 +2007,7 @@ impl DrawingManager {
     /// once per pixel of drag.
     pub(crate) fn refresh_wave_guards(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let updates: Vec<(usize, Vec<Violation>)> = {
+        let mut updates: Vec<(usize, Vec<Violation>)> = {
             let refs: Vec<&dyn Primitive> = b.primitives.iter().map(|p| p.as_ref()).collect();
             refs.iter()
                 .enumerate()
@@ -2009,9 +2015,193 @@ impl DrawingManager {
                 .map(|(i, &p)| (i, violations_in(p, &refs)))
                 .collect()
         };
+        // The chain's OWN rules, merged into the same cache. A `follows`
+        // chain is one coarser structure written as separate primitives, so
+        // its joints are that structure's pivots and the family rules apply
+        // to them (`elliott::guard::chain_violations`) — a violation nothing
+        // in the chain exhibits on its own. Reported ON the member that owns
+        // the offending wave, which is why `ChainViolation` carries a member
+        // index at all.
+        let chain_updates: Vec<(usize, Violation)> = {
+            let mut out = Vec::new();
+            let mut seen_heads: HashSet<u64> = HashSet::new();
+            let member_ids: Vec<u64> = b
+                .primitives
+                .iter()
+                .filter(|p| p.wave_degree().is_some())
+                .map(|p| p.data().id)
+                .collect();
+            for id in member_ids {
+                let head = Self::chain_head_id(b, id);
+                if !seen_heads.insert(head) {
+                    continue;
+                }
+                let ids = Self::chain_member_ids(b, head);
+                if ids.len() < 2 {
+                    continue;
+                }
+                let idxs: Vec<usize> = ids.iter().filter_map(|id| Self::find_index_by_id(b, *id)).collect();
+                if idxs.len() != ids.len() {
+                    continue;
+                }
+                let chain: Vec<&dyn Primitive> = idxs.iter().map(|&i| b.primitives[i].as_ref()).collect();
+                for v in chain_violations(&chain) {
+                    if let Some(&idx) = idxs.get(v.member_index) {
+                        out.push((idx, Violation { rule_id: v.rule_id, wave: v.wave, message: v.message }));
+                    }
+                }
+            }
+            out
+        };
+        for (idx, violation) in chain_updates {
+            if let Some(slot) = updates.iter_mut().find(|(i, _)| *i == idx) {
+                slot.1.push(violation);
+            }
+        }
         for (i, violations) in updates {
             b.primitives[i].set_context_violations(violations);
         }
+    }
+
+    // =========================================================================
+    // Wave joints — a chain stays a chain while it is dragged
+    // =========================================================================
+
+    /// Re-stitch every joint `moved_id`'s own drag just pulled apart.
+    ///
+    /// Owner report 2026-08-13, with a screenshot of a chain stretched into
+    /// disconnected pieces: "цепочка это цепочка нельзя растягивать её по
+    /// кускам так чтобы она разорвала связь". A `follows` chain is one
+    /// structure's subdivision written as separate primitives — the point
+    /// where two members meet is ONE pivot, not two that happen to coincide,
+    /// so a drag that moves one side must carry the other. `elliott::guard`'s
+    /// own `chain_continuity` rule stays: it reports a gap this function
+    /// cannot close (a pasted or hand-edited file whose members were never
+    /// dragged), not one it just created.
+    ///
+    /// The hand wins. Whatever `moved_id` now says its first/last point is,
+    /// its predecessor's last point and its successors' first points are set
+    /// to match — the neighbour DEFORMS at the shared pivot, it is not
+    /// translated whole, because moving a member must not silently move
+    /// structures the user never touched.
+    ///
+    /// Subdivisions ride along the same way: every child of `moved_id` is
+    /// re-anchored onto the slot span it occupies (`elliott::count::
+    /// child_seed`, the same function that placed it), keeping its own shape
+    /// by proportional rescale rather than being rebuilt as a straight line.
+    ///
+    /// NOT covered, deliberately, and stated rather than left to be
+    /// discovered: dragging a CHILD's own endpoint does not move the parent's
+    /// pivot under it. That pivot is shared by two of the parent's waves, so
+    /// writing it back is a change to the parent's own count — a decision,
+    /// not a repair. `count::slot_span` is `pub(super)` today, which is the
+    /// same statement in code.
+    fn restitch_wave_joints(b: &mut crate::bubble::DataBubble, moved_id: u64) {
+        let Some(moved_idx) = Self::find_index_by_id(b, moved_id) else { return };
+        let (first, last, follows, is_wave) = {
+            let p = b.primitives[moved_idx].as_ref();
+            let pts = p.points();
+            (pts.first().copied(), pts.last().copied(), p.wave_follows(), p.wave_degree().is_some())
+        };
+        if !is_wave {
+            return;
+        }
+        let (Some(first), Some(last)) = (first, last) else { return };
+
+        // The predecessor ends where this structure now begins.
+        if let Some(prev_id) = follows {
+            if let Some(i) = Self::find_index_by_id(b, prev_id) {
+                Self::set_endpoint(b.primitives[i].as_mut(), false, first);
+            }
+        }
+
+        // Every successor begins where this structure now ends.
+        let successor_idxs: Vec<usize> = b
+            .primitives
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.wave_follows() == Some(moved_id))
+            .map(|(i, _)| i)
+            .collect();
+        for i in successor_idxs {
+            Self::set_endpoint(b.primitives[i].as_mut(), true, last);
+        }
+
+        // Every subdivision still spans the wave it subdivides.
+        let child_slots: Vec<(usize, WaveSlot)> = b
+            .primitives
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                p.wave_link().filter(|l| l.parent_id == moved_id).map(|l| (i, l.slot))
+            })
+            .collect();
+        for (i, slot) in child_slots {
+            let seed = child_seed(b.primitives[moved_idx].as_ref(), slot);
+            if let Some(seed) = seed {
+                Self::rescale_between(b.primitives[i].as_mut(), seed.start, seed.end);
+            }
+        }
+    }
+
+    /// Move one end of `prim`'s own point array to `to` — `first` selects
+    /// which end. Goes through `points()`/`set_points` (the trait's own
+    /// accessors) rather than any concrete type's field, matching how every
+    /// other cross-primitive operation in this file reads a wave.
+    fn set_endpoint(prim: &mut dyn Primitive, first: bool, to: (i64, f64)) {
+        let mut pts = prim.points();
+        if pts.is_empty() {
+            return;
+        }
+        let idx = if first { 0 } else { pts.len() - 1 };
+        if pts[idx] == to {
+            return;
+        }
+        pts[idx] = to;
+        prim.set_points(&pts);
+    }
+
+    /// Map `prim`'s own points from the span they currently occupy onto
+    /// `start..end`, preserving each point's relative position — so a
+    /// subdivision whose parent wave moved keeps the shape the user drew
+    /// instead of collapsing back to the evenly-interpolated seed.
+    ///
+    /// Each axis is handled on its own: an axis whose old span is degenerate
+    /// (every point on the same timestamp, or a perfectly flat wave) carries
+    /// no relative position to preserve, so those points are distributed
+    /// evenly by index rather than dividing by zero.
+    fn rescale_between(prim: &mut dyn Primitive, start: (i64, f64), end: (i64, f64)) {
+        let pts = prim.points();
+        if pts.len() < 2 {
+            return;
+        }
+        let old_first = pts[0];
+        let old_last = pts[pts.len() - 1];
+        let old_ts_span = (old_last.0 - old_first.0) as f64;
+        let old_price_span = old_last.1 - old_first.1;
+        let n = pts.len();
+        let rescaled: Vec<(i64, f64)> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, &(ts, price))| {
+                let even = i as f64 / (n - 1) as f64;
+                let t_ts = if old_ts_span.abs() > f64::EPSILON {
+                    (ts - old_first.0) as f64 / old_ts_span
+                } else {
+                    even
+                };
+                let t_price = if old_price_span.abs() > f64::EPSILON {
+                    (price - old_first.1) / old_price_span
+                } else {
+                    even
+                };
+                (
+                    start.0 + ((end.0 - start.0) as f64 * t_ts).round() as i64,
+                    start.1 + (end.1 - start.1) * t_price,
+                )
+            })
+            .collect();
+        prim.set_points(&rescaled);
     }
 
     // =========================================================================
