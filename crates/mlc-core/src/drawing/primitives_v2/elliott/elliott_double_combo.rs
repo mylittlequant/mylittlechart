@@ -13,6 +13,7 @@ use super::count::{WaveLink, WaveSlot};
 use super::ratio;
 
 fn default_true() -> bool { true }
+fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ElliottDoubleCombo {
@@ -44,6 +45,23 @@ pub struct ElliottDoubleCombo {
     /// before this field existed loads and renders unchanged.
     #[serde(default)]
     pub show_ratios: bool,
+    /// The ratio ribs' own stroke colour — see `super::ratio`'s module doc.
+    /// `None` (the default) falls back to this structure's own stroke
+    /// colour at reduced alpha — EXACTLY what every rib drew before this
+    /// field existed, so a drawing saved before this field existed renders
+    /// unchanged.
+    #[serde(default)]
+    pub ratio_rib_color: Option<String>,
+    /// The ratio ribs' own stroke width. `None` (the default) falls back to
+    /// `data.width * 0.6` (floored at 1px) — EXACTLY what every rib drew
+    /// before this field existed.
+    #[serde(default)]
+    pub ratio_rib_width: Option<f64>,
+    /// The ratio ribs' own line style. Defaults to [`LineStyle::Dotted`] —
+    /// EXACTLY what every rib drew before this field existed (a fixed 2px
+    /// dash, see `ratio::draw_ratio_annotations`'s own dash table).
+    #[serde(default = "default_ratio_rib_style")]
+    pub ratio_rib_style: LineStyle,
     /// How many of `points` are REAL — see `ElliottImpulse::realized_points`
     /// own doc (`super::elliott_impulse`) for the full rationale
     /// (`DrawingManager::promote_wave_chain`'s own point padding). `None`
@@ -75,6 +93,9 @@ impl ElliottDoubleCombo {
             link: None,
             follows: None,
             show_ratios: false,
+            ratio_rib_color: None,
+            ratio_rib_width: None,
+            ratio_rib_style: LineStyle::Dotted,
             realized_points: None,
         }
     }
@@ -120,6 +141,7 @@ impl Primitive for ElliottDoubleCombo {
     }
     fn wave_follows(&self) -> Option<u64> { self.follows }
     fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
+    fn realized_point_count(&self) -> usize { self.realized_len() }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -214,6 +236,7 @@ impl Primitive for ElliottDoubleCombo {
             ratio::draw_ratio_annotations(
                 ctx, &self.points, realized, &ratio::DOUBLE_COMBO_RATIO_LEGS, &ratio::DOUBLE_COMBO_RATIO_RIBS,
                 &self.data.color.stroke, self.data.width, &self.label_style,
+                self.ratio_rib_color.as_deref(), self.ratio_rib_width, self.ratio_rib_style,
             );
         }
 
@@ -249,13 +272,21 @@ impl Primitive for ElliottDoubleCombo {
             .map(|d| SelectOption::new(d.as_str(), d.display_name()))
             .collect();
 
+        let rib_color_default = self.ratio_rib_color.clone().unwrap_or_else(|| ratio::default_rib_color(&self.data.color.stroke));
+        let rib_width_default = self.ratio_rib_width.unwrap_or_else(|| ratio::default_rib_width(self.data.width));
+
         let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
             ConfigProperty::show_ratios(self.show_ratios).with_category(PropertyCategory::AppearanceLine).with_order(12),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(13),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(14),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(15),
+            // The ratio ribs' own style — next to `show_ratios` (see
+            // `super::ratio`'s own module doc).
+            ConfigProperty::ratio_rib_color(&rib_color_default).with_category(PropertyCategory::AppearanceLine).with_order(13),
+            ConfigProperty::ratio_rib_width(rib_width_default).with_category(PropertyCategory::AppearanceLine).with_order(14),
+            ConfigProperty::ratio_rib_style(self.ratio_rib_style.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(15),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(16),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(17),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(18),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props
@@ -266,6 +297,9 @@ impl Primitive for ElliottDoubleCombo {
             "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
             "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
             "show_ratios" => { if let Some(v) = value.as_bool() { self.show_ratios = v; return true; } }
+            "ratio_rib_color" => { if let Some(c) = value.as_color() { self.ratio_rib_color = Some(c.to_string()); return true; } }
+            "ratio_rib_width" => { if let Some(v) = value.as_number() { self.ratio_rib_width = Some(v); return true; } }
+            "ratio_rib_style" => { if let Some(s) = value.as_string() { self.ratio_rib_style = LineStyle::from_str(s); return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }

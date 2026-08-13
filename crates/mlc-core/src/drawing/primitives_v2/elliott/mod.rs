@@ -7,6 +7,7 @@ pub mod elliott_double_combo;
 pub mod elliott_triple_combo;
 pub mod count;
 mod ratio;
+pub mod guard;
 
 pub use elliott_impulse::ElliottImpulse;
 pub use elliott_correction::ElliottCorrection;
@@ -17,3 +18,4 @@ pub use count::{
     WaveSlot, WaveLink, ChildSeed, child_seed, SuccessorSeed, successor_seed, successor_kinds,
     PromotedShape, promote_chain_shape,
 };
+pub use guard::{Violation, violations};

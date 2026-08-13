@@ -1283,7 +1283,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 278] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 287] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1562,6 +1562,15 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 278] = [
     /* 275 LineSubject */ [ "Line", "Линия", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 276 LinesAxisLabel                    */ [ "Lines", "Линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 277 FillInheritLine                   */ [ "as lines", "как линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 278 RatioRibColorLabel                */ [ "Ratio rib colour", "Цвет линии соотношений", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 279 RatioRibWidthLabel                */ [ "Ratio rib width", "Толщина линии соотношений", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 280 RatioRibStyleLabel                */ [ "Ratio rib style", "Стиль линии соотношений", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 281 RuleWave2BeyondOrigin             */ [ "Wave 2 retraces beyond wave 1's origin", "Волна 2 уходит за начало волны 1", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 282 RuleWave4OverlapsWave1            */ [ "Wave 4 overlaps wave 1", "Волна 4 перекрывает волну 1", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 283 RuleWave3Shortest                 */ [ "Wave 3 is the shortest of waves 1, 3 and 5", "Волна 3 короче волн 1 и 5", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 284 RuleCorrectionBRule               */ [ "Wave B breaks this correction's own rule", "Волна B нарушает правило для этого типа коррекции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 285 RuleCorrectionCRule               */ [ "Wave C breaks this correction's own rule", "Волна C нарушает правило для этого типа коррекции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 286 RuleTriangleNotContracting        */ [ "This wave does not contract against its own reference wave", "Эта волна не сужается относительно опорной волны", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

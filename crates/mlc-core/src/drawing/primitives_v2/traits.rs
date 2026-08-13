@@ -877,6 +877,36 @@ pub trait Primitive: Send + Sync {
     /// default.
     fn set_wave_follows(&mut self, _follows: Option<u64>) {}
 
+    /// How many of [`points`](Self::points) are REAL right now, for a
+    /// primitive that supports partial/in-progress construction — see each
+    /// Elliott type's own `realized_points` field doc (`elliott::
+    /// elliott_impulse`) for the full rationale. Read by `elliott::guard::
+    /// violations` (and each Elliott type's own `render`, to know which
+    /// prefix of `points()` is real rather than padding) so a rule needing a
+    /// not-yet-drawn point is skipped, not reported.
+    ///
+    /// Default: every point is real (`points().len()`) — exactly how every
+    /// non-Elliott primitive behaves, and how every Elliott primitive
+    /// behaved before this concept existed. Overridden by the five Elliott
+    /// types to return their own `realized_len()`.
+    fn realized_point_count(&self) -> usize {
+        self.points().len()
+    }
+
+    /// This primitive's own drawn Elliott CORRECTION subtype, as the same
+    /// fixed token `ElliottCorrection::apply_style_property`'s own
+    /// `"correction_type"` id already reads and writes (`"zigzag"` /
+    /// `"flat"` / `"expanded"` / `"running"`) — the shape `elliott::guard`
+    /// needs to pick which of `mylittleindicators::ewa::primitives`'s own
+    /// catalogue rule set applies (`RegularFlat`/`ExpandedFlat`/
+    /// `RunningFlat` each carry a different hard-rule list; `zigzag` is also
+    /// this method's own default label when unresolved, matching
+    /// `CorrectionType`'s own `#[default]`). `None` for every primitive
+    /// that is not an `ElliottCorrection`, Elliott or not.
+    fn correction_subtype(&self) -> Option<&'static str> {
+        None
+    }
+
     // =========================================================================
     // Serialization
     // =========================================================================

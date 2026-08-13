@@ -9,10 +9,11 @@ use super::super::{
     render_primitive_text, draw_label_plate,
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
-use super::count::{WaveLink, WaveSlot};
-use super::ratio;
+use super::count::{WaveLink, WaveSlot, slot_span};
+use super::{guard, ratio};
 
 fn default_true() -> bool { true }
+fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum CorrectionType {
@@ -21,6 +22,22 @@ pub enum CorrectionType {
     Flat,
     Expanded,
     Running,
+}
+
+impl CorrectionType {
+    /// The same fixed token `style_properties`/`apply_style_property` below
+    /// already read and wrote inline (`"zigzag"`/`"flat"`/`"expanded"`/
+    /// `"running"`) — named here once so `Primitive::correction_subtype`
+    /// (read by `elliott::guard` to pick the right catalogue rule set) uses
+    /// the SAME mapping instead of a second copy of it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CorrectionType::Zigzag => "zigzag",
+            CorrectionType::Flat => "flat",
+            CorrectionType::Expanded => "expanded",
+            CorrectionType::Running => "running",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,6 +73,23 @@ pub struct ElliottCorrection {
     /// and renders unchanged.
     #[serde(default)]
     pub show_ratios: bool,
+    /// The ratio ribs' own stroke colour — see `super::ratio`'s module doc.
+    /// `None` (the default) falls back to this structure's own stroke
+    /// colour at reduced alpha — EXACTLY what every rib drew before this
+    /// field existed, so a drawing saved before this field existed renders
+    /// unchanged.
+    #[serde(default)]
+    pub ratio_rib_color: Option<String>,
+    /// The ratio ribs' own stroke width. `None` (the default) falls back to
+    /// `data.width * 0.6` (floored at 1px) — EXACTLY what every rib drew
+    /// before this field existed.
+    #[serde(default)]
+    pub ratio_rib_width: Option<f64>,
+    /// The ratio ribs' own line style. Defaults to [`LineStyle::Dotted`] —
+    /// EXACTLY what every rib drew before this field existed (a fixed 2px
+    /// dash, see `ratio::draw_ratio_annotations`'s own dash table).
+    #[serde(default = "default_ratio_rib_style")]
+    pub ratio_rib_style: LineStyle,
     /// How many of `points` are REAL — see `ElliottImpulse::realized_points`
     /// own doc (`super::elliott_impulse`) for the full rationale
     /// (`DrawingManager::promote_wave_chain`'s own point padding). `None`
@@ -88,6 +122,9 @@ impl ElliottCorrection {
             link: None,
             follows: None,
             show_ratios: false,
+            ratio_rib_color: None,
+            ratio_rib_width: None,
+            ratio_rib_style: LineStyle::Dotted,
             realized_points: None,
         }
     }
@@ -133,6 +170,8 @@ impl Primitive for ElliottCorrection {
     }
     fn wave_follows(&self) -> Option<u64> { self.follows }
     fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
+    fn realized_point_count(&self) -> usize { self.realized_len() }
+    fn correction_subtype(&self) -> Option<&'static str> { Some(self.correction_type.as_str()) }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -184,6 +223,12 @@ impl Primitive for ElliottCorrection {
         let dpr = ctx.dpr();
         let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();
         let realized = self.realized_len();
+        // Hard-rule guard (`super::guard`) — independent of `show_ratios`,
+        // a broken count is broken whether or not the ratio ribs show. Never
+        // blocks the drawing; only recolors the offending segment/label
+        // below. Empty for a compliant structure, so a structure with no
+        // violations renders byte-for-byte as before this existed.
+        let violations = guard::violations(self);
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -207,6 +252,21 @@ impl Primitive for ElliottCorrection {
 
         ctx.set_line_dash(&[]);
 
+        if self.show_lines && !violations.is_empty() {
+            ctx.set_stroke_color(guard::VIOLATION_COLOR);
+            ctx.set_stroke_width(self.data.width);
+            for v in &violations {
+                if let Some((a, b)) = slot_span(self.type_id(), v.wave) {
+                    if b < realized {
+                        ctx.begin_path();
+                        ctx.move_to(crisp(screen[a].0, dpr), crisp(screen[a].1, dpr));
+                        ctx.line_to(crisp(screen[b].0, dpr), crisp(screen[b].1, dpr));
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
         if self.show_labels {
             let labels = self.wave_labels();
             let label_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
@@ -219,7 +279,9 @@ impl Primitive for ElliottCorrection {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
                 let offset = if i > 0 && screen[i].1 < screen[i - 1].1 { -self.label_style.offset_y } else { self.label_style.offset_y };
-                draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, label_color);
+                let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
+                let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
+                draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);
             }
         }
 
@@ -227,6 +289,7 @@ impl Primitive for ElliottCorrection {
             ratio::draw_ratio_annotations(
                 ctx, &self.points, realized, &ratio::CORRECTION_RATIO_LEGS, &ratio::CORRECTION_RATIO_RIBS,
                 &self.data.color.stroke, self.data.width, &self.label_style,
+                self.ratio_rib_color.as_deref(), self.ratio_rib_width, self.ratio_rib_style,
             );
         }
 
@@ -262,24 +325,27 @@ impl Primitive for ElliottCorrection {
             .map(|d| SelectOption::new(d.as_str(), d.display_name()))
             .collect();
 
+        let rib_color_default = self.ratio_rib_color.clone().unwrap_or_else(|| ratio::default_rib_color(&self.data.color.stroke));
+        let rib_width_default = self.ratio_rib_width.unwrap_or_else(|| ratio::default_rib_width(self.data.width));
+
         let mut props = vec![
             // The pattern's own subtype — changes what shape it draws, so
             // it lives on Appearance next to the other shape-defining
             // controls, same placement as `patterns/triangle_pattern.rs`'s
             // own `triangle_type`. Real field, zero `ConfigProperty` until
             // this pass (2026-08-09 modal-surface-inventory audit).
-            ConfigProperty::correction_type(match self.correction_type {
-                CorrectionType::Zigzag => "zigzag",
-                CorrectionType::Flat => "flat",
-                CorrectionType::Expanded => "expanded",
-                CorrectionType::Running => "running",
-            }).with_category(PropertyCategory::AppearanceLine).with_order(9),
+            ConfigProperty::correction_type(self.correction_type.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(9),
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
             ConfigProperty::show_ratios(self.show_ratios).with_category(PropertyCategory::AppearanceLine).with_order(12),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(13),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(14),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(15),
+            // The ratio ribs' own style — next to `show_ratios` (see
+            // `super::ratio`'s own module doc).
+            ConfigProperty::ratio_rib_color(&rib_color_default).with_category(PropertyCategory::AppearanceLine).with_order(13),
+            ConfigProperty::ratio_rib_width(rib_width_default).with_category(PropertyCategory::AppearanceLine).with_order(14),
+            ConfigProperty::ratio_rib_style(self.ratio_rib_style.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(15),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(16),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(17),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(18),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props
@@ -301,6 +367,9 @@ impl Primitive for ElliottCorrection {
             "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
             "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
             "show_ratios" => { if let Some(v) = value.as_bool() { self.show_ratios = v; return true; } }
+            "ratio_rib_color" => { if let Some(c) = value.as_color() { self.ratio_rib_color = Some(c.to_string()); return true; } }
+            "ratio_rib_width" => { if let Some(v) = value.as_number() { self.ratio_rib_width = Some(v); return true; } }
+            "ratio_rib_style" => { if let Some(s) = value.as_string() { self.ratio_rib_style = LineStyle::from_str(s); return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }

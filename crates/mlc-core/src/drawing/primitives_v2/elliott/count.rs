@@ -286,8 +286,11 @@ pub fn child_seed(parent: &dyn Primitive, slot: WaveSlot) -> Option<ChildSeed> {
 /// The `(start_index, end_index)` pair into a parent's own `points()` that
 /// `slot` spans, keyed by the parent's `type_id()`. The point layout is
 /// fixed per Elliott type (see each type's own `points` field doc); this is
-/// a pure lookup table, not a downcast.
-fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)> {
+/// a pure lookup table, not a downcast. `pub(super)` (rather than private)
+/// so `elliott::guard`'s render-side marking and every `elliott_*.rs`'s own
+/// `render` can look up which segment/label index a [`WaveSlot`] violation
+/// lands on, without a second copy of this table.
+pub(super) fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)> {
     use WaveSlot::*;
     match type_id {
         // ElliottImpulse: 6 points — start(0), wave1..5(1..=5). Each wave

@@ -1572,6 +1572,25 @@ impl ConfigProperty {
         Self::boolean("show_ratios", ConfigKey::ShowRatios.get(current_language()), value)
     }
 
+    /// Create the Elliott ratio-ribs' own stroke colour property with i18n —
+    /// declared next to [`Self::show_ratios`] on every Elliott type (`id`
+    /// deliberately distinct from `"stroke_color"`, which the click-dispatch
+    /// path special-cases to write `PrimitiveData` directly — this is a
+    /// SEPARATE colour, the ribs' own).
+    pub fn ratio_rib_color(value: &str) -> Self {
+        Self::color("ratio_rib_color", ConceptKey::RatioRibColorLabel.get(current_language()), value)
+    }
+
+    /// Create the Elliott ratio-ribs' own stroke width property with i18n.
+    pub fn ratio_rib_width(value: f64) -> Self {
+        Self::number("ratio_rib_width", ConceptKey::RatioRibWidthLabel.get(current_language()), value, Some(1.0), Some(10.0))
+    }
+
+    /// Create the Elliott ratio-ribs' own line-style property with i18n.
+    pub fn ratio_rib_style(value: &str) -> Self {
+        Self::line_style("ratio_rib_style", ConceptKey::RatioRibStyleLabel.get(current_language()), value)
+    }
+
     /// Create "Show Trendlines" boolean property with i18n
     pub fn show_trendlines(value: bool) -> Self {
         Self::boolean("show_trendlines", ConfigKey::ShowTrendlines.get(current_language()), value)

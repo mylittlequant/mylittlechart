@@ -18,29 +18,83 @@
 //! — the same centralization `count.rs`'s own `slot_span` already uses for
 //! the OTHER point-layout lookup this module (WaveSlot child seeding).
 //!
-//! Gated per primitive by its own `show_ratios` toggle (default OFF).
+//! Gated per primitive by its own `show_ratios` toggle (default OFF). The
+//! ribs' own stroke colour/width/line-style are independently configurable
+//! (`ratio_rib_color`/`ratio_rib_width`/`ratio_rib_style` on each of the
+//! five Elliott structs, next to `show_ratios`) — `None`/the default line
+//! style reproduces exactly what every rib drew before those fields
+//! existed, see [`draw_ratio_annotations`]'s own doc.
 //!
 //! # Geometry (owner correction 2026-08-13)
 //!
 //! The ratio annotation is NOT a set of short connectors, one per leg —
 //! that draws a dotted copy of the zigzag itself, which is not how the
 //! owner's reference chart reads it. Instead every Elliott type threads its
-//! SAME-PARITY wave-ends onto shared dotted "ribs" — e.g. an impulse's odd
-//! waves (1, 3, 5) end-to-end on one rib, its even waves (2, 4) end-to-end
-//! on the other, running down opposite sides of the structure — and each
-//! wave's own ratio prints near the vertex where THAT wave ends (nudged off
-//! it so it never lands on top of the wave label already drawn there). See
-//! [`Rib`] for the per-type tables and [`draw_ratio_annotations`] for how a
-//! rib and a leg's label are drawn from the same point-index vocabulary.
+//! SAME-PARITY wave-ends onto shared dotted "ribs" — e.g. an impulse's
+//! EVEN-indexed points (the origin, then wave 2, then wave 4) end-to-end on
+//! one rib, its ODD-indexed points (wave 1, 3, 5) end-to-end on the other,
+//! running down opposite sides of the structure — and each wave's own ratio
+//! prints near the vertex where THAT wave ends (nudged off it so it never
+//! lands on top of the wave label already drawn there). See [`Rib`] for the
+//! per-type tables and [`draw_ratio_annotations`] for how a rib and a leg's
+//! label are drawn from the same point-index vocabulary.
+//!
+//! The parity rule is over the primitive's own `points()` ARRAY INDEX, not
+//! over the Elliott wave-letter/number — the origin (index 0) is on the
+//! even chain, the same as every other even-indexed pivot, for every family
+//! (owner correction 2026-08-13: "the even rib starts at the origin: 0-2-4,
+//! not 2-4" — a chain that dropped the origin under-drew the even side by
+//! one segment). Applied identically over each family's own point count:
+//! impulse/triangle `p0..p5` → `[0,2,4]`/`[1,3,5]`; correction `p0..p3` →
+//! `[0,2]`/`[1,3]`; the two combos over their own longer point arrays. Ratio
+//! LABELS are unaffected by this — they still anchor at
+//! `points[leg.measured_end]`, exactly as before.
 
 use super::super::config::LabelStyle;
-use super::super::{crisp, draw_label_plate, RenderContext, HIT_TOLERANCE};
+use super::super::{crisp, draw_label_plate, LineStyle, RenderContext, HIT_TOLERANCE};
 
 /// Alpha byte appended to the primitive's own stroke colour for a ratio
 /// annotation's dotted connector and label — REDUCED EMPHASIS on the SAME
 /// colour the primitive already draws its wave line with, never a second
-/// palette (owner instruction: reuse the primitive's own colour).
+/// palette (owner instruction: reuse the primitive's own colour). Only used
+/// as the FALLBACK when a primitive's own `ratio_rib_color` is unset — see
+/// [`default_rib_color`].
 const RATIO_ANNOTATION_ALPHA: u8 = 0x8a; // ~54% opacity
+
+/// The rib colour a primitive with no `ratio_rib_color` of its own falls
+/// back to — the structure's own stroke at [`RATIO_ANNOTATION_ALPHA`].
+/// Shared by [`draw_ratio_annotations`] (the actual render fallback) and
+/// each Elliott type's own `style_properties` (the settings-modal colour
+/// swatch's default preview) so the two never drift apart.
+pub(super) fn default_rib_color(stroke_color: &str) -> String {
+    format!("{}{:02x}", &stroke_color[..stroke_color.len().min(7)], RATIO_ANNOTATION_ALPHA)
+}
+
+/// The rib width a primitive with no `ratio_rib_width` of its own falls
+/// back to — 60% of the structure's own stroke width, floored at 1px.
+/// Shared the same way as [`default_rib_color`].
+pub(super) fn default_rib_width(base_width: f64) -> f64 {
+    (base_width * 0.6).max(1.0)
+}
+
+/// The fixed dash pattern for one [`LineStyle`] — the SAME literal table
+/// every Elliott primitive's own `render` already switches on for its main
+/// wave line (see e.g. `elliott_impulse::ElliottImpulse::render`), reused
+/// here rather than a second copy so `LineStyle::Dotted` — the ribs' own
+/// default — still draws the exact `[2.0, 2.0]` dash every rib drew before
+/// `ratio_rib_style` existed (unlike [`LineStyle::dash_pattern`], which
+/// scales the dash by line width and would NOT reproduce that fixed default
+/// once `ratio_rib_width` defaults to a different pixel width than a
+/// primitive's own base `data.width`).
+fn rib_dash_pattern(style: LineStyle) -> &'static [f64] {
+    match style {
+        LineStyle::Solid => &[],
+        LineStyle::Dashed => &[8.0, 4.0],
+        LineStyle::Dotted => &[2.0, 2.0],
+        LineStyle::LargeDashed => &[12.0, 6.0],
+        LineStyle::SparseDotted => &[2.0, 8.0],
+    }
+}
 
 /// Horizontal push applied to a ratio label off its own anchor vertex. The
 /// wave label already sits AT that same vertex via a VERTICAL `offset_y`
@@ -90,9 +144,11 @@ pub(super) const IMPULSE_RATIO_LEGS: [RatioLeg; 4] = [
     RatioLeg { ref_start: 2, ref_end: 3, measured_start: 4, measured_end: 5 }, // wave 5 vs wave 3
 ];
 
-/// `ElliottImpulse` ribs — odd wave-ends (1, 3, 5) on one rib, even
-/// wave-ends (2, 4) on the other, opposite sides of the zigzag.
-pub(super) const IMPULSE_RATIO_RIBS: [Rib; 2] = [&[1, 3, 5], &[2, 4]];
+/// `ElliottImpulse` ribs — even-indexed points (origin, wave 2, wave 4) on
+/// one rib, odd-indexed points (wave 1, 3, 5) on the other, opposite sides
+/// of the zigzag (see the module doc's parity rule — the origin belongs to
+/// the even chain).
+pub(super) const IMPULSE_RATIO_RIBS: [Rib; 2] = [&[0, 2, 4], &[1, 3, 5]];
 
 /// `ElliottCorrection` — points: start(0), A(1), B(2), C(3). B vs A is the
 /// retracement, C vs A is the extension.
@@ -101,11 +157,10 @@ pub(super) const CORRECTION_RATIO_LEGS: [RatioLeg; 2] = [
     RatioLeg { ref_start: 0, ref_end: 1, measured_start: 2, measured_end: 3 }, // C vs A
 ];
 
-/// `ElliottCorrection` ribs — A and C are the two same-direction waves, so
-/// one rib threads `A → C`; B has no same-parity partner in a 3-wave
-/// correction, so it carries no rib of its own (see the module doc: "where
-/// a family genuinely has one comparison, one rib is correct").
-pub(super) const CORRECTION_RATIO_RIBS: [Rib; 1] = [&[1, 3]];
+/// `ElliottCorrection` ribs — even-indexed points (origin, B) on one rib,
+/// odd-indexed points (A, C) on the other (see the module doc's parity
+/// rule).
+pub(super) const CORRECTION_RATIO_RIBS: [Rib; 2] = [&[0, 2], &[1, 3]];
 
 /// `ElliottTriangle` — points: start(0), A..E (1..=5). Each wave measured
 /// against the one TWO before it.
@@ -115,8 +170,10 @@ pub(super) const TRIANGLE_RATIO_LEGS: [RatioLeg; 3] = [
     RatioLeg { ref_start: 2, ref_end: 3, measured_start: 4, measured_end: 5 }, // E vs C
 ];
 
-/// `ElliottTriangle` ribs — A-C-E on one rib, B-D on the other.
-pub(super) const TRIANGLE_RATIO_RIBS: [Rib; 2] = [&[1, 3, 5], &[2, 4]];
+/// `ElliottTriangle` ribs — even-indexed points (origin, B, D) on one rib,
+/// odd-indexed points (A, C, E) on the other (see the module doc's parity
+/// rule).
+pub(super) const TRIANGLE_RATIO_RIBS: [Rib; 2] = [&[0, 2, 4], &[1, 3, 5]];
 
 /// `ElliottDoubleCombo` — points: start(0), W subwaves(1,2) [W: 0→2], X(3)
 /// [connector, ends at 3], Y subwaves(4,5,6) [Y: 3→6].
@@ -124,8 +181,12 @@ pub(super) const DOUBLE_COMBO_RATIO_LEGS: [RatioLeg; 1] = [
     RatioLeg { ref_start: 0, ref_end: 2, measured_start: 3, measured_end: 6 }, // Y vs W
 ];
 
-/// `ElliottDoubleCombo` ribs — a single rib, W's own end to Y's own end.
-pub(super) const DOUBLE_COMBO_RATIO_RIBS: [Rib; 1] = [&[2, 6]];
+/// `ElliottDoubleCombo` ribs — even-indexed points (origin, W's own end,
+/// the middle Y subwave, Y's own end) on one rib, odd-indexed points (the
+/// middle W subwave, X, the other Y subwave) on the other (see the module
+/// doc's parity rule — applied over this type's own 7-point array, same as
+/// every other family).
+pub(super) const DOUBLE_COMBO_RATIO_RIBS: [Rib; 2] = [&[0, 2, 4, 6], &[1, 3, 5]];
 
 /// `ElliottTripleCombo` — points: start(0), W subwaves(1,2) [W: 0→2], X(3),
 /// Y subwaves(4,5) [Y: 3→5], XX(6), Z subwaves(7,8) [Z: 6→8].
@@ -134,8 +195,11 @@ pub(super) const TRIPLE_COMBO_RATIO_LEGS: [RatioLeg; 2] = [
     RatioLeg { ref_start: 3, ref_end: 5, measured_start: 6, measured_end: 8 }, // Z vs Y
 ];
 
-/// `ElliottTripleCombo` ribs — W's end to Y's end, then Y's end to Z's end.
-pub(super) const TRIPLE_COMBO_RATIO_RIBS: [Rib; 2] = [&[2, 5], &[5, 8]];
+/// `ElliottTripleCombo` ribs — even-indexed points (origin, W's own end,
+/// Y's own end, XX, Z's own end) on one rib, odd-indexed points (the middle
+/// W/Y/Z subwaves, X) on the other (see the module doc's parity rule —
+/// applied over this type's own 9-point array).
+pub(super) const TRIPLE_COMBO_RATIO_RIBS: [Rib; 2] = [&[0, 2, 4, 6, 8], &[1, 3, 5, 7]];
 
 /// Draw every ratio rib and label that is fully within the REALIZED point
 /// prefix (`realized` — see each primitive's own `realized_points` field
@@ -156,6 +220,14 @@ pub(super) const TRIPLE_COMBO_RATIO_RIBS: [Rib; 2] = [&[2, 5], &[5, 8]];
 ///   reference leg's price travel — plain magnitudes (see this module's
 ///   own doc); a reference leg with zero price travel is skipped rather
 ///   than dividing by it.
+///
+/// `rib_color`/`rib_width`/`rib_style` are the primitive's own configurable
+/// rib style (`None`/[`LineStyle::Dotted`] falling back to
+/// [`default_rib_color`]/[`default_rib_width`]/a fixed `[2.0, 2.0]` dash —
+/// EXACTLY what every rib drew before those fields existed, so an existing
+/// drawing renders unchanged). The label text reuses the SAME resolved rib
+/// colour — it was always tied to the rib's own colour, not a separate
+/// setting.
 pub(super) fn draw_ratio_annotations(
     ctx: &mut dyn RenderContext,
     points: &[(i64, f64)],
@@ -165,16 +237,19 @@ pub(super) fn draw_ratio_annotations(
     stroke_color: &str,
     base_width: f64,
     label_style: &LabelStyle,
+    rib_color: Option<&str>,
+    rib_width: Option<f64>,
+    rib_style: LineStyle,
 ) {
     let dpr = ctx.dpr();
     let ratio_font_size = (label_style.font_size - 1.0).max(9.0);
-    let faded = format!("{}{:02x}", &stroke_color[..stroke_color.len().min(7)], RATIO_ANNOTATION_ALPHA);
-    let line_width = (base_width * 0.6).max(1.0);
+    let faded = rib_color.map(str::to_string).unwrap_or_else(|| default_rib_color(stroke_color));
+    let line_width = rib_width.unwrap_or_else(|| default_rib_width(base_width));
 
     // ---- Ribs: one dotted polyline per same-parity thread ----
     ctx.set_stroke_color(&faded);
     ctx.set_stroke_width(line_width);
-    ctx.set_line_dash(&[2.0, 2.0]);
+    ctx.set_line_dash(rib_dash_pattern(rib_style));
     for rib in ribs {
         let screen_pts: Vec<(f64, f64)> = rib
             .iter()

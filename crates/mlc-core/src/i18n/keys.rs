@@ -2829,10 +2829,27 @@ pub enum ConceptKey {
     /// leading row label reuses `ConfigKey::Fill` ("Заливка") — no new key
     /// needed for that half.
     FillInheritLine = 277,
+
+    // ---- Elliott ratio-rib style properties (2026-08-13) — next to
+    // `ConfigKey::ShowRatios` in every Elliott type's own `style_properties`,
+    // see `elliott::ratio`'s own module doc.
+    RatioRibColorLabel = 278,
+    RatioRibWidthLabel = 279,
+    RatioRibStyleLabel = 280,
+
+    // ---- Elliott hard-rule guard messages (2026-08-13) — one per
+    // `elliott::guard::Violation::message`, see that module's own doc for
+    // the predicate each message reports on.
+    RuleWave2BeyondOrigin = 281,
+    RuleWave4OverlapsWave1 = 282,
+    RuleWave3Shortest = 283,
+    RuleCorrectionBRule = 284,
+    RuleCorrectionCRule = 285,
+    RuleTriangleNotContracting = 286,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 278;
+    pub const COUNT: usize = 287;
 
     /// Get translation for this key.
     #[inline]
