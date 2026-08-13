@@ -703,7 +703,27 @@ impl ChartApp {
             prim.wave_at(hx, hy, &bars, &hit_vp, &hit_ps).map(|slot| (GestureTarget::WaveSegment, Some(slot)))
         };
         let Some((target, wave_slot)) = target_and_slot else { return false; };
-        let Some(gesture) = self.gesture_bindings.gesture_for(trigger, target) else { return false; };
+        // Right-click is not a BINDING, it is the primitive's own menu
+        // growing an Elliott block — owner, 2026-08-13, after the first
+        // version gated it behind the binding and so never showed it: "как
+        // только мы делаем ПКМ по волнам, должно открывать сверху над
+        // Settings эллиот-блок, соответствующий тому, в какую часть ткнули —
+        // то же самое что даблклик левой, только ПКМ и просто сверху уже
+        // имеющегося меню". So a right-click over a wave ALWAYS resolves to
+        // the block for whatever it landed on, and the merge below keeps
+        // Settings/Clone/Lock/Hide/Delete one click away underneath it.
+        // `GestureBindings` still governs the EXCLUSIVE gesture — the one
+        // that opens the wave block alone, double-click today.
+        let gesture = match trigger {
+            GestureTrigger::RightClick => match target {
+                GestureTarget::WaveSegment => ChartGesture::WaveMenu,
+                GestureTarget::TerminalPoint => ChartGesture::SuccessorMenu,
+            },
+            _ => match self.gesture_bindings.gesture_for(trigger, target) {
+                Some(g) => g,
+                None => return false,
+            },
+        };
 
         // Select so the inline toolbar and the settings modal agree with
         // what the menu is about — mirrors `on_right_click`'s own
