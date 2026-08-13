@@ -81,6 +81,13 @@ pub struct ElliottImpulse {
     /// never lowers it.
     #[serde(default)]
     pub realized_points: Option<usize>,
+    /// The extra violations that depend on this impulse's own siblings —
+    /// see [`super::super::Primitive::context_violations`]'s own doc. Cache
+    /// only, filled by the collection's own owner — skipped on
+    /// (de)serialization so it never becomes a second source of truth on
+    /// disk.
+    #[serde(skip)]
+    pub context_violations: Vec<guard::Violation>,
 }
 
 impl ElliottImpulse {
@@ -105,6 +112,7 @@ impl ElliottImpulse {
             ratio_rib_width: None,
             ratio_rib_style: LineStyle::Dotted,
             realized_points: None,
+            context_violations: Vec::new(),
         }
     }
 
@@ -151,6 +159,8 @@ impl Primitive for ElliottImpulse {
     fn wave_follows(&self) -> Option<u64> { self.follows }
     fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
     fn realized_point_count(&self) -> usize { self.realized_len() }
+    fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
+    fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -206,8 +216,14 @@ impl Primitive for ElliottImpulse {
         // a broken count is broken whether or not the ratio ribs show. Never
         // blocks the drawing; only recolors the offending segment/label
         // below. Empty for a compliant structure, so a structure with no
-        // violations renders byte-for-byte as before this existed.
-        let violations = guard::violations(self);
+        // violations renders byte-for-byte as before this existed. Merges
+        // the SELF-only checks (recomputed live every frame, so they keep
+        // updating while the user drags) with the CONTEXT cache
+        // (`self.context_violations()`, filled by the collection's own
+        // owner — see `Primitive::context_violations`'s own doc) so a
+        // context violation marks its wave exactly like a self-only one.
+        let mut violations = guard::violations(self);
+        violations.extend_from_slice(self.context_violations());
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);

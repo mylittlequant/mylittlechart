@@ -35,6 +35,8 @@
 use serde::{Deserialize, Serialize};
 use super::super::Primitive;
 use super::super::config::WaveDegree;
+use mli::ewa::grammar::{self, EwaWavePosition};
+use mli::ewa::types::EwaPatternKind;
 
 /// Which position inside its parent a child Elliott wave occupies.
 ///
@@ -482,6 +484,196 @@ pub fn successor_kinds(prev: &dyn Primitive) -> &'static [&'static str] {
 }
 
 // =========================================================================
+// Grammar — which child kinds legally fit a slot (owner ask 2026-08-13: a
+// motive slot always seeded an impulse child and everything else a
+// correction, purely off `WaveSlot::is_motive` — that heuristic cannot
+// express that wave 2 may be many structures but never a triangle, that
+// wave 4 may be a triangle, that a zigzag's own wave A is a five and a
+// flat's own wave A is a three). The VOCABULARY these functions read is
+// never re-invented here: every mapping below is a lookup into
+// `mylittleindicators::ewa::{grammar, types}`, the same OSS catalogue
+// `elliott::guard` already wires its rule ids from — this module only adds
+// the translation between THIS crate's own chart-side type ids/slots and
+// that catalogue's own pattern kinds/positions.
+// =========================================================================
+
+/// A "kind id" is the chart-side `type_id`, optionally carrying an
+/// `ElliottCorrection` subtype after a colon (e.g. `"elliott_impulse"`,
+/// `"elliott_correction:flat"`) — the fixed spelling every function below
+/// (and [`crate::i18n::ConceptKey`]'s own `WaveKind*` rows) shares. The
+/// complete candidate set [`child_kinds`] itself picks among.
+pub const CHILD_KIND_CANDIDATES: [&str; 8] = [
+    "elliott_impulse",
+    "elliott_correction:zigzag",
+    "elliott_correction:flat",
+    "elliott_correction:expanded",
+    "elliott_correction:running",
+    "elliott_triangle",
+    "elliott_double_combo",
+    "elliott_triple_combo",
+];
+
+/// Split a "kind id" (see [`CHILD_KIND_CANDIDATES`]'s own doc) back into its
+/// `(type_id, subtype)` pair, so a caller building a new primitive from a
+/// [`child_kinds`] entry never re-parses the colon convention by hand.
+/// `subtype` is `None` for every kind id without a colon.
+pub fn split_kind_id(kind_id: &str) -> (&str, Option<&str>) {
+    match kind_id.split_once(':') {
+        Some((type_id, subtype)) => (type_id, Some(subtype)),
+        None => (kind_id, None),
+    }
+}
+
+/// The Elliott catalogue pattern kind (`mli::ewa::types::EwaPatternKind`) a
+/// primitive's own `type_id()` names — `correction_subtype` follows
+/// [`Primitive::correction_subtype`]'s own default (`"zigzag"` when
+/// unresolved) for `"elliott_correction"`, and is ignored for every other
+/// `type_id`. `None` for a `type_id` outside the five Elliott types.
+pub fn parent_pattern(type_id: &str, correction_subtype: Option<&str>) -> Option<EwaPatternKind> {
+    Some(match type_id {
+        "elliott_impulse" => EwaPatternKind::Impulse,
+        "elliott_correction" => match correction_subtype.unwrap_or("zigzag") {
+            "flat" => EwaPatternKind::RegularFlat,
+            "expanded" => EwaPatternKind::ExpandedFlat,
+            "running" => EwaPatternKind::RunningFlat,
+            _ => EwaPatternKind::Zigzag,
+        },
+        "elliott_triangle" => EwaPatternKind::ContractingTriangle,
+        "elliott_double_combo" => EwaPatternKind::DoubleThree,
+        "elliott_triple_combo" => EwaPatternKind::TripleThree,
+        _ => return None,
+    })
+}
+
+/// The catalogue pattern kind a "kind id" (see [`split_kind_id`]) names —
+/// [`parent_pattern`] applied to the split pair, so [`child_kinds`]'s own
+/// candidate side reads the exact same mapping a parent's own pattern does,
+/// never a second copy of it.
+pub fn kind_pattern(kind_id: &str) -> Option<EwaPatternKind> {
+    let (type_id, subtype) = split_kind_id(kind_id);
+    parent_pattern(type_id, subtype)
+}
+
+/// The [`crate::i18n::ConceptKey`] naming `kind_id` for a picker row (e.g.
+/// the child-kind picker [`child_kinds`] feeds). `None` for a string outside
+/// [`CHILD_KIND_CANDIDATES`].
+pub fn kind_label(kind_id: &str) -> Option<crate::i18n::ConceptKey> {
+    use crate::i18n::ConceptKey;
+    Some(match kind_id {
+        "elliott_impulse" => ConceptKey::WaveKindImpulse,
+        "elliott_correction:zigzag" => ConceptKey::WaveKindZigzag,
+        "elliott_correction:flat" => ConceptKey::WaveKindRegularFlat,
+        "elliott_correction:expanded" => ConceptKey::WaveKindExpandedFlat,
+        "elliott_correction:running" => ConceptKey::WaveKindRunningFlat,
+        "elliott_triangle" => ConceptKey::WaveKindTriangle,
+        "elliott_double_combo" => ConceptKey::WaveKindDoubleCombo,
+        "elliott_triple_combo" => ConceptKey::WaveKindTripleCombo,
+        _ => return None,
+    })
+}
+
+/// The grammar position (`mli::ewa::grammar::EwaWavePosition`) `slot`
+/// occupies on a primitive of `type_id` — the other half of the vocabulary
+/// [`child_kinds`] needs alongside [`parent_pattern`]. Both of a combo's own
+/// connector slots (`ComboX`/`ComboXX`) map onto the SAME position `X` —
+/// `mli::ewa::grammar` has no separate position for a second connector, and
+/// the triple combo's own [`slot_span`] table already threads both through
+/// the same `X` notation for the same reason. `None` for a slot that does
+/// not exist on `type_id` (mirrors [`slot_span`]'s own `None` contract) or
+/// for a `type_id` outside the five Elliott types.
+pub fn slot_position(type_id: &str, slot: WaveSlot) -> Option<EwaWavePosition> {
+    use WaveSlot::*;
+    match type_id {
+        "elliott_impulse" => Some(match slot {
+            Impulse1 => EwaWavePosition::Wave1,
+            Impulse2 => EwaWavePosition::Wave2,
+            Impulse3 => EwaWavePosition::Wave3,
+            Impulse4 => EwaWavePosition::Wave4,
+            Impulse5 => EwaWavePosition::Wave5,
+            _ => return None,
+        }),
+        "elliott_correction" => Some(match slot {
+            CorrectionA => EwaWavePosition::A,
+            CorrectionB => EwaWavePosition::B,
+            CorrectionC => EwaWavePosition::C,
+            _ => return None,
+        }),
+        "elliott_triangle" => Some(match slot {
+            TriangleA => EwaWavePosition::A,
+            TriangleB => EwaWavePosition::B,
+            TriangleC => EwaWavePosition::C,
+            TriangleD => EwaWavePosition::D,
+            TriangleE => EwaWavePosition::E,
+            _ => return None,
+        }),
+        "elliott_double_combo" => Some(match slot {
+            ComboW => EwaWavePosition::W,
+            ComboX => EwaWavePosition::X,
+            ComboY => EwaWavePosition::Y,
+            _ => return None,
+        }),
+        "elliott_triple_combo" => Some(match slot {
+            ComboW => EwaWavePosition::W,
+            ComboX | ComboXX => EwaWavePosition::X,
+            ComboY => EwaWavePosition::Y,
+            ComboZ => EwaWavePosition::Z,
+            _ => return None,
+        }),
+        _ => None,
+    }
+}
+
+/// Every kind id legally allowed to subdivide `slot` of `parent`, in
+/// [`CHILD_KIND_CANDIDATES`]'s own fixed order — the grammar-driven
+/// replacement for the old `WaveSlot::is_motive` heuristic (see this
+/// section's own doc).
+///
+/// A candidate passes when it clears BOTH halves of the grammar
+/// `mylittleindicators::ewa::grammar` already owns: the parent's own slot
+/// table (`grammar::slots_for(parent_pattern)`, matched by
+/// [`slot_position`]) names a CLASS the candidate's own pattern must
+/// satisfy (`grammar::matches_class`), and the candidate's own pattern must
+/// be legal AT that position at all (`grammar::allowed_in_position` — this
+/// is what keeps a triangle out of wave 2: `allowed_in_position` only
+/// permits a triangle at `Wave4`/`B`/`X`/`Y`/`Z`, never `Wave2`, regardless
+/// of `matches_class`).
+///
+/// Hand-verified (see this crate's own `count.rs` change report): a motive
+/// slot (impulse wave 1, 3 or 5) returns exactly `["elliott_impulse"]`;
+/// impulse wave 2 returns the six corrective candidates MINUS the triangle
+/// (zigzag/regular flat/expanded flat/running flat/double combo/triple
+/// combo); impulse wave 4 returns all seven corrective candidates,
+/// triangle included.
+///
+/// Empty when `parent` is not an Elliott primitive ([`parent_pattern`]
+/// returns `None`), when `slot` does not exist on `parent`'s own type
+/// ([`slot_position`] returns `None`), or when the grammar allows nothing
+/// at that position.
+pub fn child_kinds(parent: &dyn Primitive, slot: WaveSlot) -> Vec<&'static str> {
+    let Some(pattern) = parent_pattern(parent.type_id(), parent.correction_subtype()) else {
+        return Vec::new();
+    };
+    let Some(position) = slot_position(parent.type_id(), slot) else {
+        return Vec::new();
+    };
+    let Some(class) = grammar::slots_for(pattern)
+        .iter()
+        .find(|s| s.position == position)
+        .map(|s| s.class)
+    else {
+        return Vec::new();
+    };
+    CHILD_KIND_CANDIDATES
+        .into_iter()
+        .filter(|&kind_id| {
+            kind_pattern(kind_id)
+                .map(|k| grammar::matches_class(k, class) && grammar::allowed_in_position(k, position))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+// =========================================================================
 // Promotion — collapsing a same-degree chain into the degree above
 // =========================================================================
 
@@ -608,6 +800,73 @@ mod tests {
         assert_eq!(seed.start, points[2]);
         assert_eq!(seed.end, points[3]);
         assert_eq!(seed.degree, WaveDegree::Intermediate.finer());
+    }
+
+    #[test]
+    fn split_kind_id_separates_type_id_and_subtype() {
+        assert_eq!(split_kind_id("elliott_correction:flat"), ("elliott_correction", Some("flat")));
+        assert_eq!(split_kind_id("elliott_impulse"), ("elliott_impulse", None));
+    }
+
+    #[test]
+    fn child_kinds_impulse_wave2_excludes_triangle() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let kinds = child_kinds(&impulse, WaveSlot::Impulse2);
+        assert_eq!(
+            kinds,
+            vec![
+                "elliott_correction:zigzag",
+                "elliott_correction:flat",
+                "elliott_correction:expanded",
+                "elliott_correction:running",
+                "elliott_double_combo",
+                "elliott_triple_combo",
+            ],
+            "wave 2 may be many structures but never a triangle"
+        );
+    }
+
+    #[test]
+    fn child_kinds_impulse_wave4_includes_triangle() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let kinds = child_kinds(&impulse, WaveSlot::Impulse4);
+        assert_eq!(
+            kinds,
+            vec![
+                "elliott_correction:zigzag",
+                "elliott_correction:flat",
+                "elliott_correction:expanded",
+                "elliott_correction:running",
+                "elliott_triangle",
+                "elliott_double_combo",
+                "elliott_triple_combo",
+            ],
+            "wave 4 may be a triangle, unlike wave 2"
+        );
+    }
+
+    #[test]
+    fn child_kinds_motive_slots_offer_only_impulse() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse1), vec!["elliott_impulse"]);
+        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse3), vec!["elliott_impulse"]);
+        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse5), vec!["elliott_impulse"]);
+    }
+
+    #[test]
+    fn child_kinds_empty_for_non_elliott_primitive() {
+        use crate::drawing::primitives_v2::TrendLine;
+        let line = TrendLine::new(0, 100.0, 1_000, 110.0, "#2196F3");
+        assert!(child_kinds(&line, WaveSlot::Impulse1).is_empty());
     }
 
     #[test]

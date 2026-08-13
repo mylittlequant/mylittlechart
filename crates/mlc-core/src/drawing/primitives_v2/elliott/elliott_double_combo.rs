@@ -9,8 +9,8 @@ use super::super::{
     render_primitive_text, draw_label_plate,
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
-use super::count::{WaveLink, WaveSlot};
-use super::ratio;
+use super::count::{WaveLink, WaveSlot, slot_span};
+use super::{guard, ratio};
 
 fn default_true() -> bool { true }
 fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
@@ -73,6 +73,17 @@ pub struct ElliottDoubleCombo {
     /// lowers it.
     #[serde(default)]
     pub realized_points: Option<usize>,
+    /// The extra violations that depend on this double combo's own
+    /// siblings — see [`super::super::Primitive::context_violations`]'s own
+    /// doc (the combination-grammar rules — `x_is_corrective`,
+    /// `w_and_y_are_corrective`, `at_most_one_zigzag`,
+    /// `triangle_only_final_component` — are ALL context-dependent, so this
+    /// is the only violation source this type's own `render` ever marks).
+    /// Cache only, filled by the collection's own owner — skipped on
+    /// (de)serialization so it never becomes a second source of truth on
+    /// disk.
+    #[serde(skip)]
+    pub context_violations: Vec<guard::Violation>,
 }
 
 impl ElliottDoubleCombo {
@@ -97,6 +108,7 @@ impl ElliottDoubleCombo {
             ratio_rib_width: None,
             ratio_rib_style: LineStyle::Dotted,
             realized_points: None,
+            context_violations: Vec::new(),
         }
     }
 
@@ -142,6 +154,8 @@ impl Primitive for ElliottDoubleCombo {
     fn wave_follows(&self) -> Option<u64> { self.follows }
     fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
     fn realized_point_count(&self) -> usize { self.realized_len() }
+    fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
+    fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -193,6 +207,16 @@ impl Primitive for ElliottDoubleCombo {
         let dpr = ctx.dpr();
         let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();
         let realized = self.realized_len();
+        // Hard-rule guard (`super::guard`) — a double combo has no SELF-only
+        // rule of its own (`guard::violations` always returns empty for
+        // this type_id), so every entry here is a CONTEXT violation —
+        // `x_is_corrective`/`w_and_y_are_corrective`/`at_most_one_zigzag`/
+        // `triangle_only_final_component` — filled by the collection's own
+        // owner via `set_context_violations` (see
+        // `Primitive::context_violations`'s own doc). Never blocks the
+        // drawing; only recolors the offending segment/label below.
+        let mut violations = guard::violations(self);
+        violations.extend_from_slice(self.context_violations());
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -216,6 +240,21 @@ impl Primitive for ElliottDoubleCombo {
 
         ctx.set_line_dash(&[]);
 
+        if self.show_lines && !violations.is_empty() {
+            ctx.set_stroke_color(guard::VIOLATION_COLOR);
+            ctx.set_stroke_width(self.data.width);
+            for v in &violations {
+                if let Some((a, b)) = slot_span(self.type_id(), v.wave) {
+                    if b < realized {
+                        ctx.begin_path();
+                        ctx.move_to(crisp(screen[a].0, dpr), crisp(screen[a].1, dpr));
+                        ctx.line_to(crisp(screen[b].0, dpr), crisp(screen[b].1, dpr));
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
         if self.show_labels {
             let labels = self.wave_labels();
             let label_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
@@ -228,7 +267,9 @@ impl Primitive for ElliottDoubleCombo {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
                 let offset = if i > 0 && screen[i].1 < screen[i - 1].1 { -self.label_style.offset_y } else { self.label_style.offset_y };
-                draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, label_color);
+                let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
+                let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
+                draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);
             }
         }
 

@@ -1283,7 +1283,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 287] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 304] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1571,6 +1571,23 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 287] = [
     /* 284 RuleCorrectionBRule               */ [ "Wave B breaks this correction's own rule", "Волна B нарушает правило для этого типа коррекции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 285 RuleCorrectionCRule               */ [ "Wave C breaks this correction's own rule", "Волна C нарушает правило для этого типа коррекции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 286 RuleTriangleNotContracting        */ [ "This wave does not contract against its own reference wave", "Эта волна не сужается относительно опорной волны", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 287 WaveKindImpulse                   */ [ "Impulse", "Импульс", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 288 WaveKindZigzag                    */ [ "Zigzag", "Зигзаг", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 289 WaveKindRegularFlat               */ [ "Regular Flat", "Обычная плоскость", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 290 WaveKindExpandedFlat              */ [ "Expanded Flat", "Расширенная плоскость", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 291 WaveKindRunningFlat               */ [ "Running Flat", "Бегущая плоскость", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 292 WaveKindTriangle                  */ [ "Triangle", "Треугольник", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 293 WaveKindDoubleCombo               */ [ "Double Combination", "Двойная комбинация", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 294 WaveKindTripleCombo               */ [ "Triple Combination", "Тройная комбинация", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 295 RuleFlatRequiresBNearAOrigin      */ [ "Declared a flat, but wave B retraces too little of wave A — below 0.9 this is a zigzag", "Заявлена плоскость, но волна B возвращается слишком мало относительно волны A — ниже 0.9 это уже зигзаг", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 296 RuleZigzagRequiresShallowB        */ [ "Declared a zigzag, but wave B retraces too much of wave A to stay shallow", "Заявлен зигзаг, но волна B возвращается слишком глубоко относительно волны A", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 297 RuleExpandedFlatRequiresBBeyondAOrigin */ [ "Declared an expanded flat, but wave B does not exceed wave A's own origin", "Заявлена расширенная плоскость, но волна B не заходит за начало волны A", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 298 RuleSubdivisionClass              */ [ "This wave's own subdivision does not fit the grammar for its slot", "Вложенная структура этой волны не подходит по грамматике для своей позиции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 299 RuleComboXNotCorrective           */ [ "The connector's own subdivision must be a corrective structure", "Вложенная структура коннектора должна быть коррективной", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 300 RuleComboWyzNotCorrective         */ [ "This component's own subdivision must be a corrective structure", "Вложенная структура этой компоненты должна быть коррективной", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 301 RuleComboAtMostOneZigzag          */ [ "At most one of this combination's own components may be a zigzag", "Зигзагом может быть не более одной компоненты этой комбинации", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 302 RuleComboTriangleOnlyFinal        */ [ "A triangle may only occupy this combination's own final component", "Треугольник может занимать только последнюю компоненту комбинации", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 303 RuleChainContinuityGap            */ [ "This structure's own first point does not connect to its predecessor's last point", "Первая точка этой структуры не совпадает с последней точкой предшественника", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

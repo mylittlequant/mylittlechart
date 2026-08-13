@@ -12,6 +12,7 @@ use super::types::{
 use crate::render::{RenderContext, crisp};
 use super::config::{TimeframeVisibilityConfig, WaveDegree};
 use super::elliott::count::{WaveLink, WaveSlot};
+use super::elliott::guard::Violation;
 
 /// Category of primitive for toolbar organization
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -906,6 +907,35 @@ pub trait Primitive: Send + Sync {
     fn correction_subtype(&self) -> Option<&'static str> {
         None
     }
+
+    // =========================================================================
+    // Elliott Guard Context Cache (E2 — render-side cache, see
+    // `elliott::guard::violations_in`)
+    // =========================================================================
+
+    /// The extra hard-rule violations this primitive currently exhibits
+    /// that depend on its own SIBLINGS — its subdivisions or its own
+    /// predecessor (see `elliott::guard::violations_in`'s own doc for what
+    /// those checks are). A primitive cannot see its siblings on its own
+    /// (`elliott::count`'s own module doc), so this is not COMPUTED here —
+    /// it is a CACHE the collection's own owner fills by calling
+    /// `elliott::guard::violations_in(self, others)` and writing the result
+    /// back via [`set_context_violations`](Self::set_context_violations),
+    /// typically once per meaningful edit to the collection. Pure render
+    /// cache — never persisted, never read from or written to JSON; every
+    /// drawing's own serialized form is unaffected by this existing.
+    ///
+    /// Default: empty — exactly how every primitive outside the Elliott
+    /// family behaves (they never call `set_context_violations`), and how
+    /// an Elliott primitive behaves before its owner has ever filled this.
+    fn context_violations(&self) -> &[Violation] {
+        &[]
+    }
+
+    /// Replace [`context_violations`](Self::context_violations) — see that
+    /// method's own doc for who calls this and when. No-op default,
+    /// matching every primitive outside the Elliott family.
+    fn set_context_violations(&mut self, _v: Vec<Violation>) {}
 
     // =========================================================================
     // Serialization

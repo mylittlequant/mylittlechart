@@ -2846,10 +2846,39 @@ pub enum ConceptKey {
     RuleCorrectionBRule = 284,
     RuleCorrectionCRule = 285,
     RuleTriangleNotContracting = 286,
+
+    // ---- Elliott child-kind picker labels (2026-08-13) — one per
+    // `elliott::count::child_kinds` candidate id, see that function's own
+    // doc for the fixed eight-candidate order these name.
+    WaveKindImpulse = 287,
+    WaveKindZigzag = 288,
+    WaveKindRegularFlat = 289,
+    WaveKindExpandedFlat = 290,
+    WaveKindRunningFlat = 291,
+    WaveKindTriangle = 292,
+    WaveKindDoubleCombo = 293,
+    WaveKindTripleCombo = 294,
+
+    // ---- Elliott declared-subtype-vs-measured-ratio guard messages
+    // (2026-08-13, owner ask: "есть ли проверка на плоскость? что плоскость
+    // >0.9 если меньше это не плоскость") — see
+    // `elliott::guard::correction_violations`'s own doc.
+    RuleFlatRequiresBNearAOrigin = 295,
+    RuleZigzagRequiresShallowB = 296,
+    RuleExpandedFlatRequiresBBeyondAOrigin = 297,
+
+    // ---- Elliott CONTEXT-aware guard messages (2026-08-13) — one per
+    // `elliott::guard::violations_in` rule, see that function's own doc.
+    RuleSubdivisionClass = 298,
+    RuleComboXNotCorrective = 299,
+    RuleComboWyzNotCorrective = 300,
+    RuleComboAtMostOneZigzag = 301,
+    RuleComboTriangleOnlyFinal = 302,
+    RuleChainContinuityGap = 303,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 287;
+    pub const COUNT: usize = 304;
 
     /// Get translation for this key.
     #[inline]
