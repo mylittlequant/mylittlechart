@@ -223,7 +223,7 @@ impl Primitive for ElliottTriangle {
         // A wave label's own plate is clickable too (owner ask 2026-08-13),
         // gated on `show_labels` exactly like the render side.
         if self.show_labels
-            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style)
+            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style, self.degree)
         {
             return HitTestResult::Body;
         }
@@ -244,7 +244,7 @@ impl Primitive for ElliottTriangle {
         let labels = self.wave_labels();
         wave_hit::wave_slot_at(
             sx, sy, self.type_id(), &screen, self.realized_len(), self.wave_slots(),
-            &labels, &self.label_style, self.show_labels, self.show_ratios, &ratio::TRIANGLE_RATIO_RIBS,
+            &labels, &self.label_style, self.degree, self.show_labels, self.show_ratios, &ratio::TRIANGLE_RATIO_RIBS,
         )
     }
 
@@ -365,7 +365,7 @@ impl Primitive for ElliottTriangle {
             for (i, label) in labels.iter().enumerate() {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
-                let offset = wave_label_offset(&screen, i, self.label_style.offset_y);
+                let offset = wave_label_offset(&screen, i, &self.label_style, self.degree);
                 let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
                 let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
                 draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);

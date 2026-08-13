@@ -263,6 +263,26 @@ pub(crate) fn stroke_leg_segments(
     }
 }
 
+/// Ladder size for [`wave_label_offset`]'s own per-degree placement ring —
+/// kept as one named constant so [`WaveDegree::rank_from_finest`]'s own
+/// modulus and this doc's "N steps apart share a ring again" caveat always
+/// read off the SAME number.
+///
+/// `4`: the collision this exists to fix (owner report 2026-08-14) is a
+/// parent and its own directly-nested subdivision sharing one pivot, and
+/// those are always exactly ONE degree apart (`elliott::count::child_seed`
+/// mints a child at [`WaveDegree::finer`] of its parent, never more than
+/// one step) — any `N >= 2` already separates that pair. `4` leaves one
+/// extra ring of headroom for a grandparent/parent/child stack that shares
+/// the same anchor (plausible: a subdivided wave's own FIRST point is
+/// often exactly its parent's own anchor too, and nothing caps how many
+/// levels deep a chain of subdivisions nests), at the cost of at most three
+/// extra rungs of vertical distance for the deepest ring. Past four levels
+/// sharing one pivot the ladder wraps and two of the labels land on the
+/// same ring again — accepted, not solved (see [`wave_label_offset`]'s own
+/// doc).
+const LABEL_DEGREE_RING_COUNT: usize = 4;
+
 /// The vertical push applied to wave label `i`'s own anchor point before
 /// drawing it — UP when this pivot sits above (smaller screen `y`) the one
 /// before it, DOWN otherwise, so a label never sits on top of the wave line
@@ -270,17 +290,48 @@ pub(crate) fn stroke_leg_segments(
 /// branch inline before this existed; factored out so `render`'s own label
 /// placement and [`hit_test_label_plates`]'s own hit area can never drift
 /// apart.
-pub(crate) fn wave_label_offset(screen: &[(f64, f64)], i: usize, offset_y: f64) -> f64 {
-    if i > 0 && screen[i].1 < screen[i - 1].1 { -offset_y } else { offset_y }
+///
+/// Grows the DISTANCE (never the direction the branch above already
+/// picked) by `degree`'s own ring on a [`LABEL_DEGREE_RING_COUNT`]-step
+/// ladder — owner report 2026-08-14: an impulse whose wave 2 is subdivided
+/// into an ABC renders the parent's own "(2)" label and then, at the SAME
+/// pivot, the child's own "C" label drawn later on top of it — the parent
+/// is not skipped, it is painted over. Both marks belong at that point by
+/// Elliott notation convention ("младший цикл... и старший", the owner's
+/// own framing): the FINER degree sits closest to the pivot, each COARSER
+/// one pushed further out. This is a LOCAL rule derived only from `degree`
+/// — no shared per-frame label registry exists or is added here, because a
+/// primitive cannot see another primitive's own labels; threading that
+/// state through the render path would be a far larger change than this
+/// defect warrants.
+///
+/// A parent and the subdivision nested directly inside it always differ by
+/// exactly one degree (see [`LABEL_DEGREE_RING_COUNT`]'s own doc), so they
+/// always land on adjacent, distinct rings — the actual collision this
+/// fixes. The consequence accepted in exchange: two degrees exactly
+/// [`LABEL_DEGREE_RING_COUNT`] steps apart share a ring again and can still
+/// collide.
+pub(crate) fn wave_label_offset(
+    screen: &[(f64, f64)],
+    i: usize,
+    label_style: &LabelStyle,
+    degree: WaveDegree,
+) -> f64 {
+    let sign = if i > 0 && screen[i].1 < screen[i - 1].1 { -1.0 } else { 1.0 };
+    let ring = (degree.rank_from_finest() % LABEL_DEGREE_RING_COUNT) as f64;
+    let rung = label_style.font_size * 0.9 + label_style.background_padding;
+    sign * (label_style.offset_y + ring * rung)
 }
 
 /// Hit-test every REALIZED, non-empty wave label's own plate rectangle —
 /// the label-side counterpart to `elliott::ratio::hit_test_ratio_ribs`'s own
 /// rib hit test. Shares [`wave_label_offset`] (the SAME anchor placement
-/// `render`'s own label loop uses) and [`label_plate_rect`] (the SAME
-/// padding math [`draw_label_plate`]'s own background draws), fed an
-/// ESTIMATED width ([`estimate_text_width`]) instead of a real
-/// `ctx.measure_text` one — see that function's own doc for why.
+/// `render`'s own label loop uses, so `degree` must be the SAME structure's
+/// own `WaveDegree` — see that function's own doc for what it does with it)
+/// and [`label_plate_rect`] (the SAME padding math [`draw_label_plate`]'s
+/// own background draws), fed an ESTIMATED width ([`estimate_text_width`])
+/// instead of a real `ctx.measure_text` one — see that function's own doc
+/// for why.
 ///
 /// Gated on `show_labels` by the CALLER, not here — mirrors
 /// `hit_test_ratio_ribs`'s own "caller gates on show_ratios" contract, so a
@@ -292,12 +343,13 @@ pub(crate) fn hit_test_label_plates(
     labels: &[&str],
     realized: usize,
     label_style: &LabelStyle,
+    degree: WaveDegree,
 ) -> bool {
     for (i, &(x, y)) in screen.iter().enumerate() {
         if i >= realized || i >= labels.len() || labels[i].is_empty() {
             continue;
         }
-        let label_y = y + wave_label_offset(screen, i, label_style.offset_y);
+        let label_y = y + wave_label_offset(screen, i, label_style, degree);
         let width = estimate_text_width(labels[i], label_style.font_size);
         let (bg_x, bg_y, bg_w, bg_h) =
             label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);
@@ -390,6 +442,83 @@ pub(crate) fn level_rank(level: f64, sorted_levels: &[f64]) -> usize {
         .iter()
         .position(|&l| (l - level).abs() < 1e-9)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod wave_label_offset_tests {
+    use super::*;
+
+    // A single point at the origin — `wave_label_offset`'s own `i == 0`
+    // branch always picks the positive (DOWN) sign, so every case below
+    // isolates the degree-ring term without also depending on local
+    // geometry (see the function's own doc for that separate branch).
+    fn single_point() -> Vec<(f64, f64)> {
+        vec![(0.0, 0.0)]
+    }
+
+    fn style() -> LabelStyle {
+        LabelStyle::default()
+    }
+
+    /// Owner report 2026-08-14: a parent's own label and its directly
+    /// nested subdivision's own label share one pivot. Parent and child
+    /// always differ by exactly one degree — this is the actual collision
+    /// [`wave_label_offset`] exists to fix, so it must produce two
+    /// DIFFERENT offsets for it.
+    #[test]
+    fn one_degree_apart_produces_different_offsets() {
+        let screen = single_point();
+        let s = style();
+        let parent = wave_label_offset(&screen, 0, &s, WaveDegree::Intermediate);
+        let child = wave_label_offset(&screen, 0, &s, WaveDegree::Intermediate.finer());
+        assert_ne!(parent, child, "a parent and its directly nested subdivision must land on different rings");
+    }
+
+    /// Same degree, same geometry, same style: the offset is a pure
+    /// function of its inputs, so calling it twice must agree — no hidden
+    /// per-frame state anywhere in this LOCAL rule.
+    #[test]
+    fn same_degree_produces_same_offset() {
+        let screen = single_point();
+        let s = style();
+        let a = wave_label_offset(&screen, 0, &s, WaveDegree::Primary);
+        let b = wave_label_offset(&screen, 0, &s, WaveDegree::Primary);
+        assert_eq!(a, b);
+    }
+
+    /// The ladder wraps every [`LABEL_DEGREE_RING_COUNT`] steps (this
+    /// function's own doc states the consequence: two degrees exactly that
+    /// many steps apart share a ring again) — `Miniscule` (rank 0) and the
+    /// degree `LABEL_DEGREE_RING_COUNT` steps coarser than it land back on
+    /// the SAME ring and therefore the SAME offset.
+    #[test]
+    fn ring_wraps_at_the_documented_ladder_size() {
+        let screen = single_point();
+        let s = style();
+        let mut coarser = WaveDegree::Miniscule;
+        for _ in 0..LABEL_DEGREE_RING_COUNT {
+            coarser = coarser.coarser();
+        }
+        assert_eq!(
+            WaveDegree::Miniscule.rank_from_finest() % LABEL_DEGREE_RING_COUNT,
+            coarser.rank_from_finest() % LABEL_DEGREE_RING_COUNT,
+            "the two ranks are exactly LABEL_DEGREE_RING_COUNT apart, so they share a ring by construction"
+        );
+        let base = wave_label_offset(&screen, 0, &s, WaveDegree::Miniscule);
+        let wrapped = wave_label_offset(&screen, 0, &s, coarser);
+        assert_eq!(base, wrapped, "degrees LABEL_DEGREE_RING_COUNT steps apart share a ring and must produce the same offset");
+    }
+
+    /// Direction stays exactly what local geometry picks — a pivot ABOVE
+    /// the previous one still pushes the label UP (negative) regardless of
+    /// degree, only the distance grows.
+    #[test]
+    fn direction_still_follows_local_geometry_not_degree() {
+        let screen = vec![(0.0, 100.0), (10.0, 50.0)]; // point 1 sits above point 0
+        let s = style();
+        let offset = wave_label_offset(&screen, 1, &s, WaveDegree::Supermillennium);
+        assert!(offset < 0.0, "a pivot above the previous one must still push its label UP");
+    }
 }
 
 // Category modules
