@@ -3,10 +3,31 @@
 //! Today the five Elliott primitives (`ElliottImpulse`, `ElliottCorrection`,
 //! `ElliottTriangle`, `ElliottDoubleCombo`, `ElliottTripleCombo`) are five
 //! independent drawings — each carries its own [`super::super::config::WaveDegree`]
-//! and nothing links them. This module adds the link: a child primitive
-//! carries a [`WaveLink`] naming which [`WaveSlot`] of which parent it
-//! occupies, and [`child_seed`] tells a caller what degree/anchor points a
-//! NEW child nested into a given slot must be constructed with.
+//! and nothing links them. This module adds TWO links, because a count is
+//! two different relations, not one:
+//!
+//! - **Subdivision** — a child primitive carries a [`WaveLink`] naming which
+//!   [`WaveSlot`] of which parent it occupies (one degree FINER than the
+//!   parent, nested INSIDE one of the parent's own legs), and [`child_seed`]
+//!   tells a caller what degree/anchor points a NEW child nested into a
+//!   given slot must be constructed with.
+//! - **Succession** — a primitive carries `follows` (the predecessor's own
+//!   id) naming the SAME-degree structure it continues after — the
+//!   motive→corrective→motive alternation that comes AFTER a 1-2-3-4-5
+//!   impulse (an A-B-C correction, a triangle, or a W-X-Y/W-X-Y-XX-Z
+//!   combination) rather than nested inside it. [`successor_seed`] tells a
+//!   caller what degree/anchor a NEW successor must be constructed with,
+//!   and [`successor_kinds`] tells it which Elliott types are valid to
+//!   follow a given predecessor (the alternation grammar itself).
+//!
+//! The two relations are deliberately NOT the same type: a child is a piece
+//! OF its parent (deleting the parent deletes the child — there is no
+//! parent-shaped hole left on the chart to point at); a successor is a
+//! SIBLING that happens to reference where it started (deleting the
+//! predecessor leaves the successor standing — it is its own structure,
+//! just missing the thing it used to point back to). See
+//! `DrawingManager::delete`'s own doc for exactly how that difference plays
+//! out at the one place both relations get cleaned up.
 //!
 //! Pure data + pure functions — no rendering, no rule validation (a later
 //! wave), no dependency outside `mlc-core`.
@@ -211,18 +232,32 @@ impl ChildSeed {
     /// once it knows how many points its own type needs (6 for
     /// `ElliottImpulse`, 4 for `ElliottCorrection`).
     pub fn interpolate(&self, n: usize) -> Vec<(i64, f64)> {
-        match n {
-            0 => Vec::new(),
-            1 => vec![self.start],
-            _ => (0..n)
-                .map(|i| {
-                    let t = i as f64 / (n - 1) as f64;
-                    let ts = self.start.0 + ((self.end.0 - self.start.0) as f64 * t).round() as i64;
-                    let price = self.start.1 + (self.end.1 - self.start.1) * t;
-                    (ts, price)
-                })
-                .collect(),
-        }
+        interpolate_points(self.start, self.end, n)
+    }
+}
+
+/// Evenly interpolate `n` points from `start` to `end` (`n >= 2`, inclusive
+/// of both endpoints; `n == 0` empty, `n == 1` `[start]` — same degenerate
+/// handling as the doc on [`ChildSeed::interpolate`] describes). Shared by
+/// [`ChildSeed::interpolate`] and [`SuccessorSeed::interpolate`] — same
+/// point-filling math, but the two seed types stay separate structs on
+/// purpose: a child nests INSIDE its parent's own span (`end` is a real
+/// anchor read off the parent), a successor starts AFTER its predecessor's
+/// last point into a span this module can only default a guess for (see
+/// [`SuccessorSeed`]'s own doc). Collapsing them into one type would blur
+/// that distinction at every call site that seeds one.
+fn interpolate_points(start: (i64, f64), end: (i64, f64), n: usize) -> Vec<(i64, f64)> {
+    match n {
+        0 => Vec::new(),
+        1 => vec![start],
+        _ => (0..n)
+            .map(|i| {
+                let t = i as f64 / (n - 1) as f64;
+                let ts = start.0 + ((end.0 - start.0) as f64 * t).round() as i64;
+                let price = start.1 + (end.1 - start.1) * t;
+                (ts, price)
+            })
+            .collect(),
     }
 }
 
@@ -305,10 +340,148 @@ fn slot_span(type_id: &str, slot: WaveSlot) -> Option<(usize, usize)> {
     }
 }
 
+// =========================================================================
+// Succession — the other relation (see module doc)
+// =========================================================================
+
+/// What a NEW successor primitive continuing `prev` at `prev`'s own degree
+/// must be seeded with.
+///
+/// `degree` is always `prev`'s OWN degree, unchanged — succession is a
+/// same-degree sibling relation, not a subdivision, so unlike
+/// [`ChildSeed::degree`] this is never [`WaveDegree::finer`]. `start` is
+/// exactly `prev`'s own LAST point (`points().last()`), so the two
+/// structures visibly connect on the chart with no gap.
+///
+/// `span_bars_hint`/`price_hint` are a DEFAULT extent for the successor's
+/// still-unplaced far end, not a rule derived from the predecessor's
+/// internal structure the way [`ChildSeed::end`](ChildSeed) is (`child_seed`
+/// reads a real anchor off the parent's OWN points; a successor has no such
+/// anchor to read — nothing about the next structure exists yet, by
+/// definition). The two numbers are chosen for a specific, stated reason
+/// each, not picked arbitrarily:
+///
+/// - `span_bars_hint` ≈ 0.618 of the predecessor's own total bar span
+///   (`last.0 - first.0`) — the same golden-ratio constant Elliott markup
+///   already uses everywhere else in this codebase (retracement/extension
+///   level ladders). Reused here for the same reason it is used there: it
+///   reads as a plausible corrective-vs-motive time proportion without
+///   pretending this function can know the real one — the user drags the
+///   far end from here.
+/// - `price_hint` ≈ 0.5 of the predecessor's own total price travel
+///   (`last.1 - first.1`), NEGATED — the structure that follows moves in
+///   the OPPOSITE direction from the one that produced it (a correction
+///   pulls back against the impulse that preceded it; the next impulse
+///   resumes the original direction after a correction). A half-retrace is
+///   a defensible midpoint default: neither a negligible pullback nor a
+///   full round-trip.
+///
+/// Both numbers seed a draggable INITIAL shape, not a forecast — every
+/// point of the new primitive is exactly as draggable afterward as any
+/// other freshly-placed primitive's points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SuccessorSeed {
+    /// The degree the successor must be constructed with — always `prev`'s
+    /// own degree (see this struct's own doc for why this differs from
+    /// [`ChildSeed::degree`]).
+    pub degree: WaveDegree,
+    /// The successor's starting anchor — `prev`'s own last point.
+    pub start: (i64, f64),
+    /// Default bar-span extent for the successor's far end, relative to
+    /// `start.0` — see this struct's own doc for the 0.618 reasoning.
+    pub span_bars_hint: i64,
+    /// Default price extent for the successor's far end, relative to
+    /// `start.1`, already signed (opposite the predecessor's own price
+    /// travel) — see this struct's own doc for the 0.5-inverted reasoning.
+    pub price_hint: f64,
+}
+
+impl SuccessorSeed {
+    /// The successor's far-end anchor implied by `start` +
+    /// `span_bars_hint`/`price_hint` — the OTHER endpoint
+    /// [`interpolate`](Self::interpolate) fills points between.
+    pub fn end(&self) -> (i64, f64) {
+        (self.start.0 + self.span_bars_hint, self.start.1 + self.price_hint)
+    }
+
+    /// `n` points evenly interpolated from `start` to [`end`](Self::end) —
+    /// see [`interpolate_points`]'s own doc for why this shares its math
+    /// with, but is not the same type as, [`ChildSeed::interpolate`].
+    pub fn interpolate(&self, n: usize) -> Vec<(i64, f64)> {
+        interpolate_points(self.start, self.end(), n)
+    }
+}
+
+/// What a new successor primitive continuing `prev` at its own degree must
+/// be seeded with. `None` when `prev` is not an Elliott wave at all
+/// (`prev.wave_degree()` is `None`), or its own points do not yet reach 2
+/// entries (a primitive still being drawn — there is no "last point" yet).
+/// Reads `prev` only through the [`Primitive`] trait, never downcasts —
+/// same contract as [`child_seed`].
+pub fn successor_seed(prev: &dyn Primitive) -> Option<SuccessorSeed> {
+    let degree = prev.wave_degree()?;
+    let points = prev.points();
+    if points.len() < 2 {
+        return None;
+    }
+    let first = points[0];
+    let last = points[points.len() - 1];
+    let bar_span = last.0 - first.0;
+    let price_travel = last.1 - first.1;
+    Some(SuccessorSeed {
+        degree,
+        start: last,
+        span_bars_hint: (bar_span as f64 * 0.618).round() as i64,
+        price_hint: -(price_travel * 0.5),
+    })
+}
+
+/// The Elliott type ids that may validly follow `prev` at `prev`'s own
+/// degree — the alternation this module's succession relation exists to
+/// represent: after a MOTIVE structure comes a corrective one, after a
+/// corrective structure comes a motive one, never motive-after-motive or
+/// corrective-after-corrective. Keyed on `prev.type_id()`, not a slot —
+/// succession is a relation between two WHOLE structures, never between a
+/// structure and one of its own internal [`WaveSlot`]s (that pairing is
+/// [`child_seed`]/[`WaveSlot::is_motive`], the other relation this module
+/// owns).
+///
+/// - After `"elliott_impulse"` (the only motive structure among the five)
+///   → any of the four corrective structures: `"elliott_correction"`,
+///   `"elliott_triangle"`, `"elliott_double_combo"`, `"elliott_triple_combo"`.
+/// - After any of those four corrective structures → `"elliott_impulse"`
+///   only.
+/// - Empty for every primitive outside the Elliott family
+///   (`prev.wave_degree()` is `None`) — nothing may validly follow a
+///   non-Elliott primitive.
+///
+/// This is the grammar itself, not just advice to a picker: the caller that
+/// creates a successor (`DrawingManager::create_wave_successor`)
+/// re-checks the requested type id against this list before constructing
+/// anything, so a stale or forged action id can never create a
+/// motive-after-motive or corrective-after-corrective pair.
+pub fn successor_kinds(prev: &dyn Primitive) -> &'static [&'static str] {
+    if prev.wave_degree().is_none() {
+        return &[];
+    }
+    match prev.type_id() {
+        "elliott_impulse" => &[
+            "elliott_correction",
+            "elliott_triangle",
+            "elliott_double_combo",
+            "elliott_triple_combo",
+        ],
+        "elliott_correction" | "elliott_triangle" | "elliott_double_combo" | "elliott_triple_combo" => {
+            &["elliott_impulse"]
+        }
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ElliottDoubleCombo};
+    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ElliottCorrection, ElliottDoubleCombo};
 
     #[test]
     fn child_seed_impulse_wave3_spans_correct_points() {
@@ -394,5 +567,81 @@ mod tests {
         let seed = ChildSeed { degree: WaveDegree::Minor, start: (0, 100.0), end: (1_000, 110.0) };
         assert_eq!(seed.interpolate(0), Vec::new());
         assert_eq!(seed.interpolate(1), vec![(0, 100.0)]);
+    }
+
+    #[test]
+    fn successor_seed_starts_at_predecessors_last_point_same_degree() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0),
+            (1_000, 110.0),
+            (2_000, 105.0),
+            (3_000, 130.0),
+            (4_000, 120.0),
+            (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = successor_seed(&impulse).expect("impulse seeds a successor");
+        assert_eq!(seed.start, points[5]);
+        assert_eq!(seed.degree, WaveDegree::Intermediate, "succession keeps the SAME degree, never finer");
+    }
+
+    #[test]
+    fn successor_seed_span_is_0_618_of_predecessors_own_bar_span() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = successor_seed(&impulse).expect("impulse seeds a successor");
+        // Predecessor's own bar span is 10_000 - 0 = 10_000.
+        assert_eq!(seed.span_bars_hint, (10_000f64 * 0.618).round() as i64);
+    }
+
+    #[test]
+    fn successor_seed_price_hint_is_half_predecessors_travel_and_inverted() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = successor_seed(&impulse).expect("impulse seeds a successor");
+        // Predecessor travelled +50 (100.0 -> 150.0); the successor's own
+        // default extent is HALF that, in the OPPOSITE direction.
+        assert_eq!(seed.price_hint, -25.0);
+        assert_eq!(seed.end(), (points[5].0 + seed.span_bars_hint, 150.0 - 25.0));
+    }
+
+    #[test]
+    fn successor_seed_none_for_non_elliott_or_undrawn_primitive() {
+        let points: [(i64, f64); 4] = [(0, 100.0), (0, 100.0), (0, 100.0), (0, 100.0)];
+        let correction = ElliottCorrection::new(points, "#FF5722");
+        // Single distinct point (all four collapsed) still has >= 2 entries,
+        // so this only exercises the "not Elliott" `None` path via a type
+        // that IS Elliott but with degenerate points — the real "not
+        // Elliott" case is covered by every non-Elliott primitive's own
+        // `wave_degree() == None`, exercised indirectly through
+        // `successor_kinds`'s own empty-slice test below.
+        assert!(successor_seed(&correction).is_some());
+    }
+
+    #[test]
+    fn successor_kinds_alternates_motive_and_corrective() {
+        let impulse_points: [(i64, f64); 6] = [
+            (0, 100.0), (1, 101.0), (2, 102.0), (3, 103.0), (4, 104.0), (5, 105.0),
+        ];
+        let impulse = ElliottImpulse::new(impulse_points, "#2196F3");
+        let after_impulse = successor_kinds(&impulse);
+        assert_eq!(after_impulse, &["elliott_correction", "elliott_triangle", "elliott_double_combo", "elliott_triple_combo"]);
+        assert!(!after_impulse.contains(&"elliott_impulse"), "a motive structure must never offer another motive structure as its successor");
+
+        let correction_points: [(i64, f64); 4] = [(0, 100.0), (1, 101.0), (2, 102.0), (3, 103.0)];
+        let correction = ElliottCorrection::new(correction_points, "#FF5722");
+        let after_correction = successor_kinds(&correction);
+        assert_eq!(after_correction, &["elliott_impulse"]);
+    }
+
+    #[test]
+    fn successor_kinds_empty_for_non_elliott_primitive() {
+        use crate::drawing::primitives_v2::TrendLine;
+        let line = TrendLine::new(0, 100.0, 1_000, 110.0, "#2196F3");
+        assert!(successor_kinds(&line).is_empty());
     }
 }

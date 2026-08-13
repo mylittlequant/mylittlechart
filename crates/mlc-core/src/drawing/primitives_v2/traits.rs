@@ -844,6 +844,28 @@ pub trait Primitive: Send + Sync {
         &[]
     }
 
+    /// The id of the structure THIS primitive continues — succession, not
+    /// subdivision (see `elliott::count`'s own module doc for why the two
+    /// are different relations, each with its own field: this one is
+    /// `follows`, [`wave_link`](Self::wave_link) is `link`). `None` for
+    /// every primitive outside the Elliott family, and for an Elliott wave
+    /// that opens a count rather than continuing one.
+    fn wave_follows(&self) -> Option<u64> {
+        None
+    }
+
+    /// Clear (or set) [`wave_follows`](Self::wave_follows) without
+    /// downcasting to one of the five concrete Elliott structs — the one
+    /// write path this relation needs from OUTSIDE the Elliott family
+    /// itself: `DrawingManager::delete`'s choke point must drop a dangling
+    /// successor reference on every SURVIVING primitive when its
+    /// predecessor is deleted (see that method's own doc for why deleting a
+    /// predecessor does not cascade into its successor the way deleting a
+    /// parent cascades into its children). No-op for every primitive
+    /// outside the Elliott family, mirroring `wave_link`'s own `None`
+    /// default.
+    fn set_wave_follows(&mut self, _follows: Option<u64>) {}
+
     // =========================================================================
     // Serialization
     // =========================================================================

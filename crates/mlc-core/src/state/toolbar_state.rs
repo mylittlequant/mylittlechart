@@ -665,6 +665,15 @@ pub struct ChartToolbarState {
     /// `mlc-app-layout`'s `ToolbarSection::inline_config`'s `"inline:wave"`
     /// button). Same shape as the style/width dropdown flags above.
     pub open_inline_wave_dropdown: bool,
+    /// Whether the inline wave-SUCCESSION picker dropdown is open (E3 — see
+    /// `mlc-app-layout`'s `ToolbarSection::inline_config`'s
+    /// `"inline:wave_next"` button, the SECOND wave control: "what comes
+    /// after this" rather than E2's "what subdivides this"). Same shape as
+    /// `open_inline_wave_dropdown` above — a separate flag because the two
+    /// pickers can each be open independently of the other (never both at
+    /// once in practice, since opening one closes the other, but they are
+    /// still two distinct buttons with two distinct row lists).
+    pub open_inline_wave_next_dropdown: bool,
     /// Hovered item inside the inline dropdown (for hover highlight).
     pub hovered_inline_dropdown_item: Option<String>,
     /// Scroll offsets for each toolbar (pixels; 0.0 = no scroll).
@@ -723,6 +732,7 @@ impl Default for ChartToolbarState {
             open_inline_style_dropdown: false,
             open_inline_width_dropdown: false,
             open_inline_wave_dropdown: false,
+            open_inline_wave_next_dropdown: false,
             hovered_inline_dropdown_item: None,
             top_scroll_offset: 0.0,
             bottom_scroll_offset: 0.0,

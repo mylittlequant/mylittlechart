@@ -12,4 +12,4 @@ pub use elliott_correction::ElliottCorrection;
 pub use elliott_triangle::ElliottTriangle;
 pub use elliott_double_combo::ElliottDoubleCombo;
 pub use elliott_triple_combo::ElliottTripleCombo;
-pub use count::{WaveSlot, WaveLink, ChildSeed, child_seed};
+pub use count::{WaveSlot, WaveLink, ChildSeed, child_seed, SuccessorSeed, successor_seed, successor_kinds};

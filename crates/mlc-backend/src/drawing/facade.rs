@@ -646,6 +646,15 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.create_wave_child(&mut self.bubbles, bid, parent_id, slot)
     }
 
+    /// Create a new Elliott successor primitive continuing `prev_id` at its
+    /// own degree (E3 wave-succession picker). See
+    /// `DrawingManager::create_wave_successor` for the degree/anchor/type
+    /// rules; `None` mirrors `elliott::count::successor_seed`'s own `None`
+    /// cases, plus a `type_id` outside `elliott::count::successor_kinds(prev)`.
+    pub fn create_wave_successor(&mut self, bid: BubbleId, prev_id: u64, type_id: &str) -> Option<u64> {
+        self.mgr.create_wave_successor(&mut self.bubbles, bid, prev_id, type_id)
+    }
+
     pub fn insert_at(&mut self, bid: BubbleId, index: usize, type_id: &str, points: &[(i64, f64)], data: &PrimitiveData) -> Option<u64> {
         self.mgr.insert_at(&mut self.bubbles, bid, index, type_id, points, data)
     }

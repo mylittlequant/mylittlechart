@@ -430,14 +430,17 @@ impl ToolbarSection {
     ///
     /// Creates a section with primitive name, settings, color, line width,
     /// line style, [wave-slot picker (E2, only when `wave_slots` is
-    /// non-empty)], alert, lock, delete, and more buttons.
+    /// non-empty)], [wave-succession picker (E3, only when
+    /// `successor_kinds` is non-empty)], alert, lock, delete, and more
+    /// buttons.
     ///
-    /// `wave_slots` is `(item_id, label)` pairs — plain display-ready
-    /// strings, not the `WaveSlot` type itself, matching every other param
-    /// here (`style` is `"dashed"`, not a `LineStyle`): this file stays
-    /// domain-agnostic toolbar chrome. `item_id` is used verbatim as the
-    /// dropdown row's own id; the caller (`panel_app.rs`) is the one that
-    /// knows it must already be prefixed `"inline:wave_option:"`.
+    /// `wave_slots`/`successor_kinds` are both `(item_id, label)` pairs —
+    /// plain display-ready strings, not `WaveSlot`/a type id, matching
+    /// every other param here (`style` is `"dashed"`, not a `LineStyle`):
+    /// this file stays domain-agnostic toolbar chrome. `item_id` is used
+    /// verbatim as the dropdown row's own id; the caller (`panel_app.rs`)
+    /// is the one that knows it must already be prefixed
+    /// `"inline:wave_option:"` / `"inline:wave_next_option:"` respectively.
     pub fn inline_config(
         name: &str,
         color: &str,
@@ -447,6 +450,7 @@ impl ToolbarSection {
         style: &str,
         locked: bool,
         wave_slots: &[(String, String)],
+        successor_kinds: &[(String, String)],
     ) -> Self {
         let mut items = vec![
             // Primitive name
@@ -488,6 +492,19 @@ impl ToolbarSection {
         if !wave_slots.is_empty() {
             items.push(ToolbarItem::Separator);
             items.push(ToolbarItem::icon_button("inline:wave", IconId::new("layers")));
+        }
+
+        // Wave-SUCCESSION picker (E3) — the SECOND, separate wave control:
+        // "what comes after this" rather than E2's "what subdivides this".
+        // Only when the selected primitive actually has a valid successor
+        // type to offer (`elliott::count::successor_kinds` non-empty — an
+        // Elliott wave, since a non-Elliott primitive can have no
+        // successor). `chevron_right` (not `layers`, E2's icon) so the two
+        // buttons read as visually distinct actions rather than a doubled
+        // control.
+        if !successor_kinds.is_empty() {
+            items.push(ToolbarItem::Separator);
+            items.push(ToolbarItem::icon_button("inline:wave_next", IconId::new("chevron_right")));
         }
 
         // Separator space

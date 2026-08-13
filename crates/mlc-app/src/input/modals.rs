@@ -238,7 +238,7 @@ impl ChartApp {
             // ── Wave button — toggle wave-slot picker dropdown (E2) ──────────
             "inline:wave" => {
                 let was_open = self.panel_app.toolbar_state.open_inline_wave_dropdown;
-                // Close all three dropdowns first, then toggle — same shape
+                // Close all four dropdowns first, then toggle — same shape
                 // as the style/width chevrons above. Unlike those, this
                 // button is not a split button (there is no "cycle to the
                 // next slot" main-area action), so the whole button IS the
@@ -246,6 +246,7 @@ impl ChartApp {
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_dropdown = true;
@@ -253,11 +254,29 @@ impl ChartApp {
                 eprintln!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
             }
 
+            // ── Wave-succession button — toggle wave-succession picker
+            // dropdown (E3, "what comes after this" — the second, separate
+            // wave control). Same shape as "inline:wave" above, its own
+            // sibling dropdown flag.
+            "inline:wave_next" => {
+                let was_open = self.panel_app.toolbar_state.open_inline_wave_next_dropdown;
+                self.panel_app.toolbar_state.open_inline_style_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+                self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+                if !was_open {
+                    self.panel_app.toolbar_state.open_inline_wave_next_dropdown = true;
+                }
+                eprintln!("[ChartApp] inline: wave-succession dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_next_dropdown);
+            }
+
             // ── Background absorber — close inline dropdown ──────────────────
             "inline_dropdown:__bg__" => {
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
@@ -353,6 +372,47 @@ impl ChartApp {
                     eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
                 }
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+            }
+
+            _ if action.starts_with("inline:wave_next_option:") => {
+                // ── Wave-succession type selected — create the Elliott
+                // successor (E3). Mirrors the "inline:wave_option:" handler
+                // above bit-for-bit, EXCEPT the primitive it creates
+                // continues `prim_id` (`follows`) instead of nesting inside
+                // it (`link`) — see `create_wave_successor`'s own doc for
+                // why that is a different call, not the same one with a
+                // different argument.
+                let type_id = action.strip_prefix("inline:wave_next_option:").unwrap_or_default();
+                let new_id = active_bid_inline
+                    .and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prim_id, type_id));
+                match new_id {
+                    Some(new_id) => {
+                        let snapshot = active_bid_inline.and_then(|bid| {
+                            let guard = self.core.drawings();
+                            let type_id = guard.get_type_id(bid, new_id)?;
+                            let points = guard.get_points(bid, new_id)?;
+                            let data = guard.get_data(bid, new_id)?;
+                            Some((type_id, points, data))
+                        });
+                        if let Some((snap_type_id, points, data)) = snapshot {
+                            self.push_undo_command(mlc_core::Command::CreatePrimitive {
+                                prim_id: new_id,
+                                type_id: snap_type_id,
+                                points,
+                                data,
+                            });
+                            eprintln!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
+                        }
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
+                        eprintln!("[ChartApp] inline: created wave successor #{} ({}) after #{}", new_id, type_id, prim_id);
+                    }
+                    None => {
+                        eprintln!("[ChartApp] inline: create_wave_successor returned None for type '{}' after #{}", type_id, prim_id);
+                    }
+                }
+                self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
@@ -2137,6 +2197,7 @@ impl ChartApp {
         self.panel_app.toolbar_state.open_inline_style_dropdown = false;
         self.panel_app.toolbar_state.open_inline_width_dropdown = false;
         self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.panel_app.context_menu_state.close();
         self.modal_state.close();

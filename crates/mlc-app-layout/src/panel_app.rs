@@ -1023,6 +1023,11 @@ pub fn chart_toolbar_render_toolbars(
             let wave_slot_items: Vec<(String, String)> = config.wave_slots.iter()
                 .map(|(slot_id, label)| (format!("inline:wave_option:{slot_id}"), label.clone()))
                 .collect();
+            // E3 — same widget-ization as `wave_slot_items` above, for the
+            // succession picker's own row list.
+            let successor_kind_items: Vec<(String, String)> = config.successor_kinds.iter()
+                .map(|(type_id, display_name)| (format!("inline:wave_next_option:{type_id}"), display_name.clone()))
+                .collect();
             let inline_section = ToolbarSection::inline_config(
                 &config.name,
                 &config.color,
@@ -1032,6 +1037,7 @@ pub fn chart_toolbar_render_toolbars(
                 &config.style,
                 config.locked,
                 &wave_slot_items,
+                &successor_kind_items,
             );
 
             let inline_tc_config = TcConfig {
@@ -1221,7 +1227,7 @@ pub fn chart_toolbar_render_toolbars(
             None
         };
 
-        // Render inline style/width/wave dropdown popup if open
+        // Render inline style/width/wave/wave-succession dropdown popup if open
         let inline_dropdown_result = chart_toolbar_render_inline_dropdown(
             tb,
             ctx,
@@ -1230,6 +1236,7 @@ pub fn chart_toolbar_render_toolbars(
             &theme,
             layout.full_rect.height,
             selected_primitive.map(|c| c.wave_slots.as_slice()).unwrap_or(&[]),
+            selected_primitive.map(|c| c.successor_kinds.as_slice()).unwrap_or(&[]),
         );
 
         ChartToolbarRenderResult {
@@ -2209,8 +2216,8 @@ fn chart_toolbar_render_dropdown(
         })
     }
 
-/// Render the inline style, width, or wave-slot (E2) dropdown popup if one
-/// is open.
+/// Render the inline style, width, wave-slot (E2), or wave-succession (E3)
+/// dropdown popup if one is open.
 ///
 /// Looks up the button rect from `inline_config`, then calls `draw_dropdown` to
 /// draw the popup below (or above) the button.  Returns `None` if no inline dropdown
@@ -2224,6 +2231,9 @@ fn chart_toolbar_render_dropdown(
 /// wave_slots` (`(slot_id, label)` pairs) — only read when the wave dropdown
 /// is the one open; empty for a non-Elliott selection, matching the
 /// `"inline:wave"` button itself only existing when this is non-empty.
+/// `successor_kinds` is the same shape for `SelectedPrimitiveConfig::
+/// successor_kinds` — only read when the wave-succession dropdown is the
+/// one open, matching `"inline:wave_next"`'s own non-empty gate.
 fn chart_toolbar_render_inline_dropdown(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -2232,6 +2242,7 @@ fn chart_toolbar_render_inline_dropdown(
     toolbar_theme: &TcToolbarTheme,
     panel_height: f64,
     wave_slots: &[(String, String)],
+    successor_kinds: &[(String, String)],
 ) -> Option<InlineDropdownResult> {
     // Determine which inline dropdown is open (style takes priority)
     let (dropdown_id, button_id) = if tb.open_inline_style_dropdown {
@@ -2240,6 +2251,8 @@ fn chart_toolbar_render_inline_dropdown(
         ("inline:width", "inline:width")
     } else if tb.open_inline_wave_dropdown {
         ("inline:wave", "inline:wave")
+    } else if tb.open_inline_wave_next_dropdown {
+        ("inline:wave_next", "inline:wave_next")
     } else {
         return None;
     };
@@ -2278,7 +2291,7 @@ fn chart_toolbar_render_inline_dropdown(
                     &format!("{} px", w),
                 )
             }).collect()
-        } else {
+        } else if dropdown_id == "inline:wave" {
             // Wave-slot picker (E2) — one row per slot the selected
             // primitive's own points can seed a child into, labelled the
             // way that slot prints AT THE PARENT's degree
@@ -2286,6 +2299,15 @@ fn chart_toolbar_render_inline_dropdown(
             // `WaveSlot::label`).
             wave_slots.iter().map(|(slot_id, label)| {
                 crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_option:{slot_id}"), label)
+            }).collect()
+        } else {
+            // Wave-succession picker (E3) — one row per Elliott type valid
+            // to follow the selected primitive at its own degree
+            // (`SelectedPrimitiveConfig::successor_kinds`, sourced from
+            // `elliott::count::successor_kinds` + each candidate type's own
+            // registered `display_name`).
+            successor_kinds.iter().map(|(type_id, display_name)| {
+                crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_next_option:{type_id}"), display_name)
             }).collect()
         };
 

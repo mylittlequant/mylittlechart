@@ -23,14 +23,14 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
-use mlc_core::drawing::primitives_v2::elliott::{child_seed, WaveLink, WaveSlot};
+use mlc_core::drawing::primitives_v2::elliott::{child_seed, successor_kinds, successor_seed, WaveLink, WaveSlot};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
 use mlc_core::drawing::primitives_v2::{
-    ClickBehavior, ControlPoint, ControlPointType, ElliottCorrection, ElliottImpulse,
-    HitTestResult, LineStyle, Primitive, PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode,
-    TextAlign,
+    ClickBehavior, ControlPoint, ControlPointType, ElliottCorrection, ElliottDoubleCombo,
+    ElliottImpulse, ElliottTriangle, ElliottTripleCombo, HitTestResult, LineStyle, Primitive,
+    PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
 };
 use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
 use mlc_core::ids::BubbleId;
@@ -462,6 +462,18 @@ impl DrawingManager {
                 .collect(),
             None => Vec::new(),
         };
+        // E3 — succession picker (the second inline control, "what comes
+        // after this"). `display_name` is read off each candidate type's
+        // OWN registered `PrimitiveMetadata` — the same source every other
+        // primitive name in this codebase comes from — never a second name
+        // table hand-written here.
+        let successor_kind_items: Vec<(String, String)> = {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            successor_kinds(prim.as_ref())
+                .iter()
+                .filter_map(|&kind_id| registry.get(kind_id).map(|meta| (kind_id.to_string(), meta.display_name.to_string())))
+                .collect()
+        };
         Some(SelectedPrimitiveConfig {
             name: prim.display_name().to_string(),
             color: data.color.stroke.clone(),
@@ -471,6 +483,7 @@ impl DrawingManager {
             text_color,
             supports_text,
             wave_slots,
+            successor_kinds: successor_kind_items,
         })
     }
 
@@ -1479,17 +1492,33 @@ impl DrawingManager {
     // Delete
     // =========================================================================
 
-    /// Delete `prim_id` and, transitively, every Elliott child nested under
-    /// it (`Primitive::wave_link().parent_id`, see `elliott::count::
-    /// WaveLink`) — the WHOLE subtree, not the one primitive with the link
-    /// cleared. A deleted parent's own count is wrong for everything nested
-    /// inside it too, so orphaning a child into a standalone wave at the
-    /// wrong degree would leave a primitive on the chart that silently
-    /// stopped meaning what it looked like it meant; deleting the subtree
-    /// is the honest behaviour. The single choke point every deletion call
-    /// site (inline trash button, Delete hotkey, right-click menu, "Delete
-    /// selected" dropdown) already goes through, so the rule applies
-    /// uniformly with no extra plumbing.
+    /// Delete `prim_id` and handle its two DIFFERENT kinds of Elliott
+    /// reference — subdivision and succession (see `elliott::count`'s own
+    /// module doc) — DIFFERENTLY, on purpose:
+    ///
+    /// - **Subdivision** (`Primitive::wave_link().parent_id`) cascades: every
+    ///   child nested under `prim_id`, transitively, is deleted too — the
+    ///   WHOLE subtree, not just the one primitive with the link cleared. A
+    ///   deleted parent's own count is wrong for everything nested inside it
+    ///   too, so orphaning a child into a standalone wave at the wrong
+    ///   degree would leave a primitive on the chart that silently stopped
+    ///   meaning what it looked like it meant; deleting the subtree is the
+    ///   honest behaviour.
+    /// - **Succession** (`Primitive::wave_follows()`) does NOT cascade: a
+    ///   successor is a SIBLING structure, not a piece of its predecessor —
+    ///   deleting an impulse must not delete the correction that came after
+    ///   it, because that correction is a complete, independently-valid
+    ///   structure in its own right, exactly as valid standing alone as it
+    ///   was while pointing back at the impulse. What DOES need cleaning up
+    ///   is the dangling reference itself: every surviving primitive whose
+    ///   `wave_follows()` points into the deleted set has that reference
+    ///   cleared (`Primitive::set_wave_follows(None)`) so it never looks
+    ///   like it continues a structure that no longer exists.
+    ///
+    /// The single choke point every deletion call site (inline trash
+    /// button, Delete hotkey, right-click menu, "Delete selected" dropdown)
+    /// already goes through, so both rules apply uniformly with no extra
+    /// plumbing.
     pub(crate) fn delete(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64) -> bool {
         let Some(b) = bubbles.bubble_mut(bid) else { return false };
         let before = b.primitives.len();
@@ -1512,6 +1541,18 @@ impl DrawingManager {
             }
             if !grew {
                 break;
+            }
+        }
+
+        // Succession does NOT cascade (see this method's own doc) — only
+        // the dangling `follows` reference is cleared, on every surviving
+        // primitive that is not itself being deleted.
+        for p in b.primitives.iter_mut() {
+            if to_delete.contains(&p.data().id) {
+                continue;
+            }
+            if p.wave_follows().is_some_and(|id| to_delete.contains(&id)) {
+                p.set_wave_follows(None);
             }
         }
 
@@ -1812,6 +1853,86 @@ impl DrawingManager {
         };
 
         Some(self.add_external(bubbles, bid, child))
+    }
+
+    /// Create a new Elliott successor primitive continuing `prev_id` at
+    /// `prev_id`'s OWN degree (E3 — the inline config toolbar's SECOND wave
+    /// picker, "what comes after this"). Returns `None` when `prev_id` is
+    /// gone, is not an Elliott wave (`elliott::count::successor_seed`
+    /// itself returns `None`), or `type_id` is not one of
+    /// `elliott::count::successor_kinds(prev)` — the alternation grammar is
+    /// enforced HERE, not just suggested by the picker's own row list, so a
+    /// stale or forged action id can never create a motive-after-motive or
+    /// corrective-after-corrective pair.
+    ///
+    /// Unlike `create_wave_child`, the new primitive's `follows` is
+    /// stamped, never `link` — see `elliott::count`'s own module doc for
+    /// why succession and subdivision are different relations with
+    /// different fields. `successor_seed` is the ONLY source of the
+    /// successor's degree and starting anchor; this method never invents
+    /// either, only resolves the per-type point count needed to interpolate
+    /// the seed's own default extent (`SuccessorSeed::interpolate`).
+    ///
+    /// Goes through the SAME `add_external` path every other
+    /// externally-constructed primitive uses, same as `create_wave_child`.
+    pub(crate) fn create_wave_successor(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        prev_id: u64,
+        type_id: &str,
+    ) -> Option<u64> {
+        let (seed, color) = {
+            let b = bubbles.bubble(bid)?;
+            let idx = Self::find_index_by_id(b, prev_id)?;
+            let prev = b.primitives[idx].as_ref();
+            // `.contains(&type_id)` would not type-check: the slice holds
+            // `&'static str` and `type_id: &str` is not `'static` — a plain
+            // value comparison sidesteps that (str equality does not care
+            // whether the two references share a lifetime).
+            if !successor_kinds(prev).iter().any(|&kind_id| kind_id == type_id) {
+                return None;
+            }
+            let seed = successor_seed(prev)?;
+            (seed, prev.data().color.stroke.clone())
+        };
+
+        let follows = Some(prev_id);
+        let successor: Box<dyn Primitive> = match type_id {
+            "elliott_impulse" => {
+                let mut p = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                p.follows = follows;
+                Box::new(p)
+            }
+            "elliott_correction" => {
+                let mut p = ElliottCorrection::new(points_array::<4>(seed.interpolate(4)), &color);
+                p.degree = seed.degree;
+                p.follows = follows;
+                Box::new(p)
+            }
+            "elliott_triangle" => {
+                let mut p = ElliottTriangle::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                p.follows = follows;
+                Box::new(p)
+            }
+            "elliott_double_combo" => {
+                let mut p = ElliottDoubleCombo::new(points_array::<7>(seed.interpolate(7)), &color);
+                p.degree = seed.degree;
+                p.follows = follows;
+                Box::new(p)
+            }
+            "elliott_triple_combo" => {
+                let mut p = ElliottTripleCombo::new(seed.interpolate(9), &color);
+                p.degree = seed.degree;
+                p.follows = follows;
+                Box::new(p)
+            }
+            _ => return None,
+        };
+
+        Some(self.add_external(bubbles, bid, successor))
     }
 
     /// Insert a primitive at a specific list position, type_id + points +

@@ -32,6 +32,12 @@ pub struct ElliottDoubleCombo {
     /// before this field existed.
     #[serde(default)]
     pub link: Option<WaveLink>,
+    /// The predecessor Elliott primitive's own id this double combo
+    /// continues — succession, not subdivision (see `super::count`'s own
+    /// module doc). `None` (the default) for a double combo that opens a
+    /// count rather than continuing one.
+    #[serde(default)]
+    pub follows: Option<u64>,
 }
 
 impl ElliottDoubleCombo {
@@ -50,6 +56,7 @@ impl ElliottDoubleCombo {
             label_style: LabelStyle::default(),
             show_lines: true,
             link: None,
+            follows: None,
         }
     }
 
@@ -73,6 +80,8 @@ impl Primitive for ElliottDoubleCombo {
     fn wave_slots(&self) -> &'static [WaveSlot] {
         &[WaveSlot::ComboW, WaveSlot::ComboX, WaveSlot::ComboY]
     }
+    fn wave_follows(&self) -> Option<u64> { self.follows }
+    fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }

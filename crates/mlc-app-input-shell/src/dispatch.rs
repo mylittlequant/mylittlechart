@@ -241,6 +241,7 @@ pub fn process_event(
                     || chart.panel_app.toolbar_state.open_inline_style_dropdown
                     || chart.panel_app.toolbar_state.open_inline_width_dropdown
                     || chart.panel_app.toolbar_state.open_inline_wave_dropdown
+                    || chart.panel_app.toolbar_state.open_inline_wave_next_dropdown
                 {
                     dirty.toolbar_dirty = true;
                 }

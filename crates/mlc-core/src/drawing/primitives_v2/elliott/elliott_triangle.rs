@@ -34,6 +34,12 @@ pub struct ElliottTriangle {
     /// field existed.
     #[serde(default)]
     pub link: Option<WaveLink>,
+    /// The predecessor Elliott primitive's own id this triangle continues —
+    /// succession, not subdivision (see `super::count`'s own module doc).
+    /// `None` (the default) for a triangle that opens a count rather than
+    /// continuing one.
+    #[serde(default)]
+    pub follows: Option<u64>,
 }
 
 impl ElliottTriangle {
@@ -53,6 +59,7 @@ impl ElliottTriangle {
             label_style: LabelStyle::default(),
             show_lines: true,
             link: None,
+            follows: None,
         }
     }
 
@@ -76,6 +83,8 @@ impl Primitive for ElliottTriangle {
     fn wave_slots(&self) -> &'static [WaveSlot] {
         &[WaveSlot::TriangleA, WaveSlot::TriangleB, WaveSlot::TriangleC, WaveSlot::TriangleD, WaveSlot::TriangleE]
     }
+    fn wave_follows(&self) -> Option<u64> { self.follows }
+    fn set_wave_follows(&mut self, follows: Option<u64>) { self.follows = follows; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }

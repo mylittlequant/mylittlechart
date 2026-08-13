@@ -25,4 +25,13 @@ pub struct SelectedPrimitiveConfig {
     /// primitive's own degree (e.g. an Intermediate-degree impulse offers
     /// `("impulse_1", "(1)")` .. `("impulse_5", "(5)")`).
     pub wave_slots: Vec<(String, String)>,
+    /// `(type_id, display_name)` pairs for the Elliott types that may
+    /// validly follow this primitive at its OWN degree — succession, not
+    /// subdivision (see `drawing::primitives_v2::elliott::count::
+    /// successor_kinds`). Empty for every primitive outside the Elliott
+    /// family. `type_id` is the primitive's own registry id (e.g.
+    /// `"elliott_correction"`), matching every other `type_id` string in
+    /// this codebase; `display_name` is that type's own registered
+    /// `PrimitiveMetadata::display_name` — never a second name table.
+    pub successor_kinds: Vec<(String, String)>,
 }
