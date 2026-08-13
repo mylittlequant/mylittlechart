@@ -2148,17 +2148,27 @@ impl DrawingManager {
         };
 
         let needed_points: usize = if shape.type_id == "elliott_impulse" { 6 } else { 4 };
+        // `shape.points.len()` is the chain's own REAL point count (chain
+        // length + 1 boundary points — see `PromotedShape::points`' own
+        // doc) BEFORE `pad_points_to` repeats the last one to fill out the
+        // parent's fixed count. Stamping that onto the new parent's own
+        // `realized_points` is what stops the padded trailing points from
+        // rendering as a stray line/label — see each Elliott type's own
+        // `realized_points` field doc.
+        let realized = shape.points.len();
         let padded = pad_points_to(&shape.points, needed_points);
 
         let parent: Box<dyn Primitive> = match shape.type_id {
             "elliott_impulse" => {
                 let mut p = ElliottImpulse::new(points_array::<6>(padded), &color);
                 p.degree = shape.degree;
+                p.realized_points = Some(realized);
                 Box::new(p)
             }
             "elliott_correction" => {
                 let mut p = ElliottCorrection::new(points_array::<4>(padded), &color);
                 p.degree = shape.degree;
+                p.realized_points = Some(realized);
                 Box::new(p)
             }
             _ => return None,

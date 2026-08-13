@@ -6,6 +6,7 @@ pub mod elliott_triangle;
 pub mod elliott_double_combo;
 pub mod elliott_triple_combo;
 pub mod count;
+mod ratio;
 
 pub use elliott_impulse::ElliottImpulse;
 pub use elliott_correction::ElliottCorrection;

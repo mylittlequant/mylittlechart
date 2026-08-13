@@ -10,6 +10,7 @@ use super::super::{
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot};
+use super::ratio;
 
 fn default_true() -> bool { true }
 
@@ -38,6 +39,22 @@ pub struct ElliottDoubleCombo {
     /// count rather than continuing one.
     #[serde(default)]
     pub follows: Option<u64>,
+    /// Show the dotted wave-ratio annotation — Y vs W (see `super::ratio`).
+    /// `false` (the default) — off until asked for, so every drawing saved
+    /// before this field existed loads and renders unchanged.
+    #[serde(default)]
+    pub show_ratios: bool,
+    /// How many of `points` are REAL — see `ElliottImpulse::realized_points`
+    /// own doc (`super::elliott_impulse`) for the full rationale
+    /// (`DrawingManager::promote_wave_chain`'s own point padding). `None`
+    /// (the default) means every point is real, exactly how this primitive
+    /// behaved before this field existed. `render` draws the connecting
+    /// line and wave labels ONLY for the first `realized_points` points; a
+    /// later drag past the realized prefix (`move_control_point`/
+    /// `set_points`) raises it back toward the full point count — never
+    /// lowers it.
+    #[serde(default)]
+    pub realized_points: Option<usize>,
 }
 
 impl ElliottDoubleCombo {
@@ -57,12 +74,32 @@ impl ElliottDoubleCombo {
             show_lines: true,
             link: None,
             follows: None,
+            show_ratios: false,
+            realized_points: None,
         }
     }
 
     pub fn wave_labels(&self) -> [&'static str; 7] {
         let combo = self.degree.combo_labels();
         [combo[0], "", "", combo[1], combo[2], "", ""]
+    }
+
+    /// How many of [`points`](Self::points) are real right now — see
+    /// [`realized_points`](Self::realized_points)'s own field doc. Never
+    /// exceeds `points.len()`.
+    fn realized_len(&self) -> usize {
+        self.realized_points.unwrap_or(self.points.len()).min(self.points.len())
+    }
+
+    /// Raise `realized_points` to at least `at_least` (clamped to the point
+    /// count) — never lowers it. A no-op when `realized_points` is already
+    /// `None`: every point is already real.
+    fn grow_realized(&mut self, at_least: usize) {
+        if let Some(n) = self.realized_points {
+            if at_least > n {
+                self.realized_points = Some(at_least.min(self.points.len()));
+            }
+        }
     }
 }
 
@@ -86,14 +123,20 @@ impl Primitive for ElliottDoubleCombo {
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
-    fn set_points(&mut self, pts: &[(i64, f64)]) { for (i, &p) in pts.iter().take(7).enumerate() { self.points[i] = p; } }
+    fn set_points(&mut self, pts: &[(i64, f64)]) {
+        for (i, &p) in pts.iter().take(7).enumerate() { self.points[i] = p; }
+        self.grow_realized(pts.len().min(7));
+    }
     fn point_labels(&self) -> Option<Vec<String>> {
         Some(self.wave_labels().iter().map(|s| s.to_string()).collect())
     }
     fn translate(&mut self, td: i64, pd: f64) { for p in &mut self.points { p.0 += td; p.1 += pd; } }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Index(i) if (i as usize) < 7 => self.points[i as usize] = (ts_ms, price),
+            ControlPointType::Index(i) if (i as usize) < 7 => {
+                self.points[i as usize] = (ts_ms, price);
+                self.grow_realized(i as usize + 1);
+            }
             ControlPointType::Move => { let td = ts_ms - self.points[0].0; let pd = price - self.points[0].1; self.translate(td, pd); }
             _ => {}
         }
@@ -121,6 +164,7 @@ impl Primitive for ElliottDoubleCombo {
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();
+        let realized = self.realized_len();
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -133,10 +177,10 @@ impl Primitive for ElliottDoubleCombo {
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
 
-        if self.show_lines {
+        if self.show_lines && realized >= 2 {
             ctx.begin_path();
             ctx.move_to(crisp(screen[0].0, dpr), crisp(screen[0].1, dpr));
-            for &(sx, sy) in &screen[1..7] {
+            for &(sx, sy) in &screen[1..realized] {
                 ctx.line_to(crisp(sx, dpr), crisp(sy, dpr));
             }
             ctx.stroke();
@@ -153,11 +197,18 @@ impl Primitive for ElliottDoubleCombo {
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
             for (i, label) in labels.iter().enumerate() {
-                if label.is_empty() { continue; }
+                if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
                 let offset = if i > 0 && screen[i].1 < screen[i - 1].1 { -self.label_style.offset_y } else { self.label_style.offset_y };
                 draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, label_color);
             }
+        }
+
+        if self.show_ratios {
+            ratio::draw_ratio_annotations(
+                ctx, &self.points, realized, &ratio::DOUBLE_COMBO_RATIO_LEGS,
+                &self.data.color.stroke, self.data.width, &self.label_style,
+            );
         }
 
         if let Some(ref text) = self.data.text {
@@ -195,9 +246,10 @@ impl Primitive for ElliottDoubleCombo {
         let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(12),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(13),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(14),
+            ConfigProperty::show_ratios(self.show_ratios).with_category(PropertyCategory::AppearanceLine).with_order(12),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(13),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(14),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(15),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props
@@ -207,6 +259,7 @@ impl Primitive for ElliottDoubleCombo {
         match id {
             "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
             "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
+            "show_ratios" => { if let Some(v) = value.as_bool() { self.show_ratios = v; return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
