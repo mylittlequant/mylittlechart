@@ -3498,14 +3498,20 @@ impl ChartApp {
 
             // Close inline dropdowns when clicking any toolbar button that is not
             // an inline dropdown item or the dropdown menu triggers themselves.
+            // "inline:wave" is its own trigger (not a split button, unlike
+            // style/width — no separate "_menu" chevron), so it is excluded
+            // here the same way "inline:style_menu"/"inline:width_menu" are.
             if !item_id.starts_with("inline:style_option:")
                 && !item_id.starts_with("inline:width_option:")
+                && !item_id.starts_with("inline:wave_option:")
                 && item_id != "inline:style_menu"
                 && item_id != "inline:width_menu"
+                && item_id != "inline:wave"
                 && item_id != "inline_dropdown:__bg__"
             {
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 

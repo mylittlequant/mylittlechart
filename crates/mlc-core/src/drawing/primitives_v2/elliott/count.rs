@@ -89,6 +89,76 @@ impl WaveSlot {
             WaveSlot::ComboZ => degree.combo_labels()[4],
         }
     }
+
+    /// Stable serialization/wire id for this slot — mirrors
+    /// [`WaveDegree::as_str`]'s own convention (a fixed snake_case token,
+    /// independent of [`label`](Self::label)'s per-degree/per-language
+    /// notation). This is what a UI layer encodes into a widget action id
+    /// (e.g. the E2 inline-bar wave-slot picker's `"inline:wave_option:
+    /// {id}"` rows) and what [`Self::from_id`] parses back — never the
+    /// printed notation itself, which changes with `degree`.
+    pub fn id(&self) -> &'static str {
+        match self {
+            WaveSlot::Impulse1 => "impulse_1",
+            WaveSlot::Impulse2 => "impulse_2",
+            WaveSlot::Impulse3 => "impulse_3",
+            WaveSlot::Impulse4 => "impulse_4",
+            WaveSlot::Impulse5 => "impulse_5",
+            WaveSlot::CorrectionA => "correction_a",
+            WaveSlot::CorrectionB => "correction_b",
+            WaveSlot::CorrectionC => "correction_c",
+            WaveSlot::TriangleA => "triangle_a",
+            WaveSlot::TriangleB => "triangle_b",
+            WaveSlot::TriangleC => "triangle_c",
+            WaveSlot::TriangleD => "triangle_d",
+            WaveSlot::TriangleE => "triangle_e",
+            WaveSlot::ComboW => "combo_w",
+            WaveSlot::ComboX => "combo_x",
+            WaveSlot::ComboY => "combo_y",
+            WaveSlot::ComboXX => "combo_xx",
+            WaveSlot::ComboZ => "combo_z",
+        }
+    }
+
+    /// Parse [`Self::id`]'s own output back into a [`WaveSlot`]. `None` for
+    /// any string that is not one of the fixed tokens `id` produces.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "impulse_1" => WaveSlot::Impulse1,
+            "impulse_2" => WaveSlot::Impulse2,
+            "impulse_3" => WaveSlot::Impulse3,
+            "impulse_4" => WaveSlot::Impulse4,
+            "impulse_5" => WaveSlot::Impulse5,
+            "correction_a" => WaveSlot::CorrectionA,
+            "correction_b" => WaveSlot::CorrectionB,
+            "correction_c" => WaveSlot::CorrectionC,
+            "triangle_a" => WaveSlot::TriangleA,
+            "triangle_b" => WaveSlot::TriangleB,
+            "triangle_c" => WaveSlot::TriangleC,
+            "triangle_d" => WaveSlot::TriangleD,
+            "triangle_e" => WaveSlot::TriangleE,
+            "combo_w" => WaveSlot::ComboW,
+            "combo_x" => WaveSlot::ComboX,
+            "combo_y" => WaveSlot::ComboY,
+            "combo_xx" => WaveSlot::ComboXX,
+            "combo_z" => WaveSlot::ComboZ,
+            _ => return None,
+        })
+    }
+
+    /// Whether this slot subdivides as a 5-wave MOTIVE structure (seeds an
+    /// `ElliottImpulse` child) rather than a corrective one (seeds an
+    /// `ElliottCorrection` child) — classic Elliott alternation: only
+    /// impulse waves 1, 3, 5 are motive. Impulse waves 2/4, every A/B/C
+    /// corrective leg, and every triangle/combination slot are corrective —
+    /// none of those subdivide as a 5-wave motive.
+    ///
+    /// Read by the caller that creates a NEW child primitive for a slot
+    /// (`elliott::count` itself never constructs a primitive, per this
+    /// module's own doc) to decide which Elliott type to build.
+    pub fn is_motive(&self) -> bool {
+        matches!(self, WaveSlot::Impulse1 | WaveSlot::Impulse3 | WaveSlot::Impulse5)
+    }
 }
 
 /// A child primitive's own link upward to the parent Elliott wave it is
@@ -122,6 +192,38 @@ pub struct ChildSeed {
     /// The slot's ending anchor point, read off the parent's own
     /// `points()`.
     pub end: (i64, f64),
+}
+
+impl ChildSeed {
+    /// `n` points evenly interpolated from `start` to `end` (`n >= 2`,
+    /// inclusive of both endpoints) — the shape a freshly-seeded child
+    /// primitive's OWN point array must be filled with so it renders as a
+    /// visible, immediately-draggable wave instead of a degenerate
+    /// zero-length line collapsed onto `start`.
+    ///
+    /// `n == 0` returns an empty vec; `n == 1` returns `[start]` — neither
+    /// case arises from a real Elliott child (every concrete type's own
+    /// point count is fixed at 4 or 6), but both are handled without
+    /// panicking rather than assumed away.
+    ///
+    /// Not used by [`child_seed`] itself, which only reports the two
+    /// anchors — the CALLER that constructs the new primitive calls this
+    /// once it knows how many points its own type needs (6 for
+    /// `ElliottImpulse`, 4 for `ElliottCorrection`).
+    pub fn interpolate(&self, n: usize) -> Vec<(i64, f64)> {
+        match n {
+            0 => Vec::new(),
+            1 => vec![self.start],
+            _ => (0..n)
+                .map(|i| {
+                    let t = i as f64 / (n - 1) as f64;
+                    let ts = self.start.0 + ((self.end.0 - self.start.0) as f64 * t).round() as i64;
+                    let price = self.start.1 + (self.end.1 - self.start.1) * t;
+                    (ts, price)
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The degree/anchor points a child nested into `slot` of `parent` must be
@@ -249,5 +351,48 @@ mod tests {
         let seed = child_seed(&combo, WaveSlot::ComboY).expect("double combo has slot Y");
         assert_eq!(seed.start, points[3]);
         assert_eq!(seed.end, points[6]);
+    }
+
+    #[test]
+    fn every_wave_slot_id_round_trips_through_from_id() {
+        let all = [
+            WaveSlot::Impulse1, WaveSlot::Impulse2, WaveSlot::Impulse3, WaveSlot::Impulse4, WaveSlot::Impulse5,
+            WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC,
+            WaveSlot::TriangleA, WaveSlot::TriangleB, WaveSlot::TriangleC, WaveSlot::TriangleD, WaveSlot::TriangleE,
+            WaveSlot::ComboW, WaveSlot::ComboX, WaveSlot::ComboY, WaveSlot::ComboXX, WaveSlot::ComboZ,
+        ];
+        for slot in all {
+            assert_eq!(WaveSlot::from_id(slot.id()), Some(slot), "slot {:?} did not round-trip via id {:?}", slot, slot.id());
+        }
+        assert_eq!(WaveSlot::from_id("not_a_real_slot"), None);
+    }
+
+    #[test]
+    fn only_impulse_1_3_5_are_motive_slots() {
+        assert!(WaveSlot::Impulse1.is_motive());
+        assert!(WaveSlot::Impulse3.is_motive());
+        assert!(WaveSlot::Impulse5.is_motive());
+        assert!(!WaveSlot::Impulse2.is_motive());
+        assert!(!WaveSlot::Impulse4.is_motive());
+        assert!(!WaveSlot::CorrectionA.is_motive());
+        assert!(!WaveSlot::TriangleA.is_motive());
+        assert!(!WaveSlot::ComboW.is_motive());
+    }
+
+    #[test]
+    fn interpolate_spans_start_to_end_inclusive_evenly() {
+        let seed = ChildSeed { degree: WaveDegree::Minor, start: (0, 100.0), end: (4_000, 140.0) };
+        let pts = seed.interpolate(5);
+        assert_eq!(pts.len(), 5);
+        assert_eq!(pts[0], (0, 100.0));
+        assert_eq!(pts[4], (4_000, 140.0));
+        assert_eq!(pts[2], (2_000, 120.0));
+    }
+
+    #[test]
+    fn interpolate_degenerate_counts_never_panic() {
+        let seed = ChildSeed { degree: WaveDegree::Minor, start: (0, 100.0), end: (1_000, 110.0) };
+        assert_eq!(seed.interpolate(0), Vec::new());
+        assert_eq!(seed.interpolate(1), vec![(0, 100.0)]);
     }
 }

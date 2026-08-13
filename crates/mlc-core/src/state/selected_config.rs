@@ -15,4 +15,14 @@ pub struct SelectedPrimitiveConfig {
     pub text_color: Option<String>,
     /// Whether this primitive supports text
     pub supports_text: bool,
+    /// `(slot_id, label)` pairs for the slots this primitive's own points
+    /// can seed a child Elliott wave into (E2 — see
+    /// `drawing::primitives_v2::elliott::count`). Empty for every
+    /// primitive outside the Elliott family. `slot_id` is
+    /// `WaveSlot::id()` — a stable wire token, not the printed notation —
+    /// so a UI layer can build a widget action id without depending on the
+    /// `WaveSlot` type itself; `label` is `WaveSlot::label()` read at THIS
+    /// primitive's own degree (e.g. an Intermediate-degree impulse offers
+    /// `("impulse_1", "(1)")` .. `("impulse_5", "(5)")`).
+    pub wave_slots: Vec<(String, String)>,
 }

@@ -15,7 +15,7 @@
 //! See `docs/mlc/plans/doctrine-cutover-2026-06-27.md` §1A and
 //! `docs/mlc/plans/step-3.1-drawing-manager-design.md`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Mutex;
 
@@ -23,12 +23,14 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
+use mlc_core::drawing::primitives_v2::elliott::{child_seed, WaveLink, WaveSlot};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
 use mlc_core::drawing::primitives_v2::{
-    ClickBehavior, ControlPoint, ControlPointType, HitTestResult, LineStyle, Primitive,
-    PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
+    ClickBehavior, ControlPoint, ControlPointType, ElliottCorrection, ElliottImpulse,
+    HitTestResult, LineStyle, Primitive, PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode,
+    TextAlign,
 };
 use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
 use mlc_core::ids::BubbleId;
@@ -39,6 +41,21 @@ use mlc_core::{Bar, PriceScale, Viewport};
 use crate::bubble::BubbleStore;
 
 use super::facade::SwapSymbolResult;
+
+/// Pack a `Vec<(i64, f64)>` into a fixed-size `[(i64, f64); N]`, taking the
+/// first `N` elements and zero-filling any that are missing — used to hand
+/// `ElliottImpulse::new`/`ElliottCorrection::new` (which take fixed-size
+/// arrays) the output of `ChildSeed::interpolate(N)` (E2). Never panics:
+/// `interpolate(N)` always returns exactly `N` points, but this stays
+/// correct even if that invariant ever changes, instead of a `copy_from_slice`
+/// that would panic on a length mismatch.
+fn points_array<const N: usize>(pts: Vec<(i64, f64)>) -> [(i64, f64); N] {
+    let mut arr = [(0i64, 0.0f64); N];
+    for (slot, p) in arr.iter_mut().zip(pts) {
+        *slot = p;
+    }
+    arr
+}
 
 /// Apply a `TemplateStyle` snapshot to a freshly-created primitive.
 fn apply_last_style_snapshot(prim: &mut Box<dyn Primitive>, style: &TemplateStyle) {
@@ -434,6 +451,17 @@ impl DrawingManager {
             registry.supports_text(type_id)
         };
         let text_color = if supports_text { data.text.as_ref().and_then(|t| t.color.clone()) } else { None };
+        // E2 — wave-slot picker. `wave_slots()` is empty for every
+        // non-Elliott primitive; a `None` degree (also non-Elliott) maps to
+        // the same empty result via the `match` below rather than a
+        // `.unwrap_or_default()` that would silently paper over an Elliott
+        // primitive somehow missing its own degree.
+        let wave_slots: Vec<(String, String)> = match prim.wave_degree() {
+            Some(degree) => prim.wave_slots().iter()
+                .map(|slot| (slot.id().to_string(), slot.label(degree).to_string()))
+                .collect(),
+            None => Vec::new(),
+        };
         Some(SelectedPrimitiveConfig {
             name: prim.display_name().to_string(),
             color: data.color.stroke.clone(),
@@ -442,6 +470,7 @@ impl DrawingManager {
             locked: data.locked,
             text_color,
             supports_text,
+            wave_slots,
         })
     }
 
@@ -1450,17 +1479,50 @@ impl DrawingManager {
     // Delete
     // =========================================================================
 
+    /// Delete `prim_id` and, transitively, every Elliott child nested under
+    /// it (`Primitive::wave_link().parent_id`, see `elliott::count::
+    /// WaveLink`) — the WHOLE subtree, not the one primitive with the link
+    /// cleared. A deleted parent's own count is wrong for everything nested
+    /// inside it too, so orphaning a child into a standalone wave at the
+    /// wrong degree would leave a primitive on the chart that silently
+    /// stopped meaning what it looked like it meant; deleting the subtree
+    /// is the honest behaviour. The single choke point every deletion call
+    /// site (inline trash button, Delete hotkey, right-click menu, "Delete
+    /// selected" dropdown) already goes through, so the rule applies
+    /// uniformly with no extra plumbing.
     pub(crate) fn delete(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64) -> bool {
         let Some(b) = bubbles.bubble_mut(bid) else { return false };
         let before = b.primitives.len();
-        b.primitives.retain(|p| p.data().id != prim_id);
+
+        let mut to_delete: HashSet<u64> = HashSet::new();
+        to_delete.insert(prim_id);
+        loop {
+            let mut grew = false;
+            for p in b.primitives.iter() {
+                let id = p.data().id;
+                if to_delete.contains(&id) {
+                    continue;
+                }
+                if let Some(link) = p.wave_link() {
+                    if to_delete.contains(&link.parent_id) {
+                        to_delete.insert(id);
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+
+        b.primitives.retain(|p| !to_delete.contains(&p.data().id));
         let removed = b.primitives.len() != before;
         if removed {
             let session = self.session_mut(bid);
-            if session.selected == Some(prim_id) {
+            if session.selected.is_some_and(|id| to_delete.contains(&id)) {
                 session.selected = None;
             }
-            if session.dragging == Some(prim_id) {
+            if session.dragging.is_some_and(|id| to_delete.contains(&id)) {
                 session.dragging = None;
                 session.drag_start = None;
             }
@@ -1696,6 +1758,60 @@ impl DrawingManager {
         b.primitives.push(prim);
         self.session_mut(bid).selected = Some(id);
         id
+    }
+
+    /// Create a new Elliott child primitive nested into `slot` of the
+    /// parent primitive `parent_id` (E2 — the inline config toolbar's
+    /// wave-slot picker). Returns `None` exactly when `elliott::count::
+    /// child_seed` itself would: `parent_id` is gone, `slot` does not
+    /// exist on the parent's own type, the parent is not (yet) an Elliott
+    /// wave, or the parent's stored points do not yet reach the slot's
+    /// span. `child_seed` is the ONLY source of the child's degree and
+    /// anchor points — this method never invents either.
+    ///
+    /// Child TYPE follows the classic Elliott alternation
+    /// (`WaveSlot::is_motive`): a motive slot (impulse waves 1/3/5) seeds
+    /// an `ElliottImpulse`; every corrective slot (impulse waves 2/4, every
+    /// A/B/C leg, and every triangle/combination slot) seeds an
+    /// `ElliottCorrection`. The intermediate points between the seed's
+    /// `start`/`end` are interpolated evenly (`ChildSeed::interpolate`) so
+    /// the child renders as a visible, immediately-draggable wave rather
+    /// than a degenerate line collapsed onto its own start point.
+    ///
+    /// Goes through the SAME `add_external` path every other
+    /// externally-constructed primitive uses — proper id allocation,
+    /// symbol fill-in, and select-on-create (so the caller can hand the
+    /// user straight into dragging the new child's points) — never a
+    /// direct `bubbles.bubble_mut(..).primitives.push(..)`.
+    pub(crate) fn create_wave_child(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        parent_id: u64,
+        slot: WaveSlot,
+    ) -> Option<u64> {
+        let (seed, color) = {
+            let b = bubbles.bubble(bid)?;
+            let idx = Self::find_index_by_id(b, parent_id)?;
+            let parent = b.primitives[idx].as_ref();
+            let seed = child_seed(parent, slot)?;
+            (seed, parent.data().color.stroke.clone())
+        };
+
+        let link = WaveLink { parent_id, slot };
+        let child: Box<dyn Primitive> = if slot.is_motive() {
+            let mut impulse = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
+            impulse.degree = seed.degree;
+            impulse.link = Some(link);
+            Box::new(impulse)
+        } else {
+            let mut correction = ElliottCorrection::new(points_array::<4>(seed.interpolate(4)), &color);
+            correction.degree = seed.degree;
+            correction.link = Some(link);
+            Box::new(correction)
+        };
+
+        Some(self.add_external(bubbles, bid, child))
     }
 
     /// Insert a primitive at a specific list position, type_id + points +

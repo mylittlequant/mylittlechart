@@ -235,10 +235,29 @@ impl ChartApp {
                 eprintln!("[ChartApp] inline: width dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_width_dropdown);
             }
 
+            // ── Wave button — toggle wave-slot picker dropdown (E2) ──────────
+            "inline:wave" => {
+                let was_open = self.panel_app.toolbar_state.open_inline_wave_dropdown;
+                // Close all three dropdowns first, then toggle — same shape
+                // as the style/width chevrons above. Unlike those, this
+                // button is not a split button (there is no "cycle to the
+                // next slot" main-area action), so the whole button IS the
+                // toggle trigger.
+                self.panel_app.toolbar_state.open_inline_style_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+                self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+                if !was_open {
+                    self.panel_app.toolbar_state.open_inline_wave_dropdown = true;
+                }
+                eprintln!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
+            }
+
             // ── Background absorber — close inline dropdown ──────────────────
             "inline_dropdown:__bg__" => {
                 self.panel_app.toolbar_state.open_inline_style_dropdown = false;
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+                self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
@@ -289,6 +308,51 @@ impl ChartApp {
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
                 self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+                self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+            }
+
+            _ if action.starts_with("inline:wave_option:") => {
+                // ── Wave slot selected — create the nested Elliott child
+                // (E2). Mirrors the context menu's "clone" handler
+                // (`on_context_menu_action`): create through the facade,
+                // record `CreatePrimitive` for undo, sync back to the sync
+                // group, autosave — the same path every other
+                // programmatically-created primitive takes.
+                use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
+                let slot_id = action.strip_prefix("inline:wave_option:").unwrap_or_default();
+                if let Some(slot) = WaveSlot::from_id(slot_id) {
+                    let new_id = active_bid_inline
+                        .and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot));
+                    match new_id {
+                        Some(new_id) => {
+                            let snapshot = active_bid_inline.and_then(|bid| {
+                                let guard = self.core.drawings();
+                                let type_id = guard.get_type_id(bid, new_id)?;
+                                let points = guard.get_points(bid, new_id)?;
+                                let data = guard.get_data(bid, new_id)?;
+                                Some((type_id, points, data))
+                            });
+                            if let Some((type_id, points, data)) = snapshot {
+                                self.push_undo_command(mlc_core::Command::CreatePrimitive {
+                                    prim_id: new_id,
+                                    type_id,
+                                    points,
+                                    data,
+                                });
+                                eprintln!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
+                            }
+                            self.sync_drawing_back_to_group();
+                            self.autosave_snapshot();
+                            eprintln!("[ChartApp] inline: created wave child #{} in slot {} of #{}", new_id, slot_id, prim_id);
+                        }
+                        None => {
+                            eprintln!("[ChartApp] inline: create_wave_child returned None for slot {} of #{}", slot_id, prim_id);
+                        }
+                    }
+                } else {
+                    eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
+                }
+                self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
             }
 
@@ -2072,6 +2136,7 @@ impl ChartApp {
         self.granularity_drag = None;
         self.panel_app.toolbar_state.open_inline_style_dropdown = false;
         self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
         self.panel_app.context_menu_state.close();
         self.modal_state.close();

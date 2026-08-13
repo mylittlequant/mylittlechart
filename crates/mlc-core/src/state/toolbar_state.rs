@@ -661,6 +661,10 @@ pub struct ChartToolbarState {
     pub open_inline_style_dropdown: bool,
     /// Whether the inline width dropdown is open.
     pub open_inline_width_dropdown: bool,
+    /// Whether the inline wave-slot picker dropdown is open (E2 — see
+    /// `mlc-app-layout`'s `ToolbarSection::inline_config`'s `"inline:wave"`
+    /// button). Same shape as the style/width dropdown flags above.
+    pub open_inline_wave_dropdown: bool,
     /// Hovered item inside the inline dropdown (for hover highlight).
     pub hovered_inline_dropdown_item: Option<String>,
     /// Scroll offsets for each toolbar (pixels; 0.0 = no scroll).
@@ -718,6 +722,7 @@ impl Default for ChartToolbarState {
             hovered_inline_id: None,
             open_inline_style_dropdown: false,
             open_inline_width_dropdown: false,
+            open_inline_wave_dropdown: false,
             hovered_inline_dropdown_item: None,
             top_scroll_offset: 0.0,
             bottom_scroll_offset: 0.0,

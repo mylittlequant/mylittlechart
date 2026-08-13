@@ -240,6 +240,7 @@ pub fn process_event(
                 if chart.panel_app.toolbar_state.open_dropdown_id.is_some()
                     || chart.panel_app.toolbar_state.open_inline_style_dropdown
                     || chart.panel_app.toolbar_state.open_inline_width_dropdown
+                    || chart.panel_app.toolbar_state.open_inline_wave_dropdown
                 {
                     dirty.toolbar_dirty = true;
                 }

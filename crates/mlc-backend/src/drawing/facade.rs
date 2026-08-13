@@ -14,6 +14,7 @@ use mlc_core::drawing::primitives_v2::config::{
     FibLevelConfig, PropertyKind, PropertyValue, TemplateStyle,
     TimeframeVisibilityConfig,
 };
+use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
 use mlc_core::drawing::primitives_v2::{
     ControlPoint, ControlPointType, LineStyle, Primitive, PrimitiveData, SyncMode, TextAlign,
 };
@@ -634,6 +635,15 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn add_external(&mut self, bid: BubbleId, prim: Box<dyn Primitive>) -> u64 {
         self.mgr.add_external(&mut self.bubbles, bid, prim)
+    }
+
+    /// Create a new Elliott child primitive nested into `slot` of the
+    /// parent primitive `parent_id` (E2 wave-slot picker). See
+    /// `DrawingManager::create_wave_child` for the degree/anchor/type
+    /// rules; `None` mirrors `elliott::count::child_seed`'s own `None`
+    /// cases.
+    pub fn create_wave_child(&mut self, bid: BubbleId, parent_id: u64, slot: WaveSlot) -> Option<u64> {
+        self.mgr.create_wave_child(&mut self.bubbles, bid, parent_id, slot)
     }
 
     pub fn insert_at(&mut self, bid: BubbleId, index: usize, type_id: &str, points: &[(i64, f64)], data: &PrimitiveData) -> Option<u64> {

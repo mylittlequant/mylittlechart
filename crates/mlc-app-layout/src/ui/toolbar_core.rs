@@ -429,7 +429,15 @@ impl ToolbarSection {
     /// Create an inline config section for selected primitive
     ///
     /// Creates a section with primitive name, settings, color, line width,
-    /// line style, alert, lock, delete, and more buttons.
+    /// line style, [wave-slot picker (E2, only when `wave_slots` is
+    /// non-empty)], alert, lock, delete, and more buttons.
+    ///
+    /// `wave_slots` is `(item_id, label)` pairs — plain display-ready
+    /// strings, not the `WaveSlot` type itself, matching every other param
+    /// here (`style` is `"dashed"`, not a `LineStyle`): this file stays
+    /// domain-agnostic toolbar chrome. `item_id` is used verbatim as the
+    /// dropdown row's own id; the caller (`panel_app.rs`) is the one that
+    /// knows it must already be prefixed `"inline:wave_option:"`.
     pub fn inline_config(
         name: &str,
         color: &str,
@@ -438,6 +446,7 @@ impl ToolbarSection {
         width: u32,
         style: &str,
         locked: bool,
+        wave_slots: &[(String, String)],
     ) -> Self {
         let mut items = vec![
             // Primitive name
@@ -469,6 +478,17 @@ impl ToolbarSection {
             _ => IconId::new("LineSolid"),
         };
         items.push(ToolbarItem::split_icon_button("inline:style", style_icon));
+
+        // Wave-slot picker (E2) — only when the selected primitive actually
+        // has slots to offer (Elliott family; empty for everything else).
+        // Opens a plain popup (`inline:wave` toggles it, same shape as the
+        // style/width chevrons) rather than a split button: there is no
+        // sensible "cycle to the next slot" default action the way there is
+        // a next width/style, only a set of slots to choose from.
+        if !wave_slots.is_empty() {
+            items.push(ToolbarItem::Separator);
+            items.push(ToolbarItem::icon_button("inline:wave", IconId::new("layers")));
+        }
 
         // Separator space
         items.push(ToolbarItem::Separator);

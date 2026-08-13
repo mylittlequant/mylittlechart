@@ -4927,8 +4927,8 @@ impl ChartApp {
             } else if let Some(item_id) = id_str.strip_prefix("rtb:") {
                 self.panel_app.toolbar_state.hovered_right_toolbar_id = Some(item_id.to_string());
             } else if let Some(item_id) = id_str.strip_prefix("ilb:") {
-                // Check if this is an inline dropdown item (style_option or width_option)
-                if item_id.starts_with("inline:style_option:") || item_id.starts_with("inline:width_option:") {
+                // Check if this is an inline dropdown item (style_option, width_option, or wave_option)
+                if item_id.starts_with("inline:style_option:") || item_id.starts_with("inline:width_option:") || item_id.starts_with("inline:wave_option:") {
                     self.panel_app.toolbar_state.hovered_inline_dropdown_item = Some(item_id.to_string());
                 } else if item_id == "inline_dropdown:__bg__" || item_id == "__bg__" {
                     // background absorbers — no highlight

@@ -1015,6 +1015,14 @@ pub fn chart_toolbar_render_toolbars(
         // When a primitive is selected, render a standalone floating bar on top of
         // the content area. Position and dock edge are controlled by floating_inline_bar.
         let inline_config = if let Some(config) = selected_primitive {
+            // E2 — widget-ize the raw `(slot_id, label)` pairs into
+            // dropdown-row `(item_id, label)` pairs. The "inline:wave_option:"
+            // prefix is an app-layer widget-id convention, not something
+            // `SelectedPrimitiveConfig` (a plain data snapshot) or
+            // `toolbar_core.rs` (domain-agnostic chrome) should know about.
+            let wave_slot_items: Vec<(String, String)> = config.wave_slots.iter()
+                .map(|(slot_id, label)| (format!("inline:wave_option:{slot_id}"), label.clone()))
+                .collect();
             let inline_section = ToolbarSection::inline_config(
                 &config.name,
                 &config.color,
@@ -1023,6 +1031,7 @@ pub fn chart_toolbar_render_toolbars(
                 config.width as u32,
                 &config.style,
                 config.locked,
+                &wave_slot_items,
             );
 
             let inline_tc_config = TcConfig {
@@ -1212,7 +1221,7 @@ pub fn chart_toolbar_render_toolbars(
             None
         };
 
-        // Render inline style/width dropdown popup if open
+        // Render inline style/width/wave dropdown popup if open
         let inline_dropdown_result = chart_toolbar_render_inline_dropdown(
             tb,
             ctx,
@@ -1220,6 +1229,7 @@ pub fn chart_toolbar_render_toolbars(
             dd_theme_ref,
             &theme,
             layout.full_rect.height,
+            selected_primitive.map(|c| c.wave_slots.as_slice()).unwrap_or(&[]),
         );
 
         ChartToolbarRenderResult {
@@ -2199,7 +2209,8 @@ fn chart_toolbar_render_dropdown(
         })
     }
 
-/// Render the inline style or width dropdown popup if one is open.
+/// Render the inline style, width, or wave-slot (E2) dropdown popup if one
+/// is open.
 ///
 /// Looks up the button rect from `inline_config`, then calls `draw_dropdown` to
 /// draw the popup below (or above) the button.  Returns `None` if no inline dropdown
@@ -2208,6 +2219,11 @@ fn chart_toolbar_render_dropdown(
 /// When there is not enough space below the button (button bottom + dropdown height
 /// exceeds `panel_height`), the dropdown opens upward and the chevron icon on the
 /// button is redrawn pointing up.
+///
+/// `wave_slots` is the selected primitive's own `SelectedPrimitiveConfig::
+/// wave_slots` (`(slot_id, label)` pairs) — only read when the wave dropdown
+/// is the one open; empty for a non-Elliott selection, matching the
+/// `"inline:wave"` button itself only existing when this is non-empty.
 fn chart_toolbar_render_inline_dropdown(
     tb: &ChartToolbarState,
     ctx: &mut dyn RenderContext,
@@ -2215,12 +2231,15 @@ fn chart_toolbar_render_inline_dropdown(
     theme: &DropdownTheme,
     toolbar_theme: &TcToolbarTheme,
     panel_height: f64,
+    wave_slots: &[(String, String)],
 ) -> Option<InlineDropdownResult> {
     // Determine which inline dropdown is open (style takes priority)
     let (dropdown_id, button_id) = if tb.open_inline_style_dropdown {
         ("inline:style", "inline:style")
     } else if tb.open_inline_width_dropdown {
         ("inline:width", "inline:width")
+    } else if tb.open_inline_wave_dropdown {
+        ("inline:wave", "inline:wave")
     } else {
         return None;
     };
@@ -2251,13 +2270,22 @@ fn chart_toolbar_render_inline_dropdown(
                 crate::ui::dropdown::DropdownItem::item("inline:style_option:sparse_dotted", "Sparse Dotted")
                     .with_icon(crate::ui::toolbar_core::IconId::new("LineDotted")),
             ]
-        } else {
+        } else if dropdown_id == "inline:width" {
             // Width options 1–5
             (1u32..=5).map(|w| {
                 crate::ui::dropdown::DropdownItem::item(
                     &format!("inline:width_option:{}", w),
                     &format!("{} px", w),
                 )
+            }).collect()
+        } else {
+            // Wave-slot picker (E2) — one row per slot the selected
+            // primitive's own points can seed a child into, labelled the
+            // way that slot prints AT THE PARENT's degree
+            // (`SelectedPrimitiveConfig::wave_slots`, sourced from
+            // `WaveSlot::label`).
+            wave_slots.iter().map(|(slot_id, label)| {
+                crate::ui::dropdown::DropdownItem::item(&format!("inline:wave_option:{slot_id}"), label)
             }).collect()
         };
 
