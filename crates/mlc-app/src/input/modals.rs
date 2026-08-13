@@ -1636,20 +1636,24 @@ impl ChartApp {
 
                 // If magnet mode is active, call calculate_magnet_snap() directly
                 // (like the terminal does) rather than relying on crosshair state.
+                // The window magnet can land on a neighbouring bar — `bar` travels
+                // with it so the click's timestamp matches the bar the price was
+                // snapped to (see `calculate_magnet_snap`'s own doc).
                 let magnet_bars = self.active_chart_bars();
-                let price = self.panel_app.panel_grid.active_container()
+                let (bar, price) = self.panel_app.panel_grid.active_container()
                     .map(|w| {
                         if w.crosshair.is_magnet() {
                             let bar_idx = w.viewport().x_to_bar(local_x_main);
-                            let (snapped_price, _) = w.calculate_magnet_snap(
+                            let (snapped_price, _, snapped_bar_idx) = w.calculate_magnet_snap(
                                 &magnet_bars, bar_idx, raw_price, chart_height, price_min, price_max,
                             );
-                            snapped_price
+                            let snapped_bar = snapped_bar_idx.map(|idx| idx as f64).unwrap_or(bar);
+                            (snapped_bar, snapped_price)
                         } else {
-                            raw_price
+                            (bar, raw_price)
                         }
                     })
-                    .unwrap_or(raw_price);
+                    .unwrap_or((bar, raw_price));
 
                 // Reset pane context to main chart.
                 if let Some(bid) = active_bid_tool {

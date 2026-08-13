@@ -11429,24 +11429,29 @@ impl ChartApp {
                     );
 
                     // Apply magnet snap for main-pane primitives when magnet is active.
-                    let data_price = if primitive_pane_id.is_none() {
+                    // The window magnet can land on a NEIGHBOURING bar — `data_bar`
+                    // must travel with it, or the primitive's timestamp stays on the
+                    // bar under the mouse while its price jumps to the snapped pivot
+                    // (see `calculate_magnet_snap`'s own doc).
+                    let (data_bar, data_price) = if primitive_pane_id.is_none() {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport().x_to_bar(local_x);
-                                let (snapped, _) = w.calculate_magnet_snap(
+                                let (snapped_price, _, snapped_bar_idx) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale().price_min, w.price_scale().price_max,
                                 );
-                                snapped
+                                let snapped_bar = snapped_bar_idx.map(|idx| idx as f64).unwrap_or(data_bar);
+                                (snapped_bar, snapped_price)
                             } else {
-                                data_price
+                                (data_bar, data_price)
                             }
                         } else {
-                            data_price
+                            (data_bar, data_price)
                         }
                     } else {
-                        data_price
+                        (data_bar, data_price)
                     };
 
                     // Capture the primitive's points BEFORE drag.
@@ -11478,24 +11483,27 @@ impl ChartApp {
 
                     // Apply magnet snap for main-pane primitives when magnet is active.
                     // Call calculate_magnet_snap() directly, like the terminal does.
-                    let data_price = if primitive_pane_id.is_none() {
+                    // The window magnet can land on a NEIGHBOURING bar — `data_bar`
+                    // must travel with it (see `calculate_magnet_snap`'s own doc).
+                    let (data_bar, data_price) = if primitive_pane_id.is_none() {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport().x_to_bar(local_x);
-                                let (snapped, _) = w.calculate_magnet_snap(
+                                let (snapped_price, _, snapped_bar_idx) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale().price_min, w.price_scale().price_max,
                                 );
-                                snapped
+                                let snapped_bar = snapped_bar_idx.map(|idx| idx as f64).unwrap_or(data_bar);
+                                (snapped_bar, snapped_price)
                             } else {
-                                data_price
+                                (data_bar, data_price)
                             }
                         } else {
-                            data_price
+                            (data_bar, data_price)
                         }
                     } else {
-                        data_price
+                        (data_bar, data_price)
                     };
 
                     // Capture points before control-point reshape too.
@@ -11532,24 +11540,27 @@ impl ChartApp {
 
                     // Apply magnet snap for main-pane primitives when magnet is active.
                     // Call calculate_magnet_snap() directly on every drag update, like the terminal does.
-                    let data_price = if primitive_pane_id.is_none() {
+                    // The window magnet can land on a NEIGHBOURING bar — `data_bar`
+                    // must travel with it (see `calculate_magnet_snap`'s own doc).
+                    let (data_bar, data_price) = if primitive_pane_id.is_none() {
                         if let Some(w) = self.panel_app.panel_grid.active_container() {
                             if w.crosshair.is_magnet() {
                                 let local_x = screen_x - chart_x;
                                 let bar_idx = w.viewport().x_to_bar(local_x);
-                                let (snapped, _) = w.calculate_magnet_snap(
+                                let (snapped_price, _, snapped_bar_idx) = w.calculate_magnet_snap(
                                     &active_bars, bar_idx, data_price, chart_h,
                                     w.price_scale().price_min, w.price_scale().price_max,
                                 );
-                                snapped
+                                let snapped_bar = snapped_bar_idx.map(|idx| idx as f64).unwrap_or(data_bar);
+                                (snapped_bar, snapped_price)
                             } else {
-                                data_price
+                                (data_bar, data_price)
                             }
                         } else {
-                            data_price
+                            (data_bar, data_price)
                         }
                     } else {
-                        data_price
+                        (data_bar, data_price)
                     };
 
                     // Get the dragged primitive id BEFORE update_drag (id doesn't change).

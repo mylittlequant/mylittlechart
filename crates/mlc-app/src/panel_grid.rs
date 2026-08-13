@@ -1904,11 +1904,19 @@ impl ChartPanelGrid {
                         window.crosshair.bar_f64 = bar_f64;
                         window.crosshair.price = price;
                         if window.crosshair.is_magnet() {
-                            let (snapped_price, snapped_y) = window.calculate_magnet_snap(
+                            let (snapped_price, snapped_y, snapped_bar_idx) = window.calculate_magnet_snap(
                                 bars, bar_idx, price, chart_rect.height,
                                 window.price_scale().price_min, window.price_scale().price_max,
                             );
                             window.crosshair.set_snapped(snapped_price, snapped_y);
+                            // Move the crosshair's own bar with the snap (see
+                            // `calculate_magnet_snap`'s doc) so the vertical
+                            // line and virtual dot land on the same bar the
+                            // price was snapped to.
+                            if let Some(idx) = snapped_bar_idx {
+                                window.crosshair.bar_idx = Some(idx);
+                                window.crosshair.bar_f64 = idx as f64;
+                            }
                         } else {
                             window.crosshair.snapped_y = local_y;
                             window.crosshair.snapped_price = price;

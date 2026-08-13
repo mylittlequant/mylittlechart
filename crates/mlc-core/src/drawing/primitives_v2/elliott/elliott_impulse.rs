@@ -159,7 +159,13 @@ impl Primitive for ElliottImpulse {
             if (sx - x).powi(2) + (sy - y).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2) { return HitTestResult::ControlPoint(ControlPointType::Index(i as u8)); }
         }
         for i in 0..5 {
-            if point_to_line_dist(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+            if ratio::point_to_line_dist(sx, sy, screen[i].0, screen[i].1, screen[i+1].0, screen[i+1].1) < HIT_TOLERANCE { return HitTestResult::Body; }
+        }
+        // Ratio ribs are secondary edges of the shape, live only while
+        // `show_ratios` is on — no behaviour change, no extra hit area,
+        // when it is off (see `super::ratio`'s own doc).
+        if self.show_ratios && ratio::hit_test_ratio_ribs(sx, sy, &screen, &ratio::IMPULSE_RATIO_RIBS) {
+            return HitTestResult::Body;
         }
         HitTestResult::Miss
     }
@@ -219,7 +225,7 @@ impl Primitive for ElliottImpulse {
 
         if self.show_ratios {
             ratio::draw_ratio_annotations(
-                ctx, &self.points, realized, &ratio::IMPULSE_RATIO_LEGS,
+                ctx, &self.points, realized, &ratio::IMPULSE_RATIO_LEGS, &ratio::IMPULSE_RATIO_RIBS,
                 &self.data.color.stroke, self.data.width, &self.label_style,
             );
         }
@@ -293,14 +299,6 @@ impl Primitive for ElliottImpulse {
         if self.label_style.apply_property(id, value, &self.data.color.stroke) { return true; }
         false
     }
-}
-
-fn point_to_line_dist(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
-    let (dx, dy) = (x2 - x1, y2 - y1);
-    let len_sq = dx * dx + dy * dy;
-    if len_sq == 0.0 { return ((px - x1).powi(2) + (py - y1).powi(2)).sqrt(); }
-    let t = (((px - x1) * dx + (py - y1) * dy) / len_sq).clamp(0.0, 1.0);
-    ((px - (x1 + t * dx)).powi(2) + (py - (y1 + t * dy)).powi(2)).sqrt()
 }
 
 pub fn metadata() -> PrimitiveMetadata {

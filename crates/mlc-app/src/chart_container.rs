@@ -325,6 +325,15 @@ pub struct ChartContainer {
 /// after a snap-to-end operation. Will be user-configurable in the future.
 pub const DEFAULT_SNAP_MARGIN: f64 = 5.0;
 
+/// Bars searched on EACH side of the cursor's bar for the magnet's nearest
+/// OHLC extreme (owner spec 2026-08-13, window magnet — see
+/// [`ChartContainer::calculate_magnet_snap`]). A swing high/low rarely
+/// lands exactly under the cursor at typical zoom levels — being off by a
+/// bar or two is common — so the window widens the search past the single
+/// bar the mouse happens to be over. 3 bars each side (7-bar window) catches
+/// a near-miss without reaching into a neighbouring swing.
+pub const MAGNET_WINDOW_BARS: usize = 3;
+
 /// Build a fresh `DockState<ChartContainerLeaf>` with a single `MainChart` leaf.
 ///
 /// Used by every `ChartContainer` constructor. The main chart leaf's
@@ -1410,10 +1419,20 @@ impl ChartContainer {
         self.crosshair.price = price;
 
         if pane_index.is_none() && !is_dragging {
-            let (snapped_price, snapped_y) = self.calculate_magnet_snap(
+            let (snapped_price, snapped_y, snapped_bar_idx) = self.calculate_magnet_snap(
                 bars, bar_idx, price, pane_height, price_min, price_max,
             );
             self.crosshair.set_snapped(snapped_price, snapped_y);
+            // The window magnet can land on a neighbouring bar — move the
+            // crosshair's own bar position with it so the vertical line,
+            // the virtual snap dot, and the OHLC tooltip all agree on the
+            // SAME bar the price was snapped to (see
+            // `calculate_magnet_snap`'s own doc: a snap that moves price
+            // but leaves the bar behind puts the pivot at the wrong point).
+            if let Some(idx) = snapped_bar_idx {
+                self.crosshair.bar_idx = Some(idx);
+                self.crosshair.bar_f64 = idx as f64;
+            }
         } else {
             self.crosshair.snapped_y = self.crosshair.y;
             self.crosshair.snapped_price = price;
@@ -1421,6 +1440,23 @@ impl ChartContainer {
     }
 
     /// Centralized magnet snap calculation. Phase X0 / C5c: caller supplies `bars`.
+    ///
+    /// Owner spec 2026-08-13 (window magnet): a swing pivot rarely lands
+    /// exactly under the cursor at typical zoom levels, so the search looks
+    /// at every bar's HIGH and LOW within [`MAGNET_WINDOW_BARS`] bars of the
+    /// cursor, plus the cursor bar's own OPEN/CLOSE (the pre-window
+    /// behaviour, kept reachable), and snaps to whichever candidate is
+    /// nearest the cursor by PIXEL distance in BOTH axes — not by price
+    /// alone, so the magnet behaves the same at every zoom level (the X
+    /// distance is priced in bars via `self.viewport.bar_spacing`).
+    ///
+    /// Returns `(price, y, bar_idx)` — `bar_idx` is the bar the winning
+    /// candidate belongs to, which may differ from the cursor's own
+    /// `bar_idx` argument. Callers that derive a timestamp from the snap
+    /// MUST use this returned index, not the cursor's own bar: otherwise
+    /// the placed point's price jumps to the neighbouring pivot while its
+    /// timestamp stays on the bar under the mouse, putting the pivot at the
+    /// wrong (x, y) pair on the chart.
     pub fn calculate_magnet_snap(
         &self,
         bars: &[Bar],
@@ -1429,40 +1465,67 @@ impl ChartContainer {
         pane_height: f64,
         price_min: f64,
         price_max: f64,
-    ) -> (f64, f64) {
+    ) -> (f64, f64, Option<usize>) {
         let price_range = price_max - price_min;
-
-        if !self.crosshair.is_magnet() {
-            let raw_y = if price_range > 0.0 {
-                ((price_max - raw_price) / price_range) * pane_height
+        let price_to_y = |p: f64| {
+            if price_range > 0.0 {
+                ((price_max - p) / price_range) * pane_height
             } else {
                 0.0
-            };
-            return (raw_price, raw_y);
-        }
-
-        if let Some(idx) = bar_idx {
-            if idx < bars.len() {
-                let bar = &bars[idx];
-                let (snapped_price, snapped_y) = self.crosshair.find_nearest_ohlc(
-                    bar,
-                    raw_price,
-                    |p| {
-                        let ratio = (price_max - p) / price_range;
-                        ratio * pane_height
-                    },
-                    self.viewport.bar_spacing,
-                );
-                return (snapped_price, snapped_y.clamp(0.0, pane_height));
             }
+        };
+        let raw_y = price_to_y(raw_price);
+
+        if !self.crosshair.is_magnet() {
+            return (raw_price, raw_y, bar_idx);
+        }
+        let Some(idx) = bar_idx else {
+            return (raw_price, raw_y, bar_idx);
+        };
+        if idx >= bars.len() {
+            return (raw_price, raw_y, bar_idx);
         }
 
-        let raw_y = if price_range > 0.0 {
-            ((price_max - raw_price) / price_range) * pane_height
-        } else {
-            0.0
+        // Tolerance mirrors `Crosshair::find_nearest_ohlc`'s own per-mode
+        // radius (Magnet = strong, MagnetOHLC = light), now applied to the
+        // combined pixel distance below instead of Y-distance alone.
+        let tolerance = match self.crosshair.mode {
+            mlc_core::CrosshairMode::Magnet => (self.viewport.bar_spacing * 0.4).clamp(20.0, 80.0),
+            _ => (self.viewport.bar_spacing * 0.25).clamp(10.0, 50.0),
         };
-        (raw_price, raw_y)
+
+        let window_start = idx.saturating_sub(MAGNET_WINDOW_BARS);
+        let window_end = (idx + MAGNET_WINDOW_BARS).min(bars.len() - 1);
+
+        let mut best_price = raw_price;
+        let mut best_y = raw_y;
+        let mut best_idx = idx;
+        let mut best_dist = f64::INFINITY;
+        let mut consider = |candidate_idx: usize, price: f64| {
+            let y = price_to_y(price);
+            let x_dist = (candidate_idx as f64 - idx as f64) * self.viewport.bar_spacing;
+            let dist = x_dist.hypot(y - raw_y);
+            if dist < best_dist {
+                best_dist = dist;
+                best_price = price;
+                best_y = y;
+                best_idx = candidate_idx;
+            }
+        };
+
+        for i in window_start..=window_end {
+            consider(i, bars[i].high);
+            consider(i, bars[i].low);
+        }
+        // Cursor bar's own body — the pre-window behaviour, kept reachable.
+        consider(idx, bars[idx].open);
+        consider(idx, bars[idx].close);
+
+        if best_dist <= tolerance {
+            (best_price, best_y.clamp(0.0, pane_height), Some(best_idx))
+        } else {
+            (raw_price, raw_y, bar_idx)
+        }
     }
 
     /// Hide crosshair (call when mouse leaves chart area)
