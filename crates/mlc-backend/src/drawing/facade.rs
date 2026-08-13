@@ -665,6 +665,15 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.create_wave_successor(&mut self.bubbles, bid, prev_id, type_id)
     }
 
+    /// Create a new Elliott predecessor primitive that `next_id` continues
+    /// FROM. See `DrawingManager::create_wave_predecessor` for the full
+    /// contract; `None` mirrors `elliott::count::predecessor_seed`'s own
+    /// `None` cases, plus a `type_id` outside `elliott::count::
+    /// predecessor_kinds(next)`.
+    pub fn create_wave_predecessor(&mut self, bid: BubbleId, next_id: u64, type_id: &str) -> Option<(u64, PrimitiveSnapshot)> {
+        self.mgr.create_wave_predecessor(&mut self.bubbles, bid, next_id, type_id)
+    }
+
     pub fn insert_at(&mut self, bid: BubbleId, index: usize, type_id: &str, json: &str) -> Option<u64> {
         self.mgr.insert_at(&mut self.bubbles, bid, index, type_id, json)
     }
@@ -690,6 +699,11 @@ impl<'a> DrawingsMut<'a> {
     /// See `DrawingManager::set_wave_link`.
     pub fn set_wave_link(&mut self, bid: BubbleId, prim_id: u64, link: Option<WaveLink>) {
         self.mgr.set_wave_link(&mut self.bubbles, bid, prim_id, link)
+    }
+
+    /// See `DrawingManager::set_wave_follows`.
+    pub fn set_wave_follows(&mut self, bid: BubbleId, prim_id: u64, follows: Option<u64>) {
+        self.mgr.set_wave_follows(&mut self.bubbles, bid, prim_id, follows)
     }
 
     /// See `DrawingManager::promote_wave_chain`.

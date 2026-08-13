@@ -1050,6 +1050,36 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    /// The [`ControlPointType`] identifying this primitive's own FIRST
+    /// point — the pivot a NEW predecessor structure would continue INTO
+    /// (owner ask 2026-08-14: a count is read backwards as often as
+    /// forwards, so a chain must be buildable from either end). The
+    /// mirror of [`terminal_control_point`](Self::terminal_control_point)
+    /// — same "not a generic default over `control_points`" reasoning
+    /// applies (see that method's own doc): every Elliott type overrides
+    /// this directly against its own known point layout instead of
+    /// trusting an assumption `control_points` never promises.
+    ///
+    /// A two-point-realized structure (`terminal_control_point` and this
+    /// method both resolving to index 0) reports its FIRST point here and
+    /// its LAST point there regardless — the two methods never disagree
+    /// with each other about which index they name, only the CALLER
+    /// (`ChartApp::try_wave_gesture`) decides which one wins a hit that
+    /// lands on the single realized point both describe, and picks the
+    /// origin (see that method's own doc for why).
+    ///
+    /// Default: `None` — exactly how every primitive outside the Elliott
+    /// family behaves (it has no notion of a chain "continuing" from it),
+    /// same as [`terminal_control_point`](Self::terminal_control_point).
+    fn origin_control_point(
+        &self,
+        _bars: &[Bar],
+        _viewport: &Viewport,
+        _price_scale: &PriceScale,
+    ) -> Option<ControlPointType> {
+        None
+    }
+
     // =========================================================================
     // Serialization
     // =========================================================================

@@ -498,6 +498,44 @@ impl ChartApp {
         }
     }
 
+    /// Create an Elliott predecessor of `type_id` that `next_id` continues
+    /// FROM, and record it for undo (owner ask 2026-08-14: "щас мы чейн
+    /// можем только с конца строить, а хорошо бы... делать достройку перед
+    /// началом чейна" — a count is read backwards as often as forwards) —
+    /// the wave-gesture menu's own `"wave_menu:predecessor:"` action.
+    /// Unlike [`create_wave_successor_and_record`] (a plain
+    /// `CreatePrimitive` — the new primitive is the only thing that
+    /// changed), this bundles TWO edits into ONE undo entry: the new
+    /// predecessor AND the re-pointed `next_id.follows` — see
+    /// `Command::CreateWavePredecessor`'s own doc. `previous_follows` is
+    /// read BEFORE the create call runs (the create call itself
+    /// overwrites `next_id`'s own `follows`), so undo can put back
+    /// whatever `next_id` already followed, if anything.
+    fn create_wave_predecessor_and_record(&mut self, bid: Option<BubbleId>, next_id: u64, type_id: &str) {
+        let Some(bid) = bid else { return };
+        let previous_follows = self.core.drawings().primitives(bid).iter()
+            .find(|p| p.data().id == next_id)
+            .and_then(|p| p.wave_follows());
+        let result = self.core.drawings_mut().create_wave_predecessor(bid, next_id, type_id);
+        match result {
+            Some((new_id, snapshot)) => {
+                self.push_undo_command(mlc_core::Command::CreateWavePredecessor {
+                    prim_id: new_id,
+                    snapshot,
+                    next_id,
+                    previous_follows,
+                });
+                eprintln!("[ChartApp] Recorded CreateWavePredecessor {}", new_id);
+                self.sync_drawing_back_to_group();
+                self.autosave_snapshot();
+                eprintln!("[ChartApp] created wave predecessor #{} ({}) before #{}", new_id, type_id, next_id);
+            }
+            None => {
+                eprintln!("[ChartApp] create_wave_predecessor returned None for type '{}' before #{}", type_id, next_id);
+            }
+        }
+    }
+
     /// Collapse `prim_id`'s own `follows`-linked same-degree chain into one
     /// coarser structure, and record it for undo (E4) — the shared tail
     /// both the inline toolbar's `"inline:wave_up"` button and the
@@ -2422,11 +2460,12 @@ impl ChartApp {
                     // ── Wave-gesture menu actions (E5, second control
                     // surface — `ChartApp::try_wave_gesture` /
                     // `mlc-app-layout`'s `build_wave_menu`/
-                    // `build_successor_menu`). `prim_id` here is already
-                    // the structure the gesture selected — the wave
-                    // menu's own slot/kind and the successor menu's own
-                    // child id ride in the action string instead, so
-                    // nothing has to re-hit-test the click.
+                    // `build_successor_menu`/`build_predecessor_menu`).
+                    // `prim_id` here is already the structure the gesture
+                    // selected — the wave menu's own slot/kind, the
+                    // successor menu's own child id, and the predecessor
+                    // menu's own type id all ride in the action string
+                    // instead, so nothing has to re-hit-test the click.
                     _ if action.starts_with("wave_menu:convert:") => {
                         let kind_id = action.strip_prefix("wave_menu:convert:").unwrap_or_default();
                         self.convert_primitive_kind_and_record(active_bid_ctx, prim_id, kind_id);
@@ -2445,6 +2484,10 @@ impl ChartApp {
                     _ if action.starts_with("wave_menu:successor:") => {
                         let type_id = action.strip_prefix("wave_menu:successor:").unwrap_or_default();
                         self.create_wave_successor_and_record(active_bid_ctx, prim_id, type_id);
+                    }
+                    _ if action.starts_with("wave_menu:predecessor:") => {
+                        let type_id = action.strip_prefix("wave_menu:predecessor:").unwrap_or_default();
+                        self.create_wave_predecessor_and_record(active_bid_ctx, prim_id, type_id);
                     }
                     "wave_menu:promote" => {
                         if let Some(bid) = active_bid_ctx {

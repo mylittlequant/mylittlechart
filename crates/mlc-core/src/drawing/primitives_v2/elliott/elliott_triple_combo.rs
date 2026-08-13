@@ -252,6 +252,11 @@ impl Primitive for ElliottTripleCombo {
         if realized == 0 { return None; }
         Some(ControlPointType::Index((realized - 1) as u8))
     }
+
+    fn origin_control_point(&self, _bars: &[Bar], _viewport: &Viewport, _price_scale: &PriceScale) -> Option<ControlPointType> {
+        if self.realized_len() == 0 { return None; }
+        Some(ControlPointType::Index(0))
+    }
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         if self.points.is_empty() { return; }
         let dpr = ctx.dpr();

@@ -30,6 +30,10 @@
 //!   type (and correction subtype) IN PLACE mid-count, remapping its own
 //!   subdivisions by ordinal rather than by name (owner report 2026-08-14,
 //!   see the variant's own doc)
+//! - `CreateWavePredecessor` / `DeleteWavePredecessor` - build a chain
+//!   BACKWARDS from its own first pivot: create a new same-degree
+//!   structure and re-point an EXISTING structure's own `follows` at it,
+//!   as one undo entry (owner ask 2026-08-14, see the variant's own doc)
 //!
 //! The pre-`ChartContainer` object-ID-based command family (`ObjectInfo`,
 //! `SetVisibility`, `SetLock`, `SetGlobalLock`, `SetCategoryVisibility`,
@@ -288,6 +292,51 @@ pub enum Command {
         children: Vec<(u64, Option<WaveSlot>, Option<WaveSlot>)>,
     },
 
+    /// Create a NEW predecessor structure that `next_id` continues FROM —
+    /// build BACKWARDS from a chain's own first pivot, not only forward
+    /// from its terminal one (owner ask 2026-08-14: "щас мы чейн можем
+    /// только с конца строить, а хорошо бы... делать достройку перед
+    /// началом чейна" — a count is read backwards as often as forwards).
+    ///
+    /// Bundles TWO edits the user experiences as ONE action, so one
+    /// Ctrl+Z undoes both together rather than two: creating the
+    /// predecessor primitive (`prim_id`/`snapshot`, same full-serialized-
+    /// state shape [`Command::CreatePrimitive`]'s own doc explains) AND
+    /// re-pointing `next_id`'s own `follows` at it. This is why it is its
+    /// own `Command` variant instead of a plain
+    /// [`Command::CreatePrimitive`] — the exact same reason
+    /// [`Command::PromoteWaveChain`] is not just a `CreatePrimitive`
+    /// either (see that variant's own doc).
+    ///
+    /// `previous_follows` is what `next_id.follows` held BEFORE this
+    /// command ran — `None` when `next_id` had no predecessor of its own
+    /// yet, `Some(id)` when the analyst inserted this predecessor in
+    /// FRONT of a structure that already continued a chain (that
+    /// existing link is DISPLACED, not destroyed — undo restores it
+    /// exactly, see [`Command::DeleteWavePredecessor`]'s own doc for how).
+    CreateWavePredecessor {
+        prim_id: u64,
+        snapshot: PrimitiveSnapshot,
+        next_id: u64,
+        previous_follows: Option<u64>,
+    },
+
+    /// Inverse of [`Command::CreateWavePredecessor`] — same fields,
+    /// opposite application: removes the predecessor primitive, then
+    /// restores `next_id`'s own `follows` to `previous_follows`.
+    /// `DrawingManager::delete`'s own dangling-`follows` cleanup would
+    /// otherwise leave `next_id.follows` cleared to `None` regardless of
+    /// what it held before this command's own forward direction ran —
+    /// restoring it afterward reinstates that prior value (`None`, or
+    /// another chain member) instead of leaving the clean-up's own
+    /// unconditional `None` stand in for it.
+    DeleteWavePredecessor {
+        prim_id: u64,
+        snapshot: PrimitiveSnapshot,
+        next_id: u64,
+        previous_follows: Option<u64>,
+    },
+
     // =========================================================================
     // Compare Overlay commands
     // =========================================================================
@@ -470,6 +519,24 @@ impl Command {
                 }
             }
 
+            Command::CreateWavePredecessor { prim_id, snapshot, next_id, previous_follows } => {
+                Command::DeleteWavePredecessor {
+                    prim_id: *prim_id,
+                    snapshot: snapshot.clone(),
+                    next_id: *next_id,
+                    previous_follows: *previous_follows,
+                }
+            }
+
+            Command::DeleteWavePredecessor { prim_id, snapshot, next_id, previous_follows } => {
+                Command::CreateWavePredecessor {
+                    prim_id: *prim_id,
+                    snapshot: snapshot.clone(),
+                    next_id: *next_id,
+                    previous_follows: *previous_follows,
+                }
+            }
+
             Command::MovePrimitive { prim_id, previous_points, new_points } => {
                 Command::MovePrimitive {
                     prim_id: *prim_id,
@@ -578,12 +645,14 @@ impl Command {
 
     /// The primitive this command acts on, when it acts on one.
     ///
-    /// `PromoteWaveChain`/`DemoteWaveChain`/`ConvertPrimitiveKind` act on
-    /// MULTIPLE primitives (a parent/converted primitive plus every chain
-    /// member/subdivided child) and are deliberately excluded here, same as
-    /// `DeleteAllPrimitives`/`RestoreAllPrimitives` — the single-id remap
-    /// machinery below (`set_prim_id`/`primitive_identity`) only ever
-    /// covers a command with exactly one primitive of its own.
+    /// `PromoteWaveChain`/`DemoteWaveChain`/`ConvertPrimitiveKind`/
+    /// `CreateWavePredecessor`/`DeleteWavePredecessor` act on MULTIPLE
+    /// primitives (a parent/converted/created primitive plus every chain
+    /// member/subdivided child, or — for the predecessor pair — the
+    /// predecessor AND `next_id`) and are deliberately excluded here, same
+    /// as `DeleteAllPrimitives`/`RestoreAllPrimitives` — the single-id
+    /// remap machinery below (`set_prim_id`/`primitive_identity`) only
+    /// ever covers a command with exactly one primitive of its own.
     pub fn prim_id(&self) -> Option<u64> {
         match self {
             Command::SetPrimitiveVisibility { prim_id, .. }
@@ -669,6 +738,8 @@ impl Command {
             Command::PromoteWaveChain { .. } => "Promote Wave Chain",
             Command::DemoteWaveChain { .. } => "Demote Wave Chain",
             Command::ConvertPrimitiveKind { .. } => "Convert Wave Kind",
+            Command::CreateWavePredecessor { .. } => "Create Wave Predecessor",
+            Command::DeleteWavePredecessor { .. } => "Delete Wave Predecessor",
 
             // Compare commands
             Command::AddCompareSeries { .. } => "Add Compare Symbol",

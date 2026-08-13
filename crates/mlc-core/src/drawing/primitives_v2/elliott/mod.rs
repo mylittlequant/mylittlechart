@@ -17,6 +17,7 @@ pub use elliott_double_combo::ElliottDoubleCombo;
 pub use elliott_triple_combo::ElliottTripleCombo;
 pub use count::{
     WaveSlot, WaveLink, ChildSeed, child_seed, SuccessorSeed, successor_seed, successor_kinds,
+    PredecessorSeed, predecessor_seed, predecessor_kinds,
     PromotedShape, promote_chain_shape,
     CHILD_KIND_CANDIDATES, split_kind_id, parent_pattern, kind_pattern, kind_label,
     slot_position, child_kinds, slot_span,

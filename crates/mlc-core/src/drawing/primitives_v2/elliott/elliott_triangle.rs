@@ -254,6 +254,11 @@ impl Primitive for ElliottTriangle {
         Some(ControlPointType::Index((realized - 1) as u8))
     }
 
+    fn origin_control_point(&self, _bars: &[Bar], _viewport: &Viewport, _price_scale: &PriceScale) -> Option<ControlPointType> {
+        if self.realized_len() == 0 { return None; }
+        Some(ControlPointType::Index(0))
+    }
+
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();

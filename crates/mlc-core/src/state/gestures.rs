@@ -37,21 +37,32 @@ pub enum ChartGesture {
     /// same-degree structure) — opened on a hit against a structure's own
     /// TERMINAL point (its last drawn pivot).
     SuccessorMenu,
+    /// The predecessor menu (e.g. build a NEW structure that this one
+    /// continues from) — opened on a hit against a structure's own ORIGIN
+    /// point (its first drawn pivot). [`SuccessorMenu`](Self::SuccessorMenu)
+    /// read backwards (owner ask 2026-08-14: "щас мы чейн можем только с
+    /// конца строить, а хорошо бы... делать достройку перед началом
+    /// чейна" — a count is read backwards as often as forwards).
+    PredecessorMenu,
 }
 
 /// The kind of chart element a [`GestureTrigger`] landed on — the other half
 /// of the question [`GestureBindings::gesture_for`] answers. A hit-test
-/// result (already resolved to "this IS a wave segment" or "this IS a
-/// terminal point" by the caller) rather than raw geometry — this module
-/// owns no hit-testing of its own.
+/// result (already resolved to "this IS a wave segment", "this IS a
+/// terminal point", or "this IS an origin point" by the caller) rather than
+/// raw geometry — this module owns no hit-testing of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GestureTarget {
-    /// A hit on one of a structure's own wave segments (not its terminal
-    /// point).
+    /// A hit on one of a structure's own wave segments (not its terminal or
+    /// origin point).
     WaveSegment,
     /// A hit on a structure's own terminal point — its last drawn pivot,
     /// the point a successor would continue from.
     TerminalPoint,
+    /// A hit on a structure's own origin point — its FIRST drawn pivot, the
+    /// point a NEW predecessor would continue INTO. The mirror of
+    /// [`TerminalPoint`](Self::TerminalPoint); see that variant's own doc.
+    OriginPoint,
 }
 
 /// Which physical gesture opens which wave-editing menu — the whole
@@ -68,6 +79,10 @@ pub struct GestureBindings {
     /// [`GestureTarget::TerminalPoint`] hit.
     #[serde(default = "default_successor_menu_trigger")]
     pub successor_menu: GestureTrigger,
+    /// The gesture that opens [`ChartGesture::PredecessorMenu`] on a
+    /// [`GestureTarget::OriginPoint`] hit.
+    #[serde(default = "default_predecessor_menu_trigger")]
+    pub predecessor_menu: GestureTrigger,
 }
 
 fn default_wave_menu_trigger() -> GestureTrigger {
@@ -78,15 +93,23 @@ fn default_successor_menu_trigger() -> GestureTrigger {
     GestureTrigger::DoubleClick
 }
 
+fn default_predecessor_menu_trigger() -> GestureTrigger {
+    GestureTrigger::DoubleClick
+}
+
 impl Default for GestureBindings {
-    /// Both menus open on double-click — a STARTING default the owner
+    /// All three menus open on double-click — a STARTING default the owner
     /// explicitly left open to revisit ("дискуссионно"), not a settled
     /// design decision. Stated here as a default meant to be flipped, e.g.
-    /// to `RightClick` for one or both menus, once the owner picks —
+    /// to `RightClick` for one or more menus, once the owner picks —
     /// exactly the one-field edit [`GestureBindings::gesture_for`]'s own doc
     /// describes.
     fn default() -> Self {
-        Self { wave_menu: default_wave_menu_trigger(), successor_menu: default_successor_menu_trigger() }
+        Self {
+            wave_menu: default_wave_menu_trigger(),
+            successor_menu: default_successor_menu_trigger(),
+            predecessor_menu: default_predecessor_menu_trigger(),
+        }
     }
 }
 
@@ -102,6 +125,7 @@ impl GestureBindings {
         match target {
             GestureTarget::WaveSegment if trigger == self.wave_menu => Some(ChartGesture::WaveMenu),
             GestureTarget::TerminalPoint if trigger == self.successor_menu => Some(ChartGesture::SuccessorMenu),
+            GestureTarget::OriginPoint if trigger == self.predecessor_menu => Some(ChartGesture::PredecessorMenu),
             _ => None,
         }
     }
@@ -112,14 +136,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_bindings_are_both_double_click() {
+    fn default_bindings_are_all_double_click() {
         let bindings = GestureBindings::default();
         assert_eq!(bindings.wave_menu, GestureTrigger::DoubleClick);
         assert_eq!(bindings.successor_menu, GestureTrigger::DoubleClick);
+        assert_eq!(bindings.predecessor_menu, GestureTrigger::DoubleClick);
     }
 
     #[test]
-    fn default_bindings_resolve_both_gestures_on_double_click() {
+    fn default_bindings_resolve_all_three_gestures_on_double_click() {
         let bindings = GestureBindings::default();
         assert_eq!(
             bindings.gesture_for(GestureTrigger::DoubleClick, GestureTarget::WaveSegment),
@@ -129,21 +154,26 @@ mod tests {
             bindings.gesture_for(GestureTrigger::DoubleClick, GestureTarget::TerminalPoint),
             Some(ChartGesture::SuccessorMenu)
         );
+        assert_eq!(
+            bindings.gesture_for(GestureTrigger::DoubleClick, GestureTarget::OriginPoint),
+            Some(ChartGesture::PredecessorMenu)
+        );
     }
 
     #[test]
     fn unbound_trigger_resolves_to_none() {
         let bindings = GestureBindings::default();
-        // Right-click is not bound to anything under the default — neither
-        // menu opens.
+        // Right-click is not bound to anything under the default — none of
+        // the three menus open.
         assert_eq!(bindings.gesture_for(GestureTrigger::RightClick, GestureTarget::WaveSegment), None);
         assert_eq!(bindings.gesture_for(GestureTrigger::RightClick, GestureTarget::TerminalPoint), None);
+        assert_eq!(bindings.gesture_for(GestureTrigger::RightClick, GestureTarget::OriginPoint), None);
     }
 
     #[test]
     fn flipping_one_binding_is_a_one_field_edit() {
         // The whole point of this module: switching wave_menu to right-click
-        // is ONE field, and successor_menu is untouched.
+        // is ONE field, and successor_menu/predecessor_menu are untouched.
         let bindings = GestureBindings { wave_menu: GestureTrigger::RightClick, ..GestureBindings::default() };
         assert_eq!(
             bindings.gesture_for(GestureTrigger::RightClick, GestureTarget::WaveSegment),
@@ -154,11 +184,19 @@ mod tests {
             bindings.gesture_for(GestureTrigger::DoubleClick, GestureTarget::TerminalPoint),
             Some(ChartGesture::SuccessorMenu)
         );
+        assert_eq!(
+            bindings.gesture_for(GestureTrigger::DoubleClick, GestureTarget::OriginPoint),
+            Some(ChartGesture::PredecessorMenu)
+        );
     }
 
     #[test]
     fn bindings_round_trip_through_json() {
-        let bindings = GestureBindings { wave_menu: GestureTrigger::RightClick, successor_menu: GestureTrigger::DoubleClick };
+        let bindings = GestureBindings {
+            wave_menu: GestureTrigger::RightClick,
+            successor_menu: GestureTrigger::DoubleClick,
+            predecessor_menu: GestureTrigger::RightClick,
+        };
         let json = serde_json::to_string(&bindings).expect("GestureBindings serializes");
         let restored: GestureBindings = serde_json::from_str(&json).expect("GestureBindings deserializes");
         assert_eq!(bindings, restored);
@@ -167,7 +205,8 @@ mod tests {
     #[test]
     fn missing_fields_fall_back_to_double_click_default() {
         // A persisted settings blob written before this struct existed —
-        // both fields absent — still loads (`#[serde(default)]` on both).
+        // all three fields absent — still loads (`#[serde(default)]` on
+        // each).
         let restored: GestureBindings = serde_json::from_str("{}").expect("empty object deserializes via field defaults");
         assert_eq!(restored, GestureBindings::default());
     }

@@ -26,7 +26,7 @@ use mlc_core::drawing::primitives_v2::config::{
 use mlc_core::drawing::primitives_v2::elliott::{
     chain_violations, child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
     resample_polyline, slot_at_ordinal, slot_ordinal, slot_span, split_kind_id, successor_kinds,
-    successor_seed,
+    successor_seed, predecessor_kinds, predecessor_seed,
     promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
@@ -591,6 +591,17 @@ impl DrawingManager {
                 .filter_map(|&kind_id| registry.get(kind_id).map(|meta| (kind_id.to_string(), meta.display_name.to_string())))
                 .collect()
         };
+        // Predecessor picker (owner ask 2026-08-14: "делать достройку
+        // перед началом чейна" — a count is read backwards as often as
+        // forwards). Same shape as the E3 block above, `elliott::count::
+        // predecessor_kinds` read instead of `successor_kinds`.
+        let predecessor_kind_items: Vec<(String, String)> = {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            predecessor_kinds(prim.as_ref())
+                .iter()
+                .filter_map(|&kind_id| registry.get(kind_id).map(|meta| (kind_id.to_string(), meta.display_name.to_string())))
+                .collect()
+        };
         // E4 — promotion button. Whether the selected primitive's own
         // `follows`-linked chain (found by walking backward to the chain's
         // head, then forward from there — same resolution
@@ -642,6 +653,7 @@ impl DrawingManager {
             wave_slots,
             wave_slot_kinds,
             successor_kinds: successor_kind_items,
+            predecessor_kinds: predecessor_kind_items,
             can_promote,
             conversion_kinds: conversion_kind_items,
         })
@@ -2562,6 +2574,105 @@ impl DrawingManager {
         Some(new_id)
     }
 
+    /// Create a new Elliott predecessor primitive that `next_id` continues
+    /// FROM (owner ask 2026-08-14: "щас мы чейн можем только с конца
+    /// строить, а хорошо бы при даблклике или ПКМ на 0 точку делать
+    /// достройку перед началом чейна" — a count is read backwards as often
+    /// as forwards, so a chain must be buildable from either end).
+    /// [`Self::create_wave_successor`] read backwards: returns `None` when
+    /// `next_id` is gone, is not an Elliott wave (`elliott::count::
+    /// predecessor_seed` itself returns `None`), or `type_id` is not one
+    /// of `elliott::count::predecessor_kinds(next)` — the alternation
+    /// grammar is enforced HERE, not just suggested by the picker's own
+    /// row list, the same fail-closed shape `create_wave_successor` uses
+    /// against `successor_kinds`.
+    ///
+    /// Unlike `create_wave_successor` (which only ever touches the NEW
+    /// primitive), this ALSO re-points an EXISTING primitive's own
+    /// `follows` — `next_id`'s own `follows` becomes `Some(new_id)` —
+    /// because `follows` always names the PREDECESSOR, and `next_id`'s
+    /// predecessor is now the structure this call just created. The
+    /// caller is responsible for reading `next_id`'s own PRIOR `follows`
+    /// (if it wants to undo the re-point later — see
+    /// `Command::CreateWavePredecessor`'s own doc) BEFORE calling this;
+    /// this method only ever reports the NEW state, never the old one.
+    ///
+    /// `predecessor_seed` is the ONLY source of the predecessor's degree
+    /// and far anchor. Its LAST point is welded EXACTLY onto `next_id`'s
+    /// own FIRST point by `Self::restitch_wave_joints` below, after the
+    /// `follows` stamp — the same weld a drag step already performs for
+    /// every other wave joint — rather than assumed to already match from
+    /// interpolation alone.
+    ///
+    /// Goes through the SAME `add_external` path every other
+    /// externally-constructed primitive uses, same as `create_wave_child`/
+    /// `create_wave_successor`. Returns the new predecessor's id together
+    /// with its own full snapshot — the caller (`create_wave_predecessor_
+    /// and_record`, `mlc-app`) needs both to build `Command::
+    /// CreateWavePredecessor` without a second query.
+    pub(crate) fn create_wave_predecessor(
+        &mut self,
+        bubbles: &mut BubbleStore,
+        bid: BubbleId,
+        next_id: u64,
+        type_id: &str,
+    ) -> Option<(u64, PrimitiveSnapshot)> {
+        let (seed, color) = {
+            let b = bubbles.bubble(bid)?;
+            let idx = Self::find_index_by_id(b, next_id)?;
+            let next = b.primitives[idx].as_ref();
+            // `.contains(&type_id)` would not type-check — same reason
+            // `create_wave_successor` sidesteps it with a value compare.
+            if !predecessor_kinds(next).iter().any(|&kind_id| kind_id == type_id) {
+                return None;
+            }
+            let seed = predecessor_seed(next)?;
+            (seed, next.data().color.stroke.clone())
+        };
+
+        let predecessor: Box<dyn Primitive> = match type_id {
+            "elliott_impulse" => {
+                let mut p = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                Box::new(p)
+            }
+            "elliott_correction" => {
+                let mut p = ElliottCorrection::new(points_array::<4>(seed.interpolate(4)), &color);
+                p.degree = seed.degree;
+                Box::new(p)
+            }
+            "elliott_triangle" => {
+                let mut p = ElliottTriangle::new(points_array::<6>(seed.interpolate(6)), &color);
+                p.degree = seed.degree;
+                Box::new(p)
+            }
+            "elliott_double_combo" => {
+                let mut p = ElliottDoubleCombo::new(points_array::<7>(seed.interpolate(7)), &color);
+                p.degree = seed.degree;
+                Box::new(p)
+            }
+            "elliott_triple_combo" => {
+                let mut p = ElliottTripleCombo::new(seed.interpolate(9), &color);
+                p.degree = seed.degree;
+                Box::new(p)
+            }
+            _ => return None,
+        };
+
+        let new_id = self.add_external(bubbles, bid, predecessor);
+
+        if let Some(b) = bubbles.bubble_mut(bid) {
+            if let Some(next) = b.primitives.iter_mut().find(|p| p.data().id == next_id) {
+                next.set_wave_follows(Some(new_id));
+            }
+            Self::restitch_wave_joints(b, next_id);
+        }
+        self.refresh_wave_guards(bubbles, bid);
+
+        let snapshot = self.get_snapshot(bubbles, bid, new_id)?;
+        Some((new_id, snapshot))
+    }
+
     /// Set (or clear) `prim_id`'s own [`WaveLink`] directly — the write
     /// path chain promotion/demotion needs (`Self::promote_wave_chain` and
     /// its undo-apply counterpart in `Command::DemoteWaveChain`), never
@@ -2579,6 +2690,22 @@ impl DrawingManager {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         if let Some(p) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
             p.set_wave_link(link);
+        }
+        self.refresh_wave_guards(bubbles, bid);
+    }
+
+    /// Set (or clear) `prim_id`'s own `follows` directly — the write path
+    /// a wave-predecessor undo/redo needs (`Command::CreateWavePredecessor`/
+    /// `Command::DeleteWavePredecessor`'s own apply arms in `mlc-app`), the
+    /// same shape [`Self::set_wave_link`] already offers for the other
+    /// relation. `Self::create_wave_predecessor` itself does NOT go
+    /// through this — it stamps `follows` directly while it still holds
+    /// the fresh `&mut DataBubble` from `add_external`, so it can also run
+    /// `Self::restitch_wave_joints` in the same borrow.
+    pub(crate) fn set_wave_follows(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, follows: Option<u64>) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        if let Some(p) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
+            p.set_wave_follows(follows);
         }
         self.refresh_wave_guards(bubbles, bid);
     }

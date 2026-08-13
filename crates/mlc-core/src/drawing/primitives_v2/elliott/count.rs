@@ -668,6 +668,172 @@ pub fn successor_kinds(prev: &dyn Primitive) -> &'static [&'static str] {
 }
 
 // =========================================================================
+// Predecession — succession read backwards (owner ask 2026-08-14: "щас мы
+// чейн можем только с конца строить, а хорошо бы при даблклике или ПКМ на
+// 0 точку делать достройку перед началом чейна" — a count is read
+// backwards as often as forwards, so building a chain must not be limited
+// to appending after the terminal pivot). Same `follows` field
+// `successor_seed`/`successor_kinds` already use — a predecessor is still
+// `follows`-linked to what it precedes, exactly like an ordinary successor
+// is `follows`-linked to what it continues; the only thing that changes is
+// which END of the relation the caller already has a primitive for.
+// =========================================================================
+
+/// What a NEW predecessor primitive that `next` continues FROM must be
+/// seeded with — [`SuccessorSeed`] read backwards.
+///
+/// `degree` is always `next`'s OWN degree, unchanged — succession (in
+/// either direction) is a same-degree sibling relation, never a
+/// subdivision (same reasoning [`SuccessorSeed::degree`]'s own doc gives).
+/// `end` is exactly `next`'s own FIRST point (`points().first()`), so the
+/// two structures visibly connect on the chart with no gap — the mirror of
+/// [`SuccessorSeed::start`], which is exactly `prev`'s own LAST point.
+///
+/// `span_bars_hint`/`price_hint` are a DEFAULT extent for the
+/// predecessor's still-unplaced STARTING end, using the exact same
+/// reasoning [`SuccessorSeed`]'s own doc gives for its own hints:
+///
+/// - `span_bars_hint` ≈ 0.618 of `next`'s own total bar span
+///   (`last.0 - first.0`) — the same golden-ratio constant, for the same
+///   reason [`SuccessorSeed::span_bars_hint`] states: a plausible
+///   corrective-vs-motive time proportion, not a claim to know the real
+///   one. This field itself carries the NEGATIVE sign (unlike
+///   `SuccessorSeed::span_bars_hint`, which is always `>= 0`): the
+///   predecessor's own start lies BEFORE `end` in time, since it is placed
+///   in FRONT of the chain instead of after it, so [`Self::start`]
+///   computes the far anchor by ADDING this (negative) hint to `end`
+///   rather than subtracting a positive one.
+/// - `price_hint` ≈ 0.5 of `next`'s own total price travel
+///   (`last.1 - first.1`) — the same half-retrace magnitude
+///   [`SuccessorSeed::price_hint`] uses, but the direction of this hint is
+///   INVERTED relative to the successor case, because a predecessor
+///   ARRIVES INTO this structure rather than LEAVING it. Read it through
+///   the same alternation rule `SuccessorSeed::price_hint` applies (a
+///   structure's own motion opposes whatever it is adjacent to): there,
+///   the successor's motion opposes `prev`'s motion, so the hint negates
+///   `prev`'s own travel; here, by the same rule read the other way,
+///   `next`'s motion opposes the PREDECESSOR's motion, so the
+///   predecessor's own motion is `-(next`'s own travel `* 0.5)`. But
+///   because THIS seed's fixed anchor is `end`, not `start`, [`Self::start`]
+///   recovers the predecessor's own start by ADDING `price_hint` to
+///   `end.1` — and adding the ALREADY-negated motion back onto `end` to
+///   reach `start` cancels the negation, so `price_hint` itself is stored
+///   as the un-negated `next`'s own travel `* 0.5`. Same magnitude
+///   formula as `SuccessorSeed::price_hint`, opposite sign convention —
+///   not a different reasoning, a different anchor.
+///
+/// Both numbers seed a draggable INITIAL shape, not a forecast — same as
+/// [`SuccessorSeed`]'s own doc states.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PredecessorSeed {
+    /// The degree the predecessor must be constructed with — always
+    /// `next`'s own degree (see this struct's own doc).
+    pub degree: WaveDegree,
+    /// The predecessor's ending anchor — `next`'s own first point.
+    pub end: (i64, f64),
+    /// Default bar-span extent for the predecessor's still-unplaced
+    /// STARTING end, relative to `end.0` — see this struct's own doc for
+    /// why this carries the negative sign (unlike
+    /// [`SuccessorSeed::span_bars_hint`]).
+    pub span_bars_hint: i64,
+    /// Default price extent for the predecessor's still-unplaced STARTING
+    /// end, relative to `end.1` — see this struct's own doc for the
+    /// "inverted relative to the successor case" derivation.
+    pub price_hint: f64,
+}
+
+impl PredecessorSeed {
+    /// The predecessor's still-unplaced STARTING anchor implied by `end` +
+    /// `span_bars_hint`/`price_hint` — the mirror of [`SuccessorSeed::end`],
+    /// which computes the far end by ADDING its own hints to `start`; here
+    /// `end` is the fixed anchor and this method locates `start` instead.
+    pub fn start(&self) -> (i64, f64) {
+        (self.end.0 + self.span_bars_hint, self.end.1 + self.price_hint)
+    }
+
+    /// `n` points evenly interpolated from [`start`](Self::start) to `end`
+    /// — see [`interpolate_points`]'s own doc for why this shares its math
+    /// with, but is not the same type as, [`SuccessorSeed::interpolate`]/
+    /// [`ChildSeed::interpolate`].
+    pub fn interpolate(&self, n: usize) -> Vec<(i64, f64)> {
+        interpolate_points(self.start(), self.end, n)
+    }
+}
+
+/// What a new predecessor primitive that `next` continues FROM at its own
+/// degree must be seeded with. `None` when `next` is not an Elliott wave at
+/// all (`next.wave_degree()` is `None`), or its own points do not yet reach
+/// 2 entries (a primitive still being drawn — there is no "first point"
+/// yet). Reads `next` only through the [`Primitive`] trait, never
+/// downcasts — same contract as [`successor_seed`].
+pub fn predecessor_seed(next: &dyn Primitive) -> Option<PredecessorSeed> {
+    let degree = next.wave_degree()?;
+    let points = next.points();
+    if points.len() < 2 {
+        return None;
+    }
+    let first = points[0];
+    let last = points[points.len() - 1];
+    let bar_span = last.0 - first.0;
+    let price_travel = last.1 - first.1;
+    Some(PredecessorSeed {
+        degree,
+        end: first,
+        span_bars_hint: -((bar_span as f64 * 0.618).round() as i64),
+        price_hint: price_travel * 0.5,
+    })
+}
+
+/// The Elliott type ids that may validly PRECEDE `next` at `next`'s own
+/// degree — [`successor_kinds`] read backwards: after a MOTIVE structure
+/// comes a corrective one, so BEFORE a corrective structure came a motive
+/// one; after a corrective structure comes a motive one, so BEFORE a
+/// motive structure came a corrective one.
+///
+/// Written as its OWN function rather than calling [`successor_kinds`] on
+/// some notional "the other end of the relation" and trusting the mapping
+/// is symmetric: it happens to BE symmetric today — the alternation this
+/// module encodes has exactly two classes (motive and corrective), and
+/// swapping "comes after" for "comes before" between two classes of two is
+/// its own inverse — but the two functions are kept separate ON PURPOSE.
+/// A future asymmetric grammar (e.g. a rule that a triangle may FOLLOW
+/// anything but nothing may FOLLOW a triangle) would need to edit only one
+/// of these two functions, and having them separate from day one means
+/// that edit is a one-function change instead of an untangle.
+///
+/// - Before `"elliott_impulse"` (the only motive structure among the five)
+///   → any of the four corrective structures: `"elliott_correction"`,
+///   `"elliott_triangle"`, `"elliott_double_combo"`, `"elliott_triple_combo"`.
+/// - Before any of those four corrective structures → `"elliott_impulse"`
+///   only.
+/// - Empty for every primitive outside the Elliott family
+///   (`next.wave_degree()` is `None`) — nothing may validly precede a
+///   non-Elliott primitive.
+///
+/// This is the grammar itself, not just advice to a picker: the caller
+/// that creates a predecessor (`DrawingManager::create_wave_predecessor`)
+/// re-checks the requested type id against this list before constructing
+/// anything, the same fail-closed shape `create_wave_successor` already
+/// uses against [`successor_kinds`].
+pub fn predecessor_kinds(next: &dyn Primitive) -> &'static [&'static str] {
+    if next.wave_degree().is_none() {
+        return &[];
+    }
+    match next.type_id() {
+        "elliott_impulse" => &[
+            "elliott_correction",
+            "elliott_triangle",
+            "elliott_double_combo",
+            "elliott_triple_combo",
+        ],
+        "elliott_correction" | "elliott_triangle" | "elliott_double_combo" | "elliott_triple_combo" => {
+            &["elliott_impulse"]
+        }
+        _ => &[],
+    }
+}
+
+// =========================================================================
 // Grammar — which child kinds legally fit a slot (owner ask 2026-08-13: a
 // motive slot always seeded an impulse child and everything else a
 // correction, purely off `WaveSlot::is_motive` — that heuristic cannot
@@ -1505,6 +1671,97 @@ mod tests {
         use crate::drawing::primitives_v2::TrendLine;
         let line = TrendLine::new(0, 100.0, 1_000, 110.0, "#2196F3");
         assert!(successor_kinds(&line).is_empty());
+    }
+
+    // =====================================================================
+    // predecessor_seed / predecessor_kinds (owner ask 2026-08-14,
+    // "Predecession" section above — `SuccessorSeed`/`successor_kinds` read
+    // backwards)
+    // =====================================================================
+
+    #[test]
+    fn predecessor_seed_ends_at_nexts_first_point_same_degree() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = predecessor_seed(&impulse).expect("impulse seeds a predecessor");
+        assert_eq!(seed.end, points[0]);
+        assert_eq!(seed.degree, WaveDegree::Intermediate, "predecession keeps the SAME degree, never finer");
+    }
+
+    #[test]
+    fn predecessor_seed_span_is_0_618_of_nexts_own_bar_span_and_negative() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = predecessor_seed(&impulse).expect("impulse seeds a predecessor");
+        // next's own bar span is 10_000 - 0 = 10_000; the predecessor's own
+        // start lies BEFORE `end` in time, so the hint carries the negative
+        // sign.
+        assert_eq!(seed.span_bars_hint, -((10_000f64 * 0.618).round() as i64));
+    }
+
+    #[test]
+    fn predecessor_seed_price_hint_is_half_nexts_travel_not_negated() {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (10_000, 150.0),
+        ];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let seed = predecessor_seed(&impulse).expect("impulse seeds a predecessor");
+        // next travelled +50 (100.0 -> 150.0); the predecessor's own
+        // default motion is HALF that, in the OPPOSITE direction — which,
+        // because `end` (not `start`) is the fixed anchor here, comes out
+        // as a POSITIVE price_hint (see `PredecessorSeed`'s own doc for the
+        // "inverted relative to the successor case" derivation).
+        assert_eq!(seed.price_hint, 25.0);
+        assert_eq!(seed.start(), (points[0].0 + seed.span_bars_hint, 100.0 + 25.0));
+    }
+
+    #[test]
+    fn predecessor_seed_none_for_undrawn_primitive() {
+        // Same "not enough points yet" contract `successor_seed`'s own
+        // test exercises — the "not Elliott" `None` path is covered
+        // separately below, by `predecessor_kinds_empty_for_non_elliott_primitive`.
+        let points: [(i64, f64); 4] = [(0, 100.0), (0, 100.0), (0, 100.0), (0, 100.0)];
+        let correction = ElliottCorrection::new(points, "#FF5722");
+        assert!(predecessor_seed(&correction).is_some());
+    }
+
+    #[test]
+    fn predecessor_kinds_alternates_motive_and_corrective() {
+        let impulse_points: [(i64, f64); 6] = [
+            (0, 100.0), (1, 101.0), (2, 102.0), (3, 103.0), (4, 104.0), (5, 105.0),
+        ];
+        let impulse = ElliottImpulse::new(impulse_points, "#2196F3");
+        let before_impulse = predecessor_kinds(&impulse);
+        assert_eq!(before_impulse, &["elliott_correction", "elliott_triangle", "elliott_double_combo", "elliott_triple_combo"]);
+        assert!(!before_impulse.contains(&"elliott_impulse"), "a motive structure must never offer another motive structure as its predecessor");
+
+        let correction_points: [(i64, f64); 4] = [(0, 100.0), (1, 101.0), (2, 102.0), (3, 103.0)];
+        let correction = ElliottCorrection::new(correction_points, "#FF5722");
+        let before_correction = predecessor_kinds(&correction);
+        assert_eq!(before_correction, &["elliott_impulse"]);
+    }
+
+    #[test]
+    fn predecessor_kinds_empty_for_non_elliott_primitive() {
+        use crate::drawing::primitives_v2::TrendLine;
+        let line = TrendLine::new(0, 100.0, 1_000, 110.0, "#2196F3");
+        assert!(predecessor_kinds(&line).is_empty());
+    }
+
+    #[test]
+    fn predecessor_kinds_matches_successor_kinds_today_but_stays_its_own_function() {
+        // The relation happens to be symmetric today (two classes, motive
+        // and corrective) — see `predecessor_kinds`' own doc for why the
+        // two functions are kept separate anyway.
+        let impulse_points: [(i64, f64); 6] = [
+            (0, 100.0), (1, 101.0), (2, 102.0), (3, 103.0), (4, 104.0), (5, 105.0),
+        ];
+        let impulse = ElliottImpulse::new(impulse_points, "#2196F3");
+        assert_eq!(predecessor_kinds(&impulse), successor_kinds(&impulse));
     }
 
     fn chain_impulse_then_correction() -> (ElliottImpulse, ElliottCorrection) {

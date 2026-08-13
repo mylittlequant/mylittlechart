@@ -444,3 +444,41 @@ pub fn build_successor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuIte
 
     items
 }
+
+/// Build the "what precedes this structure" popup
+/// (`ChartGesture::PredecessorMenu`) for the already-selected primitive —
+/// [`build_successor_menu`] read backwards (owner ask 2026-08-14: "щас мы
+/// чейн можем только с конца строить, а хорошо бы... делать достройку
+/// перед началом чейна" — a count is read backwards as often as
+/// forwards, so building must not be limited to appending after the
+/// terminal pivot).
+///
+/// Action ids: `"wave_menu:predecessor:{type_id}"` — mirrors
+/// `build_successor_menu`'s own `"wave_menu:successor:{type_id}"` rows.
+/// No promote button here: E4 promotion collapses a chain FORWARD from
+/// its own head, and [`SelectedPrimitiveConfig::can_promote`] already
+/// answers that question from whichever member of the chain is selected
+/// — nothing about building backwards changes what promotion means, so
+/// this menu leaves it to whichever OTHER wave-gesture menu the analyst
+/// opens on the chain's own head.
+///
+/// Opens with [`build_conversion_block`] (own doc has the full "what this
+/// whole segment currently IS" rationale), same as [`build_wave_menu`]/
+/// [`build_successor_menu`].
+pub fn build_predecessor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuItemState> {
+    // No second name row, same reasoning `build_successor_menu`'s own doc
+    // gives: the conversion block above already opens with this
+    // structure's own name.
+    let mut items = build_conversion_block(cfg);
+    items.push(ContextMenuItemState::separator());
+
+    for (type_id, display_name) in &cfg.predecessor_kinds {
+        items.push(ContextMenuItemState::action_with_icon(
+            elliott_icon_id(type_id),
+            format!("wave_menu:predecessor:{type_id}"),
+            display_name.clone(),
+        ));
+    }
+
+    items
+}

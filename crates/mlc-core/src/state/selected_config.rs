@@ -50,6 +50,18 @@ pub struct SelectedPrimitiveConfig {
     /// this codebase; `display_name` is that type's own registered
     /// `PrimitiveMetadata::display_name` — never a second name table.
     pub successor_kinds: Vec<(String, String)>,
+    /// `(type_id, display_name)` pairs for the Elliott types that may
+    /// validly PRECEDE this primitive at its OWN degree —
+    /// [`Self::successor_kinds`] read backwards (see
+    /// `drawing::primitives_v2::elliott::count::predecessor_kinds`; owner
+    /// ask 2026-08-14: a count is read backwards as often as forwards, so
+    /// building a chain must not be limited to appending after the
+    /// terminal pivot). Same shape and same source convention as
+    /// [`Self::successor_kinds`] — `type_id` is the primitive's own
+    /// registry id, `display_name` is that type's own registered
+    /// `PrimitiveMetadata::display_name`. Empty for every primitive
+    /// outside the Elliott family.
+    pub predecessor_kinds: Vec<(String, String)>,
     /// Whether the selected primitive's own `follows`-linked chain
     /// currently promotes into one coarser structure (E4 — see
     /// `drawing::primitives_v2::elliott::count::promote_chain_shape`).

@@ -109,7 +109,7 @@ use mlc_app_layout::layout::ExtendedLayoutHitTester;
 use mlc_app_layout::panel_app::ChartPanelLayout;
 use mlc_app_layout::ui::context_menu::{
     ContextMenuTarget, ContextMenuItemState,
-    build_primitive_context_menu, build_wave_menu, build_successor_menu,
+    build_primitive_context_menu, build_wave_menu, build_successor_menu, build_predecessor_menu,
 };
 use mlc_app_layout::ui::modal_settings::DualSliderHandle;
 use mlc_core::drawing::TimeframeVisibilityConfig;
@@ -586,17 +586,17 @@ impl ChartApp {
     }
 
     /// Ask the wave-gesture question for `(x, y)`: does it land on an
-    /// Elliott primitive's own wave segment or terminal point, and — if so
-    /// — does `trigger` open a menu for it under the active
-    /// [`mlc_core::state::GestureBindings`]? The ONE entry point both
-    /// `on_double_click` and `on_right_click`'s primitive arm call BEFORE
-    /// their own generic behaviour, returning early on `true` — see each
-    /// call site's own comment for why it runs where it does relative to
-    /// what was already there. Neither call site matches on `trigger`
-    /// itself: that indirection is `GestureBindings`'s whole reason for
-    /// existing (owner ask 2026-08-13 — "вопрос только на что это вешать
-    /// на даблклик или на ПКМ хз, дискуссионно" — see that module's own
-    /// doc).
+    /// Elliott primitive's own wave segment, terminal point, or origin
+    /// point, and — if so — does `trigger` open a menu for it under the
+    /// active [`mlc_core::state::GestureBindings`]? The ONE entry point
+    /// both `on_double_click` and `on_right_click`'s primitive arm call
+    /// BEFORE their own generic behaviour, returning early on `true` —
+    /// see each call site's own comment for why it runs where it does
+    /// relative to what was already there. Neither call site matches on
+    /// `trigger` itself: that indirection is `GestureBindings`'s whole
+    /// reason for existing (owner ask 2026-08-13 — "вопрос только на что
+    /// это вешать на даблклик или на ПКМ хз, дискуссионно" — see that
+    /// module's own doc).
     ///
     /// Resolves the primitive under the cursor through the SAME
     /// `DrawingManager::hit_test`/`hit_test_in_pane` entry points every
@@ -611,12 +611,15 @@ impl ChartApp {
     /// `prim_id`).
     ///
     /// The target — a wave segment vs. the structure's own terminal point
-    /// — is decided with the SAME per-primitive `hit_test` (control points
-    /// first, at the drag path's own hit radius —
-    /// `Primitive::control_point_hit_test`'s default, which every
-    /// concrete `hit_test` override still goes through) and `wave_at`
-    /// (body + label + ratio-rib search) every other consumer of those two
-    /// methods already uses; this never invents a third geometry test.
+    /// vs. its own origin point (owner ask 2026-08-14: a count is read
+    /// backwards as often as forwards, so building a chain must not be
+    /// limited to appending after the terminal pivot) — is decided with
+    /// the SAME per-primitive `hit_test` (control points first, at the
+    /// drag path's own hit radius — `Primitive::control_point_hit_test`'s
+    /// default, which every concrete `hit_test` override still goes
+    /// through) and `wave_at` (body + label + ratio-rib search) every
+    /// other consumer of those two methods already uses; this never
+    /// invents a third geometry test.
     pub(crate) fn try_wave_gesture(&mut self, x: f64, y: f64, trigger: GestureTrigger) -> bool {
         use mlc_core::state::{ChartGesture, GestureTarget};
 
@@ -693,11 +696,29 @@ impl ChartApp {
             return false;
         }
 
-        let terminal_hit = matches!(
-            prim.hit_test(hx, hy, &bars, &hit_vp, &hit_ps),
-            HitTestResult::ControlPoint(cp) if Some(cp) == prim.terminal_control_point(&bars, &hit_vp, &hit_ps)
-        );
-        let target_and_slot = if terminal_hit {
+        // Which control point (if any) the hit landed on — read ONCE, then
+        // compared against both `origin_control_point` and
+        // `terminal_control_point` rather than hit-testing twice.
+        let hit_cp = match prim.hit_test(hx, hy, &bars, &hit_vp, &hit_ps) {
+            HitTestResult::ControlPoint(cp) => Some(cp),
+            _ => None,
+        };
+        let origin_hit = hit_cp.is_some() && hit_cp == prim.origin_control_point(&bars, &hit_vp, &hit_ps);
+        let terminal_hit = hit_cp.is_some() && hit_cp == prim.terminal_control_point(&bars, &hit_vp, &hit_ps);
+        // A structure realized down to a single point reports that SAME
+        // point as both its origin (index 0) and its terminal (index
+        // `realized - 1`, which is also 0 when only one point exists) —
+        // `origin_control_point`/`terminal_control_point` never resolve
+        // that overlap themselves (see each method's own doc), so the
+        // caller must, and does it here: origin wins. A predecessor menu
+        // on the structure's only placed point is the useful reading (the
+        // count has nowhere to go FORWARD yet, since there is no terminal
+        // pivot distinct from the origin); a successor menu on a
+        // one-point structure would open on a pivot indistinguishable from
+        // where the analyst is still drawing.
+        let target_and_slot = if origin_hit {
+            Some((GestureTarget::OriginPoint, None))
+        } else if terminal_hit {
             Some((GestureTarget::TerminalPoint, None))
         } else {
             prim.wave_at(hx, hy, &bars, &hit_vp, &hit_ps).map(|slot| (GestureTarget::WaveSegment, Some(slot)))
@@ -718,6 +739,7 @@ impl ChartApp {
             GestureTrigger::RightClick => match target {
                 GestureTarget::WaveSegment => ChartGesture::WaveMenu,
                 GestureTarget::TerminalPoint => ChartGesture::SuccessorMenu,
+                GestureTarget::OriginPoint => ChartGesture::PredecessorMenu,
             },
             _ => match self.gesture_bindings.gesture_for(trigger, target) {
                 Some(g) => g,
@@ -739,6 +761,7 @@ impl ChartApp {
                 build_wave_menu(&cfg, slot, child_id)
             }
             (ChartGesture::SuccessorMenu, _) => build_successor_menu(&cfg),
+            (ChartGesture::PredecessorMenu, _) => build_predecessor_menu(&cfg),
             // `GestureBindings::gesture_for` only ever maps
             // `GestureTarget::WaveSegment` to `ChartGesture::WaveMenu`, and
             // the `WaveSegment` branch above always carries a slot — this
@@ -7506,6 +7529,46 @@ impl ChartApp {
                     }
                 }
             }
+            Command::CreateWavePredecessor { prim_id, snapshot, next_id, .. } => {
+                // Redo of a predecessor creation, or undo of its own
+                // inverse (`DeleteWavePredecessor`): recreate the
+                // predecessor from its own snapshot, then re-point
+                // `next_id`'s own `follows` at it — see
+                // `Command::DeleteWavePredecessor`'s own doc for why the
+                // two directions are not symmetric enough to share one
+                // apply arm (this one must NOT go through
+                // `DrawingManager::delete`).
+                if let Some(gid) = group_id {
+                    let mut guard = self.core.drawings_mut();
+                    let insert_pos = guard.count(gid);
+                    guard.insert_at(gid, insert_pos, &snapshot.type_id, &snapshot.json);
+                    guard.set_wave_follows(gid, *next_id, Some(*prim_id));
+                } else if let Some(bid) = active_bid_cmd {
+                    let mut guard = self.core.drawings_mut();
+                    let insert_pos = guard.count(bid);
+                    guard.insert_at(bid, insert_pos, &snapshot.type_id, &snapshot.json);
+                    guard.set_wave_follows(bid, *next_id, Some(*prim_id));
+                }
+            }
+            Command::DeleteWavePredecessor { prim_id, next_id, previous_follows, .. } => {
+                // Undo of a predecessor creation, or redo of a demotion:
+                // remove the predecessor primitive, then restore
+                // `next_id`'s own `follows` to whatever it held before the
+                // predecessor was created (`None`, or another chain
+                // member it already continued) — `DrawingManager::
+                // delete`'s own dangling-`follows` cleanup would otherwise
+                // leave it cleared to `None` regardless of what it held
+                // before.
+                if let Some(gid) = group_id {
+                    let mut guard = self.core.drawings_mut();
+                    guard.delete(gid, *prim_id);
+                    guard.set_wave_follows(gid, *next_id, *previous_follows);
+                } else if let Some(bid) = active_bid_cmd {
+                    let mut guard = self.core.drawings_mut();
+                    guard.delete(bid, *prim_id);
+                    guard.set_wave_follows(bid, *next_id, *previous_follows);
+                }
+            }
             Command::MovePrimitive { prim_id, new_points, .. } => {
                 if let Some(gid) = group_id {
                     self.core.drawings_mut().set_points(gid, *prim_id, new_points);
@@ -8068,7 +8131,8 @@ impl ChartApp {
             | Command::MovePrimitive { .. } | Command::ModifyPrimitiveData { .. }
             | Command::ModifyPrimitiveFull { .. }
             | Command::PromoteWaveChain { .. } | Command::DemoteWaveChain { .. }
-            | Command::ConvertPrimitiveKind { .. } => {
+            | Command::ConvertPrimitiveKind { .. }
+            | Command::CreateWavePredecessor { .. } | Command::DeleteWavePredecessor { .. } => {
                 self.autosave_snapshot();
             }
             _ => {}
@@ -8434,6 +8498,8 @@ impl ChartApp {
                 | Command::PromoteWaveChain { .. }
                 | Command::DemoteWaveChain { .. }
                 | Command::ConvertPrimitiveKind { .. }
+                | Command::CreateWavePredecessor { .. }
+                | Command::DeleteWavePredecessor { .. }
                 | Command::AddIndicator { .. }
                 | Command::RemoveIndicator { .. }
                 | Command::ModifyIndicator { .. }
