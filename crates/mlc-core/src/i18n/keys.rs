@@ -390,10 +390,16 @@ pub enum ConfigKey {
     // same settings-modal row family, own key because it labels a distinct
     // property (`show_projections`, not `show_ratios`).
     ShowProjections               = 162,
+
+    // Elliott per-structure truncated-fifth escape hatch
+    // (`ElliottImpulse::truncated_fifth`, owner ruling 2026-08-15) — same
+    // settings-modal row family as `ShowProjections` right above it, own key
+    // because it labels a distinct property.
+    TruncatedFifth                = 163,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 163;
+    pub const COUNT: usize = 164;
 
     /// Get translation for this key
     #[inline]
@@ -2952,10 +2958,28 @@ pub enum ConceptKey {
     // the CHILD side (the primitive carrying the `WaveLink`) rather than
     // the parent, so it can name both degrees.
     RuleSubdivisionDegree = 327,
+
+    // ---- Elliott truncated-fifth guard message (2026-08-15, owner ruling:
+    // a fifth that fails to exceed wave 3 is a real Elliott shape — a
+    // truncation — not automatically a mistake, so the rule gained a
+    // per-structure excuse rather than staying unimplemented). See
+    // `elliott::guard::impulse_violations`'s own `"wave5_beyond_wave3"`
+    // check and `ElliottImpulse::truncated_fifth`'s own field doc.
+    RuleWave5BeyondWave3 = 328,
+
+    // ---- Wave-5 context-menu checkable row (2026-08-15, second entrance
+    // for `ElliottImpulse::truncated_fifth` — the first is the structure's
+    // own settings modal, free via `style_properties()`). Two labels, not
+    // one dynamic string: `mlc-app-layout`'s `build_wave_menu` mirrors the
+    // existing lock/visibility toggle idiom (`MenuKey::Lock`/`MenuKey::
+    // Unlock`) — the label names the ACTION a click performs, which reads
+    // back as the row's current state.
+    MarkTruncatedFifthLabel = 329,
+    ClearTruncatedFifthLabel = 330,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 328;
+    pub const COUNT: usize = 331;
 
     /// Get translation for this key.
     #[inline]

@@ -1601,6 +1601,16 @@ impl ConfigProperty {
         Self::boolean("show_projections", ConfigKey::ShowProjections.get(current_language()), value)
     }
 
+    /// Create "Truncated fifth" boolean property with i18n — the
+    /// per-structure escape hatch for `elliott::guard`'s own
+    /// `"wave5_beyond_wave3"` hard rule (owner ruling 2026-08-15), declared
+    /// next to [`Self::show_projections`] on `ElliottImpulse`, same
+    /// ungrouped run, same "falls out of `style_properties()` for free"
+    /// surface — see `ElliottImpulse::truncated_fifth`'s own field doc.
+    pub fn truncated_fifth(value: bool) -> Self {
+        Self::boolean("truncated_fifth", ConfigKey::TruncatedFifth.get(current_language()), value)
+    }
+
     /// Create "Show Trendlines" boolean property with i18n
     pub fn show_trendlines(value: bool) -> Self {
         Self::boolean("show_trendlines", ConfigKey::ShowTrendlines.get(current_language()), value)

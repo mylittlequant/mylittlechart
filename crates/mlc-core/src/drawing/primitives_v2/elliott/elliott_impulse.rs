@@ -71,6 +71,29 @@ pub struct ElliottImpulse {
     /// loads and renders unchanged.
     #[serde(default)]
     pub show_projections: bool,
+    /// Declares THIS impulse's own fifth wave deliberately truncated — a
+    /// real Elliott shape (`EwaPatternKind::TruncatedImpulse`, whose fifth
+    /// legitimately fails to make new ground past wave 3) rather than a
+    /// drawing mistake (owner ruling 2026-08-15: a fifth that fails to
+    /// exceed wave 3 is a rare, real shape, not automatically an error —
+    /// `guard::impulse_violations`'s own `"wave5_beyond_wave3"` check needed
+    /// a per-structure way to excuse it). `false` (the default) — an
+    /// existing drawing loads with the rule ACTIVE, so every drawing saved
+    /// before this field existed keeps being checked exactly as before: the
+    /// analyst opts INTO calling his own fifth truncated, not the other way
+    /// around. Its ONLY effect is skipping `"wave5_beyond_wave3"` for THIS
+    /// structure — every other hard rule (wave 2/4 overlap, wave 3
+    /// progression, wave 3 not shortest, ...) keeps checking exactly as
+    /// before (see `guard`'s own `wave5_truncation_tests` module, the test
+    /// asserting a structure that ALSO overlaps wave 1 still reports that
+    /// violation with this flag on). Deliberately per-structure, not an
+    /// `EwaEngineConfig` toggle — truncation is a property of ONE fifth
+    /// wave, and a process-global switch would silence the rule on every
+    /// count on the chart (owner: "по дефолту выключены, но кликая по
+    /// конкретной 5 и настройкам там просто тугл — усечённая, и оно снимает
+    /// ошибку").
+    #[serde(default)]
+    pub truncated_fifth: bool,
     /// How many of `points` are REAL — i.e. correspond to an actually-drawn
     /// pivot — as opposed to padding introduced when a `follows`-linked
     /// chain is promoted into a coarser structure before every one of its
@@ -148,6 +171,11 @@ impl ElliottImpulse {
             ratio_rib_width: ratio_rib_defaults.width,
             ratio_rib_style: ratio_rib_defaults.style,
             show_projections: ewa_cfg.show_projections,
+            // No `EwaEngineConfig` counterpart (owner ask 2026-08-15,
+            // rejected — see the field's own doc): every freshly drawn
+            // impulse starts with the rule active, the same posture a
+            // pre-existing drawing loads into.
+            truncated_fifth: false,
             realized_points: None,
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
@@ -208,6 +236,7 @@ impl Primitive for ElliottImpulse {
     fn set_realized_point_count(&mut self, n: usize) {
         self.realized_points = Some(n.min(self.points.len()));
     }
+    fn truncated_fifth(&self) -> bool { self.truncated_fifth }
     fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
     fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn subdivided_slots(&self) -> &[WaveSlot] { &self.subdivided_slots }
@@ -457,14 +486,19 @@ impl Primitive for ElliottImpulse {
             // the ratio-rib block it shares its own style with (see
             // `elliott::projection`'s module doc).
             ConfigProperty::show_projections(self.show_projections).with_category(PropertyCategory::AppearanceLine).with_order(16),
+            // The per-structure truncated-fifth escape hatch (owner ruling
+            // 2026-08-15) — next to `show_projections`, same ungrouped run,
+            // same "falls out of `style_properties()` for free" surface
+            // (see `truncated_fifth`'s own field doc).
+            ConfigProperty::truncated_fifth(self.truncated_fifth).with_category(PropertyCategory::AppearanceLine).with_order(17),
             // `PropertyGroup::Degree` (W2) — the approved design's own
             // `wave_tabs()` "Degree" group, pulled out of the default Line
             // run into its own header.
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17).in_group(PropertyGroup::Degree),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(18).in_group(PropertyGroup::Degree),
             // `PropertyGroup::WaveLabels` (W2) — the approved design's own
             // `WaveLabelsGroupTitle`.
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18).in_group(PropertyGroup::WaveLabels),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
@@ -479,6 +513,7 @@ impl Primitive for ElliottImpulse {
             "ratio_rib_width" => { if let Some(v) = value.as_number() { self.ratio_rib_width = Some(v); return true; } }
             "ratio_rib_style" => { if let Some(s) = value.as_string() { self.ratio_rib_style = LineStyle::from_str(s); return true; } }
             "show_projections" => { if let Some(v) = value.as_bool() { self.show_projections = v; return true; } }
+            "truncated_fifth" => { if let Some(v) = value.as_bool() { self.truncated_fifth = v; return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }

@@ -657,6 +657,7 @@ impl DrawingManager {
             predecessor_kinds: predecessor_kind_items,
             can_promote,
             conversion_kinds: conversion_kind_items,
+            truncated_fifth: prim.truncated_fifth(),
         })
     }
 

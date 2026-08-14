@@ -384,10 +384,11 @@ fn push_engine_settings_row(items: &mut Vec<ContextMenuItemState>) {
 ///
 /// Action ids: `"wave_menu:subdivide:{slot_id}:{kind_id}"`,
 /// `"wave_menu:select_child:{child_id}"`,
-/// `"wave_menu:delete_child:{child_id}"` — `on_context_menu_action`
-/// (`mlc-app`) parses these back; see that function's own doc for why the
-/// parent's own id is never embedded (it is already the context menu's
-/// `ContextMenuTarget::Primitive` id).
+/// `"wave_menu:delete_child:{child_id}"`,
+/// `"wave_menu:toggle_truncated_fifth"` (wave-5-only, see below) —
+/// `on_context_menu_action` (`mlc-app`) parses these back; see that
+/// function's own doc for why the parent's own id is never embedded (it is
+/// already the context menu's `ContextMenuTarget::Primitive` id).
 ///
 /// Opens with [`build_conversion_block`] (own doc has the full "what this
 /// whole segment currently IS" rationale) — the reading order is "what this
@@ -404,6 +405,32 @@ pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: 
         .map(|(_, label)| label.as_str())
         .unwrap_or(slot_id);
     items.push(ContextMenuItemState::action(WAVE_MENU_LABEL_ACTION, wave_label).set_enabled(false));
+
+    // Wave-5-only "truncated fifth" checkable row (owner ruling 2026-08-15,
+    // second entrance for `ElliottImpulse::truncated_fifth` — the first is
+    // the structure's own settings modal, free via `style_properties()`).
+    // `slot_id == "impulse_5"` is `WaveSlot::Impulse5`'s own fixed `id()`
+    // spelling — the ONLY slot id any Elliott type produces with that
+    // token — so this alone identifies "wave 5 of an impulse" without a
+    // second `type_id` field on `SelectedPrimitiveConfig`. Renders the SAME
+    // toggle idiom this crate's own `build_primitive_context_menu` already
+    // uses for lock/visibility (`MenuKey::Lock`/`MenuKey::Unlock`): the
+    // label names the ACTION a click performs, which reads back as the
+    // row's own current state — this crate's context-menu icon table
+    // (`layout::modals::context_menu::render_context_menu`) carries no
+    // separate checkbox glyph (see [`build_conversion_block`]'s own doc for
+    // why that table was never given one), so no icon is invented for it
+    // either, matching this SAME builder's own icon-less rows just below
+    // (`SelectSubdivisionLabel`/`RemoveSubdivisionLabel`).
+    if slot_id == "impulse_5" {
+        let label = if cfg.truncated_fifth {
+            t_concept(ConceptKey::ClearTruncatedFifthLabel)
+        } else {
+            t_concept(ConceptKey::MarkTruncatedFifthLabel)
+        };
+        items.push(ContextMenuItemState::action("wave_menu:toggle_truncated_fifth", label));
+        items.push(ContextMenuItemState::separator());
+    }
 
     if let Some((_, kinds)) = cfg.wave_slot_kinds.iter().find(|(id, _)| id == slot_id) {
         for (kind_id, key) in kinds {

@@ -940,6 +940,21 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    /// Whether THIS impulse has DECLARED its own fifth wave truncated — the
+    /// analyst's own per-structure opt-in that a fifth failing to exceed
+    /// wave 3 is the real Elliott shape (`EwaPatternKind::TruncatedImpulse`)
+    /// rather than a drawing mistake (owner ruling 2026-08-15: see
+    /// `elliott::guard::impulse_violations`'s own `"wave5_beyond_wave3"`
+    /// check, and `ElliottImpulse::truncated_fifth`'s own field doc for the
+    /// full "why per-structure, not engine-wide" rationale). `false` for
+    /// every primitive that is not an `ElliottImpulse` — Elliott or not —
+    /// and for an impulse drawn before this field existed
+    /// (`#[serde(default)]`), so the rule stays ACTIVE unless the analyst
+    /// has actually ticked the box.
+    fn truncated_fifth(&self) -> bool {
+        false
+    }
+
     // =========================================================================
     // Elliott Guard Context Cache (E2 — render-side cache, see
     // `elliott::guard::violations_in`)

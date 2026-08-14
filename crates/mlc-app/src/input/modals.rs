@@ -2525,6 +2525,32 @@ impl ChartApp {
                             }
                         }
                     }
+                    // Wave-5 menu's own checkable row (`mlc-app-layout`'s
+                    // `build_wave_menu`, owner ruling 2026-08-15) — flips
+                    // `ElliottImpulse::truncated_fifth` through the SAME
+                    // undo mechanism every settings-modal property edit
+                    // already goes through (`edit_primitive_recorded` ->
+                    // `Command::ModifyPrimitiveFull`), not a new `Command`
+                    // variant. Current state is read fresh inside the
+                    // recorded edit (not from a stale `cfg` captured when
+                    // the menu opened), same "read current, write !current"
+                    // shape `settings.rs`'s own `"levels_global_fill_toggle"`
+                    // uses for the same reason.
+                    "wave_menu:toggle_truncated_fifth" => {
+                        if let Some(bid) = active_bid_ctx {
+                            self.edit_primitive_recorded(prim_id, |app| {
+                                use mlc_core::drawing::primitives_v2::config::PropertyValue;
+                                let current = app.core.drawings().primitives(bid).iter()
+                                    .find(|p| p.data().id == prim_id)
+                                    .is_some_and(|p| p.truncated_fifth());
+                                app.core.drawings_mut().apply_property(
+                                    bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style,
+                                    "truncated_fifth", &PropertyValue::Boolean(!current),
+                                );
+                            });
+                            eprintln!("[ChartApp] wave menu: toggled truncated_fifth for #{}", prim_id);
+                        }
+                    }
                     // Trailing "EWA settings" row every wave-gesture popup
                     // ends with (`mlc-app-layout`'s
                     // `push_engine_settings_row`) — opens the process-global

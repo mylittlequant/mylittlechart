@@ -53,15 +53,26 @@
 //!   [`violations_in`]'s own doc, further down, for why the rule lives ONLY
 //!   there rather than being reported self-only and retracted by context.
 //! - Wave 5 exceeding wave 3 (the OTHER motive-progression rule the owner's
-//!   report describes) is NOT implemented: a failing wave 5 is a real
-//!   Elliott shape (`EwaPatternKind::TruncatedImpulse`, whose own catalogue
-//!   rule is literally `"wave5_fails_to_exceed_wave3"`), but `ElliottImpulse`
-//!   carries no field naming a structure as truncated, and inventing one
-//!   only for this check is out of scope here. Reporting it unconditionally
-//!   would flag every legitimate truncated fifth as broken; skipping it
-//!   entirely is the same "incomplete/ambiguous is not wrong" contract this
-//!   module already applies to a structure still being drawn (see this
-//!   module's own doc above).
+//!   report describes) gained its own check on 2026-08-15:
+//!   `"wave5_beyond_wave3"` in [`impulse_violations`], mirroring
+//!   `"wave3_exceeds_wave1"` exactly, one wave later
+//!   (`ewa_rules::beyond(wave1_origin, wave3_end, wave5_end)` — the same
+//!   "does test progress past reference, relative to origin" predicate, no
+//!   new comparison). Unlike that check it is NOT unconditional: a failing
+//!   wave 5 is a real Elliott shape (`EwaPatternKind::TruncatedImpulse`,
+//!   whose own catalogue rule is literally `"wave5_fails_to_exceed_wave3"`),
+//!   so `ElliottImpulse` now carries `truncated_fifth: bool`
+//!   (`#[serde(default)]`, `false`) — the analyst's own PER-STRUCTURE opt-in
+//!   that THIS fifth is deliberately short (see that field's own doc for
+//!   the full rationale). Reporting it unconditionally would flag every
+//!   legitimate truncated fifth as broken, exactly the gap this field
+//!   closes; a process-global toggle was considered and rejected (owner,
+//!   2026-08-15: "по дефолту выключены, но кликая по конкретной 5 и
+//!   настройкам там просто тугл") because truncation is a property of ONE
+//!   fifth wave, and a global switch would silence the rule on every count
+//!   on the chart. Default `false` means an existing drawing loads with the
+//!   rule ACTIVE — the analyst opts INTO calling his own fifth truncated,
+//!   not the other way around.
 //!
 //! Every new predicate call here reads `mli::ewa::rules::{beyond,
 //! progresses}` exactly as this module's own opening paragraph promises —
@@ -98,7 +109,8 @@ pub enum GuardRuleFamily {
 /// Which [`GuardRuleFamily`] a rule id belongs to. The catch-all arm covers
 /// every point-geometry rule id this module produces
 /// (`wave2_not_beyond_wave1_origin`, `wave4_no_wave1_overlap`,
-/// `wave3_exceeds_wave1`, `wave3_not_shortest`, `b_terminates_near_a_origin`,
+/// `wave3_exceeds_wave1`, `wave5_beyond_wave3`, `wave3_not_shortest`,
+/// `b_terminates_near_a_origin`,
 /// `b_exceeds_a_origin`, `b_does_not_retrace_a_origin`,
 /// `c_fails_to_exceed_a_end`, `c_slightly_exceeds_a_end`, `c_exceeds_a_end`,
 /// `contracting_boundaries`, `wave2_retraces_wave1`, `wave4_retraces_wave3`)
@@ -168,7 +180,7 @@ pub fn violations(prim: &dyn Primitive) -> Vec<Violation> {
     let realized = prim.realized_point_count();
     let points = prim.points();
     let mut out = match prim.type_id() {
-        "elliott_impulse" => impulse_violations(&points, realized),
+        "elliott_impulse" => impulse_violations(&points, realized, prim.truncated_fifth()),
         "elliott_correction" => {
             correction_violations(&points, realized, prim.correction_subtype().unwrap_or("zigzag"))
         }
@@ -187,7 +199,7 @@ fn price(points: &[(i64, f64)], idx: usize) -> Option<f64> {
 // Impulse — the three hard rules (owner spec, 2026-08-13)
 // =============================================================================
 
-fn impulse_violations(points: &[(i64, f64)], realized: usize) -> Vec<Violation> {
+fn impulse_violations(points: &[(i64, f64)], realized: usize, truncated_fifth: bool) -> Vec<Violation> {
     let mut out = Vec::new();
 
     // wave2_not_beyond_wave1_origin — wave 2 must not retrace past wave 1's
@@ -243,6 +255,35 @@ fn impulse_violations(points: &[(i64, f64)], realized: usize) -> Vec<Violation> 
                     rule_id: "wave3_exceeds_wave1",
                     wave: WaveSlot::Impulse3,
                     message: ConceptKey::RuleWave3NotExceedingWave1,
+                });
+            }
+        }
+    }
+
+    // wave5_beyond_wave3 — the OTHER motive-progression rule (owner report
+    // 2026-08-14 named it, implemented 2026-08-15): wave 5 must end beyond
+    // wave 3's own end, continuing in the SAME direction wave 1 itself
+    // established. Mirrors `wave3_exceeds_wave1` immediately above exactly,
+    // one wave later — `beyond(origin, reference, test)` with
+    // origin/reference = wave 1's own start (point 0) / wave 3's own end
+    // (point 3) and test = wave 5's own end (point 5), the identical
+    // predicate, no new comparison.
+    //
+    // UNLIKE every other check in this function, this one is conditional: a
+    // failing wave 5 is a real Elliott shape
+    // (`EwaPatternKind::TruncatedImpulse`), not automatically a mistake, so
+    // `truncated_fifth` — this impulse's own per-structure opt-in
+    // (`ElliottImpulse::truncated_fifth`'s own field doc has the full "why
+    // per-structure, not engine-wide" rationale) — skips the check entirely
+    // rather than reporting and relying on a caller to retract it; the flag
+    // touches no other rule in this function.
+    if realized >= 6 && !truncated_fifth {
+        if let (Some(p0), Some(p3), Some(p5)) = (price(points, 0), price(points, 3), price(points, 5)) {
+            if !ewa_rules::beyond(p0, p3, p5) {
+                out.push(Violation {
+                    rule_id: "wave5_beyond_wave3",
+                    wave: WaveSlot::Impulse5,
+                    message: ConceptKey::RuleWave5BeyondWave3,
                 });
             }
         }
@@ -844,7 +885,16 @@ pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
         if let Some(shape) = count::promote_chain_shape(chain) {
             let realized = shape.points.len();
             let family = match shape.type_id {
-                "elliott_impulse" => impulse_violations(&shape.points, realized),
+                // `truncated_fifth: false` unconditionally — a promoted
+                // chain's own coarser impulse is SYNTHESIZED
+                // (`count::promote_chain_shape`), not drawn, so there is no
+                // single `ElliottImpulse::truncated_fifth` this assembled
+                // shape's own wave 5 could read from; the owner's ask
+                // (2026-08-15) was a toggle on a drawn structure, not a
+                // chain-level counterpart. `"wave5_beyond_wave3"` stays
+                // ACTIVE here, same posture a chain member that has never
+                // had the box ticked already has.
+                "elliott_impulse" => impulse_violations(&shape.points, realized, false),
                 "elliott_correction" => {
                     let subtype = head.correction_subtype().unwrap_or("zigzag");
                     correction_violations(&shape.points, realized, subtype)
@@ -1097,5 +1147,95 @@ mod subdivision_degree_tests {
         seeded_child.link = Some(WaveLink { parent_id: p.data.id, slot: WaveSlot::Impulse2 });
         let found = violations_in(&seeded_child, &[&p]);
         assert!(found.is_empty(), "child_seed's own .finer() contract must still produce zero violations: {found:?}");
+    }
+}
+
+#[cfg(test)]
+mod wave5_truncation_tests {
+    //! `"wave5_beyond_wave3"` + `ElliottImpulse::truncated_fifth` (owner
+    //! ruling 2026-08-15). None of these touch `guard_families` — unlike
+    //! `subdivision_degree_tests` above, there is no process-global
+    //! `EwaEngineConfig` state to race here, so each scenario is free to
+    //! stay its own `#[test]` function.
+
+    use super::*;
+    use crate::drawing::primitives_v2::elliott::ElliottImpulse;
+
+    /// Wave 5 ends beyond wave 3 (140 > 130) — the compliant case, every
+    /// other self-only rule already clean on this shape (same fixture
+    /// `retracement_tests::compliant_impulse_reports_nothing` uses).
+    fn wave5_exceeds_wave3() -> ElliottImpulse {
+        let points: [(i64, f64); 6] =
+            [(0, 100.0), (1_000, 110.0), (2_000, 104.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)];
+        ElliottImpulse::new(points, "#2196F3")
+    }
+
+    /// Wave 5 ends SHORT of wave 3 (125 < 130) — every OTHER self-only rule
+    /// still clean (wave 3 not shortest: lengths 10/26/5; wave 2/4 stay on
+    /// their own side of the origin; wave 3 still exceeds wave 1), isolating
+    /// exactly the one violation this module exists to test.
+    fn wave5_falls_short_of_wave3() -> ElliottImpulse {
+        let points: [(i64, f64); 6] =
+            [(0, 100.0), (1_000, 110.0), (2_000, 104.0), (3_000, 130.0), (4_000, 120.0), (5_000, 125.0)];
+        ElliottImpulse::new(points, "#2196F3")
+    }
+
+    #[test]
+    fn fifth_exceeding_third_reports_nothing() {
+        let impulse = wave5_exceeds_wave3();
+        let found = violations(&impulse);
+        assert!(!found.iter().any(|v| v.rule_id == "wave5_beyond_wave3"), "a fifth that exceeds wave 3 must not report: {found:?}");
+    }
+
+    #[test]
+    fn short_fifth_reports_wave5_beyond_wave3() {
+        let impulse = wave5_falls_short_of_wave3();
+        let found = violations(&impulse);
+        assert_eq!(found.len(), 1, "exactly the wave-5 violation, nothing else: {found:?}");
+        assert_eq!(found[0].rule_id, "wave5_beyond_wave3");
+        assert_eq!(found[0].wave, WaveSlot::Impulse5);
+    }
+
+    #[test]
+    fn truncated_fifth_flag_silences_the_same_short_fifth() {
+        let mut impulse = wave5_falls_short_of_wave3();
+        impulse.truncated_fifth = true;
+        let found = violations(&impulse);
+        assert!(found.is_empty(), "the analyst's own opt-in must clear the rule it names, and nothing else fires on this shape: {found:?}");
+    }
+
+    /// The flag's own contract (field doc): its ONLY effect is skipping
+    /// `"wave5_beyond_wave3"` — a SEPARATE violation on the same structure
+    /// (wave 4 re-entering wave 1's own territory) must keep reporting with
+    /// the flag on.
+    #[test]
+    fn truncated_fifth_flag_does_not_silence_a_different_violation() {
+        // Same short fifth (130 -> 125) PLUS wave 4 pulled back to 105,
+        // inside wave 1's own [100, 110] span — `wave4_no_wave1_overlap`
+        // fires independently of wave 5.
+        let points: [(i64, f64); 6] =
+            [(0, 100.0), (1_000, 110.0), (2_000, 104.0), (3_000, 130.0), (4_000, 105.0), (5_000, 125.0)];
+        let mut impulse = ElliottImpulse::new(points, "#2196F3");
+        impulse.truncated_fifth = true;
+
+        let found = violations(&impulse);
+        assert!(found.iter().any(|v| v.rule_id == "wave4_no_wave1_overlap"), "the unrelated violation must still report: {found:?}");
+        assert!(!found.iter().any(|v| v.rule_id == "wave5_beyond_wave3"), "the flagged rule must stay silent: {found:?}");
+    }
+
+    /// A downward impulse — the same short-fifth geometry mirrored around
+    /// the origin (every price delta negated) — must report the same rule.
+    /// `beyond`'s own direction derivation (`reference >= origin`) flips
+    /// branch on a downward structure, so this is the check that the rule
+    /// is not accidentally direction-locked to an uptrend.
+    #[test]
+    fn downward_impulse_reports_wave5_beyond_wave3() {
+        let points: [(i64, f64); 6] =
+            [(0, 100.0), (1_000, 90.0), (2_000, 96.0), (3_000, 70.0), (4_000, 80.0), (5_000, 75.0)];
+        let impulse = ElliottImpulse::new(points, "#2196F3");
+        let found = violations(&impulse);
+        assert_eq!(found.len(), 1, "exactly the wave-5 violation, nothing else: {found:?}");
+        assert_eq!(found[0].rule_id, "wave5_beyond_wave3");
+        assert_eq!(found[0].wave, WaveSlot::Impulse5);
     }
 }

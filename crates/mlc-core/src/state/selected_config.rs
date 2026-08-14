@@ -92,4 +92,12 @@ pub struct SelectedPrimitiveConfig {
     /// this to disable that row rather than offering a picker option that
     /// would be a no-op.
     pub conversion_kinds: Vec<(String, ConceptKey, bool)>,
+    /// Whether the selected primitive currently declares its own fifth wave
+    /// truncated (`ElliottImpulse::truncated_fifth`'s own field doc has the
+    /// full "why per-structure, not engine-wide" rationale) — read here so
+    /// the WAVE-5 context-menu row (`mlc-app-layout`'s
+    /// `build_wave_menu`) can show the flag's CURRENT state without a
+    /// second round trip through the backend. `false` for every primitive
+    /// that is not an `ElliottImpulse` — Elliott or not.
+    pub truncated_fifth: bool,
 }
