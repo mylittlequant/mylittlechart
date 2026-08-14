@@ -24,7 +24,7 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
+    adoptable_children, adopted_parent_degree, child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
     resample_polyline, slot_at_ordinal, slot_ordinal, slot_span, split_kind_id, successor_kinds,
     successor_seed, predecessor_kinds, predecessor_seed,
     promote_chain_shape, WaveLink, WaveSlot,
@@ -41,6 +41,7 @@ use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
 use mlc_core::i18n::ConceptKey;
 use mlc_core::ids::BubbleId;
 use mlc_core::instrument::InstrumentAddress;
+use mlc_core::state::ewa_engine::ewa_engine_config;
 use mlc_core::state::selected_config::SelectedPrimitiveConfig;
 use mlc_core::{Bar, PriceScale, Viewport};
 
@@ -911,7 +912,96 @@ impl DrawingManager {
         let id = prim.data().id;
         b.primitives.push(prim);
         session.selected = Some(id);
+
+        // Higher-degree auto-adoption (owner ask 2026-08-14, EWA engine
+        // settings' own "detect_higher_degree" switch — `crates/mlc-app-
+        // layout/src/layout/modals/ewa_engine_settings.rs`): OFF by
+        // default, so leaving the switch untouched changes nothing about
+        // creation — the whole detector sits behind this one early return.
+        if ewa_engine_config().detect_higher_degree {
+            Self::adopt_higher_degree(b, id);
+        }
+
         id
+    }
+
+    /// Recognise every already-drawn primitive in `b` that legally occupies
+    /// one of `parent_id`'s own slots (`elliott::count::adoptable_children`)
+    /// and weld/link/re-degree the new structure accordingly — the write
+    /// side of higher-degree auto-adoption (owner ask 2026-08-14: "неплохо
+    /// было бы детектить вверх и делать авторазметку более высокого цикла" —
+    /// when the analyst draws a COARSER structure over waves he already
+    /// marked, the engine recognises the existing ones as its own
+    /// subdivisions instead of making him re-link them by hand). Called
+    /// from [`Self::finalize_new_primitive`] only, already gated on
+    /// `EwaEngineConfig::detect_higher_degree` there — this method itself
+    /// does not re-check the switch.
+    ///
+    /// A no-op (nothing welded, nothing linked, degree untouched) when
+    /// `parent_id` does not resolve or `adoptable_children` reports no
+    /// match — the freshly-created primitive is left exactly as
+    /// `finalize_new_primitive` built it.
+    ///
+    /// WELD: every matched slot's own anchor points on `parent_id` are
+    /// overwritten with the adopted child's own EXACT endpoints (the
+    /// analyst clicked NEAR them; adoption makes the join exact — the same
+    /// invariant [`Self::restitch_wave_joints`] already maintains for a
+    /// hand-made subdivision). Only the anchors of MATCHED slots move;
+    /// every other point on `parent_id` stays exactly where it was drawn.
+    /// LINK: every adopted child's own [`WaveLink`] is stamped onto it,
+    /// naming `parent_id` and the slot it now occupies. DEGREE: `parent_id`
+    /// itself is set to the adopted children's own shared degree, one step
+    /// coarser (`elliott::count::adopted_parent_degree`) — never invented,
+    /// always derived from what was actually adopted. Finishes with
+    /// [`Self::refresh_wave_guards`]'s own bubble-scoped computation, same
+    /// as every other link-mutating operation in this file.
+    fn adopt_higher_degree(b: &mut crate::bubble::DataBubble, parent_id: u64) {
+        let Some(parent_idx) = Self::find_index_by_id(b, parent_id) else { return };
+
+        // Both the match and the shared-degree read happen in ONE
+        // immutable borrow of `b.primitives` — `adoptions`/`parent_degree`
+        // come out as owned data, so the borrow ends here and the mutation
+        // below is free to proceed.
+        let (adoptions, parent_degree) = {
+            let parent = b.primitives[parent_idx].as_ref();
+            let candidates: Vec<(u64, &dyn Primitive)> = b
+                .primitives
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| i != parent_idx)
+                .map(|(_, p)| (p.data().id, p.as_ref()))
+                .collect();
+            let adoptions = adoptable_children(parent, &candidates);
+            let parent_degree = adopted_parent_degree(&candidates, &adoptions);
+            (adoptions, parent_degree)
+        };
+        // `adopted_parent_degree` returns `None` precisely when `adoptions`
+        // is empty (its own first-entry lookup fails) — this one check
+        // covers "nothing to adopt" as well as "nothing to derive a degree
+        // from".
+        let Some(parent_degree) = parent_degree else { return };
+
+        let parent_type_id = b.primitives[parent_idx].type_id();
+        let mut parent_points = b.primitives[parent_idx].points();
+        for adoption in &adoptions {
+            let Some((start_idx, end_idx)) = slot_span(parent_type_id, adoption.slot) else { continue };
+            if start_idx < parent_points.len() {
+                parent_points[start_idx] = adoption.start;
+            }
+            if end_idx < parent_points.len() {
+                parent_points[end_idx] = adoption.end;
+            }
+        }
+        b.primitives[parent_idx].set_points(&parent_points);
+        b.primitives[parent_idx].set_wave_degree(parent_degree);
+
+        for adoption in &adoptions {
+            if let Some(child) = b.primitives.iter_mut().find(|p| p.data().id == adoption.child_id) {
+                child.set_wave_link(Some(WaveLink { parent_id, slot: adoption.slot }));
+            }
+        }
+
+        crate::bubble::wave_guards::refresh_wave_guards(b);
     }
 
     /// What a freshly-created primitive's `style_reference` starts as —
@@ -2671,6 +2761,28 @@ impl DrawingManager {
         self.refresh_wave_guards(bubbles, bid);
     }
 
+    /// Every `(child_id, slot)` pair currently [`WaveLink`]-ed under
+    /// `parent_id` in `bid`'s own bubble — a plain read, derived from
+    /// whatever is already persisted on each primitive's own `link` field,
+    /// never a stashed pending value on `self`.
+    ///
+    /// This is how the `mlc-app` layer learns whether a just-created
+    /// primitive's own construction adopted anything (`Self::
+    /// adopt_higher_degree` stamps the link directly onto each adopted
+    /// child, at creation time, before this can ever be called) — the
+    /// caller resolves the new primitive's own id the same way it already
+    /// does for `Command::CreatePrimitive` (`Self::last_index`, right after
+    /// the click/finish call returns), then asks this whether that id
+    /// adopted anything, and records `Command::PromoteWaveChain` instead of
+    /// `Command::CreatePrimitive` when it did (see that command's own doc).
+    pub(crate) fn wave_children_of(&self, bubbles: &BubbleStore, bid: BubbleId, parent_id: u64) -> Vec<(u64, WaveSlot)> {
+        let Some(b) = bubbles.bubble(bid) else { return Vec::new() };
+        b.primitives
+            .iter()
+            .filter_map(|p| p.wave_link().filter(|l| l.parent_id == parent_id).map(|l| (p.data().id, l.slot)))
+            .collect()
+    }
+
     /// Set (or clear) `prim_id`'s own `follows` directly — the write path
     /// a wave-predecessor undo/redo needs (`Command::CreateWavePredecessor`/
     /// `Command::DeleteWavePredecessor`'s own apply arms in `mlc-app`), the
@@ -3476,6 +3588,113 @@ mod wave_link_restore_tests {
             child.wave_link(), None,
             "restore_from_snapshots alone must clear a link naming an id no bubble contains, not leave it dangling",
         );
+    }
+}
+
+#[cfg(test)]
+mod auto_adoption_gate_tests {
+    //! Proves higher-degree auto-adoption (owner ask 2026-08-14,
+    //! `elliott::count::adoptable_children` +
+    //! `DrawingManager::adopt_higher_degree`) sits ENTIRELY behind
+    //! `EwaEngineConfig::detect_higher_degree`, which defaults to `false` —
+    //! drawing a brand new top-level structure exactly over an
+    //! already-drawn one must NOT adopt it while the switch is off, even
+    //! when the geometry is an exact match (the exact scenario the switch,
+    //! once on, is meant to recognise).
+
+    use super::*;
+    use crate::bubble::BubbleStore;
+    use mlc_core::drawing::primitives_v2::config::WaveDegree;
+    use mlc_core::state::ewa_engine::{EwaEngineConfig, set_ewa_engine_config};
+
+    /// Both halves of the gate live in ONE test function on purpose: the
+    /// switch is process-global mutable state (`EWA_ENGINE_CONFIG`,
+    /// `mlc-core`'s own `OnceLock<RwLock<..>>`), and `cargo test` runs
+    /// different `#[test]` functions on different threads by default — two
+    /// separate tests each flipping the SAME global would race each other
+    /// (measured: splitting this into two functions made the "on" half
+    /// intermittently read `false` because the "off" half's own reset ran
+    /// concurrently). One function, one thread, deterministic — the same
+    /// reason `ewa_engine.rs`'s own `set_then_read_round_trips` test resets
+    /// the global at its OWN end rather than relying on test isolation.
+    #[test]
+    fn adoption_gated_by_detect_higher_degree() {
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+        let mut mgr = DrawingManager::default();
+
+        // A standalone, already-drawn impulse CONFINED to the new
+        // structure's own wave-1 span below (0..1_000) — `adoptable_children`
+        // matches a candidate's own overall first/last point, not any
+        // interior one, so a would-be wave-1 subdivision must itself start
+        // and end there. Its own first/last are 0.05 off the new
+        // structure's own wave-1 anchors — inside the 2% click-slop
+        // tolerance, and exactly what the "on" half below must weld onto.
+        let mut existing = ElliottImpulse::new(
+            [(0, 100.05), (200, 103.0), (400, 101.0), (600, 106.0), (800, 104.0), (1_000, 109.95)],
+            "#2196F3",
+        );
+        existing.degree = WaveDegree::Minute;
+        let existing_id = mgr.add_external(&mut bubbles, bid, Box::new(existing));
+
+        let click_points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (6_000, 90.0), (7_000, 150.0), (8_000, 100.0), (9_000, 160.0),
+        ];
+        let click = |mgr: &mut DrawingManager, bubbles: &mut BubbleStore| {
+            // Six clicks: `ClickBehavior::MultiPointFixed(6)` finalizes on
+            // the 6th (see `on_click_n_point`'s own doc).
+            mgr.set_tool(bid, Some("elliott_impulse"));
+            for &(ts, price) in &click_points {
+                mgr.on_canvas_click(bubbles, bid, ts, price);
+            }
+        };
+
+        // --- OFF (the default): drawing the exact same geometry must not
+        // adopt anything.
+        set_ewa_engine_config(EwaEngineConfig::default());
+        assert!(!ewa_engine_config().detect_higher_degree, "this half's own precondition");
+        click(&mut mgr, &mut bubbles);
+        let off_round_id = {
+            let b = bubbles.bubble(bid).expect("bubble exists");
+            let existing_after = b.primitives.iter().find(|p| p.data().id == existing_id).expect("existing primitive survives");
+            assert_eq!(existing_after.wave_link(), None, "detect_higher_degree defaults to false — must not auto-adopt");
+            let new_prim = b.primitives.iter().find(|p| p.data().id != existing_id).expect("new impulse was created");
+            assert_eq!(new_prim.points(), click_points.to_vec(), "switch off — no weld, points stay exactly as clicked");
+            new_prim.data().id
+        };
+        // This off-round primitive's own points are an EXACT (zero-slop)
+        // match for the same slot the on-round below re-targets — left
+        // standing, it would out-compete `existing` for adoption (its own
+        // default `Intermediate` degree is COARSER than `existing`'s own
+        // `Minute`, and `adoptable_children` keeps only the coarsest match
+        // per slot). Removed so the on-round below has exactly one
+        // candidate to adopt, unambiguously.
+        mgr.delete(&mut bubbles, bid, off_round_id);
+
+        // --- ON: the SAME geometry, drawn again, now adopts the existing
+        // impulse into its own wave-1 slot.
+        let mut cfg = EwaEngineConfig::default();
+        cfg.detect_higher_degree = true;
+        set_ewa_engine_config(cfg);
+        click(&mut mgr, &mut bubbles);
+        let new_id = mgr
+            .last_index(&bubbles, bid)
+            .filter(|&id| id != existing_id)
+            .expect("second click sequence created a second new impulse");
+
+        let b = bubbles.bubble(bid).expect("bubble exists");
+        let existing_after = b.primitives.iter().find(|p| p.data().id == existing_id).expect("existing primitive survives");
+        assert_eq!(existing_after.wave_link(), Some(WaveLink { parent_id: new_id, slot: WaveSlot::Impulse1 }));
+
+        let new_prim = b.primitives.iter().find(|p| p.data().id == new_id).expect("new impulse exists");
+        // Welded onto the CHILD's own exact endpoints, not the clicked ones.
+        assert_eq!(new_prim.points()[0], (0, 100.05));
+        assert_eq!(new_prim.points()[1], (1_000, 109.95));
+        // Every OTHER point stays exactly as clicked.
+        assert_eq!(new_prim.points()[2..], click_points[2..]);
+        assert_eq!(new_prim.wave_degree(), Some(WaveDegree::Minute.coarser()));
+
+        set_ewa_engine_config(EwaEngineConfig::default());
     }
 }
 

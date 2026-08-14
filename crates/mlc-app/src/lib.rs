@@ -11705,7 +11705,7 @@ impl ChartApp {
                     if new_count > prev_count {
                         let cmd = active_bid_fm.and_then(|bid| {
                             let prim_id = self.core.drawings().last_index(bid)?;
-                            self.build_create_primitive_command(bid, prim_id)
+                            self.build_creation_command(bid, prim_id)
                         });
                         if let Some(cmd) = cmd {
                             self.push_undo_command(cmd);
@@ -11734,7 +11734,7 @@ impl ChartApp {
                     if new_count > prev_count {
                         let cmd = active_bid_dc.and_then(|bid| {
                             let prim_id = self.core.drawings().last_index(bid)?;
-                            self.build_create_primitive_command(bid, prim_id)
+                            self.build_creation_command(bid, prim_id)
                         });
                         if let Some(cmd) = cmd {
                             self.push_undo_command(cmd);

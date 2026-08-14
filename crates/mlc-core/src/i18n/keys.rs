@@ -384,10 +384,16 @@ pub enum ConfigKey {
     // Labels-tab renderer used to show for `cell_{row}_{col}` properties
     // (removed — see `Table::text_properties`'s own doc).
     TabCells                      = 161,
+
+    // Elliott fibonacci-EXTENSION projection toggle (`elliott::projection`,
+    // 2026-08-14) — the per-structure counterpart to `ShowRatios` above;
+    // same settings-modal row family, own key because it labels a distinct
+    // property (`show_projections`, not `show_ratios`).
+    ShowProjections               = 162,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 162;
+    pub const COUNT: usize = 163;
 
     /// Get translation for this key
     #[inline]
@@ -2934,10 +2940,22 @@ pub enum ConceptKey {
     EwaGuardGrammarLabel = 324,
     EwaGuardChainLabel = 325,
     EwaRatioRibDefaultsGroupTitle = 326,
+
+    // ---- Elliott subdivision-degree guard message (2026-08-14,
+    // coordinator review of higher-degree auto-adoption: `elliott::count::
+    // adopted_parent_degree`'s own ceiling case — `WaveDegree::coarser`
+    // saturates at `Supermillennium`, so adopting children already at that
+    // degree leaves the new parent sharing its own children's degree
+    // instead of sitting one step above them). See
+    // `elliott::guard::violations_in`'s own `"subdivision_degree"` check —
+    // a CONTEXT rule like `RuleSubdivisionClass` above, just checked from
+    // the CHILD side (the primitive carrying the `WaveLink`) rather than
+    // the parent, so it can name both degrees.
+    RuleSubdivisionDegree = 327,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 327;
+    pub const COUNT: usize = 328;
 
     /// Get translation for this key.
     #[inline]

@@ -848,6 +848,20 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    /// Set [`wave_degree`](Self::wave_degree) without downcasting to one of
+    /// the five concrete Elliott structs — the write path higher-degree
+    /// auto-adoption needs from OUTSIDE the Elliott family itself
+    /// (`elliott::count::adoptable_children` + the backend's own detector
+    /// that runs it at creation time): a newly drawn structure that adopts
+    /// existing finer-degree structures as its own subdivisions must carry a
+    /// degree one step COARSER than what it adopted, and that degree is only
+    /// known AFTER adoption resolves — unlike every other Elliott
+    /// primitive's degree, which is fixed at construction
+    /// ([`wave_degree`](Self::wave_degree)'s own doc). No-op for every
+    /// primitive outside the Elliott family, mirroring
+    /// [`set_wave_link`](Self::set_wave_link)'s own default.
+    fn set_wave_degree(&mut self, _degree: WaveDegree) {}
+
     /// Which slots this primitive's own points can seed a child into — the
     /// five impulse waves, the three corrective waves, the five triangle
     /// waves, or a combination's own W/X/Y(/XX/Z) slots. Empty for every

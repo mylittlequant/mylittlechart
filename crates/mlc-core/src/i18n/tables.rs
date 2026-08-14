@@ -46,7 +46,7 @@ pub(super) static MENU_KEY_TABLE: [[&str; N_LANG]; 22] = [
 //
 //  Col:  0=En                                   1=Ru                                          2..14=""
 
-pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 162] = [
+pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 163] = [
     /* 0  Labels            */ [ "Labels",                     "Подписи",                                "Etiquetas",           "Beschriftungen",        "Étiquettes",              "Rótulos",             "标签",      "ラベル",       "레이블",      "التسميات",       "Etichette",          "Etiketler",          "Etykiety",           "Мітки",               "लेबल"            ],
     /* 1  Levels            */ [ "Levels",                     "Уровни",                                 "Niveles",             "Ebenen",                "Niveaux",                 "Níveis",              "级别",      "レベル",       "레벨",        "المستويات",      "Livelli",            "Seviyeler",          "Poziomy",            "Рівні",               "स्तर"            ],
     /* 2  Percentages       */ [ "Percentages",                 "процент",                                "Porcentajes",         "Prozentwerte",          "Pourcentages",            "Percentuais",         "百分比",    "パーセント",   "퍼센트",      "النسب المئوية",   "Percentuali",        "Yüzdeler",           "Procenty",           "Відсотки",            "प्रतिशत"         ],
@@ -241,6 +241,10 @@ pub(super) static CONFIG_KEY_TABLE: [[&str; N_LANG]; 162] = [
 
     // Table's own derived Cells tab (2026-08-09 modal-surface pass).
     /* 161 TabCells          */ [ "Cells",                    "Ячейки",                  "Celdas",                       "Zellen",                         "Cellules",                            "Células",                "单元格",       "セル",         "셀",           "الخلايا",           "Celle",                  "Hücreler",                "Komórki",                "Клітинки",            "सेल"                 ],
+
+    // Elliott fibonacci-EXTENSION projection toggle (`elliott::projection`,
+    // 2026-08-14) — same row family as `ShowRatios` (index 18) above.
+    /* 162 ShowProjections   */ [ "Show Projections",         "Показывать проекции",     "Mostrar proyecciones",         "Projektionen anzeigen",          "Afficher projections",                "Mostrar projeções",      "显示投影",     "投影表示",     "투영 표시",    "إظهار الإسقاطات",   "Mostra proiezioni",      "Projeksiyonları Göster", "Pokaż projekcje",       "Показати проекції",   "प्रक्षेपण दिखाएं"    ],
 ];
 
 // =============================================================================
@@ -1283,7 +1287,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 327] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 328] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1611,6 +1615,7 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 327] = [
     /* 324 EwaGuardGrammarLabel              */ [ "Grammar & subdivision rules", "Правила грамматики и вложенности", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 325 EwaGuardChainLabel                */ [ "Chain rules", "Правила цепочек", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 326 EwaRatioRibDefaultsGroupTitle     */ [ "New structure ratio ribs", "Рёбра соотношений для новых структур", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 327 RuleSubdivisionDegree             */ [ "This subdivision's own degree is not exactly one step finer than its parent's", "Степень этой вложенной структуры не на один шаг младше степени родителя", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

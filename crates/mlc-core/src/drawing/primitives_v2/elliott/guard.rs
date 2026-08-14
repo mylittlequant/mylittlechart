@@ -109,6 +109,7 @@ pub fn rule_family(rule_id: &str) -> GuardRuleFamily {
     match rule_id {
         "chain_continuity" | "chain_alternation" | "chain_degree" => GuardRuleFamily::Chain,
         "subdivision_class"
+        | "subdivision_degree"
         | "flat_requires_b_near_a_origin"
         | "zigzag_requires_shallow_b"
         | "expanded_flat_requires_b_beyond_a_origin"
@@ -496,6 +497,43 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
             .is_some_and(|kind| count::child_kinds(prim, slot).iter().any(|&k| k == kind));
         if !matches {
             out.push(Violation { rule_id: "subdivision_class", wave: slot, message: ConceptKey::RuleSubdivisionClass });
+        }
+    }
+
+    // a.1) subdivision_degree — a subdivision must carry a degree exactly
+    // one step FINER than the parent it is nested inside
+    // (`elliott::count::child_seed`'s own contract:
+    // `parent.wave_degree()?.finer()`). Checked from the CHILD side (`prim`
+    // itself, when it carries a [`count::WaveLink`]) rather than from the
+    // parent's own pass above (`a`): the parent's own `children` list can
+    // only see THAT a child is nested in a slot, never report on it by
+    // name from there without duplicating this same lookup per child, so
+    // this reads more naturally as the child's own violation, matching
+    // `wave: own_first_slot` — a stand-in "the whole structure" marker,
+    // same shape `chain_continuity` (below) already uses for the same
+    // reason: there is no single INTERNAL wave this is about.
+    //
+    // Closes a real, previously-silent gap: higher-degree auto-adoption
+    // (`count::adopted_parent_degree`) derives the new parent's own degree
+    // as the adopted children's shared degree, one step
+    // [`crate::drawing::primitives_v2::config::WaveDegree::coarser`]. That
+    // step SATURATES at `WaveDegree::Supermillennium` rather than wrapping
+    // or panicking — adopting children already at that ceiling leaves the
+    // new parent SHARING its own children's degree instead of sitting one
+    // step above them, and until this check existed nothing reported it.
+    if let Some(link) = prim.wave_link() {
+        if let Some(parent) = others.iter().find(|p| p.data().id == link.parent_id) {
+            if let (Some(parent_degree), Some(own_degree)) = (parent.wave_degree(), prim.wave_degree()) {
+                if own_degree != parent_degree.finer() {
+                    if let Some(&own_first_slot) = prim.wave_slots().first() {
+                        out.push(Violation {
+                            rule_id: "subdivision_degree",
+                            wave: own_first_slot,
+                            message: ConceptKey::RuleSubdivisionDegree,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -954,5 +992,110 @@ mod retracement_tests {
         let impulse = ElliottImpulse::new(points, "#2196F3");
         assert!(violations(&impulse).is_empty());
         assert!(violations_in(&impulse, &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod subdivision_degree_tests {
+    //! `"subdivision_degree"` — coordinator review of higher-degree
+    //! auto-adoption (2026-08-14): `elliott::count::adopted_parent_degree`'s
+    //! own ceiling case (`WaveDegree::coarser` saturates at
+    //! `Supermillennium`) left a new parent silently SHARING its own
+    //! children's degree instead of sitting one step above them, and
+    //! nothing reported it. These tests exercise the rule from the CHILD
+    //! side, the way it is actually checked — see [`violations_in`]'s own
+    //! `"a.1"` block.
+
+    use super::*;
+    use crate::drawing::primitives_v2::config::WaveDegree;
+    use crate::drawing::primitives_v2::elliott::{ElliottCorrection, ElliottImpulse, WaveLink};
+    use crate::state::ewa_engine::{EwaEngineConfig, set_ewa_engine_config};
+
+    /// A plain impulse parent (default `WaveDegree::Intermediate`) with its
+    /// own wave-2 span — every test below nests a correction into that
+    /// slot and varies only the CHILD's own degree.
+    fn parent() -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let mut p = ElliottImpulse::new(points, "#2196F3");
+        p.data.id = 1;
+        p
+    }
+
+    /// A zigzag correction nested into the parent's own wave-2 slot,
+    /// carrying `degree` exactly as given — the fixture every test below
+    /// varies only by which degree it passes.
+    fn child_at(parent_id: u64, degree: WaveDegree) -> ElliottCorrection {
+        let points: [(i64, f64); 4] = [(1_000, 110.0), (1_250, 107.0), (1_500, 109.0), (2_000, 105.0)];
+        let mut c = ElliottCorrection::new(points, "#FF5722");
+        c.data.id = 2;
+        c.degree = degree;
+        c.link = Some(WaveLink { parent_id, slot: WaveSlot::Impulse2 });
+        c
+    }
+
+    /// Every scenario lives in ONE test function on purpose:
+    /// `guard_families.grammar` is process-global mutable state
+    /// (`mlc-core`'s own `OnceLock<RwLock<EwaEngineConfig>>`), and `cargo
+    /// test` runs different `#[test]` functions on different threads by
+    /// default. Any function here that flips it off would race every OTHER
+    /// function in this module that assumes the family stays on
+    /// (measured: it did, intermittently, splitting this into five
+    /// functions made the "reports" cases occasionally see the family OFF
+    /// mid-flight and read back an empty result). One function, one
+    /// thread, deterministic — same reason `manager::
+    /// auto_adoption_gate_tests::adoption_gated_by_detect_higher_degree`
+    /// (`mlc-backend`) merges its own off/on halves for the SAME class of
+    /// global.
+    #[test]
+    fn subdivision_degree_rule_behaves_correctly() {
+        set_ewa_engine_config(EwaEngineConfig::default());
+        let p = parent();
+
+        // A child ONE step finer than its parent — the correct relation
+        // `child_seed` itself always produces — must not report.
+        let one_step_finer = child_at(p.data.id, p.wave_degree().expect("impulse carries a degree").finer());
+        let found = violations_in(&one_step_finer, &[&p]);
+        assert!(!found.iter().any(|v| v.rule_id == "subdivision_degree"), "one step finer is the correct relation: {found:?}");
+
+        // A child at the SAME degree as its parent — the higher-degree
+        // auto-adoption ceiling case (`count::adopted_parent_degree`'s own
+        // doc: `WaveDegree::coarser` saturates at `Supermillennium`) —
+        // must report, and nothing else.
+        let same_degree = child_at(p.data.id, p.wave_degree().expect("impulse carries a degree"));
+        let found = violations_in(&same_degree, &[&p]);
+        assert_eq!(found.len(), 1, "exactly the degree violation, nothing else: {found:?}");
+        assert_eq!(found[0].rule_id, "subdivision_degree");
+        assert_eq!(found[0].wave, WaveSlot::CorrectionA, "the child's own FIRST slot stands in for \"the whole structure\", same as chain_continuity's own marker");
+
+        // A child TWO steps finer — still wrong, not merely "finer than".
+        let two_steps_finer = child_at(p.data.id, p.wave_degree().expect("impulse carries a degree").finer().finer());
+        let found = violations_in(&two_steps_finer, &[&p]);
+        assert!(found.iter().any(|v| v.rule_id == "subdivision_degree"), "two steps finer is still wrong: {found:?}");
+
+        // Grammar family OFF: the loudest fixture (same-degree, already
+        // proven to violate above) must now report nothing.
+        let mut cfg = EwaEngineConfig::default();
+        cfg.guard_families.grammar = false;
+        set_ewa_engine_config(cfg);
+        let found = violations_in(&same_degree, &[&p]);
+        assert!(!found.iter().any(|v| v.rule_id == "subdivision_degree"), "grammar family off must silence this rule too: {found:?}");
+        set_ewa_engine_config(EwaEngineConfig::default());
+
+        // The normal hand-made-subdivision path (`DrawingManager::
+        // create_wave_child`) seeds a NEW child through `count::
+        // child_seed`, whose own degree is `parent.wave_degree()?.finer()`
+        // by contract — this must stay exactly as clean under the new rule
+        // as it already was, or the rule is wrong, not the seed.
+        let seed = count::child_seed(&p, WaveSlot::Impulse2).expect("impulse has a wave-2 slot");
+        let seeded_points = seed.interpolate(4);
+        let points: [(i64, f64); 4] = [seeded_points[0], seeded_points[1], seeded_points[2], seeded_points[3]];
+        let mut seeded_child = ElliottCorrection::new(points, "#FF5722");
+        seeded_child.data.id = 2;
+        seeded_child.degree = seed.degree;
+        seeded_child.link = Some(WaveLink { parent_id: p.data.id, slot: WaveSlot::Impulse2 });
+        let found = violations_in(&seeded_child, &[&p]);
+        assert!(found.is_empty(), "child_seed's own .finer() contract must still produce zero violations: {found:?}");
     }
 }

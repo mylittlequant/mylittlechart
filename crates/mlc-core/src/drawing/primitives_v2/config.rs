@@ -1591,6 +1591,16 @@ impl ConfigProperty {
         Self::line_style("ratio_rib_style", ConceptKey::RatioRibStyleLabel.get(current_language()), value)
     }
 
+    /// Create "Show Projections" boolean property with i18n — the
+    /// fibonacci-EXTENSION projection toggle (`elliott::projection`), the
+    /// forward-looking counterpart to [`Self::show_ratios`] declared next
+    /// to it on the four Elliott types that carry it (not
+    /// `elliott_triangle` — see `elliott::projection`'s own module doc for
+    /// why).
+    pub fn show_projections(value: bool) -> Self {
+        Self::boolean("show_projections", ConfigKey::ShowProjections.get(current_language()), value)
+    }
+
     /// Create "Show Trendlines" boolean property with i18n
     pub fn show_trendlines(value: bool) -> Self {
         Self::boolean("show_trendlines", ConfigKey::ShowTrendlines.get(current_language()), value)

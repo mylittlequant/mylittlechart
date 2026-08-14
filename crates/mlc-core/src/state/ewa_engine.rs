@@ -10,14 +10,17 @@
 //! carried in the profile blob (`ProfileUiSettings::ewa_engine`) so it
 //! survives a reload — see [`ewa_engine_config`]/[`set_ewa_engine_config`].
 //!
-//! Two of the fields below (`detect_higher_degree`, `show_projections`) are
-//! read by NOTHING yet — they are the settings surface for two later tasks
-//! (higher-cycle recognition and a per-structure fibonacci-projection
-//! toggle) that this pass only wires the KNOB for, not the behaviour. Their
-//! defaults are chosen for those future readers (both start OFF — the owner
-//! asked for higher-cycle recognition as an option, not a default; `false`
-//! is also the natural default for the per-structure projection toggle a
-//! later task adds), not for anything active today.
+//! Two of the fields below (`detect_higher_degree`, `show_projections`)
+//! were knobs with no reader when this module was first written; both are
+//! live now and both still start OFF, so an untouched config behaves
+//! exactly as it did before either reader existed:
+//! - `detect_higher_degree` gates the whole higher-cycle detector at
+//!   creation time (`DrawingManager::adopt_higher_degree`, which sits
+//!   behind one early return on this field) — the owner asked for
+//!   recognition as an option, not a default;
+//! - `show_projections` is the STARTING value of each Elliott structure's
+//!   own per-drawing `show_projections` toggle, read once at construction
+//!   the same way `ratio_rib_defaults` is, never retro-applied.
 
 use std::sync::{OnceLock, RwLock};
 
@@ -86,9 +89,10 @@ impl Default for RatioRibDefaults {
 ///   retracement-vs-origin checks, the triangle contracting-boundaries
 ///   check, the wave-2/wave-4-must-retrace checks).
 /// - `grammar` — the subdivision/typing rules (does the right KIND of
-///   structure occupy a slot, does a declared correction subtype actually
-///   match its measured ratio, combo component/connector correctness, at
-///   most one zigzag component, a triangle only in the final component).
+///   structure occupy a slot, does a subdivision carry the right DEGREE for
+///   its slot, does a declared correction subtype actually match its
+///   measured ratio, combo component/connector correctness, at most one
+///   zigzag component, a triangle only in the final component).
 /// - `chain` — the `follows`-chain-level rules (continuity, alternation,
 ///   shared degree).
 ///
@@ -139,16 +143,21 @@ pub struct EwaEngineConfig {
     pub label_separation: LabelSeparationStyle,
 
     /// Recognize higher-degree cycles automatically. Default `false` — the
-    /// owner asked for this as an OPTION, not a default. Nothing reads this
-    /// field yet (see this module's own doc); a later task wires the
-    /// detector behind it.
+    /// owner asked for this as an OPTION, not a default. Read at creation
+    /// time by `DrawingManager::finalize_new_primitive`, which runs the
+    /// whole detector (`elliott::count::adoptable_children` +
+    /// `DrawingManager::adopt_higher_degree`) behind one early return on
+    /// this field, so an untouched config leaves creation untouched.
     #[serde(default)]
     pub detect_higher_degree: bool,
 
     /// Show fibonacci projections by default on a newly drawn structure.
-    /// Default `false` — nothing reads this field yet (see this module's
-    /// own doc); the per-structure projection-toggle task adds the reader
-    /// and this becomes that toggle's own starting value.
+    /// Default `false`. Read ONCE, at construction, by each Elliott type
+    /// that has a projection table of its own (impulse, correction, both
+    /// combos — not the triangle, see `elliott::projection`'s module doc),
+    /// seeding that structure's own per-drawing `show_projections` toggle
+    /// exactly the way `ratio_rib_defaults` seeds its rib style; never
+    /// retro-applied to a structure that already exists.
     #[serde(default)]
     pub show_projections: bool,
 

@@ -65,6 +65,11 @@ pub struct ElliottTriangle {
     /// dash, see `ratio::draw_ratio_annotations`'s own dash table).
     #[serde(default = "default_ratio_rib_style")]
     pub ratio_rib_style: LineStyle,
+    // Deliberately NO `show_projections` field here — a triangle's own legs
+    // CONTRACT toward its apex, so there is no motive-extension relation to
+    // project. See `super::projection`'s module doc ("ElliottTriangle has
+    // no table and no toggle") for the full reasoning; this is a decision,
+    // not an oversight.
     /// How many of `points` are REAL — see `ElliottImpulse::realized_points`
     /// own doc (`super::elliott_impulse`) for the full rationale
     /// (`DrawingManager::promote_wave_chain`'s own point padding). `None`
@@ -172,6 +177,7 @@ impl Primitive for ElliottTriangle {
     fn wave_link(&self) -> Option<WaveLink> { self.link }
     fn set_wave_link(&mut self, link: Option<WaveLink>) { self.link = link; }
     fn wave_degree(&self) -> Option<WaveDegree> { Some(self.degree) }
+    fn set_wave_degree(&mut self, degree: WaveDegree) { self.degree = degree; }
     fn wave_slots(&self) -> &'static [WaveSlot] {
         &[WaveSlot::TriangleA, WaveSlot::TriangleB, WaveSlot::TriangleC, WaveSlot::TriangleD, WaveSlot::TriangleE]
     }

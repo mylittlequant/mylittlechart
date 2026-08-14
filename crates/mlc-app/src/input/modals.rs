@@ -1842,7 +1842,7 @@ impl ChartApp {
                     // Record undo and propagate to color-tag peers.
                     let cmd = active_bid_tool.and_then(|bid| {
                         let prim_id = self.core.drawings().last_index(bid)?;
-                        self.build_create_primitive_command(bid, prim_id)
+                        self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
                         eprintln!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
@@ -1932,7 +1932,7 @@ impl ChartApp {
                     // Extract snapshot then push undo command.
                     let cmd = active_bid_tool.and_then(|bid| {
                         let prim_id = self.core.drawings().last_index(bid)?;
-                        self.build_create_primitive_command(bid, prim_id)
+                        self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
                         eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
@@ -2667,6 +2667,38 @@ impl ChartApp {
         let points = guard.get_points(bid, prim_id)?;
         let snapshot = guard.get_snapshot(bid, prim_id)?;
         Some(mlc_core::Command::CreatePrimitive { prim_id, points, snapshot, cascaded: Vec::new() })
+    }
+
+    /// Build the undo command for a just-finished creation gesture at
+    /// `bid`/`prim_id` — [`Self::build_create_primitive_command`]'s own
+    /// `Command::CreatePrimitive` normally, or `Command::PromoteWaveChain`
+    /// when higher-degree auto-adoption fired DURING that primitive's own
+    /// construction (`EwaEngineConfig::detect_higher_degree`,
+    /// `DrawingManager::adopt_higher_degree`).
+    ///
+    /// Undoing a creation that adopted existing structures as its own
+    /// subdivisions must remove BOTH the new parent AND every adopted
+    /// child's own `WaveLink`, in one step — `CreatePrimitive`'s own inverse
+    /// (`DeletePrimitive`, single-primitive) cannot express that: it would
+    /// leave the adopted children pointing at a parent id that no longer
+    /// exists. `PromoteWaveChain`/`DemoteWaveChain` already solve exactly
+    /// this "recreate parent + stamp links / clear links + delete parent"
+    /// shape for chain promotion (see `promote_wave_chain_and_record`'s own
+    /// doc) — reused here VERBATIM, no new `Command` variant.
+    ///
+    /// `wave_children_of` is a plain read of what `DrawingManager::
+    /// adopt_higher_degree` already wrote onto each adopted child's own
+    /// `link` field at creation time — never a stashed pending value, so
+    /// this can be called any time after the creation call returns, exactly
+    /// like every other call site already resolves the new primitive's own
+    /// id via `last_index` after the fact.
+    pub(crate) fn build_creation_command(&self, bid: mlc_core::BubbleId, prim_id: u64) -> Option<mlc_core::Command> {
+        let members = self.core.drawings().wave_children_of(bid, prim_id);
+        if members.is_empty() {
+            return self.build_create_primitive_command(bid, prim_id);
+        }
+        let parent_snapshot = self.core.drawings().get_snapshot(bid, prim_id)?;
+        Some(mlc_core::Command::PromoteWaveChain { parent_id: prim_id, parent_snapshot, members })
     }
 
     /// Delete a primitive by stable id, recording undo state first — shared

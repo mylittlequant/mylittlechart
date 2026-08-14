@@ -1108,6 +1108,336 @@ pub fn child_kinds(parent: &dyn Primitive, slot: WaveSlot) -> Vec<&'static str> 
 }
 
 // =========================================================================
+// Adoption — recognizing already-drawn structures as subdivisions of a NEW,
+// coarser one (owner ask 2026-08-14: "кроме того что у нас разбиение по
+// циклам идет вниз когда мы дробим, неплохо было бы детектить вверх и
+// делать авторазметку более высокого цикла" — when the analyst draws a
+// COARSER structure over waves he already marked, the engine recognises the
+// existing ones as its own subdivisions instead of making him re-link them
+// by hand). This is RECOGNITION of what was actually drawn, never a guessed
+// count: a candidate is adopted only when its own endpoints coincide with
+// the new structure's own slot anchors (within [`ADOPT_TOLERANCE_FRAC`]'s
+// own click-slop budget) AND its kind is grammatically legal in that slot
+// ([`child_kinds`] — the SAME gate a hand-built child already has to clear,
+// so recognition can never produce a subdivision the analyst could not have
+// created himself). Nothing is invented, nothing is moved except the weld
+// the caller performs afterward (see [`Adoption::start`]/[`Adoption::end`]'s
+// own doc) — this module only ever REPORTS matches, never mutates anything;
+// the collection's own owner (`DrawingManager`, `mlc-backend`) does the
+// actual write.
+// =========================================================================
+
+/// The click-slop budget [`adoptable_children`] matches a candidate's own
+/// endpoints against a new structure's own slot anchors — a FRACTION of the
+/// new structure's own bounding span (its own high-low price range, its own
+/// earliest-to-latest time span), never an absolute price or a pixel count:
+/// `mlc-core` cannot see pixels, and a fixed absolute price tolerance would
+/// be wrong both for a cent-priced altcoin and for a five-figure index. The
+/// analyst clicks NEAR his own pivots when drawing the coarser structure,
+/// never exactly on them — an exact point comparison would recognise
+/// nothing.
+const ADOPT_TOLERANCE_FRAC: f64 = 0.02;
+
+/// One existing primitive [`adoptable_children`] recognises as already
+/// occupying one of a new structure's own slots.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Adoption {
+    /// The adopted child's own [`super::super::PrimitiveData::id`].
+    pub child_id: u64,
+    /// Which of the new structure's own slots the child occupies.
+    pub slot: WaveSlot,
+    /// The child's OWN first point — read off `Primitive::points`, never the
+    /// parent's own (looser, click-slop) anchor at this slot. This is what
+    /// the caller welds the parent's own slot-start point ONTO: the analyst
+    /// clicked NEAR the child's own end when drawing the new structure,
+    /// adoption makes the join exact, the same invariant a hand-made
+    /// subdivision already gets from `DrawingManager::restitch_wave_joints`.
+    /// Reported, not applied — this module never mutates either primitive.
+    pub start: (i64, f64),
+    /// The child's own LAST point — the mirror of [`start`](Self::start).
+    pub end: (i64, f64),
+}
+
+/// Every existing primitive in `candidates` that legally occupies one of
+/// `parent`'s own slots — the detector behind auto-adoption (this module's
+/// own "Adoption" section doc above). `parent` is a primitive that has not
+/// yet been linked to anything (a freshly drawn top-level structure); this
+/// function only REPORTS which candidates qualify, it never mutates either
+/// `parent` or any candidate — the caller (`DrawingManager`, the only thing
+/// that can write back into the collection) does the welding/linking.
+///
+/// For each of `parent`'s own slots ([`Primitive::wave_slots`]), this
+/// resolves the slot's own point span via [`slot_span`] and reads the two
+/// anchor points straight off `parent`'s own [`Primitive::points`] — never
+/// invented, never a guess at what the count "should" contain. A candidate
+/// qualifies for that slot only when ALL of the following hold:
+///
+/// - it is not `parent` itself (compared by
+///   [`super::super::PrimitiveData::id`], via `candidates`' own `u64`);
+/// - [`Primitive::wave_link`] is `None` — a structure that already
+///   subdivides something else is not up for adoption by a second parent,
+///   the same rule [`promote_chain_shape`] enforces for its own chain
+///   members (see that function's own doc);
+/// - both of its own endpoints (`points().first()`/`points().last()`) lie
+///   within [`ADOPT_TOLERANCE_FRAC`]'s own click-slop budget of the slot's
+///   own `start`/`end` anchors;
+/// - its own kind id ([`kind_id_of`]) is one of [`child_kinds`]`(parent,
+///   slot)` — the SAME grammar gate a hand-built child already has to
+///   clear, so recognition can never produce a subdivision the analyst
+///   could not have created himself by picking it from the slot picker;
+/// - it carries a [`Primitive::wave_degree`] at all — a non-Elliott
+///   primitive (a plain trend line drawn across the same two points, say)
+///   can never be adopted, matching every other function in this module's
+///   own "outside the Elliott family" contract.
+///
+/// Degree consistency: two candidates matching two different slots may
+/// carry two different degrees (e.g. one drawn at `Minor`, another at
+/// `Minute`, both happening to land on the new structure's own anchors).
+/// Only the matches sharing the COARSEST degree PRESENT among them survive
+/// into the result — a structure's own subdivisions are all one degree, the
+/// same invariant `elliott::guard::chain_violations`'s own `"chain_degree"`
+/// rule already enforces for a `follows` chain. The coarsest (not finest,
+/// not majority) degree wins because a genuine higher-cycle markup nests
+/// EVERY finer degree below it; a stray match at a still-finer degree than
+/// the rest reads as a coincidental overlap rather than a real subdivision,
+/// and is silently dropped rather than merged in.
+///
+/// Uniqueness, BOTH directions (checked AFTER the degree filter above): a
+/// slot holds exactly one subdivision, and a child occupies exactly one
+/// slot, so the raw matches above can still conflict two ways that a broken
+/// state, never a preference, has to resolve:
+///
+/// - two DIFFERENT candidates both matching the SAME slot (two structures
+///   drawn near the same span) — welding both would leave the slot's own
+///   anchor pointing at whichever [`WaveLink`] was written last;
+/// - one candidate matching TWO DIFFERENT slots (a degenerate — very
+///   short — middle wave puts both of ITS OWN endpoints inside the
+///   tolerance box of more than one slot) — linking it twice would give one
+///   child two parents' worth of slot.
+///
+/// Both are resolved by keeping the CLOSEST match, never by iteration
+/// order: every raw match carries a `score` — its own endpoint distance
+/// from the slot's anchors, EACH AXIS normalized by that same axis's own
+/// `ts_tol`/`price_tol` budget (so a millisecond and a price unit become
+/// comparable), summed over both endpoints (`start` error + `end` error).
+/// Lower is closer. Slot conflicts resolve FIRST (one winner per
+/// [`WaveSlot`]); a child that still appears under two different
+/// slot-winners after that keeps only its own lower-scored one, and the
+/// slot it loses reverts to unmatched. Either tie (equal score) breaks on
+/// the smaller [`Adoption::child_id`] — deterministic, never "whichever the
+/// candidate slice happened to list first".
+///
+/// Empty when `parent` carries no [`Primitive::wave_degree`] itself, when
+/// `parent`'s own points do not yet reach 2 entries (nothing to read a
+/// bounding span or a slot anchor off), or when fewer than one slot matched
+/// at all — there is nothing to recognise.
+pub fn adoptable_children(parent: &dyn Primitive, candidates: &[(u64, &dyn Primitive)]) -> Vec<Adoption> {
+    if parent.wave_degree().is_none() {
+        return Vec::new();
+    }
+    let parent_id = parent.data().id;
+    let parent_points = parent.points();
+    if parent_points.len() < 2 {
+        return Vec::new();
+    }
+
+    // The new structure's own bounding span — the basis for
+    // `ADOPT_TOLERANCE_FRAC`'s own click-slop budget (see that const's own
+    // doc): price range and time range across EVERY one of `parent`'s own
+    // points, not just its own first/last (a structure that retraces past
+    // its own start still has that retracement count toward its own span,
+    // same reasoning `resample_polyline`'s own normalization uses).
+    let (min_ts, max_ts) = parent_points.iter().fold(
+        (parent_points[0].0, parent_points[0].0),
+        |(lo, hi), &(t, _)| (lo.min(t), hi.max(t)),
+    );
+    let (min_price, max_price) = parent_points.iter().fold(
+        (parent_points[0].1, parent_points[0].1),
+        |(lo, hi), &(_, p)| (lo.min(p), hi.max(p)),
+    );
+    let ts_tol = (max_ts - min_ts) as f64 * ADOPT_TOLERANCE_FRAC;
+    let price_tol = (max_price - min_price) * ADOPT_TOLERANCE_FRAC;
+
+    struct RawMatch {
+        child_id: u64,
+        slot: WaveSlot,
+        start: (i64, f64),
+        end: (i64, f64),
+        degree: WaveDegree,
+        /// See [`adoptable_children`]'s own doc, "Uniqueness" paragraph, for
+        /// what this measures and how ties break.
+        score: f64,
+    }
+    let mut raw: Vec<RawMatch> = Vec::new();
+
+    for &slot in parent.wave_slots() {
+        let Some((start_idx, end_idx)) = slot_span(parent.type_id(), slot) else { continue };
+        let (Some(&span_start), Some(&span_end)) = (parent_points.get(start_idx), parent_points.get(end_idx))
+        else {
+            continue;
+        };
+        let allowed = child_kinds(parent, slot);
+        if allowed.is_empty() {
+            continue;
+        }
+        for &(child_id, child) in candidates {
+            if child_id == parent_id {
+                continue;
+            }
+            if child.wave_link().is_some() {
+                continue;
+            }
+            let Some(child_degree) = child.wave_degree() else { continue };
+            let child_points = child.points();
+            let (Some(&c_first), Some(&c_last)) = (child_points.first(), child_points.last()) else {
+                continue;
+            };
+            let dt_start = (c_first.0 - span_start.0).unsigned_abs() as f64;
+            let dp_start = (c_first.1 - span_start.1).abs();
+            let dt_end = (c_last.0 - span_end.0).unsigned_abs() as f64;
+            let dp_end = (c_last.1 - span_end.1).abs();
+            if dt_start > ts_tol || dp_start > price_tol || dt_end > ts_tol || dp_end > price_tol {
+                continue;
+            }
+            let Some(kind_id) = kind_id_of(child) else { continue };
+            if !allowed.iter().any(|&k| k == kind_id) {
+                continue;
+            }
+            // `Adoption::start`/`::end` carry the CHILD's own exact
+            // endpoints, not `span_start`/`span_end` — see `Adoption`'s
+            // own field doc for why: the weld snaps the parent's own
+            // (click-slop) anchor ONTO the child's own precise point, not
+            // the other way around.
+            let score = normalized_error(dt_start, ts_tol)
+                + normalized_error(dp_start, price_tol)
+                + normalized_error(dt_end, ts_tol)
+                + normalized_error(dp_end, price_tol);
+            raw.push(RawMatch { child_id, slot, start: c_first, end: c_last, degree: child_degree, score });
+        }
+    }
+
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    // Degree consistency — keep only the coarsest degree present (see this
+    // function's own doc for why coarsest, not finest or majority).
+    // `WaveDegree::all()` is ordered coarsest-to-finest, so the smallest
+    // position among the matched degrees names the coarsest one.
+    let all_degrees = WaveDegree::all();
+    let coarsest = raw
+        .iter()
+        .filter_map(|m| all_degrees.iter().position(|&d| d == m.degree))
+        .min()
+        .and_then(|idx| all_degrees.get(idx).copied());
+    let Some(coarsest) = coarsest else { return Vec::new() };
+    raw.retain(|m| m.degree == coarsest);
+
+    // Uniqueness pass 1: at most one adoption PER SLOT. Keep the
+    // lower-scored (closer) match; a tie breaks on the smaller `child_id`
+    // (deterministic, never "whichever came first in `candidates`").
+    let mut best_by_slot: std::collections::HashMap<WaveSlot, RawMatch> = std::collections::HashMap::new();
+    for m in raw {
+        match best_by_slot.entry(m.slot) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(m);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let keep_new = m.score < e.get().score || (m.score == e.get().score && m.child_id < e.get().child_id);
+                if keep_new {
+                    e.insert(m);
+                }
+            }
+        }
+    }
+
+    // Uniqueness pass 2: at most one adoption PER CHILD, checked AFTER slot
+    // conflicts already resolved above — a child that still wins two
+    // different slots here keeps only its own lower-scored slot, and the
+    // OTHER slot simply drops back out of the result (it is not handed to
+    // a second-choice candidate — that candidate already lost its own
+    // slot-conflict round on its own merits, or never had one).
+    let mut best_by_child: std::collections::HashMap<u64, RawMatch> = std::collections::HashMap::new();
+    for m in best_by_slot.into_values() {
+        match best_by_child.entry(m.child_id) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(m);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let keep_new = m.score < e.get().score || (m.score == e.get().score && m.slot.id() < e.get().slot.id());
+                if keep_new {
+                    e.insert(m);
+                }
+            }
+        }
+    }
+
+    let mut result: Vec<Adoption> = best_by_child
+        .into_values()
+        .map(|m| Adoption { child_id: m.child_id, slot: m.slot, start: m.start, end: m.end })
+        .collect();
+    // Deterministic output order — `HashMap` iteration order is not, and
+    // nothing about which entry a test or a caller sees first should depend
+    // on it.
+    result.sort_by_key(|a| a.child_id);
+    result
+}
+
+/// `diff / tol`, except `0.0` when `tol` is exactly `0.0` — by the time this
+/// is called, `diff <= tol` has already been enforced by the caller's own
+/// match gate, so `tol == 0.0` only ever pairs with `diff == 0.0` (an EXACT
+/// match on an axis with no slop budget at all, e.g. a perfectly flat
+/// price). Plain float division there would be `0.0 / 0.0 = NaN`, which
+/// compares false against everything and would poison every score it
+/// touches; reading "no budget, but matched exactly" as "zero error on that
+/// axis" is what it actually means.
+fn normalized_error(diff: f64, tol: f64) -> f64 {
+    if tol > 0.0 { diff / tol } else { 0.0 }
+}
+
+/// The degree a NEW parent must be constructed with after adopting
+/// `adoptions` — one step [`WaveDegree::coarser`] than the shared degree
+/// every entry in `adoptions` already carries (see [`adoptable_children`]'s
+/// own doc: only the coarsest degree PRESENT among the raw matches survives
+/// into its result, so every entry here already shares one degree).
+/// Resolves that shared degree by looking up the FIRST entry's own
+/// [`Adoption::child_id`] back in `candidates` — [`Adoption`] itself does
+/// not carry a degree field (only what the caller needs to weld/link), so
+/// this is the one place that re-reads it, off the SAME `candidates` slice
+/// [`adoptable_children`] was called with.
+///
+/// `None` for an empty `adoptions` (nothing to derive a shared degree from)
+/// or when the first entry's own id is not found in `candidates` (never
+/// happens for a `candidates` slice unchanged between the two calls, but
+/// this does not assume that of an arbitrary caller).
+///
+/// Ceiling: [`WaveDegree::coarser`] SATURATES at
+/// [`WaveDegree::Supermillennium`] rather than wrapping or panicking (see
+/// its own doc). When the adopted children are already at that coarsest
+/// degree, this function returns `Supermillennium` again — the new parent
+/// then shares its own children's degree instead of sitting one step above
+/// them. That is visible in the data (`parent.wave_degree() ==
+/// child.wave_degree()`) but, as of this writing, NOTHING in
+/// `elliott::guard` actually reads and flags it: `"chain_degree"` is a
+/// different relation entirely (it checks that `follows`-chained SIBLINGS
+/// share one degree, never that a [`WaveLink`] parent sits one step above
+/// its own child), and no `"subdivision_degree"`-shaped rule exists. A
+/// same-degree parent/child pair produced this way passes every existing
+/// check silently. Recorded here as a known, honest gap rather than papered
+/// over — Supermillennium is the top of a 15-rung ladder, so it is a real
+/// but rare edge, and closing it (either refusing adoption at the ceiling,
+/// or adding the missing guard rule) is a follow-up decision, not part of
+/// this function's own contract.
+pub fn adopted_parent_degree(candidates: &[(u64, &dyn Primitive)], adoptions: &[Adoption]) -> Option<WaveDegree> {
+    let first = adoptions.first()?;
+    candidates
+        .iter()
+        .find(|&&(id, _)| id == first.child_id)
+        .and_then(|&(_, p)| p.wave_degree())
+        .map(|d| d.coarser())
+}
+
+// =========================================================================
 // Conversion — what this structure may become mid-count (owner report
 // 2026-08-14: "я создал АБЦ как зигзаг, но в процессе понял, что хочу
 // сделать его плоскостью или ещё чем-то — не получается переменить весь
@@ -1504,7 +1834,7 @@ pub fn slot_at_ordinal(type_id: &str, ordinal: usize) -> Option<WaveSlot> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ElliottCorrection, ElliottDoubleCombo};
+    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ElliottCorrection, ElliottDoubleCombo, ElliottTriangle};
 
     #[test]
     fn child_seed_impulse_wave3_spans_correct_points() {
@@ -1896,6 +2226,198 @@ mod tests {
         assert_eq!(shape.type_id, "elliott_correction");
         assert_eq!(shape.slots, vec![WaveSlot::CorrectionA, WaveSlot::CorrectionB]);
         assert_eq!(shape.points, vec![(0, 100.0), (3_000, 85.0), (8_000, 115.0)]);
+    }
+
+    // =====================================================================
+    // adoptable_children / adopted_parent_degree (owner ask 2026-08-14,
+    // this module's own "Adoption" section above)
+    // =====================================================================
+
+    /// The parent every adoption test below drives — a plain impulse whose
+    /// own five slots are exactly what the tests below match candidates
+    /// against. `id` is set apart from every candidate `id` used below so
+    /// "not `parent` itself" is exercised, not merely assumed to hold.
+    fn impulse_parent_for_adoption() -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let mut p = ElliottImpulse::new(points, "#2196F3");
+        p.data.id = 100;
+        p
+    }
+
+    /// A standalone impulse spanning exactly `start..end`, for the Impulse1
+    /// motive slot — only interior points are degenerate (repeated `start`);
+    /// `adoptable_children` only ever reads a candidate's own first/last
+    /// point, so the interior shape does not matter to any test below.
+    fn standalone_impulse(id: u64, degree: WaveDegree, start: (i64, f64), end: (i64, f64)) -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [start, start, start, start, start, end];
+        let mut p = ElliottImpulse::new(points, "#2196F3");
+        p.data.id = id;
+        p.degree = degree;
+        p
+    }
+
+    /// A standalone (zigzag) correction spanning exactly `start..end` — the
+    /// corrective candidate every wave-2-slot test below adopts.
+    fn standalone_correction(id: u64, degree: WaveDegree, start: (i64, f64), end: (i64, f64)) -> ElliottCorrection {
+        let points: [(i64, f64); 4] = [start, start, start, end];
+        let mut p = ElliottCorrection::new(points, "#FF5722");
+        p.data.id = id;
+        p.degree = degree;
+        p
+    }
+
+    /// A standalone triangle spanning exactly `start..end` — used only by
+    /// the illegal-kind test below (a triangle is never legal in an
+    /// impulse's wave-2 slot, see `child_kinds_impulse_wave2_excludes_triangle`).
+    fn standalone_triangle(id: u64, degree: WaveDegree, start: (i64, f64), end: (i64, f64)) -> ElliottTriangle {
+        let points: [(i64, f64); 6] = [start, start, start, start, start, end];
+        let mut p = ElliottTriangle::new(points, "#9C27B0");
+        p.data.id = id;
+        p.degree = degree;
+        p
+    }
+
+    #[test]
+    fn adoptable_children_adopts_exact_matches_with_right_slots() {
+        let parent = impulse_parent_for_adoption();
+        // Impulse1 span: (0, 100.0) -> (1_000, 110.0).
+        let child_a = standalone_impulse(1, WaveDegree::Minute, (0, 100.0), (1_000, 110.0));
+        // Impulse2 span: (1_000, 110.0) -> (2_000, 105.0).
+        let child_b = standalone_correction(2, WaveDegree::Minute, (1_000, 110.0), (2_000, 105.0));
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(1, &child_a), (2, &child_b)];
+
+        let mut adopted = adoptable_children(&parent, &candidates);
+        adopted.sort_by_key(|a| a.child_id);
+        assert_eq!(adopted.len(), 2, "both drawn-over candidates must be recognised");
+        assert_eq!(adopted[0], Adoption { child_id: 1, slot: WaveSlot::Impulse1, start: (0, 100.0), end: (1_000, 110.0) });
+        assert_eq!(adopted[1], Adoption { child_id: 2, slot: WaveSlot::Impulse2, start: (1_000, 110.0), end: (2_000, 105.0) });
+
+        assert_eq!(
+            adopted_parent_degree(&candidates, &adopted),
+            Some(WaveDegree::Minute.coarser()),
+            "the new parent's own degree is one step coarser than what it adopted"
+        );
+    }
+
+    #[test]
+    fn adoptable_children_refuses_endpoint_outside_tolerance() {
+        let parent = impulse_parent_for_adoption();
+        // Parent's own price span is 140.0 - 100.0 = 40.0, so the 2% budget
+        // is 0.8 — shifting the candidate's own end by 2.0 clears it.
+        let child = standalone_impulse(1, WaveDegree::Minute, (0, 100.0), (1_000, 112.0));
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(1, &child)];
+        assert!(adoptable_children(&parent, &candidates).is_empty(), "an endpoint outside the click-slop budget must not be adopted");
+    }
+
+    #[test]
+    fn adoptable_children_refuses_a_child_already_linked_elsewhere() {
+        let parent = impulse_parent_for_adoption();
+        let mut child = standalone_impulse(1, WaveDegree::Minute, (0, 100.0), (1_000, 110.0));
+        child.link = Some(WaveLink { parent_id: 999, slot: WaveSlot::CorrectionA });
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(1, &child)];
+        assert!(adoptable_children(&parent, &candidates).is_empty(), "a structure already nested under another parent must not be re-adopted");
+    }
+
+    #[test]
+    fn adoptable_children_refuses_a_kind_illegal_in_the_slot() {
+        let parent = impulse_parent_for_adoption();
+        // Impulse2 span: (1_000, 110.0) -> (2_000, 105.0) — geometrically
+        // exact, but a triangle is never a legal wave-2 candidate.
+        let child = standalone_triangle(1, WaveDegree::Minute, (1_000, 110.0), (2_000, 105.0));
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(1, &child)];
+        assert!(adoptable_children(&parent, &candidates).is_empty(), "a triangle must never be adopted into an impulse's own wave-2 slot");
+    }
+
+    #[test]
+    fn adoptable_children_keeps_only_the_coarsest_degree_present() {
+        let parent = impulse_parent_for_adoption();
+        // Impulse1 span, drawn at the COARSER of the two degrees.
+        let child_a = standalone_impulse(1, WaveDegree::Minor, (0, 100.0), (1_000, 110.0));
+        // Impulse2 span, drawn at the FINER of the two degrees.
+        let child_b = standalone_correction(2, WaveDegree::Minute, (1_000, 110.0), (2_000, 105.0));
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(1, &child_a), (2, &child_b)];
+
+        let adopted = adoptable_children(&parent, &candidates);
+        assert_eq!(adopted.len(), 1, "only the coarsest-degree match survives");
+        assert_eq!(adopted[0].child_id, 1);
+        assert_eq!(adopted[0].slot, WaveSlot::Impulse1);
+
+        assert_eq!(
+            adopted_parent_degree(&candidates, &adopted),
+            Some(WaveDegree::Minor.coarser()),
+            "the new parent's own degree is derived from the SURVIVING (coarsest) degree only"
+        );
+    }
+
+    #[test]
+    fn adoptable_children_empty_when_nothing_matched() {
+        let parent = impulse_parent_for_adoption();
+        assert!(adoptable_children(&parent, &[]).is_empty());
+    }
+
+    /// Two DIFFERENT candidates matching the SAME slot is a broken state,
+    /// not a preference between them — `adoptable_children` must resolve to
+    /// exactly one adoption, keeping the CLOSER match (lower score), never
+    /// whichever happened to be listed first in `candidates`.
+    #[test]
+    fn adoptable_children_two_candidates_competing_for_one_slot_yields_the_closer_one() {
+        let parent = impulse_parent_for_adoption();
+        // Impulse1 span: (0, 100.0) -> (1_000, 110.0).
+        let exact = standalone_impulse(1, WaveDegree::Minute, (0, 100.0), (1_000, 110.0));
+        // Same slot, same degree (so the degree filter cannot be what
+        // picks the winner — only the distance score can), but 0.3 off on
+        // price at both ends — still inside the 0.8 tolerance budget, so
+        // both genuinely qualify.
+        let off = standalone_impulse(2, WaveDegree::Minute, (0, 100.3), (1_000, 110.3));
+        // Listing the WORSE match first proves the winner is picked by
+        // score, not by candidate order.
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(2, &off), (1, &exact)];
+
+        let adopted = adoptable_children(&parent, &candidates);
+        assert_eq!(adopted.len(), 1, "a slot holds exactly one subdivision — never two links to the same slot");
+        assert_eq!(adopted[0].child_id, 1, "the EXACT match must win over the 0.3-off one");
+        assert_eq!(adopted[0].slot, WaveSlot::Impulse1);
+        assert_eq!(adopted[0].start, (0, 100.0));
+        assert_eq!(adopted[0].end, (1_000, 110.0));
+    }
+
+    /// One candidate whose own two points are both short enough to sit
+    /// inside the tolerance box of TWO different slots (the degenerate
+    /// "very short middle wave" case) must be adopted into exactly ONE of
+    /// them — the closer-scoring one — never linked twice.
+    #[test]
+    fn adoptable_children_one_candidate_matching_two_slots_is_adopted_once() {
+        // Waves 2 and 4 both cluster tightly around ts~1_020, price~100.06
+        // — close enough together that a single short candidate sitting in
+        // that cluster falls inside BOTH slots' own tolerance boxes. Waves
+        // 0 and 5 stay far apart so the parent's own bounding span (and so
+        // its tolerance budget: price 0.8, ts 100) is not itself degenerate.
+        let points: [(i64, f64); 6] = [
+            (0, 100.0),
+            (1_000, 100.05),
+            (1_010, 100.10),
+            (1_020, 100.08),
+            (1_030, 100.03),
+            (5_000, 140.0),
+        ];
+        let parent = ElliottImpulse::new(points, "#2196F3");
+        // Impulse2 span: (1_000, 100.05) -> (1_010, 100.10).
+        // Impulse4 span: (1_020, 100.08) -> (1_030, 100.03).
+        // Both slots accept a zigzag correction (neither is motive-only).
+        // This short candidate's own first/last (1_015, 100.06) ->
+        // (1_018, 100.07) sits inside BOTH slots' own tolerance boxes.
+        let child = standalone_correction(9, WaveDegree::Minute, (1_015, 100.06), (1_018, 100.07));
+        let candidates: Vec<(u64, &dyn Primitive)> = vec![(9, &child)];
+
+        let adopted = adoptable_children(&parent, &candidates);
+        assert_eq!(adopted.len(), 1, "one candidate must never be linked into two slots at once");
+        assert_eq!(adopted[0].child_id, 9);
+        // Impulse4's own anchors are numerically closer to the candidate's
+        // own endpoints than Impulse2's — see this test's own comment
+        // above for the raw deltas; the lower-scored slot must win.
+        assert_eq!(adopted[0].slot, WaveSlot::Impulse4, "the closer-scoring slot must win, not merely a legal one");
     }
 
     // =====================================================================

@@ -86,7 +86,12 @@ pub(super) fn default_rib_width(base_width: f64) -> f64 {
 /// scales the dash by line width and would NOT reproduce that fixed default
 /// once `ratio_rib_width` defaults to a different pixel width than a
 /// primitive's own base `data.width`).
-fn rib_dash_pattern(style: LineStyle) -> &'static [f64] {
+///
+/// `pub(super)` (not private) — `elliott::projection`'s own annotations are
+/// the SAME family as a ratio rib (owner spec 2026-08-14: "projections are
+/// the same annotation family, not a second palette"), so its draw fn reuses
+/// this exact table rather than a second copy of it.
+pub(super) fn rib_dash_pattern(style: LineStyle) -> &'static [f64] {
     match style {
         LineStyle::Solid => &[],
         LineStyle::Dashed => &[8.0, 4.0],

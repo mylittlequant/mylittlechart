@@ -10,7 +10,7 @@ use super::super::{
     config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot, slot_span, segment_is_subdivided, visible_leg_segments};
-use super::{guard, ratio, wave_hit};
+use super::{guard, ratio, projection, wave_hit};
 
 fn default_true() -> bool { true }
 fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
@@ -90,6 +90,13 @@ pub struct ElliottCorrection {
     /// dash, see `ratio::draw_ratio_annotations`'s own dash table).
     #[serde(default = "default_ratio_rib_style")]
     pub ratio_rib_style: LineStyle,
+    /// Show the fibonacci-EXTENSION projection ticks for wave C while it is
+    /// still being placed — C off A, anchored at B's own end (see
+    /// `super::projection`). `false` (the default) — off until asked for,
+    /// so every drawing saved before this field existed loads and renders
+    /// unchanged.
+    #[serde(default)]
+    pub show_projections: bool,
     /// How many of `points` are REAL — see `ElliottImpulse::realized_points`
     /// own doc (`super::elliott_impulse`) for the full rationale
     /// (`DrawingManager::promote_wave_chain`'s own point padding). `None`
@@ -130,10 +137,12 @@ pub struct ElliottCorrection {
 
 impl ElliottCorrection {
     pub fn new(points: [(i64, f64); 4], color: &str) -> Self {
-        // Ratio-rib defaults come from the EWA engine's own configurable
-        // defaults (owner ask 2026-08-14) — see `ElliottImpulse::new`'s own
-        // comment for the full rationale.
-        let ratio_rib_defaults = crate::state::ewa_engine::ewa_engine_config().ratio_rib_defaults;
+        // Ratio-rib defaults AND the projection toggle's own starting value
+        // come from the EWA engine's own configurable defaults (owner ask
+        // 2026-08-14) — see `ElliottImpulse::new`'s own comment for the
+        // full rationale (one config read, not two).
+        let ewa_cfg = crate::state::ewa_engine::ewa_engine_config();
+        let ratio_rib_defaults = ewa_cfg.ratio_rib_defaults;
         Self {
             data: PrimitiveData {
                 type_id: "elliott_correction".to_string(),
@@ -154,6 +163,7 @@ impl ElliottCorrection {
             ratio_rib_color: ratio_rib_defaults.color,
             ratio_rib_width: ratio_rib_defaults.width,
             ratio_rib_style: ratio_rib_defaults.style,
+            show_projections: ewa_cfg.show_projections,
             realized_points: None,
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
@@ -197,6 +207,7 @@ impl Primitive for ElliottCorrection {
     fn wave_link(&self) -> Option<WaveLink> { self.link }
     fn set_wave_link(&mut self, link: Option<WaveLink>) { self.link = link; }
     fn wave_degree(&self) -> Option<WaveDegree> { Some(self.degree) }
+    fn set_wave_degree(&mut self, degree: WaveDegree) { self.degree = degree; }
     fn wave_slots(&self) -> &'static [WaveSlot] {
         &[WaveSlot::CorrectionA, WaveSlot::CorrectionB, WaveSlot::CorrectionC]
     }
@@ -301,7 +312,7 @@ impl Primitive for ElliottCorrection {
         Some(ControlPointType::Index(0))
     }
 
-    fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
+    fn render(&self, ctx: &mut dyn RenderContext, is_selected: bool) {
         let dpr = ctx.dpr();
         let screen: Vec<(f64, f64)> = self.points.iter().map(|(ts, price)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*price))).collect();
         let realized = self.realized_len();
@@ -391,6 +402,19 @@ impl Primitive for ElliottCorrection {
             );
         }
 
+        // A SELECTED correction shows its projections on demand; an
+        // UNFINISHED one (realized < 4) shows them regardless of selection
+        // — see `ElliottImpulse::render`'s own comment for the full
+        // rationale (the in-progress preview is always `is_selected ==
+        // false`).
+        if self.show_projections && (is_selected || realized < 4) {
+            projection::draw_projection_annotations(
+                ctx, &self.points, realized, &projection::CORRECTION_PROJECTION_LEGS,
+                &self.data.color.stroke, self.data.width, &self.label_style,
+                self.ratio_rib_color.as_deref(), self.ratio_rib_width, self.ratio_rib_style,
+            );
+        }
+
         if let Some(ref text) = self.data.text {
             if !text.content.is_empty() {
                 let min_y = screen.iter().fold(f64::INFINITY, |a, (_, y)| a.min(*y));
@@ -441,9 +465,13 @@ impl Primitive for ElliottCorrection {
             ConfigProperty::ratio_rib_color(&rib_color_default).with_category(PropertyCategory::AppearanceLine).with_order(13),
             ConfigProperty::ratio_rib_width(rib_width_default).with_category(PropertyCategory::AppearanceLine).with_order(14),
             ConfigProperty::ratio_rib_style(self.ratio_rib_style.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(15),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(16),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(17),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(18),
+            // The fibonacci-EXTENSION projection toggle — immediately after
+            // the ratio-rib block it shares its own style with (see
+            // `elliott::projection`'s module doc).
+            ConfigProperty::show_projections(self.show_projections).with_category(PropertyCategory::AppearanceLine).with_order(16),
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19),
         ];
         props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
         props
@@ -468,6 +496,7 @@ impl Primitive for ElliottCorrection {
             "ratio_rib_color" => { if let Some(c) = value.as_color() { self.ratio_rib_color = Some(c.to_string()); return true; } }
             "ratio_rib_width" => { if let Some(v) = value.as_number() { self.ratio_rib_width = Some(v); return true; } }
             "ratio_rib_style" => { if let Some(s) = value.as_string() { self.ratio_rib_style = LineStyle::from_str(s); return true; } }
+            "show_projections" => { if let Some(v) = value.as_bool() { self.show_projections = v; return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }

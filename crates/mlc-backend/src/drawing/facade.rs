@@ -209,6 +209,12 @@ impl<'a> Drawings<'a> {
         self.mgr.get_snapshot(&self.bubbles, bid, prim_id)
     }
 
+    /// Every `(child_id, slot)` pair currently linked under `parent_id` —
+    /// see `DrawingManager::wave_children_of`'s own doc.
+    pub fn wave_children_of(&self, bid: BubbleId, parent_id: u64) -> Vec<(u64, WaveSlot)> {
+        self.mgr.wave_children_of(&self.bubbles, bid, parent_id)
+    }
+
     pub fn is_drawing(&self, bid: BubbleId) -> bool {
         self.mgr.is_drawing(bid)
     }
@@ -459,6 +465,16 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn finish_multipoint(&mut self, bid: BubbleId) -> bool {
         self.mgr.finish_multipoint(&mut self.bubbles, bid)
+    }
+
+    /// Every `(child_id, slot)` pair currently linked under `parent_id` —
+    /// see `DrawingManager::wave_children_of`'s own doc. The caller asks
+    /// this right after discovering a just-created primitive's own id
+    /// (`last_index`), to learn whether higher-degree auto-adoption fired
+    /// during its own construction and, if so, build `Command::
+    /// PromoteWaveChain` instead of `Command::CreatePrimitive` for it.
+    pub fn wave_children_of(&self, bid: BubbleId, parent_id: u64) -> Vec<(u64, WaveSlot)> {
+        self.mgr.wave_children_of(&self.bubbles, bid, parent_id)
     }
 
     pub fn start_freehand(&mut self, bid: BubbleId, ts_ms: i64, price: f64) -> bool {

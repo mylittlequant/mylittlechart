@@ -4986,7 +4986,7 @@ impl ChartApp {
             // For standalone windows: record undo and propagate to color-tag peers.
             if !self.intercept_completed_primitive_to_group() {
                 // Standalone path.
-                let cmd = active_bid_cf.and_then(|bid| self.build_create_primitive_command(bid, freehand.prim_id));
+                let cmd = active_bid_cf.and_then(|bid| self.build_creation_command(bid, freehand.prim_id));
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
                 }
