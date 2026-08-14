@@ -93,6 +93,15 @@ pub struct ElliottDoubleCombo {
     /// disk.
     #[serde(skip)]
     pub subdivided_slots: Vec<WaveSlot>,
+    /// This double combo's own point indices where a nested child's own
+    /// label lands on the same pivot — see
+    /// [`super::super::Primitive::label_collisions`]'s own doc. Cache only,
+    /// filled by the collection's own owner exactly like
+    /// [`subdivided_slots`](Self::subdivided_slots) — skipped on
+    /// (de)serialization so it never becomes a second source of truth on
+    /// disk.
+    #[serde(skip)]
+    pub label_collisions: Vec<usize>,
 }
 
 impl ElliottDoubleCombo {
@@ -119,6 +128,7 @@ impl ElliottDoubleCombo {
             realized_points: None,
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
+            label_collisions: Vec::new(),
         }
     }
 
@@ -177,6 +187,8 @@ impl Primitive for ElliottDoubleCombo {
     fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn subdivided_slots(&self) -> &[WaveSlot] { &self.subdivided_slots }
     fn set_subdivided_slots(&mut self, v: Vec<WaveSlot>) { self.subdivided_slots = v; }
+    fn label_collisions(&self) -> &[usize] { &self.label_collisions }
+    fn set_label_collisions(&mut self, v: Vec<usize>) { self.label_collisions = v; }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
     fn points(&self) -> Vec<(i64, f64)> { self.points.to_vec() }
@@ -223,7 +235,7 @@ impl Primitive for ElliottDoubleCombo {
         // A wave label's own plate is clickable too (owner ask 2026-08-13),
         // gated on `show_labels` exactly like the render side.
         if self.show_labels
-            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style, self.degree)
+            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style, &self.label_collisions)
         {
             return HitTestResult::Body;
         }
@@ -244,7 +256,7 @@ impl Primitive for ElliottDoubleCombo {
         let labels = self.wave_labels();
         wave_hit::wave_slot_at(
             sx, sy, self.type_id(), &screen, self.realized_len(), self.wave_slots(),
-            &labels, &self.label_style, self.degree, self.show_labels, self.show_ratios, &ratio::DOUBLE_COMBO_RATIO_RIBS,
+            &labels, &self.label_style, &self.label_collisions, self.show_labels, self.show_ratios, &ratio::DOUBLE_COMBO_RATIO_RIBS,
         )
     }
 
@@ -334,7 +346,8 @@ impl Primitive for ElliottDoubleCombo {
             for (i, label) in labels.iter().enumerate() {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
-                let offset = wave_label_offset(&screen, i, &self.label_style, self.degree);
+                let collides = self.label_collisions.contains(&i);
+                let offset = wave_label_offset(&screen, i, &self.label_style, collides);
                 let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
                 let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
                 draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);

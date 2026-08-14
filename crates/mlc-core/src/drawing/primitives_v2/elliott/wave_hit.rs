@@ -9,7 +9,7 @@
 
 use super::count::{label_slot_for_index, slot_span, WaveSlot};
 use super::ratio::{self, Rib};
-use super::super::config::{LabelStyle, WaveDegree};
+use super::super::config::LabelStyle;
 use super::super::{estimate_text_width, label_plate_rect, wave_label_offset, HIT_TOLERANCE};
 
 /// The [`WaveSlot`] under `(sx, sy)` in screen space, or `None` — combining
@@ -27,10 +27,11 @@ use super::super::{estimate_text_width, label_plate_rect, wave_label_offset, HIT
 ///   segments.
 /// - its own LABEL PLATE — the SAME rectangle `render`'s own label loop
 ///   draws ([`label_plate_rect`], fed [`wave_label_offset`]'s own anchor,
-///   the SAME `degree` the structure renders with, and
-///   [`estimate_text_width`]'s own estimate — see those functions' own
-///   docs for why the estimate exists), resolved back to a slot via
-///   [`label_slot_for_index`].
+///   computed from the SAME `label_collisions` cache the structure renders
+///   with — see `elliott::count::label_collision_indices`'s own doc for
+///   the rule that fills it — and [`estimate_text_width`]'s own estimate,
+///   see those functions' own docs for why the estimate exists), resolved
+///   back to a slot via [`label_slot_for_index`].
 /// - (while `show_ratios` is on) a RATIO-RIB segment — `ratio_ribs`'s own
 ///   drawn same-parity polyline segments, each resolved to the wave its
 ///   LATER endpoint measures: an EXACT match (the endpoint IS that slot's
@@ -61,7 +62,7 @@ pub(super) fn wave_slot_at(
     wave_slots: &[WaveSlot],
     labels: &[&str],
     label_style: &LabelStyle,
-    degree: WaveDegree,
+    label_collisions: &[usize],
     show_labels: bool,
     show_ratios: bool,
     ratio_ribs: &[Rib],
@@ -91,7 +92,8 @@ pub(super) fn wave_slot_at(
                 continue;
             }
             let Some(slot) = label_slot_for_index(type_id, i) else { continue };
-            let label_y = y + wave_label_offset(screen, i, label_style, degree);
+            let collides = label_collisions.contains(&i);
+            let label_y = y + wave_label_offset(screen, i, label_style, collides);
             let width = estimate_text_width(labels[i], label_style.font_size);
             let (bg_x, bg_y, bg_w, bg_h) =
                 label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);

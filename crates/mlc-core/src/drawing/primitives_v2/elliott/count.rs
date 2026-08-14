@@ -399,6 +399,68 @@ pub(super) fn visible_leg_segments(type_id: &str, realized: usize, subdivided: &
         .collect()
 }
 
+/// Every point index on `parent` where ANOTHER structure's own label lands
+/// on the SAME pivot — the rule behind [`Primitive::label_collisions`]'s
+/// own render cache (that method's own doc), computed here once by the
+/// collection's own owner (`mlc-backend`) and written back via
+/// [`Primitive::set_label_collisions`]. This crate owns the RULE; the
+/// backend owns WHEN to recompute it and WHERE the (child, slot) pairs it
+/// passes in come from.
+///
+/// Regression fix (owner report 2026-08-14, second pass): a first attempt
+/// at this rule (`slot_boundary_collides`, since removed) treated BOTH ends
+/// of a subdivided slot's own [`slot_span`] as always colliding, using only
+/// the SLOT to decide — wrong for the exact reason the blanket per-degree
+/// ring was wrong: it moves a label that has nothing to collide with.
+/// `ElliottCorrection`/`ElliottImpulse`/`ElliottTriangle` all draw an EMPTY
+/// label at their own FIRST point (see each type's own `wave_labels` —
+/// index 0 is always `""`), so nesting one of those into a slot never
+/// collides at that span's START, only (when its own last label is
+/// non-empty, which it always is for these three) at the span's END.
+/// `ElliottDoubleCombo`/`ElliottTripleCombo` label their own first point
+/// ("W"), so nesting one of THOSE genuinely does collide at a span's
+/// START too. The collision cannot be derived from the slot alone — it
+/// depends on the CHILD's own type, which is why this function takes the
+/// children themselves.
+///
+/// For each `(child, slot)` pair in `children`: `slot`'s own [`slot_span`]
+/// on `parent` names the two pivots (`a`, `b`) the child shares with
+/// `parent` (the child's own first/last point — the backend welds them
+/// there, `restitch_wave_joints`). `a` collides only when `child`'s own
+/// label at ITS OWN first point is non-empty; `b` collides only when
+/// `child`'s own label at ITS OWN last point is non-empty. Read ONLY
+/// through [`Primitive::point_labels`] — never a downcast to a concrete
+/// Elliott type, matching every other function in this module's own
+/// contract.
+///
+/// Sorted and deduplicated. Skips a `(child, slot)` pair when `slot` does
+/// not exist on `parent`'s own type (mirrors [`slot_span`]'s own `None`
+/// contract) or when `child` carries no [`Primitive::point_labels`] at all
+/// (`None` — every real Elliott type always returns `Some`, but this
+/// function does not assume that of an arbitrary `&dyn Primitive`). Empty
+/// `children` (no child nested into `parent` at all) returns empty — a
+/// structure with no subdivisions collides nowhere, and neither does a
+/// subdivision's own child at any of its own points (a child is never
+/// itself named as `parent` here unless something is in turn nested inside
+/// IT, and even then only ITS OWN children are consulted, never its
+/// parent's).
+pub fn label_collision_indices(parent: &dyn Primitive, children: &[(&dyn Primitive, WaveSlot)]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for &(child, slot) in children {
+        let Some((a, b)) = slot_span(parent.type_id(), slot) else { continue };
+        let Some(labels) = child.point_labels() else { continue };
+        if labels.first().is_some_and(|l| !l.is_empty()) {
+            indices.push(a);
+        }
+        if labels.len() >= 2 && labels.last().is_some_and(|l| !l.is_empty()) {
+            indices.push(b);
+        }
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
 // =========================================================================
 // Resampling — keeping the drawn shape across a pivot-count change (owner
 // report 2026-08-14, same report cited in this module's own "Conversion"
@@ -1888,5 +1950,64 @@ mod tests {
         // not mask this branch.
         let flat = [(10, 20.0), (10, 20.0), (10, 20.0), (10, 20.0)];
         assert_eq!(resample_polyline(&flat, 6), vec![(10, 20.0); 6]);
+    }
+
+    // =====================================================================
+    // label_collision_indices (regression fix, owner report 2026-08-14,
+    // second pass: a first attempt derived the collision from the SLOT
+    // alone and stepped out both ends of every subdivided span — wrong,
+    // same failure shape as the blanket per-degree ring: it moved a label
+    // that has nothing to collide with. The rule now reads the CHILD's own
+    // `point_labels()`.)
+    // =====================================================================
+
+    fn impulse_fixture() -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        ElliottImpulse::new(points, "#2196F3")
+    }
+
+    #[test]
+    fn no_children_no_collisions() {
+        let impulse = impulse_fixture();
+        assert_eq!(label_collision_indices(&impulse, &[]), Vec::<usize>::new());
+    }
+
+    /// `ElliottCorrection::wave_labels()` is `["", A, B, C]` — index 0 is
+    /// EMPTY, so a correction nested into wave 4 (span `(3, 4)`) never
+    /// collides at the span's own START (3): there is no label there to
+    /// collide with. Its own LAST label ("C") is non-empty, so it collides
+    /// at the span's own END (4) only.
+    #[test]
+    fn correction_nested_in_wave4_collides_at_index_4_only() {
+        let impulse = impulse_fixture();
+        let correction_points: [(i64, f64); 4] =
+            [(3_000, 130.0), (3_250, 122.0), (3_500, 128.0), (4_000, 120.0)];
+        let correction = ElliottCorrection::new(correction_points, "#FF5722");
+        let children: Vec<(&dyn Primitive, WaveSlot)> = vec![(&correction, WaveSlot::Impulse4)];
+        assert_eq!(label_collision_indices(&impulse, &children), vec![4]);
+    }
+
+    /// `ElliottDoubleCombo::wave_labels()` is `[W, "", "", X, Y, "", ""]` —
+    /// index 0 ("W") IS labelled, so a double combo nested into wave 4
+    /// (span `(3, 4)`) genuinely collides at the span's own START (3). Its
+    /// own LAST point (index 6, "") carries no label — `label_slot_for_index`'s
+    /// own doc explains why: "Y" is drawn at an INTERIOR subwave pivot, not
+    /// at the component's own true end — so nesting one does NOT collide at
+    /// the span's own END (4), unlike the correction case above. Deriving
+    /// the rule from the slot alone (the removed `slot_boundary_collides`)
+    /// would have collided at both; reading the child's own labels collides
+    /// at exactly the one that is real.
+    #[test]
+    fn double_combo_nested_in_wave4_collides_at_index_3_only() {
+        let impulse = impulse_fixture();
+        let combo_points: [(i64, f64); 7] = [
+            (3_000, 130.0), (3_100, 126.0), (3_200, 128.0), (3_400, 124.0),
+            (3_600, 127.0), (3_800, 122.0), (4_000, 120.0),
+        ];
+        let combo = ElliottDoubleCombo::new(combo_points, "#9C27B0");
+        let children: Vec<(&dyn Primitive, WaveSlot)> = vec![(&combo, WaveSlot::Impulse4)];
+        assert_eq!(label_collision_indices(&impulse, &children), vec![3]);
     }
 }

@@ -263,25 +263,37 @@ pub(crate) fn stroke_leg_segments(
     }
 }
 
-/// Ladder size for [`wave_label_offset`]'s own per-degree placement ring —
-/// kept as one named constant so [`WaveDegree::rank_from_finest`]'s own
-/// modulus and this doc's "N steps apart share a ring again" caveat always
-/// read off the SAME number.
-///
-/// `4`: the collision this exists to fix (owner report 2026-08-14) is a
-/// parent and its own directly-nested subdivision sharing one pivot, and
-/// those are always exactly ONE degree apart (`elliott::count::child_seed`
-/// mints a child at [`WaveDegree::finer`] of its parent, never more than
-/// one step) — any `N >= 2` already separates that pair. `4` leaves one
-/// extra ring of headroom for a grandparent/parent/child stack that shares
-/// the same anchor (plausible: a subdivided wave's own FIRST point is
-/// often exactly its parent's own anchor too, and nothing caps how many
-/// levels deep a chain of subdivisions nests), at the cost of at most three
-/// extra rungs of vertical distance for the deepest ring. Past four levels
-/// sharing one pivot the ladder wraps and two of the labels land on the
-/// same ring again — accepted, not solved (see [`wave_label_offset`]'s own
-/// doc).
-const LABEL_DEGREE_RING_COUNT: usize = 4;
+/// How a collision-separated label is pushed off its shared pivot — the
+/// EWA-engine setting the owner asked for (owner ask 2026-08-14: "отдалять
+/// можно разными способами: один над другим, или параллельно, или
+/// треугольничком — это должно быть настраиваемым через модалку ЕВА").
+/// [`Stacked`](Self::Stacked) is the only variant that exists today —
+/// `Parallel`/`Triangle` are named in that ask but have no placement math
+/// yet, so they are not added here as dead variants; the task that builds
+/// the modal setting choosing between them adds each one together with its
+/// own implementation in [`step_out_for_collision`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LabelSeparationStyle {
+    /// Push straight along the same axis the collision-direction sign
+    /// already picked (`wave_label_offset`'s own UP/DOWN branch) — one
+    /// added rung of DISTANCE from the pivot, same line the base offset
+    /// already sits on.
+    Stacked,
+}
+
+/// Push `base` one further rung out along `sign`'s own direction — the
+/// single style [`LabelSeparationStyle`] implements today (see that enum's
+/// own doc for why the other two named styles are not here yet). `rung`
+/// reuses the SAME per-label metrics `wave_label_offset`'s own base offset
+/// already scales with (font size + background padding), so the added
+/// distance grows with the label's own rendered size instead of a fixed
+/// pixel constant.
+fn step_out_for_collision(base: f64, sign: f64, label_style: &LabelStyle, style: LabelSeparationStyle) -> f64 {
+    let rung = label_style.font_size * 0.9 + label_style.background_padding;
+    match style {
+        LabelSeparationStyle::Stacked => base + sign * rung,
+    }
+}
 
 /// The vertical push applied to wave label `i`'s own anchor point before
 /// drawing it — UP when this pivot sits above (smaller screen `y`) the one
@@ -291,47 +303,60 @@ const LABEL_DEGREE_RING_COUNT: usize = 4;
 /// placement and [`hit_test_label_plates`]'s own hit area can never drift
 /// apart.
 ///
-/// Grows the DISTANCE (never the direction the branch above already
-/// picked) by `degree`'s own ring on a [`LABEL_DEGREE_RING_COUNT`]-step
-/// ladder — owner report 2026-08-14: an impulse whose wave 2 is subdivided
-/// into an ABC renders the parent's own "(2)" label and then, at the SAME
-/// pivot, the child's own "C" label drawn later on top of it — the parent
-/// is not skipped, it is painted over. Both marks belong at that point by
-/// Elliott notation convention ("младший цикл... и старший", the owner's
-/// own framing): the FINER degree sits closest to the pivot, each COARSER
-/// one pushed further out. This is a LOCAL rule derived only from `degree`
-/// — no shared per-frame label registry exists or is added here, because a
-/// primitive cannot see another primitive's own labels; threading that
-/// state through the render path would be a far larger change than this
-/// defect warrants.
+/// `collides` is `true` only for a label whose OWN pivot is a point index
+/// present in this structure's own `Primitive::label_collisions` cache —
+/// every caller of this function reads that cache
+/// (`self.label_collisions().contains(&i)`) and passes the membership test
+/// in; this function performs no lookup of its own, it only reacts to the
+/// bool. When `true`, the label steps out by ONE rung beyond the base
+/// offset via [`step_out_for_collision`], so it clears the child's own
+/// label drawn closer to the shared pivot at the child's own base
+/// (non-colliding) offset — Elliott notation convention: the finer degree
+/// sits closest to a shared pivot, the coarser one pushed further out
+/// (owner's own framing, "младший цикл... и старший"). Every other label —
+/// every label of a structure with no subdivisions, and every label of a
+/// structure that IS subdivided but does not sit on a pivot the child
+/// actually labels too — passes `false` and draws at EXACTLY the offset
+/// this function produced before the collision case existed:
+/// `sign * label_style.offset_y`.
 ///
-/// A parent and the subdivision nested directly inside it always differ by
-/// exactly one degree (see [`LABEL_DEGREE_RING_COUNT`]'s own doc), so they
-/// always land on adjacent, distinct rings — the actual collision this
-/// fixes. The consequence accepted in exchange: two degrees exactly
-/// [`LABEL_DEGREE_RING_COUNT`] steps apart share a ring again and can still
-/// collide.
-pub(crate) fn wave_label_offset(
-    screen: &[(f64, f64)],
-    i: usize,
-    label_style: &LabelStyle,
-    degree: WaveDegree,
-) -> f64 {
+/// Regression fix (owner report 2026-08-14, first pass): a prior revision
+/// (`cad6b834`) grew this DISTANCE by an unconditional per-degree ring
+/// applied to EVERY label of EVERY structure, so even a lone impulse with
+/// no subdivisions at all had its five labels pushed away from their
+/// pivots for no reason. `collides` replaces that ring entirely — a
+/// structure with no subdivisions now renders byte-for-byte what it
+/// rendered before `cad6b834`.
+///
+/// Second pass (same day): the FIRST fix derived `collides` from the slot
+/// alone (whether point `i` bounded a subdivided `elliott::count::slot_span`,
+/// regardless of what the child actually drew there) — also wrong, for the
+/// same reason: it could still step out a label with nothing to collide
+/// with (a correction's own EMPTY first label, see each family's own
+/// `wave_labels`). `elliott::count::label_collision_indices` now derives
+/// the cache from the CHILD's own `Primitive::point_labels`, so only a
+/// pivot the child genuinely labels too ever collides.
+pub(crate) fn wave_label_offset(screen: &[(f64, f64)], i: usize, label_style: &LabelStyle, collides: bool) -> f64 {
     let sign = if i > 0 && screen[i].1 < screen[i - 1].1 { -1.0 } else { 1.0 };
-    let ring = (degree.rank_from_finest() % LABEL_DEGREE_RING_COUNT) as f64;
-    let rung = label_style.font_size * 0.9 + label_style.background_padding;
-    sign * (label_style.offset_y + ring * rung)
+    let base = sign * label_style.offset_y;
+    if collides {
+        step_out_for_collision(base, sign, label_style, LabelSeparationStyle::Stacked)
+    } else {
+        base
+    }
 }
 
 /// Hit-test every REALIZED, non-empty wave label's own plate rectangle —
 /// the label-side counterpart to `elliott::ratio::hit_test_ratio_ribs`'s own
 /// rib hit test. Shares [`wave_label_offset`] (the SAME anchor placement
-/// `render`'s own label loop uses, so `degree` must be the SAME structure's
-/// own `WaveDegree` — see that function's own doc for what it does with it)
-/// and [`label_plate_rect`] (the SAME padding math [`draw_label_plate`]'s
-/// own background draws), fed an ESTIMATED width ([`estimate_text_width`])
-/// instead of a real `ctx.measure_text` one — see that function's own doc
-/// for why.
+/// `render`'s own label loop uses, so `label_collisions` must be the SAME
+/// structure's own `Primitive::label_collisions` cache `render` reads —
+/// see that function's own doc for what it does with the bool this derives
+/// via plain index membership, and `elliott::count::label_collision_indices`'s
+/// own doc for the rule that fills the cache) and [`label_plate_rect`]
+/// (the SAME padding math [`draw_label_plate`]'s own background draws),
+/// fed an ESTIMATED width ([`estimate_text_width`]) instead of a real
+/// `ctx.measure_text` one — see that function's own doc for why.
 ///
 /// Gated on `show_labels` by the CALLER, not here — mirrors
 /// `hit_test_ratio_ribs`'s own "caller gates on show_ratios" contract, so a
@@ -343,13 +368,14 @@ pub(crate) fn hit_test_label_plates(
     labels: &[&str],
     realized: usize,
     label_style: &LabelStyle,
-    degree: WaveDegree,
+    label_collisions: &[usize],
 ) -> bool {
     for (i, &(x, y)) in screen.iter().enumerate() {
         if i >= realized || i >= labels.len() || labels[i].is_empty() {
             continue;
         }
-        let label_y = y + wave_label_offset(screen, i, label_style, degree);
+        let collides = label_collisions.contains(&i);
+        let label_y = y + wave_label_offset(screen, i, label_style, collides);
         let width = estimate_text_width(labels[i], label_style.font_size);
         let (bg_x, bg_y, bg_w, bg_h) =
             label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);
@@ -450,7 +476,7 @@ mod wave_label_offset_tests {
 
     // A single point at the origin — `wave_label_offset`'s own `i == 0`
     // branch always picks the positive (DOWN) sign, so every case below
-    // isolates the degree-ring term without also depending on local
+    // isolates the `collides` term without also depending on local
     // geometry (see the function's own doc for that separate branch).
     fn single_point() -> Vec<(f64, f64)> {
         vec![(0.0, 0.0)]
@@ -460,64 +486,70 @@ mod wave_label_offset_tests {
         LabelStyle::default()
     }
 
-    /// Owner report 2026-08-14: a parent's own label and its directly
-    /// nested subdivision's own label share one pivot. Parent and child
-    /// always differ by exactly one degree — this is the actual collision
-    /// [`wave_label_offset`] exists to fix, so it must produce two
-    /// DIFFERENT offsets for it.
+    /// Regression fix (owner report 2026-08-14): a structure with no
+    /// subdivisions must offset NOTHING beyond the plain per-primitive
+    /// `offset_y` — this is the exact expression `wave_label_offset` used
+    /// before `cad6b834` added the (now-deleted) blanket per-degree ring,
+    /// restored here as the `collides == false` path.
     #[test]
-    fn one_degree_apart_produces_different_offsets() {
+    fn no_collision_offsets_nothing_beyond_the_base() {
         let screen = single_point();
         let s = style();
-        let parent = wave_label_offset(&screen, 0, &s, WaveDegree::Intermediate);
-        let child = wave_label_offset(&screen, 0, &s, WaveDegree::Intermediate.finer());
-        assert_ne!(parent, child, "a parent and its directly nested subdivision must land on different rings");
+        let offset = wave_label_offset(&screen, 0, &s, false);
+        assert_eq!(offset, s.offset_y, "no collision must reproduce the pre-cad6b834 expression exactly: sign * offset_y");
     }
 
-    /// Same degree, same geometry, same style: the offset is a pure
-    /// function of its inputs, so calling it twice must agree — no hidden
-    /// per-frame state anywhere in this LOCAL rule.
+    /// A structure with no subdivisions never collides at any of its own
+    /// labels — every label of it must therefore land at the SAME base
+    /// offset, matching `no_collision_offsets_nothing_beyond_the_base`'s
+    /// own single-point case for a whole array of points.
     #[test]
-    fn same_degree_produces_same_offset() {
-        let screen = single_point();
+    fn a_structure_with_no_subdivisions_offsets_no_label_beyond_the_base() {
+        let screen = vec![(0.0, 0.0), (10.0, -20.0), (20.0, 10.0), (30.0, -5.0), (40.0, 30.0), (50.0, 0.0)];
         let s = style();
-        let a = wave_label_offset(&screen, 0, &s, WaveDegree::Primary);
-        let b = wave_label_offset(&screen, 0, &s, WaveDegree::Primary);
-        assert_eq!(a, b);
-    }
-
-    /// The ladder wraps every [`LABEL_DEGREE_RING_COUNT`] steps (this
-    /// function's own doc states the consequence: two degrees exactly that
-    /// many steps apart share a ring again) — `Miniscule` (rank 0) and the
-    /// degree `LABEL_DEGREE_RING_COUNT` steps coarser than it land back on
-    /// the SAME ring and therefore the SAME offset.
-    #[test]
-    fn ring_wraps_at_the_documented_ladder_size() {
-        let screen = single_point();
-        let s = style();
-        let mut coarser = WaveDegree::Miniscule;
-        for _ in 0..LABEL_DEGREE_RING_COUNT {
-            coarser = coarser.coarser();
+        for i in 0..screen.len() {
+            let sign = if i > 0 && screen[i].1 < screen[i - 1].1 { -1.0 } else { 1.0 };
+            assert_eq!(wave_label_offset(&screen, i, &s, false), sign * s.offset_y, "label {i}: no collision, base offset only");
         }
-        assert_eq!(
-            WaveDegree::Miniscule.rank_from_finest() % LABEL_DEGREE_RING_COUNT,
-            coarser.rank_from_finest() % LABEL_DEGREE_RING_COUNT,
-            "the two ranks are exactly LABEL_DEGREE_RING_COUNT apart, so they share a ring by construction"
-        );
-        let base = wave_label_offset(&screen, 0, &s, WaveDegree::Miniscule);
-        let wrapped = wave_label_offset(&screen, 0, &s, coarser);
-        assert_eq!(base, wrapped, "degrees LABEL_DEGREE_RING_COUNT steps apart share a ring and must produce the same offset");
+    }
+
+    /// Owner report 2026-08-14: a parent's own label and its directly
+    /// nested subdivision's own label share one pivot. The subdivided
+    /// (colliding) label must step out by exactly one rung beyond the base
+    /// offset — the child's own label at that SAME point stays at the base
+    /// offset, closest to the pivot, matching Elliott notation convention.
+    #[test]
+    fn collision_steps_out_by_exactly_one_rung_beyond_the_base() {
+        let screen = single_point();
+        let s = style();
+        let base = wave_label_offset(&screen, 0, &s, false);
+        let collided = wave_label_offset(&screen, 0, &s, true);
+        let rung = s.font_size * 0.9 + s.background_padding;
+        assert_eq!(collided, base + rung, "a colliding label steps out by exactly one rung beyond the base offset");
+        assert_ne!(collided, base, "a colliding label must land somewhere different from the base offset");
+    }
+
+    /// Same inputs, same output: the offset is a pure function of its
+    /// arguments, so calling it twice must agree — no hidden per-frame
+    /// state anywhere in this LOCAL rule.
+    #[test]
+    fn same_inputs_produce_same_offset() {
+        let screen = single_point();
+        let s = style();
+        let a = wave_label_offset(&screen, 0, &s, true);
+        let b = wave_label_offset(&screen, 0, &s, true);
+        assert_eq!(a, b);
     }
 
     /// Direction stays exactly what local geometry picks — a pivot ABOVE
     /// the previous one still pushes the label UP (negative) regardless of
-    /// degree, only the distance grows.
+    /// whether it collides, only the distance grows when it does.
     #[test]
-    fn direction_still_follows_local_geometry_not_degree() {
+    fn direction_still_follows_local_geometry_not_collision() {
         let screen = vec![(0.0, 100.0), (10.0, 50.0)]; // point 1 sits above point 0
         let s = style();
-        let offset = wave_label_offset(&screen, 1, &s, WaveDegree::Supermillennium);
-        assert!(offset < 0.0, "a pivot above the previous one must still push its label UP");
+        assert!(wave_label_offset(&screen, 1, &s, false) < 0.0, "a pivot above the previous one must still push its label UP");
+        assert!(wave_label_offset(&screen, 1, &s, true) < 0.0, "...even while colliding — collision only grows the distance");
     }
 }
 

@@ -998,6 +998,39 @@ pub trait Primitive: Send + Sync {
     /// matching every primitive outside the Elliott family.
     fn set_subdivided_slots(&mut self, _slots: Vec<WaveSlot>) {}
 
+    /// This structure's OWN point indices where ANOTHER degree's label
+    /// lands on the SAME pivot — the render cache
+    /// `wave_label_offset`/`hit_test_label_plates`/`wave_at` read to decide
+    /// which labels step out by one rung (regression fix, owner report
+    /// 2026-08-14: a per-degree ring that stepped out EVERY label of EVERY
+    /// structure was wrong, and so is a slot-only rule that ignores which
+    /// LABEL the child actually draws at the shared pivot — see
+    /// `elliott::count::label_collision_indices`'s own doc for the actual
+    /// rule and why it depends on the child's own type, not just the slot).
+    ///
+    /// A primitive cannot see its own children on its own (`elliott::
+    /// count`'s own module doc), so this is not COMPUTED here — it is a
+    /// CACHE the collection's own owner fills (via
+    /// `elliott::count::label_collision_indices`), exactly like
+    /// [`context_violations`](Self::context_violations) and
+    /// [`subdivided_slots`](Self::subdivided_slots) are filled. Pure render
+    /// cache — never persisted, never read from or written to JSON.
+    ///
+    /// Default: empty — exactly how every primitive outside the Elliott
+    /// family behaves (they never call
+    /// [`set_label_collisions`](Self::set_label_collisions)), and how an
+    /// Elliott primitive behaves before its owner has ever filled this (and
+    /// always how a CHILD behaves at its own shared pivot — a child reads
+    /// only its own cache, never its parent's, so it is never stepped out).
+    fn label_collisions(&self) -> &[usize] {
+        &[]
+    }
+
+    /// Replace [`label_collisions`](Self::label_collisions) — see that
+    /// method's own doc for who calls this and when. No-op default,
+    /// matching every primitive outside the Elliott family.
+    fn set_label_collisions(&mut self, _indices: Vec<usize>) {}
+
     // =========================================================================
     // Elliott Wave-At-Point Resolution (E3 — owner ask 2026-08-13: a
     // double-click on a wave opens "subdivide this wave into…", a

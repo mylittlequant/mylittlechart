@@ -25,6 +25,7 @@ use mlc_core::drawing::primitives_v2::config::{
 };
 use mlc_core::drawing::primitives_v2::elliott::{
     chain_violations, child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
+    label_collision_indices,
     resample_polyline, slot_at_ordinal, slot_ordinal, slot_span, split_kind_id, successor_kinds,
     successor_seed, predecessor_kinds, predecessor_seed,
     promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
@@ -2153,6 +2154,45 @@ impl DrawingManager {
                 })
                 .collect()
         };
+        // Where another degree's mark really lands on this structure's own
+        // pivots. Owner report 2026-08-14, after a first attempt pushed EVERY
+        // label out by its degree: "отдалять нужно только тогда, когда там
+        // нотации 2 циклов в одной точке, а в остальных не надо никакого
+        // шарамыжничества с паддингом". Whether a child actually draws a
+        // label at a shared pivot depends on the CHILD's own type — a
+        // correction leaves its first point blank, a double combination
+        // labels it — so the slot alone cannot answer it and the parent
+        // cannot see the child. This pass can see both, which is why the
+        // answer is computed here and cached; `elliott::count::
+        // label_collision_indices` owns the rule itself, so the backend
+        // never re-derives what a label array says.
+        let collisions: Vec<(usize, Vec<usize>)> = {
+            let ids: Vec<(usize, u64)> = b
+                .primitives
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.wave_degree().is_some())
+                .map(|(i, p)| (i, p.data().id))
+                .collect();
+            ids.into_iter()
+                .map(|(i, id)| {
+                    let children: Vec<(&dyn Primitive, WaveSlot)> = b
+                        .primitives
+                        .iter()
+                        .filter_map(|p| {
+                            p.wave_link()
+                                .filter(|l| l.parent_id == id)
+                                .map(|l| (p.as_ref(), l.slot))
+                        })
+                        .collect();
+                    (i, label_collision_indices(b.primitives[i].as_ref(), &children))
+                })
+                .collect()
+        };
+        for (i, indices) in collisions {
+            b.primitives[i].set_label_collisions(indices);
+        }
+
         for (i, slots) in subdivided {
             b.primitives[i].set_subdivided_slots(slots);
         }
@@ -2376,7 +2416,34 @@ impl DrawingManager {
     /// `pane_id` is preserved from the deserialized state (not overwritten)
     /// so drawings restored from a preset keep their pane assignment.
     pub(crate) fn add_external(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, mut prim: Box<dyn Primitive>) -> u64 {
-        prim.data_mut().id = alloc_primitive_id();
+        // A restored primitive KEEPS its own id when nothing else is using
+        // it. This used to allocate unconditionally, and that silently broke
+        // every Elliott relation on reload: `WaveLink::parent_id` and
+        // `follows` name ids, so re-stamping every primitive on the way in
+        // left every subdivision and every chain pointing at ids that no
+        // longer existed — the subdivided legs came back, the context rules
+        // went quiet, and two degrees' labels sat on top of each other again
+        // (found 2026-08-14 while verifying the label-collision fix, which
+        // could not work until this did).
+        //
+        // Uniqueness is still guaranteed: an id already present in ANY
+        // bubble, or a zero id from a primitive built without one, falls
+        // back to a fresh allocation. `persistence::hydration` seeds the
+        // global counter above every restored id right after the restore, so
+        // later allocations cannot collide with what was just loaded.
+        let incoming = prim.data().id;
+        let taken = incoming == 0 || {
+            let mut used = false;
+            bubbles.each_bubble(|bv| {
+                if !used && bv.primitive_ids().any(|id| id == incoming) {
+                    used = true;
+                }
+            });
+            used
+        };
+        if taken {
+            prim.data_mut().id = alloc_primitive_id();
+        }
         let Some(b) = bubbles.bubble_mut(bid) else { return prim.data().id };
         if prim.data().symbol.is_empty() {
             prim.data_mut().symbol = b.address.symbol.clone();
@@ -2384,6 +2451,17 @@ impl DrawingManager {
         let id = prim.data().id;
         b.primitives.push(prim);
         self.session_mut(bid).selected = Some(id);
+        // The COLD-LOAD path runs through here (`persistence::hydration`
+        // restores every saved drawing with `add_external`), and a restored
+        // Elliott primitive arrives with its `link`/`follows` already set —
+        // so without this, a reload showed a count with none of its
+        // render caches filled: subdivided legs drawn again under their
+        // subdivisions, no context violations, and every label back on top
+        // of its neighbour's. Refreshing per insert is O(n) passes over a
+        // bulk restore; measured against a real preset that is tens of
+        // primitives, not thousands, and correctness after a reload is not
+        // negotiable for a cache the render reads every frame.
+        self.refresh_wave_guards(bubbles, bid);
         id
     }
 
@@ -3134,9 +3212,23 @@ impl DrawingManager {
         let mut restored = 0usize;
         if let Some(snaps) = restore_snaps {
             if let Ok(reg) = PrimitiveRegistry::global().read() {
+                // Same rule as `add_external`, and for the same reason: a
+                // restored primitive KEEPS its own id unless something in
+                // this bubble already claimed it. `WaveLink::parent_id` and
+                // `follows` name ids, so re-stamping on the way in silently
+                // detached every subdivision and every chain — the bubble is
+                // cleared just above, so the only ids that can collide are
+                // ones this very loop already restored (a legacy preset that
+                // saved duplicates).
+                let mut claimed: HashSet<u64> = HashSet::new();
                 for snap in snaps {
                     if let Some(mut prim) = reg.from_json(&snap.type_id, &snap.json) {
-                        prim.data_mut().id = alloc_primitive_id();
+                        let incoming = prim.data().id;
+                        if incoming == 0 || !claimed.insert(incoming) {
+                            let fresh = alloc_primitive_id();
+                            prim.data_mut().id = fresh;
+                            claimed.insert(fresh);
+                        }
                         if prim.data().symbol.is_empty() {
                             prim.data_mut().symbol = address.symbol.clone();
                         }

@@ -266,27 +266,6 @@ impl WaveDegree {
         let idx = all.iter().position(|d| d == self).unwrap_or(0);
         all[idx.saturating_sub(1)]
     }
-
-    /// Rank of this degree counted from the FINEST end of the 15-degree
-    /// ladder — `Miniscule` (the finest) is `0`, growing by one each degree
-    /// coarser, `Supermillennium` (the coarsest) is `all().len() - 1`. No
-    /// pre-existing public ordinal to reuse: [`Self::finer`]/[`Self::coarser`]
-    /// already compute the same `all()`-position internally, but in the
-    /// OPPOSITE direction (0 at `Supermillennium`, matching `all()`'s own
-    /// coarsest-to-finest declaration order) and never expose it.
-    ///
-    /// Used by `wave_label_offset` (primitives_v2's own label-placement
-    /// helper) to grow a label's own placement ring OUTWARD as a structure
-    /// gets coarser: Elliott notation nests the FINEST subdivision's own
-    /// label closest to a shared pivot and each coarser parent further out,
-    /// so ring `0` — the smallest offset — must belong to the finest
-    /// degree, and only the finest end of the ladder is a fixed reference
-    /// point to count from.
-    pub fn rank_from_finest(&self) -> usize {
-        let all = Self::all();
-        let idx = all.iter().position(|d| d == self).unwrap_or(0);
-        all.len() - 1 - idx
-    }
 }
 
 #[cfg(test)]
@@ -313,21 +292,6 @@ mod wave_degree_tests {
     #[test]
     fn coarser_saturates_at_supermillennium() {
         assert_eq!(WaveDegree::Supermillennium.coarser(), WaveDegree::Supermillennium);
-    }
-
-    #[test]
-    fn rank_from_finest_zero_at_miniscule() {
-        assert_eq!(WaveDegree::Miniscule.rank_from_finest(), 0);
-    }
-
-    #[test]
-    fn rank_from_finest_max_at_supermillennium() {
-        assert_eq!(WaveDegree::Supermillennium.rank_from_finest(), WaveDegree::all().len() - 1);
-    }
-
-    #[test]
-    fn rank_from_finest_grows_by_one_per_finer_step() {
-        assert_eq!(WaveDegree::Intermediate.finer().rank_from_finest() + 1, WaveDegree::Intermediate.rank_from_finest());
     }
 }
 
