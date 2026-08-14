@@ -24,11 +24,10 @@ use mlc_core::drawing::primitives_v2::config::{
     TimeframeVisibilityConfig,
 };
 use mlc_core::drawing::primitives_v2::elliott::{
-    chain_violations, child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
-    label_collision_indices,
+    child_kinds, child_seed, conversion_kinds, kind_id_of, kind_label,
     resample_polyline, slot_at_ordinal, slot_ordinal, slot_span, split_kind_id, successor_kinds,
     successor_seed, predecessor_kinds, predecessor_seed,
-    promote_chain_shape, violations_in, Violation, WaveLink, WaveSlot,
+    promote_chain_shape, WaveLink, WaveSlot,
 };
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
@@ -2071,179 +2070,31 @@ impl DrawingManager {
     /// recompute live every frame from a primitive's own `render`; this is
     /// the expensive whole-bubble pass, and it runs once per gesture, not
     /// once per pixel of drag.
+    ///
+    /// Thin `bid`-resolving wrapper — the actual bubble-scoped computation
+    /// lives in `crate::bubble::wave_guards::refresh_wave_guards` (moved
+    /// there 2026-08-14, second report: `BubbleStore::restore_from_snapshots`
+    /// — a path that never touches `DrawingManager` at all — needed the
+    /// SAME computation and could only get it if it lived one level lower
+    /// than `bid` + `&mut BubbleStore`). Every call site here keeps working
+    /// unchanged; this is the shape THIS crate's live-editing methods need.
     pub(crate) fn refresh_wave_guards(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
-        let mut updates: Vec<(usize, Vec<Violation>)> = {
-            let refs: Vec<&dyn Primitive> = b.primitives.iter().map(|p| p.as_ref()).collect();
-            refs.iter()
-                .enumerate()
-                .filter(|(_, p)| p.wave_degree().is_some())
-                .map(|(i, &p)| (i, violations_in(p, &refs)))
-                .collect()
-        };
-        // The chain's OWN rules, merged into the same cache. A `follows`
-        // chain is one coarser structure written as separate primitives, so
-        // its joints are that structure's pivots and the family rules apply
-        // to them (`elliott::guard::chain_violations`) — a violation nothing
-        // in the chain exhibits on its own. Reported ON the member that owns
-        // the offending wave, which is why `ChainViolation` carries a member
-        // index at all.
-        let chain_updates: Vec<(usize, Violation)> = {
-            let mut out = Vec::new();
-            let mut seen_heads: HashSet<u64> = HashSet::new();
-            let member_ids: Vec<u64> = b
-                .primitives
-                .iter()
-                .filter(|p| p.wave_degree().is_some())
-                .map(|p| p.data().id)
-                .collect();
-            for id in member_ids {
-                let head = Self::chain_head_id(b, id);
-                if !seen_heads.insert(head) {
-                    continue;
-                }
-                let ids = Self::chain_member_ids(b, head);
-                if ids.len() < 2 {
-                    continue;
-                }
-                let idxs: Vec<usize> = ids.iter().filter_map(|id| Self::find_index_by_id(b, *id)).collect();
-                if idxs.len() != ids.len() {
-                    continue;
-                }
-                let chain: Vec<&dyn Primitive> = idxs.iter().map(|&i| b.primitives[i].as_ref()).collect();
-                for v in chain_violations(&chain) {
-                    if let Some(&idx) = idxs.get(v.member_index) {
-                        out.push((idx, Violation { rule_id: v.rule_id, wave: v.wave, message: v.message }));
-                    }
-                }
-            }
-            out
-        };
-        for (idx, violation) in chain_updates {
-            if let Some(slot) = updates.iter_mut().find(|(i, _)| *i == idx) {
-                slot.1.push(violation);
-            }
-        }
-        for (i, violations) in updates {
-            b.primitives[i].set_context_violations(violations);
-        }
-
-        // Which of each structure's own waves are subdivided. The render side
-        // reads this to stop drawing the leg a subdivision replaced — a
-        // subdivision IS that wave, so the parent's straight line under it is
-        // the "накладывается сверху" the owner reported. Same cache shape and
-        // same refresh points as the violations above; a structure whose
-        // subdivision was just deleted is written an empty list rather than
-        // being left holding a stale one.
-        let subdivided: Vec<(usize, Vec<WaveSlot>)> = {
-            let ids: Vec<(usize, u64)> = b
-                .primitives
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| p.wave_degree().is_some())
-                .map(|(i, p)| (i, p.data().id))
-                .collect();
-            ids.into_iter()
-                .map(|(i, id)| {
-                    let slots = b
-                        .primitives
-                        .iter()
-                        .filter_map(|p| p.wave_link().filter(|l| l.parent_id == id).map(|l| l.slot))
-                        .collect();
-                    (i, slots)
-                })
-                .collect()
-        };
-        // Where another degree's mark really lands on this structure's own
-        // pivots. Owner report 2026-08-14, after a first attempt pushed EVERY
-        // label out by its degree: "отдалять нужно только тогда, когда там
-        // нотации 2 циклов в одной точке, а в остальных не надо никакого
-        // шарамыжничества с паддингом". Whether a child actually draws a
-        // label at a shared pivot depends on the CHILD's own type — a
-        // correction leaves its first point blank, a double combination
-        // labels it — so the slot alone cannot answer it and the parent
-        // cannot see the child. This pass can see both, which is why the
-        // answer is computed here and cached; `elliott::count::
-        // label_collision_indices` owns the rule itself, so the backend
-        // never re-derives what a label array says.
-        let collisions: Vec<(usize, Vec<usize>)> = {
-            let ids: Vec<(usize, u64)> = b
-                .primitives
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| p.wave_degree().is_some())
-                .map(|(i, p)| (i, p.data().id))
-                .collect();
-            ids.into_iter()
-                .map(|(i, id)| {
-                    let children: Vec<(&dyn Primitive, WaveSlot)> = b
-                        .primitives
-                        .iter()
-                        .filter_map(|p| {
-                            p.wave_link()
-                                .filter(|l| l.parent_id == id)
-                                .map(|l| (p.as_ref(), l.slot))
-                        })
-                        .collect();
-                    (i, label_collision_indices(b.primitives[i].as_ref(), &children))
-                })
-                .collect()
-        };
-        for (i, indices) in collisions {
-            b.primitives[i].set_label_collisions(indices);
-        }
-
-        for (i, slots) in subdivided {
-            b.primitives[i].set_subdivided_slots(slots);
-        }
+        crate::bubble::wave_guards::refresh_wave_guards(b);
     }
 
     /// Clear any [`WaveLink`]/`follows` reference in `bid`'s own bubble that
-    /// no longer resolves within that same collection.
+    /// no longer resolves within that same collection — see
+    /// `crate::bubble::wave_guards::clear_dangling_wave_links`'s own doc for
+    /// the full rationale. A no-op when `bid` does not resolve to a live
+    /// bubble. Returns the number of primitives whose `link` and/or
+    /// `follows` was cleared.
     ///
-    /// `WaveLink::parent_id` and `wave_follows` name a sibling in the SAME
-    /// bubble — never a cross-bubble or cross-store reference (see
-    /// `WaveLink`'s own doc: "a primitive cannot see its siblings, so it
-    /// stores only this reference, never the parent itself"). A restored
-    /// primitive normally keeps that reference intact — every external-
-    /// insertion path either preserves the incoming id
-    /// (`Self::add_external`/`Self::swap_symbol`) or, when ids MUST change
-    /// on a copy, is responsible for rewriting `link`/`follows` through the
-    /// old→new map itself. A file saved before that doctrine existed, or
-    /// hand-edited, can still carry an id nothing in this bubble owns any
-    /// more — that reference is not recoverable by guessing which primitive
-    /// it used to name, so it is DROPPED here rather than left dangling: the
-    /// alternative is a subdivision/chain link `Self::refresh_wave_guards`
-    /// (which resolves children by `wave_link().parent_id`) silently skips
-    /// forever, holding a parent's own leg drawn under a subdivision that no
-    /// longer claims it (owner report 2026-08-14, WaveLink cold-restore
-    /// audit).
-    ///
-    /// A no-op when `bid` does not resolve to a live bubble. Returns the
-    /// number of primitives whose `link` and/or `follows` was cleared.
+    /// Thin `bid`-resolving wrapper, same reasoning as
+    /// [`Self::refresh_wave_guards`] above.
     pub(crate) fn clear_dangling_wave_links(&self, bubbles: &mut BubbleStore, bid: BubbleId) -> u32 {
         let Some(b) = bubbles.bubble_mut(bid) else { return 0 };
-        let ids: HashSet<u64> = b.primitives.iter().map(|p| p.data().id).collect();
-        let mut cleared = 0u32;
-        for p in b.primitives.iter_mut() {
-            let mut touched = false;
-            if let Some(link) = p.wave_link() {
-                if !ids.contains(&link.parent_id) {
-                    p.set_wave_link(None);
-                    touched = true;
-                }
-            }
-            if let Some(follows) = p.wave_follows() {
-                if !ids.contains(&follows) {
-                    p.set_wave_follows(None);
-                    touched = true;
-                }
-            }
-            if touched {
-                cleared += 1;
-            }
-        }
-        cleared
+        crate::bubble::wave_guards::clear_dangling_wave_links(b)
     }
 
     // =========================================================================
@@ -3473,21 +3324,25 @@ mod park_unpark_tests {
 
 #[cfg(test)]
 mod wave_link_restore_tests {
-    //! Cold-restore proof for the 2026-08-14 report ("an Elliott parent and
-    //! its subdivision, created in one session, LOSE their relation across
-    //! a page reload"). Manual repro the report names: draw an impulse,
-    //! subdivide wave 2 as a zigzag, reload.
+    //! Cold-restore proof for the 2026-08-14 reports ("an Elliott parent
+    //! and its subdivision, created in one session, LOSE their relation
+    //! across a page reload"). Manual repro the report names: draw an
+    //! impulse, subdivide wave 2 as a zigzag, reload.
     //!
-    //! This exercises the SAME functions the app's cold-load path calls —
-    //! `BubbleStore::restore_from_snapshots`, then
-    //! `DrawingManager::{clear_dangling_wave_links, refresh_wave_guards}`
-    //! (`hydration_impl.rs`'s post-dedup sweep) — over a snapshot that made
-    //! a full JSON round trip, i.e. the exact bytes a page reload reads
-    //! back. It proves the DATA the renderer reads is correct after a
-    //! restore; the visual half (does the renderer actually skip the
-    //! parent's own leg once `subdivided_slots` is filled) needs a running
-    //! app and a screenshot, neither available to this agent — UNVERIFIED
-    //! here.
+    //! First attempt (commit `d36e6ae5`) put the sweep in `mlc-app`'s
+    //! `apply_preset_cold`, one level above `BubbleStore::
+    //! restore_from_snapshots`. The owner measured it still broken on a
+    //! plain wasm page reload. Second attempt (this one) moves the sweep
+    //! INTO `restore_from_snapshots` itself — see
+    //! `crate::bubble::wave_guards`'s own module doc for why that is the
+    //! convergence point every restore path is required to go through.
+    //! These tests exercise `BubbleStore::restore_from_snapshots` ALONE,
+    //! with no separate sweep call, over a snapshot that made a full JSON
+    //! round trip — i.e. the exact bytes a page reload reads back. They
+    //! prove the DATA the renderer reads is correct after a bare restore;
+    //! the visual half (does the renderer actually skip the parent's own
+    //! leg once `subdivided_slots` is filled) needs a running app and a
+    //! screenshot, neither available to this agent — UNVERIFIED here.
 
     use super::*;
     use crate::bubble::{BubbleStore, BubbleView};
@@ -3562,56 +3417,46 @@ mod wave_link_restore_tests {
     }
 
     #[test]
-    fn guard_cache_is_empty_until_the_cold_restore_sweep_runs() {
+    fn guard_cache_is_filled_by_restore_from_snapshots_alone() {
         let (bubbles, tags, bid, parent_id, _child_id) = build_impulse_with_zigzag_subdivision();
         let snaps = snapshot_round_trip(&bubbles, &tags, bid);
 
+        // No `DrawingManager` anywhere in this test — `restore_from_snapshots`
+        // must fill the guard cache on its own, since it is the ONLY
+        // production entry point that turns a `DataBubbleSnapshot` list back
+        // into live bubbles (see `crate::bubble::wave_guards`'s own module
+        // doc). Before this fix the cache stayed at its freshly-deserialized
+        // empty default here — exactly the symptom measured in the running
+        // app (the parent's own straight leg drawn again under its own
+        // subdivision).
         let mut restored_bubbles = BubbleStore::new();
         restored_bubbles.restore_from_snapshots(&snaps);
-
-        // `BubbleStore::restore_from_snapshots` never goes through
-        // `DrawingManager` — this is the 2026-08-14 bug: the parent's
-        // `subdivided_slots` cache stays at its freshly-deserialized
-        // default (empty) right after restore, exactly the symptom
-        // measured in the running app (the parent's own straight leg drawn
-        // again under its own subdivision).
-        {
-            let b = restored_bubbles.bubble(bid).expect("bubble restored");
-            let parent = b.primitives.iter().find(|p| p.data().id == parent_id).expect("parent restored");
-            assert!(
-                parent.subdivided_slots().is_empty(),
-                "guard cache must start empty right after restore_from_snapshots alone \
-                 (proves the cache, not the link, is what a bare restore leaves stale)",
-            );
-        }
-
-        // The cold-restore sweep hydration_impl.rs runs right after
-        // `dedup_primitive_ids` — `clear_dangling_wave_links` then
-        // `refresh_wave_guards`, per restored bubble id.
-        let sweep_mgr = DrawingManager::default();
-        let cleared = sweep_mgr.clear_dangling_wave_links(&mut restored_bubbles, bid);
-        assert_eq!(cleared, 0, "a correctly round-tripped link must not be flagged dangling");
-        sweep_mgr.refresh_wave_guards(&mut restored_bubbles, bid);
 
         let b = restored_bubbles.bubble(bid).expect("bubble restored");
         let parent = b.primitives.iter().find(|p| p.data().id == parent_id).expect("parent restored");
         assert_eq!(
             parent.subdivided_slots(),
             &[WaveSlot::Impulse2],
-            "refresh_wave_guards must fill subdivided_slots after the cold-restore sweep runs",
+            "restore_from_snapshots alone must fill subdivided_slots — no separate sweep call needed",
         );
     }
 
     #[test]
-    fn dangling_link_is_cleared_not_left_pointing_at_nothing() {
+    fn dangling_link_in_a_snapshot_is_cleared_by_restore_from_snapshots_alone() {
         // A file saved before the id-preservation doctrine existed (or
         // hand-edited) can carry a `link` naming an id nothing in the
-        // bubble owns any more — construct that directly rather than via
-        // a round trip, since a healthy round trip never produces one.
+        // bubble owns any more. Build that shape directly into a
+        // `DataBubbleSnapshot` — a healthy save never produces one — and
+        // prove `restore_from_snapshots` itself drops it, not a caller-side
+        // step.
         let mut bubbles = BubbleStore::new();
         let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
-        let mut mgr = DrawingManager::default();
+        let mut tags = TagManager::new();
+        let mut tag = Tag::new_auto(bid, [0.0, 0.0, 0.0, 0.0]);
+        tag.members.insert(SyncMemberId::Chart(1));
+        tags.insert(tag);
 
+        let mut mgr = DrawingManager::default();
         let mut orphan_child = ElliottCorrection::new(
             [(1_000, 10.0), (1_250, 7.0), (1_500, 9.0), (2_000, 5.0)],
             "#ffffff",
@@ -3620,12 +3465,17 @@ mod wave_link_restore_tests {
         orphan_child.link = Some(WaveLink { parent_id: 999_999, slot: WaveSlot::Impulse2 });
         let child_id = mgr.add_external(&mut bubbles, bid, Box::new(orphan_child));
 
-        let cleared = mgr.clear_dangling_wave_links(&mut bubbles, bid);
-        assert_eq!(cleared, 1);
+        let snaps = snapshot_round_trip(&bubbles, &tags, bid);
 
-        let b = bubbles.bubble(bid).expect("bubble exists");
-        let child = b.primitives.iter().find(|p| p.data().id == child_id).expect("child exists");
-        assert_eq!(child.wave_link(), None, "a link naming an id no bubble contains must be cleared, not left dangling");
+        let mut restored_bubbles = BubbleStore::new();
+        restored_bubbles.restore_from_snapshots(&snaps);
+
+        let b = restored_bubbles.bubble(bid).expect("bubble restored");
+        let child = b.primitives.iter().find(|p| p.data().id == child_id).expect("child restored");
+        assert_eq!(
+            child.wave_link(), None,
+            "restore_from_snapshots alone must clear a link naming an id no bubble contains, not leave it dangling",
+        );
     }
 }
 

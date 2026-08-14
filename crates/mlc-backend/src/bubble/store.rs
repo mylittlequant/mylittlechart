@@ -547,6 +547,17 @@ impl BubbleStore {
     /// cutover). Does NOT call [`Self::clear`] — callers that want a full
     /// wipe-and-rebuild call `clear()` first.
     ///
+    /// Every restored bubble's Elliott wave links are swept here before
+    /// insertion (2026-08-14 report, second attempt — see
+    /// `crate::bubble::wave_guards`'s own module doc for why this is the
+    /// convergence point rather than a caller-side step): a `link`/`follows`
+    /// naming an id nothing in the bubble owns is cleared, then the
+    /// `subdivided_slots`/`label_collisions`/context-violation caches
+    /// `DrawingManager::refresh_wave_guards` owns are filled. This is
+    /// unconditional and cannot be skipped by any caller — this function is
+    /// the only place a `DataBubbleSnapshot` list turns back into live
+    /// bubbles at all.
+    ///
     /// Returns the ids of every bubble restored, in snapshot order.
     pub fn restore_from_snapshots(
         &mut self,
@@ -575,6 +586,8 @@ impl BubbleStore {
                     }
                 }
             }
+            super::wave_guards::clear_dangling_wave_links(&mut bubble);
+            super::wave_guards::refresh_wave_guards(&mut bubble);
             let bid = bubble.id;
             self.insert_bubble_raw(bubble);
             restored_ids.push(bid);

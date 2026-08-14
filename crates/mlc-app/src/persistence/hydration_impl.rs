@@ -749,28 +749,38 @@ impl ChartApp {
                         eprintln!("[ChartApp] Re-IDed {} duplicate primitive(s) across all groups", total_dedup);
                     }
 
-                    // Elliott WaveLink/follows integrity sweep (2026-08-14
-                    // report, cold-restore audit). `restore_from_snapshots`
-                    // above keeps every persisted primitive id — it never
-                    // re-stamps — so a `link`/`follows` restored here still
-                    // names a sibling in the SAME bubble on disk. This runs
-                    // AFTER the dedup pass right above (the one remaining
-                    // re-stamp on this path, and only for a legacy id
-                    // collision) so it sees the FINAL id state: first drop
-                    // any reference that still doesn't resolve (a file saved
-                    // before this doctrine existed, or hand-edited), then
-                    // fill the guard cache
-                    // (`subdivided_slots`/`label_collisions`/context
-                    // violations) `DrawingManager::refresh_wave_guards` owns.
-                    // `restore_from_snapshots` builds bubbles straight on
-                    // `BubbleStore`, never through `DrawingManager`, so
-                    // without this sweep that cache stayed at its
-                    // freshly-deserialized default (empty) after every cold
-                    // load: a restored subdivision's parent drew its own
-                    // straight leg again underneath it, the chain/context
-                    // rules stayed silent, and two degrees' labels could
-                    // stack on the same pivot — until the next live edit
-                    // happened to touch that bubble and recompute it.
+                    // Elliott WaveLink/follows integrity re-sweep (2026-08-14
+                    // report, second pass). The PRIMARY defense now lives one
+                    // level lower, inside `BubbleStore::restore_from_snapshots`
+                    // itself (`crate::bubble::wave_guards` in mlc-backend) —
+                    // every restored bubble already had its dangling links
+                    // cleared and its guard cache filled the moment
+                    // `restore_from_snapshots` ran, above. A first attempt put
+                    // the ONLY sweep here (commit `d36e6ae5`) and the owner
+                    // measured it still broken on a plain wasm page reload —
+                    // the app boots through `ChartApp::new_window`'s
+                    // `has_saved_preset` branch, which stashes the cold body
+                    // into `pending_cold_apply` and applies it one frame
+                    // later via `drain_pending_cold_apply` -> this same
+                    // `apply_preset_cold`, so this function DOES run on
+                    // every reload; what could not be proven is that nothing
+                    // else on this path re-broke a link afterward. Moving the
+                    // fix down to `restore_from_snapshots` closes that
+                    // uncertainty structurally: it is the one function every
+                    // restore path (this one, and any future one) is
+                    // REQUIRED to call to turn a `DataBubbleSnapshot` list
+                    // back into primitives at all.
+                    //
+                    // This loop stays as a SECOND pass for one real reason:
+                    // `dedup_primitive_ids` right above runs AFTER
+                    // `restore_from_snapshots` and re-stamps a primitive id
+                    // when TWO primitives in one bubble collide (a legacy
+                    // save only, see that function's own doc for why it does
+                    // NOT remap) — that re-stamp can dangle a link the
+                    // per-bubble sweep already found clean. Re-running the
+                    // same clear+refresh here catches exactly that, and is a
+                    // no-op (nothing to clear, cache already correct) on
+                    // every bubble dedup did not touch.
                     let mut total_dangling_links = 0u32;
                     for &bid in &restored_bubble_ids {
                         total_dangling_links += self.core.drawings_mut().clear_dangling_wave_links(bid);

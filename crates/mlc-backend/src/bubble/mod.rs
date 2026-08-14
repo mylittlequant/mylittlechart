@@ -6,6 +6,7 @@ mod facade;
 mod raw_layer;
 mod view_fold;
 mod trade_built_kline;
+pub(crate) mod wave_guards;
 pub use data_bubble::*;
 pub use store::{BubbleStore, InstrumentKey};
 pub use render::{build_chart_render_state, ChartWindowRenderInputs};
