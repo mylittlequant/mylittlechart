@@ -4696,6 +4696,17 @@ impl ChartApp {
         self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
         self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
 
+        // EWA engine configuration (owner ask 2026-08-14) — process-level
+        // like the control-point style above: `set_ewa_engine_config` writes
+        // the one global `wave_label_offset`/`elliott::guard`/each Elliott
+        // constructor read fresh, so every open chart (and every NEW
+        // structure drawn from here on) adopts the persisted config on the
+        // very next use, no primitive touched. Mirrored into
+        // `ewa_engine_settings_state` here too so the modal shows the right
+        // selection immediately rather than waiting for a click.
+        mlc_core::state::ewa_engine::set_ewa_engine_config(profile.ui.ewa_engine.clone());
+        self.panel_app.ewa_engine_settings_state.config = profile.ui.ewa_engine.clone();
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

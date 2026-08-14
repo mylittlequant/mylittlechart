@@ -1768,6 +1768,17 @@ impl ChartApp {
     fn handle_prim_settings_item(&mut self, item_id: &str, x: f64, _y: f64) {
         use mlc_core::drawing::primitives_v2::{LineStyle, TextAlign};
         use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
+
+        // The Wave archetype's own trailing "EWA settings" button
+        // (`primitive_settings_vid::draw_ewa_engine_settings_button`) — an
+        // action on the ENGINE'S own config, not on this primitive, so it is
+        // handled before the `prim_id` requirement below.
+        if item_id == "open_ewa_engine_settings" {
+            self.panel_app.ewa_engine_settings_state.open();
+            eprintln!("[ChartApp] Opened EWA engine settings from primitive settings modal");
+            return;
+        }
+
         let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         // Close template dropdown on any non-dropdown click. Every row in

@@ -105,6 +105,10 @@ pub struct ElliottTriangle {
 
 impl ElliottTriangle {
     pub fn new(points: [(i64, f64); 6], color: &str) -> Self {
+        // Ratio-rib defaults come from the EWA engine's own configurable
+        // defaults (owner ask 2026-08-14) — see `ElliottImpulse::new`'s own
+        // comment for the full rationale.
+        let ratio_rib_defaults = crate::state::ewa_engine::ewa_engine_config().ratio_rib_defaults;
         Self {
             data: PrimitiveData {
                 type_id: "elliott_triangle".to_string(),
@@ -122,9 +126,9 @@ impl ElliottTriangle {
             link: None,
             follows: None,
             show_ratios: false,
-            ratio_rib_color: None,
-            ratio_rib_width: None,
-            ratio_rib_style: LineStyle::Dotted,
+            ratio_rib_color: ratio_rib_defaults.color,
+            ratio_rib_width: ratio_rib_defaults.width,
+            ratio_rib_style: ratio_rib_defaults.style,
             realized_points: None,
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
@@ -378,10 +382,10 @@ impl Primitive for ElliottTriangle {
                 if i >= realized || label.is_empty() { continue; }
                 let (x, y) = screen[i];
                 let collides = self.label_collisions.contains(&i);
-                let offset = wave_label_offset(&screen, i, &self.label_style, collides);
+                let (dx, dy) = wave_label_offset(&screen, i, &self.label_style, collides);
                 let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
                 let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
-                draw_label_plate(ctx, x, y + offset, label, self.label_style.font_size, &self.label_style, this_label_color);
+                draw_label_plate(ctx, x + dx, y + dy, label, self.label_style.font_size, &self.label_style, this_label_color);
             }
         }
 

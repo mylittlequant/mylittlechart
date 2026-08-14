@@ -157,6 +157,11 @@ impl ChartApp {
                 profile.ui.trading_panel_topbar_takeover;
             self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
             self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
+            // EWA engine configuration (owner ask 2026-08-14) — same
+            // multi-window mirror class as the two lines above: keeps this
+            // window's own EWA Engine Settings modal in sync even when a
+            // DIFFERENT window is the one that changed it.
+            self.panel_app.ewa_engine_settings_state.config = profile.ui.ewa_engine.clone();
             // The DATA & CACHE sliders keep their committed value while the
             // user is dragging one, so the handle does not snap back on
             // every frame mid-drag.

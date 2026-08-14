@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
+use crate::state::ewa_engine::EwaEngineConfig;
 
 // =============================================================================
 // Schema version
@@ -607,6 +608,17 @@ pub struct ProfileUiSettings {
     /// rationale; same process-wide, mutated-in-place, rendering-only class.
     #[serde(default)]
     pub control_point_size: ControlPointSize,
+
+    /// EWA (Elliott Wave Analysis) engine configuration — the "EWA Engine
+    /// Settings" modal's own edited value (owner ask 2026-08-14). Same
+    /// process-wide, mutated-in-place, RAM+profile class as
+    /// `control_point_shape`/`control_point_size` above: applied to the live
+    /// global via `mlc_core::state::ewa_engine::set_ewa_engine_config` at
+    /// profile load (`ChartApp::apply_profile_state`) and again on every
+    /// modal edit. No daemon/headless consumer reads this (chart-rendering
+    /// and drawing-construction only).
+    #[serde(default)]
+    pub ewa_engine: EwaEngineConfig,
 }
 
 fn default_true() -> bool {
@@ -638,6 +650,7 @@ impl ProfileUiSettings {
             trading_panel_topbar_takeover: false,
             control_point_shape: ControlPointShape::default(),
             control_point_size: ControlPointSize::default(),
+            ewa_engine: EwaEngineConfig::default(),
         }
     }
 }

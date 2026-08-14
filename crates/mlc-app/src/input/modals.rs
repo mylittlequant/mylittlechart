@@ -2268,6 +2268,10 @@ impl ChartApp {
                     self.panel_app.user_settings_state.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: user_settings closed");
                 }
+                "ewa_engine_settings" => {
+                    self.panel_app.ewa_engine_settings_state.close();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
+                }
                 "profile_manager" => {
                     // In skeleton mode (vault unlock required), profile manager cannot be dismissed.
                     if !self.panel_app.user_settings_state.needs_vault_unlock {
@@ -2318,6 +2322,7 @@ impl ChartApp {
         self.panel_app.primitive_settings_state.close();
         self.panel_app.chart_settings_state.close();
         self.panel_app.indicator_settings_state.close();
+        self.panel_app.ewa_engine_settings_state.close();
         // Close top-level modals that are managed outside of modal_state.
         self.panel_app.close_tags_tabs();
         if self.panel_app.chart_browser.is_open {
@@ -2519,6 +2524,15 @@ impl ChartApp {
                                 eprintln!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
                             }
                         }
+                    }
+                    // Trailing "EWA settings" row every wave-gesture popup
+                    // ends with (`mlc-app-layout`'s
+                    // `push_engine_settings_row`) — opens the process-global
+                    // engine config modal, not anything about `prim_id`
+                    // itself.
+                    "wave_menu:engine_settings" => {
+                        self.panel_app.ewa_engine_settings_state.open();
+                        eprintln!("[ChartApp] Opened EWA engine settings from wave menu");
                     }
 
                     _ => {

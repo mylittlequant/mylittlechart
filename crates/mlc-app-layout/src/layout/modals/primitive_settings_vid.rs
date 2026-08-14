@@ -59,7 +59,7 @@ use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
 use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyGroup, PropertyType};
 use mlc_core::drawing::primitives_v2::elliott::guard;
-use mlc_core::drawing::primitives_v2::Primitive;
+use mlc_core::drawing::primitives_v2::{Archetype, Primitive};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::{current_language, ConceptKey, ConfigKey, SettingsKey, StyleKey};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
@@ -163,13 +163,17 @@ struct GroupHeights {
     /// Zero for every non-Elliott primitive and for a compliant Elliott
     /// structure.
     rules: f64,
+    /// The trailing "EWA settings" button (2026-08-14) — see
+    /// [`ewa_engine_settings_button_height`]'s own doc. Zero for every
+    /// primitive whose `Archetype` is not `Wave`.
+    ewa_settings_button: f64,
 }
 
 impl GroupHeights {
     fn total(&self) -> f64 {
         let mut h = 0.0;
         let mut any = false;
-        for g in [self.line, self.fill, self.stats, self.rules] {
+        for g in [self.line, self.fill, self.stats, self.rules, self.ewa_settings_button] {
             if g > 0.0 {
                 if any {
                     h += GROUP_GAP;
@@ -248,8 +252,9 @@ fn group_heights(prim: &dyn Primitive) -> GroupHeights {
     let stats = headered_group_height(&stats_props);
 
     let rules = rules_group_height(primitive_violations(prim).len());
+    let ewa_settings_button = ewa_engine_settings_button_height(prim);
 
-    GroupHeights { line, fill, stats, rules }
+    GroupHeights { line, fill, stats, rules, ewa_settings_button }
 }
 
 // =============================================================================
@@ -282,6 +287,58 @@ fn rules_group_height(count: usize) -> f64 {
         return 0.0;
     }
     GROUP_HEADER_H + count as f64 * ROW_H + GROUP_PAD_BOTTOM
+}
+
+// =============================================================================
+// EWA engine settings button (2026-08-14) — the Wave archetype's own second
+// entrance to the EWA Engine Settings modal (owner ask: "по какой-то ещё
+// общей кнопке типа EWA settings" — the first entrance is the wave-menu
+// popups' own trailing row, `crate::ui::context_menu::push_engine_settings_row`).
+// Always the LAST thing in the Subject tab, present for every primitive
+// whose `Archetype` is `Wave` — unlike the Rules group above, this is
+// unconditional (not gated on there being anything wrong to report).
+// =============================================================================
+
+/// Height of the trailing "EWA settings" button — one plain row, present
+/// only for a `Archetype::Wave` primitive. Shared by `group_heights`/
+/// `query_heights` (never query-filtered — an action, not a searchable
+/// setting label, same treatment [`rules_group_height`] gets) and mirrored
+/// by [`draw_ewa_engine_settings_button`].
+fn ewa_engine_settings_button_height(prim: &dyn Primitive) -> f64 {
+    if prim.archetype() == Archetype::Wave {
+        ROW_H
+    } else {
+        0.0
+    }
+}
+
+/// Draws the trailing "EWA settings" button — see this section's own doc.
+/// Registers ONE `content_items` entry, `"open_ewa_engine_settings"`,
+/// dispatched by `on_context_menu_action`'s own sibling click-handler
+/// (`mlc-app`'s `input/panel_click.rs`) next to `"settings"`/`"delete"`/etc.
+/// Draws nothing when [`ewa_engine_settings_button_height`] is zero.
+fn draw_ewa_engine_settings_button(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    row_y: &mut f64,
+    any_drawn: &mut bool,
+    prim: &dyn Primitive,
+) {
+    if prim.archetype() != Archetype::Wave {
+        return;
+    }
+    if *any_drawn {
+        *row_y += GROUP_GAP;
+    }
+    let rect = WidgetRect::new(x0, *row_y + 1.0, (x1 - x0).max(20.0), ROW_H - 2.0);
+    let label = ConceptKey::EwaEngineSettingsMenuLabel.get(current_language());
+    draw_toggle_segment(ctx, toolbar_theme, rect, label, false);
+    result.content_items.push(("open_ewa_engine_settings".to_string(), rect));
+    *row_y += ROW_H;
+    *any_drawn = true;
 }
 
 /// Draws the trailing Rules group — see this section's own doc. Non-
@@ -409,8 +466,11 @@ fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
     // label), so its height is the SAME unfiltered value the empty-query
     // early return above already uses.
     let rules = rules_group_height(primitive_violations(prim).len());
+    // Same treatment for the trailing EWA-settings button — an action, not a
+    // searchable setting label.
+    let ewa_settings_button = ewa_engine_settings_button_height(prim);
 
-    GroupHeights { line, fill, stats, rules }
+    GroupHeights { line, fill, stats, rules, ewa_settings_button }
 }
 
 /// Draws the Appearance tab's own rows. Returns `true` if at least one interactive
@@ -491,6 +551,11 @@ pub fn draw(
     // primitive's own current shape, not a searchable setting label (see
     // this group's own doc section above).
     draw_rules_group(ctx, toolbar_theme, x0, x1, row_y, &mut any_drawn, prim);
+
+    // ---- EWA settings button — always the LAST thing of all, below Rules.
+    // See this file's own "EWA engine settings button" section for why it
+    // is unconditional (not gated on there being a violation to report).
+    draw_ewa_engine_settings_button(ctx, toolbar_theme, result, x0, x1, row_y, &mut any_drawn, prim);
 
     result.content_items.len() > items_before
 }

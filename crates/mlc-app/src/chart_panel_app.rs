@@ -90,6 +90,8 @@ pub struct ChartPanelApp {
     pub compare_settings_state: CompareSettingsState,
     /// User settings modal state.
     pub user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState,
+    /// EWA Engine Settings modal state (owner ask 2026-08-14).
+    pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Clock popup state (timezone selector + 24h toggle).
     pub clock_popup_state: mlc_app_layout::ui::ClockPopupState,
 
@@ -144,6 +146,7 @@ impl ChartPanelApp {
             alert_settings_state: AlertSettingsState::new(),
             compare_settings_state: CompareSettingsState::new(),
             user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
+            ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
             panel_color_picker: mlc_app_layout::ui::color_picker_state::ColorPickerState::new(),
             panel_color_picker_leaf: None,
@@ -857,6 +860,20 @@ impl ChartPanelApp {
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,
+                input_coordinator,
+            ));
+        }
+
+        // EWA Engine Settings modal
+        if self.ewa_engine_settings_state.is_open {
+            use mlc_app_layout::layout::modals::ewa_engine_settings::render_ewa_engine_settings_modal;
+            result.ewa_engine_settings = Some(render_ewa_engine_settings_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.ewa_engine_settings_state,
+                frame_theme,
+                toolbar_theme,
                 input_coordinator,
             ));
         }

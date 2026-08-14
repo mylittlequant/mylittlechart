@@ -10,6 +10,7 @@ use crate::ui::scroll_state::ScrollState;
 use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
+use mlc_core::state::ewa_engine::EwaEngineConfig;
 use uzor::app_context::TextInputState;
 use mlc_alert_delivery::NotificationSettings;
 
@@ -3672,3 +3673,95 @@ impl_resizable_modal!(
     IndicatorSettingsState => (420.0, 320.0),
     CompareSettingsState => (380.0, 300.0),
 );
+
+// =============================================================================
+// EwaEngineSettingsState — the "EWA Engine Settings" modal (owner ask
+// 2026-08-14: "для настройки ЕВА движка можно сделать отдельную настройку,
+// ну вот прям модалку ЕВА движка, в которую можно попасть из каждого ЕВА
+// дравлинга — из его модалки настроек или по какой-то ещё общей кнопке типа
+// EWA settings в ПКМ или дабл-ЛКМ"). See
+// `crate::layout::modals::ewa_engine_settings` for the renderer.
+//
+// `config` is the modal's own live copy of `mlc_core::state::ewa_engine::
+// EwaEngineConfig` — mirrored from the profile at load
+// (`ChartApp::apply_profile_state`) and written through on every edit (the
+// SAME apply-on-change, no-diff shape `UserSettingsState::control_point_shape`/
+// `control_point_size` already use for the same class of process-global,
+// RAM+profile setting — see that struct's own field docs). There is
+// deliberately no separate "pending" copy: this config is not per-drawing,
+// so there is nothing to accept or discard.
+// =============================================================================
+
+/// State for the "EWA Engine Settings" modal — fixed size, no tabs, no
+/// scrolling (its whole body is a handful of rows), draggable by its own
+/// header like every other settings modal in this file.
+#[derive(Clone, Debug)]
+pub struct EwaEngineSettingsState {
+    /// Whether the modal is currently open.
+    pub is_open: bool,
+    /// Modal position (`None` = centered on screen).
+    pub position: Option<(f64, f64)>,
+    /// Whether the modal is being dragged by its header.
+    pub is_dragging: bool,
+    /// Offset from mouse to modal top-left when drag started.
+    pub drag_offset: Option<(f64, f64)>,
+    /// ID of the item currently hovered (for hover highlight).
+    pub hovered_item_id: Option<String>,
+    /// The modal's own live copy of the engine config — see this section's
+    /// own doc for why there is no separate pending/dirty copy.
+    pub config: EwaEngineConfig,
+}
+
+impl Default for EwaEngineSettingsState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            position: None,
+            is_dragging: false,
+            drag_offset: None,
+            hovered_item_id: None,
+            config: EwaEngineConfig::default(),
+        }
+    }
+}
+
+impl EwaEngineSettingsState {
+    /// Open the modal.
+    pub fn open(&mut self) {
+        self.is_open = true;
+    }
+
+    /// Close the modal and reset drag state.
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+
+    /// Toggle open/closed.
+    pub fn toggle(&mut self) {
+        if self.is_open {
+            self.close();
+        } else {
+            self.open();
+        }
+    }
+
+    /// Start dragging from the modal header.
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    /// Update modal position while dragging.
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.drag_offset {
+            self.position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
+    /// End dragging.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+}

@@ -4991,6 +4991,69 @@ impl ChartApp {
             return;
         }
 
+        // === EWA Engine Settings modal clicks ===
+        // Every edit here applies as it is made and writes through to the
+        // process-global `EwaEngineConfig` (`Self::apply_ewa_engine_config_edit`)
+        // — same class of setting as `control_point_shape`/`control_point_size`
+        // above, so OK and ✕ are the same action: leave.
+        if let Some(action) = widget_id.strip_prefix("ewa_engine_settings:") {
+            match action {
+                "close" | "ok" => {
+                    self.panel_app.ewa_engine_settings_state.close();
+                }
+                "modal_bg" | "header" => {}
+                rest if rest.starts_with("ewa:label_separation:") => {
+                    use mlc_core::drawing::primitives_v2::LabelSeparationStyle;
+                    let key = &rest["ewa:label_separation:".len()..];
+                    let style = match key {
+                        "stacked" => LabelSeparationStyle::Stacked,
+                        "parallel" => LabelSeparationStyle::Parallel,
+                        "triangle" => LabelSeparationStyle::Triangle,
+                        _ => {
+                            eprintln!("[ChartApp] ewa_engine_settings unknown label_separation: {}", key);
+                            return;
+                        }
+                    };
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.label_separation = style);
+                }
+                "ewa:detect_higher_degree" => {
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.detect_higher_degree = !cfg.detect_higher_degree);
+                }
+                "ewa:show_projections" => {
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.show_projections = !cfg.show_projections);
+                }
+                "ewa:guard_geometry" => {
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.guard_families.geometry = !cfg.guard_families.geometry);
+                }
+                "ewa:guard_grammar" => {
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.guard_families.grammar = !cfg.guard_families.grammar);
+                }
+                "ewa:guard_chain" => {
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.guard_families.chain = !cfg.guard_families.chain);
+                }
+                rest if rest.starts_with("ewa:ratio_color:") => {
+                    let key = &rest["ewa:ratio_color:".len()..];
+                    let color = if key == "auto" { None } else { Some(format!("#{key}")) };
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.ratio_rib_defaults.color = color);
+                }
+                rest if rest.starts_with("ewa:ratio_width:") => {
+                    let key = &rest["ewa:ratio_width:".len()..];
+                    let width = if key == "auto" { None } else { key.parse::<f64>().ok() };
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.ratio_rib_defaults.width = width);
+                }
+                rest if rest.starts_with("ewa:ratio_style:") => {
+                    use mlc_core::drawing::primitives_v2::LineStyle;
+                    let key = &rest["ewa:ratio_style:".len()..];
+                    let style = LineStyle::from_str(key);
+                    self.apply_ewa_engine_config_edit(|cfg| cfg.ratio_rib_defaults.style = style);
+                }
+                _ => {
+                    eprintln!("[ChartApp] ewa_engine_settings unhandled: {}", action);
+                }
+            }
+            return;
+        }
+
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use mlc_app_layout::ui::modal_settings::UserSettingsTab;
@@ -7403,6 +7466,28 @@ impl ChartApp {
         self.panel_app.user_settings_state.control_point_size = size;
         self.autosave_snapshot();
         eprintln!("[ChartApp] control_point_size = {:?}", size);
+    }
+
+    /// Apply one edit to `ProfileUiSettings::ewa_engine`, push it into the
+    /// live global (`mlc_core::state::ewa_engine::set_ewa_engine_config` —
+    /// read fresh by every consumer, next use), mirror it into
+    /// `ewa_engine_settings_state.config` so the modal reflects the pick the
+    /// same frame it's clicked, and autosave — the EWA Engine Settings
+    /// modal's own single write path (owner ask 2026-08-14). Same shape as
+    /// [`Self::set_control_point_shape`]/[`Self::set_control_point_size`]
+    /// above, generalized to one closure since this config has more than
+    /// two independently-clicked fields.
+    fn apply_ewa_engine_config_edit(&mut self, edit: impl FnOnce(&mut mlc_core::state::ewa_engine::EwaEngineConfig)) {
+        let cfg = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            edit(&mut ui.ewa_engine);
+            ui.ewa_engine.clone()
+        };
+        mlc_core::state::ewa_engine::set_ewa_engine_config(cfg.clone());
+        self.panel_app.ewa_engine_settings_state.config = cfg;
+        self.autosave_snapshot();
+        eprintln!("[ChartApp] ewa_engine config updated");
     }
 
     /// Route a click inside the `symbol_selector` inline fast-search

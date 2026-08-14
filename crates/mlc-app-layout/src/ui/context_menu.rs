@@ -351,6 +351,25 @@ pub(crate) fn elliott_icon_id(kind_or_type_id: &str) -> &str {
     kind_or_type_id.split(':').next().unwrap_or(kind_or_type_id)
 }
 
+/// The trailing "EWA settings" row every wave-gesture popup ends with (owner
+/// ask 2026-08-14: "по какой-то ещё общей кнопке типа EWA settings в ПКМ" —
+/// the ENGINE's own settings, not this structure's own). Action
+/// `"wave_menu:engine_settings"`, routed by `on_context_menu_action`
+/// (`mlc-app`) next to the other `wave_menu:*` arms — opens
+/// `layout::modals::ewa_engine_settings::render_ewa_engine_settings_modal`.
+/// Shared by [`build_wave_menu`], [`build_successor_menu`] and
+/// [`build_predecessor_menu`] so the three popups can never disagree about
+/// where this row sits (always last) or what it says.
+fn push_engine_settings_row(items: &mut Vec<ContextMenuItemState>) {
+    use mlc_core::i18n::{t_concept, ConceptKey};
+    items.push(ContextMenuItemState::separator());
+    items.push(ContextMenuItemState::action_with_icon(
+        "settings",
+        "wave_menu:engine_settings",
+        t_concept(ConceptKey::EwaEngineSettingsMenuLabel),
+    ));
+}
+
 /// Build the "subdivide this wave" popup (`ChartGesture::WaveMenu`) for the
 /// wave `slot` the gesture resolved to on the already-selected primitive.
 ///
@@ -408,6 +427,7 @@ pub fn build_wave_menu(cfg: &SelectedPrimitiveConfig, slot: WaveSlot, child_id: 
         ));
     }
 
+    push_engine_settings_row(&mut items);
     items
 }
 
@@ -442,6 +462,7 @@ pub fn build_successor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuIte
         items.push(ContextMenuItemState::action("wave_menu:promote", t_concept(ConceptKey::PromoteChainLabel)));
     }
 
+    push_engine_settings_row(&mut items);
     items
 }
 
@@ -480,5 +501,6 @@ pub fn build_predecessor_menu(cfg: &SelectedPrimitiveConfig) -> Vec<ContextMenuI
         ));
     }
 
+    push_engine_settings_row(&mut items);
     items
 }

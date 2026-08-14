@@ -524,6 +524,27 @@ pub struct UserSettingsResult {
 }
 
 // =============================================================================
+// EWA Engine Settings Modal
+// =============================================================================
+
+/// Result of EWA Engine Settings modal rendering with hit zones — see
+/// `crate::layout::modals::ewa_engine_settings` for the renderer and
+/// `mlc_core::state::ewa_engine` for the config it edits. Deliberately
+/// small: no tabs, no scrolling, no slider tracks — the whole body is a
+/// handful of radio/checkbox rows.
+#[derive(Clone, Debug, Default)]
+pub struct EwaEngineSettingsResult {
+    /// Modal bounding rect.
+    pub modal_rect: WidgetRect,
+    /// Header rect (for dragging).
+    pub header_rect: WidgetRect,
+    /// Close button rect.
+    pub close_btn_rect: WidgetRect,
+    /// Content item rects for hit testing: (item_id, rect).
+    pub content_items: Vec<(String, WidgetRect)>,
+}
+
+// =============================================================================
 // Chart Modal Render Result
 // =============================================================================
 
@@ -564,6 +585,8 @@ pub struct ChartModalRenderResult {
     pub chart_template_name: Option<crate::layout::modals::template_name_modal::TemplateNameModalResult>,
     /// User settings modal result (if open).
     pub user_settings: Option<UserSettingsResult>,
+    /// EWA Engine Settings modal result (if open).
+    pub ewa_engine_settings: Option<EwaEngineSettingsResult>,
 }
 
 // =============================================================================

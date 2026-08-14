@@ -74,6 +74,8 @@ pub use welcome_wizard::render_welcome_wizard;
 pub use welcome_wizard::render_vault_unlock;
 pub mod profile_manager;
 pub use profile_manager::render_profile_manager;
+pub mod ewa_engine_settings;
+pub use ewa_engine_settings::render_ewa_engine_settings_modal;
 
 pub use indicator_settings::*;
 pub use context_menu::*;

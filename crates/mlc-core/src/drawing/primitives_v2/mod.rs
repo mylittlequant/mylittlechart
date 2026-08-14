@@ -81,6 +81,8 @@
 //!     └── risk_reward.rs
 //! ```
 
+use serde::{Deserialize, Serialize};
+
 mod traits;
 mod types;
 pub mod registry;
@@ -266,40 +268,58 @@ pub(crate) fn stroke_leg_segments(
 /// How a collision-separated label is pushed off its shared pivot — the
 /// EWA-engine setting the owner asked for (owner ask 2026-08-14: "отдалять
 /// можно разными способами: один над другим, или параллельно, или
-/// треугольничком — это должно быть настраиваемым через модалку ЕВА").
-/// [`Stacked`](Self::Stacked) is the only variant that exists today —
-/// `Parallel`/`Triangle` are named in that ask but have no placement math
-/// yet, so they are not added here as dead variants; the task that builds
-/// the modal setting choosing between them adds each one together with its
-/// own implementation in [`step_out_for_collision`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LabelSeparationStyle {
+/// треугольничком — это должно быть настраиваемым через модалку ЕВА",
+/// implemented in the EWA Engine Settings modal,
+/// `EwaEngineConfig::label_separation`). `pub`, not `pub(crate)`, since that
+/// config field must round-trip through `mlc-app-layout`'s own modal and
+/// `mlc-app`'s own click dispatch, neither of which lives in this crate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LabelSeparationStyle {
     /// Push straight along the same axis the collision-direction sign
     /// already picked (`wave_label_offset`'s own UP/DOWN branch) — one
-    /// added rung of DISTANCE from the pivot, same line the base offset
-    /// already sits on.
+    /// added rung of DISTANCE from the pivot, same vertical line the base
+    /// offset already sits on. The only style that existed before the other
+    /// two were added — the default, so an untouched EWA engine config
+    /// renders every structure byte-for-byte as before.
+    #[default]
     Stacked,
+    /// Push sideways instead of further away: the colliding label lands at
+    /// the SAME height as the base (non-colliding) offset, shifted
+    /// horizontally by one rung — two labels that read side by side at the
+    /// same vertical level ("параллельно").
+    Parallel,
+    /// Push diagonally — one rung out both horizontally and vertically from
+    /// the base offset, so the pivot and the two labels (the child's own
+    /// label at the base offset, this one stepped out diagonally) trace a
+    /// small triangle ("треугольничком").
+    Triangle,
 }
 
-/// Push `base` one further rung out along `sign`'s own direction — the
-/// single style [`LabelSeparationStyle`] implements today (see that enum's
-/// own doc for why the other two named styles are not here yet). `rung`
-/// reuses the SAME per-label metrics `wave_label_offset`'s own base offset
-/// already scales with (font size + background padding), so the added
-/// distance grows with the label's own rendered size instead of a fixed
-/// pixel constant.
-fn step_out_for_collision(base: f64, sign: f64, label_style: &LabelStyle, style: LabelSeparationStyle) -> f64 {
+/// Push `base_dy` one further rung out from the pivot, in the direction
+/// [`LabelSeparationStyle`] names — see that enum's own doc for what each
+/// style looks like. `rung` reuses the SAME per-label metrics
+/// `wave_label_offset`'s own base offset already scales with (font size +
+/// background padding), so the added distance grows with the label's own
+/// rendered size instead of a fixed pixel constant. Returns `(dx, dy)`
+/// relative to the label's own anchor point — `Stacked` alone stays
+/// horizontal-free (`dx == 0.0`), matching the single axis this function
+/// moved along before the other two styles existed.
+fn step_out_for_collision(base_dy: f64, sign: f64, label_style: &LabelStyle, style: LabelSeparationStyle) -> (f64, f64) {
     let rung = label_style.font_size * 0.9 + label_style.background_padding;
     match style {
-        LabelSeparationStyle::Stacked => base + sign * rung,
+        LabelSeparationStyle::Stacked => (0.0, base_dy + sign * rung),
+        LabelSeparationStyle::Parallel => (sign * rung, base_dy),
+        LabelSeparationStyle::Triangle => (sign * rung * 0.7, base_dy + sign * rung * 0.7),
     }
 }
 
-/// The vertical push applied to wave label `i`'s own anchor point before
-/// drawing it — UP when this pivot sits above (smaller screen `y`) the one
-/// before it, DOWN otherwise, so a label never sits on top of the wave line
-/// leading into it. Every Elliott type's own label loop computed this same
-/// branch inline before this existed; factored out so `render`'s own label
+/// The push applied to wave label `i`'s own anchor point before drawing it,
+/// as `(dx, dy)` — `dy` is UP when this pivot sits above (smaller screen
+/// `y`) the one before it, DOWN otherwise, so a label never sits on top of
+/// the wave line leading into it; `dx` is `0.0` unless a collision AND a
+/// sideways-pushing [`LabelSeparationStyle`] both apply (see that enum's own
+/// doc). Every Elliott type's own label loop computed this same branch
+/// inline before this existed; factored out so `render`'s own label
 /// placement and [`hit_test_label_plates`]'s own hit area can never drift
 /// apart.
 ///
@@ -309,16 +329,20 @@ fn step_out_for_collision(base: f64, sign: f64, label_style: &LabelStyle, style:
 /// (`self.label_collisions().contains(&i)`) and passes the membership test
 /// in; this function performs no lookup of its own, it only reacts to the
 /// bool. When `true`, the label steps out by ONE rung beyond the base
-/// offset via [`step_out_for_collision`], so it clears the child's own
-/// label drawn closer to the shared pivot at the child's own base
-/// (non-colliding) offset — Elliott notation convention: the finer degree
-/// sits closest to a shared pivot, the coarser one pushed further out
-/// (owner's own framing, "младший цикл... и старший"). Every other label —
-/// every label of a structure with no subdivisions, and every label of a
-/// structure that IS subdivided but does not sit on a pivot the child
-/// actually labels too — passes `false` and draws at EXACTLY the offset
-/// this function produced before the collision case existed:
-/// `sign * label_style.offset_y`.
+/// offset via [`step_out_for_collision`], in whichever direction the ACTIVE
+/// `EwaEngineConfig::label_separation` names — read fresh here via
+/// [`crate::state::ewa_engine::ewa_engine_config`], the same "read fresh,
+/// never cached" contract `control_point_style` already uses, so flipping
+/// the setting changes every open chart's own colliding labels on the very
+/// next frame. So it clears the child's own label drawn closer to the
+/// shared pivot at the child's own base (non-colliding) offset — Elliott
+/// notation convention: the finer degree sits closest to a shared pivot, the
+/// coarser one pushed further out (owner's own framing, "младший цикл... и
+/// старший"). Every other label — every label of a structure with no
+/// subdivisions, and every label of a structure that IS subdivided but does
+/// not sit on a pivot the child actually labels too — passes `false` and
+/// draws at EXACTLY the offset this function produced before the collision
+/// case existed: `(0.0, sign * label_style.offset_y)`.
 ///
 /// Regression fix (owner report 2026-08-14, first pass): a prior revision
 /// (`cad6b834`) grew this DISTANCE by an unconditional per-degree ring
@@ -336,13 +360,20 @@ fn step_out_for_collision(base: f64, sign: f64, label_style: &LabelStyle, style:
 /// `wave_labels`). `elliott::count::label_collision_indices` now derives
 /// the cache from the CHILD's own `Primitive::point_labels`, so only a
 /// pivot the child genuinely labels too ever collides.
-pub(crate) fn wave_label_offset(screen: &[(f64, f64)], i: usize, label_style: &LabelStyle, collides: bool) -> f64 {
+///
+/// Third pass (EWA-engine-settings arc, 2026-08-14): the return type widened
+/// from a single `f64` (a pure vertical offset) to `(f64, f64)` so
+/// `Parallel`/`Triangle` can genuinely move a label sideways — every caller
+/// applies `dx` to its own `x` and `dy` to its own `y`, in place of the old
+/// `y + offset`.
+pub(crate) fn wave_label_offset(screen: &[(f64, f64)], i: usize, label_style: &LabelStyle, collides: bool) -> (f64, f64) {
     let sign = if i > 0 && screen[i].1 < screen[i - 1].1 { -1.0 } else { 1.0 };
-    let base = sign * label_style.offset_y;
+    let base_dy = sign * label_style.offset_y;
     if collides {
-        step_out_for_collision(base, sign, label_style, LabelSeparationStyle::Stacked)
+        let style = crate::state::ewa_engine::ewa_engine_config().label_separation;
+        step_out_for_collision(base_dy, sign, label_style, style)
     } else {
-        base
+        (0.0, base_dy)
     }
 }
 
@@ -375,10 +406,11 @@ pub(crate) fn hit_test_label_plates(
             continue;
         }
         let collides = label_collisions.contains(&i);
-        let label_y = y + wave_label_offset(screen, i, label_style, collides);
+        let (dx, dy) = wave_label_offset(screen, i, label_style, collides);
+        let (label_x, label_y) = (x + dx, y + dy);
         let width = estimate_text_width(labels[i], label_style.font_size);
         let (bg_x, bg_y, bg_w, bg_h) =
-            label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);
+            label_plate_rect(label_x, label_y, width, label_style.font_size, label_style.background_padding);
         if sx >= bg_x && sx <= bg_x + bg_w && sy >= bg_y && sy <= bg_y + bg_h {
             return true;
         }
@@ -490,13 +522,16 @@ mod wave_label_offset_tests {
     /// subdivisions must offset NOTHING beyond the plain per-primitive
     /// `offset_y` — this is the exact expression `wave_label_offset` used
     /// before `cad6b834` added the (now-deleted) blanket per-degree ring,
-    /// restored here as the `collides == false` path.
+    /// restored here as the `collides == false` path. No horizontal push
+    /// either — `dx` is `0.0` unless a collision AND a sideways-pushing
+    /// `LabelSeparationStyle` both apply (see that enum's own doc).
     #[test]
     fn no_collision_offsets_nothing_beyond_the_base() {
         let screen = single_point();
         let s = style();
-        let offset = wave_label_offset(&screen, 0, &s, false);
-        assert_eq!(offset, s.offset_y, "no collision must reproduce the pre-cad6b834 expression exactly: sign * offset_y");
+        let (dx, dy) = wave_label_offset(&screen, 0, &s, false);
+        assert_eq!(dx, 0.0, "no collision must never push sideways");
+        assert_eq!(dy, s.offset_y, "no collision must reproduce the pre-cad6b834 expression exactly: sign * offset_y");
     }
 
     /// A structure with no subdivisions never collides at any of its own
@@ -509,7 +544,7 @@ mod wave_label_offset_tests {
         let s = style();
         for i in 0..screen.len() {
             let sign = if i > 0 && screen[i].1 < screen[i - 1].1 { -1.0 } else { 1.0 };
-            assert_eq!(wave_label_offset(&screen, i, &s, false), sign * s.offset_y, "label {i}: no collision, base offset only");
+            assert_eq!(wave_label_offset(&screen, i, &s, false), (0.0, sign * s.offset_y), "label {i}: no collision, base offset only");
         }
     }
 
@@ -518,20 +553,28 @@ mod wave_label_offset_tests {
     /// (colliding) label must step out by exactly one rung beyond the base
     /// offset — the child's own label at that SAME point stays at the base
     /// offset, closest to the pivot, matching Elliott notation convention.
+    /// Under the default `LabelSeparationStyle::Stacked` (the process-wide
+    /// config's own default, untouched by this test) that rung is entirely
+    /// vertical, exactly as it was before `LabelSeparationStyle` grew its
+    /// other two variants.
     #[test]
     fn collision_steps_out_by_exactly_one_rung_beyond_the_base() {
         let screen = single_point();
         let s = style();
-        let base = wave_label_offset(&screen, 0, &s, false);
-        let collided = wave_label_offset(&screen, 0, &s, true);
+        let (base_dx, base_dy) = wave_label_offset(&screen, 0, &s, false);
+        let (collided_dx, collided_dy) = wave_label_offset(&screen, 0, &s, true);
         let rung = s.font_size * 0.9 + s.background_padding;
-        assert_eq!(collided, base + rung, "a colliding label steps out by exactly one rung beyond the base offset");
-        assert_ne!(collided, base, "a colliding label must land somewhere different from the base offset");
+        assert_eq!(collided_dx, base_dx, "the default Stacked style never pushes sideways");
+        assert_eq!(collided_dy, base_dy + rung, "a colliding label steps out by exactly one rung beyond the base offset");
+        assert_ne!(collided_dy, base_dy, "a colliding label must land somewhere different from the base offset");
     }
 
     /// Same inputs, same output: the offset is a pure function of its
-    /// arguments, so calling it twice must agree — no hidden per-frame
-    /// state anywhere in this LOCAL rule.
+    /// arguments PLUS the active `EwaEngineConfig::label_separation` — the
+    /// same "read fresh, never cached" contract `control_point_style`
+    /// already uses (see `wave_label_offset`'s own doc). Calling it twice in
+    /// a row, with nothing in between that could change the active config,
+    /// must still agree.
     #[test]
     fn same_inputs_produce_same_offset() {
         let screen = single_point();
@@ -542,14 +585,14 @@ mod wave_label_offset_tests {
     }
 
     /// Direction stays exactly what local geometry picks — a pivot ABOVE
-    /// the previous one still pushes the label UP (negative) regardless of
-    /// whether it collides, only the distance grows when it does.
+    /// the previous one still pushes the label UP (negative `dy`) regardless
+    /// of whether it collides, only the distance grows when it does.
     #[test]
     fn direction_still_follows_local_geometry_not_collision() {
         let screen = vec![(0.0, 100.0), (10.0, 50.0)]; // point 1 sits above point 0
         let s = style();
-        assert!(wave_label_offset(&screen, 1, &s, false) < 0.0, "a pivot above the previous one must still push its label UP");
-        assert!(wave_label_offset(&screen, 1, &s, true) < 0.0, "...even while colliding — collision only grows the distance");
+        assert!(wave_label_offset(&screen, 1, &s, false).1 < 0.0, "a pivot above the previous one must still push its label UP");
+        assert!(wave_label_offset(&screen, 1, &s, true).1 < 0.0, "...even while colliding — collision only grows the distance");
     }
 }
 

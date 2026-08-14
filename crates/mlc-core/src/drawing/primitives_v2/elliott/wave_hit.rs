@@ -93,10 +93,11 @@ pub(super) fn wave_slot_at(
             }
             let Some(slot) = label_slot_for_index(type_id, i) else { continue };
             let collides = label_collisions.contains(&i);
-            let label_y = y + wave_label_offset(screen, i, label_style, collides);
+            let (dx, dy) = wave_label_offset(screen, i, label_style, collides);
+            let (label_x, label_y) = (x + dx, y + dy);
             let width = estimate_text_width(labels[i], label_style.font_size);
             let (bg_x, bg_y, bg_w, bg_h) =
-                label_plate_rect(x, label_y, width, label_style.font_size, label_style.background_padding);
+                label_plate_rect(label_x, label_y, width, label_style.font_size, label_style.background_padding);
             if sx >= bg_x && sx <= bg_x + bg_w && sy >= bg_y && sy <= bg_y + bg_h {
                 offer(0.0, slot);
             }

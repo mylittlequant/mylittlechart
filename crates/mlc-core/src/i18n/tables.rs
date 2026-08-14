@@ -1283,7 +1283,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 314] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 327] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1598,6 +1598,19 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 314] = [
     /* 311 RuleWave2NotRetracingWave1        */ [ "Wave 2 does not retrace against wave 1 — it continues in the trend direction instead", "Волна 2 не корректирует волну 1 — она продолжает движение по тренду", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 312 RuleWave4NotRetracingWave3        */ [ "Wave 4 does not retrace against wave 3 — it continues in the trend direction instead", "Волна 4 не корректирует волну 3 — она продолжает движение по тренду", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 313 RuleWave3NotExceedingWave1        */ [ "Wave 3 does not end beyond wave 1's own end", "Волна 3 не заходит дальше конца волны 1", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 314 EwaEngineSettingsTitle            */ [ "EWA Engine Settings", "Настройки движка EWA", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 315 EwaEngineSettingsMenuLabel        */ [ "EWA settings", "Настройки EWA", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 316 EwaLabelSeparationGroupTitle      */ [ "Label separation", "Разделение подписей", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 317 EwaLabelSeparationStacked         */ [ "Stacked", "Друг над другом", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 318 EwaLabelSeparationParallel        */ [ "Parallel", "Параллельно", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 319 EwaLabelSeparationTriangle        */ [ "Triangle", "Треугольником", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 320 EwaDetectHigherDegreeLabel        */ [ "Detect higher-degree cycles", "Распознавать циклы старшей степени", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 321 EwaShowProjectionsLabel           */ [ "Show fibonacci projections by default", "Показывать проекции Фибоначчи по умолчанию", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 322 EwaGuardFamiliesGroupTitle        */ [ "Rule guard", "Контроль правил", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 323 EwaGuardGeometryLabel             */ [ "Geometry rules", "Геометрические правила", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 324 EwaGuardGrammarLabel              */ [ "Grammar & subdivision rules", "Правила грамматики и вложенности", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 325 EwaGuardChainLabel                */ [ "Chain rules", "Правила цепочек", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 326 EwaRatioRibDefaultsGroupTitle     */ [ "New structure ratio ribs", "Рёбра соотношений для новых структур", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

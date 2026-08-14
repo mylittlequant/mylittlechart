@@ -89,6 +89,11 @@ impl ChartApp {
                 // above.
                 control_point_shape: existing.ui.control_point_shape,
                 control_point_size: existing.ui.control_point_size,
+                // EWA engine configuration (owner ask 2026-08-14): mutated
+                // in-place via `apply_ewa_engine_config_edit` at edit time,
+                // same preserve-live-value pattern as `control_point_shape`/
+                // `control_point_size` above.
+                ewa_engine: existing.ui.ewa_engine.clone(),
             },
         }
     }

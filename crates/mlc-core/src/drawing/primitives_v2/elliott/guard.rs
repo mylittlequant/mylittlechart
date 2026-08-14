@@ -72,9 +72,70 @@ use mli::ewa::rules as ewa_rules;
 use mli::ewa::types::{EwaPatternKind, EwaSegmentDirection};
 
 use crate::i18n::ConceptKey;
+use crate::state::ewa_engine::ewa_engine_config;
 
 use super::super::Primitive;
 use super::count::{self, WaveSlot};
+
+// =============================================================================
+// Rule families — which class of rule id [`EwaEngineConfig::guard_families`]
+// (owner ask 2026-08-14) gates. Classification only — no rule id below is
+// new; every one already exists in the functions further down this file.
+// =============================================================================
+
+/// The three rule classes [`crate::state::ewa_engine::GuardFamilies`] toggles
+/// independently — see [`rule_family`] for which rule id belongs to which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuardRuleFamily {
+    /// Point-position hard rules.
+    Geometry,
+    /// Subdivision/typing and declared-shape-vs-measured-ratio rules.
+    Grammar,
+    /// `follows`-chain-level rules.
+    Chain,
+}
+
+/// Which [`GuardRuleFamily`] a rule id belongs to. The catch-all arm covers
+/// every point-geometry rule id this module produces
+/// (`wave2_not_beyond_wave1_origin`, `wave4_no_wave1_overlap`,
+/// `wave3_exceeds_wave1`, `wave3_not_shortest`, `b_terminates_near_a_origin`,
+/// `b_exceeds_a_origin`, `b_does_not_retrace_a_origin`,
+/// `c_fails_to_exceed_a_end`, `c_slightly_exceeds_a_end`, `c_exceeds_a_end`,
+/// `contracting_boundaries`, `wave2_retraces_wave1`, `wave4_retraces_wave3`)
+/// — named here in this doc rather than in the match arm itself, since
+/// [`GuardRuleFamily::Geometry`] is the class every OTHER rule id in this
+/// module is not.
+pub fn rule_family(rule_id: &str) -> GuardRuleFamily {
+    match rule_id {
+        "chain_continuity" | "chain_alternation" | "chain_degree" => GuardRuleFamily::Chain,
+        "subdivision_class"
+        | "flat_requires_b_near_a_origin"
+        | "zigzag_requires_shallow_b"
+        | "expanded_flat_requires_b_beyond_a_origin"
+        | "x_is_corrective"
+        | "w_and_y_are_corrective"
+        | "w_y_z_are_corrective"
+        | "at_most_one_zigzag"
+        | "triangle_only_final_component" => GuardRuleFamily::Grammar,
+        _ => GuardRuleFamily::Geometry,
+    }
+}
+
+/// Whether the ACTIVE `EwaEngineConfig::guard_families` currently reports
+/// `rule_id` — read fresh (never cached), the same "read fresh every use"
+/// contract `control_point_style` already uses. [`violations`],
+/// [`violations_in`] and [`chain_violations`] each filter their own output
+/// through this at the very end, so gating a family is one small `retain`
+/// per entry point rather than a check threaded through every individual
+/// predicate above.
+fn family_enabled(rule_id: &str) -> bool {
+    let families = ewa_engine_config().guard_families;
+    match rule_family(rule_id) {
+        GuardRuleFamily::Geometry => families.geometry,
+        GuardRuleFamily::Grammar => families.grammar,
+        GuardRuleFamily::Chain => families.chain,
+    }
+}
 
 /// The theme's own warning colour (`UITheme::dark().colors.warning`,
 /// `mlc-core/src/theme/preset.rs`) — reused literal, not invented. A
@@ -105,14 +166,16 @@ pub struct Violation {
 pub fn violations(prim: &dyn Primitive) -> Vec<Violation> {
     let realized = prim.realized_point_count();
     let points = prim.points();
-    match prim.type_id() {
+    let mut out = match prim.type_id() {
         "elliott_impulse" => impulse_violations(&points, realized),
         "elliott_correction" => {
             correction_violations(&points, realized, prim.correction_subtype().unwrap_or("zigzag"))
         }
         "elliott_triangle" => triangle_violations(&points, realized),
         _ => Vec::new(),
-    }
+    };
+    out.retain(|v| family_enabled(v.rule_id));
+    out
 }
 
 fn price(points: &[(i64, f64)], idx: usize) -> Option<f64> {
@@ -622,6 +685,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         }
     }
 
+    out.retain(|v| family_enabled(v.rule_id));
     out
 }
 
@@ -757,6 +821,7 @@ pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
         }
     }
 
+    out.retain(|v| family_enabled(v.rule_id));
     out
 }
 

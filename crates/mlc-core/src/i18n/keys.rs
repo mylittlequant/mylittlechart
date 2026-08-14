@@ -2915,10 +2915,29 @@ pub enum ConceptKey {
     RuleWave2NotRetracingWave1 = 311,
     RuleWave4NotRetracingWave3 = 312,
     RuleWave3NotExceedingWave1 = 313,
+
+    // ---- EWA Engine Settings modal (2026-08-14, owner ask: "для настройки
+    // ЕВА движка можно сделать отдельную настройку, ну вот прям модалку ЕВА
+    // движка") — `mlc-app-layout`'s `layout::modals::ewa_engine_settings`,
+    // reached from the wave-menu popups' own trailing row and from the Wave
+    // archetype's own Subject tab in the primitive settings modal.
+    EwaEngineSettingsTitle = 314,
+    EwaEngineSettingsMenuLabel = 315,
+    EwaLabelSeparationGroupTitle = 316,
+    EwaLabelSeparationStacked = 317,
+    EwaLabelSeparationParallel = 318,
+    EwaLabelSeparationTriangle = 319,
+    EwaDetectHigherDegreeLabel = 320,
+    EwaShowProjectionsLabel = 321,
+    EwaGuardFamiliesGroupTitle = 322,
+    EwaGuardGeometryLabel = 323,
+    EwaGuardGrammarLabel = 324,
+    EwaGuardChainLabel = 325,
+    EwaRatioRibDefaultsGroupTitle = 326,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 314;
+    pub const COUNT: usize = 327;
 
     /// Get translation for this key.
     #[inline]
