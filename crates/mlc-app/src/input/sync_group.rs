@@ -488,9 +488,15 @@ impl ChartApp {
                     d.symbol = prim_symbol.clone();
                     d.exchange = prim_exchange.clone();
                     d.account_type = prim_account_type.clone();
-                    // Re-ID group copies so they are globally unique; auto_bubble keeps originals.
-                    d.id = mlc_core::drawing::alloc_primitive_id();
                 }
+                // Re-ID group copies so they are globally unique; auto_bubble
+                // keeps originals. A batch remap (not a per-primitive
+                // independent restamp) so any Elliott subdivision/chain
+                // inside this copy still points at the COPY's own new ids
+                // instead of the ORIGINAL bubble's — see
+                // `reassign_primitive_ids_remapped`'s own doc (2026-08-14
+                // report, WaveLink cold-restore audit).
+                mlc_core::drawing::reassign_primitive_ids_remapped(&mut group_prims);
                 self.core.bubbles_mut().with_bubble_mut(group_id, |group| {
                     group.primitives = group_prims;
                 });
@@ -1282,11 +1288,14 @@ impl ChartApp {
                     d.exchange = prim_exch.clone();
                     d.account_type = prim_at.clone();
                 }
-                // Re-ID the group copies so they are globally unique.
-                // The source window's drawing_manager keeps the original IDs.
-                for p in &mut source_prims {
-                    p.data_mut().id = mlc_core::drawing::alloc_primitive_id();
-                }
+                // Re-ID the group copies so they are globally unique. The
+                // source window's drawing_manager keeps the original IDs. A
+                // batch remap (not a per-primitive independent restamp) so
+                // any Elliott subdivision/chain inside this copy still
+                // points at the COPY's own new ids instead of the source
+                // window's — see `reassign_primitive_ids_remapped`'s own doc
+                // (2026-08-14 report, WaveLink cold-restore audit).
+                mlc_core::drawing::reassign_primitive_ids_remapped(&mut source_prims);
                 if !source_prims.is_empty() {
                     let count = source_prims.len();
                     let seeded = self.core.bubbles_mut().with_bubble_mut(group_id, |group| {

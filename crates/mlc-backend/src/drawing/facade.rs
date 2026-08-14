@@ -751,6 +751,25 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.dedup_primitive_ids(&mut self.bubbles)
     }
 
+    /// See `DrawingManager::clear_dangling_wave_links` — cold-restore
+    /// integrity sweep (2026-08-14 report), called once per restored
+    /// bubble at the end of `apply_preset_cold`, before the matching
+    /// `Self::refresh_wave_guards` call.
+    pub fn clear_dangling_wave_links(&mut self, bid: BubbleId) -> u32 {
+        self.mgr.clear_dangling_wave_links(&mut self.bubbles, bid)
+    }
+
+    /// See `DrawingManager::refresh_wave_guards`. Exposed on the facade so
+    /// `mlc-app`'s cold-restore sweep (`hydration_impl.rs`) can fill the
+    /// guard cache for every bubble `BubbleStore::restore_from_snapshots`
+    /// just rebuilt — that path never goes through `DrawingManager`, so
+    /// without an explicit call here the cache stays at its
+    /// freshly-deserialized default (empty) until the next live edit
+    /// happens to touch the bubble (2026-08-14 report).
+    pub fn refresh_wave_guards(&mut self, bid: BubbleId) {
+        self.mgr.refresh_wave_guards(&mut self.bubbles, bid)
+    }
+
     // ---- Test-harness lifecycle -----------------------------------------
 
     pub fn drop_bubble(&mut self, bid: BubbleId) {

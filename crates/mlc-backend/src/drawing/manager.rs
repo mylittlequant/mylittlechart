@@ -2198,6 +2198,54 @@ impl DrawingManager {
         }
     }
 
+    /// Clear any [`WaveLink`]/`follows` reference in `bid`'s own bubble that
+    /// no longer resolves within that same collection.
+    ///
+    /// `WaveLink::parent_id` and `wave_follows` name a sibling in the SAME
+    /// bubble — never a cross-bubble or cross-store reference (see
+    /// `WaveLink`'s own doc: "a primitive cannot see its siblings, so it
+    /// stores only this reference, never the parent itself"). A restored
+    /// primitive normally keeps that reference intact — every external-
+    /// insertion path either preserves the incoming id
+    /// (`Self::add_external`/`Self::swap_symbol`) or, when ids MUST change
+    /// on a copy, is responsible for rewriting `link`/`follows` through the
+    /// old→new map itself. A file saved before that doctrine existed, or
+    /// hand-edited, can still carry an id nothing in this bubble owns any
+    /// more — that reference is not recoverable by guessing which primitive
+    /// it used to name, so it is DROPPED here rather than left dangling: the
+    /// alternative is a subdivision/chain link `Self::refresh_wave_guards`
+    /// (which resolves children by `wave_link().parent_id`) silently skips
+    /// forever, holding a parent's own leg drawn under a subdivision that no
+    /// longer claims it (owner report 2026-08-14, WaveLink cold-restore
+    /// audit).
+    ///
+    /// A no-op when `bid` does not resolve to a live bubble. Returns the
+    /// number of primitives whose `link` and/or `follows` was cleared.
+    pub(crate) fn clear_dangling_wave_links(&self, bubbles: &mut BubbleStore, bid: BubbleId) -> u32 {
+        let Some(b) = bubbles.bubble_mut(bid) else { return 0 };
+        let ids: HashSet<u64> = b.primitives.iter().map(|p| p.data().id).collect();
+        let mut cleared = 0u32;
+        for p in b.primitives.iter_mut() {
+            let mut touched = false;
+            if let Some(link) = p.wave_link() {
+                if !ids.contains(&link.parent_id) {
+                    p.set_wave_link(None);
+                    touched = true;
+                }
+            }
+            if let Some(follows) = p.wave_follows() {
+                if !ids.contains(&follows) {
+                    p.set_wave_follows(None);
+                    touched = true;
+                }
+            }
+            if touched {
+                cleared += 1;
+            }
+        }
+        cleared
+    }
+
     // =========================================================================
     // Wave joints — a chain stays a chain while it is dragged
     // =========================================================================
@@ -3306,6 +3354,17 @@ impl DrawingManager {
     /// Deduplicate primitive IDs globally, across every bubble. Old presets
     /// may carry group primitives with identical IDs (from historical clone
     /// paths that didn't re-ID). Returns the count of renumbered primitives.
+    ///
+    /// Deliberately does NOT remap `wave_link`/`follows` the way
+    /// `mlc_core::drawing::reassign_primitive_ids_remapped` does for a
+    /// legitimate copy-with-restamp batch (2026-08-14 report): a collision
+    /// here means two primitives already shared one id BEFORE this ran, so
+    /// there is no way to tell which of the two a third primitive's
+    /// reference to that id actually meant — remapping would be a guess,
+    /// not a fix. The caller (`hydration_impl.rs`'s cold-restore sweep)
+    /// runs `DrawingManager::clear_dangling_wave_links` right after this,
+    /// which drops any reference this renumbering left unresolved instead
+    /// of leaving it dangling.
     pub(crate) fn dedup_primitive_ids(&self, bubbles: &mut BubbleStore) -> u32 {
         let mut total = 0u32;
         for group in bubbles.bubbles_mut() {
@@ -3409,6 +3468,164 @@ mod park_unpark_tests {
 
         assert!(mgr.is_locked(window_a_bid), "window A's session must survive parking window B's preset");
         assert!(!parked_b.is_locked(window_a_bid), "extraction must not leak window A's session into window B's payload");
+    }
+}
+
+#[cfg(test)]
+mod wave_link_restore_tests {
+    //! Cold-restore proof for the 2026-08-14 report ("an Elliott parent and
+    //! its subdivision, created in one session, LOSE their relation across
+    //! a page reload"). Manual repro the report names: draw an impulse,
+    //! subdivide wave 2 as a zigzag, reload.
+    //!
+    //! This exercises the SAME functions the app's cold-load path calls —
+    //! `BubbleStore::restore_from_snapshots`, then
+    //! `DrawingManager::{clear_dangling_wave_links, refresh_wave_guards}`
+    //! (`hydration_impl.rs`'s post-dedup sweep) — over a snapshot that made
+    //! a full JSON round trip, i.e. the exact bytes a page reload reads
+    //! back. It proves the DATA the renderer reads is correct after a
+    //! restore; the visual half (does the renderer actually skip the
+    //! parent's own leg once `subdivided_slots` is filled) needs a running
+    //! app and a screenshot, neither available to this agent — UNVERIFIED
+    //! here.
+
+    use super::*;
+    use crate::bubble::{BubbleStore, BubbleView};
+    use crate::tag::TagManager;
+    use mlc_core::ids::SyncMemberId;
+    use mlc_core::preset::snapshots::DataBubbleSnapshot;
+    use mlc_core::tag::Tag;
+
+    /// Build one bubble holding an Elliott impulse and, nested into its own
+    /// wave-2 slot, a zigzag correction. Returns `(bubbles, tags, bid,
+    /// parent_id, child_id)`.
+    fn build_impulse_with_zigzag_subdivision() -> (BubbleStore, TagManager, BubbleId, u64, u64) {
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+        let mut tags = TagManager::new();
+        let mut tag = Tag::new_auto(bid, [0.0, 0.0, 0.0, 0.0]);
+        tag.members.insert(SyncMemberId::Chart(1));
+        tags.insert(tag);
+
+        let mut mgr = DrawingManager::default();
+        let parent = ElliottImpulse::new(
+            [(0, 0.0), (1_000, 10.0), (2_000, 5.0), (3_000, 15.0), (4_000, 10.0), (5_000, 20.0)],
+            "#ffffff",
+        );
+        let parent_id = mgr.add_external(&mut bubbles, bid, Box::new(parent));
+
+        let mut child = ElliottCorrection::new(
+            [(1_000, 10.0), (1_250, 7.0), (1_500, 9.0), (2_000, 5.0)],
+            "#ffffff",
+        );
+        child.correction_type = CorrectionType::Zigzag;
+        child.link = Some(WaveLink { parent_id, slot: WaveSlot::Impulse2 });
+        let child_id = mgr.add_external(&mut bubbles, bid, Box::new(child));
+
+        (bubbles, tags, bid, parent_id, child_id)
+    }
+
+    /// Snapshot `bid`, joined with its paired tag, and round-trip it
+    /// through JSON — the exact bytes a page reload reads back.
+    fn snapshot_round_trip(bubbles: &BubbleStore, tags: &TagManager, bid: BubbleId) -> Vec<DataBubbleSnapshot> {
+        let bubble_ref = bubbles.bubble(bid).expect("bubble exists");
+        let view = BubbleView::new(bubble_ref);
+        let tag_ref = tags.get(bid).expect("paired tag exists");
+        let synced = tags.synced_panels_snapshot();
+        let snap = view.to_snapshot(tag_ref, &synced);
+
+        let json = serde_json::to_string(&vec![snap]).expect("snapshot must serialize");
+        serde_json::from_str(&json).expect("snapshot must deserialize")
+    }
+
+    #[test]
+    fn wave_link_survives_snapshot_round_trip() {
+        let (bubbles, tags, bid, parent_id, child_id) = build_impulse_with_zigzag_subdivision();
+        let snaps = snapshot_round_trip(&bubbles, &tags, bid);
+
+        let mut restored_bubbles = BubbleStore::new();
+        let restored_ids = restored_bubbles.restore_from_snapshots(&snaps);
+        assert_eq!(restored_ids, vec![bid], "restore_from_snapshots must keep the bubble's own persisted id");
+
+        let restored_link = {
+            let b = restored_bubbles.bubble(bid).expect("bubble restored");
+            let child = b.primitives.iter().find(|p| p.data().id == child_id)
+                .expect("child primitive restored under its own persisted id");
+            child.wave_link()
+        };
+        assert_eq!(
+            restored_link,
+            Some(WaveLink { parent_id, slot: WaveSlot::Impulse2 }),
+            "child's wave_link().parent_id must still resolve to the parent after a snapshot round trip \
+             — restore_from_snapshots must not re-stamp a persisted primitive id",
+        );
+    }
+
+    #[test]
+    fn guard_cache_is_empty_until_the_cold_restore_sweep_runs() {
+        let (bubbles, tags, bid, parent_id, _child_id) = build_impulse_with_zigzag_subdivision();
+        let snaps = snapshot_round_trip(&bubbles, &tags, bid);
+
+        let mut restored_bubbles = BubbleStore::new();
+        restored_bubbles.restore_from_snapshots(&snaps);
+
+        // `BubbleStore::restore_from_snapshots` never goes through
+        // `DrawingManager` — this is the 2026-08-14 bug: the parent's
+        // `subdivided_slots` cache stays at its freshly-deserialized
+        // default (empty) right after restore, exactly the symptom
+        // measured in the running app (the parent's own straight leg drawn
+        // again under its own subdivision).
+        {
+            let b = restored_bubbles.bubble(bid).expect("bubble restored");
+            let parent = b.primitives.iter().find(|p| p.data().id == parent_id).expect("parent restored");
+            assert!(
+                parent.subdivided_slots().is_empty(),
+                "guard cache must start empty right after restore_from_snapshots alone \
+                 (proves the cache, not the link, is what a bare restore leaves stale)",
+            );
+        }
+
+        // The cold-restore sweep hydration_impl.rs runs right after
+        // `dedup_primitive_ids` — `clear_dangling_wave_links` then
+        // `refresh_wave_guards`, per restored bubble id.
+        let sweep_mgr = DrawingManager::default();
+        let cleared = sweep_mgr.clear_dangling_wave_links(&mut restored_bubbles, bid);
+        assert_eq!(cleared, 0, "a correctly round-tripped link must not be flagged dangling");
+        sweep_mgr.refresh_wave_guards(&mut restored_bubbles, bid);
+
+        let b = restored_bubbles.bubble(bid).expect("bubble restored");
+        let parent = b.primitives.iter().find(|p| p.data().id == parent_id).expect("parent restored");
+        assert_eq!(
+            parent.subdivided_slots(),
+            &[WaveSlot::Impulse2],
+            "refresh_wave_guards must fill subdivided_slots after the cold-restore sweep runs",
+        );
+    }
+
+    #[test]
+    fn dangling_link_is_cleared_not_left_pointing_at_nothing() {
+        // A file saved before the id-preservation doctrine existed (or
+        // hand-edited) can carry a `link` naming an id nothing in the
+        // bubble owns any more — construct that directly rather than via
+        // a round trip, since a healthy round trip never produces one.
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+        let mut mgr = DrawingManager::default();
+
+        let mut orphan_child = ElliottCorrection::new(
+            [(1_000, 10.0), (1_250, 7.0), (1_500, 9.0), (2_000, 5.0)],
+            "#ffffff",
+        );
+        orphan_child.correction_type = CorrectionType::Zigzag;
+        orphan_child.link = Some(WaveLink { parent_id: 999_999, slot: WaveSlot::Impulse2 });
+        let child_id = mgr.add_external(&mut bubbles, bid, Box::new(orphan_child));
+
+        let cleared = mgr.clear_dangling_wave_links(&mut bubbles, bid);
+        assert_eq!(cleared, 1);
+
+        let b = bubbles.bubble(bid).expect("bubble exists");
+        let child = b.primitives.iter().find(|p| p.data().id == child_id).expect("child exists");
+        assert_eq!(child.wave_link(), None, "a link naming an id no bubble contains must be cleared, not left dangling");
     }
 }
 

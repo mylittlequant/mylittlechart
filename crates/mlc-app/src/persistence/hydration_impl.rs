@@ -596,7 +596,7 @@ impl ChartApp {
                     // member_overrides, Step 6 doctrine cutover) and returns the
                     // synced-panel pairs so `set_panel_synced` (an app-level method,
                     // not a store method) stays in app code.
-                    self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles);
+                    let restored_bubble_ids = self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles);
                     let panel_syncs = self.core.tags_mut().restore_from_snapshots(&preset.bubbles);
                     for (member, gid) in panel_syncs {
                         self.set_panel_synced(member, gid);
@@ -747,6 +747,40 @@ impl ChartApp {
                     let total_dedup = self.core.drawings_mut().dedup_primitive_ids();
                     if total_dedup > 0 {
                         eprintln!("[ChartApp] Re-IDed {} duplicate primitive(s) across all groups", total_dedup);
+                    }
+
+                    // Elliott WaveLink/follows integrity sweep (2026-08-14
+                    // report, cold-restore audit). `restore_from_snapshots`
+                    // above keeps every persisted primitive id — it never
+                    // re-stamps — so a `link`/`follows` restored here still
+                    // names a sibling in the SAME bubble on disk. This runs
+                    // AFTER the dedup pass right above (the one remaining
+                    // re-stamp on this path, and only for a legacy id
+                    // collision) so it sees the FINAL id state: first drop
+                    // any reference that still doesn't resolve (a file saved
+                    // before this doctrine existed, or hand-edited), then
+                    // fill the guard cache
+                    // (`subdivided_slots`/`label_collisions`/context
+                    // violations) `DrawingManager::refresh_wave_guards` owns.
+                    // `restore_from_snapshots` builds bubbles straight on
+                    // `BubbleStore`, never through `DrawingManager`, so
+                    // without this sweep that cache stayed at its
+                    // freshly-deserialized default (empty) after every cold
+                    // load: a restored subdivision's parent drew its own
+                    // straight leg again underneath it, the chain/context
+                    // rules stayed silent, and two degrees' labels could
+                    // stack on the same pivot — until the next live edit
+                    // happened to touch that bubble and recompute it.
+                    let mut total_dangling_links = 0u32;
+                    for &bid in &restored_bubble_ids {
+                        total_dangling_links += self.core.drawings_mut().clear_dangling_wave_links(bid);
+                        self.core.drawings_mut().refresh_wave_guards(bid);
+                    }
+                    if total_dangling_links > 0 {
+                        eprintln!(
+                            "[ChartApp] cleared {} dangling Elliott wave link(s)/follows across {} restored bubble(s)",
+                            total_dangling_links, restored_bubble_ids.len(),
+                        );
                     }
                     let seed_ids_us = _t_seed_ids.elapsed().as_micros();
 

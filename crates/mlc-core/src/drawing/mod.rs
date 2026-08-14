@@ -70,13 +70,49 @@ pub fn seed_primitive_id_counter(max_existing: u64) {
     }
 }
 
-/// Re-assign a fresh globally-unique ID to a primitive.
+/// Re-assign a fresh globally-unique id to every primitive in `prims`, and
+/// rewrite every `wave_link().parent_id` / `wave_follows()` inside the
+/// batch that pointed at one of the batch's own OLD ids to its NEW one.
 ///
-/// Use after cloning a primitive into a new owning store (e.g. seeding
-/// `group.primitives` from stash) so that the clone and the original have
-/// distinct IDs across all stores.
-pub fn reassign_primitive_id(prim: &mut Box<dyn primitives_v2::Primitive>) {
-    prim.data_mut().id = alloc_primitive_id();
+/// Use when a whole primitive collection is copied into a new owning store
+/// (e.g. seeding a sync group's `primitives` from a window's home bubble —
+/// `mlc-app/src/input/sync_group.rs`) so the copy and the original have
+/// distinct ids across all stores. Re-stamping each primitive
+/// independently — which is what both sync-group seed sites did before
+/// this function grew a body — silently detaches every Elliott subdivision
+/// and chain the batch carried: `WaveLink::parent_id` and `follows` name an
+/// id, and a copy that hands each member an unrelated fresh id without also
+/// rewriting those references leaves them pointing at ids nothing in the
+/// NEW collection owns (2026-08-14 report, WaveLink cold-restore audit —
+/// the same root cause, on the live copy-into-group path rather than
+/// persistence).
+///
+/// A reference to an id OUTSIDE this batch — already unresolvable in the
+/// copy, since the copy does not include that primitive — is cleared
+/// rather than left dangling. In practice this never fires for the
+/// sync-group seed callers: a parent and its subdivision/chain member are
+/// always copied together, being siblings drawn in the same source bubble.
+pub fn reassign_primitive_ids_remapped(prims: &mut [Box<dyn primitives_v2::Primitive>]) {
+    let id_map: std::collections::HashMap<u64, u64> = prims
+        .iter()
+        .map(|p| (p.data().id, alloc_primitive_id()))
+        .collect();
+    for p in prims.iter_mut() {
+        if let Some(&new_id) = id_map.get(&p.data().id) {
+            p.data_mut().id = new_id;
+        }
+    }
+    for p in prims.iter_mut() {
+        if let Some(link) = p.wave_link() {
+            let remapped = id_map.get(&link.parent_id).map(|&parent_id| {
+                primitives_v2::elliott::WaveLink { parent_id, slot: link.slot }
+            });
+            p.set_wave_link(remapped);
+        }
+        if let Some(follows) = p.wave_follows() {
+            p.set_wave_follows(id_map.get(&follows).copied());
+        }
+    }
 }
 
 mod primitive_snapshot;
