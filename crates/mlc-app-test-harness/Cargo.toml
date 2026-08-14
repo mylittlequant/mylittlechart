@@ -36,5 +36,9 @@ path = "tests/e2e/chartapp_full_load.rs"
 name = "e2e_headless_full_lifecycle"
 path = "tests/e2e/headless_full_lifecycle.rs"
 
+[[test]]
+name = "e2e_preset_wave_link_round_trip"
+path = "tests/e2e/preset_wave_link_round_trip.rs"
+
 [lints]
 workspace = true
